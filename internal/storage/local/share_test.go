@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"

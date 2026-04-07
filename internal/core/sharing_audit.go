@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ShareAuditEvent represents different types of sharing audit events
@@ -48,7 +48,7 @@ type ShareAuditContext struct {
 }
 
 // LogShareCreated logs a share creation event
-func (c *SecretlyCore) LogShareCreated(ctx context.Context, auditCtx *ShareAuditContext) {
+func (c *KeyorixCore) LogShareCreated(ctx context.Context, auditCtx *ShareAuditContext) {
 	recipientType := "user"
 	if auditCtx.IsGroup {
 		recipientType = "group"
@@ -67,7 +67,7 @@ func (c *SecretlyCore) LogShareCreated(ctx context.Context, auditCtx *ShareAudit
 }
 
 // LogShareUpdated logs a share permission update event
-func (c *SecretlyCore) LogShareUpdated(ctx context.Context, auditCtx *ShareAuditContext) {
+func (c *KeyorixCore) LogShareUpdated(ctx context.Context, auditCtx *ShareAuditContext) {
 	recipientType := "user"
 	if auditCtx.IsGroup {
 		recipientType = "group"
@@ -87,7 +87,7 @@ func (c *SecretlyCore) LogShareUpdated(ctx context.Context, auditCtx *ShareAudit
 }
 
 // LogShareRevoked logs a share revocation event
-func (c *SecretlyCore) LogShareRevoked(ctx context.Context, auditCtx *ShareAuditContext) {
+func (c *KeyorixCore) LogShareRevoked(ctx context.Context, auditCtx *ShareAuditContext) {
 	recipientType := "user"
 	if auditCtx.IsGroup {
 		recipientType = "group"
@@ -106,7 +106,7 @@ func (c *SecretlyCore) LogShareRevoked(ctx context.Context, auditCtx *ShareAudit
 }
 
 // LogSharedSecretAccessed logs when a user accesses a shared secret
-func (c *SecretlyCore) LogSharedSecretAccessed(ctx context.Context, auditCtx *ShareAuditContext) {
+func (c *KeyorixCore) LogSharedSecretAccessed(ctx context.Context, auditCtx *ShareAuditContext) {
 	event := &models.AuditEvent{
 		EventType:    string(ShareAuditEventAccessed),
 		UserID:       &auditCtx.ActorID,
@@ -120,7 +120,7 @@ func (c *SecretlyCore) LogSharedSecretAccessed(ctx context.Context, auditCtx *Sh
 }
 
 // LogGroupShareCreated logs a group share creation event
-func (c *SecretlyCore) LogGroupShareCreated(ctx context.Context, auditCtx *ShareAuditContext) {
+func (c *KeyorixCore) LogGroupShareCreated(ctx context.Context, auditCtx *ShareAuditContext) {
 	event := &models.AuditEvent{
 		EventType:    string(ShareAuditEventGroupCreated),
 		UserID:       &auditCtx.ActorID,
@@ -134,7 +134,7 @@ func (c *SecretlyCore) LogGroupShareCreated(ctx context.Context, auditCtx *Share
 }
 
 // LogGroupShareUpdated logs a group share permission update event
-func (c *SecretlyCore) LogGroupShareUpdated(ctx context.Context, auditCtx *ShareAuditContext) {
+func (c *KeyorixCore) LogGroupShareUpdated(ctx context.Context, auditCtx *ShareAuditContext) {
 	event := &models.AuditEvent{
 		EventType:    string(ShareAuditEventGroupUpdated),
 		UserID:       &auditCtx.ActorID,
@@ -149,7 +149,7 @@ func (c *SecretlyCore) LogGroupShareUpdated(ctx context.Context, auditCtx *Share
 }
 
 // LogGroupShareRevoked logs a group share revocation event
-func (c *SecretlyCore) LogGroupShareRevoked(ctx context.Context, auditCtx *ShareAuditContext) {
+func (c *KeyorixCore) LogGroupShareRevoked(ctx context.Context, auditCtx *ShareAuditContext) {
 	event := &models.AuditEvent{
 		EventType:    string(ShareAuditEventGroupRevoked),
 		UserID:       &auditCtx.ActorID,
@@ -163,7 +163,7 @@ func (c *SecretlyCore) LogGroupShareRevoked(ctx context.Context, auditCtx *Share
 }
 
 // LogSelfRemovalFromShare logs when a user removes themselves from a shared secret
-func (c *SecretlyCore) LogSelfRemovalFromShare(ctx context.Context, auditCtx *ShareAuditContext) {
+func (c *KeyorixCore) LogSelfRemovalFromShare(ctx context.Context, auditCtx *ShareAuditContext) {
 	event := &models.AuditEvent{
 		EventType:    string(ShareAuditEventSelfRemoved),
 		UserID:       &auditCtx.ActorID,

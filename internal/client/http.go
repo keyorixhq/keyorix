@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // Config holds the configuration for HTTP client
@@ -90,7 +90,7 @@ func (c *HTTPClient) request(ctx context.Context, method, path string, body inte
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "secretly-cli/1.0")
+	req.Header.Set("User-Agent", "keyorix-cli/1.0")
 
 	// Add authentication if API key is provided
 	if c.apiKey != "" {

@@ -5,7 +5,7 @@
 
 set -e
 
-echo "🌐 Setting Up Secretly Web Dashboard"
+echo "🌐 Setting Up Keyorix Web Dashboard"
 echo "===================================="
 
 # Colors
@@ -68,7 +68,7 @@ else
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secretly - Secret Management</title>
+    <title>Keyorix - Secret Management</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -84,7 +84,7 @@ else
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔐 Secretly</h1>
+            <h1>🔐 Keyorix</h1>
             <p>Secret Management System</p>
         </div>
         
@@ -111,16 +111,16 @@ else
         <h2>CLI Usage</h2>
         <pre style="background: #f8f9fa; padding: 20px; border-radius: 6px; overflow-x: auto;">
 # Create a secret
-./secretly secret create --name "api-key" --value "your-secret-value"
+./keyorix secret create --name "api-key" --value "your-secret-value"
 
 # List secrets
-./secretly secret list
+./keyorix secret list
 
 # Share a secret
-./secretly share create --secret-id 1 --recipient "user@company.com"
+./keyorix share create --secret-id 1 --recipient "user@company.com"
 
 # Check system status
-./secretly status
+./keyorix status
         </pre>
         
         <div class="footer">
@@ -165,7 +165,7 @@ if curl -s http://localhost:8080/health > /dev/null 2>&1; then
     log_success "Server is running"
     
     # Test web dashboard access
-    if curl -s http://localhost:8080/ | grep -q "Secretly"; then
+    if curl -s http://localhost:8080/ | grep -q "Keyorix"; then
         log_success "Web dashboard is accessible"
     else
         log_warning "Web dashboard may need server restart to load assets"
@@ -181,7 +181,7 @@ if curl -s http://localhost:8080/health > /dev/null 2>&1; then
     
 else
     log_warning "Server not running. Start server to test web dashboard:"
-    echo "  cd server && SECRETLY_CONFIG_PATH=../secretly-simple.yaml ./secretly-server"
+    echo "  cd server && KEYORIX_CONFIG_PATH=../keyorix-simple.yaml ./keyorix-server"
 fi
 
 echo ""

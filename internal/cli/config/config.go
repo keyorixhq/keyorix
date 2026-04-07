@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -56,7 +56,7 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
@@ -92,7 +92,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	apiKey, _ := cmd.Flags().GetString("api-key")
 	timeout, _ := cmd.Flags().GetInt("timeout")
 
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		// Create default config if it doesn't exist
 		cfg = &config.Config{}
@@ -108,7 +108,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Remote.TimeoutSeconds = timeout
 	cfg.Storage.Remote.TLSVerify = true
 
-	if err := config.Save("secretly.yaml", cfg); err != nil {
+	if err := config.Save("keyorix.yaml", cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -122,7 +122,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 }
 
 func runUseLocal(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		// Create default config if it doesn't exist
 		cfg = &config.Config{}
@@ -134,7 +134,7 @@ func runUseLocal(cmd *cobra.Command, args []string) error {
 		cfg.Storage.Database.Path = "./secrets.db"
 	}
 
-	if err := config.Save("secretly.yaml", cfg); err != nil {
+	if err := config.Save("keyorix.yaml", cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -145,7 +145,7 @@ func runUseLocal(cmd *cobra.Command, args []string) error {
 }
 
 func runTestConnection(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}

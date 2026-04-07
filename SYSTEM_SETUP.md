@@ -1,48 +1,48 @@
-# Secretly System Setup Guide
+# Keyorix System Setup Guide
 
-This guide covers the complete setup and configuration of the Secretly secrets management system.
+This guide covers the complete setup and configuration of the Keyorix secrets management system.
 
 ## 🚀 Quick Start
 
 ### 1. Initialize the System
 ```bash
 # Initialize with default settings
-secretly system init
+keyorix system init
 
 # Or use interactive setup
-secretly system init --interactive
+keyorix system init --interactive
 ```
 
 ### 2. Validate the Setup
 ```bash
 # Check system configuration
-secretly system validate
+keyorix system validate
 
 # Audit file permissions
-secretly system audit
+keyorix system audit
 
 # Check encryption status
-secretly encryption status
+keyorix encryption status
 ```
 
-### 3. Start Using Secretly
+### 3. Start Using Keyorix
 Your system is now ready for secure secret management!
 
 ## 📋 Complete Setup Process
 
 ### Step 1: System Initialization
 
-The `secretly system init` command creates all necessary files and directories:
+The `keyorix system init` command creates all necessary files and directories:
 
 ```
 📁 Project Structure After Init:
-├── secretly.yaml          # Main configuration (0600)
-├── secretly_template.yaml # Template file (0644)
+├── keyorix.yaml          # Main configuration (0600)
+├── keyorix_template.yaml # Template file (0644)
 ├── keys/
 │   ├── kek.key           # Key Encryption Key (0600)
 │   └── dek.key           # Data Encryption Key (0600)
-├── secretly.db           # SQLite database (0600)
-├── secretly.log          # Application logs (0644)
+├── keyorix.db           # SQLite database (0600)
+├── keyorix.log          # Application logs (0644)
 └── certs/                # TLS certificates (if enabled)
     ├── server.crt        # Certificate (0600)
     └── server.key        # Private key (0600)
@@ -50,7 +50,7 @@ The `secretly system init` command creates all necessary files and directories:
 
 ### Step 2: Configuration Overview
 
-The `secretly.yaml` configuration includes:
+The `keyorix.yaml` configuration includes:
 
 ```yaml
 # Server settings
@@ -65,7 +65,7 @@ server:
 # Storage and encryption
 storage:
   database:
-    path: "secretly.db"
+    path: "keyorix.db"
   encryption:
     enabled: true
     kek_path: "keys/kek.key"
@@ -96,30 +96,30 @@ Initialize only specific components:
 
 ```bash
 # Encryption only
-secretly system init --encryption
+keyorix system init --encryption
 
 # Database only
-secretly system init --database
+keyorix system init --database
 
 # Multiple components
-secretly system init --encryption --database --logging
+keyorix system init --encryption --database --logging
 ```
 
 ### Custom Configuration Paths
 
 ```bash
 # Use custom config file location
-secretly system init --config /path/to/my-config.yaml
+keyorix system init --config /path/to/my-config.yaml
 
 # Validate custom config
-secretly system validate --config /path/to/my-config.yaml
+keyorix system validate --config /path/to/my-config.yaml
 ```
 
 ### Force Overwrite (Dangerous)
 
 ```bash
 # Overwrite existing files
-secretly system init --force
+keyorix system init --force
 
 # ⚠️ WARNING: This will overwrite existing configuration and keys!
 ```
@@ -129,19 +129,19 @@ secretly system init --force
 ### Initialize Encryption Separately
 ```bash
 # Initialize encryption keys
-secretly encryption init
+keyorix encryption init
 
 # Check encryption status
-secretly encryption status
+keyorix encryption status
 
 # Rotate encryption keys
-secretly encryption rotate
+keyorix encryption rotate
 
 # Validate encryption setup
-secretly encryption validate
+keyorix encryption validate
 
 # Fix key file permissions
-secretly encryption fix-perms
+keyorix encryption fix-perms
 ```
 
 ### Encryption Features
@@ -156,16 +156,16 @@ secretly encryption fix-perms
 ### 1. File Permissions
 ```bash
 # Regular permission audits
-secretly system audit
+keyorix system audit
 
 # Automatic permission fixing (if needed)
-secretly system validate --fix
+keyorix system validate --fix
 ```
 
 ### 2. Key Management
 ```bash
 # Regular key rotation
-secretly encryption rotate
+keyorix encryption rotate
 
 # Backup keys before rotation
 cp keys/kek.key keys/kek.key.backup.$(date +%s)
@@ -175,10 +175,10 @@ cp keys/dek.key keys/dek.key.backup.$(date +%s)
 ### 3. System Validation
 ```bash
 # Always validate before starting
-secretly system validate
+keyorix system validate
 
 # Check encryption status
-secretly encryption status
+keyorix encryption status
 ```
 
 ### 4. Production Deployment
@@ -195,50 +195,50 @@ secretly encryption status
 #### 1. Permission Denied Errors
 ```bash
 # Check current permissions
-secretly system audit
+keyorix system audit
 
 # Fix permissions automatically
-secretly system validate --fix
+keyorix system validate --fix
 
 # Manual permission fix
-chmod 0600 secretly.yaml keys/*.key secretly.db
+chmod 0600 keyorix.yaml keys/*.key keyorix.db
 ```
 
 #### 2. Missing Configuration
 ```bash
 # Recreate configuration
-secretly system init
+keyorix system init
 
 # Force overwrite corrupted config
-secretly system init --force
+keyorix system init --force
 ```
 
 #### 3. Encryption Key Issues
 ```bash
 # Regenerate encryption keys
-secretly encryption init
+keyorix encryption init
 
 # Check key status
-secretly encryption status
+keyorix encryption status
 
 # Validate key files
-secretly encryption validate
+keyorix encryption validate
 ```
 
 #### 4. Database Issues
 ```bash
 # Reinitialize database
-secretly system init --database
+keyorix system init --database
 
 # Check database permissions
-ls -la secretly.db
+ls -la keyorix.db
 ```
 
 ### Debug Mode
 ```bash
 # Enable debug logging
-export SECRETLY_DEBUG=true
-secretly system init
+export KEYORIX_DEBUG=true
+keyorix system init
 ```
 
 ## 📊 System Status Commands
@@ -246,18 +246,18 @@ secretly system init
 ### Comprehensive Status Check
 ```bash
 # System validation
-secretly system validate
+keyorix system validate
 
 # Encryption status
-secretly encryption status
+keyorix encryption status
 
 # File permission audit
-secretly system audit
+keyorix system audit
 ```
 
 ### Expected Output (Healthy System)
 ```
-🔍 Validating Secretly System
+🔍 Validating Keyorix System
 ============================
 🔍 Startup Validation Results
 ============================
@@ -283,17 +283,17 @@ After successful system initialization:
 
 - **Encryption Guide**: `internal/encryption/README.md`
 - **System Commands**: `internal/cli/system/README.md`
-- **Configuration Reference**: `secretly_template.yaml`
+- **Configuration Reference**: `keyorix_template.yaml`
 - **Examples**: `examples/system_init_example.go`
 
 ## 🆘 Support
 
 If you encounter issues:
 
-1. Run `secretly system validate` for detailed diagnostics
-2. Check file permissions with `secretly system audit`
-3. Verify encryption setup with `secretly encryption status`
-4. Review configuration in `secretly.yaml`
-5. Check logs in `secretly.log`
+1. Run `keyorix system validate` for detailed diagnostics
+2. Check file permissions with `keyorix system audit`
+3. Verify encryption setup with `keyorix encryption status`
+4. Review configuration in `keyorix.yaml`
+5. Check logs in `keyorix.log`
 
 The system provides comprehensive error messages and recovery suggestions for most common issues.

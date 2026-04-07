@@ -8,18 +8,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/secretlyhq/secretly/internal/storage/models"
-	"github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
-func setupTestCore(t *testing.T) *SecretlyCore {
+func setupTestCore(t *testing.T) *KeyorixCore {
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
 	
 	mockStorage := new(MockStorage)
-	return &SecretlyCore{
+	return &KeyorixCore{
 		storage: mockStorage,
 	}
 }

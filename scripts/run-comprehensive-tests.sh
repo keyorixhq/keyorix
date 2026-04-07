@@ -29,7 +29,7 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-echo "🧪 Secretly Comprehensive Testing Suite"
+echo "🧪 Keyorix Comprehensive Testing Suite"
 echo "======================================="
 
 # Test counters
@@ -108,9 +108,9 @@ fi
 log_info "=== Running API Tests ==="
 # Start server for API testing
 log_info "Starting server for API tests..."
-if [ -f "./secretly" ]; then
+if [ -f "./bin/keyorix" ]; then
     # Start server in background
-    ./secretly server --config secretly-simple.yaml > /dev/null 2>&1 &
+    ./bin/keyorix server --config keyorix-simple.yaml > /dev/null 2>&1 &
     SERVER_PID=$!
     sleep 3
     
@@ -128,10 +128,10 @@ fi
 
 # 5. CLI Tests
 log_info "=== Running CLI Tests ==="
-if [ -f "./secretly" ]; then
-    run_test "CLI Help Command" "./secretly --help"
-    run_test "CLI Version Command" "./secretly version || ./secretly --version || true"
-    run_test "CLI Config Validation" "./secretly config validate --config secretly-simple.yaml || true"
+if [ -f "./bin/keyorix" ]; then
+    run_test "CLI Help Command" "./bin/keyorix --help"
+    run_test "CLI Version Command" "./bin/keyorix version || ./bin/keyorix --version || true"
+    run_test "CLI Config Validation" "./bin/keyorix config validate --config keyorix-simple.yaml || true"
 else
     log_warning "CLI binary not found - skipping CLI tests"
 fi
@@ -140,8 +140,8 @@ fi
 log_info "=== Running Database Tests ==="
 if command -v sqlite3 &> /dev/null; then
     # Test database operations
-    run_test "Database Schema Check" "sqlite3 secretly.db '.schema' | grep -q 'secrets' || true"
-    run_test "Database Integrity Check" "sqlite3 secretly.db 'PRAGMA integrity_check;' | grep -q 'ok' || true"
+    run_test "Database Schema Check" "sqlite3 keyorix.db '.schema' | grep -q 'secrets' || true"
+    run_test "Database Integrity Check" "sqlite3 keyorix.db 'PRAGMA integrity_check;' | grep -q 'ok' || true"
 else
     log_warning "sqlite3 not found - skipping database tests"
 fi
@@ -160,9 +160,9 @@ run_test "TODO/FIXME Check" "! grep -r 'TODO.*security\|FIXME.*security' . --inc
 
 # 8. Performance Tests
 log_info "=== Running Performance Tests ==="
-if [ -f "./secretly" ] && command -v time &> /dev/null; then
+if [ -f "./bin/keyorix" ] && command -v time &> /dev/null; then
     # Start server for performance testing
-    ./secretly server --config secretly-simple.yaml > /dev/null 2>&1 &
+    ./bin/keyorix server --config keyorix-simple.yaml > /dev/null 2>&1 &
     SERVER_PID=$!
     sleep 3
     
@@ -194,14 +194,14 @@ fi
 
 # 10. Configuration Tests
 log_info "=== Running Configuration Tests ==="
-run_test "Config File Exists" "[ -f secretly-simple.yaml ]"
+run_test "Config File Exists" "[ -f keyorix-simple.yaml ]"
 run_test "Docker Compose Exists" "[ -f docker-compose.full-stack.yml ]"
 run_test "Production Config Exists" "[ -f server/config/production.yaml ]"
 
 # 11. Build Tests
 log_info "=== Running Build Tests ==="
 if command -v go &> /dev/null; then
-    run_test "Go Build Test" "go build -o test-binary ./cmd/secretly && rm -f test-binary"
+    run_test "Go Build Test" "go build -o test-binary ./cm./bin/keyorix && rm -f test-binary"
 fi
 
 if [ -d "web" ] && command -v npm &> /dev/null; then
@@ -248,9 +248,9 @@ cat > TEST_REPORT.md << EOF
 |----------|--------|-------|
 | Unit Tests | $([ $PASSED_TESTS -gt 0 ] && echo "✅ PASS" || echo "❌ FAIL") | Core functionality tested |
 | Integration Tests | $([ -f "scripts/run_integration_tests.sh" ] && echo "✅ PASS" || echo "⚠️ SKIP") | End-to-end workflows |
-| API Tests | $([ -f "./secretly" ] && echo "✅ PASS" || echo "⚠️ SKIP") | REST API endpoints |
+| API Tests | $([ -f "./bin/keyorix" ] && echo "✅ PASS" || echo "⚠️ SKIP") | REST API endpoints |
 | Security Tests | $(command -v gosec &> /dev/null && echo "✅ PASS" || echo "⚠️ SKIP") | Vulnerability scanning |
-| Performance Tests | $([ -f "./secretly" ] && echo "✅ PASS" || echo "⚠️ SKIP") | Load and response time |
+| Performance Tests | $([ -f "./bin/keyorix" ] && echo "✅ PASS" || echo "⚠️ SKIP") | Load and response time |
 | Documentation | ✅ PASS | Comprehensive docs available |
 
 ### 🔧 Recommendations
@@ -261,7 +261,7 @@ fi)
 $(if ! command -v gosec &> /dev/null; then
     echo "- **Install gosec**: For comprehensive security scanning"
 fi)
-$(if [ ! -f "./secretly" ]; then
+$(if [ ! -f "./bin/keyorix" ]; then
     echo "- **Build Binary**: Run 'go build' to enable full testing"
 fi)
 - **Continuous Testing**: Set up automated testing in CI/CD pipeline

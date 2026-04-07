@@ -1,3 +1,21 @@
+/*
+Keyorix Server - Enterprise Secret Management System
+Copyright (C) 2025 Keyorix Contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
 package main
 
 import (
@@ -13,13 +31,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
-	"github.com/secretlyhq/secretly/server/grpc"
-	httpServer "github.com/secretlyhq/secretly/server/http"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/grpc"
+	httpServer "github.com/keyorixhq/keyorix/server/http"
 	"golang.org/x/crypto/acme/autocert"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -36,8 +54,24 @@ func main() {
 	if err := i18n.Initialize(cfg); err != nil {
 		log.Fatalf("Failed to initialize i18n system: %v", err)
 	}
-	log.Printf("i18n system initialized with language: %s, fallback: %s", cfg.Locale.Language, cfg.Locale.FallbackLanguage)
 
+	// Print startup info
+	if cfg.Server.HTTP.Enabled {
+		scheme := "http"
+		if cfg.Server.HTTP.TLS.Enabled {
+			scheme = "https"
+		}
+		host := cfg.Server.HTTP.Domain
+		if host == "" {
+			host = "localhost"
+		}
+		log.Printf("HTTP server will start on %s://%s:%s", scheme, host, cfg.Server.HTTP.Port)
+	} else {
+		log.Printf("HTTP server is disabled (check keyorix.yaml)")
+	}
+	if cfg.Server.GRPC.Enabled {
+		log.Printf("gRPC server will start on localhost:%s", cfg.Server.GRPC.Port)
+	}
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -93,7 +127,7 @@ func main() {
 	}
 }
 
-func initializeCoreService(cfg *config.Config) (*core.SecretlyCore, error) {
+func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, error) {
 	// Connect to database
 	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
 	if err != nil {
@@ -107,7 +141,7 @@ func initializeCoreService(cfg *config.Config) (*core.SecretlyCore, error) {
 
 	// Initialize storage and core service
 	storage := local.NewLocalStorage(db)
-	coreService := core.NewSecretlyCore(storage)
+	coreService := core.NewKeyorixCore(storage)
 
 	return coreService, nil
 }
@@ -143,29 +177,39 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		server.TLSConfig = tlsConfig
 	}
 
+	// Bind the listener early so we can confirm the address before serving
+	ln, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("failed to bind HTTP listener: %w", err)
+	}
+
+	scheme := "http"
+	if cfg.Server.HTTP.TLS.Enabled {
+		scheme = "https"
+	}
+	ip := resolveOutboundIP()
+	log.Printf("HTTP server listening on %s://%s:%s", scheme, ip, cfg.Server.HTTP.Port)
+
 	// Start server
 	go func() {
-		log.Printf("Starting HTTP server on :%s", cfg.Server.HTTP.Port)
-		var err error
+		var serveErr error
 		if cfg.Server.HTTP.TLS.Enabled {
 			if cfg.Server.HTTP.TLS.AutoCert {
-				// Use autocert for Let's Encrypt
 				m := &autocert.Manager{
 					Cache:      autocert.DirCache("certs"),
 					Prompt:     autocert.AcceptTOS,
 					HostPolicy: autocert.HostWhitelist(cfg.Server.HTTP.TLS.Domains...),
 				}
 				server.TLSConfig = m.TLSConfig()
-				err = server.ListenAndServeTLS("", "")
+				serveErr = server.ServeTLS(ln, "", "")
 			} else {
-				// Use provided certificates
-				err = server.ListenAndServeTLS(cfg.Server.HTTP.TLS.CertFile, cfg.Server.HTTP.TLS.KeyFile)
+				serveErr = server.ServeTLS(ln, cfg.Server.HTTP.TLS.CertFile, cfg.Server.HTTP.TLS.KeyFile)
 			}
 		} else {
-			err = server.ListenAndServe()
+			serveErr = server.Serve(ln)
 		}
-		if err != nil && err != http.ErrServerClosed {
-			log.Printf("HTTP server error: %v", err)
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			log.Printf("HTTP server error: %v", serveErr)
 		}
 	}()
 
@@ -193,9 +237,10 @@ func startGRPCServer(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("failed to listen on gRPC port: %w", err)
 	}
 
+	log.Printf("gRPC server listening on %s", lis.Addr().String())
+
 	// Start server
 	go func() {
-		log.Printf("Starting gRPC server on :%s", cfg.Server.GRPC.Port)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Printf("gRPC server error: %v", err)
 		}
@@ -231,4 +276,14 @@ func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		},
 	}, nil
+}
+
+// resolveOutboundIP returns the machine's preferred outbound IP address.
+func resolveOutboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "127.0.0.1"
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }

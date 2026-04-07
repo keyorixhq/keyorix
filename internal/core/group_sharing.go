@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // GroupShareSecretRequest represents a request to share a secret with a group
@@ -17,7 +17,7 @@ type GroupShareSecretRequest struct {
 }
 
 // ShareSecretWithGroup shares a secret with a group
-func (c *SecretlyCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareSecretRequest) (*models.ShareRecord, error) {
+func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareSecretRequest) (*models.ShareRecord, error) {
 	// Validate request
 	if err := c.validateGroupShareSecretRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
@@ -63,7 +63,7 @@ func (c *SecretlyCore) ShareSecretWithGroup(ctx context.Context, req *GroupShare
 }
 
 // ListGroupShares lists all shares for a group
-func (c *SecretlyCore) ListGroupShares(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
+func (c *KeyorixCore) ListGroupShares(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
 	if groupID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
 	}
@@ -78,7 +78,7 @@ func (c *SecretlyCore) ListGroupShares(ctx context.Context, groupID uint) ([]*mo
 }
 
 // ListGroupSharedSecrets lists all secrets shared with a group
-func (c *SecretlyCore) ListGroupSharedSecrets(ctx context.Context, groupID uint) ([]*models.SecretNode, error) {
+func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, groupID uint) ([]*models.SecretNode, error) {
 	if groupID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
 	}
@@ -89,7 +89,7 @@ func (c *SecretlyCore) ListGroupSharedSecrets(ctx context.Context, groupID uint)
 }
 
 // CheckUserGroupPermission checks if a user has permission to access a secret via group membership
-func (c *SecretlyCore) CheckUserGroupPermission(ctx context.Context, secretID, userID uint) (bool, string, error) {
+func (c *KeyorixCore) CheckUserGroupPermission(ctx context.Context, secretID, userID uint) (bool, string, error) {
 	if secretID == 0 {
 		return false, "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -104,7 +104,7 @@ func (c *SecretlyCore) CheckUserGroupPermission(ctx context.Context, secretID, u
 
 // Validation methods
 
-func (c *SecretlyCore) validateGroupShareSecretRequest(req *GroupShareSecretRequest) error {
+func (c *KeyorixCore) validateGroupShareSecretRequest(req *GroupShareSecretRequest) error {
 	if req == nil {
 		return fmt.Errorf("request cannot be nil")
 	}

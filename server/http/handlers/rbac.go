@@ -6,8 +6,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/secretlyhq/secretly/server/middleware"
-	"github.com/secretlyhq/secretly/server/validation"
+	"github.com/keyorixhq/keyorix/server/middleware"
+	"github.com/keyorixhq/keyorix/server/validation"
 )
 
 // User represents a user in the system
@@ -111,7 +111,7 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 		{
 			ID:          1,
 			Username:    "admin",
-			Email:       "admin@secretly.com",
+			Email:       "admin@keyorix.com",
 			DisplayName: "System Administrator",
 			Active:      true,
 			CreatedAt:   "2024-01-01T00:00:00Z",
@@ -120,7 +120,7 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 		{
 			ID:          2,
 			Username:    "user1",
-			Email:       "user1@secretly.com",
+			Email:       "user1@keyorix.com",
 			DisplayName: "Regular User",
 			Active:      true,
 			CreatedAt:   "2024-01-02T00:00:00Z",
@@ -193,7 +193,7 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 		user := User{
 			ID:          1,
 			Username:    "admin",
-			Email:       "admin@secretly.com",
+			Email:       "admin@keyorix.com",
 			DisplayName: "System Administrator",
 			Active:      true,
 			CreatedAt:   "2024-01-01T00:00:00Z",
@@ -235,7 +235,7 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	user := User{
 		ID:          uint(id),
 		Username:    "admin",
-		Email:       "admin@secretly.com",
+		Email:       "admin@keyorix.com",
 		DisplayName: "System Administrator",
 		Active:      true,
 		CreatedAt:   "2024-01-01T00:00:00Z",

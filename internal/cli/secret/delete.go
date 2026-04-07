@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -31,9 +31,9 @@ var deleteCmd = &cobra.Command{
 	Long: `Delete a secret permanently.
 
 Examples:
-  secretly secret delete --id 123
-  secretly secret delete --name "db-password" --namespace 1 --zone 1 --environment 1
-  secretly secret delete --id 123 --force  # Skip confirmation`,
+  keyorix secret delete --id 123
+  keyorix secret delete --name "db-password" --namespace 1 --zone 1 --environment 1
+  keyorix secret delete --id 123 --force  # Skip confirmation`,
 	RunE: runDelete,
 }
 
@@ -70,7 +70,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 
 	// Initialize storage and core service
 	storageImpl := local.NewLocalStorage(db)
-	service := core.NewSecretlyCore(storageImpl)
+	service := core.NewKeyorixCore(storageImpl)
 
 	// Create context
 	ctx := context.Background()

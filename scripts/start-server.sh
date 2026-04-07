@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Start Secretly Server Script
+# Start Keyorix Server Script
 # Starts the server with proper configuration
 
 set -e
 
-echo "🚀 Starting Secretly Server"
+echo "🚀 Starting Keyorix Server"
 echo "==========================="
 
 # Colors
@@ -32,14 +32,14 @@ if curl -s http://localhost:8080/health > /dev/null 2>&1; then
 fi
 
 # Check if config exists
-if [ ! -f "secretly-simple.yaml" ]; then
+if [ ! -f "keyorix-simple.yaml" ]; then
     log_warning "Configuration file not found. Run ./scripts/deploy-simple.sh first."
     exit 1
 fi
 
 # Start server
-log_info "Starting server with configuration: secretly-simple.yaml"
+log_info "Starting server with configuration: keyorix-simple.yaml"
 log_info "Server will run on: http://localhost:8080"
 
 cd server
-SECRETLY_CONFIG_PATH=../secretly-simple.yaml ./secretly-server
+KEYORIX_CONFIG_PATH=../bin/keyorix-simple.yaml ./bin/keyorix-server

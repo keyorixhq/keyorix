@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 )
 

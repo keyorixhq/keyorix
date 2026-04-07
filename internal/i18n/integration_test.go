@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 func TestFullTranslationWorkflow(t *testing.T) {
@@ -32,7 +32,7 @@ func TestFullTranslationWorkflow(t *testing.T) {
 		messageID string
 		expected  string
 	}{
-		{"Welcome", "Welcome", "Welcome to Secretly!"},
+		{"Welcome", "Welcome", "Welcome to Keyorix!"},
 		{"Error", "ErrorUserNotFound", "User not found"},
 		{"Success", "SuccessSecretCreated", "Secret created successfully"},
 		{"Label", "LabelName", "Name"},
@@ -79,7 +79,7 @@ func TestAllSupportedLanguages(t *testing.T) {
 	}{
 		{
 			code:    "en",
-			welcome: "Welcome to Secretly!",
+			welcome: "Welcome to Keyorix!",
 			error:   "User not found",
 			success: "Secret created successfully",
 			label:   "Name",
@@ -87,7 +87,7 @@ func TestAllSupportedLanguages(t *testing.T) {
 		},
 		{
 			code:    "ru",
-			welcome: "Добро пожаловать в Secretly!",
+			welcome: "Добро пожаловать в Keyorix!",
 			error:   "Пользователь не найден",
 			success: "Секрет успешно создан",
 			label:   "Имя",
@@ -95,7 +95,7 @@ func TestAllSupportedLanguages(t *testing.T) {
 		},
 		{
 			code:    "es",
-			welcome: "¡Bienvenido a Secretly!",
+			welcome: "¡Bienvenido a Keyorix!",
 			error:   "Usuario no encontrado",
 			success: "Secreto creado con éxito",
 			label:   "Nombre",
@@ -103,7 +103,7 @@ func TestAllSupportedLanguages(t *testing.T) {
 		},
 		{
 			code:    "fr",
-			welcome: "Bienvenue sur Secretly !",
+			welcome: "Bienvenue sur Keyorix !",
 			error:   "Utilisateur non trouvé",
 			success: "Secret créé avec succès",
 			label:   "Nom",
@@ -111,7 +111,7 @@ func TestAllSupportedLanguages(t *testing.T) {
 		},
 		{
 			code:    "de",
-			welcome: "Willkommen bei Secretly!",
+			welcome: "Willkommen bei Keyorix!",
 			error:   "Benutzer nicht gefunden",
 			success: "Geheimnis erfolgreich erstellt",
 			label:   "Name",
@@ -168,7 +168,7 @@ func TestFallbackLanguageBehavior(t *testing.T) {
 
 	// Test existing Spanish message
 	result := localizer.Localize("Welcome", nil)
-	expected := "¡Bienvenido a Secretly!"
+	expected := "¡Bienvenido a Keyorix!"
 	if result != expected {
 		t.Errorf("Spanish message: Localize() = %v, expected %v", result, expected)
 	}
@@ -196,7 +196,7 @@ func TestConfigurationChanges(t *testing.T) {
 					FallbackLanguage: "en",
 				},
 			},
-			expected: "Welcome to Secretly!",
+			expected: "Welcome to Keyorix!",
 		},
 		{
 			name: "Russian primary with English fallback",
@@ -206,7 +206,7 @@ func TestConfigurationChanges(t *testing.T) {
 					FallbackLanguage: "en",
 				},
 			},
-			expected: "Добро пожаловать в Secretly!",
+			expected: "Добро пожаловать в Keyorix!",
 		},
 		{
 			name: "Empty language defaults to English",
@@ -216,7 +216,7 @@ func TestConfigurationChanges(t *testing.T) {
 					FallbackLanguage: "",
 				},
 			},
-			expected: "Welcome to Secretly!",
+			expected: "Welcome to Keyorix!",
 		},
 	}
 
@@ -263,12 +263,12 @@ func TestLanguageSwitching(t *testing.T) {
 		code     string
 		expected string
 	}{
-		{"en", "Welcome to Secretly!"},
-		{"ru", "Добро пожаловать в Secretly!"},
-		{"es", "¡Bienvenido a Secretly!"},
-		{"fr", "Bienvenue sur Secretly !"},
-		{"de", "Willkommen bei Secretly!"},
-		{"en", "Welcome to Secretly!"}, // Switch back to English
+		{"en", "Welcome to Keyorix!"},
+		{"ru", "Добро пожаловать в Keyorix!"},
+		{"es", "¡Bienvenido a Keyorix!"},
+		{"fr", "Bienvenue sur Keyorix !"},
+		{"de", "Willkommen bei Keyorix!"},
+		{"en", "Welcome to Keyorix!"}, // Switch back to English
 	}
 
 	for i, lang := range languages {

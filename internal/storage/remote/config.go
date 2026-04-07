@@ -62,8 +62,8 @@ func (c *Config) GetAPIKeyFromEnv() string {
 
 	// Try common environment variable names
 	envVars := []string{
-		"SECRETLY_API_KEY",
-		"SECRETLY_TOKEN",
+		"KEYORIX_API_KEY",
+		"KEYORIX_TOKEN",
 		"API_KEY",
 	}
 

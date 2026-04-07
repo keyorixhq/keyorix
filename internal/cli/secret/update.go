@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"gorm.io/driver/sqlite"
@@ -39,10 +39,10 @@ var updateCmd = &cobra.Command{
 	Long: `Update an existing secret's value or metadata.
 
 Examples:
-  secretly secret update --id 123 --value "new-secret"
-  secretly secret update --id 123 --type "api-key" --expires "2024-12-31T23:59:59Z"
-  secretly secret update --id 123 --from-file ./new-value.txt
-  secretly secret update --id 123 --interactive`,
+  keyorix secret update --id 123 --value "new-secret"
+  keyorix secret update --id 123 --type "api-key" --expires "2024-12-31T23:59:59Z"
+  keyorix secret update --id 123 --from-file ./new-value.txt
+  keyorix secret update --id 123 --interactive`,
 	RunE: runUpdate,
 }
 
@@ -79,7 +79,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	// Initialize storage and core service
 	storageImpl := local.NewLocalStorage(db)
-	service := core.NewSecretlyCore(storageImpl)
+	service := core.NewKeyorixCore(storageImpl)
 
 	// Create context
 	ctx := context.Background()

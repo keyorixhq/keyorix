@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -146,7 +146,7 @@ func TestCheckSecretPermission(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.setupMocks(mockStorage)
 
-			core := NewSecretlyCore(mockStorage)
+			core := NewKeyorixCore(mockStorage)
 
 			ctx := context.Background()
 			permCtx, err := core.CheckSecretPermission(ctx, tt.secretID, tt.userID, tt.requiredPermission)
@@ -169,7 +169,7 @@ func TestCheckSecretPermission(t *testing.T) {
 }
 
 func TestHasRequiredPermission(t *testing.T) {
-	core := &SecretlyCore{}
+	core := &KeyorixCore{}
 
 	tests := []struct {
 		name               string
@@ -211,7 +211,7 @@ func TestEnforceSecretReadPermission(t *testing.T) {
 		Name:    "test-secret",
 	}, nil)
 
-	core := NewSecretlyCore(mockStorage)
+	core := NewKeyorixCore(mockStorage)
 
 	ctx := context.Background()
 	permCtx, err := core.EnforceSecretReadPermission(ctx, 1, 1)
@@ -253,7 +253,7 @@ func TestEnforceSecretWritePermission(t *testing.T) {
 	}, nil)
 	mockStorage.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
 
-	core := NewSecretlyCore(mockStorage)
+	core := NewKeyorixCore(mockStorage)
 
 	ctx := context.Background()
 	permCtx, err := core.EnforceSecretWritePermission(ctx, 1, 1)
@@ -339,7 +339,7 @@ func TestCanUserModifySecret(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.setupMocks(mockStorage)
 
-			core := NewSecretlyCore(mockStorage)
+			core := NewKeyorixCore(mockStorage)
 
 			ctx := context.Background()
 			canModify, err := core.CanUserModifySecret(ctx, 1, 1)
@@ -416,7 +416,7 @@ func TestCanUserShareSecret(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.setupMocks(mockStorage)
 
-			core := NewSecretlyCore(mockStorage)
+			core := NewKeyorixCore(mockStorage)
 
 			ctx := context.Background()
 			canShare, err := core.CanUserShareSecret(ctx, 1, 1)
@@ -503,7 +503,7 @@ func TestGetEffectivePermission(t *testing.T) {
 			mockStorage := &MockStorage{}
 			tt.setupMocks(mockStorage)
 
-			core := NewSecretlyCore(mockStorage)
+			core := NewKeyorixCore(mockStorage)
 
 			ctx := context.Background()
 			permission, err := core.GetEffectivePermission(ctx, 1, 1)
@@ -528,7 +528,7 @@ func TestCheckGroupPermissions(t *testing.T) {
 	require.NoError(t, err)
 
 	mockStorage := &MockStorage{}
-	core := NewSecretlyCore(mockStorage)
+	core := NewKeyorixCore(mockStorage)
 
 	// Setup user groups
 	mockStorage.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{

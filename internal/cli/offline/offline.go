@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 // NetworkStatus represents the current network connectivity status
@@ -48,7 +48,7 @@ func checkInternetConnectivity(ctx context.Context) bool {
 
 // checkRemoteServerReachability checks if the configured remote server is reachable
 func checkRemoteServerReachability(ctx context.Context) bool {
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil || cfg.Storage.Type != "remote" || cfg.Storage.Remote == nil {
 		return false
 	}
@@ -93,7 +93,7 @@ func HandleOfflineMode() error {
 	fmt.Println()
 	fmt.Println("Available options:")
 	fmt.Println("1. Check your internet connection and try again")
-	fmt.Println("2. Switch to local mode: secretly config use-local")
+	fmt.Println("2. Switch to local mode: keyorix config use-local")
 	fmt.Println("3. Wait for connectivity to be restored")
 	fmt.Println()
 	
@@ -105,7 +105,7 @@ func GracefulDegradation() error {
 	fmt.Println("🔄 Attempting graceful degradation to local storage...")
 	
 	// Load current configuration
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
@@ -117,12 +117,12 @@ func GracefulDegradation() error {
 	}
 
 	// Save the updated configuration
-	if err := config.Save("secretly.yaml", cfg); err != nil {
+	if err := config.Save("keyorix.yaml", cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
 	fmt.Println("✅ Temporarily switched to local storage")
-	fmt.Println("💡 Use 'secretly config set-remote' to switch back when connectivity is restored")
+	fmt.Println("💡 Use 'keyorix config set-remote' to switch back when connectivity is restored")
 	
 	return nil
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"syscall"
 
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -53,7 +53,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	server, _ := cmd.Flags().GetString("server")
 
 	// Load current configuration
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		// Create default config if it doesn't exist
 		cfg = &config.Config{
@@ -107,7 +107,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Remote.RetryAttempts = 3
 
 	// Save configuration
-	if err := config.Save("secretly.yaml", cfg); err != nil {
+	if err := config.Save("keyorix.yaml", cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -119,7 +119,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 func runLogout(cmd *cobra.Command, args []string) error {
 	// Load current configuration
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
@@ -132,7 +132,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Remote = nil
 
 	// Save configuration
-	if err := config.Save("secretly.yaml", cfg); err != nil {
+	if err := config.Save("keyorix.yaml", cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
 	}
 
@@ -143,7 +143,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		fmt.Printf("❌ No configuration found\n")
 		return nil
@@ -167,7 +167,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	default:
 		fmt.Printf("Status:       💾 Using local storage (not authenticated)\n")
-		fmt.Printf("Note:         Use 'secretly auth login' to authenticate with a remote server\n")
+		fmt.Printf("Note:         Use 'keyorix auth login' to authenticate with a remote server\n")
 	}
 
 	return nil

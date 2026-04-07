@@ -9,15 +9,36 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/storage/remote"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// InitializeCoreService initializes a core service for testing
+func InitializeCoreService() (*core.KeyorixCore, error) {
+	// Load configuration
+	cfg, err := config.Load("keyorix.yaml")
+	if err != nil {
+		return nil, err
+	}
+
+	// Create storage using factory
+	factory := storage.NewStorageFactory()
+	storageImpl, err := factory.CreateStorage(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create core service
+	return core.NewKeyorixCore(storageImpl), nil
+}
+
 func TestRemoteCLIIntegration(t *testing.T) {
 	// Create a temporary directory for test configuration
-	tempDir, err := os.MkdirTemp("", "secretly-test-*")
+	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -73,7 +94,7 @@ func TestRemoteCLIIntegration(t *testing.T) {
 	}
 
 	// Save configuration
-	err = config.Save("secretly.yaml", cfg)
+	err = config.Save("keyorix.yaml", cfg)
 	require.NoError(t, err)
 
 	// Test CLI initialization with remote storage
@@ -91,7 +112,7 @@ func TestRemoteCLIIntegration(t *testing.T) {
 
 func TestLocalToRemoteSwitching(t *testing.T) {
 	// Create a temporary directory for test configuration
-	tempDir, err := os.MkdirTemp("", "secretly-test-*")
+	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -110,7 +131,7 @@ func TestLocalToRemoteSwitching(t *testing.T) {
 		},
 	}
 
-	err = config.Save("secretly.yaml", localCfg)
+	err = config.Save("keyorix.yaml", localCfg)
 	require.NoError(t, err)
 
 	// Test local initialization
@@ -142,7 +163,7 @@ func TestLocalToRemoteSwitching(t *testing.T) {
 		},
 	}
 
-	err = config.Save("secretly.yaml", remoteCfg)
+	err = config.Save("keyorix.yaml", remoteCfg)
 	require.NoError(t, err)
 
 	// Test remote initialization
@@ -160,7 +181,7 @@ func TestLocalToRemoteSwitching(t *testing.T) {
 
 func TestConfigurationPersistence(t *testing.T) {
 	// Create a temporary directory for test configuration
-	tempDir, err := os.MkdirTemp("", "secretly-test-*")
+	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -183,15 +204,15 @@ func TestConfigurationPersistence(t *testing.T) {
 		},
 	}
 
-	err = config.Save("secretly.yaml", originalCfg)
+	err = config.Save("keyorix.yaml", originalCfg)
 	require.NoError(t, err)
 
 	// Verify file exists
-	_, err = os.Stat("secretly.yaml")
+	_, err = os.Stat("keyorix.yaml")
 	assert.NoError(t, err)
 
 	// Load configuration back
-	loadedCfg, err := config.Load("secretly.yaml")
+	loadedCfg, err := config.Load("keyorix.yaml")
 	require.NoError(t, err)
 
 	// Verify configuration matches
@@ -206,7 +227,7 @@ func TestConfigurationPersistence(t *testing.T) {
 
 func TestErrorHandling(t *testing.T) {
 	// Create a temporary directory for test configuration
-	tempDir, err := os.MkdirTemp("", "secretly-test-*")
+	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -218,25 +239,25 @@ func TestErrorHandling(t *testing.T) {
 	// Test with invalid remote configuration
 	invalidCfg := &config.Config{
 		Storage: config.StorageConfig{
-			Type: "remote",
+			Type:   "remote",
 			Remote: &config.RemoteConfig{
 				// Missing required fields
 			},
 		},
 	}
 
-	err = config.Save("secretly.yaml", invalidCfg)
+	err = config.Save("keyorix.yaml", invalidCfg)
 	require.NoError(t, err)
 
 	// This should fail due to invalid configuration
 	_, err = InitializeCoreService()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create storage")
+	assert.Contains(t, err.Error(), "base_url is required")
 }
 
 func TestEnvironmentVariableSupport(t *testing.T) {
 	// Create a temporary directory for test configuration
-	tempDir, err := os.MkdirTemp("", "secretly-test-*")
+	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tempDir)
 
@@ -263,11 +284,11 @@ func TestEnvironmentVariableSupport(t *testing.T) {
 		},
 	}
 
-	err = config.Save("secretly.yaml", cfg)
+	err = config.Save("keyorix.yaml", cfg)
 	require.NoError(t, err)
 
 	// Load and verify environment variable expansion
-	loadedCfg, err := config.Load("secretly.yaml")
+	loadedCfg, err := config.Load("keyorix.yaml")
 	require.NoError(t, err)
 
 	// The API key should still be the template in the loaded config

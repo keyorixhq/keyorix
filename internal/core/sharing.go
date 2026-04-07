@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ShareSecretRequest represents a request to share a secret with another user or group
@@ -25,7 +25,7 @@ type UpdateShareRequest struct {
 }
 
 // ShareSecret shares a secret with another user or group
-func (c *SecretlyCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) (*models.ShareRecord, error) {
+func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) (*models.ShareRecord, error) {
 	// Validate request
 	if err := c.validateShareSecretRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
@@ -70,7 +70,7 @@ func (c *SecretlyCore) ShareSecret(ctx context.Context, req *ShareSecretRequest)
 }
 
 // UpdateSharePermission updates the permission level of a share
-func (c *SecretlyCore) UpdateSharePermission(ctx context.Context, req *UpdateShareRequest) (*models.ShareRecord, error) {
+func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShareRequest) (*models.ShareRecord, error) {
 	// Validate request
 	if err := c.validateUpdateShareRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
@@ -122,7 +122,7 @@ func (c *SecretlyCore) UpdateSharePermission(ctx context.Context, req *UpdateSha
 }
 
 // RevokeShare revokes a share
-func (c *SecretlyCore) RevokeShare(ctx context.Context, shareID uint, revokedBy uint) error {
+func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy uint) error {
 	// Get the share record
 	shareRecord, err := c.storage.GetShareRecord(ctx, shareID)
 	if err != nil {
@@ -163,7 +163,7 @@ func (c *SecretlyCore) RevokeShare(ctx context.Context, shareID uint, revokedBy 
 }
 
 // ListSharedSecrets lists all secrets shared with a user
-func (c *SecretlyCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
+func (c *KeyorixCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
@@ -178,7 +178,7 @@ func (c *SecretlyCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*m
 }
 
 // ListSecretShares lists all shares for a secret
-func (c *SecretlyCore) ListSecretShares(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
+func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -199,7 +199,7 @@ func (c *SecretlyCore) ListSecretShares(ctx context.Context, secretID uint) ([]*
 }
 
 // ListSharesByUser lists all shares where the user is the owner
-func (c *SecretlyCore) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
+func (c *KeyorixCore) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
@@ -214,7 +214,7 @@ func (c *SecretlyCore) ListSharesByUser(ctx context.Context, userID uint) ([]*mo
 }
 
 // RemoveSelfFromShare allows a user to remove themselves from a shared secret
-func (c *SecretlyCore) RemoveSelfFromShare(ctx context.Context, secretID, userID uint) error {
+func (c *KeyorixCore) RemoveSelfFromShare(ctx context.Context, secretID, userID uint) error {
 	if secretID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -266,7 +266,7 @@ func (c *SecretlyCore) RemoveSelfFromShare(ctx context.Context, secretID, userID
 }
 
 // CheckSharePermission checks if a user has permission to access a secret
-func (c *SecretlyCore) CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error) {
+func (c *KeyorixCore) CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error) {
 	if secretID == 0 {
 		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -285,7 +285,7 @@ func (c *SecretlyCore) CheckSharePermission(ctx context.Context, secretID, userI
 
 // Validation methods
 
-func (c *SecretlyCore) validateShareSecretRequest(req *ShareSecretRequest) error {
+func (c *KeyorixCore) validateShareSecretRequest(req *ShareSecretRequest) error {
 	if req == nil {
 		return fmt.Errorf("request cannot be nil")
 	}
@@ -304,7 +304,7 @@ func (c *SecretlyCore) validateShareSecretRequest(req *ShareSecretRequest) error
 	return nil
 }
 
-func (c *SecretlyCore) validateUpdateShareRequest(req *UpdateShareRequest) error {
+func (c *KeyorixCore) validateUpdateShareRequest(req *UpdateShareRequest) error {
 	if req == nil {
 		return fmt.Errorf("request cannot be nil")
 	}
@@ -322,7 +322,7 @@ func (c *SecretlyCore) validateUpdateShareRequest(req *UpdateShareRequest) error
 
 // Helper methods
 
-func (c *SecretlyCore) logShareAction(ctx context.Context, actorID string, action string, secretID, recipientID uint, isGroup bool) {
+func (c *KeyorixCore) logShareAction(ctx context.Context, actorID string, action string, secretID, recipientID uint, isGroup bool) {
 	recipientType := "user"
 	if isGroup {
 		recipientType = "group"

@@ -2,7 +2,7 @@
 
 ## 🧪 Overview
 
-This guide covers comprehensive testing for the Secretly HTTP and gRPC server implementation. The test suite includes unit tests, integration tests, performance benchmarks, and security tests.
+This guide covers comprehensive testing for the Keyorix HTTP and gRPC server implementation. The test suite includes unit tests, integration tests, performance benchmarks, and security tests.
 
 ## 📋 Test Coverage
 

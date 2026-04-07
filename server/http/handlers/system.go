@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/secretlyhq/secretly/server/middleware"
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // SystemInfo represents system information

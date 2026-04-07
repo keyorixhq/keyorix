@@ -3,11 +3,11 @@
 # =============================================================================
 
 # --- Binary Executables ---
-secretly
-secretly-*
-server/secretly-server
-cmd/secretly
-cmd/secretly-server
+keyorix
+keyorix-*
+server/keyorix-server
+cmd/keyorix
+cmd/keyorix-server
 *.exe
 *.exe~
 *.dll
@@ -31,8 +31,8 @@ coverage.out
 *.db-wal
 *.sqlite
 *.sqlite3
-secretly.db
-test-secretly.db
+keyorix.db
+test-keyorix.db
 data/*.db
 
 # --- Log Files ---
@@ -43,7 +43,7 @@ server/logs/
 telemetry/
 
 # --- Configuration Files (keep templates) ---
-secretly.yaml
+keyorix.yaml
 config.yaml
 *.local.yaml
 .env
@@ -123,8 +123,8 @@ artifacts/
 .task/
 
 # --- Development Tools ---
-.secretly_history
-.secretly_cache
+.keyorix_history
+.keyorix_cache
 
 # --- Security Reports ---
 /security/

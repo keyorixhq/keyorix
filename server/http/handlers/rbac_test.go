@@ -9,12 +9,12 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
-	"github.com/secretlyhq/secretly/server/middleware"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -23,7 +23,7 @@ import (
 
 // RBACTestHelper provides consistent test setup for RBAC handler tests
 type RBACTestHelper struct {
-	CoreService *core.SecretlyCore
+	CoreService *core.KeyorixCore
 	DB          *gorm.DB
 }
 
@@ -49,7 +49,7 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 
 	// Create storage and core service
 	storage := local.NewLocalStorage(db)
-	coreService := core.NewSecretlyCore(storage)
+	coreService := core.NewKeyorixCore(storage)
 
 	return &RBACTestHelper{
 		CoreService: coreService,

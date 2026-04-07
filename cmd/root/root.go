@@ -7,7 +7,7 @@ import (
 var version = "dev" // value will be overwritten via ldflags
 
 var RootCmd = &cobra.Command{
-	Use:     "secretly",
-	Short:   "Secretly - Secure secrets management CLI",
+	Use:     "keyorix",
+	Short:   "Keyorix - Secure secrets management CLI",
 	Version: version, // 💡 automatically adds --version flag
 }

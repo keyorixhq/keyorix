@@ -6,12 +6,12 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 // NewSelfRemoveCommand creates a new command for removing self from shared secrets
-func NewSelfRemoveCommand(coreService *core.SecretlyCore) *cobra.Command {
+func NewSelfRemoveCommand(coreService *core.KeyorixCore) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "self-remove <secret-id>",
 		Short: i18n.T("CLISelfRemoveShort", nil),
@@ -25,7 +25,7 @@ func NewSelfRemoveCommand(coreService *core.SecretlyCore) *cobra.Command {
 	return cmd
 }
 
-func runSelfRemove(ctx context.Context, coreService *core.SecretlyCore, secretIDStr string) error {
+func runSelfRemove(ctx context.Context, coreService *core.KeyorixCore, secretIDStr string) error {
 	// Parse secret ID
 	secretID, err := strconv.ParseUint(secretIDStr, 10, 32)
 	if err != nil {

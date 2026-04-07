@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/secretlyhq/secretly/internal/securefiles"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
 type TranslationMessage struct {

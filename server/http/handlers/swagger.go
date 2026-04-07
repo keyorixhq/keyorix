@@ -27,7 +27,7 @@ func serveSwaggerIndex(w http.ResponseWriter, r *http.Request) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Secretly API Documentation</title>
+    <title>Keyorix API Documentation</title>
     <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui.css" />
     <style>
         html {
@@ -78,12 +78,12 @@ func serveSwaggerSpec(w http.ResponseWriter, r *http.Request) {
 	spec := `{
   "openapi": "3.0.3",
   "info": {
-    "title": "Secretly API",
+    "title": "Keyorix API",
     "description": "Secure secrets management API",
     "version": "1.0.0",
     "contact": {
-      "name": "Secretly Team",
-      "email": "support@secretly.dev"
+      "name": "Keyorix Team",
+      "email": "support@keyorix.dev"
     }
   },
   "servers": [
@@ -309,12 +309,12 @@ func OpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	// This would typically be loaded from a file
 	spec := `openapi: 3.0.3
 info:
-  title: Secretly API
+  title: Keyorix API
   description: Secure secrets management API
   version: 1.0.0
   contact:
-    name: Secretly Team
-    email: support@secretly.dev
+    name: Keyorix Team
+    email: support@keyorix.dev
 servers:
   - url: /api/v1
     description: API v1

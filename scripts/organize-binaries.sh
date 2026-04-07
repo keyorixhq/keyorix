@@ -53,8 +53,8 @@ move_binary() {
 
 # Move main binaries
 log_info "Moving main application binaries..."
-move_binary "secretly" "secretly"
-move_binary "server/secretly-server" "secretly-server"
+move_binary "keyorix" "keyorix"
+move_binary "server/keyorix-server" "keyorix-server"
 
 # Move test binaries
 log_info "Moving test binaries..."
@@ -78,14 +78,14 @@ done
 
 # Create symlinks in root for main binaries (for backward compatibility)
 log_info "Creating convenience symlinks..."
-if [ -f "bin/secretly" ]; then
-    ln -sf bin/secretly secretly
-    log_success "Created symlink: secretly -> bin/secretly"
+if [ -f "bin/keyorix" ]; then
+    ln -sf bin/keyorix keyorix
+    log_success "Created symlink: keyorix -> bin/keyorix"
 fi
 
-if [ -f "bin/secretly-server" ]; then
-    ln -sf bin/secretly-server secretly-server
-    log_success "Created symlink: secretly-server -> bin/secretly-server"
+if [ -f "bin/keyorix-server" ]; then
+    ln -sf bin/keyorix-server keyorix-server
+    log_success "Created symlink: keyorix-server -> bin/keyorix-server"
 fi
 
 # Update scripts to use bin directory
@@ -93,26 +93,26 @@ log_info "Updating scripts to use bin directory..."
 
 # Update start-server.sh
 if [ -f "scripts/start-server.sh" ]; then
-    sed -i.bak 's|./secretly|./bin/secretly|g' scripts/start-server.sh
-    sed -i.bak 's|./server/secretly-server|./bin/secretly-server|g' scripts/start-server.sh
+    sed -i.bak 's|./keyorix|./bin/keyorix|g' scripts/start-server.sh
+    sed -i.bak 's|./server/keyorix-server|./bin/keyorix-server|g' scripts/start-server.sh
     log_success "Updated scripts/start-server.sh"
 fi
 
 # Update test scripts
 if [ -f "scripts/test-real-usage.sh" ]; then
-    sed -i.bak 's|./secretly|./bin/secretly|g' scripts/test-real-usage.sh
+    sed -i.bak 's|./keyorix|./bin/keyorix|g' scripts/test-real-usage.sh
     log_success "Updated scripts/test-real-usage.sh"
 fi
 
 # Update deploy scripts
 if [ -f "scripts/deploy-simple.sh" ]; then
-    sed -i.bak 's|./secretly|./bin/secretly|g' scripts/deploy-simple.sh
+    sed -i.bak 's|./keyorix|./bin/keyorix|g' scripts/deploy-simple.sh
     log_success "Updated scripts/deploy-simple.sh"
 fi
 
 # Update comprehensive test script
 if [ -f "scripts/run-comprehensive-tests.sh" ]; then
-    sed -i.bak 's|./secretly|./bin/secretly|g' scripts/run-comprehensive-tests.sh
+    sed -i.bak 's|./keyorix|./bin/keyorix|g' scripts/run-comprehensive-tests.sh
     log_success "Updated scripts/run-comprehensive-tests.sh"
 fi
 
@@ -158,7 +158,7 @@ VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo '
 BUILD_TIME="$(date -u '+%Y-%m-%d_%H:%M:%S')"
 GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 
-echo "🔨 Building Secretly Binaries"
+echo "🔨 Building Keyorix Binaries"
 echo "============================="
 echo "Build Mode: $BUILD_MODE"
 echo "Target OS: $TARGET_OS"
@@ -189,8 +189,8 @@ export GOOS="$TARGET_OS"
 export GOARCH="$TARGET_ARCH"
 
 # Build main CLI
-log_info "Building CLI binary (secretly)..."
-if eval "go build $BUILD_FLAGS -o bin/secretly ./cmd/secretly"; then
+log_info "Building CLI binary (keyorix)..."
+if eval "go build $BUILD_FLAGS -o bin/keyorix ./cmd/keyorix"; then
     log_success "CLI binary built successfully"
 else
     log_error "Failed to build CLI binary"
@@ -198,8 +198,8 @@ else
 fi
 
 # Build server
-log_info "Building server binary (secretly-server)..."
-if eval "go build $BUILD_FLAGS -o bin/secretly-server ./server"; then
+log_info "Building server binary (keyorix-server)..."
+if eval "go build $BUILD_FLAGS -o bin/keyorix-server ./server"; then
     log_success "Server binary built successfully"
 else
     log_error "Failed to build server binary"
@@ -263,7 +263,7 @@ fi
 # Create build info file
 log_info "Creating build information file..."
 cat > bin/build-info.txt << EOF
-Secretly Build Information
+Keyorix Build Information
 ==========================
 Version: $VERSION
 Build Mode: $BUILD_MODE
@@ -287,9 +287,9 @@ echo "================"
 du -h bin/* 2>/dev/null || true
 echo ""
 echo "🔧 Usage:"
-echo "  ./bin/secretly --help        # CLI help"
-echo "  ./bin/secretly-server --help # Server help"
-echo "  ./bin/secretly version       # Show version"
+echo "  ./bin/keyorix --help        # CLI help"
+echo "  ./bin/keyorix-server --help # Server help"
+echo "  ./bin/keyorix version       # Show version"
 echo ""
 log_success "All binaries ready in ./bin/ directory! 🎉"
 EOF
@@ -312,14 +312,14 @@ if [ -d "bin" ]; then
 fi
 
 # Remove symlinks
-if [ -L "secretly" ]; then
-    rm secretly
-    echo "✅ Removed secretly symlink"
+if [ -L "keyorix" ]; then
+    rm keyorix
+    echo "✅ Removed keyorix symlink"
 fi
 
-if [ -L "secretly-server" ]; then
-    rm secretly-server
-    echo "✅ Removed secretly-server symlink"
+if [ -L "keyorix-server" ]; then
+    rm keyorix-server
+    echo "✅ Removed keyorix-server symlink"
 fi
 
 # Remove any remaining binaries in root
@@ -339,7 +339,7 @@ chmod +x scripts/clean.sh
 if [ -f "Makefile" ]; then
     log_info "Updating Makefile..."
     cat > Makefile << 'EOF'
-# Secretly Makefile - Comprehensive Build System
+# Keyorix Makefile - Comprehensive Build System
 
 .PHONY: build build-debug build-release build-all-platforms build-docker clean test test-integration test-coverage run server web install uninstall dev docker-up docker-down help
 
@@ -354,17 +354,17 @@ BUILD_MODE ?= release
 
 # Build all binaries (default release mode)
 build:
-	@echo "🔨 Building Secretly ($(BUILD_MODE) mode)..."
+	@echo "🔨 Building Keyorix ($(BUILD_MODE) mode)..."
 	@BUILD_MODE=$(BUILD_MODE) ./scripts/build.sh
 
 # Build in debug mode
 build-debug:
-	@echo "🔨 Building Secretly (debug mode)..."
+	@echo "🔨 Building Keyorix (debug mode)..."
 	@BUILD_MODE=debug ./scripts/build.sh
 
 # Build in release mode (optimized)
 build-release:
-	@echo "🔨 Building Secretly (release mode)..."
+	@echo "🔨 Building Keyorix (release mode)..."
 	@BUILD_MODE=release ./scripts/build.sh
 
 # Build for all platforms
@@ -382,7 +382,7 @@ clean:
 	@echo "🧹 Cleaning all build artifacts..."
 	@./scripts/clean.sh
 	@rm -rf dist/
-	@docker rmi -f $(shell docker images -q secretly* 2>/dev/null) 2>/dev/null || true
+	@docker rmi -f $(shell docker images -q keyorix* 2>/dev/null) 2>/dev/null || true
 	@echo "✅ Clean completed!"
 
 # Run all tests
@@ -409,11 +409,11 @@ test-all:
 
 # Run CLI with arguments
 run:
-	@./bin/secretly $(ARGS)
+	@./bin/keyorix $(ARGS)
 
 # Run server with arguments
 server:
-	@./bin/secretly-server $(ARGS)
+	@./bin/keyorix-server $(ARGS)
 
 # Build and serve web dashboard
 web:
@@ -423,20 +423,20 @@ web:
 # Development mode (build and run server)
 dev: build
 	@echo "🚀 Starting development server..."
-	@./bin/secretly-server --config secretly-simple.yaml
+	@./bin/keyorix-server --config keyorix-simple.yaml
 
 # Install binaries to system PATH
 install: build
 	@echo "📦 Installing binaries to /usr/local/bin/..."
-	@sudo cp bin/secretly /usr/local/bin/
-	@sudo cp bin/secretly-server /usr/local/bin/
-	@sudo chmod +x /usr/local/bin/secretly /usr/local/bin/secretly-server
+	@sudo cp bin/keyorix /usr/local/bin/
+	@sudo cp bin/keyorix-server /usr/local/bin/
+	@sudo chmod +x /usr/local/bin/keyorix /usr/local/bin/keyorix-server
 	@echo "✅ Installed successfully!"
 
 # Uninstall binaries from system PATH
 uninstall:
 	@echo "🗑️  Uninstalling binaries..."
-	@sudo rm -f /usr/local/bin/secretly /usr/local/bin/secretly-server
+	@sudo rm -f /usr/local/bin/keyorix /usr/local/bin/keyorix-server
 	@echo "✅ Uninstalled successfully!"
 
 # Docker Compose operations
@@ -479,7 +479,7 @@ setup:
 
 # Show version information
 version:
-	@echo "Secretly Build Information"
+	@echo "Keyorix Build Information"
 	@echo "=========================="
 	@echo "Version: $(VERSION)"
 	@echo "Build Time: $(BUILD_TIME)"
@@ -488,7 +488,7 @@ version:
 
 # Show comprehensive help
 help:
-	@echo "🔧 Secretly Makefile Commands"
+	@echo "🔧 Keyorix Makefile Commands"
 	@echo "=============================="
 	@echo ""
 	@echo "📦 Build Commands:"
@@ -540,12 +540,12 @@ fi
 log_info "Updating .gitignore..."
 if [ -f ".gitignore" ]; then
     # Remove old binary entries and add bin directory
-    grep -v "^secretly$\|^secretly-server$\|^core-test$\|^secret_crud$\|^secret-crud-test$\|^new-architecture$\|^system_init$" .gitignore > .gitignore.tmp || true
+    grep -v "^keyorix$\|^keyorix-server$\|^core-test$\|^secret_crud$\|^secret-crud-test$\|^new-architecture$\|^system_init$" .gitignore > .gitignore.tmp || true
     echo "" >> .gitignore.tmp
     echo "# Built binaries" >> .gitignore.tmp
     echo "bin/" >> .gitignore.tmp
-    echo "secretly" >> .gitignore.tmp
-    echo "secretly-server" >> .gitignore.tmp
+    echo "keyorix" >> .gitignore.tmp
+    echo "keyorix-server" >> .gitignore.tmp
     mv .gitignore.tmp .gitignore
     log_success "Updated .gitignore"
 fi
@@ -555,13 +555,13 @@ log_info "Creating bin directory documentation..."
 cat > bin/README.md << 'EOF'
 # Binary Directory
 
-This directory contains all compiled binary executables for the Secretly project.
+This directory contains all compiled binary executables for the Keyorix project.
 
 ## Binaries
 
 ### Main Applications
-- **`secretly`** - Main CLI application for secret management
-- **`secretly-server`** - Server application for web and API access
+- **`keyorix`** - Main CLI application for secret management
+- **`keyorix-server`** - Server application for web and API access
 
 ### Development Tools
 - **`secret_crud`** - Example CRUD operations tool
@@ -573,19 +573,19 @@ This directory contains all compiled binary executables for the Secretly project
 ### CLI Usage
 ```bash
 # Run CLI directly
-./bin/secretly --help
+./bin/keyorix --help
 
 # Or use the convenience symlink
-./secretly --help
+./keyorix --help
 ```
 
 ### Server Usage
 ```bash
 # Run server directly
-./bin/secretly-server --config config.yaml
+./bin/keyorix-server --config config.yaml
 
 # Or use the convenience symlink
-./secretly-server --config config.yaml
+./keyorix-server --config config.yaml
 ```
 
 ## Building
@@ -636,11 +636,11 @@ echo "✅ Created bin directory documentation"
 echo ""
 echo "📁 New Structure:"
 echo "├── bin/                    # All binary executables"
-echo "│   ├── secretly           # Main CLI binary"
-echo "│   ├── secretly-server    # Server binary"
+echo "│   ├── keyorix           # Main CLI binary"
+echo "│   ├── keyorix-server    # Server binary"
 echo "│   └── ...                # Other tools"
-echo "├── secretly -> bin/secretly           # Convenience symlink"
-echo "├── secretly-server -> bin/secretly-server  # Convenience symlink"
+echo "├── keyorix -> bin/keyorix           # Convenience symlink"
+echo "├── keyorix-server -> bin/keyorix-server  # Convenience symlink"
 echo "└── scripts/"
 echo "    ├── build.sh           # Build to bin/"
 echo "    └── clean.sh           # Clean bin/"
@@ -650,7 +650,7 @@ echo "  ./scripts/build.sh       # Build all binaries"
 echo "  ./scripts/clean.sh       # Clean all binaries"
 echo "  make build               # Alternative build"
 echo "  make clean               # Alternative clean"
-echo "  ./bin/secretly --help    # Direct binary access"
-echo "  ./secretly --help        # Symlink access"
+echo "  ./bin/keyorix --help    # Direct binary access"
+echo "  ./keyorix --help        # Symlink access"
 echo ""
 log_success "Project organization improved! 🎉"

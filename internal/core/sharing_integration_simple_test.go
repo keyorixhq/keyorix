@@ -2,13 +2,13 @@ package core
 
 import (
 	"context"
-	"path/filepath"
+	"fmt"
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/datatypes"
@@ -23,20 +23,38 @@ func TestSharingIntegrationSimple(t *testing.T) {
 	require.NoError(t, err)
 	defer i18n.ResetForTesting()
 
-	// Create test database
-	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	// Create test database (in-memory for isolation)
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 
 	// Auto-migrate tables
-	err = db.AutoMigrate(&models.SecretNode{}, &models.ShareRecord{}, &models.AuditEvent{})
+	err = db.AutoMigrate(
+		&models.SecretNode{},
+		&models.SecretVersion{},
+		&models.ShareRecord{},
+		&models.AuditEvent{},
+		&models.User{},
+		&models.Role{},
+		&models.UserRole{},
+		&models.Group{},
+		&models.UserGroup{},
+		&models.GroupRole{},
+	)
 	require.NoError(t, err)
+
+	// Seed users and groups required by CreateShareRecord validation
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@test.com"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recipient", Email: "recipient@test.com"}).Error)
+	for i := 10; i <= 20; i++ {
+		require.NoError(t, db.Create(&models.User{ID: uint(i), Username: fmt.Sprintf("user%d", i), Email: fmt.Sprintf("user%d@test.com", i)}).Error)
+	}
+	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group"}).Error)
 
 	// Initialize storage
 	storage := local.NewLocalStorage(db)
 
 	// Create core service (without encryption for simplicity)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: storage,
 		now:     time.Now,
 	}

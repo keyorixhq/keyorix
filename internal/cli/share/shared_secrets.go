@@ -6,10 +6,10 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -32,7 +32,7 @@ func init() {
 
 func runSharedSecrets(cmd *cobra.Command, args []string) error {
 	// Load config and connect to database
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -49,7 +49,7 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 
 	// Initialize storage and service
 	storage := local.NewLocalStorage(db)
-	service := core.NewSecretlyCore(storage)
+	service := core.NewKeyorixCore(storage)
 
 	// Call service
 	ctx := context.Background()

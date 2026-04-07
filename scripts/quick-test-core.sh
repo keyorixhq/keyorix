@@ -21,7 +21,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Test 1: Build CLI
 log_info "Building CLI..."
 cd ..
-if go build -o secretly ./ 2>/dev/null; then
+if go build -o keyorix ./ 2>/dev/null; then
     log_success "CLI built successfully"
 else
     log_error "CLI build failed"
@@ -30,7 +30,7 @@ fi
 
 # Test 2: Test CLI basic functionality
 log_info "Testing CLI basic commands..."
-if ./secretly --help >/dev/null 2>&1; then
+if ./keyorix --help >/dev/null 2>&1; then
     log_success "CLI help command works"
 else
     log_error "CLI help command failed"
@@ -39,7 +39,7 @@ fi
 # Test 3: Build server
 log_info "Building server..."
 cd server
-if go build -o secretly-server ./ 2>/dev/null; then
+if go build -o keyorix-server ./ 2>/dev/null; then
     log_success "Server built successfully"
 else
     log_error "Server build failed"
@@ -58,6 +58,6 @@ fi
 echo ""
 log_success "🎉 Core system is working!"
 log_info "Next steps:"
-echo "  1. Run: ./secretly --help"
-echo "  2. Run: cd server && ./secretly-server"
+echo "  1. Run: ./keyorix --help"
+echo "  2. Run: cd server && ./keyorix-server"
 echo "  3. Test API at: http://localhost:8080/health"

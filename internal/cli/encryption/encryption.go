@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/spf13/cobra"
 )
 
@@ -173,7 +173,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	if err := service.ValidateKeyFiles(); err != nil {
 		fmt.Printf("❌ Key file validation failed: %v\n", err)
-		fmt.Println("💡 Run 'secretly encryption fix-perms' to fix permissions")
+		fmt.Println("💡 Run 'keyorix encryption fix-perms' to fix permissions")
 		return err
 	}
 

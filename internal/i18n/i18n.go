@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/nicksnyder/go-i18n/v2/i18n"
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/config"
 	"golang.org/x/text/language"
 )
 

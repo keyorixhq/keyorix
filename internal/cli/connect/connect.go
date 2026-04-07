@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	cliconfig "github.com/secretlyhq/secretly/internal/cli/config"
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/client"
+	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
+	"github.com/keyorixhq/keyorix/internal/client"
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -83,7 +83,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✅ Connected to %s\n", endpoint)
 	fmt.Printf("🌐 CLI is now in client mode\n")
-	
+
 	if apiKey == "" {
 		fmt.Printf("💡 Tip: Use --api-key flag if the server requires authentication\n")
 	}
@@ -137,7 +137,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 		// Test connection
 		fmt.Printf("\n🔍 Testing connection...\n")
-		if err := testServerConnection(cfg.Client.Endpoint, cfg.Client.Auth.APIKey, cfg.GetTimeout()); err != nil {
+		if err := testServerConnection(cfg.Client.Endpoint, cfg.Client.Auth.GetAPIKey(), cfg.GetTimeout()); err != nil {
 			fmt.Printf("❌ Connection failed: %v\n", err)
 		} else {
 			fmt.Printf("✅ Connection successful\n")

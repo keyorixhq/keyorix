@@ -6,32 +6,32 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/encryption"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// SecretlyCore represents the core business logic layer
+// KeyorixCore represents the core business logic layer
 // It orchestrates all business operations while remaining transport-agnostic
-type SecretlyCore struct {
+type KeyorixCore struct {
 	storage    storage.Storage
 	encryption *encryption.SecretEncryption
 	now        func() time.Time // For testability
 }
 
-// NewSecretlyCore creates a new instance of the core business logic
-func NewSecretlyCore(storage storage.Storage) *SecretlyCore {
-	return &SecretlyCore{
+// NewKeyorixCore creates a new instance of the core business logic
+func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
+	return &KeyorixCore{
 		storage:    storage,
 		encryption: nil, // No encryption by default
 		now:        time.Now, // Use actual time by default
 	}
 }
 
-// NewSecretlyCoreWithEncryption creates a new instance with encryption support
-func NewSecretlyCoreWithEncryption(storage storage.Storage, encryption *encryption.SecretEncryption) *SecretlyCore {
-	return &SecretlyCore{
+// NewKeyorixCoreWithEncryption creates a new instance with encryption support
+func NewKeyorixCoreWithEncryption(storage storage.Storage, encryption *encryption.SecretEncryption) *KeyorixCore {
+	return &KeyorixCore{
 		storage:    storage,
 		encryption: encryption,
 		now:        time.Now, // Use actual time by default
@@ -68,7 +68,7 @@ type UpdateSecretRequest struct {
 }
 
 // CreateSecret creates a new secret with business logic validation
-func (c *SecretlyCore) CreateSecret(ctx context.Context, req *CreateSecretRequest) (*models.SecretNode, error) {
+func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest) (*models.SecretNode, error) {
 	// Validate request
 	if err := c.validateCreateSecretRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
@@ -134,7 +134,7 @@ func (c *SecretlyCore) CreateSecret(ctx context.Context, req *CreateSecretReques
 }
 
 // GetSecret retrieves a secret by ID with business logic validation
-func (c *SecretlyCore) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
+func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -153,7 +153,7 @@ func (c *SecretlyCore) GetSecret(ctx context.Context, id uint) (*models.SecretNo
 }
 
 // GetSecretWithPermissionCheck retrieves a secret by ID with permission validation
-func (c *SecretlyCore) GetSecretWithPermissionCheck(ctx context.Context, id, userID uint) (*models.SecretNode, error) {
+func (c *KeyorixCore) GetSecretWithPermissionCheck(ctx context.Context, id, userID uint) (*models.SecretNode, error) {
 	// Check permission first
 	_, err := c.EnforceSecretReadPermission(ctx, id, userID)
 	if err != nil {
@@ -165,7 +165,7 @@ func (c *SecretlyCore) GetSecretWithPermissionCheck(ctx context.Context, id, use
 }
 
 // UpdateSecret updates an existing secret with business logic validation
-func (c *SecretlyCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
+func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
 	// Validate request
 	if err := c.validateUpdateSecretRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
@@ -237,7 +237,7 @@ func (c *SecretlyCore) UpdateSecret(ctx context.Context, req *UpdateSecretReques
 }
 
 // UpdateSecretWithPermissionCheck updates an existing secret with permission validation
-func (c *SecretlyCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
+func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
 	if req.UserID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
@@ -253,7 +253,7 @@ func (c *SecretlyCore) UpdateSecretWithPermissionCheck(ctx context.Context, req 
 }
 
 // DeleteSecret deletes a secret by ID
-func (c *SecretlyCore) DeleteSecret(ctx context.Context, id uint) error {
+func (c *KeyorixCore) DeleteSecret(ctx context.Context, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -273,7 +273,7 @@ func (c *SecretlyCore) DeleteSecret(ctx context.Context, id uint) error {
 }
 
 // DeleteSecretWithPermissionCheck deletes a secret by ID with permission validation
-func (c *SecretlyCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, userID uint) error {
+func (c *KeyorixCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, userID uint) error {
 	if userID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
@@ -289,7 +289,7 @@ func (c *SecretlyCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, 
 }
 
 // ListSecrets lists secrets with filtering options
-func (c *SecretlyCore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
+func (c *KeyorixCore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	if filter == nil {
 		filter = &storage.SecretFilter{}
 	}
@@ -316,7 +316,7 @@ func (c *SecretlyCore) ListSecrets(ctx context.Context, filter *storage.SecretFi
 // Secret Version Management Operations
 
 // GetSecretVersions retrieves all versions of a secret
-func (c *SecretlyCore) GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error) {
+func (c *KeyorixCore) GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -337,7 +337,7 @@ func (c *SecretlyCore) GetSecretVersions(ctx context.Context, secretID uint) ([]
 }
 
 // GetSecretVersionsWithPermissionCheck retrieves all versions of a secret with permission validation
-func (c *SecretlyCore) GetSecretVersionsWithPermissionCheck(ctx context.Context, secretID, userID uint) ([]*models.SecretVersion, error) {
+func (c *KeyorixCore) GetSecretVersionsWithPermissionCheck(ctx context.Context, secretID, userID uint) ([]*models.SecretVersion, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
@@ -353,7 +353,7 @@ func (c *SecretlyCore) GetSecretVersionsWithPermissionCheck(ctx context.Context,
 }
 
 // GetSecretVersion retrieves a specific version of a secret
-func (c *SecretlyCore) GetSecretVersion(ctx context.Context, secretID uint, versionNumber int) (*models.SecretVersion, error) {
+func (c *KeyorixCore) GetSecretVersion(ctx context.Context, secretID uint, versionNumber int) (*models.SecretVersion, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -377,7 +377,7 @@ func (c *SecretlyCore) GetSecretVersion(ctx context.Context, secretID uint, vers
 }
 
 // GetSecretVersionWithPermissionCheck retrieves a specific version of a secret with permission validation
-func (c *SecretlyCore) GetSecretVersionWithPermissionCheck(ctx context.Context, secretID, userID uint, versionNumber int) (*models.SecretVersion, error) {
+func (c *KeyorixCore) GetSecretVersionWithPermissionCheck(ctx context.Context, secretID, userID uint, versionNumber int) (*models.SecretVersion, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
@@ -393,7 +393,7 @@ func (c *SecretlyCore) GetSecretVersionWithPermissionCheck(ctx context.Context, 
 }
 
 // GetLatestSecretVersion retrieves the latest version of a secret
-func (c *SecretlyCore) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
+func (c *KeyorixCore) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -412,7 +412,7 @@ func (c *SecretlyCore) GetLatestSecretVersion(ctx context.Context, secretID uint
 }
 
 // GetLatestSecretVersionWithPermissionCheck retrieves the latest version of a secret with permission validation
-func (c *SecretlyCore) GetLatestSecretVersionWithPermissionCheck(ctx context.Context, secretID, userID uint) (*models.SecretVersion, error) {
+func (c *KeyorixCore) GetLatestSecretVersionWithPermissionCheck(ctx context.Context, secretID, userID uint) (*models.SecretVersion, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
@@ -428,7 +428,7 @@ func (c *SecretlyCore) GetLatestSecretVersionWithPermissionCheck(ctx context.Con
 }
 
 // GetSecretValue retrieves the decrypted value of the latest version of a secret
-func (c *SecretlyCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte, error) {
+func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -473,7 +473,7 @@ func (c *SecretlyCore) GetSecretValue(ctx context.Context, secretID uint) ([]byt
 }
 
 // GetSecretValueWithPermissionCheck retrieves the decrypted value with permission validation
-func (c *SecretlyCore) GetSecretValueWithPermissionCheck(ctx context.Context, secretID, userID uint) ([]byte, error) {
+func (c *KeyorixCore) GetSecretValueWithPermissionCheck(ctx context.Context, secretID, userID uint) ([]byte, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
@@ -519,7 +519,7 @@ func (c *SecretlyCore) GetSecretValueWithPermissionCheck(ctx context.Context, se
 }
 
 // GetSecretValueByVersion retrieves the decrypted value of a specific version of a secret
-func (c *SecretlyCore) GetSecretValueByVersion(ctx context.Context, secretID uint, versionNumber int) ([]byte, error) {
+func (c *KeyorixCore) GetSecretValueByVersion(ctx context.Context, secretID uint, versionNumber int) ([]byte, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -554,7 +554,7 @@ func (c *SecretlyCore) GetSecretValueByVersion(ctx context.Context, secretID uin
 }
 
 // GetSecretValueByVersionWithPermissionCheck retrieves the decrypted value of a specific version with permission validation
-func (c *SecretlyCore) GetSecretValueByVersionWithPermissionCheck(ctx context.Context, secretID, userID uint, versionNumber int) ([]byte, error) {
+func (c *KeyorixCore) GetSecretValueByVersionWithPermissionCheck(ctx context.Context, secretID, userID uint, versionNumber int) ([]byte, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
@@ -572,7 +572,7 @@ func (c *SecretlyCore) GetSecretValueByVersionWithPermissionCheck(ctx context.Co
 // RBAC Management Operations
 
 // AssignRoleToUser assigns a role to a user by email and role name
-func (c *SecretlyCore) AssignRoleToUser(ctx context.Context, userEmail, roleName string) error {
+func (c *KeyorixCore) AssignRoleToUser(ctx context.Context, userEmail, roleName string) error {
 	// Find user by email
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
@@ -594,7 +594,7 @@ func (c *SecretlyCore) AssignRoleToUser(ctx context.Context, userEmail, roleName
 }
 
 // RemoveRoleFromUser removes a role from a user by email and role name
-func (c *SecretlyCore) RemoveRoleFromUser(ctx context.Context, userEmail, roleName string) error {
+func (c *KeyorixCore) RemoveRoleFromUser(ctx context.Context, userEmail, roleName string) error {
 	// Find user by email
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
@@ -616,7 +616,7 @@ func (c *SecretlyCore) RemoveRoleFromUser(ctx context.Context, userEmail, roleNa
 }
 
 // ListUserRolesByEmail lists roles for a user by email
-func (c *SecretlyCore) ListUserRolesByEmail(ctx context.Context, userEmail string) ([]*models.Role, error) {
+func (c *KeyorixCore) ListUserRolesByEmail(ctx context.Context, userEmail string) ([]*models.Role, error) {
 	// Find user by email
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
@@ -633,7 +633,7 @@ func (c *SecretlyCore) ListUserRolesByEmail(ctx context.Context, userEmail strin
 }
 
 // HasPermissionByEmail checks if a user has a specific permission by email
-func (c *SecretlyCore) HasPermissionByEmail(ctx context.Context, userEmail, resource, action string) (bool, error) {
+func (c *KeyorixCore) HasPermissionByEmail(ctx context.Context, userEmail, resource, action string) (bool, error) {
 	// Find user by email
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
@@ -650,7 +650,7 @@ func (c *SecretlyCore) HasPermissionByEmail(ctx context.Context, userEmail, reso
 }
 
 // ListUserPermissionsByEmail lists permissions for a user by email
-func (c *SecretlyCore) ListUserPermissionsByEmail(ctx context.Context, userEmail string) ([]*storage.Permission, error) {
+func (c *KeyorixCore) ListUserPermissionsByEmail(ctx context.Context, userEmail string) ([]*storage.Permission, error) {
 	// Find user by email
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
@@ -678,7 +678,7 @@ type CreateUserRequest struct {
 }
 
 // CreateUser creates a new user with business logic validation
-func (c *SecretlyCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*models.User, error) {
+func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*models.User, error) {
 	// Validate request
 	if err := c.validateCreateUserRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
@@ -708,7 +708,7 @@ func (c *SecretlyCore) CreateUser(ctx context.Context, req *CreateUserRequest) (
 
 // Validation methods
 
-func (c *SecretlyCore) validateCreateSecretRequest(req *CreateSecretRequest) error {
+func (c *KeyorixCore) validateCreateSecretRequest(req *CreateSecretRequest) error {
 	if req.Name == "" {
 		return fmt.Errorf("%s", i18n.T("LabelName", nil))
 	}
@@ -730,7 +730,7 @@ func (c *SecretlyCore) validateCreateSecretRequest(req *CreateSecretRequest) err
 	return nil
 }
 
-func (c *SecretlyCore) validateUpdateSecretRequest(req *UpdateSecretRequest) error {
+func (c *KeyorixCore) validateUpdateSecretRequest(req *UpdateSecretRequest) error {
 	if req.ID == 0 {
 		return fmt.Errorf("secret ID is required")
 	}
@@ -740,7 +740,7 @@ func (c *SecretlyCore) validateUpdateSecretRequest(req *UpdateSecretRequest) err
 	return nil
 }
 
-func (c *SecretlyCore) validateCreateUserRequest(req *CreateUserRequest) error {
+func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 	if req.Username == "" {
 		return fmt.Errorf("%s", i18n.T("LabelUsername", nil))
 	}
@@ -774,7 +774,7 @@ type PermissionContext struct {
 }
 
 // CheckSecretPermission checks if a user has the required permission for a secret
-func (c *SecretlyCore) CheckSecretPermission(ctx context.Context, secretID, userID uint, requiredPermission PermissionLevel) (*PermissionContext, error) {
+func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userID uint, requiredPermission PermissionLevel) (*PermissionContext, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -839,7 +839,7 @@ func (c *SecretlyCore) CheckSecretPermission(ctx context.Context, secretID, user
 }
 
 // hasRequiredPermission checks if the user's permission level meets the required level
-func (c *SecretlyCore) hasRequiredPermission(userPermission, requiredPermission PermissionLevel) bool {
+func (c *KeyorixCore) hasRequiredPermission(userPermission, requiredPermission PermissionLevel) bool {
 	// Define permission hierarchy: owner > write > read > none
 	permissionLevels := map[PermissionLevel]int{
 		PermissionNone:  0,
@@ -862,7 +862,7 @@ func (c *SecretlyCore) hasRequiredPermission(userPermission, requiredPermission 
 }
 
 // CheckGroupPermissions checks if a user has permission through group membership
-func (c *SecretlyCore) CheckGroupPermissions(ctx context.Context, secretID, userID uint, shares []*models.ShareRecord) (PermissionLevel, *uint, error) {
+func (c *KeyorixCore) CheckGroupPermissions(ctx context.Context, secretID, userID uint, shares []*models.ShareRecord) (PermissionLevel, *uint, error) {
 	// Get user's groups
 	userGroups, err := c.storage.GetUserGroups(ctx, userID)
 	if err != nil {
@@ -894,28 +894,28 @@ func (c *SecretlyCore) CheckGroupPermissions(ctx context.Context, secretID, user
 }
 
 // EnforceSecretReadPermission enforces read permission for secret operations
-func (c *SecretlyCore) EnforceSecretReadPermission(ctx context.Context, secretID, userID uint) (*PermissionContext, error) {
+func (c *KeyorixCore) EnforceSecretReadPermission(ctx context.Context, secretID, userID uint) (*PermissionContext, error) {
 	return c.CheckSecretPermission(ctx, secretID, userID, PermissionRead)
 }
 
 // EnforceSecretWritePermission enforces write permission for secret operations
-func (c *SecretlyCore) EnforceSecretWritePermission(ctx context.Context, secretID, userID uint) (*PermissionContext, error) {
+func (c *KeyorixCore) EnforceSecretWritePermission(ctx context.Context, secretID, userID uint) (*PermissionContext, error) {
 	return c.CheckSecretPermission(ctx, secretID, userID, PermissionWrite)
 }
 
 // EnforceSecretOwnerPermission enforces owner permission for secret operations
-func (c *SecretlyCore) EnforceSecretOwnerPermission(ctx context.Context, secretID, userID uint) (*PermissionContext, error) {
+func (c *KeyorixCore) EnforceSecretOwnerPermission(ctx context.Context, secretID, userID uint) (*PermissionContext, error) {
 	return c.CheckSecretPermission(ctx, secretID, userID, PermissionOwner)
 }
 
 // ValidateSecretAccess validates that a user can access a secret and returns the permission context
-func (c *SecretlyCore) ValidateSecretAccess(ctx context.Context, secretID, userID uint) (*PermissionContext, error) {
+func (c *KeyorixCore) ValidateSecretAccess(ctx context.Context, secretID, userID uint) (*PermissionContext, error) {
 	// Check if user has at least read permission
 	return c.EnforceSecretReadPermission(ctx, secretID, userID)
 }
 
 // CanUserModifySecret checks if a user can modify a secret (requires write or owner permission)
-func (c *SecretlyCore) CanUserModifySecret(ctx context.Context, secretID, userID uint) (bool, error) {
+func (c *KeyorixCore) CanUserModifySecret(ctx context.Context, secretID, userID uint) (bool, error) {
 	permCtx, err := c.CheckSecretPermission(ctx, secretID, userID, PermissionWrite)
 	if err != nil {
 		return false, nil // No error, just no permission
@@ -924,7 +924,7 @@ func (c *SecretlyCore) CanUserModifySecret(ctx context.Context, secretID, userID
 }
 
 // CanUserShareSecret checks if a user can share a secret (requires owner permission)
-func (c *SecretlyCore) CanUserShareSecret(ctx context.Context, secretID, userID uint) (bool, error) {
+func (c *KeyorixCore) CanUserShareSecret(ctx context.Context, secretID, userID uint) (bool, error) {
 	permCtx, err := c.CheckSecretPermission(ctx, secretID, userID, PermissionOwner)
 	if err != nil {
 		return false, nil // No error, just no permission
@@ -933,7 +933,7 @@ func (c *SecretlyCore) CanUserShareSecret(ctx context.Context, secretID, userID 
 }
 
 // GetEffectivePermission returns the effective permission level for a user on a secret
-func (c *SecretlyCore) GetEffectivePermission(ctx context.Context, secretID, userID uint) (PermissionLevel, error) {
+func (c *KeyorixCore) GetEffectivePermission(ctx context.Context, secretID, userID uint) (PermissionLevel, error) {
 	// Try to get the highest permission level
 	permCtx, err := c.CheckSecretPermission(ctx, secretID, userID, PermissionRead)
 	if err != nil {
@@ -944,7 +944,7 @@ func (c *SecretlyCore) GetEffectivePermission(ctx context.Context, secretID, use
 }
 
 // ListUserPermissions returns all secrets a user has access to with their permission levels
-func (c *SecretlyCore) ListUserPermissions(ctx context.Context, userID uint) ([]*models.UserSecretPermission, error) {
+func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*models.UserSecretPermission, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
@@ -991,7 +991,7 @@ func (c *SecretlyCore) ListUserPermissions(ctx context.Context, userID uint) ([]
 }
 
 // HealthCheck checks the health of the core service and its dependencies
-func (c *SecretlyCore) HealthCheck(ctx context.Context) error {
+func (c *KeyorixCore) HealthCheck(ctx context.Context) error {
 	// Check storage health
 	if c.storage == nil {
 		return fmt.Errorf("storage not initialized")

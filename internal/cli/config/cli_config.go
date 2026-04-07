@@ -19,8 +19,8 @@ type CLIConfig struct {
 
 // EmbeddedConfig holds configuration for embedded mode (local database)
 type EmbeddedConfig struct {
-	DatabasePath string            `yaml:"database_path"`
-	Encryption   EncryptionConfig  `yaml:"encryption"`
+	DatabasePath string           `yaml:"database_path"`
+	Encryption   EncryptionConfig `yaml:"encryption"`
 }
 
 // ClientConfig holds configuration for client mode (remote server)
@@ -33,7 +33,15 @@ type ClientConfig struct {
 // AuthConfig holds authentication configuration
 type AuthConfig struct {
 	Type   string `yaml:"type"`    // "none", "api_key"
-	APIKey string `yaml:"api_key"`
+	APIKey string `yaml:"api_key"` // use KEYORIX_API_KEY env var instead
+}
+
+// GetAPIKey returns the resolved API key, preferring the KEYORIX_API_KEY environment variable.
+func (a *AuthConfig) GetAPIKey() string {
+	if v := os.Getenv("KEYORIX_API_KEY"); v != "" {
+		return v
+	}
+	return a.APIKey
 }
 
 // EncryptionConfig holds encryption settings for embedded mode
@@ -154,12 +162,12 @@ func (c *CLIConfig) GetTimeout() time.Duration {
 	if c.Client.Timeout == "" {
 		return 30 * time.Second
 	}
-	
+
 	duration, err := time.ParseDuration(c.Client.Timeout)
 	if err != nil {
 		return 30 * time.Second
 	}
-	
+
 	return duration
 }
 
@@ -245,16 +253,16 @@ func (c *CLIConfig) GetDefaultConnection() *ConnectionConfig {
 func getDefaultCLIConfigPath() string {
 	// Try to use XDG config directory
 	if configDir := os.Getenv("XDG_CONFIG_HOME"); configDir != "" {
-		return filepath.Join(configDir, "secretly", "cli.yaml")
+		return filepath.Join(configDir, "keyorix", "cli.yaml")
 	}
 
 	// Fall back to home directory
 	if homeDir, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(homeDir, ".secretly", "cli.yaml")
+		return filepath.Join(homeDir, ".keyorix", "cli.yaml")
 	}
 
 	// Last resort: current directory
-	return "./secretly-cli.yaml"
+	return "./keyorix-cli.yaml"
 }
 
 // GetConfigPath returns the current config file path

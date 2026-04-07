@@ -6,14 +6,14 @@ import (
 	"log"
 	"strings"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
-	"github.com/secretlyhq/secretly/internal/utils/safeconv"
-	"github.com/secretlyhq/secretly/server/grpc/interceptors"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"gorm.io/driver/sqlite"
@@ -22,7 +22,7 @@ import (
 
 // SecretGRPCService implements the gRPC secret service
 type SecretGRPCService struct {
-	secretService *core.SecretlyCore
+	secretService *core.KeyorixCore
 	// TODO: Add UnimplementedSecretServiceServer when proto is generated
 }
 
@@ -47,7 +47,7 @@ func NewSecretService() (*SecretGRPCService, error) {
 
 	// Initialize storage and core service
 	storageImpl := local.NewLocalStorage(db)
-	secretService := core.NewSecretlyCore(storageImpl)
+	secretService := core.NewKeyorixCore(storageImpl)
 
 	return &SecretGRPCService{
 		secretService: secretService,

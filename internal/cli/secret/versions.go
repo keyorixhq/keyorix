@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -26,8 +26,8 @@ var versionsCmd = &cobra.Command{
 	Long: `List all versions of a secret.
 
 Examples:
-  secretly secret versions --id 123
-  secretly secret versions --id 123 --format json`,
+  keyorix secret versions --id 123
+  keyorix secret versions --id 123 --format json`,
 	RunE: runVersions,
 }
 
@@ -60,7 +60,7 @@ func runVersions(cmd *cobra.Command, args []string) error {
 
 	// Initialize storage and core service
 	storageImpl := local.NewLocalStorage(db)
-	service := core.NewSecretlyCore(storageImpl)
+	service := core.NewKeyorixCore(storageImpl)
 
 	// Create context
 	ctx := context.Background()

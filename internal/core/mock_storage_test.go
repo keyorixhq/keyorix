@@ -3,8 +3,8 @@ package core
 import (
 	"context"
 
-	"github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/mock"
 )
 

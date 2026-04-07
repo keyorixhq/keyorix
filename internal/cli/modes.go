@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/secretlyhq/secretly/internal/client"
-	cliconfig "github.com/secretlyhq/secretly/internal/cli/config"
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage"
+	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
+	"github.com/keyorixhq/keyorix/internal/client"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
 // CLIMode represents the operating mode of the CLI
@@ -35,8 +35,8 @@ func (m CLIMode) String() string {
 type CLI struct {
 	mode        CLIMode
 	config      *cliconfig.CLIConfig
-	coreService *core.SecretlyCore  // For embedded mode
-	httpClient  *client.HTTPClient  // For client mode
+	coreService *core.KeyorixCore  // For embedded mode
+	httpClient  *client.HTTPClient // For client mode
 }
 
 // NewCLI creates a new CLI instance with automatic mode detection
@@ -109,7 +109,7 @@ func (c *CLI) initEmbeddedMode() error {
 	}
 
 	// Create core service
-	c.coreService = core.NewSecretlyCore(storageImpl)
+	c.coreService = core.NewKeyorixCore(storageImpl)
 
 	return nil
 }
@@ -126,7 +126,7 @@ func (c *CLI) initClientMode() error {
 			Type: "remote",
 			Remote: &config.RemoteConfig{
 				BaseURL:        c.config.Client.Endpoint,
-				APIKey:         c.config.Client.Auth.APIKey,
+				APIKey:         c.config.Client.Auth.GetAPIKey(),
 				TimeoutSeconds: int(c.config.GetTimeout().Seconds()),
 				RetryAttempts:  3,
 				TLSVerify:      true,
@@ -142,7 +142,7 @@ func (c *CLI) initClientMode() error {
 	}
 
 	// Create core service with remote storage
-	c.coreService = core.NewSecretlyCore(storageImpl)
+	c.coreService = core.NewKeyorixCore(storageImpl)
 
 	return nil
 }
@@ -168,6 +168,6 @@ func (c *CLI) Health(ctx context.Context) error {
 }
 
 // GetCoreService returns the core service instance
-func (c *CLI) GetCoreService() *core.SecretlyCore {
+func (c *CLI) GetCoreService() *core.KeyorixCore {
 	return c.coreService
 }

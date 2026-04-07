@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -53,7 +53,7 @@ func runCheckPermission(cmd *cobra.Command, args []string) error {
 
 	// Initialize storage and core service
 	storage := local.NewLocalStorage(db)
-	service := core.NewSecretlyCore(storage)
+	service := core.NewKeyorixCore(storage)
 
 	// Create context
 	ctx := context.Background()

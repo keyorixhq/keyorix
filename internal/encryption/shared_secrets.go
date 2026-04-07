@@ -3,7 +3,7 @@ package encryption
 import (
 	"fmt"
 
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )

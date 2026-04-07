@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/securefiles"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -13,7 +13,7 @@ var FixFilePermCmd = &cobra.Command{
 	Use:   "fixfileperm",
 	Short: "Fix file permissions on critical files (config, KEK, DEK)",
 	Run: func(cmd *cobra.Command, args []string) {
-		cfg, err := config.Load("secretly.yaml")
+		cfg, err := config.Load("keyorix.yaml")
 		if err != nil {
 			log.Fatalf("Failed to load config: %v", err)
 		}
@@ -21,7 +21,7 @@ var FixFilePermCmd = &cobra.Command{
 		files := []securefiles.FilePermSpec{
 			{Path: cfg.Storage.Encryption.KEKPath, Mode: 0600},
 			{Path: cfg.Storage.Encryption.DEKPath, Mode: 0600},
-			{Path: "secretly.yaml", Mode: 0600},
+			{Path: "keyorix.yaml", Mode: 0600},
 		}
 
 		// fix permissions: autofix = true

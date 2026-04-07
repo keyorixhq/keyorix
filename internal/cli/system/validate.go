@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/secretlyhq/secretly/internal/startup"
+	"github.com/keyorixhq/keyorix/internal/startup"
 	"github.com/spf13/cobra"
 )
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate system configuration and setup",
-	Long: `Perform comprehensive validation of the Secretly system including:
+	Long: `Perform comprehensive validation of the Keyorix system including:
 - Configuration file validation
 - File permissions and ownership
 - Encryption key validation
@@ -28,18 +28,18 @@ var (
 )
 
 func init() {
-	validateCmd.Flags().StringVar(&configFile, "config", "secretly.yaml", "Path to config file")
+	validateCmd.Flags().StringVar(&configFile, "config", "keyorix.yaml", "Path to config file")
 	validateCmd.Flags().BoolVar(&fixIssues, "fix", false, "Attempt to fix issues automatically")
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
-	fmt.Println("🔍 Validating Secretly System")
+	fmt.Println("🔍 Validating Keyorix System")
 	fmt.Println("============================")
 
 	// Check if config file exists
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		fmt.Printf("❌ Config file not found: %s\n", configFile)
-		fmt.Println("💡 Run 'secretly system init' to create the configuration")
+		fmt.Println("💡 Run 'keyorix system init' to create the configuration")
 		return fmt.Errorf("config file not found")
 	}
 
@@ -76,9 +76,9 @@ func runValidate(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		fmt.Println("   • Run 'secretly system init --force' to reinitialize components")
-		fmt.Println("   • Run 'secretly encryption init' to set up encryption")
-		fmt.Println("   • Run 'secretly system audit' to check file permissions")
+		fmt.Println("   • Run 'keyorix system init --force' to reinitialize components")
+		fmt.Println("   • Run 'keyorix encryption init' to set up encryption")
+		fmt.Println("   • Run 'keyorix system audit' to check file permissions")
 	}
 
 	return nil

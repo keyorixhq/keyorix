@@ -6,11 +6,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	coreStorage "github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -38,7 +38,7 @@ func main() {
 
 	// Initialize storage and core service
 	storage := local.NewLocalStorage(db)
-	service := core.NewSecretlyCore(storage)
+	service := core.NewKeyorixCore(storage)
 
 	// Example 1: Create a secret
 	fmt.Println("\n📝 Example 1: Create Secret")

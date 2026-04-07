@@ -284,7 +284,7 @@ func main() {
 		fmt.Println("HTTP/gRPC Server Test Runner")
 		fmt.Println("============================")
 		fmt.Println()
-		fmt.Println("This tool runs comprehensive tests for the Secretly HTTP and gRPC server implementation.")
+		fmt.Println("This tool runs comprehensive tests for the Keyorix HTTP and gRPC server implementation.")
 		fmt.Println()
 		fmt.Println("Available commands:")
 		fmt.Println("  all        - Run all test suites (unit, integration, performance)")

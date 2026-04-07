@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Docker Build Script
-# Builds Docker images for the Secretly project
+# Builds Docker images for the Keyorix project
 
 set -e
 
@@ -28,11 +28,11 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-echo "🐳 Docker Build for Secretly"
+echo "🐳 Docker Build for Keyorix"
 echo "============================"
 
 # Configuration
-IMAGE_NAME="${IMAGE_NAME:-secretly}"
+IMAGE_NAME="${IMAGE_NAME:-keyorix}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 REGISTRY="${REGISTRY:-}"
 VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo 'dev')}"
@@ -147,7 +147,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/secretly ./cmd/secretly
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/keyorix ./cmd/keyorix
 
 # Production image
 FROM alpine:latest
@@ -155,10 +155,10 @@ FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
-COPY --from=builder /app/bin/secretly .
-COPY --from=builder /app/secretly-simple.yaml .
+COPY --from=builder /app/bin/keyorix .
+COPY --from=builder /app/keyorix-simple.yaml .
 
-ENTRYPOINT ["./secretly"]
+ENTRYPOINT ["./keyorix"]
 CMD ["--help"]
 EOF
 
@@ -186,7 +186,7 @@ cat > docker-compose.override.yml << EOF
 version: '3.8'
 
 services:
-  secretly:
+  keyorix:
     image: $FULL_IMAGE_NAME
     
   nginx:

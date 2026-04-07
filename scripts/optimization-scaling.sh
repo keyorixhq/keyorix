@@ -29,7 +29,7 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-echo "📈 Secretly Optimization and Scaling"
+echo "📈 Keyorix Optimization and Scaling"
 echo "===================================="
 
 # Create optimization directories
@@ -133,19 +133,19 @@ services:
       - ./nginx-lb.conf:/etc/nginx/nginx.conf
       - ../web/dist:/usr/share/nginx/html
     depends_on:
-      - secretly-1
-      - secretly-2
-      - secretly-3
+      - keyorix-1
+      - keyorix-2
+      - keyorix-3
     restart: unless-stopped
 
   # Application Instances
-  secretly-1:
+  keyorix-1:
     build: ../../server
     environment:
-      - SECRETLY_ENV=production
-      - SECRETLY_DB_URL=postgresql://secretly:${DB_PASSWORD}@postgres:5432/secretly
-      - SECRETLY_REDIS_URL=redis://redis:6379
-      - SECRETLY_INSTANCE_ID=1
+      - KEYORIX_ENV=production
+      - KEYORIX_DB_URL=postgresql://keyorix:${DB_PASSWORD}@postgres:5432/keyorix
+      - KEYORIX_REDIS_URL=redis://redis:6379
+      - KEYORIX_INSTANCE_ID=1
     volumes:
       - app-data-1:/data
     depends_on:
@@ -161,13 +161,13 @@ services:
           cpus: '0.5'
           memory: 256M
 
-  secretly-2:
+  keyorix-2:
     build: ../../server
     environment:
-      - SECRETLY_ENV=production
-      - SECRETLY_DB_URL=postgresql://secretly:${DB_PASSWORD}@postgres:5432/secretly
-      - SECRETLY_REDIS_URL=redis://redis:6379
-      - SECRETLY_INSTANCE_ID=2
+      - KEYORIX_ENV=production
+      - KEYORIX_DB_URL=postgresql://keyorix:${DB_PASSWORD}@postgres:5432/keyorix
+      - KEYORIX_REDIS_URL=redis://redis:6379
+      - KEYORIX_INSTANCE_ID=2
     volumes:
       - app-data-2:/data
     depends_on:
@@ -183,13 +183,13 @@ services:
           cpus: '0.5'
           memory: 256M
 
-  secretly-3:
+  keyorix-3:
     build: ../../server
     environment:
-      - SECRETLY_ENV=production
-      - SECRETLY_DB_URL=postgresql://secretly:${DB_PASSWORD}@postgres:5432/secretly
-      - SECRETLY_REDIS_URL=redis://redis:6379
-      - SECRETLY_INSTANCE_ID=3
+      - KEYORIX_ENV=production
+      - KEYORIX_DB_URL=postgresql://keyorix:${DB_PASSWORD}@postgres:5432/keyorix
+      - KEYORIX_REDIS_URL=redis://redis:6379
+      - KEYORIX_INSTANCE_ID=3
     volumes:
       - app-data-3:/data
     depends_on:
@@ -209,8 +209,8 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      - POSTGRES_DB=secretly
-      - POSTGRES_USER=secretly
+      - POSTGRES_DB=keyorix
+      - POSTGRES_USER=keyorix
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
     volumes:
@@ -230,8 +230,8 @@ services:
   postgres-replica:
     image: postgres:15-alpine
     environment:
-      - POSTGRES_DB=secretly
-      - POSTGRES_USER=secretly
+      - POSTGRES_DB=keyorix
+      - POSTGRES_USER=keyorix
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - PGUSER=postgres
     volumes:
@@ -361,11 +361,11 @@ http {
     limit_req_zone $binary_remote_addr zone=auth:10m rate=1r/s;
 
     # Upstream servers
-    upstream secretly_backend {
+    upstream keyorix_backend {
         least_conn;
-        server secretly-1:8080 max_fails=3 fail_timeout=30s;
-        server secretly-2:8080 max_fails=3 fail_timeout=30s;
-        server secretly-3:8080 max_fails=3 fail_timeout=30s;
+        server keyorix-1:8080 max_fails=3 fail_timeout=30s;
+        server keyorix-2:8080 max_fails=3 fail_timeout=30s;
+        server keyorix-3:8080 max_fails=3 fail_timeout=30s;
         
         # Health checks
         keepalive 32;
@@ -400,7 +400,7 @@ http {
         location /api/ {
             limit_req zone=api burst=20 nodelay;
             
-            proxy_pass http://secretly_backend;
+            proxy_pass http://keyorix_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -418,7 +418,7 @@ http {
         location /api/auth/ {
             limit_req zone=auth burst=5 nodelay;
             
-            proxy_pass http://secretly_backend;
+            proxy_pass http://keyorix_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -431,13 +431,13 @@ http {
 
         # Health check endpoint
         location /health {
-            proxy_pass http://secretly_backend;
+            proxy_pass http://keyorix_backend;
             access_log off;
         }
 
         # Swagger documentation
         location /swagger/ {
-            proxy_pass http://secretly_backend;
+            proxy_pass http://keyorix_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -459,7 +459,7 @@ log_info "Creating auto-scaling capabilities..."
 cat > optimization/scaling/auto-scale.sh << 'EOF'
 #!/bin/bash
 
-# Auto-scaling script for Secretly
+# Auto-scaling script for Keyorix
 # Monitors system metrics and scales services automatically
 
 # Configuration
@@ -481,7 +481,7 @@ get_metrics() {
     MEMORY_USAGE=$(docker stats --no-stream --format "table {{.MemPerc}}" | grep -v MEM | sed 's/%//' | awk '{sum+=$1} END {print sum/NR}')
     
     # Get current instance count
-    CURRENT_INSTANCES=$(docker-compose ps -q secretly-* | wc -l)
+    CURRENT_INSTANCES=$(docker-compose ps -q keyorix-* | wc -l)
     
     echo "Current metrics: CPU=${CPU_USAGE}%, Memory=${MEMORY_USAGE}%, Instances=${CURRENT_INSTANCES}"
 }
@@ -490,10 +490,10 @@ get_metrics() {
 scale_up() {
     if [ $CURRENT_INSTANCES -lt $MAX_INSTANCES ]; then
         NEW_INSTANCE=$((CURRENT_INSTANCES + 1))
-        echo "Scaling up: Adding secretly-${NEW_INSTANCE}"
+        echo "Scaling up: Adding keyorix-${NEW_INSTANCE}"
         
         # Add new service to docker-compose
-        docker-compose up -d --scale secretly=${NEW_INSTANCE}
+        docker-compose up -d --scale keyorix=${NEW_INSTANCE}
         
         # Update load balancer configuration
         update_load_balancer
@@ -508,10 +508,10 @@ scale_up() {
 scale_down() {
     if [ $CURRENT_INSTANCES -gt $MIN_INSTANCES ]; then
         NEW_INSTANCE=$((CURRENT_INSTANCES - 1))
-        echo "Scaling down: Removing secretly-${CURRENT_INSTANCES}"
+        echo "Scaling down: Removing keyorix-${CURRENT_INSTANCES}"
         
         # Remove instance from docker-compose
-        docker-compose up -d --scale secretly=${NEW_INSTANCE}
+        docker-compose up -d --scale keyorix=${NEW_INSTANCE}
         
         # Update load balancer configuration
         update_load_balancer
@@ -567,8 +567,8 @@ cat > optimization/monitoring/performance-dashboard.json << 'EOF'
 {
   "dashboard": {
     "id": null,
-    "title": "Secretly Performance Dashboard",
-    "tags": ["secretly", "performance"],
+    "title": "Keyorix Performance Dashboard",
+    "tags": ["keyorix", "performance"],
     "timezone": "browser",
     "panels": [
       {
@@ -650,7 +650,7 @@ cat > optimization/monitoring/performance-dashboard.json << 'EOF'
         "type": "stat",
         "targets": [
           {
-            "expr": "count(up{job=\"secretly\"})",
+            "expr": "count(up{job=\"keyorix\"})",
             "legendFormat": "Active instances"
           }
         ]
@@ -668,7 +668,7 @@ EOF
 # Create caching optimization
 log_info "Setting up caching optimization..."
 cat > optimization/caching/redis-config.conf << 'EOF'
-# Redis Configuration for Secretly Caching
+# Redis Configuration for Keyorix Caching
 
 # Memory optimization
 maxmemory 512mb
@@ -709,7 +709,7 @@ log_info "Creating performance testing tools..."
 cat > optimization/performance/load-test.sh << 'EOF'
 #!/bin/bash
 
-# Load testing script for Secretly
+# Load testing script for Keyorix
 # Tests system performance under various load conditions
 
 # Configuration
@@ -718,7 +718,7 @@ CONCURRENT_USERS=50
 TEST_DURATION=300  # 5 minutes
 RAMP_UP_TIME=60    # 1 minute
 
-echo "🚀 Starting Secretly Load Test"
+echo "🚀 Starting Keyorix Load Test"
 echo "=============================="
 
 # Test 1: Health check endpoint
@@ -754,10 +754,10 @@ fi
 
 # Test 4: Database performance test
 echo "Test 4: Database Performance Test"
-if [ -f "./secretly" ]; then
+if [ -f "./keyorix" ]; then
     echo "Testing database operations..."
-    time ./secretly secret create "load-test-$(date +%s)" "test-value" --config secretly-simple.yaml
-    time ./secretly secret list --config secretly-simple.yaml > /dev/null
+    time ./keyorix secret create "load-test-$(date +%s)" "test-value" --config keyorix-simple.yaml
+    time ./keyorix secret list --config keyorix-simple.yaml > /dev/null
 fi
 
 echo "Load testing completed!"

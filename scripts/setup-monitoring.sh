@@ -5,7 +5,7 @@
 
 set -e
 
-echo "📊 Setting Up Advanced Monitoring for Secretly"
+echo "📊 Setting Up Advanced Monitoring for Keyorix"
 echo "=============================================="
 
 # Colors
@@ -44,10 +44,10 @@ alerting:
           - alertmanager:9093
 
 scrape_configs:
-  # Secretly application metrics
-  - job_name: 'secretly-app'
+  # Keyorix application metrics
+  - job_name: 'keyorix-app'
     static_configs:
-      - targets: ['secretly:8080']
+      - targets: ['keyorix:8080']
     metrics_path: '/metrics'
     scrape_interval: 10s
 
@@ -80,17 +80,17 @@ EOF
 # Create Prometheus alert rules
 cat > monitoring/prometheus/alert_rules.yml << 'EOF'
 groups:
-  - name: secretly_alerts
+  - name: keyorix_alerts
     rules:
       # Application health alerts
-      - alert: SecretlyAppDown
-        expr: up{job="secretly-app"} == 0
+      - alert: KeyorixAppDown
+        expr: up{job="keyorix-app"} == 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Secretly application is down"
-          description: "The Secretly application has been down for more than 1 minute."
+          summary: "Keyorix application is down"
+          description: "The Keyorix application has been down for more than 1 minute."
 
       - alert: HighResponseTime
         expr: http_request_duration_seconds{quantile="0.95"} > 1
@@ -164,14 +164,14 @@ datasources:
     editable: true
 EOF
 
-# Create Grafana dashboard for Secretly
+# Create Grafana dashboard for Keyorix
 log_info "Creating Grafana dashboards..."
-cat > monitoring/grafana/dashboards/secretly-dashboard.json << 'EOF'
+cat > monitoring/grafana/dashboards/keyorix-dashboard.json << 'EOF'
 {
   "dashboard": {
     "id": null,
-    "title": "Secretly - Secret Management System",
-    "tags": ["secretly", "secrets", "security"],
+    "title": "Keyorix - Secret Management System",
+    "tags": ["keyorix", "secrets", "security"],
     "timezone": "browser",
     "panels": [
       {
@@ -180,7 +180,7 @@ cat > monitoring/grafana/dashboards/secretly-dashboard.json << 'EOF'
         "type": "stat",
         "targets": [
           {
-            "expr": "up{job=\"secretly-app\"}",
+            "expr": "up{job=\"keyorix-app\"}",
             "legendFormat": "App Status"
           }
         ],
@@ -274,7 +274,7 @@ log_info "Setting up Alertmanager..."
 cat > monitoring/alertmanager/alertmanager.yml << 'EOF'
 global:
   smtp_smarthost: 'localhost:587'
-  smtp_from: 'alerts@secretly.local'
+  smtp_from: 'alerts@keyorix.local'
 
 route:
   group_by: ['alertname']
@@ -293,7 +293,7 @@ receivers:
   - name: 'email-alerts'
     email_configs:
       - to: 'admin@company.com'
-        subject: 'Secretly Alert: {{ .GroupLabels.alertname }}'
+        subject: 'Keyorix Alert: {{ .GroupLabels.alertname }}'
         body: |
           {{ range .Alerts }}
           Alert: {{ .Annotations.summary }}
@@ -331,7 +331,7 @@ services:
       - '--storage.tsdb.retention.time=200h'
       - '--web.enable-lifecycle'
     networks:
-      - secretly-network
+      - keyorix-network
     restart: unless-stopped
 
   # Grafana for visualization
@@ -349,7 +349,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin123
       - GF_USERS_ALLOW_SIGN_UP=false
     networks:
-      - secretly-network
+      - keyorix-network
     restart: unless-stopped
 
   # Alertmanager for alert handling
@@ -365,7 +365,7 @@ services:
       - '--storage.path=/alertmanager'
       - '--web.external-url=http://localhost:9093'
     networks:
-      - secretly-network
+      - keyorix-network
     restart: unless-stopped
 
   # Node Exporter for system metrics
@@ -384,7 +384,7 @@ services:
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     networks:
-      - secretly-network
+      - keyorix-network
     restart: unless-stopped
 
   # PostgreSQL Exporter
@@ -394,9 +394,9 @@ services:
     ports:
       - "9187:9187"
     environment:
-      - DATA_SOURCE_NAME=postgresql://secretly:secretly@postgres:5432/secretly?sslmode=disable
+      - DATA_SOURCE_NAME=postgresql://keyorix:keyorix@postgres:5432/keyorix?sslmode=disable
     networks:
-      - secretly-network
+      - keyorix-network
     restart: unless-stopped
     depends_on:
       - postgres
@@ -410,7 +410,7 @@ services:
     environment:
       - REDIS_ADDR=redis://redis:6379
     networks:
-      - secretly-network
+      - keyorix-network
     restart: unless-stopped
     depends_on:
       - redis
@@ -420,7 +420,7 @@ volumes:
   grafana_data:
 
 networks:
-  secretly-network:
+  keyorix-network:
     external: true
 EOF
 
@@ -432,7 +432,7 @@ cat > scripts/health-check.sh << 'EOF'
 # Comprehensive Health Check Script
 # Monitors all services and sends alerts if issues are detected
 
-echo "🏥 Secretly System Health Check"
+echo "🏥 Keyorix System Health Check"
 echo "==============================="
 
 # Colors
@@ -464,7 +464,7 @@ check_service() {
 }
 
 # Check main application
-check_service "Secretly App" "http://localhost:8080/health" "OK"
+check_service "Keyorix App" "http://localhost:8080/health" "OK"
 
 # Check web dashboard
 check_service "Web Dashboard" "http://localhost:8080/" "html"
@@ -480,7 +480,7 @@ check_service "Grafana" "http://localhost:3001/api/health" "ok"
 
 # Check database connectivity
 echo -n "Checking Database... "
-if docker-compose exec -T postgres pg_isready -U secretly > /dev/null 2>&1; then
+if docker-compose exec -T postgres pg_isready -U keyorix > /dev/null 2>&1; then
     echo -e "${GREEN}✅ Connected${NC}"
 else
     echo -e "${RED}❌ Connection failed${NC}"

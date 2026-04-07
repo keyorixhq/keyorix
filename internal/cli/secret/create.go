@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/cli/common"
-	"github.com/secretlyhq/secretly/internal/core"
+	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

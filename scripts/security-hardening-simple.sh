@@ -29,7 +29,7 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-echo "🔒 Secretly Security Hardening (Simplified)"
+echo "🔒 Keyorix Security Hardening (Simplified)"
 echo "============================================="
 
 # Create security directories

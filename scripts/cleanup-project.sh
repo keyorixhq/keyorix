@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Secretly Project Cleanup Script
+# Keyorix Project Cleanup Script
 # This script removes binary executables, build artifacts, and temporary files
 
 set -e
 
-echo "🧹 Starting Secretly Project Cleanup"
+echo "🧹 Starting Keyorix Project Cleanup"
 
 # Colors for output
 RED='\033[0;31m'
@@ -75,26 +75,26 @@ log_info "🗑️  Removing Binary Executables"
 echo "================================"
 
 # Remove main binary executables
-safe_remove "./secretly" "main CLI binary"
-safe_remove "./secretly-server" "main server binary"
-safe_remove "./secretly-test" "test binary"
-safe_remove "./server/secretly-server" "server binary"
-safe_remove "./cmd/secretly" "CLI binary"
-safe_remove "./cmd/secretly-server" "server binary"
+safe_remove "./keyorix" "main CLI binary"
+safe_remove "./keyorix-server" "main server binary"
+safe_remove "./keyorix-test" "test binary"
+safe_remove "./server/keyorix-server" "server binary"
+safe_remove "./cmd/keyorix" "CLI binary"
+safe_remove "./cmd/keyorix-server" "server binary"
 
-# Find and remove any other secretly binaries
-find_and_remove "secretly" "binary executables"
-find_and_remove "secretly-*" "binary executables with prefix"
+# Find and remove any other keyorix binaries
+find_and_remove "keyorix" "binary executables"
+find_and_remove "keyorix-*" "binary executables with prefix"
 
 echo ""
 log_info "🗄️  Removing Database Files"
 echo "============================"
 
 # Remove database files
-safe_remove "./secretly.db" "main database file"
-safe_remove "./data/secretly.db" "data directory database"
-safe_remove "./server/secretly.db" "server database"
-safe_remove "./test-secretly.db" "test database"
+safe_remove "./keyorix.db" "main database file"
+safe_remove "./data/keyorix.db" "data directory database"
+safe_remove "./server/keyorix.db" "server database"
+safe_remove "./test-keyorix.db" "test database"
 
 # Find and remove other database files
 find_and_remove "*.db" "database files"
@@ -106,7 +106,7 @@ log_info "📝 Removing Log Files"
 echo "====================="
 
 # Remove log files
-safe_remove "./secretly.log" "main log file"
+safe_remove "./keyorix.log" "main log file"
 safe_remove "./logs/" "logs directory"
 safe_remove "./server/logs/" "server logs directory"
 
@@ -195,7 +195,7 @@ echo "==================================="
 # Remove generated/temporary config files (keep templates)
 safe_remove "./test-config.yaml" "test configuration"
 safe_remove "./config.yaml" "temporary config"
-safe_remove "./secretly-config.yaml" "temporary config"
+safe_remove "./keyorix-config.yaml" "temporary config"
 
 echo ""
 log_info "🔍 Removing IDE and Editor Files"
@@ -237,7 +237,7 @@ fi
 
 # Show remaining files that might be artifacts
 log_info "Checking for remaining potential artifacts..."
-REMAINING=$(find . -type f \( -name "secretly*" -o -name "*.db" -o -name "*.log" \) -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./.kiro/*" 2>/dev/null | head -10)
+REMAINING=$(find . -type f \( -name "keyorix*" -o -name "*.db" -o -name "*.log" \) -not -path "./.git/*" -not -path "./node_modules/*" -not -path "./.kiro/*" 2>/dev/null | head -10)
 
 if [ -n "$REMAINING" ]; then
     log_warning "Found potential remaining artifacts:"

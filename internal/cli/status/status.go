@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/cli/common"
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +28,7 @@ var PingCmd = &cobra.Command{
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	// Load configuration
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		fmt.Printf("⚠️  No configuration found, using defaults\n")
 		cfg = &config.Config{
@@ -85,7 +85,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 func runPing(cmd *cobra.Command, args []string) error {
 	// Load configuration
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}

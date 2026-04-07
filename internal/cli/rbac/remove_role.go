@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -49,7 +49,7 @@ func runRemoveRole(cmd *cobra.Command, args []string) error {
 	storage := local.NewLocalStorage(db)
 
 	// Create core service
-	coreService := core.NewSecretlyCore(storage)
+	coreService := core.NewKeyorixCore(storage)
 
 	// Use core service to remove role
 	ctx := context.Background()

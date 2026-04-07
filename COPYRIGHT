@@ -1,0 +1,39 @@
+# Copyright Notice
+
+## Keyorix - Enterprise Secret Management System
+
+Copyright (C) 2025 Keyorix Contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+## Network Copyleft Notice
+
+This software is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+This means that if you run a modified version of this software on a server and let
+others interact with it there, you must provide the source code of your modified
+version to those users.
+
+## Contact Information
+
+For questions about licensing, please contact the project maintainers.
+
+## Third-Party Components
+
+This project may include third-party components with their own licenses.
+See individual files and the `go.mod` file for details on dependencies.
+
+## Contributing
+
+By contributing to this project, you agree that your contributions will be
+licensed under the same AGPL-3.0 license.

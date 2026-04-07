@@ -1,8 +1,8 @@
 {
     "Welcome": {
         "description": "Welcome message",
-        "one": "Добро пожаловать в Secretly!",
-        "other": "Добро пожаловать в Secretly!"
+        "one": "Добро пожаловать в Keyorix!",
+        "other": "Добро пожаловать в Keyorix!"
     },
     "Goodbye": {
         "description": "Goodbye message",

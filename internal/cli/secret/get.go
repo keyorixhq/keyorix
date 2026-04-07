@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -29,9 +29,9 @@ var getCmd = &cobra.Command{
 	Long: `Retrieve a secret by ID or name.
 
 Examples:
-  secretly secret get --id 123
-  secretly secret get --name "db-password" --namespace 1 --zone 1 --environment 1
-  secretly secret get --id 123 --show-value  # Show decrypted value`,
+  keyorix secret get --id 123
+  keyorix secret get --name "db-password" --namespace 1 --zone 1 --environment 1
+  keyorix secret get --id 123 --show-value  # Show decrypted value`,
 	RunE: runGet,
 }
 
@@ -50,7 +50,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load configuration
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -68,7 +68,7 @@ func runGet(cmd *cobra.Command, args []string) error {
 
 	// Initialize storage and core service
 	storage := local.NewLocalStorage(db)
-	service := core.NewSecretlyCore(storage)
+	service := core.NewKeyorixCore(storage)
 
 	ctx := context.Background()
 	var secret *models.SecretNode

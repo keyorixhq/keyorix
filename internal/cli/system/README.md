@@ -19,7 +19,6 @@ secretly system init --interactive
 secretly system init --encryption
 secretly system init --database
 secretly system init --logging
-secretly system init --telemetry
 
 # Use custom config file path
 secretly system init --config ./my-config.yaml
@@ -33,8 +32,7 @@ secretly system init --force
 2. **Encryption Setup**: Generates KEK/DEK keys with secure permissions
 3. **Database Setup**: Creates SQLite database file
 4. **Logging Setup**: Creates log files and directories
-5. **Telemetry Setup**: Sets up telemetry logging (if enabled)
-6. **TLS Setup**: Validates TLS configuration (certificates not auto-generated)
+5. **TLS Setup**: Validates TLS configuration (certificates not auto-generated)
 7. **Permission Validation**: Ensures all files have correct permissions
 
 ### `secretly system validate`
@@ -88,7 +86,6 @@ After running `secretly system init`, your directory should contain:
 │   └── dek.key            # Data Encryption Key (0600)
 ├── secretly.db            # SQLite database (0600)
 ├── secretly.log           # Application logs (0644)
-├── telemetry.log          # Telemetry logs (0644, if enabled)
 └── certs/                 # TLS certificates (if enabled)
     ├── server.crt         # TLS certificate (0600)
     └── server.key         # TLS private key (0600)
@@ -102,7 +99,7 @@ The system uses `secretly_template.yaml` as the base template for generating con
 - **Server Configuration**: HTTP and gRPC server settings
 - **Storage Configuration**: Database and encryption settings
 - **Security Policies**: File permission and security controls
-- **Operational Settings**: Telemetry, logging, soft delete, purge
+- **Operational Settings**: Logging, soft delete, purge
 
 ## Security Features
 
@@ -131,7 +128,6 @@ The interactive mode (`--interactive`) provides a guided setup experience:
 2. **Encryption Settings**: Enable/disable encryption and key paths
 3. **Database Configuration**: Database file location
 4. **Security Policies**: Permission checking and auto-fix settings
-5. **Telemetry Settings**: Anonymous usage reporting
 
 ## Error Handling
 

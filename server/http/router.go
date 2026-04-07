@@ -10,14 +10,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/server/http/handlers"
-	customMiddleware "github.com/secretlyhq/secretly/server/middleware"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/http/handlers"
+	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // NewRouter creates and configures the HTTP router
-func NewRouter(cfg *config.Config, coreService *core.SecretlyCore) (http.Handler, error) {
+func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler, error) {
 	r := chi.NewRouter()
 
 	// Apply middleware
@@ -50,6 +50,44 @@ func NewRouter(cfg *config.Config, coreService *core.SecretlyCore) (http.Handler
 
 	// Health check endpoint
 	r.Get("/health", handlers.HealthCheck)
+	
+	// Status page endpoint - serves stylish status dashboard
+	r.Get("/status", func(w http.ResponseWriter, r *http.Request) {
+		webDir := getWebAssetsPath(cfg)
+		if webDir != "" {
+			statusPath := filepath.Join(webDir, "status.html")
+			if _, err := os.Stat(statusPath); err == nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.Header().Set("Cache-Control", "no-cache")
+				http.ServeFile(w, r, statusPath)
+				return
+			}
+		}
+		// Fallback to JSON health check if status.html not found
+		handlers.HealthCheck(w, r)
+	})
+
+	// Test route
+	r.Get("/test-route", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("Test route working"))
+	})
+
+	// Spanish status page endpoint
+	r.Get("/status-es", func(w http.ResponseWriter, r *http.Request) {
+		webDir := getWebAssetsPath(cfg)
+		if webDir != "" {
+			statusPath := filepath.Join(webDir, "status-es.html")
+			if _, err := os.Stat(statusPath); err == nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.Header().Set("Cache-Control", "no-cache")
+				http.ServeFile(w, r, statusPath)
+				return
+			}
+		}
+		// Fallback to JSON health check if status-es.html not found
+		handlers.HealthCheck(w, r)
+	})
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {

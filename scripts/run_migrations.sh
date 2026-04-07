@@ -5,7 +5,7 @@
 
 set -e
 
-DB_FILE="${1:-secretly.db}"
+DB_FILE="${1:-keyorix.db}"
 MIGRATIONS_DIR="migrations"
 DATABASE_URL="sqlite3://$DB_FILE"
 

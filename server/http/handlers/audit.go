@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/secretlyhq/secretly/server/middleware"
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // AuditLog represents an audit log entry

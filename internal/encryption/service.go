@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 // Service provides high-level encryption operations for the application

@@ -5,7 +5,7 @@
 
 set -e
 
-echo "🔒 Secretly Security Hardening"
+echo "🔒 Keyorix Security Hardening"
 echo "==============================="
 
 # Colors
@@ -42,7 +42,7 @@ prompt = no
 C = US
 ST = CA
 L = San Francisco
-O = Secretly
+O = Keyorix
 OU = Security Team
 CN = localhost
 
@@ -68,7 +68,7 @@ log_info "Creating security policies..."
 
 # Content Security Policy
 cat > security/policies/csp.conf << 'EOF'
-# Content Security Policy for Secretly
+# Content Security Policy for Keyorix
 default-src 'self';
 script-src 'self' 'unsafe-inline' 'unsafe-eval';
 style-src 'self' 'unsafe-inline';
@@ -135,8 +135,8 @@ http {
     ssl_stapling on;
     ssl_stapling_verify on;
 
-    upstream secretly_backend {
-        server secretly:8080;
+    upstream keyorix_backend {
+        server keyorix:8080;
         keepalive 32;
     }
 
@@ -161,7 +161,7 @@ http {
         # API rate limiting
         location /api/ {
             limit_req zone=api burst=20 nodelay;
-            proxy_pass http://secretly_backend;
+            proxy_pass http://keyorix_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -171,7 +171,7 @@ http {
         # Login rate limiting
         location /api/auth/login {
             limit_req zone=login burst=5 nodelay;
-            proxy_pass http://secretly_backend;
+            proxy_pass http://keyorix_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -180,7 +180,7 @@ http {
 
         # Static files with security headers
         location / {
-            proxy_pass http://secretly_backend;
+            proxy_pass http://keyorix_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -189,7 +189,7 @@ http {
 
         # Health check (no rate limiting)
         location /health {
-            proxy_pass http://secretly_backend/health;
+            proxy_pass http://keyorix_backend/health;
             access_log off;
         }
 
@@ -211,9 +211,9 @@ cat > scripts/security-scan.sh << 'EOF'
 #!/bin/bash
 
 # Security Scanning Script
-# Runs various security scans on the Secretly application
+# Runs various security scans on the Keyorix application
 
-echo "🔍 Security Scanning for Secretly"
+echo "🔍 Security Scanning for Keyorix"
 echo "================================="
 
 # Colors
@@ -280,7 +280,7 @@ fi
 log_info "Running Docker security scan..."
 if command -v docker &> /dev/null; then
     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-        -v $(pwd):/app aquasec/trivy image secretly:latest > "$SCAN_DIR/docker-scan.txt" 2>&1 || true
+        -v $(pwd):/app aquasec/trivy image keyorix:latest > "$SCAN_DIR/docker-scan.txt" 2>&1 || true
     log_success "Docker security scan completed"
 fi
 
@@ -376,7 +376,7 @@ chmod +x scripts/security-scan.sh
 # Create compliance checklist
 log_info "Creating compliance checklist..."
 cat > security/compliance/security-checklist.md << 'EOF'
-# Secretly Security Compliance Checklist
+# Keyorix Security Compliance Checklist
 
 ## Authentication & Authorization
 - [x] Strong password policies enforced
@@ -441,9 +441,9 @@ cat > docker-compose.secure.yml << 'EOF'
 version: '3.8'
 
 services:
-  secretly:
+  keyorix:
     environment:
-      - SECRETLY_ENV=production
+      - KEYORIX_ENV=production
       - ENABLE_HTTPS=true
       - SSL_CERT_PATH=/app/ssl/cert.pem
       - SSL_KEY_PATH=/app/ssl/key.pem

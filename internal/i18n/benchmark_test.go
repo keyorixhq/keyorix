@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 // BenchmarkInitialize benchmarks the initialization process

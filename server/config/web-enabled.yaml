@@ -1,4 +1,4 @@
-# Secretly Configuration with Web Dashboard
+# Keyorix Configuration with Web Dashboard
 # This configuration enables both the API server and web dashboard
 
 environment: "development"  # development, staging, production
@@ -43,11 +43,16 @@ server:
       burst: 100
 
 storage:
-  type: "local"
+  type: "local"  # options: local (SQLite), postgres, remote
   database:
-    path: "./data/secretly.db"
+    path: "./data/keyorix.db"
+    # PostgreSQL (recommended for production):
+    # type: postgres
+    # dsn: "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
+    # password: ""  # use KEYORIX_DB_PASSWORD environment variable instead
     max_open_conns: 25
     max_idle_conns: 5
+    conn_max_lifetime_minutes: 30
   encryption:
     enabled: true
     use_kek: false
@@ -61,12 +66,6 @@ secrets:
     max_chunks_per_secret: 100
   limits:
     max_secrets_per_user: 1000
-
-telemetry:
-  enabled: false
-  endpoint: ""
-  log_file: "./logs/telemetry.log"
-  api_key: ""
 
 security:
   enable_file_permission_check: true

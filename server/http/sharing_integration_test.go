@@ -2,7 +2,6 @@ package http
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,11 +9,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
+
+// newSharingTestCore creates a minimal *core.KeyorixCore for sharing tests.
+func newSharingTestCore(t *testing.T) *core.KeyorixCore {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	return core.NewKeyorixCore(local.NewLocalStorage(db))
+}
 
 // TestSharingHTTPIntegration tests the complete HTTP API sharing workflow
 func TestSharingHTTPIntegration(t *testing.T) {
@@ -35,7 +46,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 	}
 
 	// Create router
-	router, err := NewRouter(cfg)
+	router, err := NewRouter(cfg, newSharingTestCore(t))
 	require.NoError(t, err)
 
 	// Create test server
@@ -307,10 +318,10 @@ func TestSharingHTTPIntegration(t *testing.T) {
 		// Step 1: Create a secret for group sharing
 		t.Run("Create Secret for Group", func(t *testing.T) {
 			secretData := map[string]interface{}{
-				"name":        "group-sharing-test-secret",
-				"value":       "group-sharing-secret-value",
-				"namespace":   "test",
-				"type":        "password",
+				"name":      "group-sharing-test-secret",
+				"value":     "group-sharing-secret-value",
+				"namespace": "test",
+				"type":      "password",
 				"metadata": map[string]string{
 					"test": "group-sharing",
 				},
@@ -716,7 +727,7 @@ func TestSharingHTTPConcurrency(t *testing.T) {
 		},
 	}
 
-	router, err := NewRouter(cfg)
+	router, err := NewRouter(cfg, newSharingTestCore(t))
 	require.NoError(t, err)
 
 	server := httptest.NewServer(router)

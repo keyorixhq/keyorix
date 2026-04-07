@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # Production Deployment Script
-# Deploys the complete Secretly system using Docker Compose
+# Deploys the complete Keyorix system using Docker Compose
 
 set -e
 
-echo "🚀 Secretly Production Deployment"
+echo "🚀 Keyorix Production Deployment"
 echo "=================================="
 
 # Colors
@@ -50,19 +50,19 @@ log_success "Docker is running"
 log_info "Creating production environment configuration..."
 
 cat > .env.production << 'EOF'
-# Secretly Production Environment Configuration
+# Keyorix Production Environment Configuration
 
 # Application
-SECRETLY_ENV=production
-SECRETLY_DOMAIN=localhost
-SECRETLY_PORT=8080
+KEYORIX_ENV=production
+KEYORIX_DOMAIN=localhost
+KEYORIX_PORT=8080
 
 # Database
 DB_HOST=postgres
 DB_PORT=5432
-DB_NAME=secretly
-DB_USER=secretly
-DB_PASSWORD=secretly_prod_password_change_me
+DB_NAME=keyorix
+DB_USER=keyorix
+DB_PASSWORD=keyorix_prod_password_change_me
 
 # Redis
 REDIS_PASSWORD=redis_password_change_me
@@ -77,8 +77,8 @@ GRAFANA_ADMIN_PASSWORD=admin_password_change_me
 
 # SSL/TLS (set to true for production)
 ENABLE_SSL=false
-SSL_CERT_PATH=/etc/ssl/certs/secretly.crt
-SSL_KEY_PATH=/etc/ssl/private/secretly.key
+SSL_CERT_PATH=/etc/ssl/certs/keyorix.crt
+SSL_KEY_PATH=/etc/ssl/private/keyorix.key
 EOF
 
 log_success "Production environment file created: .env.production"
@@ -89,7 +89,7 @@ log_info "Setting up Docker secrets..."
 mkdir -p secrets
 
 # Generate secure passwords for production
-echo "secretly_prod_$(openssl rand -hex 16)" > secrets/db_password.txt
+echo "keyorix_prod_$(openssl rand -hex 16)" > secrets/db_password.txt
 echo "grafana_admin_$(openssl rand -hex 12)" > secrets/grafana_password.txt
 
 log_success "Docker secrets created"
@@ -101,17 +101,17 @@ cat > docker-compose.prod.yml << 'EOF'
 version: '3.8'
 
 services:
-  secretly:
+  keyorix:
     build:
       context: .
       dockerfile: server/Dockerfile
       target: production
     environment:
-      - SECRETLY_ENV=production
-      - SECRETLY_CONFIG_PATH=/app/config/production.yaml
+      - KEYORIX_ENV=production
+      - KEYORIX_CONFIG_PATH=/app/config/production.yaml
     volumes:
-      - secretly_data:/app/data
-      - secretly_logs:/app/logs
+      - keyorix_data:/app/data
+      - keyorix_logs:/app/logs
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -140,13 +140,13 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - nginx_logs:/var/log/nginx
     depends_on:
-      - secretly
+      - keyorix
     restart: unless-stopped
 
 volumes:
-  secretly_data:
+  keyorix_data:
     driver: local
-  secretly_logs:
+  keyorix_logs:
     driver: local
   postgres_data:
     driver: local
@@ -199,8 +199,8 @@ http {
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    upstream secretly_backend {
-        server secretly:8080;
+    upstream keyorix_backend {
+        server keyorix:8080;
     }
 
     server {
@@ -212,7 +212,7 @@ http {
 
         # For development, serve directly
         location / {
-            proxy_pass http://secretly_backend;
+            proxy_pass http://keyorix_backend;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -221,7 +221,7 @@ http {
 
         # Health check
         location /health {
-            proxy_pass http://secretly_backend/health;
+            proxy_pass http://keyorix_backend/health;
             access_log off;
         }
     }
@@ -235,7 +235,7 @@ http {
     #     ssl_certificate_key /etc/nginx/ssl/key.pem;
     #
     #     location / {
-    #         proxy_pass http://secretly_backend;
+    #         proxy_pass http://keyorix_backend;
     #         proxy_set_header Host $host;
     #         proxy_set_header X-Real-IP $remote_addr;
     #         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -287,7 +287,7 @@ for i in {1..30}; do
 done
 
 # Test web dashboard
-if curl -s http://localhost:8080/ | grep -q "Secretly\|html"; then
+if curl -s http://localhost:8080/ | grep -q "Keyorix\|html"; then
     log_success "Web dashboard is accessible"
 else
     log_warning "Web dashboard may need additional setup"
@@ -296,7 +296,7 @@ fi
 echo ""
 log_success "🎉 Production Deployment Complete!"
 echo ""
-echo "Your Secretly system is now running in production mode:"
+echo "Your Keyorix system is now running in production mode:"
 echo ""
 echo "🌐 Access Points:"
 echo "  - Web Dashboard: http://localhost:8080/"
@@ -304,7 +304,7 @@ echo "  - API Documentation: http://localhost:8080/swagger/"
 echo "  - Health Check: http://localhost:8080/health"
 echo ""
 echo "🐳 Docker Services:"
-echo "  - Secretly App: Full-stack application"
+echo "  - Keyorix App: Full-stack application"
 echo "  - PostgreSQL: Production database"
 echo "  - Nginx: Reverse proxy and load balancer"
 echo "  - Redis: Caching and session storage"

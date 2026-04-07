@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/secretlyhq/secretly/internal/storage/models"
-	"github.com/secretlyhq/secretly/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 func TestRemoveSelfFromShare_Success(t *testing.T) {
@@ -19,7 +19,7 @@ func TestRemoveSelfFromShare_Success(t *testing.T) {
 
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 
@@ -66,7 +66,7 @@ func TestRemoveSelfFromShare_ShareNotFound(t *testing.T) {
 
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 
@@ -105,7 +105,7 @@ func TestRemoveSelfFromShare_ValidationErrors(t *testing.T) {
 
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 
@@ -129,7 +129,7 @@ func TestRemoveSelfFromShare_AuditLogging(t *testing.T) {
 
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 

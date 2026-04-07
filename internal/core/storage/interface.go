@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // Storage defines the unified interface for data persistence operations

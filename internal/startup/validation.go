@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/securefiles"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
 const (
@@ -81,7 +81,7 @@ func validateFilePermissions(cfg *config.Config, result *ValidationResult) error
 	var files []securefiles.FilePermSpec
 
 	files = append(files, securefiles.FilePermSpec{
-		Path: filepath.Clean("secretly.yaml"),
+		Path: filepath.Clean("keyorix.yaml"),
 		Mode: 0600,
 	})
 

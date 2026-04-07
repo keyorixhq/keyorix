@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/securefiles"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -18,47 +18,44 @@ var (
 	initEncryption bool
 	initDatabase   bool
 	initLogging    bool
-	initTelemetry  bool
 	force          bool
 )
 
 var InitCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize Secretly system with config and keys",
-	Long: `Initialize the Secretly system by creating configuration files and setting up required components.
+	Short: "Initialize Keyorix system with config and keys",
+	Long: `Initialize the Keyorix system by creating configuration files and setting up required components.
 
 Supports selective initialization of different components:
-- Configuration file (secretly.yaml)
+- Configuration file (keyorix.yaml)
 - Encryption keys (KEK/DEK)
 - Database setup
 - Logging setup
-- Telemetry setup
 
 Examples:
-  secretly system init                    # Initialize all components
-  secretly system init --interactive     # Interactive setup wizard
-  secretly system init --encryption      # Initialize encryption only
-  secretly system init --force           # Overwrite existing files
-  secretly system init --config ./my.yaml # Custom config path`,
+  keyorix system init                    # Initialize all components
+  keyorix system init --interactive     # Interactive setup wizard
+  keyorix system init --encryption      # Initialize encryption only
+  keyorix system init --force           # Overwrite existing files
+  keyorix system init --config ./my.yaml # Custom config path`,
 	RunE: runInit,
 }
 
 func init() {
-	InitCmd.Flags().StringVar(&configPath, "config", "./secretly.yaml", "Path to output config file")
+	InitCmd.Flags().StringVar(&configPath, "config", "./keyorix.yaml", "Path to output config file")
 	InitCmd.Flags().BoolVar(&interactive, "interactive", false, "Launch interactive setup wizard")
 	InitCmd.Flags().BoolVar(&initAll, "all", true, "Initialize all components")
 	InitCmd.Flags().BoolVar(&initEncryption, "encryption", false, "Initialize encryption keys")
 	InitCmd.Flags().BoolVar(&initDatabase, "database", false, "Initialize database")
 	InitCmd.Flags().BoolVar(&initLogging, "logging", false, "Initialize logging")
-	InitCmd.Flags().BoolVar(&initTelemetry, "telemetry", false, "Initialize telemetry")
 	InitCmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files (dangerous)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	fmt.Println("🚀 Secretly System Initialization")
+	fmt.Println("🚀 Keyorix System Initialization")
 	fmt.Println("=================================")
 
-	if initEncryption || initDatabase || initLogging || initTelemetry {
+	if initEncryption || initDatabase || initLogging {
 		initAll = false
 	}
 
@@ -84,21 +81,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if initAll || initLogging {
-		if err := initializeLogging(cfg); err != nil {
+		if err := initializeLogging(); err != nil {
 			return fmt.Errorf("failed to initialize logging: %w", err)
 		}
 	}
 
-	if initAll || initTelemetry {
-		if err := initializeTelemetry(cfg); err != nil {
-			return fmt.Errorf("failed to initialize telemetry: %w", err)
-		}
-	}
-
-	fmt.Println("\n✅ Secretly system initialization completed successfully!")
+	fmt.Println("\n✅ Keyorix system initialization completed successfully!")
 	fmt.Printf("📋 Config file: %s\n", configPath)
-	fmt.Println("🔐 Run 'secretly encryption status' to check encryption setup")
-	fmt.Println("🛡️  Run 'secretly system audit' to validate file permissions")
+	fmt.Println("🔐 Run 'keyorix encryption status' to check encryption setup")
+	fmt.Println("🛡️  Run 'keyorix system audit' to validate file permissions")
 
 	return nil
 }
@@ -112,7 +103,7 @@ func generateConfigFile() error {
 		return nil
 	}
 
-	templateData, err := securefiles.SafeReadFile(".", "secretly_template.yaml")
+	templateData, err := securefiles.SafeReadFile(".", "keyorix_template.yaml")
 	if err != nil {
 		return fmt.Errorf("failed to read template file: %w", err)
 	}
@@ -149,26 +140,6 @@ func initializeDatabase(cfg *config.Config) error {
 	return nil
 }
 
-func initializeTelemetry(cfg *config.Config) error {
-	telemetryFile := filepath.Clean(cfg.Telemetry.LogFile)
-	if strings.Contains(telemetryFile, "..") {
-		return fmt.Errorf("invalid path for telemetry log: %s", telemetryFile)
-	}
-	if err := os.MkdirAll(filepath.Dir(telemetryFile), 0750); err != nil {
-		return fmt.Errorf("failed to create telemetry directory: %w", err)
-	}
-	if _, err := os.Stat(telemetryFile); os.IsNotExist(err) {
-		file, err := os.OpenFile(telemetryFile, os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
-			return fmt.Errorf("failed to create telemetry log file: %w", err)
-		}
-		if cerr := file.Close(); cerr != nil {
-			return fmt.Errorf("failed to close telemetry file: %w", cerr)
-		}
-	}
-	return nil
-}
-
 func initializeEncryption(cfg *config.Config) error {
 	kekDir := filepath.Dir(cfg.Storage.Encryption.KEKPath)
 	dekDir := filepath.Dir(cfg.Storage.Encryption.DEKPath)
@@ -181,8 +152,8 @@ func initializeEncryption(cfg *config.Config) error {
 	return nil
 }
 
-func initializeLogging(cfg *config.Config) error {
-	logPath := filepath.Clean("secretly.log")
+func initializeLogging() error {
+	logPath := filepath.Clean("keyorix.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0750); err != nil {
 		return fmt.Errorf("failed to create logging directory: %w", err)
 	}

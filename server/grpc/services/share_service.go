@@ -6,10 +6,10 @@ import (
 	"log"
 	"strings"
 
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/storage/models"
-	"github.com/secretlyhq/secretly/internal/utils/safeconv"
-	"github.com/secretlyhq/secretly/server/grpc/interceptors"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -18,12 +18,12 @@ import (
 
 // ShareGRPCService implements the gRPC share service
 type ShareGRPCService struct {
-	coreService *core.SecretlyCore
+	coreService *core.KeyorixCore
 	// TODO: Add UnimplementedShareServiceServer when proto is generated
 }
 
 // NewShareService creates a new share gRPC service
-func NewShareService(coreService *core.SecretlyCore) (*ShareGRPCService, error) {
+func NewShareService(coreService *core.KeyorixCore) (*ShareGRPCService, error) {
 	return &ShareGRPCService{
 		coreService: coreService,
 	}, nil

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/secretlyhq/secretly/internal/startup"
+	"github.com/keyorixhq/keyorix/internal/startup"
 )
 
 func main() {
@@ -45,7 +45,6 @@ func main() {
 		"keys/dek.key",     // Data Encryption Key
 		"secretly.db",      // SQLite database
 		"secretly.log",     // Application logs
-		"telemetry.log",    // Telemetry logs (if enabled)
 		"certs/server.crt", // TLS certificate (if TLS enabled)
 		"certs/server.key", // TLS private key (if TLS enabled)
 	}
@@ -98,7 +97,6 @@ func main() {
 		{"storage.database", "Database connection settings"},
 		{"storage.encryption", "Encryption key paths and settings"},
 		{"secrets", "Secret management limits and chunking"},
-		{"telemetry", "Anonymous usage telemetry"},
 		{"security", "File permission and security policies"},
 		{"soft_delete", "Soft delete and retention settings"},
 		{"purge", "Automatic cleanup scheduling"},

@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSecretlyCore_ShareSecretWithGroup(t *testing.T) {
+func TestKeyorixCore_ShareSecretWithGroup(t *testing.T) {
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -28,7 +28,7 @@ func TestSecretlyCore_ShareSecretWithGroup(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -71,7 +71,7 @@ func TestSecretlyCore_ShareSecretWithGroup(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ShareSecretWithGroup_ValidationError(t *testing.T) {
+func TestKeyorixCore_ShareSecretWithGroup_ValidationError(t *testing.T) {
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -84,7 +84,7 @@ func TestSecretlyCore_ShareSecretWithGroup_ValidationError(t *testing.T) {
 
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -152,10 +152,10 @@ func TestSecretlyCore_ShareSecretWithGroup_ValidationError(t *testing.T) {
 	}
 }
 
-func TestSecretlyCore_ShareSecretWithGroup_StorageError(t *testing.T) {
+func TestKeyorixCore_ShareSecretWithGroup_StorageError(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -179,10 +179,10 @@ func TestSecretlyCore_ShareSecretWithGroup_StorageError(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ListGroupShares(t *testing.T) {
+func TestKeyorixCore_ListGroupShares(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -205,7 +205,7 @@ func TestSecretlyCore_ListGroupShares(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ListGroupShares_ValidationError(t *testing.T) {
+func TestKeyorixCore_ListGroupShares_ValidationError(t *testing.T) {
 	// Initialize i18n for tests
 	cfg := &config.Config{
 		Locale: config.LocaleConfig{
@@ -218,7 +218,7 @@ func TestSecretlyCore_ListGroupShares_ValidationError(t *testing.T) {
 
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()

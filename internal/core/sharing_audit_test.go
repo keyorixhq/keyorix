@@ -5,16 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
-func TestSecretlyCore_LogShareCreated(t *testing.T) {
+func TestKeyorixCore_LogShareCreated(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -45,11 +45,11 @@ func TestSecretlyCore_LogShareCreated(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_LogShareUpdated(t *testing.T) {
+func TestKeyorixCore_LogShareUpdated(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -81,11 +81,11 @@ func TestSecretlyCore_LogShareUpdated(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_LogShareRevoked(t *testing.T) {
+func TestKeyorixCore_LogShareRevoked(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -115,11 +115,11 @@ func TestSecretlyCore_LogShareRevoked(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_LogSharedSecretAccessed(t *testing.T) {
+func TestKeyorixCore_LogSharedSecretAccessed(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -148,11 +148,11 @@ func TestSecretlyCore_LogSharedSecretAccessed(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_LogGroupShareCreated(t *testing.T) {
+func TestKeyorixCore_LogGroupShareCreated(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -183,11 +183,11 @@ func TestSecretlyCore_LogGroupShareCreated(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_LogGroupShareUpdated(t *testing.T) {
+func TestKeyorixCore_LogGroupShareUpdated(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -219,11 +219,11 @@ func TestSecretlyCore_LogGroupShareUpdated(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_LogGroupShareRevoked(t *testing.T) {
+func TestKeyorixCore_LogGroupShareRevoked(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime

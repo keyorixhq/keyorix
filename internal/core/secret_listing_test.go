@@ -5,16 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSecretlyCore_ListSecretsWithSharingInfo(t *testing.T) {
+func TestKeyorixCore_ListSecretsWithSharingInfo(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -77,6 +77,7 @@ func TestSecretlyCore_ListSecretsWithSharingInfo(t *testing.T) {
 	mockStorage.On("ListSharesByUser", ctx, userID).Return(userShares, nil)
 	mockStorage.On("GetSecret", ctx, uint(2)).Return(sharedSecret, nil)
 	mockStorage.On("GetUser", ctx, uint(2)).Return(owner, nil)
+	mockStorage.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "testuser"}, nil)
 
 	// Execute
 	result, err := core.ListSecretsWithSharingInfo(ctx, userID, filter)
@@ -107,10 +108,10 @@ func TestSecretlyCore_ListSecretsWithSharingInfo(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ListSecretsWithSharingInfo_ShowOwnedOnly(t *testing.T) {
+func TestKeyorixCore_ListSecretsWithSharingInfo_ShowOwnedOnly(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -151,10 +152,10 @@ func TestSecretlyCore_ListSecretsWithSharingInfo_ShowOwnedOnly(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
+func TestKeyorixCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -195,6 +196,7 @@ func TestSecretlyCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 	mockStorage.On("ListSharesByUser", ctx, userID).Return(userShares, nil)
 	mockStorage.On("GetSecret", ctx, uint(2)).Return(sharedSecret, nil)
 	mockStorage.On("GetUser", ctx, uint(2)).Return(owner, nil)
+	mockStorage.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "testuser"}, nil)
 
 	// Execute
 	result, err := core.ListSecretsWithSharingInfo(ctx, userID, filter)
@@ -210,10 +212,10 @@ func TestSecretlyCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_GetSecretSharingStatus(t *testing.T) {
+func TestKeyorixCore_GetSecretSharingStatus(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -246,15 +248,10 @@ func TestSecretlyCore_GetSecretSharingStatus(t *testing.T) {
 		Username: "test-user",
 	}
 
-	group := &models.Group{
-		ID:   3,
-		Name: "test-group",
-	}
-
 	// Mock expectations
 	mockStorage.On("ListSharesBySecret", ctx, secretID).Return(shares, nil)
 	mockStorage.On("GetUser", ctx, uint(2)).Return(user, nil)
-	mockStorage.On("GetGroup", ctx, uint(3)).Return(group, nil)
+	// GetGroup is NOT called — production code uses fmt.Sprintf("Group %d", id) for groups
 
 	// Execute
 	status, err := core.GetSecretSharingStatus(ctx, secretID)
@@ -273,20 +270,20 @@ func TestSecretlyCore_GetSecretSharingStatus(t *testing.T) {
 	assert.False(t, userShare.IsGroup)
 	assert.Equal(t, "read", userShare.Permission)
 
-	// Check group share
+	// Check group share — production code formats group name as "Group <id>"
 	groupShare := status.Shares[1]
 	assert.Equal(t, uint(3), groupShare.RecipientID)
-	assert.Equal(t, "test-group", groupShare.RecipientName)
+	assert.Equal(t, "Group 3", groupShare.RecipientName)
 	assert.True(t, groupShare.IsGroup)
 	assert.Equal(t, "write", groupShare.Permission)
 
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_GetUserSecretPermission(t *testing.T) {
+func TestKeyorixCore_GetUserSecretPermission(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()

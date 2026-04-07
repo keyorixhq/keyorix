@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/secretlyhq/secretly/internal/config"
+	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 func TestInitialize(t *testing.T) {
@@ -132,7 +132,7 @@ func TestLocalize(t *testing.T) {
 			name:         "existing message",
 			messageID:    "Welcome",
 			templateData: nil,
-			expected:     "Welcome to Secretly!",
+			expected:     "Welcome to Keyorix!",
 		},
 		{
 			name:         "non-existing message returns messageID",
@@ -197,7 +197,7 @@ func TestMustLocalize(t *testing.T) {
 
 	t.Run("existing message", func(t *testing.T) {
 		result := localizer.MustLocalize("Welcome", nil)
-		expected := "Welcome to Secretly!"
+		expected := "Welcome to Keyorix!"
 		if result != expected {
 			t.Errorf("MustLocalize() = %v, expected %v", result, expected)
 		}
@@ -245,7 +245,7 @@ func TestSetLanguage(t *testing.T) {
 
 	// Test translation in new language
 	result := localizer.Localize("Welcome", nil)
-	expected := "Добро пожаловать в Secretly!"
+	expected := "Добро пожаловать в Keyorix!"
 	if result != expected {
 		t.Errorf("Localize() after SetLanguage() = %v, expected %v", result, expected)
 	}
@@ -269,7 +269,7 @@ func TestTFunction(t *testing.T) {
 	}
 
 	result := T("Welcome", nil)
-	expected := "Welcome to Secretly!"
+	expected := "Welcome to Keyorix!"
 	if result != expected {
 		t.Errorf("T() = %v, expected %v", result, expected)
 	}
@@ -294,7 +294,7 @@ func TestMustTFunction(t *testing.T) {
 
 	t.Run("existing message", func(t *testing.T) {
 		result := MustT("Welcome", nil)
-		expected := "Welcome to Secretly!"
+		expected := "Welcome to Keyorix!"
 		if result != expected {
 			t.Errorf("MustT() = %v, expected %v", result, expected)
 		}
@@ -333,11 +333,11 @@ func TestMultipleLanguages(t *testing.T) {
 		code     string
 		expected string
 	}{
-		{"en", "Welcome to Secretly!"},
-		{"ru", "Добро пожаловать в Secretly!"},
-		{"es", "¡Bienvenido a Secretly!"},
-		{"fr", "Bienvenue sur Secretly !"},
-		{"de", "Willkommen bei Secretly!"},
+		{"en", "Welcome to Keyorix!"},
+		{"ru", "Добро пожаловать в Keyorix!"},
+		{"es", "¡Bienvenido a Keyorix!"},
+		{"fr", "Bienvenue sur Keyorix !"},
+		{"de", "Willkommen bei Keyorix!"},
 	}
 
 	for _, lang := range languages {
@@ -372,7 +372,7 @@ func TestFallbackBehavior(t *testing.T) {
 
 	// Test existing Spanish message
 	result := localizer.Localize("Welcome", nil)
-	expected := "¡Bienvenido a Secretly!"
+	expected := "¡Bienvenido a Keyorix!"
 	if result != expected {
 		t.Errorf("Localize() for existing Spanish message = %v, expected %v", result, expected)
 	}

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Secretly Web Integration Test Script
+# Keyorix Web Integration Test Script
 # This script tests the full-stack integration between the web dashboard and Go backend
 
 set -e
 
-echo "🚀 Starting Secretly Web Integration Test"
+echo "🚀 Starting Keyorix Web Integration Test"
 
 # Configuration
 SERVER_PORT=8080
@@ -44,7 +44,7 @@ cleanup() {
         kill $SERVER_PID 2>/dev/null || true
         wait $SERVER_PID 2>/dev/null || true
     fi
-    rm -f ./data/test-secretly.db
+    rm -f ./data/test-keyorix.db
 }
 
 # Set trap for cleanup
@@ -110,9 +110,9 @@ if [ ! -f "go.mod" ]; then
 fi
 
 # Build the server
-go build -o secretly-server ./
+go build -o keyorix-server ./
 
-if [ ! -f "secretly-server" ]; then
+if [ ! -f "keyorix-server" ]; then
     log_error "Server build failed"
     exit 1
 fi
@@ -155,7 +155,7 @@ server:
 storage:
   type: "local"
   database:
-    path: "./data/test-secretly.db"
+    path: "./data/test-keyorix.db"
     max_open_conns: 25
     max_idle_conns: 5
   encryption:
@@ -189,10 +189,10 @@ EOF
 log_success "Test configuration prepared"
 
 # Step 5: Start the server
-log_info "Starting Secretly server..."
+log_info "Starting Keyorix server..."
 
 cd server
-SECRETLY_CONFIG_PATH="../test-config.yaml" ./secretly-server &
+KEYORIX_CONFIG_PATH="../test-config.yaml" ./keyorix-server &
 SERVER_PID=$!
 cd ..
 

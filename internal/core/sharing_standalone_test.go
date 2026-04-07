@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -100,7 +100,7 @@ func testShareSecret(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorageSharing)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -148,7 +148,7 @@ func testUpdateSharePermission(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorageSharing)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -203,7 +203,7 @@ func testRevokeShare(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorageSharing)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -243,7 +243,7 @@ func testRevokeShare(t *testing.T) {
 func testListSharedSecrets(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorageSharing)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -269,7 +269,7 @@ func testListSharedSecrets(t *testing.T) {
 func testListSecretShares(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorageSharing)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -301,7 +301,7 @@ func testListSecretShares(t *testing.T) {
 func testCheckSharePermission(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorageSharing)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()

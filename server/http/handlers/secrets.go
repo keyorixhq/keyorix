@@ -8,21 +8,21 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
-	"github.com/secretlyhq/secretly/server/middleware"
-	"github.com/secretlyhq/secretly/server/validation"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/middleware"
+	"github.com/keyorixhq/keyorix/server/validation"
 )
 
 // SecretHandler handles secret-related HTTP requests
 type SecretHandler struct {
-	coreService *core.SecretlyCore
+	coreService *core.KeyorixCore
 	validator   *validation.Validator
 }
 
 // NewSecretHandler creates a new secret handler
-func NewSecretHandler(coreService *core.SecretlyCore) (*SecretHandler, error) {
+func NewSecretHandler(coreService *core.KeyorixCore) (*SecretHandler, error) {
 	return &SecretHandler{
 		coreService: coreService,
 		validator:   validation.NewValidator(),

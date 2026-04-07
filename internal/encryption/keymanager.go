@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/securefiles"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
 // KeyManager handles key lifecycle and storage

@@ -60,7 +60,7 @@ func NewHTTPClient(config *Config) (*HTTPClient, error) {
 		baseURL:       config.BaseURL,
 		apiKey:        config.GetAPIKeyFromEnv(),
 		retryAttempts: config.RetryAttempts,
-		userAgent:     "secretly-cli/1.0",
+		userAgent:     "keyorix-cli/1.0",
 		cache:         make(map[string]*cacheEntry),
 		cacheMux:      sync.RWMutex{},
 	}, nil

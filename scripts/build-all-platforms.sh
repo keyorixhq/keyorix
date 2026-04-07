@@ -24,7 +24,7 @@ log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-echo "🌍 Multi-Platform Build for Secretly"
+echo "🌍 Multi-Platform Build for Keyorix"
 echo "===================================="
 
 # Get version info
@@ -59,7 +59,7 @@ for platform in "${PLATFORMS[@]}"; do
     log_info "Building for $os/$arch..."
     
     # Create platform-specific directory
-    PLATFORM_DIR="$DIST_DIR/secretly-$VERSION-$os-$arch"
+    PLATFORM_DIR="$DIST_DIR/keyorix-$VERSION-$os-$arch"
     mkdir -p "$PLATFORM_DIR"
     
     # Set build environment
@@ -76,7 +76,7 @@ for platform in "${PLATFORMS[@]}"; do
     BUILD_FLAGS="-ldflags='-s -w -X main.Version=$VERSION -X main.BuildTime=$BUILD_TIME -X main.GitCommit=$GIT_COMMIT'"
     
     # Build CLI
-    if eval "go build $BUILD_FLAGS -o $PLATFORM_DIR/secretly$EXT ./cmd/secretly"; then
+    if eval "go build $BUILD_FLAGS -o $PLATFORM_DIR/keyorix$EXT ./cmd/keyorix"; then
         log_success "CLI built for $os/$arch"
     else
         log_warning "Failed to build CLI for $os/$arch"
@@ -84,7 +84,7 @@ for platform in "${PLATFORMS[@]}"; do
     fi
     
     # Build server
-    if eval "go build $BUILD_FLAGS -o $PLATFORM_DIR/secretly-server$EXT ./server"; then
+    if eval "go build $BUILD_FLAGS -o $PLATFORM_DIR/keyorix-server$EXT ./server"; then
         log_success "Server built for $os/$arch"
     else
         log_warning "Failed to build server for $os/$arch"
@@ -92,35 +92,35 @@ for platform in "${PLATFORMS[@]}"; do
     fi
     
     # Copy configuration files
-    cp secretly-simple.yaml "$PLATFORM_DIR/" 2>/dev/null || true
+    cp keyorix-simple.yaml "$PLATFORM_DIR/" 2>/dev/null || true
     
     # Create README for the platform
     cat > "$PLATFORM_DIR/README.md" << EOF
-# Secretly $VERSION - $os/$arch
+# Keyorix $VERSION - $os/$arch
 
 ## Quick Start
 
 ### CLI Usage
 \`\`\`bash
-./secretly --help
-./secretly secret create "my-secret" "secret-value"
-./secretly secret list
+./keyorix --help
+./keyorix secret create "my-secret" "secret-value"
+./keyorix secret list
 \`\`\`
 
 ### Server Usage
 \`\`\`bash
-./secretly-server --config secretly-simple.yaml
+./keyorix-server --config keyorix-simple.yaml
 \`\`\`
 
 Then visit: http://localhost:8080
 
 ## Configuration
 
-Edit \`secretly-simple.yaml\` to customize settings.
+Edit \`keyorix-simple.yaml\` to customize settings.
 
 ## Documentation
 
-Visit: https://github.com/your-org/secretly
+Visit: https://github.com/your-org/keyorix
 
 ## Version Information
 - Version: $VERSION
@@ -131,7 +131,7 @@ EOF
     
     # Create archive
     cd "$DIST_DIR"
-    ARCHIVE_NAME="secretly-$VERSION-$os-$arch"
+    ARCHIVE_NAME="keyorix-$VERSION-$os-$arch"
     
     if [ "$os" = "windows" ]; then
         # Create ZIP for Windows

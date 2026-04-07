@@ -6,13 +6,13 @@ import (
 	"sort"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ListSecretsWithSharingInfo lists secrets with sharing information for a specific user
-func (c *SecretlyCore) ListSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) {
+func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
@@ -88,7 +88,7 @@ func (c *SecretlyCore) ListSecretsWithSharingInfo(ctx context.Context, userID ui
 }
 
 // getOwnedSecretsWithSharingInfo retrieves secrets owned by the user with sharing information
-func (c *SecretlyCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
+func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
 	// Convert to storage filter
 	storageFilter := c.convertToStorageFilter(filter)
 	storageFilter.CreatedBy = &[]string{fmt.Sprintf("%d", userID)}[0] // Filter by owner
@@ -125,7 +125,7 @@ func (c *SecretlyCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userI
 }
 
 // getSharedSecretsWithSharingInfo retrieves secrets shared with the user
-func (c *SecretlyCore) getSharedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
+func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
 	// Get all shares for this user
 	shares, err := c.storage.ListSharesByUser(ctx, userID)
 	if err != nil {
@@ -168,7 +168,7 @@ func (c *SecretlyCore) getSharedSecretsWithSharingInfo(ctx context.Context, user
 }
 
 // applySecretFilters applies additional filters to the secret list
-func (c *SecretlyCore) applySecretFilters(secrets []*models.SecretWithSharingInfo, filter *models.SecretListFilter) []*models.SecretWithSharingInfo {
+func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo, filter *models.SecretListFilter) []*models.SecretWithSharingInfo {
 	var filtered []*models.SecretWithSharingInfo
 
 	for _, secret := range secrets {
@@ -222,7 +222,7 @@ func (c *SecretlyCore) applySecretFilters(secrets []*models.SecretWithSharingInf
 }
 
 // sortSecrets sorts the secret list based on the specified criteria
-func (c *SecretlyCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortBy, sortOrder string) {
+func (c *KeyorixCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortBy, sortOrder string) {
 	if sortBy == "" {
 		sortBy = "name" // Default sort by name
 	}
@@ -262,7 +262,7 @@ func (c *SecretlyCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sort
 }
 
 // convertToStorageFilter converts SecretListFilter to storage.SecretFilter
-func (c *SecretlyCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
+func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
 	return &storage.SecretFilter{
 		NamespaceID:   filter.NamespaceID,
 		ZoneID:        filter.ZoneID,
@@ -278,7 +278,7 @@ func (c *SecretlyCore) convertToStorageFilter(filter *models.SecretListFilter) *
 }
 
 // GetSecretSharingStatus returns the sharing status of a secret
-func (c *SecretlyCore) GetSecretSharingStatus(ctx context.Context, secretID uint) (*models.SharingStatus, error) {
+func (c *KeyorixCore) GetSecretSharingStatus(ctx context.Context, secretID uint) (*models.SharingStatus, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -324,7 +324,7 @@ func (c *SecretlyCore) GetSecretSharingStatus(ctx context.Context, secretID uint
 }
 
 // GetSecretSharingStatusWithIndicators returns the sharing status of a secret with UI indicators
-func (c *SecretlyCore) GetSecretSharingStatusWithIndicators(ctx context.Context, secretID, userID uint) (*models.SharingStatusWithIndicators, error) {
+func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, secretID, userID uint) (*models.SharingStatusWithIndicators, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -405,7 +405,7 @@ func (c *SecretlyCore) GetSecretSharingStatusWithIndicators(ctx context.Context,
 }
 
 // GetUserSecretPermission returns a user's permission for a specific secret
-func (c *SecretlyCore) GetUserSecretPermission(ctx context.Context, secretID, userID uint) (*models.UserSecretPermission, error) {
+func (c *KeyorixCore) GetUserSecretPermission(ctx context.Context, secretID, userID uint) (*models.UserSecretPermission, error) {
 	if secretID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
@@ -454,7 +454,7 @@ func (c *SecretlyCore) GetUserSecretPermission(ctx context.Context, secretID, us
 }
 
 // buildSharingIndicators creates UI indicators for a secret based on sharing information
-func (c *SecretlyCore) buildSharingIndicators(secret *models.SecretNode, shares []*models.ShareRecord, isOwner bool, userPermission string) *models.SharingIndicators {
+func (c *KeyorixCore) buildSharingIndicators(secret *models.SecretNode, shares []*models.ShareRecord, isOwner bool, userPermission string) *models.SharingIndicators {
 	indicators := &models.SharingIndicators{
 		CanRead:   true, // All users with access can read
 		CanWrite:  isOwner || userPermission == "write",
@@ -505,7 +505,7 @@ func (c *SecretlyCore) buildSharingIndicators(secret *models.SecretNode, shares 
 }
 
 // buildShareDetails creates detailed sharing information for UI
-func (c *SecretlyCore) buildShareDetails(shares []*models.ShareRecord) *models.ShareDetails {
+func (c *KeyorixCore) buildShareDetails(shares []*models.ShareRecord) *models.ShareDetails {
 	details := &models.ShareDetails{
 		TotalShares: len(shares),
 	}

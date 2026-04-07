@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
-	"github.com/secretlyhq/secretly/server/grpc/interceptors"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -20,7 +20,7 @@ import (
 
 // TestHelper provides consistent test setup for system service tests
 type SystemTestHelper struct {
-	CoreService *core.SecretlyCore
+	CoreService *core.KeyorixCore
 	DB          *gorm.DB
 }
 
@@ -48,7 +48,7 @@ func NewSystemTestHelper(t *testing.T) *SystemTestHelper {
 	storage := local.NewLocalStorage(db)
 
 	// Create core service
-	coreService := core.NewSecretlyCore(storage)
+	coreService := core.NewKeyorixCore(storage)
 
 	return &SystemTestHelper{
 		CoreService: coreService,

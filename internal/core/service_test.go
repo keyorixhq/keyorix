@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -15,7 +15,7 @@ import (
 
 
 
-func TestSecretlyCore_CreateSecret(t *testing.T) {
+func TestKeyorixCore_CreateSecret(t *testing.T) {
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
@@ -23,7 +23,7 @@ func TestSecretlyCore_CreateSecret(t *testing.T) {
 
 	// Create mock storage
 	mockStorage := new(MockStorage)
-	core := NewSecretlyCore(mockStorage)
+	core := NewKeyorixCore(mockStorage)
 
 	ctx := context.Background()
 
@@ -125,7 +125,7 @@ func TestSecretlyCore_CreateSecret(t *testing.T) {
 	})
 }
 
-func TestSecretlyCore_GetSecret(t *testing.T) {
+func TestKeyorixCore_GetSecret(t *testing.T) {
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestSecretlyCore_GetSecret(t *testing.T) {
 	t.Run("successful secret retrieval", func(t *testing.T) {
 		// Create fresh mock storage for this test
 		mockStorage := new(MockStorage)
-		core := NewSecretlyCore(mockStorage)
+		core := NewKeyorixCore(mockStorage)
 
 		secretID := uint(1)
 		expectedSecret := &models.SecretNode{
@@ -163,7 +163,7 @@ func TestSecretlyCore_GetSecret(t *testing.T) {
 	t.Run("secret not found", func(t *testing.T) {
 		// Create fresh mock storage for this test
 		mockStorage := new(MockStorage)
-		core := NewSecretlyCore(mockStorage)
+		core := NewKeyorixCore(mockStorage)
 
 		secretID := uint(999)
 
@@ -183,7 +183,7 @@ func TestSecretlyCore_GetSecret(t *testing.T) {
 	t.Run("expired secret", func(t *testing.T) {
 		// Create fresh mock storage for this test
 		mockStorage := new(MockStorage)
-		core := NewSecretlyCore(mockStorage)
+		core := NewKeyorixCore(mockStorage)
 
 		secretID := uint(1)
 		expiredTime := time.Now().Add(-1 * time.Hour) // Expired 1 hour ago
@@ -209,7 +209,7 @@ func TestSecretlyCore_GetSecret(t *testing.T) {
 	t.Run("validation error - zero ID", func(t *testing.T) {
 		// Create fresh mock storage for this test
 		mockStorage := new(MockStorage)
-		core := NewSecretlyCore(mockStorage)
+		core := NewKeyorixCore(mockStorage)
 
 		secretID := uint(0)
 
@@ -223,7 +223,7 @@ func TestSecretlyCore_GetSecret(t *testing.T) {
 	})
 }
 
-func TestSecretlyCore_ListSecrets(t *testing.T) {
+func TestKeyorixCore_ListSecrets(t *testing.T) {
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
@@ -234,7 +234,7 @@ func TestSecretlyCore_ListSecrets(t *testing.T) {
 	t.Run("successful secret listing", func(t *testing.T) {
 		// Create fresh mock storage for this test
 		mockStorage := new(MockStorage)
-		core := NewSecretlyCore(mockStorage)
+		core := NewKeyorixCore(mockStorage)
 
 		filter := &storage.SecretFilter{
 			Page:     1,
@@ -265,7 +265,7 @@ func TestSecretlyCore_ListSecrets(t *testing.T) {
 	t.Run("default pagination", func(t *testing.T) {
 		// Create fresh mock storage for this test
 		mockStorage := new(MockStorage)
-		core := NewSecretlyCore(mockStorage)
+		core := NewKeyorixCore(mockStorage)
 
 		// Execute with nil filter
 		mockStorage.On("ListSecrets", ctx, mock.AnythingOfType("*storage.SecretFilter")).Return([]*models.SecretNode{}, int64(0), nil)

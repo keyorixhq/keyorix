@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -38,7 +38,7 @@ func main() {
 	storage := local.NewLocalStorage(db)
 
 	// Create core business logic
-	coreService := core.NewSecretlyCore(storage)
+	coreService := core.NewKeyorixCore(storage)
 
 	// Example usage
 	ctx := context.Background()

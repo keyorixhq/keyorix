@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/core"
-	coreStorage "github.com/secretlyhq/secretly/internal/core/storage"
-	"github.com/secretlyhq/secretly/internal/storage/local"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -31,10 +31,10 @@ var listCmd = &cobra.Command{
 	Long: `List secrets with filtering and pagination.
 
 Examples:
-  secretly secret list
-  secretly secret list --namespace 1 --zone 1 --environment 1
-  secretly secret list --search "password" --limit 10
-  secretly secret list --format table  # table or json`,
+  keyorix secret list
+  keyorix secret list --namespace 1 --zone 1 --environment 1
+  keyorix secret list --search "password" --limit 10
+  keyorix secret list --format table  # table or json`,
 	RunE: runList,
 }
 
@@ -68,7 +68,7 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	// Initialize storage and core service
 	storageImpl := local.NewLocalStorage(db)
-	service := core.NewSecretlyCore(storageImpl)
+	service := core.NewKeyorixCore(storageImpl)
 
 	// Create context
 	ctx := context.Background()

@@ -1,4 +1,4 @@
-# 🚀 Secretly - Quick Start Guide
+# 🚀 Keyorix - Quick Start Guide
 
 ## ✅ Your System is Ready!
 
@@ -8,8 +8,8 @@ The core test passed - you have a **fully functional secret management system**!
 
 ### **Step 1: You Already Have Working Binaries**
 From your test, you already have:
-- `./secretly` - The CLI tool
-- `./server/secretly-server` - The API server
+- `./keyorix` - The CLI tool
+- `./server/keyorix-server` - The API server
 
 ### **Step 2: Start Using It Right Now**
 
@@ -17,24 +17,24 @@ From your test, you already have:
 
 ```bash
 # 1. Test the CLI
-./secretly --help
-./secretly secret --help
+./keyorix --help
+./keyorix secret --help
 
 # 2. Start the server (in one terminal)
 cd server
-./secretly-server
+./keyorix-server
 
 # 3. In another terminal, use the CLI
-./secretly secret create --name "my-first-secret" --value "hello-world"
-./secretly secret list
-./secretly secret get --id 1
+./keyorix secret create --name "my-first-secret" --value "hello-world"
+./keyorix secret list
+./keyorix secret get --id 1
 ```
 
 #### **Option B: Proper Setup (5 minutes)**
 
 ```bash
 # 1. Create a basic config file
-cat > secretly.yaml << 'EOF'
+cat > keyorix.yaml << 'EOF'
 environment: "development"
 
 locale:
@@ -54,13 +54,10 @@ server:
 storage:
   type: "local"
   database:
-    path: "./data/secretly.db"
+    path: "./data/keyorix.db"
   encryption:
     enabled: true
     use_kek: false
-
-telemetry:
-  enabled: false
 
 security:
   enable_file_permission_check: false
@@ -72,14 +69,14 @@ mkdir -p data
 
 # 3. Start server with config
 cd server
-SECRETLY_CONFIG_PATH=../secretly.yaml ./secretly-server
+KEYORIX_CONFIG_PATH=../keyorix.yaml ./keyorix-server
 
 # 4. In another terminal, test everything
-./secretly secret create --name "api-key" --value "sk-1234567890"
-./secretly secret create --name "db-password" --value "super-secret-password"
-./secretly secret list
-./secretly share create --secret-id 1 --recipient "colleague@company.com"
-./secretly share list --secret-id 1
+./keyorix secret create --name "api-key" --value "sk-1234567890"
+./keyorix secret create --name "db-password" --value "super-secret-password"
+./keyorix secret list
+./keyorix share create --secret-id 1 --recipient "colleague@company.com"
+./keyorix share list --secret-id 1
 ```
 
 ### **Step 3: Access the Web API**
@@ -94,7 +91,7 @@ Once the server is running:
 
 ### ✅ **Complete CLI Tool**
 ```bash
-./secretly --help
+./keyorix --help
 
 Available Commands:
   auth        Manage authentication
@@ -134,9 +131,9 @@ When you're ready for production:
 docker-compose -f docker-compose.full-stack.yml up -d
 
 # Or deploy manually with production config
-cp server/config/production.yaml ./secretly-prod.yaml
+cp server/config/production.yaml ./keyorix-prod.yaml
 # Edit production settings
-SECRETLY_CONFIG_PATH=./secretly-prod.yaml ./server/secretly-server
+KEYORIX_CONFIG_PATH=./keyorix-prod.yaml ./server/keyorix-server
 ```
 
 ## 🎯 **Real-World Usage Examples**
@@ -144,29 +141,29 @@ SECRETLY_CONFIG_PATH=./secretly-prod.yaml ./server/secretly-server
 ### **Development Team Secrets**
 ```bash
 # Store API keys
-./secretly secret create --name "stripe-api-key" --value "sk_test_..."
-./secretly secret create --name "github-token" --value "ghp_..."
+./keyorix secret create --name "stripe-api-key" --value "sk_test_..."
+./keyorix secret create --name "github-token" --value "ghp_..."
 
 # Share with team
-./secretly share create --secret-id 1 --recipient "dev-team@company.com"
-./secretly share create --secret-id 2 --recipient "devops@company.com"
+./keyorix share create --secret-id 1 --recipient "dev-team@company.com"
+./keyorix share create --secret-id 2 --recipient "devops@company.com"
 ```
 
 ### **Infrastructure Secrets**
 ```bash
 # Database credentials
-./secretly secret create --name "prod-db-password" --value "complex-password"
-./secretly secret create --name "redis-auth" --value "redis-secret"
+./keyorix secret create --name "prod-db-password" --value "complex-password"
+./keyorix secret create --name "redis-auth" --value "redis-secret"
 
 # Share with ops team
-./secretly share create --secret-id 3 --recipient "ops-team@company.com" --permission "read"
+./keyorix share create --secret-id 3 --recipient "ops-team@company.com" --permission "read"
 ```
 
 ### **Personal Use**
 ```bash
 # Personal passwords and keys
-./secretly secret create --name "personal-ssh-key" --from-file ~/.ssh/id_rsa
-./secretly secret create --name "wifi-password" --value "home-wifi-secret"
+./keyorix secret create --name "personal-ssh-key" --from-file ~/.ssh/id_rsa
+./keyorix secret create --name "wifi-password" --value "home-wifi-secret"
 ```
 
 ## 🔥 **You're Production Ready!**
@@ -192,4 +189,4 @@ Your secret management system is **complete and ready for real-world use**. The 
 
 ---
 
-**Ready to start?** Run: `./secretly secret create --name "test" --value "it-works"`
+**Ready to start?** Run: `./keyorix secret create --name "test" --value "it-works"`

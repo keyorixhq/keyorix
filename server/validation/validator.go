@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/secretlyhq/secretly/internal/i18n"
-	"github.com/secretlyhq/secretly/internal/utils/safeconv"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
 )
 
 // Validator provides request validation functionality

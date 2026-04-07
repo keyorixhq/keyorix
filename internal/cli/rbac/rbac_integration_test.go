@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/secretlyhq/secretly/internal/testhelper"
+	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -451,8 +451,8 @@ func BenchmarkRBACOperations(b *testing.B) {
 // TestMain sets up and tears down test environment
 func TestMain(m *testing.M) {
 	// Setup test environment
-	os.Setenv("SECRETLY_ENV", "test")
-	os.Setenv("SECRETLY_LOG_LEVEL", "error")
+	os.Setenv("KEYORIX_ENV", "test")
+	os.Setenv("KEYORIX_LOG_LEVEL", "error")
 
 	// Run tests
 	code := m.Run()

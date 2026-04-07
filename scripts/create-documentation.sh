@@ -15,13 +15,13 @@ echo "📚 Creating User Documentation..."
 
 # User Guide
 cat > docs/user-guide/getting-started.md << 'EOF'
-# Getting Started with Secretly
+# Getting Started with Keyorix
 
 ## Quick Start Guide
 
 ### 1. Accessing the System
 - **Web Dashboard**: https://localhost/
-- **CLI Tool**: `secretly --help`
+- **CLI Tool**: `keyorix --help`
 - **API Documentation**: https://localhost/swagger/
 
 ### 2. First Login
@@ -48,16 +48,16 @@ cat > docs/user-guide/getting-started.md << 'EOF'
 ### 5. Using the CLI
 ```bash
 # Login to CLI
-secretly auth login
+keyorix auth login
 
 # Create a secret
-secretly secret create "my-api-key" "secret-value"
+keyorix secret create "my-api-key" "secret-value"
 
 # List secrets
-secretly secret list
+keyorix secret list
 
 # Share a secret
-secretly share create "my-api-key" --user "colleague@company.com"
+keyorix share create "my-api-key" --user "colleague@company.com"
 ```
 
 ## Next Steps
@@ -266,15 +266,15 @@ cat > docs/admin-guide/admin-guide.md << 'EOF'
    cp server/config/production.yaml.example server/config/production.yaml
    
    # Set environment variables
-   export SECRETLY_ENV=production
-   export SECRETLY_DB_URL="postgresql://user:pass@localhost/secretly"
+   export KEYORIX_ENV=production
+   export KEYORIX_DB_URL="postgresql://user:pass@localhost/keyorix"
    ```
 
 2. **SSL Certificate Installation**
    ```bash
    # Install SSL certificates
-   sudo cp ssl/cert.pem /etc/ssl/certs/secretly.crt
-   sudo cp ssl/key.pem /etc/ssl/private/secretly.key
+   sudo cp ssl/cert.pem /etc/ssl/certs/keyorix.crt
+   sudo cp ssl/key.pem /etc/ssl/private/keyorix.key
    
    # Update nginx configuration
    sudo systemctl reload nginx
@@ -286,7 +286,7 @@ cat > docs/admin-guide/admin-guide.md << 'EOF'
    ./scripts/run_migrations.sh
    
    # Verify database connection
-   secretly system health
+   keyorix system health
    ```
 
 ### System Configuration
@@ -294,24 +294,24 @@ cat > docs/admin-guide/admin-guide.md << 'EOF'
 #### Environment Variables
 ```bash
 # Core Configuration
-SECRETLY_ENV=production
-SECRETLY_PORT=8080
-SECRETLY_HOST=0.0.0.0
+KEYORIX_ENV=production
+KEYORIX_PORT=8080
+KEYORIX_HOST=0.0.0.0
 
 # Database Configuration
-SECRETLY_DB_URL=postgresql://user:pass@localhost/secretly
-SECRETLY_DB_MAX_CONNECTIONS=100
-SECRETLY_DB_TIMEOUT=30s
+KEYORIX_DB_URL=postgresql://user:pass@localhost/keyorix
+KEYORIX_DB_MAX_CONNECTIONS=100
+KEYORIX_DB_TIMEOUT=30s
 
 # Security Configuration
-SECRETLY_JWT_SECRET=your-jwt-secret-here
-SECRETLY_ENCRYPTION_KEY=your-encryption-key-here
-SECRETLY_SESSION_TIMEOUT=24h
+KEYORIX_JWT_SECRET=your-jwt-secret-here
+KEYORIX_ENCRYPTION_KEY=your-encryption-key-here
+KEYORIX_SESSION_TIMEOUT=24h
 
 # Monitoring Configuration
-SECRETLY_METRICS_ENABLED=true
-SECRETLY_METRICS_PORT=9090
-SECRETLY_LOG_LEVEL=info
+KEYORIX_METRICS_ENABLED=true
+KEYORIX_METRICS_PORT=9090
+KEYORIX_LOG_LEVEL=info
 ```
 
 #### Production Configuration File
@@ -322,18 +322,18 @@ server:
   port: 8080
   tls:
     enabled: true
-    cert_file: "/etc/ssl/certs/secretly.crt"
-    key_file: "/etc/ssl/private/secretly.key"
+    cert_file: "/etc/ssl/certs/keyorix.crt"
+    key_file: "/etc/ssl/private/keyorix.key"
 
 database:
-  url: "${SECRETLY_DB_URL}"
+  url: "${KEYORIX_DB_URL}"
   max_connections: 100
   connection_timeout: "30s"
   ssl_mode: "require"
 
 security:
-  jwt_secret: "${SECRETLY_JWT_SECRET}"
-  encryption_key: "${SECRETLY_ENCRYPTION_KEY}"
+  jwt_secret: "${KEYORIX_JWT_SECRET}"
+  encryption_key: "${KEYORIX_ENCRYPTION_KEY}"
   session_timeout: "24h"
   password_policy:
     min_length: 12
@@ -362,13 +362,13 @@ monitoring:
 2. **CLI Method**
    ```bash
    # Create new user
-   secretly admin user create \
+   keyorix admin user create \
      --email "user@company.com" \
      --name "John Doe" \
      --role "user"
    
    # Set user permissions
-   secretly admin user permissions \
+   keyorix admin user permissions \
      --email "user@company.com" \
      --permissions "read,write"
    ```
@@ -383,13 +383,13 @@ monitoring:
 ### Bulk User Operations
 ```bash
 # Import users from CSV
-secretly admin user import --file users.csv
+keyorix admin user import --file users.csv
 
 # Export user list
-secretly admin user export --format csv
+keyorix admin user export --format csv
 
 # Bulk permission updates
-secretly admin user bulk-update --file permissions.csv
+keyorix admin user bulk-update --file permissions.csv
 ```
 
 ## Security Configuration
@@ -503,18 +503,18 @@ audit:
 
 ### Log Management
 1. **Log Locations**
-   - Application logs: `/var/log/secretly/app.log`
-   - Access logs: `/var/log/secretly/access.log`
-   - Error logs: `/var/log/secretly/error.log`
-   - Audit logs: `/var/log/secretly/audit.log`
+   - Application logs: `/var/log/keyorix/app.log`
+   - Access logs: `/var/log/keyorix/access.log`
+   - Error logs: `/var/log/keyorix/error.log`
+   - Audit logs: `/var/log/keyorix/audit.log`
 
 2. **Log Rotation**
    ```bash
    # Configure logrotate
-   sudo cp config/logrotate.conf /etc/logrotate.d/secretly
+   sudo cp config/logrotate.conf /etc/logrotate.d/keyorix
    
    # Test log rotation
-   sudo logrotate -d /etc/logrotate.d/secretly
+   sudo logrotate -d /etc/logrotate.d/keyorix
    ```
 
 ## Backup and Recovery
@@ -525,11 +525,11 @@ audit:
    # Daily backup script
    #!/bin/bash
    DATE=$(date +%Y%m%d_%H%M%S)
-   pg_dump secretly > /backups/secretly_$DATE.sql
+   pg_dump keyorix > /backups/keyorix_$DATE.sql
    
    # Compress and encrypt
-   gzip /backups/secretly_$DATE.sql
-   gpg --encrypt /backups/secretly_$DATE.sql.gz
+   gzip /backups/keyorix_$DATE.sql
+   gpg --encrypt /backups/keyorix_$DATE.sql.gz
    ```
 
 2. **Backup Verification**
@@ -545,16 +545,16 @@ audit:
 1. **Recovery Procedures**
    ```bash
    # Stop services
-   sudo systemctl stop secretly
+   sudo systemctl stop keyorix
    
    # Restore database
-   gunzip -c backup.sql.gz | psql secretly
+   gunzip -c backup.sql.gz | psql keyorix
    
    # Restore configuration
-   sudo cp backup/config/* /etc/secretly/
+   sudo cp backup/config/* /etc/keyorix/
    
    # Start services
-   sudo systemctl start secretly
+   sudo systemctl start keyorix
    ```
 
 2. **Recovery Testing**
@@ -574,22 +574,22 @@ audit:
    pg_isready -h localhost -p 5432
    
    # Verify credentials
-   psql -h localhost -U secretly_user -d secretly
+   psql -h localhost -U keyorix_user -d keyorix
    
    # Check connection pool
-   secretly admin db status
+   keyorix admin db status
    ```
 
 2. **Authentication Problems**
    ```bash
    # Reset user password
-   secretly admin user reset-password --email user@company.com
+   keyorix admin user reset-password --email user@company.com
    
    # Disable 2FA temporarily
-   secretly admin user disable-2fa --email user@company.com
+   keyorix admin user disable-2fa --email user@company.com
    
    # Check JWT configuration
-   secretly admin auth verify-jwt
+   keyorix admin auth verify-jwt
    ```
 
 3. **Performance Issues**
@@ -600,10 +600,10 @@ audit:
    free -m
    
    # Database performance
-   secretly admin db analyze
+   keyorix admin db analyze
    
    # Clear caches
-   secretly admin cache clear
+   keyorix admin cache clear
    ```
 
 ### Emergency Procedures
@@ -642,12 +642,12 @@ cat > docs/training/training-overview.md << 'EOF'
 
 ## Training Modules
 
-### Module 1: Introduction to Secretly
+### Module 1: Introduction to Keyorix
 - **Duration**: 30 minutes
 - **Format**: Video + Hands-on
 - **Topics**:
   - What is secret management?
-  - Why use Secretly?
+  - Why use Keyorix?
   - System overview and architecture
   - Security principles
 
@@ -810,27 +810,27 @@ cat > docs/training/hands-on-exercises.md << 'EOF'
 1. Install the CLI tool (if not already installed)
 2. Authenticate with the server:
    ```bash
-   secretly auth login
+   keyorix auth login
    ```
 3. List your secrets:
    ```bash
-   secretly secret list
+   keyorix secret list
    ```
 4. Create a new secret:
    ```bash
-   secretly secret create "database-password" "super-secure-password"
+   keyorix secret create "database-password" "super-secure-password"
    ```
 5. Add metadata:
    ```bash
-   secretly secret update "database-password" --tag "database" --tag "production"
+   keyorix secret update "database-password" --tag "database" --tag "production"
    ```
 6. Share the secret:
    ```bash
-   secretly share create "database-password" --user "admin@company.com" --permission "read"
+   keyorix share create "database-password" --user "admin@company.com" --permission "read"
    ```
 7. List shared secrets:
    ```bash
-   secretly share list
+   keyorix share list
    ```
 
 ### Verification:
@@ -996,7 +996,7 @@ cat > docs/api-docs/api-overview.md << 'EOF'
 # API Documentation Overview
 
 ## Introduction
-The Secretly API provides programmatic access to all secret management functionality. The API follows REST principles and uses JSON for data exchange.
+The Keyorix API provides programmatic access to all secret management functionality. The API follows REST principles and uses JSON for data exchange.
 
 ## Base URL
 ```
@@ -1015,7 +1015,7 @@ All API requests require authentication using JWT tokens.
 
 2. **CLI Method**:
    ```bash
-   secretly auth token create --name "my-api-key"
+   keyorix auth token create --name "my-api-key"
    ```
 
 ### Using the Token
@@ -1135,7 +1135,7 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
 2. **Reset Password**:
    ```bash
    # Admin can reset user password
-   secretly admin user reset-password --email user@company.com
+   keyorix admin user reset-password --email user@company.com
    ```
 
 3. **Check Account Status**:
@@ -1156,7 +1156,7 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
 
 3. **Reset 2FA** (Admin only):
    ```bash
-   secretly admin user disable-2fa --email user@company.com
+   keyorix admin user disable-2fa --email user@company.com
    ```
 
 ## Secret Management Issues
@@ -1194,7 +1194,7 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
 3. **Database Sync**:
    ```bash
    # Check database connectivity
-   secretly system health
+   keyorix system health
    ```
 
 ## Sharing and Collaboration Issues
@@ -1254,7 +1254,7 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
 3. **Server Performance**:
    ```bash
    # Check system resources
-   secretly admin system status
+   keyorix admin system status
    
    # View performance metrics
    curl https://localhost/health/detailed
@@ -1298,10 +1298,10 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
 2. **Connection Pool**:
    ```bash
    # Check connection pool status
-   secretly admin db status
+   keyorix admin db status
    
    # Reset connection pool
-   secretly admin db reset-pool
+   keyorix admin db reset-pool
    ```
 
 3. **Database Recovery**:
@@ -1310,7 +1310,7 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
    sudo systemctl restart postgresql
    
    # Check database integrity
-   psql -c "SELECT pg_database_size('secretly');"
+   psql -c "SELECT pg_database_size('keyorix');"
    ```
 
 ### Issue: SSL Certificate Problems
@@ -1320,10 +1320,10 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
 1. **Certificate Validation**:
    ```bash
    # Check certificate expiration
-   openssl x509 -in /etc/ssl/certs/secretly.crt -text -noout
+   openssl x509 -in /etc/ssl/certs/keyorix.crt -text -noout
    
    # Verify certificate chain
-   openssl verify -CAfile ca.crt secretly.crt
+   openssl verify -CAfile ca.crt keyorix.crt
    ```
 
 2. **Certificate Renewal**:
@@ -1385,7 +1385,7 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
 ### System Recovery
 1. **Service Restart**:
    ```bash
-   sudo systemctl restart secretly
+   sudo systemctl restart keyorix
    sudo systemctl restart nginx
    sudo systemctl restart postgresql
    ```
@@ -1393,19 +1393,19 @@ cat > docs/troubleshooting/common-issues.md << 'EOF'
 2. **Database Recovery**:
    ```bash
    # Restore from backup
-   gunzip -c backup.sql.gz | psql secretly
+   gunzip -c backup.sql.gz | psql keyorix
    
    # Verify data integrity
-   secretly admin db verify
+   keyorix admin db verify
    ```
 
 3. **Configuration Reset**:
    ```bash
    # Restore configuration from backup
-   sudo cp /backup/config/* /etc/secretly/
+   sudo cp /backup/config/* /etc/keyorix/
    
    # Restart services
-   sudo systemctl restart secretly
+   sudo systemctl restart keyorix
    ```
 
 ### Security Incident Response

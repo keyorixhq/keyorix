@@ -2,9 +2,10 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
-	"github.com/secretlyhq/secretly/internal/securefiles"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,7 +16,6 @@ type Config struct {
 	Storage     StorageConfig    `yaml:"storage"`
 	Client      *ClientConfig    `yaml:"client,omitempty"`
 	Secrets     SecretsConfig    `yaml:"secrets"`
-	Telemetry   TelemetryConfig  `yaml:"telemetry"`
 	Security    SecurityConfig   `yaml:"security"`
 	SoftDelete  SoftDeleteConfig `yaml:"soft_delete"`
 	Purge       PurgeConfig      `yaml:"purge"`
@@ -40,9 +40,9 @@ type ServerInstanceConfig struct {
 	SwaggerEnabled    bool            `yaml:"swagger_enabled,omitempty"`
 	ReflectionEnabled bool            `yaml:"reflection_enabled,omitempty"`
 	// Web dashboard specific settings (HTTP only)
-	WebAssetsPath    string   `yaml:"web_assets_path,omitempty"`
-	AllowedOrigins   []string `yaml:"allowed_origins,omitempty"`
-	Domain           string   `yaml:"domain,omitempty"`
+	WebAssetsPath  string   `yaml:"web_assets_path,omitempty"`
+	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
+	Domain         string   `yaml:"domain,omitempty"`
 }
 
 type TLSConfig struct {
@@ -61,24 +61,73 @@ type RateLimitConfig struct {
 }
 
 type StorageConfig struct {
-	Type       string           `yaml:"type"`       // "local" or "remote"
+	Type       string           `yaml:"type"` // "local", "postgres", "postgresql", "remote"
 	Database   DatabaseConfig   `yaml:"database"`
 	Remote     *RemoteConfig    `yaml:"remote,omitempty"`
 	Encryption EncryptionConfig `yaml:"encryption"`
 }
 
 type DatabaseConfig struct {
-	Path         string `yaml:"path"`
-	MaxOpenConns int    `yaml:"max_open_conns"`
-	MaxIdleConns int    `yaml:"max_idle_conns"`
+	// SQLite
+	Path string `yaml:"path"`
+
+	// PostgreSQL — use DSN directly or set individual fields
+	DSN      string `yaml:"dsn"` // e.g. "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
+	Host     string `yaml:"host"`
+	Port     string `yaml:"port"`
+	Name     string `yaml:"name"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"` // use KEYORIX_DB_PASSWORD env var instead
+	SSLMode  string `yaml:"ssl_mode"` // disable, require, verify-full
+
+	// Shared pool settings
+	MaxOpenConns           int `yaml:"max_open_conns"`
+	MaxIdleConns           int `yaml:"max_idle_conns"`
+	ConnMaxLifetimeMinutes int `yaml:"conn_max_lifetime_minutes"`
+}
+
+// GetPassword returns the resolved DB password, preferring the environment variable.
+func (d *DatabaseConfig) GetPassword() string {
+	return resolveSecret("KEYORIX_DB_PASSWORD", d.Password)
+}
+
+// BuildPostgresDSN returns a ready-to-use PostgreSQL DSN.
+// If DSN is set directly it is returned as-is; otherwise it is built from individual fields.
+func BuildPostgresDSN(d *DatabaseConfig) string {
+	if d.DSN != "" {
+		return d.DSN
+	}
+	host := d.Host
+	if host == "" {
+		host = "localhost"
+	}
+	port := d.Port
+	if port == "" {
+		port = "5432"
+	}
+	sslMode := d.SSLMode
+	if sslMode == "" {
+		sslMode = "require"
+	}
+	dsn := fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s",
+		host, port, d.Name, d.User, sslMode)
+	if pw := d.GetPassword(); pw != "" {
+		dsn += " password=" + pw
+	}
+	return dsn
 }
 
 type RemoteConfig struct {
 	BaseURL        string `yaml:"base_url"`
-	APIKey         string `yaml:"api_key"`
+	APIKey         string `yaml:"api_key"` // use KEYORIX_REMOTE_API_KEY env var instead
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 	RetryAttempts  int    `yaml:"retry_attempts"`
 	TLSVerify      bool   `yaml:"tls_verify"`
+}
+
+// GetAPIKey returns the resolved API key, preferring the environment variable.
+func (r *RemoteConfig) GetAPIKey() string {
+	return resolveSecret("KEYORIX_REMOTE_API_KEY", r.APIKey)
 }
 
 type ClientConfig struct {
@@ -88,8 +137,13 @@ type ClientConfig struct {
 }
 
 type AuthConfig struct {
-	Type   string `yaml:"type"`   // "none", "api_key"
-	APIKey string `yaml:"api_key"`
+	Type   string `yaml:"type"`    // "none", "api_key"
+	APIKey string `yaml:"api_key"` // use KEYORIX_API_KEY env var instead
+}
+
+// GetAPIKey returns the resolved API key, preferring the environment variable.
+func (a *AuthConfig) GetAPIKey() string {
+	return resolveSecret("KEYORIX_API_KEY", a.APIKey)
 }
 
 type EncryptionConfig struct {
@@ -114,13 +168,6 @@ type LimitsConfig struct {
 	MaxSecretsPerUser int `yaml:"max_secrets_per_user"`
 }
 
-type TelemetryConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	Endpoint string `yaml:"endpoint"`
-	LogFile  string `yaml:"log_file"`
-	APIKey   string `yaml:"api_key"`
-}
-
 type SecurityConfig struct {
 	EnableFilePermissionCheck  bool `yaml:"enable_file_permission_check"`
 	AutoFixFilePermissions     bool `yaml:"auto_fix_file_permissions"`
@@ -137,13 +184,21 @@ type PurgeConfig struct {
 	Schedule string `yaml:"schedule"`
 }
 
+// resolveSecret returns the value of envVar if set and non-empty, otherwise fallback.
+func resolveSecret(envVar string, fallback string) string {
+	if v := os.Getenv(envVar); v != "" {
+		return v
+	}
+	return fallback
+}
+
 const appRootDir = "."
 
 // Load loads the YAML configuration file.
-// If path is empty, it will load "secretly.yaml" from the application root.
+// If path is empty, it will load "keyorix.yaml" from the application root.
 func Load(path string) (*Config, error) {
 	if path == "" {
-		path = filepath.Join(appRootDir, "secretly.yaml")
+		path = filepath.Join(appRootDir, "keyorix.yaml")
 	}
 
 	data, err := securefiles.SafeReadFile(appRootDir, path)
@@ -167,7 +222,6 @@ func LoadConfig() (*Config, error) {
 
 // Validate checks the configuration for required fields and correctness.
 func (c *Config) Validate() error {
-	// Validate server settings
 	if c.Server.HTTP.Enabled && c.Server.HTTP.Port == "" {
 		return fmt.Errorf("HTTP server is enabled but no port is specified")
 	}
@@ -176,7 +230,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gRPC server is enabled but no port is specified")
 	}
 
-	// Validate TLS settings
 	if c.Server.HTTP.TLS.Enabled {
 		if c.Server.HTTP.TLS.AutoCert {
 			if len(c.Server.HTTP.TLS.Domains) == 0 {
@@ -197,20 +250,27 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate database configuration
-	if c.Storage.Database.Path == "" {
-		return fmt.Errorf("database path is not specified")
+	switch c.Storage.Type {
+	case "remote":
+		// remote storage uses its own connection — no local DB config required
+	case "postgres", "postgresql":
+		db := c.Storage.Database
+		if db.DSN == "" && (db.Host == "" || db.Name == "" || db.User == "") {
+			return fmt.Errorf("postgres storage requires either database.dsn or all of host, name, and user to be set")
+		}
+	default: // "local", ""
+		if c.Storage.Database.Path == "" {
+			return fmt.Errorf("database path is not specified")
+		}
 	}
 
-	// Validate locale configuration
 	if c.Locale.Language == "" {
-		c.Locale.Language = "en" // Default to English
+		c.Locale.Language = "en"
 	}
 	if c.Locale.FallbackLanguage == "" {
-		c.Locale.FallbackLanguage = "en" // Default fallback to English
+		c.Locale.FallbackLanguage = "en"
 	}
 
-	// Validate supported language codes
 	supportedLanguages := map[string]bool{
 		"en": true, "ru": true, "es": true, "fr": true, "de": true,
 	}
@@ -223,10 +283,11 @@ func (c *Config) Validate() error {
 
 	return nil
 }
-// Save saves the configuration to a YAML file
+
+// Save saves the configuration to a YAML file.
 func Save(path string, cfg *Config) error {
 	if path == "" {
-		path = filepath.Join(appRootDir, "secretly.yaml")
+		path = filepath.Join(appRootDir, "keyorix.yaml")
 	}
 
 	data, err := yaml.Marshal(cfg)

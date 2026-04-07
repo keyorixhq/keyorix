@@ -5,7 +5,7 @@
 
 set -e
 
-echo "🚀 Simple Secretly Deployment"
+echo "🚀 Simple Keyorix Deployment"
 echo "============================="
 
 # Colors
@@ -25,19 +25,19 @@ log_info "Building CLI and server..."
 cd ..
 
 # Build CLI
-go build -o secretly ./
-log_success "CLI built: ./secretly"
+go build -o keyorix ./
+log_success "CLI built: ./bin/keyorix"
 
 # Build server
 cd server
-go build -o secretly-server ./
+go build -o keyorix-server ./
 cd ..
-log_success "Server built: ./server/secretly-server"
+log_success "Server built: ./serve./bin/keyorix-server"
 
 # Step 2: Create basic config
 log_info "Creating basic configuration..."
 
-cat > secretly-simple.yaml << 'EOF'
+cat > keyorix-simple.yaml << 'EOF'
 environment: "development"
 
 locale:
@@ -60,7 +60,7 @@ server:
 storage:
   type: "local"
   database:
-    path: "./data/secretly.db"
+    path: "./dat./bin/keyorix.db"
     max_open_conns: 25
     max_idle_conns: 5
   encryption:
@@ -91,7 +91,7 @@ purge:
   enabled: false
 EOF
 
-log_success "Configuration created: secretly-simple.yaml"
+log_success "Configuration created: keyorix-simple.yaml"
 
 # Step 3: Create data directory
 mkdir -p data
@@ -99,15 +99,15 @@ log_success "Data directory created"
 
 # Step 4: Test CLI
 log_info "Testing CLI..."
-./secretly --help > /dev/null
+./bin/keyorix --help > /dev/null
 log_success "CLI is working"
 
 echo ""
 log_success "🎉 Deployment complete!"
 echo ""
 echo "To start the system:"
-echo "  1. Start server: cd server && SECRETLY_CONFIG_PATH=../secretly-simple.yaml ./secretly-server"
-echo "  2. In another terminal, test CLI: ./secretly secret list"
+echo "  1. Start server: cd server && KEYORIX_CONFIG_PATH=../bin/keyorix-simple.yaml ./bin/keyorix-server"
+echo "  2. In another terminal, test CLI: ./bin/keyorix secret list"
 echo "  3. Access API: http://localhost:8080/health"
 echo "  4. View API docs: http://localhost:8080/swagger/"
 echo ""

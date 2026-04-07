@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"github.com/secretlyhq/secretly/server/grpc/interceptors"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Secretly API
+  title: Keyorix API
   description: |
     Secure secrets management API with RBAC, audit logging, and comprehensive secret lifecycle management.
     
@@ -15,9 +15,9 @@ info:
     This API uses URL versioning. Current version is v1: `/api/v1/`
   version: 1.0.0
   contact:
-    name: Secretly Team
-    email: support@secretly.dev
-    url: https://secretly.dev
+    name: Keyorix Team
+    email: support@keyorix.dev
+    url: https://keyorix.dev
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
@@ -25,9 +25,9 @@ info:
 servers:
   - url: /api/v1
     description: API v1
-  - url: https://api.secretly.dev/v1
+  - url: https://api.keyorix.dev/v1
     description: Production server
-  - url: https://staging-api.secretly.dev/v1
+  - url: https://staging-api.keyorix.dev/v1
     description: Staging server
 
 security:

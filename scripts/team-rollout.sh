@@ -29,7 +29,7 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-echo "🚀 Secretly Team Rollout Preparation"
+echo "🚀 Keyorix Team Rollout Preparation"
 echo "===================================="
 
 # Create rollout directories
@@ -42,14 +42,14 @@ cat > rollout/staging/docker-compose.staging.yml << 'EOF'
 version: '3.8'
 
 services:
-  secretly-staging:
+  keyorix-staging:
     build: ../../server
     ports:
       - "8081:8080"
     environment:
-      - SECRETLY_ENV=staging
-      - SECRETLY_DB_URL=sqlite:///data/secretly-staging.db
-      - SECRETLY_LOG_LEVEL=debug
+      - KEYORIX_ENV=staging
+      - KEYORIX_DB_URL=sqlite:///data/keyorix-staging.db
+      - KEYORIX_LOG_LEVEL=debug
     volumes:
       - staging-data:/data
     healthcheck:
@@ -66,7 +66,7 @@ services:
       - ../../web/dist:/usr/share/nginx/html
       - ./nginx-staging.conf:/etc/nginx/nginx.conf
     depends_on:
-      - secretly-staging
+      - keyorix-staging
 
 volumes:
   staging-data:
@@ -82,13 +82,13 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
 
-    upstream secretly_staging {
-        server secretly-staging:8080;
+    upstream keyorix_staging {
+        server keyorix-staging:8080;
     }
 
     server {
         listen 80;
-        server_name staging.secretly.local;
+        server_name staging.keyorix.local;
 
         # Serve static web files
         location / {
@@ -98,7 +98,7 @@ http {
 
         # Proxy API requests
         location /api/ {
-            proxy_pass http://secretly_staging;
+            proxy_pass http://keyorix_staging;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -106,12 +106,12 @@ http {
 
         # Health check
         location /health {
-            proxy_pass http://secretly_staging;
+            proxy_pass http://keyorix_staging;
         }
 
         # Swagger documentation
         location /swagger/ {
-            proxy_pass http://secretly_staging;
+            proxy_pass http://keyorix_staging;
         }
     }
 }
@@ -120,7 +120,7 @@ EOF
 # Create team training materials
 log_info "Creating team training materials..."
 cat > rollout/training/team-training-plan.md << 'EOF'
-# Team Training Plan for Secretly
+# Team Training Plan for Keyorix
 
 ## Training Schedule
 
@@ -129,9 +129,9 @@ cat > rollout/training/team-training-plan.md << 'EOF'
 **Duration**: 2 hours
 **Format**: Live presentation + hands-on
 
-#### Session 1: Introduction to Secretly (1 hour)
+#### Session 1: Introduction to Keyorix (1 hour)
 - What is secret management and why it matters
-- Overview of Secretly features and capabilities
+- Overview of Keyorix features and capabilities
 - Security benefits and best practices
 - Q&A session
 
@@ -258,7 +258,7 @@ cat > rollout/training/user-onboarding-checklist.md << 'EOF'
 # User Onboarding Checklist
 
 ## Pre-Onboarding (IT/Admin Tasks)
-- [ ] Create user account in Secretly
+- [ ] Create user account in Keyorix
 - [ ] Assign appropriate role and permissions
 - [ ] Add user to relevant groups/teams
 - [ ] Send welcome email with login instructions
@@ -266,7 +266,7 @@ cat > rollout/training/user-onboarding-checklist.md << 'EOF'
 
 ## Day 1: Getting Started
 - [ ] **Welcome Session** (30 minutes)
-  - [ ] Introduction to Secretly and team
+  - [ ] Introduction to Keyorix and team
   - [ ] Overview of security policies
   - [ ] Account setup and first login
   - [ ] Basic navigation walkthrough
@@ -378,7 +378,7 @@ EOF
 # Create feedback collection system
 log_info "Setting up feedback collection..."
 cat > rollout/feedback/feedback-form.md << 'EOF'
-# Secretly Rollout Feedback Form
+# Keyorix Rollout Feedback Form
 
 ## User Information
 - **Name**: ___________
@@ -457,13 +457,13 @@ EOF
 # Create rollout announcement templates
 log_info "Creating rollout announcements..."
 cat > rollout/announcements/rollout-announcement.md << 'EOF'
-# 🚀 Introducing Secretly: Our New Secret Management System
+# 🚀 Introducing Keyorix: Our New Secret Management System
 
-## What is Secretly?
+## What is Keyorix?
 
-We're excited to announce the rollout of **Secretly**, our new enterprise-grade secret management system! Secretly provides a secure, user-friendly platform for storing, sharing, and managing sensitive information across our organization.
+We're excited to announce the rollout of **Keyorix**, our new enterprise-grade secret management system! Keyorix provides a secure, user-friendly platform for storing, sharing, and managing sensitive information across our organization.
 
-## Why Secretly?
+## Why Keyorix?
 
 ### 🔒 Enhanced Security
 - Military-grade encryption (AES-256-GCM)
@@ -592,14 +592,14 @@ We're excited to announce the rollout of **Secretly**, our new enterprise-grade 
 ### Feedback Welcome
 We want to hear from you! Please share your thoughts, concerns, and suggestions:
 - **Email**: feedback@company.com
-- **Slack**: #secretly-rollout
+- **Slack**: #keyorix-rollout
 - **Office Hours**: Fridays 2-4 PM
 
 ## Thank You
 
 Thank you for your patience and cooperation during this important security upgrade. Together, we're making our organization more secure and efficient.
 
-**The Secretly Project Team**
+**The Keyorix Project Team**
 
 ---
 

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/secretlyhq/secretly/internal/di"
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/di"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -18,7 +18,7 @@ func main() {
 	}
 	fmt.Println(msg)
 
-	db, err := gorm.Open(sqlite.Open("secretly.db"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("keyorix.db"), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("❌ Database connection error: %v", err)
 	}
@@ -57,5 +57,5 @@ func main() {
 		log.Fatalf("❌ Migration error: %v", err)
 	}
 
-	fmt.Println("✅ Secretly app initialized. DB migrated.")
+	fmt.Println("✅ Keyorix app initialized. DB migrated.")
 }

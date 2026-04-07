@@ -3,20 +3,29 @@ package core
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSecretlyCore_ShareSecret(t *testing.T) {
+func TestMain(m *testing.M) {
+	if err := i18n.InitializeForTesting(); err != nil {
+		panic("failed to initialize i18n for tests: " + err.Error())
+	}
+	os.Exit(m.Run())
+}
+
+func TestKeyorixCore_ShareSecret(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -60,10 +69,10 @@ func TestSecretlyCore_ShareSecret(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ShareSecret_ValidationError(t *testing.T) {
+func TestKeyorixCore_ShareSecret_ValidationError(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -93,7 +102,7 @@ func TestSecretlyCore_ShareSecret_ValidationError(t *testing.T) {
 			req: &ShareSecretRequest{
 				SecretID:   1,
 				Permission: "read",
-				SharedBy:    1,
+				SharedBy:   1,
 			},
 			wantErr: true,
 		},
@@ -131,10 +140,10 @@ func TestSecretlyCore_ShareSecret_ValidationError(t *testing.T) {
 	}
 }
 
-func TestSecretlyCore_ShareSecret_StorageError(t *testing.T) {
+func TestKeyorixCore_ShareSecret_StorageError(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -158,11 +167,11 @@ func TestSecretlyCore_ShareSecret_StorageError(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_UpdateSharePermission(t *testing.T) {
+func TestKeyorixCore_UpdateSharePermission(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -213,11 +222,11 @@ func TestSecretlyCore_UpdateSharePermission(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_RevokeShare(t *testing.T) {
+func TestKeyorixCore_RevokeShare(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
 	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 		now: func() time.Time {
 			return mockTime
@@ -254,10 +263,10 @@ func TestSecretlyCore_RevokeShare(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ListSharedSecrets(t *testing.T) {
+func TestKeyorixCore_ListSharedSecrets(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -280,10 +289,10 @@ func TestSecretlyCore_ListSharedSecrets(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ListSecretShares(t *testing.T) {
+func TestKeyorixCore_ListSecretShares(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -312,10 +321,10 @@ func TestSecretlyCore_ListSecretShares(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_ListSharesByUser(t *testing.T) {
+func TestKeyorixCore_ListSharesByUser(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()
@@ -338,10 +347,10 @@ func TestSecretlyCore_ListSharesByUser(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestSecretlyCore_CheckSharePermission(t *testing.T) {
+func TestKeyorixCore_CheckSharePermission(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
-	core := &SecretlyCore{
+	core := &KeyorixCore{
 		storage: mockStorage,
 	}
 	ctx := context.Background()

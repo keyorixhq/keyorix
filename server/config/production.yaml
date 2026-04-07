@@ -1,4 +1,4 @@
-# Secretly Production Configuration with Web Dashboard
+# Keyorix Production Configuration with Web Dashboard
 # This configuration is optimized for production deployment
 
 environment: "production"
@@ -39,11 +39,16 @@ server:
       burst: 50
 
 storage:
-  type: "local"
+  type: "local"  # options: local (SQLite), postgres, remote
   database:
-    path: "/app/data/secretly.db"
+    path: "/app/data/keyorix.db"
+    # PostgreSQL (recommended for production):
+    # type: postgres
+    # dsn: "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
+    # password: ""  # use KEYORIX_DB_PASSWORD environment variable instead
     max_open_conns: 25
     max_idle_conns: 5
+    conn_max_lifetime_minutes: 30
   encryption:
     enabled: true
     use_kek: true
@@ -57,12 +62,6 @@ secrets:
     max_chunks_per_secret: 100
   limits:
     max_secrets_per_user: 10000
-
-telemetry:
-  enabled: true
-  endpoint: "${TELEMETRY_ENDPOINT:-}"
-  log_file: "/app/logs/telemetry.log"
-  api_key: "${TELEMETRY_API_KEY:-}"
 
 security:
   enable_file_permission_check: true

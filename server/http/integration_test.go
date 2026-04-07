@@ -9,11 +9,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/secretlyhq/secretly/internal/config"
-	"github.com/secretlyhq/secretly/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
+
+// newTestCore creates a minimal *core.KeyorixCore backed by an in-memory SQLite DB.
+func newTestCore(t *testing.T) *core.KeyorixCore {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	return core.NewKeyorixCore(local.NewLocalStorage(db))
+}
 
 // Integration tests for the complete HTTP server
 func TestHTTPServerIntegration(t *testing.T) {
@@ -34,7 +46,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 	}
 
 	// Create router
-	router, err := NewRouter(cfg)
+	router, err := NewRouter(cfg, newTestCore(t))
 	require.NoError(t, err)
 
 	// Create test server
@@ -441,7 +453,7 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 		},
 	}
 
-	router, err := NewRouter(cfg)
+	router, err := NewRouter(cfg, newTestCore(t))
 	require.NoError(t, err)
 
 	server := httptest.NewServer(router)
@@ -561,7 +573,7 @@ func TestHTTPServerPerformance(t *testing.T) {
 		},
 	}
 
-	router, err := NewRouter(cfg)
+	router, err := NewRouter(cfg, newTestCore(t))
 	require.NoError(t, err)
 
 	server := httptest.NewServer(router)
