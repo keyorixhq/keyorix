@@ -161,6 +161,35 @@ func validateToken(token string) (*UserContext, error) {
 		}, nil
 	}
 
+	// Test token representing user id 2 (share recipient) in HTTP integration tests
+	if token == "recipient-token" {
+		return &UserContext{
+			UserID:   2,
+			Username: "user2",
+			Email:    "user2@test.com",
+			Roles:    []string{"user"},
+			Permissions: []string{
+				"secrets.read",
+			},
+		}, nil
+	}
+
+	// Test token for share owner scenarios (same user id as valid-token admin in seeded tests)
+	if token == "owner-token" {
+		return &UserContext{
+			UserID:   1,
+			Username: "owner",
+			Email:    "owner@example.com",
+			Roles:    []string{"admin"},
+			Permissions: []string{
+				"secrets.read", "secrets.write", "secrets.delete",
+				"users.read", "users.write", "users.delete",
+				"roles.read", "roles.write", "roles.assign",
+				"audit.read", "system.read",
+			},
+		}, nil
+	}
+
 	return nil, http.ErrNotSupported
 }
 

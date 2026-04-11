@@ -83,10 +83,10 @@ func (m *MockStorageSharing) LogAuditEvent(ctx context.Context, event *models.Au
 }
 
 func TestSharingMethods(t *testing.T) {
-	// Initialize i18n for testing
+	// i18n is initialized once for the package in TestMain (sharing_test.go)
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
-	defer i18n.ResetForTesting()
+	// Note: do not defer ResetForTesting here — TestMain owns the i18n lifecycle for this package
 
 	t.Run("ShareSecret", testShareSecret)
 	t.Run("UpdateSharePermission", testUpdateSharePermission)

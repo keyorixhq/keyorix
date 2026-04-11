@@ -30,6 +30,7 @@ type Storage interface {
 	DeleteShareRecord(ctx context.Context, shareID uint) error
 	ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error)
 	ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error)
+	ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error)
 	ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error)
 	ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error)
 	CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error)
@@ -41,7 +42,18 @@ type Storage interface {
 	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
 	DeleteUser(ctx context.Context, id uint) error
 	ListUsers(ctx context.Context, filter *UserFilter) ([]*models.User, int64, error)
+	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
 	GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error)
+
+	// Group Management
+	CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
+	GetGroup(ctx context.Context, id uint) (*models.Group, error)
+	UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
+	DeleteGroup(ctx context.Context, id uint) error
+	ListGroups(ctx context.Context) ([]*models.Group, error)
+	AddUserToGroup(ctx context.Context, userID, groupID uint) error
+	RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error
+	ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error)
 
 	// Role Management
 	CreateRole(ctx context.Context, role *models.Role) (*models.Role, error)

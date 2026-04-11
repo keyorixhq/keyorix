@@ -21,10 +21,17 @@ func TestSharingIntegrationSimple(t *testing.T) {
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
-	defer i18n.ResetForTesting()
+	// Note: do not defer ResetForTesting here — TestMain owns the i18n lifecycle for this package
 
-	// Create test database (in-memory for isolation)
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	// Create test database (in-memory for isolation).
+	// Use WAL journal mode to allow concurrent reads alongside writes,
+	// and limit to a single connection so SQLite doesn't deadlock itself.
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_journal_mode=WAL"), &gorm.Config{})
+	require.NoError(t, err)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, err)
 
 	// Auto-migrate tables

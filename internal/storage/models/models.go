@@ -32,8 +32,11 @@ type User struct {
 	ID           uint   `gorm:"primaryKey"`
 	Username     string `gorm:"uniqueIndex;not null"`
 	Email        string
+	DisplayName  string
 	PasswordHash string
+	IsActive     bool `gorm:"default:true"`
 	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type Role struct {

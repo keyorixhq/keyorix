@@ -154,6 +154,15 @@ func (s *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*mo
 	return shares, nil
 }
 
+// ListSharesByOwner lists all share records created by secrets owned by this user (share owner_id)
+func (s *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
+	var shares []*models.ShareRecord
+	if err := s.db.Where("owner_id = ? AND deleted_at IS NULL", ownerID).Find(&shares).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+	}
+	return shares, nil
+}
+
 // ListSharesByGroup lists all share records where the group is the recipient
 func (s *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord

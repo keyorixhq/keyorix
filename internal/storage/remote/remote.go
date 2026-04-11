@@ -405,6 +405,11 @@ func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*
 	return result, nil
 }
 
+// ListSharesByOwner lists shares by owner via remote API (not implemented; empty list).
+func (rs *RemoteStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
+	return []*models.ShareRecord{}, nil
+}
+
 // ListSharesByGroup lists all share records where the group is the recipient via remote API
 func (rs *RemoteStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
 	path := fmt.Sprintf("/api/v1/groups/%d/shares", groupID)
@@ -632,6 +637,51 @@ func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilt
 	}
 
 	return result.Users, result.Total, nil
+}
+
+// GetUserByUsername retrieves a user by username via remote API (not implemented)
+func (rs *RemoteStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+	return nil, fmt.Errorf("GetUserByUsername not implemented for remote storage")
+}
+
+// CreateGroup creates a group via remote API (not implemented)
+func (rs *RemoteStorage) CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
+	return nil, fmt.Errorf("CreateGroup not implemented for remote storage")
+}
+
+// GetGroup retrieves a group by ID via remote API (not implemented)
+func (rs *RemoteStorage) GetGroup(ctx context.Context, id uint) (*models.Group, error) {
+	return nil, fmt.Errorf("GetGroup not implemented for remote storage")
+}
+
+// UpdateGroup updates a group via remote API (not implemented)
+func (rs *RemoteStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
+	return nil, fmt.Errorf("UpdateGroup not implemented for remote storage")
+}
+
+// DeleteGroup deletes a group via remote API (not implemented)
+func (rs *RemoteStorage) DeleteGroup(ctx context.Context, id uint) error {
+	return fmt.Errorf("DeleteGroup not implemented for remote storage")
+}
+
+// ListGroups lists groups via remote API (not implemented)
+func (rs *RemoteStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
+	return nil, fmt.Errorf("ListGroups not implemented for remote storage")
+}
+
+// AddUserToGroup adds a user to a group via remote API (not implemented)
+func (rs *RemoteStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+	return fmt.Errorf("AddUserToGroup not implemented for remote storage")
+}
+
+// RemoveUserFromGroup removes a user from a group via remote API (not implemented)
+func (rs *RemoteStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
+	return fmt.Errorf("RemoveUserFromGroup not implemented for remote storage")
+}
+
+// ListGroupMembers lists group members via remote API (not implemented)
+func (rs *RemoteStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error) {
+	return nil, fmt.Errorf("ListGroupMembers not implemented for remote storage")
 }
 
 // Role Management Methods

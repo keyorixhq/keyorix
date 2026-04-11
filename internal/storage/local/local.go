@@ -257,6 +257,124 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	return users, total, nil
 }
 
+// GetUserByUsername retrieves a user by username
+func (ls *LocalStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+	var user models.User
+	if err := ls.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &user, nil
+}
+
+// CreateGroup creates a new group
+func (ls *LocalStorage) CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
+	if err := ls.db.WithContext(ctx).Create(group).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return group, nil
+}
+
+// GetGroup retrieves a group by ID
+func (ls *LocalStorage) GetGroup(ctx context.Context, id uint) (*models.Group, error) {
+	var group models.Group
+	if err := ls.db.WithContext(ctx).First(&group, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorGroupNotFound", nil))
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &group, nil
+}
+
+// UpdateGroup updates an existing group
+func (ls *LocalStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
+	if err := ls.db.WithContext(ctx).Save(group).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return group, nil
+}
+
+// DeleteGroup deletes a group by ID
+func (ls *LocalStorage) DeleteGroup(ctx context.Context, id uint) error {
+	if _, err := ls.GetGroup(ctx, id); err != nil {
+		return err
+	}
+	if err := ls.db.WithContext(ctx).Where("group_id = ?", id).Delete(&models.GroupRole{}).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if err := ls.db.WithContext(ctx).Where("group_id = ?", id).Delete(&models.UserGroup{}).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	result := ls.db.WithContext(ctx).Delete(&models.Group{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s", i18n.T("ErrorGroupNotFound", nil))
+	}
+	return nil
+}
+
+// ListGroups lists all groups
+func (ls *LocalStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
+	var groups []*models.Group
+	if err := ls.db.WithContext(ctx).Order("name").Find(&groups).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return groups, nil
+}
+
+// AddUserToGroup adds a user to a group
+func (ls *LocalStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+	if _, err := ls.GetUser(ctx, userID); err != nil {
+		return err
+	}
+	if _, err := ls.GetGroup(ctx, groupID); err != nil {
+		return err
+	}
+	var existing models.UserGroup
+	err := ls.db.WithContext(ctx).Where("user_id = ? AND group_id = ?", userID, groupID).First(&existing).Error
+	if err == nil {
+		return nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+	}
+	ug := models.UserGroup{UserID: userID, GroupID: groupID}
+	if err := ls.db.WithContext(ctx).Create(&ug).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+// RemoveUserFromGroup removes a user from a group
+func (ls *LocalStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
+	result := ls.db.WithContext(ctx).Where("user_id = ? AND group_id = ?", userID, groupID).Delete(&models.UserGroup{})
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	return nil
+}
+
+// ListGroupMembers lists all users in a group
+func (ls *LocalStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error) {
+	if _, err := ls.GetGroup(ctx, groupID); err != nil {
+		return nil, err
+	}
+	var users []*models.User
+	err := ls.db.WithContext(ctx).Model(&models.User{}).
+		Joins("JOIN user_groups ON user_groups.user_id = users.id").
+		Where("user_groups.group_id = ?", groupID).
+		Find(&users).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return users, nil
+}
+
 // Role Management Implementation
 
 // CreateRole creates a new role in the database
@@ -493,9 +611,15 @@ func (ls *LocalStorage) HealthCheck(ctx context.Context) error {
 
 // GetUserGroups retrieves all groups a user is a member of
 func (ls *LocalStorage) GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error) {
-	// For now, return empty groups since group functionality is not fully implemented
-	// This is a placeholder implementation to satisfy the interface
-	return []*models.Group{}, nil
+	var groups []*models.Group
+	err := ls.db.WithContext(ctx).Model(&models.Group{}).
+		Joins("JOIN user_groups ON user_groups.group_id = groups.id").
+		Where("user_groups.user_id = ?", userID).
+		Find(&groups).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return groups, nil
 }
 
 func (ls *LocalStorage) GetStats(ctx context.Context) (*storage.StorageStats, error) {

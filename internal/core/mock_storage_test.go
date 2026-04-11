@@ -136,6 +136,14 @@ func (m *MockStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*mod
 	return args.Get(0).([]*models.ShareRecord), args.Error(1)
 }
 
+func (m *MockStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
+	args := m.Called(ctx, ownerID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.ShareRecord), args.Error(1)
+}
+
 func (m *MockStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
 	args := m.Called(ctx, groupID)
 	if args.Get(0) == nil {
@@ -204,12 +212,75 @@ func (m *MockStorage) ListUsers(ctx context.Context, filter *storage.UserFilter)
 	return args.Get(0).([]*models.User), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *MockStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+	args := m.Called(ctx, username)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
 func (m *MockStorage) GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.Group), args.Error(1)
+}
+
+func (m *MockStorage) CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
+	args := m.Called(ctx, group)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Group), args.Error(1)
+}
+
+func (m *MockStorage) GetGroup(ctx context.Context, id uint) (*models.Group, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Group), args.Error(1)
+}
+
+func (m *MockStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
+	args := m.Called(ctx, group)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Group), args.Error(1)
+}
+
+func (m *MockStorage) DeleteGroup(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Group), args.Error(1)
+}
+
+func (m *MockStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+	args := m.Called(ctx, userID, groupID)
+	return args.Error(0)
+}
+
+func (m *MockStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
+	args := m.Called(ctx, userID, groupID)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error) {
+	args := m.Called(ctx, groupID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.User), args.Error(1)
 }
 
 // Role Management

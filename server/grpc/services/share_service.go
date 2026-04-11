@@ -78,6 +78,11 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *ShareSecretRequ
 	var shareRecord *models.ShareRecord
 	var err error
 	
+	// Guard against nil coreService (e.g. in tests that pass nil)
+	if s.coreService == nil {
+		return nil, status.Errorf(codes.Internal, "Share service not configured")
+	}
+
 	// Handle group sharing differently
 	if req.IsGroup {
 		// Convert to group share service request

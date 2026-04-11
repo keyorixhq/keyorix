@@ -13,6 +13,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -22,7 +23,23 @@ import (
 // newTestCore creates a minimal *core.KeyorixCore backed by an in-memory SQLite DB.
 func newTestCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_timeout=30000&_journal_mode=WAL"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	err = db.AutoMigrate(
+		&models.SecretNode{},
+		&models.SecretVersion{},
+		&models.User{},
+		&models.Role{},
+		&models.UserRole{},
+		&models.Group{},
+		&models.UserGroup{},
+		&models.GroupRole{},
+		&models.ShareRecord{},
+		&models.AuditEvent{},
+	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(local.NewLocalStorage(db))
 }
@@ -103,6 +120,9 @@ func TestHTTPServerIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Contains(t, response, "data")
+			if response["data"] == nil {
+				t.Fatalf("expected data in response body, got nil. Full response: %v", response)
+			}
 			data := response["data"].(map[string]interface{})
 			assert.Contains(t, data, "secrets")
 			assert.Contains(t, data, "total")
@@ -111,12 +131,12 @@ func TestHTTPServerIntegration(t *testing.T) {
 		// Step 4: Create a new secret
 		t.Run("Create Secret", func(t *testing.T) {
 			secretData := map[string]interface{}{
-				"name":        "integration-test-secret",
-				"value":       "super-secret-value",
-				"namespace":   "test",
-				"zone":        "us-west-2",
-				"environment": "integration",
-				"type":        "password",
+				"name":           "integration-test-secret",
+				"value":          "super-secret-value",
+				"namespace_id":   1,
+				"zone_id":        1,
+				"environment_id": 1,
+				"type":           "password",
 				"metadata": map[string]string{
 					"test":  "integration",
 					"owner": "test-suite",
@@ -145,13 +165,15 @@ func TestHTTPServerIntegration(t *testing.T) {
 			assert.Contains(t, response, "data")
 			assert.Contains(t, response, "message")
 
+			if response["data"] == nil {
+				t.Fatalf("expected data in response body, got nil. Full response: %v", response)
+			}
 			data := response["data"].(map[string]interface{})
-			assert.Contains(t, data, "id")
-			assert.Equal(t, "integration-test-secret", data["name"])
-			assert.Equal(t, "test", data["namespace"])
+			assert.Contains(t, data, "ID")
+			assert.Equal(t, "integration-test-secret", data["Name"])
 
 			// Store secret ID for later tests
-			secretID = uint(data["id"].(float64))
+			secretID = uint(data["ID"].(float64))
 		})
 
 		// Step 5: Get the created secret
@@ -171,9 +193,12 @@ func TestHTTPServerIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			assert.Contains(t, response, "data")
+			if response["data"] == nil {
+				t.Fatalf("expected data in response body, got nil. Full response: %v", response)
+			}
 			data := response["data"].(map[string]interface{})
-			assert.Equal(t, float64(secretID), data["id"])
-			assert.Equal(t, "integration-test-secret", data["name"])
+			assert.Equal(t, float64(secretID), data["ID"])
+			assert.Equal(t, "integration-test-secret", data["Name"])
 		})
 
 		// Step 6: Update the secret

@@ -173,6 +173,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		Metadata:      reqBody.Metadata,
 		Tags:          reqBody.Tags,
 		CreatedBy:     userCtx.Username,
+		OwnerID:       userCtx.UserID,
 	}
 
 	// Call service

@@ -8,9 +8,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
 	"github.com/keyorixhq/keyorix/internal/cli/encryption"
+	"github.com/keyorixhq/keyorix/internal/cli/group"
 	"github.com/keyorixhq/keyorix/internal/cli/rbac"
 	"github.com/keyorixhq/keyorix/internal/cli/secret"
 	"github.com/keyorixhq/keyorix/internal/cli/share"
+	"github.com/keyorixhq/keyorix/internal/cli/user"
 	"github.com/keyorixhq/keyorix/internal/cli/status"
 	"github.com/keyorixhq/keyorix/internal/cli/system"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -26,6 +28,8 @@ var rootCmd = &cobra.Command{
 func init() {
 	// Add all available commands
 	rootCmd.AddCommand(secret.SecretCmd)
+	rootCmd.AddCommand(user.UserCmd)
+	rootCmd.AddCommand(group.GroupCmd)
 	rootCmd.AddCommand(share.ShareCmd)
 	rootCmd.AddCommand(auth.AuthCmd)
 	rootCmd.AddCommand(config.ConfigCmd)

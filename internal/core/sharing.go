@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -173,6 +174,9 @@ func (c *KeyorixCore) ListSharedSecrets(ctx context.Context, userID uint) ([]*mo
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	if secrets == nil {
+		secrets = []*models.SecretNode{}
+	}
 
 	return secrets, nil
 }
@@ -198,19 +202,38 @@ func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*m
 	return shares, nil
 }
 
-// ListSharesByUser lists all shares where the user is the owner
+// ListSharesByUser lists shares involving the user: received (recipient) and outgoing (as secret owner on share records).
 func (c *KeyorixCore) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
 
-	// Get shares from storage
-	shares, err := c.storage.ListSharesByUser(ctx, userID)
+	received, err := c.storage.ListSharesByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	owned, err := c.storage.ListSharesByOwner(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
-	return shares, nil
+	byID := make(map[uint]*models.ShareRecord)
+	for _, s := range received {
+		if s != nil {
+			byID[s.ID] = s
+		}
+	}
+	for _, s := range owned {
+		if s != nil {
+			byID[s.ID] = s
+		}
+	}
+	out := make([]*models.ShareRecord, 0, len(byID))
+	for _, s := range byID {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 // RemoveSelfFromShare allows a user to remove themselves from a shared secret

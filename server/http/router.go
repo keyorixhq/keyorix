@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -25,7 +26,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(middleware.RealIP)
 	r.Use(customMiddleware.Logger())
 	r.Use(customMiddleware.Recovery())
-	r.Use(middleware.Timeout(60))
+	r.Use(middleware.Timeout(60 * time.Second))
 
 	// CORS configuration - updated for web dashboard
 	r.Use(cors.Handler(cors.Options{
@@ -38,6 +39,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	}))
 
 	// Initialize handlers
+	_, groupHandler, err := handlers.InitCoreHandlers(coreService)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init core HTTP handlers: %w", err)
+	}
+
 	secretHandler, err := handlers.NewSecretHandler(coreService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret handler: %w", err)
@@ -134,6 +140,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/{id}", handlers.GetUser)
 			r.Put("/{id}", handlers.UpdateUser)
 			r.Delete("/{id}", handlers.DeleteUser)
+		})
+
+		// Groups endpoints
+		r.Route("/groups", func(r chi.Router) {
+			r.Use(customMiddleware.RequirePermission("users.read"))
+			r.Get("/", groupHandler.ListGroups)
+			r.Post("/", groupHandler.CreateGroup)
+			r.Get("/{id}", groupHandler.GetGroup)
+			r.Put("/{id}", groupHandler.UpdateGroup)
+			r.Delete("/{id}", groupHandler.DeleteGroup)
+			r.Get("/{id}/members", groupHandler.GetGroupMembers)
+			r.Post("/{id}/members", groupHandler.AddGroupMember)
+			r.Delete("/{id}/members/{userId}", groupHandler.RemoveGroupMember)
 		})
 
 		// Roles endpoints (RBAC)

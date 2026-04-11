@@ -279,6 +279,9 @@ func (h *ShareHandler) ListSharedSecrets(w http.ResponseWriter, r *http.Request)
 		h.sendError(w, "InternalError", "Failed to list shared secrets", http.StatusInternalServerError, nil)
 		return
 	}
+	if secrets == nil {
+		secrets = []*models.SecretNode{}
+	}
 
 	// Send response
 	response := map[string]interface{}{

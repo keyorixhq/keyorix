@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -16,10 +15,7 @@ import (
 
 
 func TestKeyorixCore_CreateSecret(t *testing.T) {
-	// Initialize i18n for testing
-	err := i18n.InitializeForTesting()
-	require.NoError(t, err)
-	defer i18n.ResetForTesting()
+	// i18n is initialized once for the package in TestMain (sharing_test.go)
 
 	// Create mock storage
 	mockStorage := new(MockStorage)
@@ -126,10 +122,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 }
 
 func TestKeyorixCore_GetSecret(t *testing.T) {
-	// Initialize i18n for testing
-	err := i18n.InitializeForTesting()
-	require.NoError(t, err)
-	defer i18n.ResetForTesting()
+	// i18n is initialized once for the package in TestMain (sharing_test.go)
 
 	ctx := context.Background()
 
@@ -224,10 +217,7 @@ func TestKeyorixCore_GetSecret(t *testing.T) {
 }
 
 func TestKeyorixCore_ListSecrets(t *testing.T) {
-	// Initialize i18n for testing
-	err := i18n.InitializeForTesting()
-	require.NoError(t, err)
-	defer i18n.ResetForTesting()
+	// i18n is initialized once for the package in TestMain (sharing_test.go)
 
 	ctx := context.Background()
 
