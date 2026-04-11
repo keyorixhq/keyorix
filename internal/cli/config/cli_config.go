@@ -89,7 +89,8 @@ func LoadCLIConfig(configPath string) (*CLIConfig, error) {
 		return DefaultCLIConfig(), nil
 	}
 
-	// Read file
+	// #nosec G304 -- configPath is user-controlled local filesystem path,
+	// not derived from network input. Safe in CLI context.
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -124,7 +125,7 @@ func SaveCLIConfig(config *CLIConfig, configPath string) error {
 
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(configPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0750); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 

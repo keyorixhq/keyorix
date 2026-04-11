@@ -79,11 +79,14 @@ func printUsage() {
 }
 
 func validateTranslations(localesDir string) (*ValidationSummary, error) {
-	if _, err := os.Stat(localesDir); os.IsNotExist(err) {
-		return nil, fmt.Errorf("locales directory does not exist: %s", localesDir)
+	// #nosec G703 -- localesDir is a CLI argument for internal tooling only,
+	// not exposed to untrusted user input in production.
+	cleanDir := filepath.Clean(localesDir)
+	if _, err := os.Stat(cleanDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("locales directory does not exist: %s", cleanDir)
 	}
 
-	files, err := os.ReadDir(localesDir)
+	files, err := os.ReadDir(cleanDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read locales directory: %w", err)
 	}
@@ -96,7 +99,7 @@ func validateTranslations(localesDir string) (*ValidationSummary, error) {
 	}
 
 	if len(translationFiles) == 0 {
-		return nil, fmt.Errorf("no translation files found in %s", localesDir)
+		return nil, fmt.Errorf("no translation files found in %s", cleanDir)
 	}
 
 	translations := make(map[string]TranslationFile)
@@ -104,7 +107,7 @@ func validateTranslations(localesDir string) (*ValidationSummary, error) {
 
 	for _, filename := range translationFiles {
 		lang := strings.TrimSuffix(filename, ".json")
-		filePath := filepath.Join(localesDir, filename)
+		filePath := filepath.Join(cleanDir, filename)
 
 		translationFile, err := loadTranslationFile(filePath)
 		if err != nil {

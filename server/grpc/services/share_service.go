@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -178,9 +179,9 @@ func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *ListSecret
 
 	return &ListSharesResponse{
 		Shares:     grpcShares,
-		Total:      uint32(len(grpcShares)),
+		Total:      safeUint32(len(grpcShares)),
 		Page:       1,
-		PageSize:   uint32(len(grpcShares)),
+		PageSize:   safeUint32(len(grpcShares)),
 		TotalPages: 1,
 	}, nil
 }
@@ -229,10 +230,10 @@ func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *ListUserShar
 
 	return &ListSharesResponse{
 		Shares:     grpcShares,
-		Total:      uint32(len(grpcShares)),
+		Total:      safeUint32(len(grpcShares)),
 		Page:       req.Page,
 		PageSize:   req.PageSize,
-		TotalPages: uint32((len(grpcShares) + int(req.PageSize) - 1) / int(req.PageSize)),
+		TotalPages: safeUint32((len(grpcShares) + int(req.PageSize) - 1) / int(req.PageSize)),
 	}, nil
 }
 
@@ -287,12 +288,21 @@ func (s *ShareGRPCService) ListSharedSecrets(ctx context.Context, req *ListShare
 		grpcSecrets[i] = s.convertToGRPCSecretResponse(secret)
 	}
 
+	var totalPagesShared int32
+	if req.PageSize > 0 {
+		tp := (int64(len(grpcSecrets)) + int64(req.PageSize) - 1) / int64(req.PageSize)
+		if tp > int64(math.MaxInt32) {
+			tp = math.MaxInt32
+		}
+		totalPagesShared = int32(tp)
+	}
+
 	return &ListSecretsResponse{
 		Secrets:    grpcSecrets,
 		Total:      int64(len(grpcSecrets)),
-		Page:       int32(req.Page),
-		PageSize:   int32(req.PageSize),
-		TotalPages: int32((len(grpcSecrets) + int(req.PageSize) - 1) / int(req.PageSize)),
+		Page:       safeInt32FromUint32(req.Page),
+		PageSize:   safeInt32FromUint32(req.PageSize),
+		TotalPages: totalPagesShared,
 	}, nil
 }
 
@@ -481,6 +491,25 @@ func (s *ShareGRPCService) convertToGRPCShareRecord(share *models.ShareRecord) *
 		CreatedAt:  timestamppb.New(share.CreatedAt),
 		UpdatedAt:  timestamppb.New(share.UpdatedAt),
 	}
+}
+
+// safeUint32 converts int to uint32 safely, clamping to MaxUint32
+func safeUint32(n int) uint32 {
+	if n < 0 {
+		return 0
+	}
+	if uint64(n) > uint64(math.MaxUint32) {
+		return math.MaxUint32
+	}
+	return uint32(n)
+}
+
+// safeInt32FromUint32 converts uint32 to int32 safely
+func safeInt32FromUint32(n uint32) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n)
 }
 
 // convertToGRPCSecretResponse converts a storage secret node to a gRPC secret response

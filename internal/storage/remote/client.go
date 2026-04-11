@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -50,8 +51,12 @@ func NewHTTPClient(config *Config) (*HTTPClient, error) {
 
 	// Configure TLS if needed
 	if !config.TLSVerify {
+		// #nosec G402 -- InsecureSkipVerify is explicitly user-controlled via
+		// tls_verify: false in config. Intended for dev/air-gapped environments only.
+		// Production deployments must use tls_verify: true.
+		log.Println("WARNING: TLS verification disabled. Do not use in production.")
 		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- user-controlled via tls_verify: false; dev/air-gapped only
 		}
 	}
 

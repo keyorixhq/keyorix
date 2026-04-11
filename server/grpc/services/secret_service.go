@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -248,7 +249,14 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *ListSecretsReq
 		grpcSecrets[i] = s.convertToGRPCSecretResponse(secret)
 	}
 
-	totalPages := int32((total + int64(req.PageSize) - 1) / int64(req.PageSize))
+	var totalPages int32
+	if req.PageSize > 0 {
+		tp := (total + int64(req.PageSize) - 1) / int64(req.PageSize)
+		if tp > int64(math.MaxInt32) {
+			tp = math.MaxInt32
+		}
+		totalPages = int32(tp)
+	}
 
 	return &ListSecretsResponse{
 		Secrets:    grpcSecrets,
