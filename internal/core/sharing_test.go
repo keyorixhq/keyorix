@@ -337,6 +337,7 @@ func TestKeyorixCore_ListSharesByUser(t *testing.T) {
 
 	// Mock expectations
 	mockStorage.On("ListSharesByUser", ctx, uint(1)).Return(shares, nil)
+	mockStorage.On("ListSharesByOwner", ctx, uint(1)).Return([]*models.ShareRecord{}, nil)
 
 	// Execute
 	result, err := core.ListSharesByUser(ctx, 1)

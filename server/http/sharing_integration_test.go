@@ -25,13 +25,43 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+
+	// Limit to one connection to prevent SQLite "table is locked" errors
+	// under concurrent write load in tests.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
 	err = db.AutoMigrate(
-		&models.SecretNode{},
-		&models.SecretVersion{},
-		&models.ShareRecord{},
+		&models.Namespace{},
+		&models.Zone{},
+		&models.Environment{},
+		&models.User{},
+		&models.Role{},
+		&models.UserRole{},
 		&models.Group{},
 		&models.UserGroup{},
-		&models.User{},
+		&models.GroupRole{},
+		&models.SecretNode{},
+		&models.SecretVersion{},
+		&models.SecretAccessLog{},
+		&models.SecretMetadataHistory{},
+		&models.ShareRecord{},
+		&models.Session{},
+		&models.PasswordReset{},
+		&models.Tag{},
+		&models.SecretTag{},
+		&models.Notification{},
+		&models.AuditEvent{},
+		&models.Setting{},
+		&models.SystemMetadata{},
+		&models.APIClient{},
+		&models.APIToken{},
+		&models.RateLimit{},
+		&models.APICallLog{},
+		&models.GRPCService{},
+		&models.IdentityProvider{},
+		&models.ExternalIdentity{},
 	)
 	require.NoError(t, err)
 	now := time.Now()
