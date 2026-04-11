@@ -64,8 +64,14 @@ server:
 
 # Storage and encryption
 storage:
+  type: sqlite  # options: sqlite, postgres
   database:
+    # SQLite (default — zero infrastructure required)
     path: "keyorix.db"
+    # PostgreSQL (recommended for production):
+    # type: postgres
+    # dsn: "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
+    # Or use KEYORIX_DB_PASSWORD env var for the password field.
   encryption:
     enabled: true
     kek_path: "keys/kek.key"

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -169,7 +168,7 @@ func (se *ShareEncryption) StoreSharedSecret(secretNode *models.SecretNode, plai
 		SecretNodeID:       secretNode.ID,
 		VersionNumber:      nextVersion,
 		EncryptedValue:     encryptedData,
-		EncryptionMetadata: datatypes.JSON(metadata),
+		EncryptionMetadata: models.JSON(metadata),
 	}
 
 	if err := tx.Create(version).Error; err != nil {

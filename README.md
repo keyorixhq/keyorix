@@ -42,7 +42,8 @@ curl http://localhost:8080/health
 - **Complete translation coverage** for all user-facing messages
 
 ### 🔧 **Flexible Architecture**
-- **Local storage** with SQLite (default)
+- **Local storage** with SQLite (default, zero infrastructure)
+- **PostgreSQL storage** for production and multi-instance deployments
 - **Remote storage** support for distributed deployments
 - **HTTP REST API** with OpenAPI documentation
 - **gRPC API** for high-performance integrations
@@ -69,7 +70,8 @@ curl http://localhost:8080/health
 
 ### Prerequisites
 - Go 1.21 or higher
-- SQLite (for local storage)
+- SQLite (for local storage, the default — no setup required)
+- PostgreSQL 13+ (optional, recommended for production)
 
 ### Build from Source
 ```bash
@@ -172,6 +174,7 @@ KEYORIX_LANGUAGE=de ./keyorix secret list
                     ┌─────────────────┐
                     │ Storage Layer   │
                     │ - Local SQLite  │
+                    │ - PostgreSQL    │
                     │ - Remote Store  │
                     └─────────────────┘
 ```

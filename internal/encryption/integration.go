@@ -5,7 +5,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -82,7 +81,7 @@ func (se *SecretEncryption) StoreSecret(secretNode *models.SecretNode, plaintext
 		SecretNodeID:       secretNode.ID,
 		VersionNumber:      nextVersion,
 		EncryptedValue:     encryptedData,
-		EncryptionMetadata: datatypes.JSON(metadata),
+		EncryptionMetadata: models.JSON(metadata),
 	}
 
 	if err := tx.Create(version).Error; err != nil {
@@ -138,7 +137,7 @@ func (se *SecretEncryption) StoreLargeSecret(secretNode *models.SecretNode, plai
 			SecretNodeID:       secretNode.ID,
 			VersionNumber:      i + 1,
 			EncryptedValue:     encryptedChunk,
-			EncryptionMetadata: datatypes.JSON(metadataChunks[i]),
+			EncryptionMetadata: models.JSON(metadataChunks[i]),
 		}
 
 		if err := se.db.Create(version).Error; err != nil {
@@ -212,7 +211,7 @@ func (se *SecretEncryption) RotateSecretEncryption(versionID uint) error {
 	// Update the version
 	updates := map[string]interface{}{
 		"encrypted_value":     encryptedData,
-		"encryption_metadata": datatypes.JSON(metadata),
+		"encryption_metadata": models.JSON(metadata),
 	}
 
 	if err := se.db.Model(&models.SecretVersion{}).Where("id = ?", versionID).Updates(updates).Error; err != nil {

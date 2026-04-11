@@ -11,7 +11,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/datatypes"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -78,7 +77,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 			Type:          "password",
 			OwnerID:       1,
 			IsSecret:      true,
-			Metadata:      datatypes.JSON(`{"test": "integration"}`),
+			Metadata:      models.JSON(`{"test": "integration"}`),
 			CreatedAt:     time.Now(),
 			UpdatedAt:     time.Now(),
 		}

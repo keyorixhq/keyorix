@@ -67,7 +67,7 @@ storage:
     # password: ""  # use KEYORIX_DB_PASSWORD environment variable instead
     # ssl_mode: require  # always use require or verify-full in production
 
-    max_open_conns: 10
+    max_open_conns: 25
     max_idle_conns: 5
     conn_max_lifetime_minutes: 30
 

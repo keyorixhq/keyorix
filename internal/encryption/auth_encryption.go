@@ -5,7 +5,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -170,7 +169,7 @@ func (ae *AuthEncryption) StoreEncryptedAPIClient(client *models.APIClient, plai
 	// Update the client with encrypted data
 	client.EncryptedClientSecret = encryptedSecret
 	if metadata != nil {
-		client.ClientSecretMetadata = datatypes.JSON(metadata)
+		client.ClientSecretMetadata = models.JSON(metadata)
 	}
 
 	// Store in database
@@ -208,7 +207,7 @@ func (ae *AuthEncryption) StoreEncryptedSession(session *models.Session, plainTo
 	// Update the session with encrypted data
 	session.EncryptedSessionToken = encryptedToken
 	if metadata != nil {
-		session.SessionTokenMetadata = datatypes.JSON(metadata)
+		session.SessionTokenMetadata = models.JSON(metadata)
 	}
 
 	// Store in database
@@ -246,7 +245,7 @@ func (ae *AuthEncryption) StoreEncryptedAPIToken(token *models.APIToken, plainTo
 	// Update the token with encrypted data
 	token.EncryptedToken = encryptedToken
 	if metadata != nil {
-		token.TokenMetadata = datatypes.JSON(metadata)
+		token.TokenMetadata = models.JSON(metadata)
 	}
 
 	// Store in database
@@ -332,7 +331,7 @@ func (ae *AuthEncryption) rotateAPIClientSecrets() error {
 		// Update in database
 		updates := map[string]interface{}{
 			"encrypted_client_secret": encryptedSecret,
-			"client_secret_metadata":  datatypes.JSON(metadata),
+			"client_secret_metadata":  models.JSON(metadata),
 		}
 
 		if err := ae.db.Model(&client).Updates(updates).Error; err != nil {
@@ -366,7 +365,7 @@ func (ae *AuthEncryption) rotateSessionTokens() error {
 		// Update in database
 		updates := map[string]interface{}{
 			"encrypted_session_token": encryptedToken,
-			"session_token_metadata":  datatypes.JSON(metadata),
+			"session_token_metadata":  models.JSON(metadata),
 		}
 
 		if err := ae.db.Model(&session).Updates(updates).Error; err != nil {
@@ -400,7 +399,7 @@ func (ae *AuthEncryption) rotateAPITokens() error {
 		// Update in database
 		updates := map[string]interface{}{
 			"encrypted_token": encryptedToken,
-			"token_metadata":  datatypes.JSON(metadata),
+			"token_metadata":  models.JSON(metadata),
 		}
 
 		if err := ae.db.Model(&token).Updates(updates).Error; err != nil {

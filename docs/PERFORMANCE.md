@@ -55,19 +55,17 @@ Uptime: 5h30m+ stable
 
 ### Database Optimization
 ```yaml
-# Optimized database configuration
+# Optimized connection pool configuration (applies to both SQLite and PostgreSQL)
 database:
-  max_connections: 100
-  connection_timeout: 30s
-  idle_timeout: 5m
-  max_lifetime: 1h
-  
-  # SQLite optimizations
-  sqlite:
-    cache_size: 10000
-    journal_mode: "WAL"
-    synchronous: "NORMAL"
-    temp_store: "MEMORY"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime_minutes: 30
+
+  # SQLite only — these pragmas improve write throughput on SQLite:
+  # journal_mode: WAL, synchronous: NORMAL, temp_store: MEMORY
+
+  # PostgreSQL — tuning is done server-side (postgresql.conf):
+  # max_connections, shared_buffers, work_mem, effective_cache_size
 ```
 
 ### Server Optimization
@@ -197,14 +195,20 @@ alerts:
 
 ### Database Tuning
 ```sql
--- SQLite performance optimizations
+-- SQLite performance optimizations (run on the SQLite connection)
 PRAGMA cache_size = 10000;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = MEMORY;
 PRAGMA mmap_size = 268435456;
 
--- Index optimization
+-- PostgreSQL performance optimizations (postgresql.conf / ALTER SYSTEM)
+-- shared_buffers = 256MB
+-- work_mem = 16MB
+-- effective_cache_size = 1GB
+-- wal_compression = on
+
+-- Index optimization (both backends)
 CREATE INDEX idx_secrets_name ON secret_nodes(name);
 CREATE INDEX idx_secrets_created ON secret_nodes(created_at);
 CREATE INDEX idx_shares_secret ON share_records(secret_id);

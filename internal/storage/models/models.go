@@ -3,7 +3,6 @@ package models
 import (
 	"time"
 
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -79,7 +78,7 @@ type SecretNode struct {
 	Type          string
 	MaxReads      *int
 	Expiration    *time.Time
-	Metadata      datatypes.JSON
+	Metadata      JSON
 	Status        string `gorm:"default:'active'"`
 	CreatedBy     string
 	OwnerID       uint   `gorm:"index"`
@@ -93,7 +92,7 @@ type SecretVersion struct {
 	SecretNodeID       uint
 	VersionNumber      int
 	EncryptedValue     []byte
-	EncryptionMetadata datatypes.JSON
+	EncryptionMetadata JSON
 	ReadCount          int
 	CreatedAt          time.Time
 }
@@ -114,8 +113,8 @@ type SecretMetadataHistory struct {
 	SecretNodeID uint
 	ChangedBy    string
 	ChangeTime   time.Time
-	OldMetadata  datatypes.JSON
-	NewMetadata  datatypes.JSON
+	OldMetadata  JSON
+	NewMetadata  JSON
 }
 
 type Session struct {
@@ -123,7 +122,7 @@ type Session struct {
 	UserID                uint
 	SessionToken          string `gorm:"unique"` // Deprecated: use EncryptedSessionToken
 	EncryptedSessionToken []byte
-	SessionTokenMetadata  datatypes.JSON
+	SessionTokenMetadata  JSON
 	CreatedAt             time.Time
 	ExpiresAt             *time.Time
 }
@@ -133,7 +132,7 @@ type PasswordReset struct {
 	UserID         uint
 	Token          string `gorm:"unique"` // Deprecated: use EncryptedToken
 	EncryptedToken []byte
-	TokenMetadata  datatypes.JSON
+	TokenMetadata  JSON
 	ExpiresAt      *time.Time
 	CreatedAt      time.Time
 }
@@ -187,7 +186,7 @@ type APIClient struct {
 	ClientID              string `gorm:"unique"`
 	ClientSecret          string // Deprecated: use EncryptedClientSecret
 	EncryptedClientSecret []byte
-	ClientSecretMetadata  datatypes.JSON
+	ClientSecretMetadata  JSON
 	Scopes                string
 	IsActive              bool
 	CreatedAt             time.Time
@@ -199,7 +198,7 @@ type APIToken struct {
 	UserID         *uint
 	Token          string `gorm:"unique"` // Deprecated: use EncryptedToken
 	EncryptedToken []byte
-	TokenMetadata  datatypes.JSON
+	TokenMetadata  JSON
 	Scope          string
 	Revoked        bool
 	ExpiresAt      *time.Time
@@ -261,6 +260,6 @@ type ExternalIdentity struct {
 	ExternalID string
 	Email      string
 	Name       string
-	Metadata   datatypes.JSON
+	Metadata   JSON
 	LinkedAt   time.Time
 }
