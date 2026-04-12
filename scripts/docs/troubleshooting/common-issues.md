@@ -14,7 +14,7 @@
 2. **Reset Password**:
    ```bash
    # Admin can reset user password
-   secretly admin user reset-password --email user@company.com
+   keyorix admin user reset-password --email user@company.com
    ```
 
 3. **Check Account Status**:
@@ -35,7 +35,7 @@
 
 3. **Reset 2FA** (Admin only):
    ```bash
-   secretly admin user disable-2fa --email user@company.com
+   keyorix admin user disable-2fa --email user@company.com
    ```
 
 ## Secret Management Issues
@@ -73,7 +73,7 @@
 3. **Database Sync**:
    ```bash
    # Check database connectivity
-   secretly system health
+   keyorix system health
    ```
 
 ## Sharing and Collaboration Issues
@@ -133,7 +133,7 @@
 3. **Server Performance**:
    ```bash
    # Check system resources
-   secretly admin system status
+   keyorix admin system status
    
    # View performance metrics
    curl https://localhost/health/detailed
@@ -177,10 +177,10 @@
 2. **Connection Pool**:
    ```bash
    # Check connection pool status
-   secretly admin db status
+   keyorix admin db status
    
    # Reset connection pool
-   secretly admin db reset-pool
+   keyorix admin db reset-pool
    ```
 
 3. **Database Recovery**:
@@ -189,7 +189,7 @@
    sudo systemctl restart postgresql
    
    # Check database integrity
-   psql -c "SELECT pg_database_size('secretly');"
+   psql -c "SELECT pg_database_size('keyorix');"
    ```
 
 ### Issue: SSL Certificate Problems
@@ -199,10 +199,10 @@
 1. **Certificate Validation**:
    ```bash
    # Check certificate expiration
-   openssl x509 -in /etc/ssl/certs/secretly.crt -text -noout
+   openssl x509 -in /etc/ssl/certs/keyorix.crt -text -noout
    
    # Verify certificate chain
-   openssl verify -CAfile ca.crt secretly.crt
+   openssl verify -CAfile ca.crt keyorix.crt
    ```
 
 2. **Certificate Renewal**:
@@ -264,7 +264,7 @@
 ### System Recovery
 1. **Service Restart**:
    ```bash
-   sudo systemctl restart secretly
+   sudo systemctl restart keyorix
    sudo systemctl restart nginx
    sudo systemctl restart postgresql
    ```
@@ -272,19 +272,19 @@
 2. **Database Recovery**:
    ```bash
    # Restore from backup
-   gunzip -c backup.sql.gz | psql secretly
+   gunzip -c backup.sql.gz | psql keyorix
    
    # Verify data integrity
-   secretly admin db verify
+   keyorix admin db verify
    ```
 
 3. **Configuration Reset**:
    ```bash
    # Restore configuration from backup
-   sudo cp /backup/config/* /etc/secretly/
+   sudo cp /backup/config/* /etc/keyorix/
    
    # Restart services
-   sudo systemctl restart secretly
+   sudo systemctl restart keyorix
    ```
 
 ### Security Incident Response

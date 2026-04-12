@@ -1,4 +1,4 @@
-# Locale Configuration Examples for Secretly
+# Locale Configuration Examples for Keyorix
 # This file contains various examples of locale configuration for different use cases
 
 # Example 1: English-only deployment (default)
@@ -51,8 +51,8 @@ locale_multi_regional:
 # 4. Both fields are required and must be valid language codes
 # 5. Invalid language codes will cause the application to fail startup validation
 
-# Integration with secretly.yaml:
-# Copy the desired locale configuration block to your secretly.yaml file under the 'locale:' section
+# Integration with keyorix.yaml:
+# Copy the desired locale configuration block to your keyorix.yaml file under the 'locale:' section
 # Example:
 # locale:
 #   language: "ru"

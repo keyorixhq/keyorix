@@ -18,14 +18,14 @@
    
    # Set environment variables
    export SECRETLY_ENV=production
-   export SECRETLY_DB_URL="postgresql://user:pass@localhost/secretly"
+   export SECRETLY_DB_URL="postgresql://user:pass@localhost/keyorix"
    ```
 
 2. **SSL Certificate Installation**
    ```bash
    # Install SSL certificates
-   sudo cp ssl/cert.pem /etc/ssl/certs/secretly.crt
-   sudo cp ssl/key.pem /etc/ssl/private/secretly.key
+   sudo cp ssl/cert.pem /etc/ssl/certs/keyorix.crt
+   sudo cp ssl/key.pem /etc/ssl/private/keyorix.key
    
    # Update nginx configuration
    sudo systemctl reload nginx
@@ -37,7 +37,7 @@
    ./scripts/run_migrations.sh
    
    # Verify database connection
-   secretly system health
+   keyorix system health
    ```
 
 ### System Configuration
@@ -50,7 +50,7 @@ SECRETLY_PORT=8080
 SECRETLY_HOST=0.0.0.0
 
 # Database Configuration
-SECRETLY_DB_URL=postgresql://user:pass@localhost/secretly
+SECRETLY_DB_URL=postgresql://user:pass@localhost/keyorix
 SECRETLY_DB_MAX_CONNECTIONS=100
 SECRETLY_DB_TIMEOUT=30s
 
@@ -73,8 +73,8 @@ server:
   port: 8080
   tls:
     enabled: true
-    cert_file: "/etc/ssl/certs/secretly.crt"
-    key_file: "/etc/ssl/private/secretly.key"
+    cert_file: "/etc/ssl/certs/keyorix.crt"
+    key_file: "/etc/ssl/private/keyorix.key"
 
 database:
   url: "${SECRETLY_DB_URL}"
@@ -113,13 +113,13 @@ monitoring:
 2. **CLI Method**
    ```bash
    # Create new user
-   secretly admin user create \
+   keyorix admin user create \
      --email "user@company.com" \
      --name "John Doe" \
      --role "user"
    
    # Set user permissions
-   secretly admin user permissions \
+   keyorix admin user permissions \
      --email "user@company.com" \
      --permissions "read,write"
    ```
@@ -134,13 +134,13 @@ monitoring:
 ### Bulk User Operations
 ```bash
 # Import users from CSV
-secretly admin user import --file users.csv
+keyorix admin user import --file users.csv
 
 # Export user list
-secretly admin user export --format csv
+keyorix admin user export --format csv
 
 # Bulk permission updates
-secretly admin user bulk-update --file permissions.csv
+keyorix admin user bulk-update --file permissions.csv
 ```
 
 ## Security Configuration
@@ -254,18 +254,18 @@ audit:
 
 ### Log Management
 1. **Log Locations**
-   - Application logs: `/var/log/secretly/app.log`
-   - Access logs: `/var/log/secretly/access.log`
-   - Error logs: `/var/log/secretly/error.log`
-   - Audit logs: `/var/log/secretly/audit.log`
+   - Application logs: `/var/log/keyorix/app.log`
+   - Access logs: `/var/log/keyorix/access.log`
+   - Error logs: `/var/log/keyorix/error.log`
+   - Audit logs: `/var/log/keyorix/audit.log`
 
 2. **Log Rotation**
    ```bash
    # Configure logrotate
-   sudo cp config/logrotate.conf /etc/logrotate.d/secretly
+   sudo cp config/logrotate.conf /etc/logrotate.d/keyorix
    
    # Test log rotation
-   sudo logrotate -d /etc/logrotate.d/secretly
+   sudo logrotate -d /etc/logrotate.d/keyorix
    ```
 
 ## Backup and Recovery
@@ -276,11 +276,11 @@ audit:
    # Daily backup script
    #!/bin/bash
    DATE=$(date +%Y%m%d_%H%M%S)
-   pg_dump secretly > /backups/secretly_$DATE.sql
+   pg_dump keyorix > /backups/keyorix_$DATE.sql
    
    # Compress and encrypt
-   gzip /backups/secretly_$DATE.sql
-   gpg --encrypt /backups/secretly_$DATE.sql.gz
+   gzip /backups/keyorix_$DATE.sql
+   gpg --encrypt /backups/keyorix_$DATE.sql.gz
    ```
 
 2. **Backup Verification**
@@ -296,16 +296,16 @@ audit:
 1. **Recovery Procedures**
    ```bash
    # Stop services
-   sudo systemctl stop secretly
+   sudo systemctl stop keyorix
    
    # Restore database
-   gunzip -c backup.sql.gz | psql secretly
+   gunzip -c backup.sql.gz | psql keyorix
    
    # Restore configuration
-   sudo cp backup/config/* /etc/secretly/
+   sudo cp backup/config/* /etc/keyorix/
    
    # Start services
-   sudo systemctl start secretly
+   sudo systemctl start keyorix
    ```
 
 2. **Recovery Testing**
@@ -325,22 +325,22 @@ audit:
    pg_isready -h localhost -p 5432
    
    # Verify credentials
-   psql -h localhost -U secretly_user -d secretly
+   psql -h localhost -U keyorix_user -d keyorix
    
    # Check connection pool
-   secretly admin db status
+   keyorix admin db status
    ```
 
 2. **Authentication Problems**
    ```bash
    # Reset user password
-   secretly admin user reset-password --email user@company.com
+   keyorix admin user reset-password --email user@company.com
    
    # Disable 2FA temporarily
-   secretly admin user disable-2fa --email user@company.com
+   keyorix admin user disable-2fa --email user@company.com
    
    # Check JWT configuration
-   secretly admin auth verify-jwt
+   keyorix admin auth verify-jwt
    ```
 
 3. **Performance Issues**
@@ -351,10 +351,10 @@ audit:
    free -m
    
    # Database performance
-   secretly admin db analyze
+   keyorix admin db analyze
    
    # Clear caches
-   secretly admin cache clear
+   keyorix admin cache clear
    ```
 
 ### Emergency Procedures

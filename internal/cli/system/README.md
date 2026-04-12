@@ -1,53 +1,53 @@
 # System Management Commands
 
-This package provides comprehensive system management commands for the Secretly secrets management system. These commands handle initialization, validation, and maintenance of the system configuration and supporting files.
+This package provides comprehensive system management commands for the Keyorix secrets management system. These commands handle initialization, validation, and maintenance of the system configuration and supporting files.
 
 ## Commands Overview
 
-### `secretly system init`
-Initialize the Secretly system with configuration files and required components.
+### `keyorix system init`
+Initialize the Keyorix system with configuration files and required components.
 
 **Usage:**
 ```bash
 # Initialize all components with default settings
-secretly system init
+keyorix system init
 
 # Interactive setup wizard
-secretly system init --interactive
+keyorix system init --interactive
 
 # Initialize specific components only
-secretly system init --encryption
-secretly system init --database
-secretly system init --logging
+keyorix system init --encryption
+keyorix system init --database
+keyorix system init --logging
 
 # Use custom config file path
-secretly system init --config ./my-config.yaml
+keyorix system init --config ./my-config.yaml
 
 # Overwrite existing files (dangerous)
-secretly system init --force
+keyorix system init --force
 ```
 
 **What it does:**
-1. **Config Generation**: Creates `secretly.yaml` from template
+1. **Config Generation**: Creates `keyorix.yaml` from template
 2. **Encryption Setup**: Generates KEK/DEK keys with secure permissions
 3. **Database Setup**: Creates SQLite database file
 4. **Logging Setup**: Creates log files and directories
 5. **TLS Setup**: Validates TLS configuration (certificates not auto-generated)
 7. **Permission Validation**: Ensures all files have correct permissions
 
-### `secretly system validate`
+### `keyorix system validate`
 Perform comprehensive validation of the system setup.
 
 **Usage:**
 ```bash
 # Validate current setup
-secretly system validate
+keyorix system validate
 
 # Validate specific config file
-secretly system validate --config ./my-config.yaml
+keyorix system validate --config ./my-config.yaml
 
 # Attempt to fix issues automatically
-secretly system validate --fix
+keyorix system validate --fix
 ```
 
 **What it validates:**
@@ -57,13 +57,13 @@ secretly system validate --fix
 - Database accessibility
 - TLS certificate availability (if enabled)
 
-### `secretly system audit`
+### `keyorix system audit`
 Audit critical file permissions and ownership.
 
 **Usage:**
 ```bash
 # Audit file permissions
-secretly system audit
+keyorix system audit
 ```
 
 **What it checks:**
@@ -75,17 +75,17 @@ secretly system audit
 
 ## File Structure
 
-After running `secretly system init`, your directory should contain:
+After running `keyorix system init`, your directory should contain:
 
 ```
 .
-├── secretly.yaml          # Main configuration file (0600)
-├── secretly_template.yaml # Template file (0644)
+├── keyorix.yaml          # Main configuration file (0600)
+├── keyorix_template.yaml # Template file (0644)
 ├── keys/
 │   ├── kek.key            # Key Encryption Key (0600)
 │   └── dek.key            # Data Encryption Key (0600)
-├── secretly.db            # SQLite database (0600)
-├── secretly.log           # Application logs (0644)
+├── keyorix.db            # SQLite database (0600)
+├── keyorix.log           # Application logs (0644)
 └── certs/                 # TLS certificates (if enabled)
     ├── server.crt         # TLS certificate (0600)
     └── server.key         # TLS private key (0600)
@@ -93,7 +93,7 @@ After running `secretly system init`, your directory should contain:
 
 ## Configuration Template
 
-The system uses `secretly_template.yaml` as the base template for generating configuration files. The template includes:
+The system uses `keyorix_template.yaml` as the base template for generating configuration files. The template includes:
 
 - **Locale Settings**: Language and localization
 - **Server Configuration**: HTTP and gRPC server settings
@@ -157,7 +157,7 @@ The system provides comprehensive error handling and user guidance:
 
 ## Best Practices
 
-1. **Always validate** after initialization: `secretly system validate`
+1. **Always validate** after initialization: `keyorix system validate`
 2. **Use secure permissions** in production environments
 3. **Backup encryption keys** before rotation
 4. **Monitor file permissions** regularly with audit command
@@ -169,17 +169,17 @@ The system provides comprehensive error handling and user guidance:
 ### Common Issues
 
 1. **Permission Denied Errors**
-   - Run `secretly system audit` to check permissions
+   - Run `keyorix system audit` to check permissions
    - Use `--fix` flag to automatically correct permissions
    - Ensure you own all the files
 
 2. **Missing Configuration**
-   - Run `secretly system init` to create missing files
+   - Run `keyorix system init` to create missing files
    - Use `--force` to overwrite corrupted files
    - Check template file exists
 
 3. **Encryption Key Issues**
-   - Run `secretly encryption init` to regenerate keys
+   - Run `keyorix encryption init` to regenerate keys
    - Validate key file sizes (should be 32 bytes)
    - Check key file permissions (should be 0600)
 
@@ -193,7 +193,7 @@ The system provides comprehensive error handling and user guidance:
 Set environment variable for detailed logging:
 ```bash
 export SECRETLY_DEBUG=true
-secretly system init
+keyorix system init
 ```
 
 ## Examples

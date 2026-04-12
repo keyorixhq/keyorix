@@ -1,6 +1,6 @@
 # Encryption Example
 
-This example demonstrates the complete encryption functionality of Secretly, including key management, secret encryption/decryption, and chunked encryption for large data.
+This example demonstrates the complete encryption functionality of Keyorix, including key management, secret encryption/decryption, and chunked encryption for large data.
 
 ## What This Example Shows
 
@@ -104,4 +104,4 @@ After running this example:
 1. Try modifying the chunk size and see how it affects the number of chunks
 2. Experiment with different secret sizes
 3. Look at the generated metadata to understand the encryption details
-4. Try the encryption CLI commands: `secretly encryption status`, `secretly encryption validate`
+4. Try the encryption CLI commands: `keyorix encryption status`, `keyorix encryption validate`

@@ -1,10 +1,10 @@
-# Getting Started with Secretly
+# Getting Started with Keyorix
 
 ## Quick Start Guide
 
 ### 1. Accessing the System
 - **Web Dashboard**: https://localhost/
-- **CLI Tool**: `secretly --help`
+- **CLI Tool**: `keyorix --help`
 - **API Documentation**: https://localhost/swagger/
 
 ### 2. First Login
@@ -31,16 +31,16 @@
 ### 5. Using the CLI
 ```bash
 # Login to CLI
-secretly auth login
+keyorix auth login
 
 # Create a secret
-secretly secret create "my-api-key" "secret-value"
+keyorix secret create "my-api-key" "secret-value"
 
 # List secrets
-secretly secret list
+keyorix secret list
 
 # Share a secret
-secretly share create "my-api-key" --user "colleague@company.com"
+keyorix share create "my-api-key" --user "colleague@company.com"
 ```
 
 ## Next Steps

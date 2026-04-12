@@ -53,27 +53,27 @@
 1. Install the CLI tool (if not already installed)
 2. Authenticate with the server:
    ```bash
-   secretly auth login
+   keyorix auth login
    ```
 3. List your secrets:
    ```bash
-   secretly secret list
+   keyorix secret list
    ```
 4. Create a new secret:
    ```bash
-   secretly secret create "database-password" "super-secure-password"
+   keyorix secret create "database-password" "super-secure-password"
    ```
 5. Add metadata:
    ```bash
-   secretly secret update "database-password" --tag "database" --tag "production"
+   keyorix secret update "database-password" --tag "database" --tag "production"
    ```
 6. Share the secret:
    ```bash
-   secretly share create "database-password" --user "admin@company.com" --permission "read"
+   keyorix share create "database-password" --user "admin@company.com" --permission "read"
    ```
 7. List shared secrets:
    ```bash
-   secretly share list
+   keyorix share list
    ```
 
 ### Verification:

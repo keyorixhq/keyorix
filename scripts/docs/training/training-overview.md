@@ -2,12 +2,12 @@
 
 ## Training Modules
 
-### Module 1: Introduction to Secretly
+### Module 1: Introduction to Keyorix
 - **Duration**: 30 minutes
 - **Format**: Video + Hands-on
 - **Topics**:
   - What is secret management?
-  - Why use Secretly?
+  - Why use Keyorix?
   - System overview and architecture
   - Security principles
 

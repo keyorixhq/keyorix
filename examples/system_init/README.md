@@ -1,10 +1,10 @@
 # System Initialization Example
 
-This example demonstrates the complete system initialization and validation process for Secretly.
+This example demonstrates the complete system initialization and validation process for Keyorix.
 
 ## What This Example Shows
 
-1. **System Validation** - How to validate an existing Secretly setup
+1. **System Validation** - How to validate an existing Keyorix setup
 2. **File Structure** - What files should exist after initialization
 3. **Available Commands** - All system and encryption management commands
 4. **Configuration Structure** - Overview of configuration sections
@@ -19,11 +19,11 @@ go run examples/system_init/main.go
 
 ## Prerequisites
 
-Before running this example, you should have initialized your Secretly system:
+Before running this example, you should have initialized your Keyorix system:
 
 ```bash
 # Initialize the system first
-secretly system init
+keyorix system init
 
 # Then run the example to see the validation results
 go run examples/system_init/main.go
@@ -40,7 +40,7 @@ The example will show:
 
 ## What You'll Learn
 
-- How to validate your Secretly system setup
+- How to validate your Keyorix system setup
 - What files are created during initialization
 - How to use system management commands
 - Security best practices for production deployment

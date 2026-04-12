@@ -14,7 +14,7 @@
 
 ## Introduction
 
-Secret sharing in Secretly allows you to securely collaborate by giving other users controlled access to your secrets. This feature enables teams to work together while maintaining security and auditability.
+Secret sharing in Keyorix allows you to securely collaborate by giving other users controlled access to your secrets. This feature enables teams to work together while maintaining security and auditability.
 
 ### Key Features
 - **Secure Sharing**: End-to-end encryption maintained during sharing
@@ -32,7 +32,7 @@ Secret sharing in Secretly allows you to securely collaborate by giving other us
 ## Getting Started
 
 ### Prerequisites
-- Active Secretly account
+- Active Keyorix account
 - Appropriate permissions to access secrets
 - Knowledge of usernames or group names you want to share with
 
@@ -47,10 +47,10 @@ Secret sharing in Secretly allows you to securely collaborate by giving other us
 #### CLI Interface
 ```bash
 # List available sharing commands
-secretly share --help
+keyorix share --help
 
 # View your current shares
-secretly shares list
+keyorix shares list
 ```
 
 #### API Interface
@@ -70,15 +70,15 @@ See the [API Documentation](SECRET_SHARING_API.md) for programmatic access.
 #### Via CLI
 ```bash
 # Share a secret with read permission
-secretly secret share --id 123 --recipient john.doe --permission read
+keyorix secret share --id 123 --recipient john.doe --permission read
 
 # Share a secret with write permission
-secretly secret share --id 123 --recipient jane.smith --permission write
+keyorix secret share --id 123 --recipient jane.smith --permission write
 ```
 
 #### Via API
 ```bash
-curl -X POST "https://api.secretly.com/api/v1/secrets/123/share" \
+curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -126,7 +126,7 @@ curl -X POST "https://api.secretly.com/api/v1/secrets/123/share" \
 ```bash
 # Share multiple secrets with the same user
 for secret_id in 123 456 789; do
-  secretly secret share --id $secret_id --recipient john.doe --permission read
+  keyorix secret share --id $secret_id --recipient john.doe --permission read
 done
 ```
 
@@ -137,20 +137,20 @@ done
 #### List Shares for a Secret
 ```bash
 # CLI
-secretly secret shares --id 123
+keyorix secret shares --id 123
 
 # API
-curl -X GET "https://api.secretly.com/api/v1/secrets/123/shares" \
+curl -X GET "https://api.keyorix.com/api/v1/secrets/123/shares" \
   -H "Authorization: Bearer your-token"
 ```
 
 #### List All Your Shares
 ```bash
 # CLI
-secretly shares list
+keyorix shares list
 
 # API
-curl -X GET "https://api.secretly.com/api/v1/shares" \
+curl -X GET "https://api.keyorix.com/api/v1/shares" \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -159,10 +159,10 @@ curl -X GET "https://api.secretly.com/api/v1/shares" \
 #### Upgrade Permission (Read → Write)
 ```bash
 # CLI
-secretly shares update --id 456 --permission write
+keyorix shares update --id 456 --permission write
 
 # API
-curl -X PUT "https://api.secretly.com/api/v1/shares/456" \
+curl -X PUT "https://api.keyorix.com/api/v1/shares/456" \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
   -d '{"permission": "write"}'
@@ -171,7 +171,7 @@ curl -X PUT "https://api.secretly.com/api/v1/shares/456" \
 #### Downgrade Permission (Write → Read)
 ```bash
 # CLI
-secretly shares update --id 456 --permission read
+keyorix shares update --id 456 --permission read
 ```
 
 ### Revoking Access
@@ -179,19 +179,19 @@ secretly shares update --id 456 --permission read
 #### Remove Specific User Access
 ```bash
 # CLI
-secretly shares revoke --id 456
+keyorix shares revoke --id 456
 
 # API
-curl -X DELETE "https://api.secretly.com/api/v1/shares/456" \
+curl -X DELETE "https://api.keyorix.com/api/v1/shares/456" \
   -H "Authorization: Bearer your-token"
 ```
 
 #### Remove All Shares for a Secret
 ```bash
 # Get all shares for the secret
-secretly secret shares --id 123 --format json | \
+keyorix secret shares --id 123 --format json | \
   jq -r '.shares[].id' | \
-  xargs -I {} secretly shares revoke --id {}
+  xargs -I {} keyorix shares revoke --id {}
 ```
 
 ## Group Sharing
@@ -215,12 +215,12 @@ Groups allow you to share secrets with multiple users at once. When you share wi
 #### Via CLI
 ```bash
 # Share with a group
-secretly secret share --id 123 --group developers --permission read
+keyorix secret share --id 123 --group developers --permission read
 ```
 
 #### Via API
 ```bash
-curl -X POST "https://api.secretly.com/api/v1/secrets/123/share" \
+curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -235,17 +235,17 @@ curl -X POST "https://api.secretly.com/api/v1/secrets/123/share" \
 #### List Group Shares
 ```bash
 # CLI - filter for group shares only
-secretly shares list --groups-only
+keyorix shares list --groups-only
 
 # API - filter response for group shares
-curl -X GET "https://api.secretly.com/api/v1/shares?recipient_type=group" \
+curl -X GET "https://api.keyorix.com/api/v1/shares?recipient_type=group" \
   -H "Authorization: Bearer your-token"
 ```
 
 #### Update Group Permissions
 ```bash
 # Update permission for entire group
-secretly shares update --id 456 --permission write
+keyorix shares update --id 456 --permission write
 ```
 
 ### Group Membership Changes
@@ -268,13 +268,13 @@ When group membership changes:
 #### CLI Interface
 ```bash
 # List all secrets shared with you
-secretly shared-secrets list
+keyorix shared-secrets list
 
 # Filter by permission level
-secretly shared-secrets list --permission write
+keyorix shared-secrets list --permission write
 
 # Filter by owner
-secretly shared-secrets list --owner admin
+keyorix shared-secrets list --owner admin
 ```
 
 ### Working with Shared Secrets
@@ -282,25 +282,25 @@ secretly shared-secrets list --owner admin
 #### Viewing Shared Secret Details
 ```bash
 # Get secret information
-secretly secret get --id 123
+keyorix secret get --id 123
 
 # View secret value (if you have read permission)
-secretly secret value --id 123
+keyorix secret value --id 123
 
 # View secret versions
-secretly secret versions --id 123
+keyorix secret versions --id 123
 ```
 
 #### Modifying Shared Secrets (Write Permission Required)
 ```bash
 # Update secret value
-secretly secret update --id 123 --value "new-secret-value"
+keyorix secret update --id 123 --value "new-secret-value"
 
 # Update metadata
-secretly secret update --id 123 --metadata key=value
+keyorix secret update --id 123 --metadata key=value
 
 # Add tags
-secretly secret update --id 123 --tags production,database
+keyorix secret update --id 123 --tags production,database
 ```
 
 ### Understanding Sharing Context
@@ -326,12 +326,12 @@ Sometimes you may want to remove yourself from a shared secret:
 #### Via CLI
 ```bash
 # Remove yourself from a specific secret
-secretly secret self-remove --id 123
+keyorix secret self-remove --id 123
 ```
 
 #### Via API
 ```bash
-curl -X DELETE "https://api.secretly.com/api/v1/secrets/123/self-share" \
+curl -X DELETE "https://api.keyorix.com/api/v1/secrets/123/self-share" \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -362,10 +362,10 @@ Configure notifications for:
 #### 2. Regular Access Reviews
 ```bash
 # Monthly review of all your shares
-secretly shares list --format table
+keyorix shares list --format table
 
 # Check specific high-value secrets
-secretly secret shares --id 123
+keyorix secret shares --id 123
 ```
 
 #### 3. Monitor Access Patterns
@@ -400,10 +400,10 @@ secretly secret shares --id 123
 #### 1. Audit Trail Monitoring
 ```bash
 # View recent sharing activities
-secretly audit logs --type sharing --recent
+keyorix audit logs --type sharing --recent
 
 # Check access to specific secrets
-secretly audit logs --secret-id 123
+keyorix audit logs --secret-id 123
 ```
 
 #### 2. Encryption Verification
@@ -477,8 +477,8 @@ secretly audit logs --secret-id 123
 
 ### General Questions
 
-**Q: Can I share a secret with someone who doesn't have a Secretly account?**
-A: No, all recipients must have active Secretly accounts to receive shared secrets.
+**Q: Can I share a secret with someone who doesn't have a Keyorix account?**
+A: No, all recipients must have active Keyorix accounts to receive shared secrets.
 
 **Q: What happens if I delete a secret that's shared with others?**
 A: The secret is deleted for everyone, including all users it was shared with. They will lose access immediately.
@@ -505,8 +505,8 @@ A: Your permission level is displayed in the secret details and in the shared se
 **Q: Are shared secrets encrypted?**
 A: Yes, all secrets maintain end-to-end encryption even when shared. Each recipient gets their own encrypted copy.
 
-**Q: Can Secretly staff see my shared secrets?**
-A: No, Secretly uses end-to-end encryption. Staff cannot see secret contents, only metadata like sharing relationships.
+**Q: Can Keyorix staff see my shared secrets?**
+A: No, Keyorix uses end-to-end encryption. Staff cannot see secret contents, only metadata like sharing relationships.
 
 **Q: What happens if someone's account is compromised?**
 A: Immediately revoke all shares with that user and report the incident. Change any secrets they had access to.
@@ -523,7 +523,7 @@ A: Yes, the full sharing functionality is available through the REST API. See th
 A: Secrets count against the owner's quota, not the recipients' quotas.
 
 **Q: Can I share secrets across different environments?**
-A: Yes, sharing works across all environments within the same Secretly instance.
+A: Yes, sharing works across all environments within the same Keyorix instance.
 
 **Q: What happens during system maintenance?**
 A: Shared secrets remain accessible during maintenance. Sharing operations may be temporarily unavailable during updates.

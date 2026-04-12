@@ -111,7 +111,7 @@ server/
 
 ## ⚙️ Configuration
 
-The server uses the main Secretly configuration file (`secretly.yaml`). Key server-related settings:
+The server uses the main Keyorix configuration file (`keyorix.yaml`). Key server-related settings:
 
 ```yaml
 server:
@@ -122,7 +122,7 @@ server:
     tls:
       enabled: false
       auto_cert: false
-      domains: ["api.secretly.dev"]
+      domains: ["api.keyorix.dev"]
       cert_file: "certs/server.crt"
       key_file: "certs/server.key"
     ratelimit:
@@ -192,7 +192,7 @@ server:
 All API endpoints (except health checks) require authentication using JWT Bearer tokens:
 
 ```bash
-curl -H "Authorization: Bearer <token>" https://api.secretly.dev/api/v1/secrets
+curl -H "Authorization: Bearer <token>" https://api.keyorix.dev/api/v1/secrets
 ```
 
 ### Development Tokens
@@ -241,7 +241,7 @@ make docker-run
 ```yaml
 version: '3.8'
 services:
-  secretly-server:
+  keyorix-server:
     build: .
     ports:
       - "8080:8080"
@@ -250,7 +250,7 @@ services:
       - ./data:/app/data
       - ./certs:/app/certs
     environment:
-      - SECRETLY_CONFIG_PATH=/app/secretly.yaml
+      - SECRETLY_CONFIG_PATH=/app/keyorix.yaml
 ```
 
 ## 🧪 Testing
@@ -299,10 +299,10 @@ When `reflection_enabled: true` in configuration, use grpcurl:
 grpcurl -plaintext localhost:9090 list
 
 # Describe service
-grpcurl -plaintext localhost:9090 describe secretly.v1.SecretService
+grpcurl -plaintext localhost:9090 describe keyorix.v1.SecretService
 
 # Call method
-grpcurl -plaintext -d '{"name":"test"}' localhost:9090 secretly.v1.SecretService/CreateSecret
+grpcurl -plaintext -d '{"name":"test"}' localhost:9090 keyorix.v1.SecretService/CreateSecret
 ```
 
 ## 🔧 Development
@@ -328,7 +328,7 @@ make lint
    - Update OpenAPI spec
 
 2. **gRPC API:**
-   - Update `proto/secretly.proto`
+   - Update `proto/keyorix.proto`
    - Regenerate protobuf files: `make proto`
    - Implement service methods in `grpc/services/`
 
@@ -376,7 +376,7 @@ Add custom middleware in the `middleware/` directory and register in:
 
 3. **Permission denied:**
    ```bash
-   chmod +x secretly-server
+   chmod +x keyorix-server
    ```
 
 ### Logs
@@ -393,7 +393,7 @@ Server logs include:
 Set environment variable for verbose logging:
 ```bash
 export SECRETLY_DEBUG=true
-./secretly-server
+./keyorix-server
 ```
 
 ## 🤝 Contributing
@@ -406,4 +406,4 @@ export SECRETLY_DEBUG=true
 
 ## 📄 License
 
-This server module is part of the Secretly project and follows the same license terms.
+This server module is part of the Keyorix project and follows the same license terms.

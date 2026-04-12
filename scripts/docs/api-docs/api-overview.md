@@ -1,7 +1,7 @@
 # API Documentation Overview
 
 ## Introduction
-The Secretly API provides programmatic access to all secret management functionality. The API follows REST principles and uses JSON for data exchange.
+The Keyorix API provides programmatic access to all secret management functionality. The API follows REST principles and uses JSON for data exchange.
 
 ## Base URL
 ```
@@ -20,7 +20,7 @@ All API requests require authentication using JWT tokens.
 
 2. **CLI Method**:
    ```bash
-   secretly auth token create --name "my-api-key"
+   keyorix auth token create --name "my-api-key"
    ```
 
 ### Using the Token
