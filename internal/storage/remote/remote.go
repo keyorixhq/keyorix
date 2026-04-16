@@ -31,6 +31,11 @@ func (rs *RemoteStorage) ListNamespaces(_ context.Context) ([]*models.Namespace,
 	return nil, fmt.Errorf("not implemented in remote storage")
 }
 
+// ListZones is not supported in remote mode.
+func (rs *RemoteStorage) ListZones(_ context.Context) ([]*models.Zone, error) {
+	return nil, fmt.Errorf("not implemented in remote storage")
+}
+
 // ListEnvironments is not supported in remote mode; returns an empty list.
 func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
 	return nil, fmt.Errorf("not implemented in remote storage")

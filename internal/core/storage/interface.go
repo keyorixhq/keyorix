@@ -13,6 +13,7 @@ import (
 type Storage interface {
 	// Namespace / Zone / Environment lookup (for embedded-mode resolution)
 	ListNamespaces(ctx context.Context) ([]*models.Namespace, error)
+	ListZones(ctx context.Context) ([]*models.Zone, error)
 	ListEnvironments(ctx context.Context) ([]*models.Environment, error)
 
 	// Secret Management

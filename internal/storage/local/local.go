@@ -31,6 +31,11 @@ func (ls *LocalStorage) ListNamespaces(ctx context.Context) ([]*models.Namespace
 	return namespaces, ls.db.WithContext(ctx).Find(&namespaces).Error
 }
 
+func (ls *LocalStorage) ListZones(ctx context.Context) ([]*models.Zone, error) {
+	var zones []*models.Zone
+	return zones, ls.db.WithContext(ctx).Find(&zones).Error
+}
+
 func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
 	var environments []*models.Environment
 	return environments, ls.db.WithContext(ctx).Find(&environments).Error

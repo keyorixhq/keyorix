@@ -18,4 +18,5 @@ func init() {
 	SecretCmd.AddCommand(updateCmd)
 	SecretCmd.AddCommand(deleteCmd)
 	SecretCmd.AddCommand(versionsCmd)
+	SecretCmd.AddCommand(importCmd)
 }

@@ -90,6 +90,10 @@ func (m *MockStorageSharing) ListNamespaces(_ context.Context) ([]*models.Namesp
 	return nil, nil
 }
 
+func (m *MockStorageSharing) ListZones(_ context.Context) ([]*models.Zone, error) {
+	return nil, nil
+}
+
 func (m *MockStorageSharing) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
 	return nil, nil
 }

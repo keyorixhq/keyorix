@@ -56,6 +56,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		return nil, fmt.Errorf("failed to create share handler: %w", err)
 	}
 
+	catalogHandler := handlers.NewCatalogHandler(coreService)
+
 	// Auth endpoints (no authentication middleware)
 	r.Post("/auth/login", authHandler.Login)
 	r.Post("/auth/logout", authHandler.Logout)
@@ -111,6 +113,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// Auth profile (requires valid token)
 		r.Get("/auth/profile", authHandler.Profile)
+
+		// Catalog endpoints (namespaces, zones, environments)
+		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/namespaces", catalogHandler.ListNamespaces)
+		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/zones", catalogHandler.ListZones)
+		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/environments", catalogHandler.ListEnvironments)
 
 		// Secrets endpoints
 		r.Route("/secrets", func(r chi.Router) {
