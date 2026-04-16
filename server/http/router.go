@@ -44,6 +44,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		return nil, fmt.Errorf("failed to init core HTTP handlers: %w", err)
 	}
 
+	authHandler := handlers.NewAuthHandler(coreService)
+
 	secretHandler, err := handlers.NewSecretHandler(coreService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret handler: %w", err)
@@ -53,6 +55,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	if err != nil {
 		return nil, fmt.Errorf("failed to create share handler: %w", err)
 	}
+
+	// Auth endpoints (no authentication middleware)
+	r.Post("/auth/login", authHandler.Login)
+	r.Post("/auth/logout", authHandler.Logout)
+	r.Post("/auth/refresh", authHandler.RefreshToken)
+	r.Post("/auth/password-reset", authHandler.PasswordReset)
+	r.Post("/system/init", authHandler.InitSystem)
 
 	// Health check endpoint
 	r.Get("/health", handlers.HealthCheck)
@@ -99,6 +108,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Route("/api/v1", func(r chi.Router) {
 		// Authentication middleware for API routes
 		r.Use(customMiddleware.Authentication())
+
+		// Auth profile (requires valid token)
+		r.Get("/auth/profile", authHandler.Profile)
 
 		// Secrets endpoints
 		r.Route("/secrets", func(r chi.Router) {

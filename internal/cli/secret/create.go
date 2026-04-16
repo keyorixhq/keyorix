@@ -1,4 +1,3 @@
-// fixed imports
 package secret
 
 import (
@@ -15,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -52,13 +52,10 @@ func init() {
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
-	// Initialize core service using storage factory
-	service, err := common.InitializeCoreService()
-	if err != nil {
-		return fmt.Errorf("failed to initialize service: %w", err)
-	}
-
-	var req *core.CreateSecretRequest
+	var (
+		req *core.CreateSecretRequest
+		err error
+	)
 	if createInteractive {
 		req, err = interactiveCreate()
 	} else {
@@ -69,24 +66,62 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runCreateRemote(ctx, rc, req)
+	}
+	return runCreateEmbedded(ctx, req)
+}
+
+func runCreateRemote(ctx context.Context, rc *common.RemoteClient, req *core.CreateSecretRequest) error {
+	body := map[string]interface{}{
+		"name":           req.Name,
+		"value":          string(req.Value),
+		"type":           req.Type,
+		"namespace_id":   req.NamespaceID,
+		"zone_id":        req.ZoneID,
+		"environment_id": req.EnvironmentID,
+	}
+	if req.MaxReads != nil {
+		body["max_reads"] = *req.MaxReads
+	}
+	if req.Expiration != nil {
+		body["expiration"] = req.Expiration.Format(time.RFC3339)
+	}
+
+	var secret models.SecretNode
+	if err := rc.Post(ctx, "/api/v1/secrets", body, &secret); err != nil {
+		return fmt.Errorf("failed to create secret: %w", err)
+	}
+	printCreatedSecret(&secret)
+	return nil
+}
+
+func runCreateEmbedded(ctx context.Context, req *core.CreateSecretRequest) error {
+	service, err := common.InitializeCoreService()
+	if err != nil {
+		return fmt.Errorf("failed to initialize service: %w", err)
+	}
 	secret, err := service.CreateSecret(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to create secret: %w", err)
 	}
-
-	fmt.Printf("✅ Secret created successfully!\n")
-	fmt.Printf("ID: %d\n", secret.ID)
-	fmt.Printf("Name: %s\n", secret.Name)
-	fmt.Printf("Type: %s\n", secret.Type)
-	fmt.Printf("Namespace: %d\n", secret.NamespaceID)
-	fmt.Printf("Zone: %d\n", secret.ZoneID)
-	fmt.Printf("Environment: %d\n", secret.EnvironmentID)
-	fmt.Printf("Created: %s\n", secret.CreatedAt.Format(time.RFC3339))
-	if secret.Expiration != nil {
-		fmt.Printf("Expires: %s\n", secret.Expiration.Format(time.RFC3339))
-	}
-
+	printCreatedSecret(secret)
 	return nil
+}
+
+func printCreatedSecret(secret *models.SecretNode) {
+	fmt.Printf("Secret created successfully!\n")
+	fmt.Printf("ID:          %d\n", secret.ID)
+	fmt.Printf("Name:        %s\n", secret.Name)
+	fmt.Printf("Type:        %s\n", secret.Type)
+	fmt.Printf("Namespace:   %d\n", secret.NamespaceID)
+	fmt.Printf("Zone:        %d\n", secret.ZoneID)
+	fmt.Printf("Environment: %d\n", secret.EnvironmentID)
+	fmt.Printf("Created:     %s\n", secret.CreatedAt.Format(time.RFC3339))
+	if secret.Expiration != nil {
+		fmt.Printf("Expires:     %s\n", secret.Expiration.Format(time.RFC3339))
+	}
 }
 
 func buildCreateRequest() (*core.CreateSecretRequest, error) {

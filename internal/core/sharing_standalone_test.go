@@ -82,6 +82,18 @@ func (m *MockStorageSharing) LogAuditEvent(ctx context.Context, event *models.Au
 	return args.Error(0)
 }
 
+func (m *MockStorageSharing) CreateSecretAccessLog(_ context.Context, _ *models.SecretAccessLog) error {
+	return nil
+}
+
+func (m *MockStorageSharing) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
+	return nil, nil
+}
+
+func (m *MockStorageSharing) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
+	return nil, nil
+}
+
 func TestSharingMethods(t *testing.T) {
 	// i18n is initialized once for the package in TestMain (sharing_test.go)
 	err := i18n.InitializeForTesting()

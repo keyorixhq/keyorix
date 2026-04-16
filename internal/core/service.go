@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -1281,4 +1282,113 @@ func (c *KeyorixCore) HealthCheck(ctx context.Context) error {
 
 	// Delegate to storage health check
 	return c.storage.HealthCheck(ctx)
+}
+// LoginRequest holds credentials for login.
+type LoginRequest struct {
+	Username string
+	Password string
+}
+
+// Login validates credentials, creates a session, and returns (session, user, error).
+func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
+	user, err := c.storage.GetUserByUsername(ctx, req.Username)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid credentials")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		return nil, nil, fmt.Errorf("invalid credentials")
+	}
+
+	token, err := generateSecureToken()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate session token: %w", err)
+	}
+
+	expiresAt := c.now().Add(24 * time.Hour)
+	session := &models.Session{
+		UserID:       user.ID,
+		SessionToken: token,
+		ExpiresAt:    &expiresAt,
+	}
+	created, err := c.storage.CreateSession(ctx, session)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	return created, user, nil
+}
+
+// Logout invalidates the session identified by token.
+func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
+	session, err := c.storage.GetSession(ctx, token)
+	if err != nil {
+		return fmt.Errorf("session not found")
+	}
+	return c.storage.DeleteSession(ctx, session.ID)
+}
+
+// RefreshSession replaces an existing session with a new token.
+func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models.Session, error) {
+	old, err := c.storage.GetSession(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("session not found or expired")
+	}
+	newToken, err := generateSecureToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+	expiresAt := c.now().Add(24 * time.Hour)
+	session := &models.Session{
+		UserID:       old.UserID,
+		SessionToken: newToken,
+		ExpiresAt:    &expiresAt,
+	}
+	created, err := c.storage.CreateSession(ctx, session)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	_ = c.storage.DeleteSession(ctx, old.ID)
+	return created, nil
+}
+
+// RequestPasswordReset initiates a password reset for the given email (best-effort, no error on unknown email).
+func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) error {
+	// Best-effort: don't reveal whether the email exists.
+	_, err := c.storage.GetUserByEmail(ctx, email)
+	if err != nil {
+		return nil
+	}
+	// TODO: send reset email
+	return nil
+}
+
+// InitializeSystem creates the first admin user; returns error if users already exist.
+func (c *KeyorixCore) InitializeSystem(ctx context.Context, req *CreateUserRequest) (*models.User, error) {
+	users, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing users: %w", err)
+	}
+	if total > 0 || len(users) > 0 {
+		return nil, fmt.Errorf("system already initialized")
+	}
+	return c.CreateUser(ctx, req)
+}
+
+// generateSecureToken creates a random hex token.
+func generateSecureToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", b), nil
+}
+
+// ListNamespaces returns all namespaces from storage.
+func (c *KeyorixCore) ListNamespaces(ctx context.Context) ([]*models.Namespace, error) {
+	return c.storage.ListNamespaces(ctx)
+}
+
+// ListEnvironments returns all environments from storage.
+func (c *KeyorixCore) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
+	return c.storage.ListEnvironments(ctx)
 }

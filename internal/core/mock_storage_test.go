@@ -13,6 +13,16 @@ type MockStorage struct {
 	mock.Mock
 }
 
+// Namespace / Environment
+
+func (m *MockStorage) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
+	return nil, nil
+}
+
 // Secret Management
 
 func (m *MockStorage) CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
@@ -367,6 +377,11 @@ func (m *MockStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*s
 
 func (m *MockStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
 	args := m.Called(ctx, event)
+	return args.Error(0)
+}
+
+func (m *MockStorage) CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error {
+	args := m.Called(ctx, log)
 	return args.Error(0)
 }
 

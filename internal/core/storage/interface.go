@@ -11,6 +11,10 @@ import (
 // This interface abstracts away the underlying storage implementation,
 // allowing for both local database access and remote API calls
 type Storage interface {
+	// Namespace / Zone / Environment lookup (for embedded-mode resolution)
+	ListNamespaces(ctx context.Context) ([]*models.Namespace, error)
+	ListEnvironments(ctx context.Context) ([]*models.Environment, error)
+
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	GetSecret(ctx context.Context, id uint) (*models.SecretNode, error)
@@ -72,6 +76,7 @@ type Storage interface {
 
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
+	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
 	GetAuditLogs(ctx context.Context, filter *AuditFilter) ([]*models.AuditEvent, int64, error)
 	GetRBACAuditLogs(ctx context.Context, filter *RBACAuditFilter) ([]*RBACAuditLog, int64, error)
 

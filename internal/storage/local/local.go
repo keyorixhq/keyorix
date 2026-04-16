@@ -24,6 +24,18 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 	}
 }
 
+// Namespace / Environment lookup
+
+func (ls *LocalStorage) ListNamespaces(ctx context.Context) ([]*models.Namespace, error) {
+	var namespaces []*models.Namespace
+	return namespaces, ls.db.WithContext(ctx).Find(&namespaces).Error
+}
+
+func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
+	var environments []*models.Environment
+	return environments, ls.db.WithContext(ctx).Find(&environments).Error
+}
+
 // Secret Management Implementation
 
 // CreateSecret creates a new secret in the database
@@ -530,8 +542,11 @@ func (ls *LocalStorage) GetUserPermissions(ctx context.Context, userID uint) ([]
 // These would be implemented based on your specific requirements
 
 func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
-	// Implementation would depend on your audit event model
-	return nil
+	return ls.db.WithContext(ctx).Create(event).Error
+}
+
+func (ls *LocalStorage) CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error {
+	return ls.db.WithContext(ctx).Create(log).Error
 }
 
 func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {

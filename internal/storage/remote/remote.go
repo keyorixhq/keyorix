@@ -26,6 +26,16 @@ func NewRemoteStorage(config *Config) (*RemoteStorage, error) {
 	}, nil
 }
 
+// ListNamespaces is not supported in remote mode; returns an empty list.
+func (rs *RemoteStorage) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
+	return nil, fmt.Errorf("not implemented in remote storage")
+}
+
+// ListEnvironments is not supported in remote mode; returns an empty list.
+func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
+	return nil, fmt.Errorf("not implemented in remote storage")
+}
+
 // CreateSecret creates a new secret via remote API
 func (rs *RemoteStorage) CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
 	resp, err := rs.client.Post(ctx, "/api/v1/secrets", secret)
@@ -912,6 +922,11 @@ func (rs *RemoteStorage) LogAuditEvent(ctx context.Context, event *models.AuditE
 		return fmt.Errorf("log audit event failed: %s", resp.Error.Error())
 	}
 
+	return nil
+}
+
+// CreateSecretAccessLog is a no-op for remote storage; access logging is handled server-side.
+func (rs *RemoteStorage) CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error {
 	return nil
 }
 

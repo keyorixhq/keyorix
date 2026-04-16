@@ -3,15 +3,13 @@ package secret
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/cli/common"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 var (
@@ -49,83 +47,167 @@ func runGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("either --id or --name is required")
 	}
 
-	// Load configuration
-	cfg, err := config.Load("keyorix.yaml")
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	// Connect to database
-	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Auto-migrate models (ensure tables exist)
-	if err := db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	// Initialize storage and core service
-	storage := local.NewLocalStorage(db)
-	service := core.NewKeyorixCore(storage)
-
 	ctx := context.Background()
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runGetRemote(ctx, rc)
+	}
+	return runGetEmbedded(ctx)
+}
+
+// ── Remote mode ───────────────────────────────────────────────────────────────
+
+func runGetRemote(ctx context.Context, rc *common.RemoteClient) error {
+	var secret *models.SecretNode
+	var value string
+
+	if getID != 0 {
+		if getShowValue {
+			path := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", getID)
+			var body struct {
+				Secret *models.SecretNode `json:"secret"`
+				Value  string             `json:"value"`
+			}
+			if err := rc.Get(ctx, path, &body); err != nil {
+				return fmt.Errorf("get secret: %w", err)
+			}
+			secret = body.Secret
+			value = body.Value
+		} else {
+			secret = &models.SecretNode{}
+			if err := rc.Get(ctx, fmt.Sprintf("/api/v1/secrets/%d", getID), secret); err != nil {
+				return fmt.Errorf("get secret: %w", err)
+			}
+		}
+	} else {
+		// Resolve name → secret via filtered list, then optionally fetch value.
+		path := fmt.Sprintf(
+			"/api/v1/secrets?namespace_id=%d&zone_id=%d&environment_id=%d&page_size=1000&page=1",
+			getNamespace, getZone, getEnv,
+		)
+		var body struct {
+			Secrets []*models.SecretNode `json:"secrets"`
+		}
+		if err := rc.Get(ctx, path, &body); err != nil {
+			return fmt.Errorf("list secrets: %w", err)
+		}
+		for _, s := range body.Secrets {
+			if strings.EqualFold(s.Name, getName) {
+				secret = s
+				break
+			}
+		}
+		if secret == nil {
+			return fmt.Errorf("secret %q not found", getName)
+		}
+
+		if getShowValue {
+			path := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", secret.ID)
+			var vbody struct {
+				Secret *models.SecretNode `json:"secret"`
+				Value  string             `json:"value"`
+			}
+			if err := rc.Get(ctx, path, &vbody); err != nil {
+				return fmt.Errorf("get secret value: %w", err)
+			}
+			if vbody.Secret != nil {
+				secret = vbody.Secret
+			}
+			value = vbody.Value
+		}
+	}
+
+	displaySecret(secret, value)
+	return nil
+}
+
+// ── Embedded mode ─────────────────────────────────────────────────────────────
+
+func runGetEmbedded(ctx context.Context) error {
+	service, err := common.InitializeCoreService()
+	if err != nil {
+		return fmt.Errorf("failed to initialize service: %w", err)
+	}
+
 	var secret *models.SecretNode
 
-	// Get secret by ID or name
 	if getID != 0 {
 		secret, err = service.GetSecret(ctx, getID)
 		if err != nil {
 			return fmt.Errorf("failed to get secret: %w", err)
 		}
 	} else {
-		// Find by name using storage interface
-		secret, err = storage.GetSecretByName(ctx, getName, getNamespace, getZone, getEnv)
+		filter := &coreStorage.SecretFilter{Page: 1, PageSize: 1000}
+		if getNamespace != 0 {
+			filter.NamespaceID = &getNamespace
+		}
+		if getZone != 0 {
+			filter.ZoneID = &getZone
+		}
+		if getEnv != 0 {
+			filter.EnvironmentID = &getEnv
+		}
+		secrets, _, err := service.ListSecrets(ctx, filter)
 		if err != nil {
-			return fmt.Errorf("secret not found: %w", err)
+			return fmt.Errorf("failed to list secrets: %w", err)
+		}
+		for _, s := range secrets {
+			if strings.EqualFold(s.Name, getName) {
+				secret = s
+				break
+			}
+		}
+		if secret == nil {
+			return fmt.Errorf("secret %q not found", getName)
 		}
 	}
 
-	// Display secret information
-	displaySecret(secret)
+	var value string
+	if getShowValue {
+		val, err := service.GetSecretValue(ctx, secret.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get secret value: %w", err)
+		}
+		value = string(val)
+	}
 
+	displaySecret(secret, value)
 	return nil
 }
 
-func displaySecret(secret *models.SecretNode) {
-	fmt.Printf("🔐 Secret Information\n")
-	fmt.Printf("====================\n")
-	fmt.Printf("ID: %d\n", secret.ID)
-	fmt.Printf("Name: %s\n", secret.Name)
-	fmt.Printf("Type: %s\n", secret.Type)
-	fmt.Printf("Status: %s\n", secret.Status)
-	fmt.Printf("Namespace: %d\n", secret.NamespaceID)
-	fmt.Printf("Zone: %d\n", secret.ZoneID)
+// ── Display ───────────────────────────────────────────────────────────────────
+
+func displaySecret(secret *models.SecretNode, value string) {
+	fmt.Printf("Secret Information\n")
+	fmt.Printf("==================\n")
+	fmt.Printf("ID:          %d\n", secret.ID)
+	fmt.Printf("Name:        %s\n", secret.Name)
+	fmt.Printf("Type:        %s\n", secret.Type)
+	fmt.Printf("Status:      %s\n", secret.Status)
+	fmt.Printf("Namespace:   %d\n", secret.NamespaceID)
+	fmt.Printf("Zone:        %d\n", secret.ZoneID)
 	fmt.Printf("Environment: %d\n", secret.EnvironmentID)
-	fmt.Printf("Created By: %s\n", secret.CreatedBy)
-	fmt.Printf("Created: %s\n", secret.CreatedAt.Format(time.RFC3339))
-	fmt.Printf("Updated: %s\n", secret.UpdatedAt.Format(time.RFC3339))
+	fmt.Printf("Created By:  %s\n", secret.CreatedBy)
+	fmt.Printf("Created:     %s\n", secret.CreatedAt.Format(time.RFC3339))
+	fmt.Printf("Updated:     %s\n", secret.UpdatedAt.Format(time.RFC3339))
 
 	if secret.MaxReads != nil {
-		fmt.Printf("Max Reads: %d\n", *secret.MaxReads)
+		fmt.Printf("Max Reads:   %d\n", *secret.MaxReads)
 	}
-
 	if secret.Expiration != nil {
-		fmt.Printf("Expires: %s\n", secret.Expiration.Format(time.RFC3339))
+		fmt.Printf("Expires:     %s\n", secret.Expiration.Format(time.RFC3339))
 		if time.Now().After(*secret.Expiration) {
-			fmt.Printf("⚠️  Status: EXPIRED\n")
+			fmt.Printf("WARNING: secret is EXPIRED\n")
 		}
 	}
 
-	if getShowValue {
-		fmt.Printf("\n🔓 Decrypted Value\n")
-		fmt.Printf("==================\n")
-		fmt.Printf("⚠️  Note: Value decryption not yet implemented in new architecture\n")
-		fmt.Printf("💡 This will be added in the next phase\n")
+	if value != "" {
+		fmt.Printf("\nDecrypted Value\n")
+		fmt.Printf("---------------\n")
+		fmt.Printf("%s\n", value)
+	} else if getShowValue {
+		fmt.Printf("\n(value unavailable)\n")
 	} else {
-		fmt.Printf("\n💡 Use --show-value to display the decrypted value\n")
+		fmt.Printf("\nUse --show-value to display the decrypted value.\n")
 	}
 }
-
-
