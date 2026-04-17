@@ -161,6 +161,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission("users.read"))
 			r.Get("/", handlers.ListUsers)
 			r.Post("/", handlers.CreateUser)
+			r.Get("/search", handlers.SearchUsers)
 			r.Get("/{id}", handlers.GetUser)
 			r.Put("/{id}", handlers.UpdateUser)
 			r.Delete("/{id}", handlers.DeleteUser)

@@ -113,6 +113,7 @@ type SecretFilter struct {
 
 // UserFilter defines filtering options for user queries
 type UserFilter struct {
+	Search       *string // OR match across username and email (LIKE %search%)
 	Username     *string
 	Email        *string
 	IsActive     *bool

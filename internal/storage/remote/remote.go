@@ -606,6 +606,9 @@ func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilt
 		path += "?"
 		params := []string{}
 		
+		if filter.Search != nil {
+			params = append(params, fmt.Sprintf("search=%s", *filter.Search))
+		}
 		if filter.Username != nil {
 			params = append(params, fmt.Sprintf("username=%s", *filter.Username))
 		}

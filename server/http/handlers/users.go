@@ -194,6 +194,15 @@ func deleteUserLegacy(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// SearchUsers handles GET /api/v1/users/search?q=<query>
+func SearchUsers(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.SearchUsers(w, r)
+}
+
 // ListUsers handles GET /api/v1/users
 func ListUsers(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
@@ -450,4 +459,38 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SearchUsers handles GET /api/v1/users/search?q=<query>
+func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		sendError(w, "BadRequest", "query parameter 'q' is required", http.StatusBadRequest, nil)
+		return
+	}
+
+	filter := &storage.UserFilter{Search: &q, Page: 1, PageSize: 10}
+	users, _, err := h.coreService.ListUsers(r.Context(), filter)
+	if err != nil {
+		log.Printf("Error searching users: %v", err)
+		sendError(w, "InternalError", "Failed to search users", http.StatusInternalServerError, nil)
+		return
+	}
+
+	type userResult struct {
+		ID       uint   `json:"id"`
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	}
+	results := make([]userResult, 0, len(users))
+	for _, u := range users {
+		results = append(results, userResult{ID: u.ID, Username: u.Username, Email: u.Email})
+	}
+
+	sendSuccess(w, map[string]interface{}{"users": results}, "")
 }
