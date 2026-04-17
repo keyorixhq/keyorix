@@ -1,0 +1,6 @@
+secret/production/database:
+  password: "pg-prod-xK9mN2pQ"
+  username: "app_user"
+secret/production/api:
+  stripe_key: "sk_live_51abc123"
+  sendgrid_key: "SG.xyz789abc"
