@@ -34,13 +34,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
+	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
 	"golang.org/x/crypto/acme/autocert"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+
 )
 
 func main() {
@@ -128,21 +126,13 @@ func main() {
 }
 
 func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, error) {
-	// Connect to database
-	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
+	// Use storage factory to support SQLite, PostgreSQL, and remote storage
+	factory := appstorage.NewStorageFactory()
+	store, err := factory.CreateStorage(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to initialize storage: %w", err)
 	}
-
-	// Auto-migrate models
-	if err := db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Role{}); err != nil {
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	// Initialize storage and core service
-	storage := local.NewLocalStorage(db)
-	coreService := core.NewKeyorixCore(storage)
-
+	coreService := core.NewKeyorixCore(store)
 	return coreService, nil
 }
 

@@ -122,6 +122,10 @@ func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage
 
 // migrateDatabase performs database migrations
 func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
+	// Check if namespaces table exists — if so, skip migration (already initialized)
+	if db.Migrator().HasTable("namespaces") {
+		return nil
+	}
 	return db.AutoMigrate(
 		&models.Namespace{},
 		&models.Zone{},
