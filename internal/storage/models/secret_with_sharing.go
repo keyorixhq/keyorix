@@ -7,7 +7,12 @@ import (
 // SecretWithSharingInfo represents a secret with additional sharing information
 type SecretWithSharingInfo struct {
 	*SecretNode
-	
+
+	// Resolved catalog names (populated by the list handler)
+	NamespaceName   string `json:"namespace_name,omitempty"`
+	ZoneName        string `json:"zone_name,omitempty"`
+	EnvironmentName string `json:"environment_name,omitempty"`
+
 	// Sharing information
 	IsShared       bool   `json:"is_shared"`
 	IsOwnedByUser  bool   `json:"is_owned_by_user"`

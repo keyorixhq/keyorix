@@ -126,6 +126,9 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve namespace, zone, and environment names.
+	h.resolveSecretNames(r.Context(), response.Secrets)
+
 	// Send response
 	h.sendSuccess(w, response, "")
 }
@@ -415,6 +418,44 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 		"versions": versions,
 	}
 	h.sendSuccess(w, response, "")
+}
+
+// resolveSecretNames populates NamespaceName, ZoneName, and EnvironmentName on each
+// secret in the list. It performs one lookup per catalog type and builds ID→name maps,
+// so the total cost is 3 queries regardless of list size.
+func (h *SecretHandler) resolveSecretNames(ctx context.Context, secrets []*models.SecretWithSharingInfo) {
+	if len(secrets) == 0 {
+		return
+	}
+
+	namespaceNames := make(map[uint]string)
+	zoneNames := make(map[uint]string)
+	environmentNames := make(map[uint]string)
+
+	if namespaces, err := h.coreService.ListNamespaces(ctx); err == nil {
+		for _, ns := range namespaces {
+			namespaceNames[ns.ID] = ns.Name
+		}
+	}
+	if zones, err := h.coreService.ListZones(ctx); err == nil {
+		for _, z := range zones {
+			zoneNames[z.ID] = z.Name
+		}
+	}
+	if environments, err := h.coreService.ListEnvironments(ctx); err == nil {
+		for _, e := range environments {
+			environmentNames[e.ID] = e.Name
+		}
+	}
+
+	for _, s := range secrets {
+		if s.SecretNode == nil {
+			continue
+		}
+		s.NamespaceName = namespaceNames[s.NamespaceID]
+		s.ZoneName = zoneNames[s.ZoneID]
+		s.EnvironmentName = environmentNames[s.EnvironmentID]
+	}
 }
 
 // Helper methods for consistent response handling
