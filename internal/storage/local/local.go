@@ -559,8 +559,32 @@ func (ls *LocalStorage) CreateSecretAccessLog(ctx context.Context, log *models.S
 }
 
 func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
-	// Implementation would depend on your audit event model
-	return nil, 0, nil
+	query := ls.db.WithContext(ctx).Model(&models.AuditEvent{})
+	if filter != nil {
+		if filter.UserID != nil {
+			query = query.Where("user_id = ?", *filter.UserID)
+		}
+		if filter.Action != nil {
+			query = query.Where("event_type = ?", *filter.Action)
+		}
+	}
+	var total int64
+	query.Count(&total)
+	var events []*models.AuditEvent
+	offset := 0
+	pageSize := 20
+	if filter != nil {
+		if filter.Page > 1 {
+			offset = (filter.Page - 1) * filter.PageSize
+		}
+		if filter.PageSize > 0 {
+			pageSize = filter.PageSize
+		}
+	}
+	if err := query.Order("event_time DESC").Limit(pageSize).Offset(offset).Find(&events).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to get audit logs: %w", err)
+	}
+	return events, total, nil
 }
 
 func (ls *LocalStorage) GetRBACAuditLogs(ctx context.Context, filter *storage.RBACAuditFilter) ([]*storage.RBACAuditLog, int64, error) {
