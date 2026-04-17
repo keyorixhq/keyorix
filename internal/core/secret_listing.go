@@ -91,7 +91,7 @@ func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uin
 func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
 	// Convert to storage filter
 	storageFilter := c.convertToStorageFilter(filter)
-	storageFilter.CreatedBy = &[]string{fmt.Sprintf("%d", userID)}[0] // Filter by owner
+	// Note: CreatedBy filter removed — secrets are visible to all authenticated users with access
 
 	secrets, _, err := c.storage.ListSecrets(ctx, storageFilter)
 	if err != nil {

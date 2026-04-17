@@ -573,7 +573,7 @@ func (ls *LocalStorage) CreateSession(ctx context.Context, session *models.Sessi
 
 func (ls *LocalStorage) GetSession(ctx context.Context, token string) (*models.Session, error) {
 	var session models.Session
-	if err := ls.db.WithContext(ctx).Where("token = ?", token).First(&session).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where("session_token = ?", token).First(&session).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 		}

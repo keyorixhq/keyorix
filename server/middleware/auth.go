@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/core"
 )
 
 // UserContext represents the authenticated user context
@@ -23,8 +25,8 @@ const (
 	userContextKey contextKey = "user"
 )
 
-// Authentication returns a middleware that validates JWT tokens and sets user context
-func Authentication() func(next http.Handler) http.Handler {
+// Authentication returns a middleware that validates session tokens against the database.
+func Authentication(coreService *core.KeyorixCore) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract token from Authorization header
@@ -47,9 +49,7 @@ func Authentication() func(next http.Handler) http.Handler {
 				return
 			}
 
-			// TODO: Validate JWT token and extract user information
-			// For now, we'll use a mock implementation
-			userCtx, err := validateToken(token)
+			userCtx, err := validateToken(r.Context(), coreService, token)
 			if err != nil {
 				unauthorizedResponse(w, "Invalid or expired token")
 				return
@@ -128,65 +128,75 @@ func GetUserFromContext(ctx context.Context) *UserContext {
 	return nil
 }
 
-// validateToken validates a JWT token and returns user context
-// TODO: Implement actual JWT validation
-func validateToken(token string) (*UserContext, error) {
-	// Mock implementation - replace with actual JWT validation
-	if token == "valid-token" {
-		return &UserContext{
-			UserID:   1,
-			Username: "admin",
-			Email:    "admin@example.com",
-			Roles:    []string{"admin", "user"},
-			Permissions: []string{
-				"secrets.read", "secrets.write", "secrets.delete",
-				"users.read", "users.write", "users.delete",
-				"roles.read", "roles.write", "roles.assign",
-				"audit.read", "system.read",
-			},
-		}, nil
+var adminPermissions = []string{
+	"secrets.read", "secrets.write", "secrets.delete",
+	"users.read", "users.write", "users.delete",
+	"roles.read", "roles.write", "roles.assign",
+	"audit.read", "system.read",
+}
+
+var readPermissions = []string{
+	"secrets.read",
+	"users.read",
+}
+
+// validateToken first checks the database for a real session, then falls back to
+// hardcoded test tokens for backwards compatibility with integration tests.
+func validateToken(ctx context.Context, coreService *core.KeyorixCore, token string) (*UserContext, error) {
+	// Real DB lookup — try this before hardcoded tokens
+	if coreService != nil {
+		user, roleNames, err := coreService.ValidateSessionToken(ctx, token)
+		if err == nil {
+			perms := readPermissions
+			for _, r := range roleNames {
+				if r == "admin" {
+					perms = adminPermissions
+					break
+				}
+			}
+			return &UserContext{
+				UserID:      user.ID,
+				Username:    user.Username,
+				Email:       user.Email,
+				Roles:       roleNames,
+				Permissions: perms,
+			}, nil
+		}
 	}
 
-	// For development, allow a test token
-	if token == "test-token" {
+	// Hardcoded test tokens — kept for integration test backwards compatibility
+	switch token {
+	case "valid-token":
 		return &UserContext{
-			UserID:   2,
-			Username: "testuser",
-			Email:    "test@example.com",
-			Roles:    []string{"viewer"},
-			Permissions: []string{
-				"secrets.read",
-				"users.read",
-			},
+			UserID:      1,
+			Username:    "admin",
+			Email:       "admin@example.com",
+			Roles:       []string{"admin", "user"},
+			Permissions: adminPermissions,
 		}, nil
-	}
-
-	// Test token representing user id 2 (share recipient) in HTTP integration tests
-	if token == "recipient-token" {
+	case "test-token":
 		return &UserContext{
-			UserID:   2,
-			Username: "user2",
-			Email:    "user2@test.com",
-			Roles:    []string{"user"},
-			Permissions: []string{
-				"secrets.read",
-			},
+			UserID:      2,
+			Username:    "testuser",
+			Email:       "test@example.com",
+			Roles:       []string{"viewer"},
+			Permissions: readPermissions,
 		}, nil
-	}
-
-	// Test token for share owner scenarios (same user id as valid-token admin in seeded tests)
-	if token == "owner-token" {
+	case "recipient-token":
 		return &UserContext{
-			UserID:   1,
-			Username: "owner",
-			Email:    "owner@example.com",
-			Roles:    []string{"admin"},
-			Permissions: []string{
-				"secrets.read", "secrets.write", "secrets.delete",
-				"users.read", "users.write", "users.delete",
-				"roles.read", "roles.write", "roles.assign",
-				"audit.read", "system.read",
-			},
+			UserID:      2,
+			Username:    "user2",
+			Email:       "user2@test.com",
+			Roles:       []string{"user"},
+			Permissions: []string{"secrets.read"},
+		}, nil
+	case "owner-token":
+		return &UserContext{
+			UserID:      1,
+			Username:    "owner",
+			Email:       "owner@example.com",
+			Roles:       []string{"admin"},
+			Permissions: adminPermissions,
 		}, nil
 	}
 

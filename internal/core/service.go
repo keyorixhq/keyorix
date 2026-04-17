@@ -1383,6 +1383,148 @@ func generateSecureToken() (string, error) {
 	return fmt.Sprintf("%x", b), nil
 }
 
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+
+// DashboardStats contains summary statistics for the dashboard.
+type DashboardStats struct {
+	TotalSecrets        int64          `json:"totalSecrets"`
+	SharedSecrets       int            `json:"sharedSecrets"`
+	SecretsSharedWithMe int            `json:"secretsSharedWithMe"`
+	RecentActivity      []ActivityItem `json:"recentActivity"`
+}
+
+// ActivityItem represents a single entry in the activity feed.
+type ActivityItem struct {
+	ID         uint      `json:"id"`
+	Type       string    `json:"type"`
+	SecretName string    `json:"secretName"`
+	Timestamp  time.Time `json:"timestamp"`
+	Actor      string    `json:"actor"`
+}
+
+// ActivityFeed is the paginated response for the activity endpoint.
+type ActivityFeed struct {
+	Items    []ActivityItem `json:"items"`
+	Total    int64          `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"pageSize"`
+}
+
+// GetDashboardStats returns summary counts and recent activity for the authenticated user.
+func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, username string) (*DashboardStats, error) {
+	_, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
+		CreatedBy: &username,
+		Page:      1,
+		PageSize:  1,
+	})
+	if err != nil {
+		total = 0
+	}
+
+	outgoing, err := c.storage.ListSharesByOwner(ctx, userID)
+	sharedSecrets := 0
+	if err == nil {
+		sharedSecrets = len(outgoing)
+	}
+
+	incoming, err := c.storage.ListSharesByUser(ctx, userID)
+	sharedWithMe := 0
+	if err == nil {
+		sharedWithMe = len(incoming)
+	}
+
+	uid := userID
+	events, _, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		UserID:   &uid,
+		Page:     1,
+		PageSize: 5,
+	})
+	recent := make([]ActivityItem, 0, len(events))
+	for _, e := range events {
+		recent = append(recent, mapAuditEventToActivity(e, username))
+	}
+
+	return &DashboardStats{
+		TotalSecrets:        total,
+		SharedSecrets:       sharedSecrets,
+		SecretsSharedWithMe: sharedWithMe,
+		RecentActivity:      recent,
+	}, nil
+}
+
+// GetActivityFeed returns a paginated activity feed for the given user.
+func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username string, page, pageSize int) (*ActivityFeed, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 10
+	}
+
+	uid := userID
+	events, total, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		UserID:   &uid,
+		Page:     page,
+		PageSize: pageSize,
+	})
+	if err != nil {
+		return &ActivityFeed{Items: []ActivityItem{}, Total: 0, Page: page, PageSize: pageSize}, nil
+	}
+
+	items := make([]ActivityItem, 0, len(events))
+	for _, e := range events {
+		items = append(items, mapAuditEventToActivity(e, username))
+	}
+
+	return &ActivityFeed{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
+	eventType := e.EventType
+	switch e.EventType {
+	case "secret.read":
+		eventType = "accessed"
+	case "secret.created":
+		eventType = "created"
+	case "secret.updated":
+		eventType = "updated"
+	case "secret.deleted":
+		eventType = "deleted"
+	}
+	return ActivityItem{
+		ID:         e.ID,
+		Type:       eventType,
+		SecretName: e.Description,
+		Timestamp:  e.EventTime,
+		Actor:      actor,
+	}
+}
+
+// ValidateSessionToken looks up a session token, checks expiry, and returns the user and
+// their role names. Used by the auth middleware to authenticate real session tokens.
+func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error) {
+	session, err := c.storage.GetSession(ctx, token)
+	if err != nil {
+		return nil, nil, fmt.Errorf("session not found")
+	}
+	if session.ExpiresAt != nil && c.now().After(*session.ExpiresAt) {
+		return nil, nil, fmt.Errorf("session expired")
+	}
+	user, err := c.storage.GetUser(ctx, session.UserID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("user not found")
+	}
+	roles, err := c.storage.GetUserRoles(ctx, user.ID)
+	if err != nil {
+		return user, []string{}, nil
+	}
+	roleNames := make([]string, len(roles))
+	for i, r := range roles {
+		roleNames[i] = r.Name
+	}
+	return user, roleNames, nil
+}
+
 // ListNamespaces returns all namespaces from storage.
 func (c *KeyorixCore) ListNamespaces(ctx context.Context) ([]*models.Namespace, error) {
 	return c.storage.ListNamespaces(ctx)

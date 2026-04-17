@@ -57,6 +57,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	}
 
 	catalogHandler := handlers.NewCatalogHandler(coreService)
+	dashboardHandler := handlers.NewDashboardHandler(coreService)
 
 	// Auth endpoints (no authentication middleware)
 	r.Post("/auth/login", authHandler.Login)
@@ -109,10 +110,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		// Authentication middleware for API routes
-		r.Use(customMiddleware.Authentication())
+		r.Use(customMiddleware.Authentication(coreService))
 
 		// Auth profile (requires valid token)
 		r.Get("/auth/profile", authHandler.Profile)
+
+		// Dashboard endpoints
+		r.Get("/dashboard/stats", dashboardHandler.GetStats)
+		r.Get("/dashboard/activity", dashboardHandler.GetActivity)
 
 		// Catalog endpoints (namespaces, zones, environments)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/namespaces", catalogHandler.ListNamespaces)
