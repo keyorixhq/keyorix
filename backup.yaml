@@ -1,0 +1,12 @@
+secret/production/api-sendgrid_key:
+  value: SG.xyz789abc
+secret/production/api-stripe_key:
+  value: sk_live_51abc123
+secret/production/database-password:
+  value: pg-prod-xK9mN2pQ
+secret/production/database-username:
+  value: app_user
+secret/production/db-password:
+  value: supersecret123
+secret/production/my-first-secret:
+  value: topsecret

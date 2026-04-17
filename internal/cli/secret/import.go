@@ -278,23 +278,20 @@ func parseDotenv(path string) ([]secretEntry, error) {
 
 // parseVault reads a Medusa/Vault YAML export.
 //
-// Expected shape:
+// Expected shape (as produced by 'keyorix secret export --format vault'):
 //
-//	secret/production/database:
-//	  password: supersecret123
-//	  username: admin
-//	secret/production/api:
-//	  stripe_key: sk_live_abc123
+//	secret/production/database-password:
+//	  value: supersecret123
+//	secret/production/api-key:
+//	  value: sk_live_abc123
 //
-// The secret name is composed as "<last-path-segment>-<field>",
-// e.g. "database-password", "api-stripe_key".
+// The secret name is the last path segment; the "value" key holds the secret value.
 func parseVault(path string) ([]secretEntry, error) {
 	data, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
 		return nil, err
 	}
 
-	// The YAML root is a map[string]map[string]interface{}.
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("invalid YAML: %w", err)
@@ -302,22 +299,27 @@ func parseVault(path string) ([]secretEntry, error) {
 
 	var entries []secretEntry
 	for pathKey, v := range raw {
-		// Last segment of the path becomes the prefix.
+		// Secret name = last path segment (e.g. "database-password" from "secret/production/database-password").
 		parts := strings.Split(strings.Trim(pathKey, "/"), "/")
-		prefix := parts[len(parts)-1]
+		name := parts[len(parts)-1]
+		if name == "" {
+			continue
+		}
 
 		fields, ok := v.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		for field, fval := range fields {
-			val := fmt.Sprintf("%v", fval)
-			if val == "" {
-				continue
-			}
-			name := prefix + "-" + field
-			entries = append(entries, secretEntry{Name: name, Value: val})
+		// The "value" key holds the secret value.
+		fval, exists := fields["value"]
+		if !exists {
+			continue
 		}
+		val := fmt.Sprintf("%v", fval)
+		if val == "" {
+			continue
+		}
+		entries = append(entries, secretEntry{Name: name, Value: val})
 	}
 	return entries, nil
 }
