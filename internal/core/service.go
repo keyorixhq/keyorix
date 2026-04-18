@@ -1384,14 +1384,22 @@ type SeedRequest struct {
 
 // SeedResult is returned after a successful seed.
 type SeedResult struct {
-	User        *models.User
-	Namespace   *models.Namespace
-	Zone        *models.Zone
+	User         *models.User
+	Namespace    *models.Namespace
+	Zone         *models.Zone
 	Environments []*models.Environment
 }
 
-// SeedSystem seeds the first admin user plus default namespace, zone, and environments.
-// Returns an error if any users already exist.
+// seedPermissionDef describes a permission to create during seeding.
+type seedPermissionDef struct {
+	Name        string
+	Description string
+	Resource    string
+	Action      string
+}
+
+// SeedSystem seeds the first admin user, RBAC data, and default namespace/zone/environments.
+// Returns an error wrapping "already seeded" if any users already exist.
 func (c *KeyorixCore) SeedSystem(ctx context.Context, req *SeedRequest) (*SeedResult, error) {
 	_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
 	if err != nil {
@@ -1416,6 +1424,72 @@ func (c *KeyorixCore) SeedSystem(ctx context.Context, req *SeedRequest) (*SeedRe
 		return nil, fmt.Errorf("failed to create admin user: %w", err)
 	}
 
+	// ── Permissions ──────────────────────────────────────────────────────────
+	permDefs := []seedPermissionDef{
+		{"secrets.read", "Read secrets", "secrets", "read"},
+		{"secrets.write", "Create and update secrets", "secrets", "write"},
+		{"secrets.delete", "Delete secrets", "secrets", "delete"},
+		{"users.read", "View user information", "users", "read"},
+		{"users.write", "Create and update users", "users", "write"},
+		{"users.delete", "Delete users", "users", "delete"},
+		{"roles.read", "View roles", "roles", "read"},
+		{"roles.write", "Create and update roles", "roles", "write"},
+		{"roles.assign", "Assign roles to users", "roles", "assign"},
+		{"audit.read", "View audit logs", "audit", "read"},
+		{"system.read", "View system information", "system", "read"},
+	}
+
+	permIDs := make(map[string]uint, len(permDefs))
+	for _, def := range permDefs {
+		p, err := c.storage.CreatePermission(ctx, &models.Permission{
+			Name:        def.Name,
+			Description: def.Description,
+			Resource:    def.Resource,
+			Action:      def.Action,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create permission %s: %w", def.Name, err)
+		}
+		permIDs[def.Name] = p.ID
+	}
+
+	// ── Roles ─────────────────────────────────────────────────────────────────
+	adminRole, err := c.storage.CreateRole(ctx, &models.Role{Name: "admin", Description: "Administrator with full access"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin role: %w", err)
+	}
+
+	viewerRole, err := c.storage.CreateRole(ctx, &models.Role{Name: "viewer", Description: "Read-only access"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create viewer role: %w", err)
+	}
+
+	// ── Role → permission assignments ────────────────────────────────────────
+	adminPerms := []string{
+		"secrets.read", "secrets.write", "secrets.delete",
+		"users.read", "users.write", "users.delete",
+		"roles.read", "roles.write", "roles.assign",
+		"audit.read", "system.read",
+	}
+	for _, name := range adminPerms {
+		if err := c.storage.AssignPermissionToRole(ctx, adminRole.ID, permIDs[name]); err != nil {
+			return nil, fmt.Errorf("failed to assign permission %s to admin: %w", name, err)
+		}
+	}
+
+	viewerPerms := []string{"secrets.read", "users.read", "audit.read"}
+	for _, name := range viewerPerms {
+		if err := c.storage.AssignPermissionToRole(ctx, viewerRole.ID, permIDs[name]); err != nil {
+			return nil, fmt.Errorf("failed to assign permission %s to viewer: %w", name, err)
+		}
+	}
+
+	// ── Assign admin role to the seeded user ─────────────────────────────────
+	if err := c.storage.AssignRole(ctx, user.ID, adminRole.ID); err != nil {
+		return nil, fmt.Errorf("failed to assign admin role to user: %w", err)
+	}
+
+	// ── Catalog data ─────────────────────────────────────────────────────────
 	ns, err := c.storage.CreateNamespace(ctx, &models.Namespace{Name: "default", Description: "Default namespace"})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create namespace: %w", err)

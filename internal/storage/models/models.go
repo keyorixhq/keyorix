@@ -44,6 +44,19 @@ type Role struct {
 	Description string
 }
 
+type Permission struct {
+	ID          uint   `gorm:"primaryKey"`
+	Name        string `gorm:"unique;not null"`
+	Description string
+	Resource    string `gorm:"not null"`
+	Action      string `gorm:"not null"`
+}
+
+type RolePermission struct {
+	RoleID       uint `gorm:"primaryKey"`
+	PermissionID uint `gorm:"primaryKey"`
+}
+
 type UserRole struct {
 	UserID      uint `gorm:"primaryKey"`
 	RoleID      uint `gorm:"primaryKey"`

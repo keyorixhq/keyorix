@@ -132,6 +132,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.Environment{},
 		&models.User{},
 		&models.Role{},
+		&models.Permission{},
+		&models.RolePermission{},
 		&models.UserRole{},
 		&models.Group{},
 		&models.UserGroup{},

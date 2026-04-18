@@ -86,6 +86,14 @@ func (m *MockStorageSharing) CreateSecretAccessLog(_ context.Context, _ *models.
 	return nil
 }
 
+func (m *MockStorageSharing) CreatePermission(_ context.Context, permission *models.Permission) (*models.Permission, error) {
+	return permission, nil
+}
+
+func (m *MockStorageSharing) AssignPermissionToRole(_ context.Context, _, _ uint) error {
+	return nil
+}
+
 func (m *MockStorageSharing) CreateNamespace(_ context.Context, namespace *models.Namespace) (*models.Namespace, error) {
 	return namespace, nil
 }

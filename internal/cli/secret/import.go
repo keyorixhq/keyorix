@@ -276,16 +276,24 @@ func parseDotenv(path string) ([]secretEntry, error) {
 	return entries, scanner.Err()
 }
 
-// parseVault reads a Medusa/Vault YAML export.
+// parseVault reads a Medusa/Vault YAML export in one of two formats.
 //
-// Expected shape (as produced by 'keyorix secret export --format vault'):
+// Format 1 — Keyorix export (single "value" key):
 //
 //	secret/production/database-password:
 //	  value: supersecret123
-//	secret/production/api-key:
-//	  value: sk_live_abc123
 //
-// The secret name is the last path segment; the "value" key holds the secret value.
+// → secret named "database-password" with value "supersecret123".
+//
+// Format 2 — real Vault/Medusa export (multiple keys per path):
+//
+//	secret/production/database:
+//	  password: pg-prod-xK9mN2pQ
+//	  username: app_user
+//
+// → secrets named "database-password" and "database-username".
+//
+// Detection: if the block has exactly one key named "value" → Format 1, otherwise Format 2.
 func parseVault(path string) ([]secretEntry, error) {
 	data, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
@@ -299,10 +307,9 @@ func parseVault(path string) ([]secretEntry, error) {
 
 	var entries []secretEntry
 	for pathKey, v := range raw {
-		// Secret name = last path segment (e.g. "database-password" from "secret/production/database-password").
 		parts := strings.Split(strings.Trim(pathKey, "/"), "/")
-		name := parts[len(parts)-1]
-		if name == "" {
+		segment := parts[len(parts)-1]
+		if segment == "" {
 			continue
 		}
 
@@ -310,16 +317,26 @@ func parseVault(path string) ([]secretEntry, error) {
 		if !ok {
 			continue
 		}
-		// The "value" key holds the secret value.
-		fval, exists := fields["value"]
-		if !exists {
-			continue
+
+		if len(fields) == 1 {
+			if fval, isFormat1 := fields["value"]; isFormat1 {
+				// Format 1: single "value" key → name is the last path segment.
+				val := fmt.Sprintf("%v", fval)
+				if val != "" {
+					entries = append(entries, secretEntry{Name: segment, Value: val})
+				}
+				continue
+			}
 		}
-		val := fmt.Sprintf("%v", fval)
-		if val == "" {
-			continue
+
+		// Format 2: multiple keys → name is "{segment}-{key}" for each key.
+		for key, fval := range fields {
+			val := fmt.Sprintf("%v", fval)
+			if key == "" || val == "" {
+				continue
+			}
+			entries = append(entries, secretEntry{Name: segment + "-" + key, Value: val})
 		}
-		entries = append(entries, secretEntry{Name: name, Value: val})
 	}
 	return entries, nil
 }

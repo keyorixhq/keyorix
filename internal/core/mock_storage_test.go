@@ -13,6 +13,16 @@ type MockStorage struct {
 	mock.Mock
 }
 
+// Permission Management
+
+func (m *MockStorage) CreatePermission(_ context.Context, permission *models.Permission) (*models.Permission, error) {
+	return permission, nil
+}
+
+func (m *MockStorage) AssignPermissionToRole(_ context.Context, _, _ uint) error {
+	return nil
+}
+
 // Namespace / Zone / Environment
 
 func (m *MockStorage) CreateNamespace(_ context.Context, namespace *models.Namespace) (*models.Namespace, error) {

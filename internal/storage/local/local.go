@@ -411,6 +411,21 @@ func (ls *LocalStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*
 // Role Management Implementation
 
 // CreateRole creates a new role in the database
+func (ls *LocalStorage) CreatePermission(ctx context.Context, permission *models.Permission) (*models.Permission, error) {
+	if err := ls.db.WithContext(ctx).Create(permission).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return permission, nil
+}
+
+func (ls *LocalStorage) AssignPermissionToRole(ctx context.Context, roleID, permissionID uint) error {
+	rp := models.RolePermission{RoleID: roleID, PermissionID: permissionID}
+	if err := ls.db.WithContext(ctx).Create(&rp).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 func (ls *LocalStorage) CreateRole(ctx context.Context, role *models.Role) (*models.Role, error) {
 	if err := ls.db.WithContext(ctx).Create(role).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

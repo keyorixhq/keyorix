@@ -63,6 +63,10 @@ type Storage interface {
 	RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error
 	ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error)
 
+	// Permission Management
+	CreatePermission(ctx context.Context, permission *models.Permission) (*models.Permission, error)
+	AssignPermissionToRole(ctx context.Context, roleID, permissionID uint) error
+
 	// Role Management
 	CreateRole(ctx context.Context, role *models.Role) (*models.Role, error)
 	GetRole(ctx context.Context, id uint) (*models.Role, error)
