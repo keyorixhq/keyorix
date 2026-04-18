@@ -3,6 +3,8 @@ package encryption
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
 	"sync"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -19,6 +21,17 @@ type Service struct {
 
 // NewService creates a new encryption service
 func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
+
+	if !cfg.Enabled {
+		log.New(os.Stderr, "", 0).Println(`
+╔══════════════════════════════════════════════════════════════════╗
+║  ⚠️  WARNING: ENCRYPTION IS DISABLED                             ║
+║                                                                  ║
+║  All secrets and tokens will be stored as PLAINTEXT.             ║
+║  This is only acceptable in local development environments.      ║
+║  NEVER run with encryption disabled in production.               ║
+╚══════════════════════════════════════════════════════════════════╝`)
+	}
 	return &Service{
 		config: cfg,
 		keyManager: NewKeyManager(

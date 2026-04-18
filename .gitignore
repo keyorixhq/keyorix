@@ -147,3 +147,31 @@ artifacts/
 # --- Local Development ---
 .kiro/
 *.spec.json
+# === AI / DevOps hygiene ===
+
+# archives
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# binaries & databases
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# OS junk
+.DS_Store
+
+# temp / artifacts
+tmp/
+temp/
+*.out
+*.cache
+
+# security / reports
+*.sarif
+*.report.json
+

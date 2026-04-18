@@ -1,6 +1,7 @@
 package encryption
 
 import (
+	"crypto/subtle"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -281,7 +282,7 @@ func (ae *AuthEncryption) ValidateEncryptedToken(encryptedToken []byte, metadata
 	}
 
 	// Compare tokens
-	return storedToken == plainToken, nil
+	return subtle.ConstantTimeCompare([]byte(storedToken), []byte(plainToken)) == 1, nil
 }
 
 // RotateAuthEncryption re-encrypts authentication data with new keys
