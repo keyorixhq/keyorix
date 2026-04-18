@@ -1,22 +1,33 @@
-BINARY_NAME=keyorix
+BINARY_CLI=keyorix
+BINARY_SERVER=keyorix-server
 BUILD_DIR=./bin
 VERSION?=dev
-LDFLAGS=-ldflags "-X main.version=$(VERSION)"
+LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION)"
 
-.PHONY: build install clean run dev
+.PHONY: build build-cli build-server install install-cli install-server clean run dev
 
-build:
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) .
+build: build-cli build-server
 
-install: build
-	sudo mv $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME)
+build-cli:
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CLI) .
 
-clean:
-	rm -rf $(BUILD_DIR)
+build-server:
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server/main.go
+
+install-cli: build-cli
+	sudo mv $(BUILD_DIR)/$(BINARY_CLI) /usr/local/bin/$(BINARY_CLI)
+
+install-server: build-server
+	sudo mv $(BUILD_DIR)/$(BINARY_SERVER) /usr/local/bin/$(BINARY_SERVER)
+
+install: install-cli install-server
 
 run:
 	KEYORIX_DB_PASSWORD=testpassword123 go run server/main.go
 
-dev: install
-	@echo "✓ keyorix installed to /usr/local/bin"
-	@echo "✓ Run 'keyorix --help' to get started"
+dev: install-cli
+	@echo "✓ keyorix CLI installed to /usr/local/bin"
+	@echo "✓ Start server with: make run"
+
+clean:
+	rm -rf $(BUILD_DIR)

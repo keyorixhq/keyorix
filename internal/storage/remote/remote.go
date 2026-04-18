@@ -489,7 +489,7 @@ func (rs *RemoteStorage) CheckSharePermission(ctx context.Context, secretID, use
 
 // Health checks the health of the remote storage connection
 func (rs *RemoteStorage) Health(ctx context.Context) error {
-	resp, err := rs.client.Get(ctx, "/api/v1/health")
+	resp, err := rs.client.Get(ctx, "/health")
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}

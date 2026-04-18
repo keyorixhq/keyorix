@@ -20,10 +20,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "dev" // overwritten via ldflags at build time
+
 var rootCmd = &cobra.Command{
-	Use:   "keyorix",
-	Short: "Keyorix - A secure secret management tool",
-	Long:  `Keyorix is a tool for securely storing, managing, and sharing secrets.`,
+	Use:     "keyorix",
+	Short:   "Keyorix - A secure secret management tool",
+	Long:    `Keyorix is a tool for securely storing, managing, and sharing secrets.`,
+	Version: version,
 }
 
 func init() {

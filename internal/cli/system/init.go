@@ -1,10 +1,15 @@
 package system
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
@@ -19,29 +24,36 @@ var (
 	initDatabase   bool
 	initLogging    bool
 	force          bool
+
+	// Remote bootstrap flags (--server triggers a different code path).
+	initServer        string
+	initAdminUsername string
+	initAdminPassword string
+	initAdminEmail    string
 )
 
 var InitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize Keyorix system with config and keys",
-	Long: `Initialize the Keyorix system by creating configuration files and setting up required components.
+	Long: `Initialize the Keyorix system.
 
-Supports selective initialization of different components:
-- Configuration file (keyorix.yaml)
-- Encryption keys (KEK/DEK)
-- Database setup
-- Logging setup
+Local mode (default): creates configuration files, encryption keys, and the database.
+
+Remote mode (--server): bootstraps a running Keyorix server — creates the admin
+user and default workspace (namespace + environments) via the HTTP API.
 
 Examples:
-  keyorix system init                    # Initialize all components
-  keyorix system init --interactive     # Interactive setup wizard
-  keyorix system init --encryption      # Initialize encryption only
-  keyorix system init --force           # Overwrite existing files
-  keyorix system init --config ./my.yaml # Custom config path`,
+  keyorix system init                              # local file setup
+  keyorix system init --server http://localhost:8080
+  keyorix system init --server https://vault.example.com \
+      --admin-username admin --admin-password secret --admin-email admin@example.com
+  keyorix system init --encryption                 # local: encryption keys only
+  keyorix system init --force                      # local: overwrite existing files`,
 	RunE: runInit,
 }
 
 func init() {
+	// Local-mode flags
 	InitCmd.Flags().StringVar(&configPath, "config", "./keyorix.yaml", "Path to output config file")
 	InitCmd.Flags().BoolVar(&interactive, "interactive", false, "Launch interactive setup wizard")
 	InitCmd.Flags().BoolVar(&initAll, "all", true, "Initialize all components")
@@ -49,10 +61,20 @@ func init() {
 	InitCmd.Flags().BoolVar(&initDatabase, "database", false, "Initialize database")
 	InitCmd.Flags().BoolVar(&initLogging, "logging", false, "Initialize logging")
 	InitCmd.Flags().BoolVar(&force, "force", false, "Overwrite existing files (dangerous)")
+
+	// Remote-bootstrap flags
+	InitCmd.Flags().StringVar(&initServer, "server", "", "Bootstrap a remote Keyorix server (triggers remote mode)")
+	InitCmd.Flags().StringVar(&initAdminUsername, "admin-username", "admin", "Admin username to create")
+	InitCmd.Flags().StringVar(&initAdminPassword, "admin-password", "admin", "Admin password (change after first login)")
+	InitCmd.Flags().StringVar(&initAdminEmail, "admin-email", "admin@localhost", "Admin email address")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	fmt.Println("🚀 Keyorix System Initialization")
+	if initServer != "" {
+		return runRemoteInit()
+	}
+
+	fmt.Println("Keyorix System Initialization")
 	fmt.Println("=================================")
 
 	if initEncryption || initDatabase || initLogging {
@@ -166,5 +188,75 @@ func initializeLogging() error {
 			return fmt.Errorf("failed to close log file: %w", cerr)
 		}
 	}
+	return nil
+}
+
+// ── Remote bootstrap ──────────────────────────────────────────────────────────
+
+// runRemoteInit bootstraps a running Keyorix server by calling POST /system/init.
+// The server creates the admin user and seeds the default namespace, zone, and
+// environments (development, staging, production) in a single call.
+func runRemoteInit() error {
+	server := strings.TrimRight(initServer, "/")
+	url := server + "/system/init"
+
+	payload := map[string]string{
+		"username":     initAdminUsername,
+		"email":        initAdminEmail,
+		"password":     initAdminPassword,
+		"display_name": "Administrator",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body)) // #nosec G107
+	if err != nil {
+		return fmt.Errorf("could not reach server at %s: %w", server, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusConflict {
+		fmt.Fprintf(os.Stderr, "Server at %s is already initialized.\n", server)
+		fmt.Fprintf(os.Stderr, "Use 'keyorix auth login' to authenticate.\n")
+		return nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		// Try to extract a message from the JSON error body.
+		var errResp struct {
+			Message string `json:"message"`
+			Error   string `json:"error"`
+		}
+		msg := fmt.Sprintf("HTTP %d", resp.StatusCode)
+		if json.Unmarshal(respBody, &errResp) == nil {
+			if errResp.Message != "" {
+				msg = errResp.Message
+			} else if errResp.Error != "" {
+				msg = errResp.Error
+			}
+		}
+		return fmt.Errorf("initialization failed: %s", msg)
+	}
+
+	// Success — print the welcome banner.
+	fmt.Printf("Keyorix initialized successfully\n\n")
+	fmt.Printf("Your workspace is ready:\n")
+	fmt.Printf("  +-- Project: default\n")
+	fmt.Printf("  +-- Environments: development, staging, production\n")
+	fmt.Printf("  +-- Admin user: %s (change password after first login)\n", initAdminUsername)
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("  keyorix auth login --server %s\n", server)
+	fmt.Printf("  keyorix secret create my-first-secret --value \"hello\"\n")
+	fmt.Printf("  keyorix run --env production -- your-app\n")
+
+	if initAdminPassword == "admin" {
+		fmt.Printf("\nWARNING: You are using the default password %q. Change it immediately.\n", initAdminPassword)
+	}
+
 	return nil
 }
