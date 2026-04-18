@@ -1,0 +1,15 @@
+environment: production
+server:
+  http:
+    enabled: true
+    port: "8080"
+storage:
+  type: postgres
+  database:
+    host: postgres
+    port: "5432"
+    name: keyorix
+    user: keyorix
+    ssl_mode: disable
+encryption:
+  enabled: true

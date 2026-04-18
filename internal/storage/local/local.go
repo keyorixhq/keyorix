@@ -24,7 +24,19 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 	}
 }
 
-// Namespace / Environment lookup
+// Namespace / Zone / Environment management
+
+func (ls *LocalStorage) CreateNamespace(ctx context.Context, namespace *models.Namespace) (*models.Namespace, error) {
+	return namespace, ls.db.WithContext(ctx).Create(namespace).Error
+}
+
+func (ls *LocalStorage) CreateZone(ctx context.Context, zone *models.Zone) (*models.Zone, error) {
+	return zone, ls.db.WithContext(ctx).Create(zone).Error
+}
+
+func (ls *LocalStorage) CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error) {
+	return env, ls.db.WithContext(ctx).Create(env).Error
+}
 
 func (ls *LocalStorage) ListNamespaces(ctx context.Context) ([]*models.Namespace, error) {
 	var namespaces []*models.Namespace

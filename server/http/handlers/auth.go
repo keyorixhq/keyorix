@@ -205,6 +205,52 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 	}, "System initialized successfully")
 }
 
+type seedRequestBody struct {
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+}
+
+// SeedSystem handles POST /api/v1/system/seed.
+// Creates the first admin user plus default namespace, zone, and environments.
+// Returns 409 if the system has already been seeded.
+func (h *AuthHandler) SeedSystem(w http.ResponseWriter, r *http.Request) {
+	var body seedRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+
+	result, err := h.coreService.SeedSystem(r.Context(), &core.SeedRequest{
+		Username:    body.Username,
+		Email:       body.Email,
+		Password:    body.Password,
+		DisplayName: body.DisplayName,
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "already seeded") {
+			status = http.StatusConflict
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+
+	envNames := make([]string, 0, len(result.Environments))
+	for _, e := range result.Environments {
+		envNames = append(envNames, e.Name)
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	sendSuccess(w, map[string]interface{}{
+		"user":         map[string]interface{}{"id": result.User.ID, "username": result.User.Username, "email": result.User.Email},
+		"namespace":    result.Namespace.Name,
+		"zone":         result.Zone.Name,
+		"environments": envNames,
+	}, "System seeded successfully")
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // extractBearerToken pulls the token from an "Authorization: Bearer <token>" header.

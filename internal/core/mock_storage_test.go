@@ -13,7 +13,19 @@ type MockStorage struct {
 	mock.Mock
 }
 
-// Namespace / Environment
+// Namespace / Zone / Environment
+
+func (m *MockStorage) CreateNamespace(_ context.Context, namespace *models.Namespace) (*models.Namespace, error) {
+	return namespace, nil
+}
+
+func (m *MockStorage) CreateZone(_ context.Context, zone *models.Zone) (*models.Zone, error) {
+	return zone, nil
+}
+
+func (m *MockStorage) CreateEnvironment(_ context.Context, env *models.Environment) (*models.Environment, error) {
+	return env, nil
+}
 
 func (m *MockStorage) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
 	return nil, nil

@@ -65,6 +65,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Post("/auth/refresh", authHandler.RefreshToken)
 	r.Post("/auth/password-reset", authHandler.PasswordReset)
 	r.Post("/system/init", authHandler.InitSystem)
+	// Seed endpoint - unauthenticated; self-guards by requiring no existing users
+	r.Post("/api/v1/system/seed", authHandler.SeedSystem)
 
 	// Health check endpoint
 	r.Get("/health", handlers.HealthCheck)

@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: keyorix
+      POSTGRES_USER: keyorix
+      POSTGRES_PASSWORD: keyorix123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keyorix"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  keyorix:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      KEYORIX_DB_PASSWORD: keyorix123
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./keyorix.docker.yaml:/app/keyorix.yaml:ro
+
+volumes:
+  postgres_data:

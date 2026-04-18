@@ -11,7 +11,10 @@ import (
 // This interface abstracts away the underlying storage implementation,
 // allowing for both local database access and remote API calls
 type Storage interface {
-	// Namespace / Zone / Environment lookup (for embedded-mode resolution)
+	// Namespace / Zone / Environment management
+	CreateNamespace(ctx context.Context, namespace *models.Namespace) (*models.Namespace, error)
+	CreateZone(ctx context.Context, zone *models.Zone) (*models.Zone, error)
+	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
 	ListNamespaces(ctx context.Context) ([]*models.Namespace, error)
 	ListZones(ctx context.Context) ([]*models.Zone, error)
 	ListEnvironments(ctx context.Context) ([]*models.Environment, error)

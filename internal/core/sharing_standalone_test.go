@@ -86,6 +86,18 @@ func (m *MockStorageSharing) CreateSecretAccessLog(_ context.Context, _ *models.
 	return nil
 }
 
+func (m *MockStorageSharing) CreateNamespace(_ context.Context, namespace *models.Namespace) (*models.Namespace, error) {
+	return namespace, nil
+}
+
+func (m *MockStorageSharing) CreateZone(_ context.Context, zone *models.Zone) (*models.Zone, error) {
+	return zone, nil
+}
+
+func (m *MockStorageSharing) CreateEnvironment(_ context.Context, env *models.Environment) (*models.Environment, error) {
+	return env, nil
+}
+
 func (m *MockStorageSharing) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
 	return nil, nil
 }

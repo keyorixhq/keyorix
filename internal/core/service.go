@@ -1374,6 +1374,71 @@ func (c *KeyorixCore) InitializeSystem(ctx context.Context, req *CreateUserReque
 	return c.CreateUser(ctx, req)
 }
 
+// SeedRequest holds credentials and display name for the initial seed.
+type SeedRequest struct {
+	Username    string
+	Email       string
+	Password    string
+	DisplayName string
+}
+
+// SeedResult is returned after a successful seed.
+type SeedResult struct {
+	User        *models.User
+	Namespace   *models.Namespace
+	Zone        *models.Zone
+	Environments []*models.Environment
+}
+
+// SeedSystem seeds the first admin user plus default namespace, zone, and environments.
+// Returns an error if any users already exist.
+func (c *KeyorixCore) SeedSystem(ctx context.Context, req *SeedRequest) (*SeedResult, error) {
+	_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing users: %w", err)
+	}
+	if total > 0 {
+		return nil, fmt.Errorf("system already seeded")
+	}
+
+	displayName := req.DisplayName
+	if displayName == "" {
+		displayName = req.Username
+	}
+
+	user, err := c.CreateUser(ctx, &CreateUserRequest{
+		Username:    req.Username,
+		Email:       req.Email,
+		Password:    req.Password,
+		DisplayName: displayName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin user: %w", err)
+	}
+
+	ns, err := c.storage.CreateNamespace(ctx, &models.Namespace{Name: "default", Description: "Default namespace"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create namespace: %w", err)
+	}
+
+	zone, err := c.storage.CreateZone(ctx, &models.Zone{Name: "default", Description: "Default zone"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zone: %w", err)
+	}
+
+	envNames := []string{"development", "staging", "production"}
+	envs := make([]*models.Environment, 0, len(envNames))
+	for _, name := range envNames {
+		env, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: name})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create environment %s: %w", name, err)
+		}
+		envs = append(envs, env)
+	}
+
+	return &SeedResult{User: user, Namespace: ns, Zone: zone, Environments: envs}, nil
+}
+
 // generateSecureToken creates a random hex token.
 func generateSecureToken() (string, error) {
 	b := make([]byte, 32)

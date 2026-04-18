@@ -26,6 +26,18 @@ func NewRemoteStorage(config *Config) (*RemoteStorage, error) {
 	}, nil
 }
 
+func (rs *RemoteStorage) CreateNamespace(_ context.Context, _ *models.Namespace) (*models.Namespace, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
+func (rs *RemoteStorage) CreateZone(_ context.Context, _ *models.Zone) (*models.Zone, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
+func (rs *RemoteStorage) CreateEnvironment(_ context.Context, _ *models.Environment) (*models.Environment, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
 // ListNamespaces is not supported in remote mode; returns an empty list.
 func (rs *RemoteStorage) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
 	return nil, fmt.Errorf("not implemented in remote storage")

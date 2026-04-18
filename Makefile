@@ -4,7 +4,7 @@ BUILD_DIR=./bin
 VERSION?=dev
 LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION)"
 
-.PHONY: build build-cli build-server install install-cli install-server clean run dev
+.PHONY: build build-cli build-server install install-cli install-server clean run dev docker-build docker-up docker-down docker-logs
 
 build: build-cli build-server
 
@@ -31,3 +31,15 @@ dev: install-cli
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+docker-build:
+	docker build -f server/Dockerfile -t keyorix-server .
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f keyorix
