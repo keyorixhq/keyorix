@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -1524,11 +1525,20 @@ func generateSecureToken() (string, error) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
+// StatTrend contains trend data for a dashboard stat.
+type StatTrend struct {
+	Value      float64 `json:"value"`      // % change vs previous snapshot
+	IsPositive bool    `json:"isPositive"` // true = grew, false = shrank
+}
+
 // DashboardStats contains summary statistics for the dashboard.
 type DashboardStats struct {
 	TotalSecrets        int64          `json:"totalSecrets"`
 	SharedSecrets       int            `json:"sharedSecrets"`
 	SecretsSharedWithMe int            `json:"secretsSharedWithMe"`
+	TotalSecretsTrend   *StatTrend     `json:"totalSecretsTrend,omitempty"`
+	SharedSecretsTrend  *StatTrend     `json:"sharedSecretsTrend,omitempty"`
+	SharedWithMeTrend   *StatTrend     `json:"sharedWithMeTrend,omitempty"`
 	RecentActivity      []ActivityItem `json:"recentActivity"`
 }
 
@@ -1583,13 +1593,56 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		recent = append(recent, mapAuditEventToActivity(e, username))
 	}
 
-	return &DashboardStats{
+	stats := &DashboardStats{
 		TotalSecrets:        total,
 		SharedSecrets:       sharedSecrets,
 		SecretsSharedWithMe: sharedWithMe,
 		RecentActivity:      recent,
-	}, nil
+	}
+
+	// Compute trends from previous snapshot
+	prev, err := c.storage.GetPreviousStatsSnapshot(ctx, userID)
+	if err == nil && prev != nil {
+		stats.TotalSecretsTrend = computeTrend(float64(prev.TotalSecrets), float64(total))
+		stats.SharedSecretsTrend = computeTrend(float64(prev.SharedSecrets), float64(sharedSecrets))
+		stats.SharedWithMeTrend = computeTrend(float64(prev.SecretsSharedWithMe), float64(sharedWithMe))
+	}
+
+	// Save snapshot (once per day — skip if one exists from today)
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	existing, _ := c.storage.GetPreviousStatsSnapshot(ctx, userID)
+	if existing == nil || existing.SnapshotDate.Before(today) {
+		_ = c.storage.SaveStatsSnapshot(ctx, &models.StatsSnapshot{
+			UserID:              userID,
+			TotalSecrets:        total,
+			SharedSecrets:       sharedSecrets,
+			SecretsSharedWithMe: sharedWithMe,
+			SnapshotDate:        today,
+		})
+	}
+
+	return stats, nil
 }
+
+// computeTrend calculates percentage change between previous and current values.
+func computeTrend(prev, current float64) *StatTrend {
+	if prev == 0 {
+		if current == 0 {
+			return nil
+		}
+		return &StatTrend{Value: 100, IsPositive: true}
+	}
+	change := ((current - prev) / prev) * 100
+	if change == 0 {
+		return nil
+	}
+	return &StatTrend{
+		Value:      math.Round(math.Abs(change)*10) / 10,
+		IsPositive: change > 0,
+	}
+}
+
+
 
 // GetActivityFeed returns a paginated activity feed for the given user.
 func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username string, page, pageSize int) (*ActivityFeed, error) {

@@ -192,6 +192,17 @@ type SystemMetadata struct {
 	UpdatedAt time.Time
 }
 
+// StatsSnapshot stores daily dashboard stat counts for trend calculation
+type StatsSnapshot struct {
+	ID                  uint      `gorm:"primaryKey"`
+	UserID              uint      `gorm:"not null;index"`
+	TotalSecrets        int64     `gorm:"not null"`
+	SharedSecrets       int       `gorm:"not null"`
+	SecretsSharedWithMe int       `gorm:"not null"`
+	SnapshotDate        time.Time `gorm:"not null;index"`
+	CreatedAt           time.Time
+}
+
 type APIClient struct {
 	ID                    uint `gorm:"primaryKey"`
 	Name                  string

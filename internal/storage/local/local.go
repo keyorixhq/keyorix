@@ -714,3 +714,21 @@ func (ls *LocalStorage) GetStats(ctx context.Context) (*storage.StorageStats, er
 
 	return stats, nil
 }
+
+func (ls *LocalStorage) SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error {
+	return ls.db.WithContext(ctx).Create(snapshot).Error
+}
+
+func (ls *LocalStorage) GetPreviousStatsSnapshot(ctx context.Context, userID uint) (*models.StatsSnapshot, error) {
+	var snapshot models.StatsSnapshot
+	// Get the most recent snapshot that is at least 20 hours old (previous day)
+	cutoff := time.Now().Add(-20 * time.Hour)
+	err := ls.db.WithContext(ctx).
+		Where("user_id = ? AND created_at < ?", userID, cutoff).
+		Order("created_at DESC").
+		First(&snapshot).Error
+	if err != nil {
+		return nil, err
+	}
+	return &snapshot, nil
+}

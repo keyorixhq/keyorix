@@ -122,7 +122,12 @@ func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage
 
 // migrateDatabase performs database migrations
 func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
-	// Check if namespaces table exists — if so, skip migration (already initialized)
+	// Always run additive migrations for new tables (safe on existing DBs)
+	if err := db.AutoMigrate(&models.StatsSnapshot{}); err != nil {
+		return fmt.Errorf("failed to migrate stats_snapshots table: %w", err)
+	}
+
+	// Check if namespaces table exists — if so, skip full migration (already initialized)
 	if db.Migrator().HasTable("namespaces") {
 		return nil
 	}
@@ -158,5 +163,6 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.GRPCService{},
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
+		&models.StatsSnapshot{},
 	)
 }

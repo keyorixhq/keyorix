@@ -82,6 +82,10 @@ type Storage interface {
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 
+	// Stats Snapshots
+	SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error
+	GetPreviousStatsSnapshot(ctx context.Context, userID uint) (*models.StatsSnapshot, error)
+
 	// Audit Logging
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
