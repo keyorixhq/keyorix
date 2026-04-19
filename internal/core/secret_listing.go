@@ -55,6 +55,17 @@ func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uin
 		sharedCount = len(sharedSecrets)
 	}
 
+	// Deduplicate by secret ID — a secret can appear in both owned and shared lists
+	seen := make(map[uint]bool)
+	deduped := allSecrets[:0]
+	for _, s := range allSecrets {
+		if !seen[s.ID] {
+			seen[s.ID] = true
+			deduped = append(deduped, s)
+		}
+	}
+	allSecrets = deduped
+
 	// Apply additional filters
 	filteredSecrets := c.applySecretFilters(allSecrets, filter)
 
