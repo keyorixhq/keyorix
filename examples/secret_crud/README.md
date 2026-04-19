@@ -1,6 +1,6 @@
 # Secret CRUD Example
 
-This example demonstrates the complete CRUD (Create, Read, Update, Delete) functionality for secrets in the Secretly system.
+This example demonstrates the complete CRUD (Create, Read, Update, Delete) functionality for secrets in the Keyorix system.
 
 ## What This Example Shows
 
@@ -23,14 +23,14 @@ go run examples/secret_crud/main.go
 
 ## Prerequisites
 
-Ensure your Secretly system is initialized:
+Ensure your Keyorix system is initialized:
 
 ```bash
 # Initialize the system
-secretly system init
+keyorix system init
 
 # Verify setup
-secretly system validate
+keyorix system validate
 ```
 
 ## Features Demonstrated
@@ -70,73 +70,73 @@ secretly system validate
 ### Create Secrets
 ```bash
 # Basic creation
-secretly secret create --name "db-password" --value "secret123" --type "password"
+keyorix secret create --name "db-password" --value "secret123" --type "password"
 
 # From file
-secretly secret create --name "ssl-cert" --from-file ./certificate.pem --type "certificate"
+keyorix secret create --name "ssl-cert" --from-file ./certificate.pem --type "certificate"
 
 # Interactive mode (secure input)
-secretly secret create --interactive
+keyorix secret create --interactive
 
 # With expiration and limits
-secretly secret create --name "temp-token" --value "abc123" --expires "2024-12-31T23:59:59Z" --max-reads 5
+keyorix secret create --name "temp-token" --value "abc123" --expires "2024-12-31T23:59:59Z" --max-reads 5
 ```
 
 ### Read Secrets
 ```bash
 # Get metadata only
-secretly secret get --id 123
+keyorix secret get --id 123
 
 # Get with decrypted value
-secretly secret get --id 123 --show-value
+keyorix secret get --id 123 --show-value
 
 # Get by name
-secretly secret get --name "db-password" --namespace 1 --zone 1 --environment 1
+keyorix secret get --name "db-password" --namespace 1 --zone 1 --environment 1
 ```
 
 ### Update Secrets
 ```bash
 # Update value (creates new version)
-secretly secret update --id 123 --value "new-secret"
+keyorix secret update --id 123 --value "new-secret"
 
 # Update metadata
-secretly secret update --id 123 --type "new-type" --max-reads 10
+keyorix secret update --id 123 --type "new-type" --max-reads 10
 
 # Interactive update
-secretly secret update --id 123 --interactive
+keyorix secret update --id 123 --interactive
 ```
 
 ### List & Search
 ```bash
 # List all secrets
-secretly secret list --namespace 1 --zone 1 --environment 1
+keyorix secret list --namespace 1 --zone 1 --environment 1
 
 # Search by name/type
-secretly secret list --search "password" --limit 10
+keyorix secret list --search "password" --limit 10
 
 # JSON output
-secretly secret list --format json
+keyorix secret list --format json
 ```
 
 ### Version Management
 ```bash
 # List all versions
-secretly secret versions --id 123
+keyorix secret versions --id 123
 
 # JSON format
-secretly secret versions --id 123 --format json
+keyorix secret versions --id 123 --format json
 ```
 
 ### Delete Secrets
 ```bash
 # Delete with confirmation
-secretly secret delete --id 123
+keyorix secret delete --id 123
 
 # Force delete (skip confirmation)
-secretly secret delete --id 123 --force
+keyorix secret delete --id 123 --force
 
 # Delete by name
-secretly secret delete --name "old-secret" --namespace 1 --zone 1 --environment 1
+keyorix secret delete --name "old-secret" --namespace 1 --zone 1 --environment 1
 ```
 
 ## Expected Output
@@ -222,4 +222,4 @@ After running this example:
 5. Implement your own secret management policies
 6. Integrate with your applications and services
 
-This example provides a complete foundation for enterprise-grade secret management with the Secretly system.
+This example provides a complete foundation for enterprise-grade secret management with the Keyorix system.

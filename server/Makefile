@@ -1,7 +1,7 @@
-# Secretly Server Makefile
+# Keyorix Server Makefile
 
 # Variables
-BINARY_NAME=secretly-server
+BINARY_NAME=keyorix-server
 PROTO_DIR=proto
 PROTO_FILES=$(wildcard $(PROTO_DIR)/*.proto)
 PB_DIR=$(PROTO_DIR)/pb
@@ -86,17 +86,17 @@ certs:
 	@echo "Generating development TLS certificates..."
 	mkdir -p certs
 	openssl req -x509 -newkey rsa:4096 -keyout certs/server.key -out certs/server.crt \
-		-days 365 -nodes -subj "/C=US/ST=CA/L=SF/O=Secretly/CN=localhost"
+		-days 365 -nodes -subj "/C=US/ST=CA/L=SF/O=Keyorix/CN=localhost"
 
 # Docker build
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t secretly-server:$(VERSION) .
+	docker build -t keyorix-server:$(VERSION) .
 
 # Docker run
 docker-run: docker-build
 	@echo "Running Docker container..."
-	docker run -p 8080:8080 -p 9090:9090 secretly-server:$(VERSION)
+	docker run -p 8080:8080 -p 9090:9090 keyorix-server:$(VERSION)
 
 # Show help
 help:

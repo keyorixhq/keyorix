@@ -67,7 +67,7 @@ tasks:
     cmds:
       - echo "🔧 Сборка CLI..."
       - mkdir -p bin
-      - go build -o bin/secretly ./cmd/secretly
+      - go build -o bin/keyorix ./cmd/keyorix
 
   # 🏗️ Сборка сервера
   build-server:

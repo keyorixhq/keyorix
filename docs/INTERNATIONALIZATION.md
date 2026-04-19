@@ -1,10 +1,10 @@
 # Internationalization (i18n) Guide
 
-This guide explains how to configure and use the internationalization features in Secretly.
+This guide explains how to configure and use the internationalization features in Keyorix.
 
 ## Overview
 
-Secretly supports multiple languages for its user interface, error messages, and system responses. The internationalization system allows you to:
+Keyorix supports multiple languages for its user interface, error messages, and system responses. The internationalization system allows you to:
 
 - Configure the primary language for your deployment
 - Set a fallback language for missing translations
@@ -13,7 +13,7 @@ Secretly supports multiple languages for its user interface, error messages, and
 
 ## Supported Languages
 
-Secretly currently supports the following languages:
+Keyorix currently supports the following languages:
 
 | Language Code | Language Name | Native Name |
 |---------------|---------------|-------------|
@@ -27,7 +27,7 @@ Secretly currently supports the following languages:
 
 ### Basic Configuration
 
-Add the locale configuration to your `secretly.yaml` file:
+Add the locale configuration to your `keyorix.yaml` file:
 
 ```yaml
 locale:
@@ -155,7 +155,7 @@ The validation utility checks for:
 3. **Use in Code**: Reference the message key in your Go code:
 
 ```go
-import "github.com/secretlyhq/secretly/internal/i18n"
+import "github.com/keyorixhq/keyorix/internal/i18n"
 
 // Simple translation
 message := i18n.T("YourMessageKey", nil)
@@ -196,8 +196,8 @@ Example:
 {
   "Welcome": {
     "description": "Welcome message for new users",
-    "one": "Welcome to Secretly!",
-    "other": "Welcome to Secretly!"
+    "one": "Welcome to Keyorix!",
+    "other": "Welcome to Keyorix!"
   },
   "ErrorUserNotFound": {
     "description": "Error when user cannot be found",
@@ -212,7 +212,7 @@ Example:
 ### Programmatic Language Switching
 
 ```go
-import "github.com/secretlyhq/secretly/internal/i18n"
+import "github.com/keyorixhq/keyorix/internal/i18n"
 
 // Get the current localizer
 localizer := i18n.GetLocalizer()
@@ -237,7 +237,7 @@ The internationalization system is thread-safe and supports concurrent access:
 
 #### 1. Application Fails to Start
 **Error**: "unsupported language: xx"
-**Solution**: Check that your language codes in `secretly.yaml` are valid
+**Solution**: Check that your language codes in `keyorix.yaml` are valid
 
 #### 2. Messages Appear in English Despite Configuration
 **Possible Causes**:

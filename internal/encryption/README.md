@@ -1,6 +1,6 @@
 # Encryption Layer
 
-This package provides a comprehensive encryption layer for the Secretly secrets management system. It implements AES-256-GCM encryption with proper key management and secure storage practices.
+This package provides a comprehensive encryption layer for the Keyorix secrets management system. It implements AES-256-GCM encryption with proper key management and secure storage practices.
 
 ## Features
 
@@ -48,13 +48,13 @@ encryption:
 
 ```bash
 # Initialize encryption keys
-secretly encryption init
+keyorix encryption init
 
 # Check encryption status
-secretly encryption status
+keyorix encryption status
 
 # Validate encryption setup
-secretly encryption validate
+keyorix encryption validate
 ```
 
 ### Programmatic Usage
@@ -63,8 +63,8 @@ secretly encryption validate
 package main
 
 import (
-    "github.com/secretlyhq/secretly/internal/encryption"
-    "github.com/secretlyhq/secretly/internal/config"
+    "github.com/keyorixhq/keyorix/internal/encryption"
+    "github.com/keyorixhq/keyorix/internal/config"
 )
 
 func main() {
@@ -104,19 +104,19 @@ decrypted, _ := secretEncryption.RetrieveSecret(version.ID)
 
 ## CLI Commands
 
-### `secretly encryption init`
+### `keyorix encryption init`
 Initialize encryption keys if they don't exist.
 
-### `secretly encryption status`
+### `keyorix encryption status`
 Display current encryption configuration and status.
 
-### `secretly encryption rotate`
+### `keyorix encryption rotate`
 Rotate encryption keys and update key version.
 
-### `secretly encryption validate`
+### `keyorix encryption validate`
 Validate encryption setup and key file permissions.
 
-### `secretly encryption fix-perms`
+### `keyorix encryption fix-perms`
 Automatically fix key file permissions.
 
 ## Security Features
@@ -180,8 +180,8 @@ This will demonstrate:
 
 ### Common Issues
 
-1. **Permission Denied**: Run `secretly encryption fix-perms`
-2. **Key Not Found**: Run `secretly encryption init`
+1. **Permission Denied**: Run `keyorix encryption fix-perms`
+2. **Key Not Found**: Run `keyorix encryption init`
 3. **Invalid Configuration**: Check `config.yaml` encryption settings
 4. **Database Errors**: Ensure proper database migration
 
@@ -197,9 +197,9 @@ export SECRETLY_DEBUG=true
 To migrate existing unencrypted secrets:
 
 1. Enable encryption in configuration
-2. Run `secretly encryption init`
+2. Run `keyorix encryption init`
 3. Use the rotation command to re-encrypt existing secrets
-4. Validate the setup with `secretly encryption validate`
+4. Validate the setup with `keyorix encryption validate`
 
 ## Best Practices
 

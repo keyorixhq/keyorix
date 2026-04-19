@@ -1,6 +1,6 @@
 # Remote CLI Troubleshooting Guide
 
-This guide helps you diagnose and resolve common issues when using the Secretly CLI with remote servers.
+This guide helps you diagnose and resolve common issues when using the Keyorix CLI with remote servers.
 
 ## Quick Diagnostics
 
@@ -8,16 +8,16 @@ Run these commands to quickly diagnose issues:
 
 ```bash
 # Check overall system status
-secretly status
+keyorix status
 
 # Test remote connectivity
-secretly ping
+keyorix ping
 
 # Check configuration
-secretly config status
+keyorix config status
 
 # Check authentication
-secretly auth status
+keyorix auth status
 ```
 
 ## Common Issues
@@ -36,7 +36,7 @@ secretly auth status
 
 1. **Verify server URL:**
    ```bash
-   secretly config status
+   keyorix config status
    # Check if the URL is correct
    ```
 
@@ -52,7 +52,7 @@ secretly auth status
 
 4. **Update server URL if incorrect:**
    ```bash
-   secretly config set-remote --url https://correct-server-url.com
+   keyorix config set-remote --url https://correct-server-url.com
    ```
 
 ### 2. Authentication Failures
@@ -68,13 +68,13 @@ secretly auth status
 
 1. **Check authentication status:**
    ```bash
-   secretly auth status
+   keyorix auth status
    ```
 
 2. **Re-authenticate:**
    ```bash
-   secretly auth logout
-   secretly auth login
+   keyorix auth logout
+   keyorix auth login
    ```
 
 3. **Verify API key format:**
@@ -100,7 +100,7 @@ secretly auth status
 
 1. **Increase timeout in configuration:**
    ```yaml
-   # secretly.yaml
+   # keyorix.yaml
    storage:
      remote:
        timeout_seconds: 60  # Increase from default 30
@@ -108,7 +108,7 @@ secretly auth status
 
 2. **Test with ping:**
    ```bash
-   secretly ping
+   keyorix ping
    # Check response times
    ```
 
@@ -131,7 +131,7 @@ secretly auth status
 1. **Wait for circuit breaker to reset (30 seconds):**
    ```bash
    sleep 30
-   secretly status
+   keyorix status
    ```
 
 2. **Check server health:**
@@ -141,7 +141,7 @@ secretly auth status
 
 3. **Switch to local mode temporarily:**
    ```bash
-   secretly config use-local
+   keyorix config use-local
    # Work locally until server is available
    ```
 
@@ -158,7 +158,7 @@ secretly auth status
 
 1. **For development/testing only - disable TLS verification:**
    ```yaml
-   # secretly.yaml
+   # keyorix.yaml
    storage:
      remote:
        tls_verify: false  # NOT recommended for production
@@ -190,19 +190,19 @@ secretly auth status
 1. **Validate YAML syntax:**
    ```bash
    # Use online YAML validator or
-   python -c "import yaml; yaml.safe_load(open('secretly.yaml'))"
+   python -c "import yaml; yaml.safe_load(open('keyorix.yaml'))"
    ```
 
 2. **Check file permissions:**
    ```bash
-   ls -la secretly.yaml
-   chmod 600 secretly.yaml
+   ls -la keyorix.yaml
+   chmod 600 keyorix.yaml
    ```
 
 3. **Reset to default configuration:**
    ```bash
-   mv secretly.yaml secretly.yaml.backup
-   secretly config use-local
+   mv keyorix.yaml keyorix.yaml.backup
+   keyorix config use-local
    ```
 
 ### 7. Environment Variable Issues
@@ -228,7 +228,7 @@ secretly auth status
 
 3. **Verify variable expansion:**
    ```bash
-   secretly config status
+   keyorix config status
    # Should show the actual key, not ${VARIABLE}
    ```
 
@@ -244,7 +244,7 @@ secretly auth status
 
 1. **Measure response times:**
    ```bash
-   secretly ping
+   keyorix ping
    ```
 
 2. **Check network latency:**
@@ -322,17 +322,17 @@ curl -X POST \
 export SECRETLY_DEBUG=true
 
 # Run commands with verbose output
-secretly status
+keyorix status
 ```
 
 ### Check System Logs
 
 ```bash
 # On macOS
-tail -f /var/log/system.log | grep secretly
+tail -f /var/log/system.log | grep keyorix
 
 # On Linux
-journalctl -f | grep secretly
+journalctl -f | grep keyorix
 ```
 
 ### Network Traffic Analysis
@@ -352,16 +352,16 @@ If all else fails, reset the CLI to default state:
 
 ```bash
 # Backup current configuration
-cp secretly.yaml secretly.yaml.backup
+cp keyorix.yaml keyorix.yaml.backup
 
 # Remove configuration
-rm secretly.yaml
+rm keyorix.yaml
 
 # Reset to local mode
-secretly config use-local
+keyorix config use-local
 
 # Verify operation
-secretly status
+keyorix status
 ```
 
 ### Emergency Local Mode
@@ -370,10 +370,10 @@ If remote server is completely unavailable:
 
 ```bash
 # Switch to local mode immediately
-secretly config use-local
+keyorix config use-local
 
 # Verify local operation
-secretly secret list
+keyorix secret list
 
 # Continue working locally until remote is restored
 ```
@@ -382,11 +382,11 @@ secretly secret list
 
 ```bash
 # Restore configuration
-cp secretly.yaml.backup secretly.yaml
+cp keyorix.yaml.backup keyorix.yaml
 
 # Test restored configuration
-secretly config status
-secretly status
+keyorix config status
+keyorix status
 ```
 
 ## Getting Help
@@ -398,16 +398,16 @@ Before seeking help, collect this information:
 ```bash
 # System information
 uname -a
-secretly --version
+keyorix --version
 
 # Configuration
-secretly config status
+keyorix config status
 
 # Connection test
-secretly ping
+keyorix ping
 
 # Error messages (run failing command with debug)
-SECRETLY_DEBUG=true secretly your-failing-command
+SECRETLY_DEBUG=true keyorix your-failing-command
 ```
 
 ### Contact Support

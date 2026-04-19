@@ -16,11 +16,11 @@ import (
 )
 
 func main() {
-	fmt.Println("🔐 Secretly Secret CRUD Example")
+	fmt.Println("🔐 Keyorix Secret CRUD Example")
 	fmt.Println("===============================")
 
 	// Load configuration
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
@@ -173,16 +173,16 @@ func main() {
 		description string
 		command     string
 	}{
-		{"Create a secret", "secretly secret create --name 'db-password' --value 'secret123' --type 'password'"},
-		{"Get secret metadata", "secretly secret get --id " + fmt.Sprintf("%d", secret.ID)},
-		{"Get secret value", "secretly secret get --id " + fmt.Sprintf("%d", secret.ID) + " --show-value"},
-		{"List all secrets", "secretly secret list --namespace 1 --zone 1 --environment 1"},
-		{"Search secrets", "secretly secret search --query 'api' --namespace 1"},
-		{"Update secret", "secretly secret update --id " + fmt.Sprintf("%d", secret.ID) + " --type 'new-type'"},
-		{"Get versions", "secretly secret versions --id " + fmt.Sprintf("%d", secret.ID)},
-		{"Interactive create", "secretly secret create --interactive"},
-		{"Create from file", "secretly secret create --name 'cert' --from-file ./certificate.pem"},
-		{"Delete secret", "secretly secret delete --id " + fmt.Sprintf("%d", secret.ID) + " --force"},
+		{"Create a secret", "keyorix secret create --name 'db-password' --value 'secret123' --type 'password'"},
+		{"Get secret metadata", "keyorix secret get --id " + fmt.Sprintf("%d", secret.ID)},
+		{"Get secret value", "keyorix secret get --id " + fmt.Sprintf("%d", secret.ID) + " --show-value"},
+		{"List all secrets", "keyorix secret list --namespace 1 --zone 1 --environment 1"},
+		{"Search secrets", "keyorix secret search --query 'api' --namespace 1"},
+		{"Update secret", "keyorix secret update --id " + fmt.Sprintf("%d", secret.ID) + " --type 'new-type'"},
+		{"Get versions", "keyorix secret versions --id " + fmt.Sprintf("%d", secret.ID)},
+		{"Interactive create", "keyorix secret create --interactive"},
+		{"Create from file", "keyorix secret create --name 'cert' --from-file ./certificate.pem"},
+		{"Delete secret", "keyorix secret delete --id " + fmt.Sprintf("%d", secret.ID) + " --force"},
 	}
 
 	fmt.Println("Available CLI commands:")

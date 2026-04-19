@@ -15,7 +15,7 @@ Authorization: Bearer <your-token>
 ## Base URL
 
 ```
-https://your-secretly-instance.com/api/v1
+https://your-keyorix-instance.com/api/v1
 ```
 
 ## Endpoints
@@ -69,7 +69,7 @@ Share a secret with a user or group.
 
 **Example:**
 ```bash
-curl -X POST "https://api.secretly.com/api/v1/secrets/123/share" \
+curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -112,7 +112,7 @@ Get all shares for a specific secret.
 
 **Example:**
 ```bash
-curl -X GET "https://api.secretly.com/api/v1/secrets/123/shares" \
+curl -X GET "https://api.keyorix.com/api/v1/secrets/123/shares" \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -155,7 +155,7 @@ Update the permission level for an existing share.
 
 **Example:**
 ```bash
-curl -X PUT "https://api.secretly.com/api/v1/shares/456" \
+curl -X PUT "https://api.keyorix.com/api/v1/shares/456" \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
   -d '{"permission": "write"}'
@@ -175,7 +175,7 @@ No response body.
 
 **Example:**
 ```bash
-curl -X DELETE "https://api.secretly.com/api/v1/shares/456" \
+curl -X DELETE "https://api.keyorix.com/api/v1/shares/456" \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -220,7 +220,7 @@ Get all shares created by the current user.
 
 **Example:**
 ```bash
-curl -X GET "https://api.secretly.com/api/v1/shares?page=1&page_size=10" \
+curl -X GET "https://api.keyorix.com/api/v1/shares?page=1&page_size=10" \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -266,7 +266,7 @@ Get all secrets shared with the current user.
 
 **Example:**
 ```bash
-curl -X GET "https://api.secretly.com/api/v1/shared-secrets?permission=write" \
+curl -X GET "https://api.keyorix.com/api/v1/shared-secrets?permission=write" \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -284,7 +284,7 @@ No response body.
 
 **Example:**
 ```bash
-curl -X DELETE "https://api.secretly.com/api/v1/secrets/123/self-share" \
+curl -X DELETE "https://api.keyorix.com/api/v1/secrets/123/self-share" \
   -H "Authorization: Bearer your-token"
 ```
 
@@ -492,10 +492,10 @@ Configure webhooks to receive notifications about sharing events:
 
 ### JavaScript/Node.js
 ```javascript
-const SecretlyClient = require('@secretly/client');
+const KeyorixClient = require('@keyorix/client');
 
-const client = new SecretlyClient({
-  baseURL: 'https://api.secretly.com',
+const client = new KeyorixClient({
+  baseURL: 'https://api.keyorix.com',
   token: 'your-api-token'
 });
 
@@ -523,10 +523,10 @@ await client.shares.delete(share.id);
 
 ### Python
 ```python
-from secretly import SecretlyClient
+from keyorix import KeyorixClient
 
-client = SecretlyClient(
-    base_url='https://api.secretly.com',
+client = KeyorixClient(
+    base_url='https://api.keyorix.com',
     token='your-api-token'
 )
 
@@ -555,30 +555,30 @@ client.shares.delete(share['id'])
 package main
 
 import (
-    "github.com/secretly/go-client"
+    "github.com/keyorix/go-client"
 )
 
 func main() {
-    client := secretly.NewClient(&secretly.Config{
-        BaseURL: "https://api.secretly.com",
+    client := keyorix.NewClient(&keyorix.Config{
+        BaseURL: "https://api.keyorix.com",
         Token:   "your-api-token",
     })
 
     // Share a secret
-    share, err := client.Shares.Create(&secretly.ShareRequest{
+    share, err := client.Shares.Create(&keyorix.ShareRequest{
         SecretID:    123,
         RecipientID: 456,
         Permission:  "read",
     })
 
     // List shared secrets
-    secrets, err := client.SharedSecrets.List(&secretly.ListOptions{
+    secrets, err := client.SharedSecrets.List(&keyorix.ListOptions{
         Page:     1,
         PageSize: 10,
     })
 
     // Update share permission
-    err = client.Shares.Update(share.ID, &secretly.UpdateShareRequest{
+    err = client.Shares.Update(share.ID, &keyorix.UpdateShareRequest{
         Permission: "write",
     })
 

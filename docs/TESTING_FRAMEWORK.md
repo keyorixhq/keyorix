@@ -32,7 +32,7 @@ The `RBACTestHelper` provides a complete in-memory database setup for testing RB
 #### Usage
 
 ```go
-import "github.com/secretlyhq/secretly/internal/testhelper"
+import "github.com/keyorixhq/keyorix/internal/testhelper"
 
 func TestRBACFunctionality(t *testing.T) {
     helper := testhelper.NewRBACTestHelper(t)
@@ -78,7 +78,7 @@ For testing service-level functionality with mock storage, use the simpler `Test
 ```go
 // TestHelper provides consistent test setup for service tests
 type TestHelper struct {
-    CoreService *core.SecretlyCore
+    CoreService *core.KeyorixCore
     DB          *gorm.DB
 }
 
@@ -103,7 +103,7 @@ func NewTestHelper(t *testing.T) *TestHelper {
 
     // Create storage and core service
     storage := local.NewLocalStorage(db)
-    coreService := core.NewSecretlyCore(storage)
+    coreService := core.NewKeyorixCore(storage)
 
     return &TestHelper{
         CoreService: coreService,
@@ -177,7 +177,7 @@ The `MockStorage` provides a complete mock implementation of the storage interfa
 ```go
 func TestSecretCreation(t *testing.T) {
     mockStorage := &MockStorage{}
-    coreService := core.NewSecretlyCore(mockStorage)
+    coreService := core.NewKeyorixCore(mockStorage)
     
     // Set up mock expectations
     expectedSecret := &models.SecretNode{
@@ -295,7 +295,7 @@ func TestSecretServiceCreateSecret(t *testing.T) {
 // Test specific error conditions
 func TestSecretNotFound(t *testing.T) {
     mockStorage := &MockStorage{}
-    coreService := core.NewSecretlyCore(mockStorage)
+    coreService := core.NewKeyorixCore(mockStorage)
     
     mockStorage.On("GetSecret", mock.Anything, uint(999)).
         Return(nil, storage.ErrSecretNotFound)
@@ -412,7 +412,7 @@ func TestWithCleanup(t *testing.T) {
 ```go
 func TestCoreServiceCreateSecret(t *testing.T) {
     mockStorage := &MockStorage{}
-    coreService := core.NewSecretlyCore(mockStorage)
+    coreService := core.NewKeyorixCore(mockStorage)
     
     expectedSecret := &models.SecretNode{ID: 1, Name: "test"}
     mockStorage.On("CreateSecret", mock.Anything, mock.AnythingOfType("*models.SecretNode")).
@@ -474,4 +474,4 @@ func TestRBACPermissions(t *testing.T) {
 }
 ```
 
-This framework provides a solid foundation for writing maintainable, reliable tests across the Secretly project. The key is to use the appropriate helper for your test type and follow the established patterns for consistency.
+This framework provides a solid foundation for writing maintainable, reliable tests across the Keyorix project. The key is to use the appropriate helper for your test type and follow the established patterns for consistency.

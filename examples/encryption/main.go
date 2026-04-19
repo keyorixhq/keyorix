@@ -14,7 +14,7 @@ import (
 
 func main() {
 	// Load configuration
-	cfg, err := config.Load("secretly.yaml")
+	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}

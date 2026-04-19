@@ -1,6 +1,6 @@
-# Secretly Examples
+# Keyorix Examples
 
-This directory contains comprehensive examples demonstrating the key features of the Secretly secrets management system.
+This directory contains comprehensive examples demonstrating the key features of the Keyorix secrets management system.
 
 ## Available Examples
 
@@ -56,9 +56,9 @@ Demonstrates comprehensive secret management operations using the new core packa
 
 ### Prerequisites
 
-1. **Initialize Secretly** (for system_init example):
+1. **Initialize Keyorix** (for system_init example):
    ```bash
-   secretly system init
+   keyorix system init
    ```
 
 2. **Go Environment**: Ensure you have Go installed and the project dependencies:
@@ -105,7 +105,7 @@ examples/
 ## What You'll Learn
 
 ### System Management
-- How to initialize a Secretly system
+- How to initialize a Keyorix system
 - Configuration file structure and options
 - File permission management
 - System validation and auditing
@@ -127,10 +127,10 @@ examples/
 ## Real-World Usage Patterns
 
 ### Development Workflow
-1. **Initialize**: `secretly system init --interactive`
-2. **Validate**: `secretly system validate`
+1. **Initialize**: `keyorix system init --interactive`
+2. **Validate**: `keyorix system validate`
 3. **Use**: Start storing and retrieving secrets
-4. **Monitor**: Regular `secretly system audit`
+4. **Monitor**: Regular `keyorix system audit`
 
 ### Production Deployment
 1. **Secure Setup**: Enable all security features
@@ -139,9 +139,9 @@ examples/
 4. **Monitoring**: Regular validation and auditing
 
 ### Maintenance Tasks
-1. **Key Rotation**: `secretly encryption rotate`
-2. **Permission Audits**: `secretly system audit`
-3. **System Validation**: `secretly system validate`
+1. **Key Rotation**: `keyorix encryption rotate`
+2. **Permission Audits**: `keyorix system audit`
+3. **System Validation**: `keyorix system validate`
 4. **Backup Procedures**: Secure key and database backups
 
 ## Troubleshooting
@@ -150,19 +150,19 @@ examples/
 
 1. **Permission Errors**:
    ```bash
-   secretly system audit
-   secretly system validate --fix
+   keyorix system audit
+   keyorix system validate --fix
    ```
 
 2. **Missing Files**:
    ```bash
-   secretly system init --force
+   keyorix system init --force
    ```
 
 3. **Encryption Issues**:
    ```bash
-   secretly encryption validate
-   secretly encryption init
+   keyorix encryption validate
+   keyorix encryption init
    ```
 
 ### Debug Mode
@@ -178,7 +178,7 @@ go run examples/system_init/main.go
 - **System Setup Guide**: `../SYSTEM_SETUP.md`
 - **Encryption Documentation**: `../internal/encryption/README.md`
 - **System Commands**: `../internal/cli/system/README.md`
-- **Configuration Reference**: `../secretly_template.yaml`
+- **Configuration Reference**: `../keyorix_template.yaml`
 
 ## Contributing
 
@@ -193,7 +193,7 @@ When adding new examples:
 
 If you encounter issues with the examples:
 1. Check the individual example README files
-2. Run `secretly system validate` for system issues
-3. Run `secretly encryption validate` for encryption issues
+2. Run `keyorix system validate` for system issues
+3. Run `keyorix encryption validate` for encryption issues
 4. Review the main documentation files
-5. Check file permissions with `secretly system audit`
+5. Check file permissions with `keyorix system audit`

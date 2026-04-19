@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the security architecture, considerations, and best practices for the Secret Sharing feature in Secretly. Understanding these security measures is crucial for administrators, developers, and users to maintain the highest level of security when sharing sensitive information.
+This document outlines the security architecture, considerations, and best practices for the Secret Sharing feature in Keyorix. Understanding these security measures is crucial for administrators, developers, and users to maintain the highest level of security when sharing sensitive information.
 
 ## Table of Contents
 1. [Security Architecture](#security-architecture)
@@ -322,13 +322,13 @@ Where:
 #### 1. Access Management
 ```bash
 # Regular access reviews
-secretly admin audit-access --all-users --format report
+keyorix admin audit-access --all-users --format report
 
 # Identify unused shares
-secretly admin unused-shares --older-than 90d
+keyorix admin unused-shares --older-than 90d
 
 # Review high-privilege users
-secretly admin high-privilege-users --report
+keyorix admin high-privilege-users --report
 ```
 
 #### 2. Monitoring and Alerting
@@ -450,13 +450,13 @@ except PermissionError:
 #### 1. Detection and Analysis
 ```bash
 # Automated detection
-secretly security scan --real-time
+keyorix security scan --real-time
 
 # Manual investigation
-secretly audit investigate --incident-id 12345
+keyorix audit investigate --incident-id 12345
 
 # Threat analysis
-secretly security analyze --timeframe 24h
+keyorix security analyze --timeframe 24h
 ```
 
 #### 2. Containment and Eradication
@@ -516,14 +516,14 @@ secretly security analyze --timeframe 24h
 ### Contact Information
 
 #### Security Team
-- **Email**: security@secretly.com
+- **Email**: security@keyorix.com
 - **Phone**: +1-555-SECURITY (24/7)
-- **Escalation**: security-escalation@secretly.com
+- **Escalation**: security-escalation@keyorix.com
 
 #### Emergency Response
 - **Critical Issues**: +1-555-CRITICAL (24/7)
-- **After Hours**: security-oncall@secretly.com
-- **Executive Escalation**: ciso@secretly.com
+- **After Hours**: security-oncall@keyorix.com
+- **Executive Escalation**: ciso@keyorix.com
 
 ---
 

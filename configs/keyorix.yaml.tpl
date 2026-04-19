@@ -1,5 +1,5 @@
-# secretly_template.yaml
-# Default configuration template for Secretly.
+# keyorix_template.yaml
+# Default configuration template for Keyorix.
 #
 # IMPORTANT: Never store API keys or credentials directly in this file.
 # Use environment variables instead:
@@ -53,7 +53,7 @@ storage:
 
   database:
     # SQLite (default — zero infrastructure required)
-    path: "secretly.db"
+    path: "keyorix.db"
 
     # PostgreSQL (recommended for production)
     # type: postgres
@@ -113,6 +113,6 @@ logging:
   # Log level: debug, info, warn, error
   level: "info"
   # Path to log file
-  file: "secretly.log"
+  file: "keyorix.log"
   # Log format
   log_format: "text"  

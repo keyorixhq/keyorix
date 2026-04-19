@@ -1,8 +1,8 @@
-# Testing Best Practices for Secretly
+# Testing Best Practices for Keyorix
 
 ## Overview
 
-This document outlines the testing best practices, patterns, and guidelines for the Secretly project. Following these practices ensures maintainable, reliable, and efficient tests that provide confidence in the codebase.
+This document outlines the testing best practices, patterns, and guidelines for the Keyorix project. Following these practices ensures maintainable, reliable, and efficient tests that provide confidence in the codebase.
 
 ## Core Testing Principles
 
@@ -104,7 +104,7 @@ func TestSecretSharing_EndToEnd(t *testing.T) {
 // ✅ Good: Using mocks for unit testing with specific error scenarios
 func TestCreateSecret_StorageError_ReturnsError(t *testing.T) {
     mockStorage := &MockStorage{}
-    coreService := core.NewSecretlyCore(mockStorage)
+    coreService := core.NewKeyorixCore(mockStorage)
     
     // Mock a storage error
     mockStorage.On("CreateSecret", mock.Anything, mock.AnythingOfType("*models.SecretNode")).
@@ -344,7 +344,7 @@ Use error type checking for specific error conditions:
 ```go
 func TestGetSecret_NotFound_ReturnsNotFoundError(t *testing.T) {
     mockStorage := &MockStorage{}
-    coreService := core.NewSecretlyCore(mockStorage)
+    coreService := core.NewKeyorixCore(mockStorage)
     
     mockStorage.On("GetSecret", mock.Anything, uint(999)).
         Return(nil, storage.ErrSecretNotFound)
@@ -564,7 +564,7 @@ func TestB(t *testing.T) {
 // ❌ Bad: Testing internal implementation
 func TestCreateSecret_CallsStorageCreateSecret(t *testing.T) {
     mockStorage := &MockStorage{}
-    service := core.NewSecretlyCore(mockStorage)
+    service := core.NewKeyorixCore(mockStorage)
     
     mockStorage.On("CreateSecret", mock.Anything, mock.Anything).Return(nil, nil)
     

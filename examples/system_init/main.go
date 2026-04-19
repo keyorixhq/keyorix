@@ -8,19 +8,19 @@ import (
 )
 
 func main() {
-	fmt.Println("🚀 Secretly System Initialization Example")
+	fmt.Println("🚀 Keyorix System Initialization Example")
 	fmt.Println("========================================")
 
 	// Example 1: Validate existing setup
 	fmt.Println("\n📝 Example 1: Validate Current Setup")
-	configPath := "secretly.yaml"
+	configPath := "keyorix.yaml"
 
 	// Check if config exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		fmt.Printf("⚠️  Config file not found: %s\n", configPath)
-		fmt.Println("💡 This is expected if you haven't run 'secretly system init' yet")
+		fmt.Println("💡 This is expected if you haven't run 'keyorix system init' yet")
 		fmt.Println("   Run the following command to initialize:")
-		fmt.Println("   secretly system init")
+		fmt.Println("   keyorix system init")
 		return
 	}
 
@@ -40,16 +40,16 @@ func main() {
 	fmt.Println("===============================================")
 
 	expectedFiles := []string{
-		"secretly.yaml",    // Main config file
+		"keyorix.yaml",    // Main config file
 		"keys/kek.key",     // Key Encryption Key
 		"keys/dek.key",     // Data Encryption Key
-		"secretly.db",      // SQLite database
-		"secretly.log",     // Application logs
+		"keyorix.db",      // SQLite database
+		"keyorix.log",     // Application logs
 		"certs/server.crt", // TLS certificate (if TLS enabled)
 		"certs/server.key", // TLS private key (if TLS enabled)
 	}
 
-	fmt.Println("Files that should exist after running 'secretly system init':")
+	fmt.Println("Files that should exist after running 'keyorix system init':")
 	for _, file := range expectedFiles {
 		status := "❌"
 		if _, err := os.Stat(file); err == nil {
@@ -66,16 +66,16 @@ func main() {
 		command     string
 		description string
 	}{
-		{"secretly system init", "Initialize all components with default settings"},
-		{"secretly system init --interactive", "Interactive setup wizard"},
-		{"secretly system init --encryption", "Initialize encryption keys only"},
-		{"secretly system init --database", "Initialize database only"},
-		{"secretly system init --config ./my.yaml", "Use custom config file path"},
-		{"secretly system init --force", "Overwrite existing files (dangerous)"},
-		{"secretly system validate", "Validate current system setup"},
-		{"secretly system audit", "Audit file permissions"},
-		{"secretly encryption init", "Initialize encryption separately"},
-		{"secretly encryption status", "Check encryption status"},
+		{"keyorix system init", "Initialize all components with default settings"},
+		{"keyorix system init --interactive", "Interactive setup wizard"},
+		{"keyorix system init --encryption", "Initialize encryption keys only"},
+		{"keyorix system init --database", "Initialize database only"},
+		{"keyorix system init --config ./my.yaml", "Use custom config file path"},
+		{"keyorix system init --force", "Overwrite existing files (dangerous)"},
+		{"keyorix system validate", "Validate current system setup"},
+		{"keyorix system audit", "Audit file permissions"},
+		{"keyorix encryption init", "Initialize encryption separately"},
+		{"keyorix encryption status", "Check encryption status"},
 	}
 
 	fmt.Println("Available initialization and validation commands:")
@@ -102,7 +102,7 @@ func main() {
 		{"purge", "Automatic cleanup scheduling"},
 	}
 
-	fmt.Println("Configuration sections in secretly.yaml:")
+	fmt.Println("Configuration sections in keyorix.yaml:")
 	for _, section := range configSections {
 		fmt.Printf("   %-20s # %s\n", section.section, section.description)
 	}
@@ -112,12 +112,12 @@ func main() {
 	fmt.Println("=====================================")
 
 	recommendations := []string{
-		"Always run 'secretly system validate' before starting the system",
+		"Always run 'keyorix system validate' before starting the system",
 		"Keep encryption keys (KEK/DEK) in a secure location with 0600 permissions",
 		"Enable file permission checks in production environments",
 		"Use TLS for all network communications in production",
-		"Regularly rotate encryption keys using 'secretly encryption rotate'",
-		"Monitor file permissions with 'secretly system audit'",
+		"Regularly rotate encryption keys using 'keyorix encryption rotate'",
+		"Monitor file permissions with 'keyorix system audit'",
 		"Backup encryption keys securely before key rotation",
 		"Use strong, unique passwords for any interactive setup",
 	}
@@ -129,8 +129,8 @@ func main() {
 
 	fmt.Println("\n✅ Example completed!")
 	fmt.Println("💡 Next steps:")
-	fmt.Println("   1. Run 'secretly system init' to set up your system")
-	fmt.Println("   2. Run 'secretly system validate' to check the setup")
-	fmt.Println("   3. Run 'secretly encryption status' to verify encryption")
-	fmt.Println("   4. Start using Secretly for secure secret management!")
+	fmt.Println("   1. Run 'keyorix system init' to set up your system")
+	fmt.Println("   2. Run 'keyorix system validate' to check the setup")
+	fmt.Println("   3. Run 'keyorix encryption status' to verify encryption")
+	fmt.Println("   4. Start using Keyorix for secure secret management!")
 }

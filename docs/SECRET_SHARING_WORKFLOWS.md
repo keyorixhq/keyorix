@@ -40,24 +40,24 @@ This document provides practical examples and workflows for common secret sharin
 #### Via CLI
 ```bash
 # DBA shares the secret
-secretly secret share \
+keyorix secret share \
   --name "Production DB Password" \
   --recipient john.developer \
   --permission read \
   --note "Debugging issue #1234"
 
 # Developer accesses the secret
-secretly secret get --name "Production DB Password"
+keyorix secret get --name "Production DB Password"
 
 # DBA revokes access after debugging
-secretly shares list --secret "Production DB Password"
-secretly shares revoke --id 456
+keyorix shares list --secret "Production DB Password"
+keyorix shares revoke --id 456
 ```
 
 #### Via API
 ```bash
 # DBA shares the secret
-curl -X POST "https://api.secretly.com/api/v1/secrets/123/share" \
+curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
   -H "Authorization: Bearer dba-token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -67,11 +67,11 @@ curl -X POST "https://api.secretly.com/api/v1/secrets/123/share" \
   }'
 
 # Developer accesses the secret
-curl -X GET "https://api.secretly.com/api/v1/secrets/123" \
+curl -X GET "https://api.keyorix.com/api/v1/secrets/123" \
   -H "Authorization: Bearer dev-token"
 
 # DBA revokes access
-curl -X DELETE "https://api.secretly.com/api/v1/shares/456" \
+curl -X DELETE "https://api.keyorix.com/api/v1/shares/456" \
   -H "Authorization: Bearer dba-token"
 ```
 
@@ -87,7 +87,7 @@ curl -X DELETE "https://api.secretly.com/api/v1/shares/456" \
 **Implementation**:
 ```bash
 # Share with contractor
-secretly secret share \
+keyorix secret share \
   --name "Payment API Key" \
   --recipient contractor@company.com \
   --permission read \
@@ -95,13 +95,13 @@ secretly secret share \
   --note "Integration project - expires 2025-07-29"
 
 # Monitor access
-secretly audit logs \
+keyorix audit logs \
   --secret "Payment API Key" \
   --user contractor@company.com \
   --since 7d
 
 # Manual revocation if needed
-secretly shares revoke --recipient contractor@company.com
+keyorix shares revoke --recipient contractor@company.com
 ```
 
 ## Team Collaboration
@@ -115,21 +115,21 @@ secretly shares revoke --recipient contractor@company.com
 #### Using Groups (Recommended)
 ```bash
 # Create or use existing development group
-secretly groups create --name "developers" \
+keyorix groups create --name "developers" \
   --description "Development team members"
 
 # Add team members to group
-secretly groups add-member --group developers --user alice.dev
-secretly groups add-member --group developers --user bob.dev
-secretly groups add-member --group developers --user charlie.dev
+keyorix groups add-member --group developers --user alice.dev
+keyorix groups add-member --group developers --user bob.dev
+keyorix groups add-member --group developers --user charlie.dev
 
 # Share secrets with the entire group
-secretly secret share \
+keyorix secret share \
   --name "Dev Database URL" \
   --group developers \
   --permission write
 
-secretly secret share \
+keyorix secret share \
   --name "Dev API Keys" \
   --group developers \
   --permission read
@@ -139,7 +139,7 @@ secretly secret share \
 ```bash
 # Share with each team member individually
 for user in alice.dev bob.dev charlie.dev; do
-  secretly secret share \
+  keyorix secret share \
     --name "Dev Database URL" \
     --recipient $user \
     --permission write
@@ -153,20 +153,20 @@ done
 **Implementation**:
 ```bash
 # Backend team lead shares API secrets
-secretly secret share \
+keyorix secret share \
   --name "Backend API Key" \
   --group frontend-team \
   --permission read \
   --note "For integration testing only"
 
 # Share staging environment secrets
-secretly secret share \
+keyorix secret share \
   --name "Staging Database URL" \
   --group frontend-team \
   --permission read
 
 # Monitor usage
-secretly audit logs \
+keyorix audit logs \
   --secret "Backend API Key" \
   --group frontend-team \
   --format table
@@ -181,23 +181,23 @@ secretly audit logs \
 **Implementation**:
 ```bash
 # Create service account for CI/CD
-secretly users create-service-account \
+keyorix users create-service-account \
   --name "github-actions" \
   --description "GitHub Actions CI/CD"
 
 # Share deployment secrets
-secretly secret share \
+keyorix secret share \
   --name "Production Deploy Key" \
   --recipient github-actions \
   --permission read
 
-secretly secret share \
+keyorix secret share \
   --name "Docker Registry Token" \
   --recipient github-actions \
   --permission read
 
 # Monitor CI/CD access
-secretly audit logs \
+keyorix audit logs \
   --user github-actions \
   --format json | jq '.[] | select(.result == "success")'
 ```
@@ -222,17 +222,17 @@ for secret in "${SECRETS[@]}"; do
   NEW_VALUE=$(openssl rand -base64 32)
   
   # Update secret
-  secretly secret update --name "$secret" --value "$NEW_VALUE"
+  keyorix secret update --name "$secret" --value "$NEW_VALUE"
   
   # Ensure infrastructure team has access
-  secretly secret share \
+  keyorix secret share \
     --name "$secret" \
     --group "$INFRA_TEAM" \
     --permission write \
     --force-update
   
   # Notify team
-  secretly notify --group "$INFRA_TEAM" \
+  keyorix notify --group "$INFRA_TEAM" \
     --message "Secret '$secret' has been rotated"
 done
 ```
@@ -246,25 +246,25 @@ done
 **Implementation**:
 ```bash
 # Generate comprehensive sharing report
-secretly audit sharing-report \
+keyorix audit sharing-report \
   --format csv \
   --output sharing-audit-$(date +%Y%m%d).csv \
   --include-metadata
 
 # Review high-privilege shares
-secretly shares list \
+keyorix shares list \
   --permission write \
   --format table \
   --sort-by created_at
 
 # Check for stale shares (older than 90 days)
-secretly shares list \
+keyorix shares list \
   --older-than 90d \
   --format json | \
   jq '.[] | {secret_name, recipient, created_at, last_accessed}'
 
 # Review group memberships
-secretly groups audit \
+keyorix groups audit \
   --include-permissions \
   --format report
 ```
@@ -284,27 +284,27 @@ INCIDENT_ID="INC-2025-001"
 echo "Starting incident response for user: $COMPROMISED_USER"
 
 # 1. Immediately lock the account
-secretly users lock --username "$COMPROMISED_USER" \
+keyorix users lock --username "$COMPROMISED_USER" \
   --reason "Security incident $INCIDENT_ID"
 
 # 2. Revoke all active sessions
-secretly sessions revoke-all --username "$COMPROMISED_USER"
+keyorix sessions revoke-all --username "$COMPROMISED_USER"
 
 # 3. List all secrets the user had access to
-secretly audit user-access \
+keyorix audit user-access \
   --username "$COMPROMISED_USER" \
   --output "incident-${INCIDENT_ID}-access.json"
 
 # 4. Revoke all shares TO the user
-secretly shares revoke-all --recipient "$COMPROMISED_USER" \
+keyorix shares revoke-all --recipient "$COMPROMISED_USER" \
   --reason "Security incident $INCIDENT_ID"
 
 # 5. List all secrets the user owned/shared
-secretly shares list --owner "$COMPROMISED_USER" \
+keyorix shares list --owner "$COMPROMISED_USER" \
   --output "incident-${INCIDENT_ID}-owned.json"
 
 # 6. Generate incident report
-secretly audit incident-report \
+keyorix audit incident-report \
   --incident-id "$INCIDENT_ID" \
   --username "$COMPROMISED_USER" \
   --timeframe 30d \
@@ -336,30 +336,30 @@ fi
 echo "Onboarding $NEW_USER to $TEAM as $ROLE"
 
 # Add user to team group
-secretly groups add-member --group "$TEAM" --user "$NEW_USER"
+keyorix groups add-member --group "$TEAM" --user "$NEW_USER"
 
 # Grant role-specific access
 case "$ROLE" in
   "developer")
-    secretly secret share --name "Dev Environment Secrets" \
+    keyorix secret share --name "Dev Environment Secrets" \
       --recipient "$NEW_USER" --permission write
-    secretly secret share --name "Test Database URL" \
+    keyorix secret share --name "Test Database URL" \
       --recipient "$NEW_USER" --permission read
     ;;
   "devops")
-    secretly secret share --name "Infrastructure Secrets" \
+    keyorix secret share --name "Infrastructure Secrets" \
       --recipient "$NEW_USER" --permission write
-    secretly secret share --name "CI/CD Tokens" \
+    keyorix secret share --name "CI/CD Tokens" \
       --recipient "$NEW_USER" --permission read
     ;;
   "qa")
-    secretly secret share --name "Test Environment Secrets" \
+    keyorix secret share --name "Test Environment Secrets" \
       --recipient "$NEW_USER" --permission read
     ;;
 esac
 
 # Send welcome notification
-secretly notify --user "$NEW_USER" \
+keyorix notify --user "$NEW_USER" \
   --message "Welcome to $TEAM! You now have access to team secrets."
 
 echo "Onboarding completed for $NEW_USER"
@@ -434,7 +434,7 @@ class SecretRotator:
 # Usage example
 if __name__ == "__main__":
     rotator = SecretRotator(
-        api_base="https://api.secretly.com/api/v1",
+        api_base="https://api.keyorix.com/api/v1",
         token=os.environ['SECRETLY_TOKEN']
     )
     
@@ -456,26 +456,26 @@ if __name__ == "__main__":
 **Diagnostic Steps**:
 ```bash
 # 1. Verify the secret exists
-secretly secret get --id 123 --metadata-only
+keyorix secret get --id 123 --metadata-only
 
 # 2. Check if user has any access
-secretly shares list --secret-id 123 --recipient john.doe
+keyorix shares list --secret-id 123 --recipient john.doe
 
 # 3. Check user's group memberships
-secretly users groups --username john.doe
+keyorix users groups --username john.doe
 
 # 4. Review recent audit logs
-secretly audit logs \
+keyorix audit logs \
   --secret-id 123 \
   --user john.doe \
   --since 24h \
   --include-failures
 
 # 5. Test access with different permission levels
-secretly test-access --secret-id 123 --user john.doe
+keyorix test-access --secret-id 123 --user john.doe
 
 # 6. Check for account issues
-secretly users status --username john.doe
+keyorix users status --username john.doe
 ```
 
 ### Workflow 12: Performance Investigation
@@ -485,26 +485,26 @@ secretly users status --username john.doe
 **Investigation Steps**:
 ```bash
 # 1. Check system performance metrics
-secretly system metrics --component sharing --timeframe 1h
+keyorix system metrics --component sharing --timeframe 1h
 
 # 2. Analyze slow queries
-secretly audit slow-queries \
+keyorix audit slow-queries \
   --component sharing \
   --threshold 5s \
   --since 1h
 
 # 3. Review sharing patterns
-secretly audit sharing-patterns \
+keyorix audit sharing-patterns \
   --high-volume-secrets \
   --format table
 
 # 4. Check for bulk operations
-secretly audit bulk-operations \
+keyorix audit bulk-operations \
   --type sharing \
   --since 1h
 
 # 5. Monitor real-time performance
-secretly monitor sharing --real-time --duration 10m
+keyorix monitor sharing --real-time --duration 10m
 ```
 
 ---
