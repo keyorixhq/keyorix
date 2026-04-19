@@ -39,7 +39,7 @@ func setupAuthEncryptionTest(t *testing.T) (*AuthEncryption, *gorm.DB, func()) {
 
 	// Create auth encryption service
 	authEnc := NewAuthEncryption(cfg, tempDir, db)
-	err = authEnc.Initialize()
+	err = authEnc.Initialize("test-passphrase-for-unit-tests")
 	require.NoError(t, err)
 
 	// Cleanup function
@@ -274,7 +274,7 @@ func TestAuthEncryption_DisabledEncryption(t *testing.T) {
 
 	// Create auth encryption service
 	authEnc := NewAuthEncryption(cfg, tempDir, db)
-	err = authEnc.Initialize()
+	err = authEnc.Initialize("test-passphrase-for-unit-tests")
 	require.NoError(t, err)
 
 	clientSecret := "plaintext-client-secret"

@@ -22,12 +22,13 @@ func NewSecretEncryption(cfg *config.EncryptionConfig, baseDir string, db *gorm.
 	}
 }
 
-// Initialize initializes the encryption service
-func (se *SecretEncryption) Initialize() error {
+// Initialize initializes the encryption service.
+// passphrase is forwarded to the key manager for KEK derivation — never stored.
+func (se *SecretEncryption) Initialize(passphrase string) error {
 	if !se.service.IsEnabled() {
 		return nil // Encryption disabled, skip initialization
 	}
-	return se.service.Initialize()
+	return se.service.Initialize(passphrase)
 }
 
 // StoreSecret encrypts and stores a secret in the database

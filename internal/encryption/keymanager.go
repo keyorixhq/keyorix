@@ -1,8 +1,11 @@
 package encryption
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,12 +14,21 @@ import (
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
-// KeyManager handles key lifecycle and storage
+// KeyManager handles key lifecycle and storage.
+//
+// ADR-004 (April 2026): Envelope encryption model.
+//
+//	Startup:  passphrase → PBKDF2 → KEK (memory only)
+//	          KEK unwraps wrapped DEK from disk → DEK (memory, process lifetime)
+//	          KEK wiped from memory immediately after unwrap
+//	On disk:  keys/kek.salt  (random salt, plaintext)
+//	          keys/dek.key   (DEK wrapped with KEK, AES-256-GCM)
+//	Never:    raw KEK on disk
 type KeyManager struct {
 	kekPath    string
 	dekPath    string
+	saltPath   string
 	baseDir    string
-	currentKEK []byte
 	currentDEK []byte
 	keyVersion string
 	mu         sync.RWMutex
@@ -31,226 +43,266 @@ type KeyInfo struct {
 }
 
 // NewKeyManager creates a new key manager
-func NewKeyManager(baseDir, kekPath, dekPath string) *KeyManager {
+func NewKeyManager(baseDir, kekPath, dekPath, saltPath string) *KeyManager {
 	return &KeyManager{
 		kekPath:    kekPath,
 		dekPath:    dekPath,
+		saltPath:   saltPath,
 		baseDir:    baseDir,
 		keyVersion: "v1",
 	}
 }
 
-// Initialize sets up the key manager and loads or generates keys
-func (km *KeyManager) Initialize() error {
+// Initialize sets up the key manager.
+// On first run: generates salt + DEK, wraps DEK with passphrase-derived KEK.
+// On subsequent runs: loads salt, derives KEK, unwraps DEK, wipes KEK.
+func (km *KeyManager) Initialize(passphrase string) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	// Ensure key files exist or create them
-	if err := km.ensureKEKExists(); err != nil {
-		return fmt.Errorf("failed to ensure KEK exists: %w", err)
+	if passphrase == "" {
+		return fmt.Errorf("master passphrase must not be empty")
 	}
 
-	if err := km.ensureDEKExists(); err != nil {
-		return fmt.Errorf("failed to ensure DEK exists: %w", err)
+	salt, err := km.ensureSaltExists()
+	if err != nil {
+		return fmt.Errorf("failed to ensure salt exists: %w", err)
 	}
 
-	// Load keys
-	if err := km.loadKeys(); err != nil {
-		return fmt.Errorf("failed to load keys: %w", err)
+	// Derive KEK from passphrase + salt (memory only — never written to disk)
+	kek := GenerateKEK(passphrase, salt, 600000)
+	defer wipeBytes(kek)
+
+	if err := km.ensureWrappedDEKExists(kek); err != nil {
+		return fmt.Errorf("failed to ensure wrapped DEK exists: %w", err)
 	}
 
+	dek, err := km.unwrapDEK(kek)
+	if err != nil {
+		return fmt.Errorf("failed to unwrap DEK: %w", err)
+	}
+
+	km.currentDEK = dek
 	return nil
 }
 
-// ensureKEKExists creates KEK file if it doesn't exist
-func (km *KeyManager) ensureKEKExists() error {
-	kekFullPath := filepath.Join(km.baseDir, km.kekPath)
+// ensureSaltExists returns the existing salt or generates a new one.
+func (km *KeyManager) ensureSaltExists() ([]byte, error) {
+	saltFullPath := filepath.Join(km.baseDir, km.saltPath)
 
-	if _, err := os.Stat(kekFullPath); os.IsNotExist(err) {
-		// Generate new KEK
-		kek, err := GenerateRandomKey(32)
-		if err != nil {
-			return fmt.Errorf("failed to generate KEK: %w", err)
+	if _, err := os.Stat(saltFullPath); os.IsNotExist(err) {
+		salt := make([]byte, 32)
+		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+			return nil, fmt.Errorf("failed to generate salt: %w", err)
 		}
-
-		// Write KEK with secure permissions
-		if err := securefiles.SecureWriteFile(km.baseDir, km.kekPath, kek, 0600); err != nil {
-			return fmt.Errorf("failed to write KEK: %w", err)
+		if err := securefiles.SecureWriteFile(km.baseDir, km.saltPath, salt, 0600); err != nil {
+			return nil, fmt.Errorf("failed to write salt: %w", err)
 		}
-
-		fmt.Printf("✅ Generated new KEK at %s\n", kekFullPath)
+		fmt.Printf("✅ Generated new KEK salt at %s\n", saltFullPath)
+		return salt, nil
 	}
 
-	return nil
+	salt, err := securefiles.SafeReadFile(km.baseDir, km.saltPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read salt: %w", err)
+	}
+	if len(salt) != 32 {
+		return nil, fmt.Errorf("invalid salt size: expected 32 bytes, got %d", len(salt))
+	}
+	return salt, nil
 }
 
-// ensureDEKExists creates DEK file if it doesn't exist
-func (km *KeyManager) ensureDEKExists() error {
+// ensureWrappedDEKExists generates and wraps a new DEK if none exists.
+func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 	dekFullPath := filepath.Join(km.baseDir, km.dekPath)
 
 	if _, err := os.Stat(dekFullPath); os.IsNotExist(err) {
-		// Generate new DEK
 		dek, err := GenerateRandomKey(32)
 		if err != nil {
 			return fmt.Errorf("failed to generate DEK: %w", err)
 		}
+		defer wipeBytes(dek)
 
-		// Write DEK with secure permissions
-		if err := securefiles.SecureWriteFile(km.baseDir, km.dekPath, dek, 0600); err != nil {
-			return fmt.Errorf("failed to write DEK: %w", err)
+		wrapped, err := wrapKey(dek, kek)
+		if err != nil {
+			return fmt.Errorf("failed to wrap DEK: %w", err)
 		}
 
-		fmt.Printf("✅ Generated new DEK at %s\n", dekFullPath)
+		if err := securefiles.SecureWriteFile(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
+			return fmt.Errorf("failed to write wrapped DEK: %w", err)
+		}
+		fmt.Printf("✅ Generated and wrapped new DEK at %s\n", dekFullPath)
 	}
 
 	return nil
 }
 
-// loadKeys loads KEK and DEK from files
-func (km *KeyManager) loadKeys() error {
-	// Load KEK
-	kek, err := securefiles.SafeReadFile(km.baseDir, km.kekPath)
+// unwrapDEK reads the wrapped DEK from disk and decrypts it with the KEK.
+func (km *KeyManager) unwrapDEK(kek []byte) ([]byte, error) {
+	wrapped, err := securefiles.SafeReadFile(km.baseDir, km.dekPath)
 	if err != nil {
-		return fmt.Errorf("failed to read KEK: %w", err)
+		return nil, fmt.Errorf("failed to read wrapped DEK: %w", err)
 	}
-	if len(kek) != 32 {
-		return fmt.Errorf("invalid KEK size: expected 32 bytes, got %d", len(kek))
-	}
-	km.currentKEK = kek
 
-	// Load DEK
-	dek, err := securefiles.SafeReadFile(km.baseDir, km.dekPath)
+	dek, err := unwrapKey(wrapped, kek)
 	if err != nil {
-		return fmt.Errorf("failed to read DEK: %w", err)
+		return nil, fmt.Errorf("failed to unwrap DEK — wrong passphrase or corrupted key file: %w", err)
 	}
+
 	if len(dek) != 32 {
-		return fmt.Errorf("invalid DEK size: expected 32 bytes, got %d", len(dek))
+		return nil, fmt.Errorf("invalid DEK size after unwrap: expected 32 bytes, got %d", len(dek))
 	}
-	km.currentDEK = dek
 
-	return nil
+	return dek, nil
 }
 
-// GetKEK returns the current KEK (thread-safe)
-func (km *KeyManager) GetKEK() []byte {
-	km.mu.RLock()
-	defer km.mu.RUnlock()
+// wrapKey encrypts a key (DEK) using AES-256-GCM with the KEK.
+// Output format: nonce (12 bytes) || ciphertext
+func wrapKey(plainKey, kek []byte) ([]byte, error) {
+	block, err := aes.NewCipher(kek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
 
-	// Return a copy to prevent modification
-	kek := make([]byte, len(km.currentKEK))
-	copy(kek, km.currentKEK)
-	return kek
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, plainKey, nil)
+	return ciphertext, nil
 }
 
-// GetDEK returns the current DEK (thread-safe)
+// unwrapKey decrypts a wrapped key using AES-256-GCM with the KEK.
+func unwrapKey(wrapped, kek []byte) ([]byte, error) {
+	block, err := aes.NewCipher(kek)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(wrapped) < nonceSize {
+		return nil, fmt.Errorf("wrapped key too short")
+	}
+
+	nonce, ciphertext := wrapped[:nonceSize], wrapped[nonceSize:]
+	plainKey, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("GCM open failed: %w", err)
+	}
+
+	return plainKey, nil
+}
+
+// wipeBytes overwrites a byte slice with zeros.
+func wipeBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+// GetDEK returns a copy of the current DEK (thread-safe).
 func (km *KeyManager) GetDEK() []byte {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 
-	// Return a copy to prevent modification
 	dek := make([]byte, len(km.currentDEK))
 	copy(dek, km.currentDEK)
 	return dek
 }
 
-// GetKeyVersion returns the current key version
+// GetKeyVersion returns the current key version.
 func (km *KeyManager) GetKeyVersion() string {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 	return km.keyVersion
 }
 
-// RotateKEK generates a new KEK and updates the key version
-func (km *KeyManager) RotateKEK() error {
+// RotateDEK generates a new DEK, wraps it with a freshly derived KEK, and
+// stores it. Secrets must be re-encrypted by the caller before the old DEK
+// is discarded — this method only rotates the key material on disk and in
+// memory. A full re-encryption sweep is an M2 item.
+func (km *KeyManager) RotateDEK(passphrase string) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	// Generate new KEK
-	newKEK, err := GenerateRandomKey(32)
+	if passphrase == "" {
+		return fmt.Errorf("master passphrase must not be empty")
+	}
+
+	salt, err := securefiles.SafeReadFile(km.baseDir, km.saltPath)
 	if err != nil {
-		return fmt.Errorf("failed to generate new KEK: %w", err)
+		return fmt.Errorf("failed to read salt for DEK rotation: %w", err)
 	}
 
-	// Backup old KEK
-	oldKEKPath := fmt.Sprintf("%s.backup.%d", km.kekPath, time.Now().Unix())
-	if err := securefiles.SecureWriteFile(km.baseDir, oldKEKPath, km.currentKEK, 0600); err != nil {
-		return fmt.Errorf("failed to backup old KEK: %w", err)
-	}
+	kek := GenerateKEK(passphrase, salt, 600000)
+	defer wipeBytes(kek)
 
-	// Write new KEK
-	if err := securefiles.SecureWriteFile(km.baseDir, km.kekPath, newKEK, 0600); err != nil {
-		return fmt.Errorf("failed to write new KEK: %w", err)
-	}
-
-	// Update in-memory KEK and version
-	km.currentKEK = newKEK
-	km.keyVersion = fmt.Sprintf("v%d", time.Now().Unix())
-
-	fmt.Printf("✅ KEK rotated successfully. New version: %s\n", km.keyVersion)
-	return nil
-}
-
-// RotateDEK generates a new DEK
-func (km *KeyManager) RotateDEK() error {
-	km.mu.Lock()
-	defer km.mu.Unlock()
-
-	// Generate new DEK
 	newDEK, err := GenerateRandomKey(32)
 	if err != nil {
 		return fmt.Errorf("failed to generate new DEK: %w", err)
 	}
 
-	// Backup old DEK
+	// Backup old wrapped DEK before overwriting
 	oldDEKPath := fmt.Sprintf("%s.backup.%d", km.dekPath, time.Now().Unix())
-	if err := securefiles.SecureWriteFile(km.baseDir, oldDEKPath, km.currentDEK, 0600); err != nil {
+	oldWrapped, err := securefiles.SafeReadFile(km.baseDir, km.dekPath)
+	if err != nil {
+		return fmt.Errorf("failed to read old DEK for backup: %w", err)
+	}
+	if err := securefiles.SecureWriteFile(km.baseDir, oldDEKPath, oldWrapped, 0600); err != nil {
 		return fmt.Errorf("failed to backup old DEK: %w", err)
 	}
 
-	// Write new DEK
-	if err := securefiles.SecureWriteFile(km.baseDir, km.dekPath, newDEK, 0600); err != nil {
-		return fmt.Errorf("failed to write new DEK: %w", err)
+	wrapped, err := wrapKey(newDEK, kek)
+	if err != nil {
+		return fmt.Errorf("failed to wrap new DEK: %w", err)
 	}
 
-	// Update in-memory DEK
-	km.currentDEK = newDEK
+	if err := securefiles.SecureWriteFile(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
+		return fmt.Errorf("failed to write new wrapped DEK: %w", err)
+	}
 
-	fmt.Printf("✅ DEK rotated successfully\n")
+	wipeBytes(km.currentDEK)
+	km.currentDEK = newDEK
+	km.keyVersion = fmt.Sprintf("v%d", time.Now().Unix())
+
+	fmt.Printf("✅ DEK rotated successfully. New version: %s\n", km.keyVersion)
 	return nil
 }
 
-// ValidateKeyFiles checks if key files exist and have correct permissions
+// ValidateKeyFiles checks if key files exist and have correct permissions.
 func (km *KeyManager) ValidateKeyFiles() error {
 	files := []securefiles.FilePermSpec{
-		{Path: filepath.Join(km.baseDir, km.kekPath), Mode: 0600},
 		{Path: filepath.Join(km.baseDir, km.dekPath), Mode: 0600},
+		{Path: filepath.Join(km.baseDir, km.saltPath), Mode: 0600},
 	}
-
-	return securefiles.FixFilePerms(files, false) // Check only, don't auto-fix
+	return securefiles.FixFilePerms(files, false)
 }
 
-// FixKeyFilePermissions fixes key file permissions
+// FixKeyFilePermissions fixes key file permissions.
 func (km *KeyManager) FixKeyFilePermissions() error {
 	files := []securefiles.FilePermSpec{
-		{Path: filepath.Join(km.baseDir, km.kekPath), Mode: 0600},
 		{Path: filepath.Join(km.baseDir, km.dekPath), Mode: 0600},
+		{Path: filepath.Join(km.baseDir, km.saltPath), Mode: 0600},
 	}
-
-	return securefiles.FixFilePerms(files, true) // Auto-fix permissions
+	return securefiles.FixFilePerms(files, true)
 }
 
-// Wipe securely removes keys from memory
+// Wipe securely removes the DEK from memory.
 func (km *KeyManager) Wipe() {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	// Overwrite keys in memory with random data
-	if km.currentKEK != nil {
-		_, _ = rand.Read(km.currentKEK) // Explicitly ignore error for secure wipe
-		km.currentKEK = nil
-	}
 	if km.currentDEK != nil {
-		_, _ = rand.Read(km.currentDEK) // Explicitly ignore error for secure wipe
+		wipeBytes(km.currentDEK)
 		km.currentDEK = nil
 	}
 }

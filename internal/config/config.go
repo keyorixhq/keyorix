@@ -147,10 +147,11 @@ func (a *AuthConfig) GetAPIKey() string {
 }
 
 type EncryptionConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	UseKEK  bool   `yaml:"use_kek"`
-	KEKPath string `yaml:"kek_path"`
-	DEKPath string `yaml:"dek_path"`
+	Enabled  bool   `yaml:"enabled"`
+	UseKEK   bool   `yaml:"use_kek"`
+	KEKPath  string `yaml:"kek_path"`
+	DEKPath  string `yaml:"dek_path"`
+	SaltPath string `yaml:"salt_path"`
 }
 
 type SecretsConfig struct {

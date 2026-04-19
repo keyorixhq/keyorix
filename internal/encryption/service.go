@@ -38,12 +38,15 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 			baseDir,
 			cfg.KEKPath,
 			cfg.DEKPath,
+			cfg.SaltPath,
 		),
 	}
 }
 
-// Initialize sets up the encryption service
-func (s *Service) Initialize() error {
+// Initialize sets up the encryption service.
+// passphrase is used to derive the KEK via PBKDF2 — it is never stored.
+// Pass via KEYORIX_MASTER_PASSWORD env var or operator stdin prompt.
+func (s *Service) Initialize(passphrase string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -51,14 +54,13 @@ func (s *Service) Initialize() error {
 		return fmt.Errorf("encryption is disabled in configuration")
 	}
 
-	// Initialize key manager
-	if err := s.keyManager.Initialize(); err != nil {
+	if err := s.keyManager.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize key manager: %w", err)
 	}
 
-	// Create encryption service with KEK
-	kek := s.keyManager.GetKEK()
-	encSvc, err := NewEncryptionService(kek)
+	// Wire DEK (not KEK) into the encryption service — ADR-004
+	dek := s.keyManager.GetDEK()
+	encSvc, err := NewEncryptionService(dek)
 	if err != nil {
 		return fmt.Errorf("failed to create encryption service: %w", err)
 	}
@@ -199,8 +201,10 @@ func (s *Service) DecryptLargeSecret(encryptedChunks [][]byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// RotateKeys rotates encryption keys
-func (s *Service) RotateKeys() error {
+// RotateDEK rotates the DEK. The passphrase is required to derive the KEK
+// for wrapping the new DEK. Note: existing secrets are NOT re-encrypted by
+// this call — a full re-encryption sweep is required (M2 backlog item).
+func (s *Service) RotateDEK(passphrase string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -208,14 +212,13 @@ func (s *Service) RotateKeys() error {
 		return fmt.Errorf("encryption service not initialized")
 	}
 
-	// Rotate KEK
-	if err := s.keyManager.RotateKEK(); err != nil {
-		return fmt.Errorf("failed to rotate KEK: %w", err)
+	if err := s.keyManager.RotateDEK(passphrase); err != nil {
+		return fmt.Errorf("failed to rotate DEK: %w", err)
 	}
 
-	// Recreate encryption service with new KEK
-	kek := s.keyManager.GetKEK()
-	encSvc, err := NewEncryptionService(kek)
+	// Recreate encryption service with new DEK
+	dek := s.keyManager.GetDEK()
+	encSvc, err := NewEncryptionService(dek)
 	if err != nil {
 		return fmt.Errorf("failed to recreate encryption service: %w", err)
 	}

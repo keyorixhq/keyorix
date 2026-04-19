@@ -9,6 +9,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+
+// masterPassphrase reads the master passphrase from KEYORIX_MASTER_PASSWORD.
+// Returns an error if the variable is unset or empty.
+func masterPassphrase() (string, error) {
+	p := os.Getenv("KEYORIX_MASTER_PASSWORD")
+	if p == "" {
+		return "", fmt.Errorf("KEYORIX_MASTER_PASSWORD environment variable is not set")
+	}
+	return p, nil
+}
+
 // EncryptionCmd is the root command for encryption operations
 var EncryptionCmd = &cobra.Command{
 	Use:   "encryption",
@@ -81,8 +92,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 	baseDir, _ := os.Getwd()
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
+	passphrase, err := masterPassphrase()
+	if err != nil {
+		return err
+	}
+
 	fmt.Println("🔐 Initializing encryption...")
-	if err := service.Initialize(); err != nil {
+	if err := service.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize encryption: %w", err)
 	}
 
@@ -111,7 +127,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	baseDir, _ := os.Getwd()
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
-	if err := service.Initialize(); err != nil {
+	passphrase, err := masterPassphrase()
+	if err != nil {
+		fmt.Printf("⚠️  %v\n", err)
+		return nil
+	}
+	if err := service.Initialize(passphrase); err != nil {
 		fmt.Printf("❌ Initialization failed: %v\n", err)
 		return nil
 	}
@@ -135,13 +156,17 @@ func runRotate(cmd *cobra.Command, args []string) error {
 	baseDir, _ := os.Getwd()
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
-	if err := service.Initialize(); err != nil {
+	passphrase, err := masterPassphrase()
+	if err != nil {
+		return err
+	}
+	if err := service.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize encryption: %w", err)
 	}
 
-	fmt.Println("🔄 Rotating encryption keys...")
-	if err := service.RotateKeys(); err != nil {
-		return fmt.Errorf("failed to rotate keys: %w", err)
+	fmt.Println("🔄 Rotating DEK...")
+	if err := service.RotateDEK(passphrase); err != nil {
+		return fmt.Errorf("failed to rotate DEK: %w", err)
 	}
 
 	fmt.Println("✅ Keys rotated successfully")
@@ -166,7 +191,11 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("🔍 Validating encryption setup...")
 
-	if err := service.Initialize(); err != nil {
+	passphrase, err := masterPassphrase()
+	if err != nil {
+		return err
+	}
+	if err := service.Initialize(passphrase); err != nil {
 		fmt.Printf("❌ Initialization failed: %v\n", err)
 		return err
 	}
@@ -194,7 +223,11 @@ func runFixPerms(cmd *cobra.Command, args []string) error {
 	baseDir, _ := os.Getwd()
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
-	if err := service.Initialize(); err != nil {
+	passphrase, err := masterPassphrase()
+	if err != nil {
+		return err
+	}
+	if err := service.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize encryption: %w", err)
 	}
 

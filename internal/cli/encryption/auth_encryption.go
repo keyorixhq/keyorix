@@ -85,7 +85,8 @@ func runAuthEncryptionStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	if err := authEnc.Initialize(); err != nil {
+	passphrase, _ := masterPassphrase()
+	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
 
@@ -144,7 +145,8 @@ func runEnableAuthEncryption(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize encryption
-	if err := authEnc.Initialize(); err != nil {
+	passphrase, _ := masterPassphrase()
+	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
 
@@ -172,7 +174,8 @@ func runRotateAuthEncryption(cmd *cobra.Command, args []string) error {
 	}
 
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	if err := authEnc.Initialize(); err != nil {
+	passphrase, _ := masterPassphrase()
+	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
 
@@ -202,7 +205,8 @@ func runMigrateAuthData(cmd *cobra.Command, args []string) error {
 	}
 
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	if err := authEnc.Initialize(); err != nil {
+	passphrase, _ := masterPassphrase()
+	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
 
@@ -255,7 +259,8 @@ func runValidateAuthEncryption(cmd *cobra.Command, args []string) error {
 	}
 
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	if err := authEnc.Initialize(); err != nil {
+	passphrase, _ := masterPassphrase()
+	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
 

@@ -23,12 +23,13 @@ func NewAuthEncryption(cfg *config.EncryptionConfig, baseDir string, db *gorm.DB
 	}
 }
 
-// Initialize initializes the authentication encryption service
-func (ae *AuthEncryption) Initialize() error {
+// Initialize initializes the authentication encryption service.
+// passphrase is forwarded to the key manager for KEK derivation — never stored.
+func (ae *AuthEncryption) Initialize(passphrase string) error {
 	if !ae.service.IsEnabled() {
 		return nil // Encryption disabled, skip initialization
 	}
-	return ae.service.Initialize()
+	return ae.service.Initialize(passphrase)
 }
 
 // EncryptClientSecret encrypts an API client secret

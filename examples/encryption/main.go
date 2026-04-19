@@ -23,6 +23,7 @@ func main() {
 	cfg.Storage.Encryption.Enabled = true
 	cfg.Storage.Encryption.KEKPath = "example_kek.key"
 	cfg.Storage.Encryption.DEKPath = "example_dek.key"
+	cfg.Storage.Encryption.SaltPath = "example_kek.salt"
 
 	// Setup database
 	db, err := gorm.Open(sqlite.Open("example.db"), &gorm.Config{})
@@ -39,7 +40,11 @@ func main() {
 	baseDir, _ := os.Getwd()
 	secretEncryption := encryption.NewSecretEncryption(&cfg.Storage.Encryption, baseDir, db)
 
-	if err := secretEncryption.Initialize(); err != nil {
+	passphrase := os.Getenv("KEYORIX_MASTER_PASSWORD")
+	if passphrase == "" {
+		passphrase = "example-dev-passphrase-do-not-use-in-production"
+	}
+	if err := secretEncryption.Initialize(passphrase); err != nil {
 		log.Fatalf("Failed to initialize encryption: %v", err)
 	}
 
@@ -134,6 +139,7 @@ func main() {
 	_ = os.Remove("example.db")
 	_ = os.Remove("example_kek.key")
 	_ = os.Remove("example_dek.key")
+	_ = os.Remove("example_kek.salt")
 
 	fmt.Println("✅ Example completed successfully!")
 }
