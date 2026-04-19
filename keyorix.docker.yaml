@@ -1,4 +1,4 @@
-environment: production
+environment: development
 server:
   http:
     enabled: true
