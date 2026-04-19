@@ -137,13 +137,16 @@ func (c *HTTPClient) request(ctx context.Context, method, path string, body inte
 
 // Health checks the health of the remote server
 func (c *HTTPClient) Health(ctx context.Context) error {
-	resp, err := c.request(ctx, "GET", "/api/v1/health", nil)
+	resp, err := c.request(ctx, "GET", "/health", nil)
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)
 	}
 
 	if !resp.Success {
-		return fmt.Errorf("server health check failed: %s", resp.Error.Error())
+		if resp.Error != nil {
+			return fmt.Errorf("server health check failed: %s", resp.Error.Error())
+		}
+		return fmt.Errorf("server health check failed: unexpected response")
 	}
 
 	return nil

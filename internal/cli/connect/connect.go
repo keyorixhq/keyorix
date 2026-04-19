@@ -1,12 +1,15 @@
 package connect
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
-	"github.com/keyorixhq/keyorix/internal/client"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +39,8 @@ var statusCmd = &cobra.Command{
 func init() {
 	// Add flags for connect command
 	ConnectCmd.Flags().String("api-key", "", "API key for authentication")
+	ConnectCmd.Flags().String("username", "", "Username for authentication (obtains token automatically)")
+	ConnectCmd.Flags().String("password", "", "Password for authentication (obtains token automatically)")
 	ConnectCmd.Flags().String("timeout", "30s", "Request timeout")
 	ConnectCmd.Flags().Bool("test", true, "Test connection before saving")
 
@@ -47,6 +52,8 @@ func init() {
 func runConnect(cmd *cobra.Command, args []string) error {
 	endpoint := args[0]
 	apiKey, _ := cmd.Flags().GetString("api-key")
+	username, _ := cmd.Flags().GetString("username")
+	password, _ := cmd.Flags().GetString("password")
 	timeoutStr, _ := cmd.Flags().GetString("timeout")
 	testConnection, _ := cmd.Flags().GetBool("test")
 
@@ -57,6 +64,17 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("🔗 Connecting to %s...\n", endpoint)
+
+	// If username/password provided, log in and get token
+	if username != "" && password != "" {
+		fmt.Printf("🔑 Logging in as %s...\n", username)
+		token, err := loginWithCredentials(endpoint, username, password, timeout)
+		if err != nil {
+			return fmt.Errorf("login failed: %w", err)
+		}
+		apiKey = token
+		fmt.Printf("✅ Login successful\n")
+	}
 
 	// Test connection if requested
 	if testConnection {
@@ -151,22 +169,71 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func testServerConnection(endpoint, apiKey string, timeout time.Duration) error {
-	// Create HTTP client for testing
-	httpClient, err := client.NewHTTPClient(&client.Config{
-		Endpoint: endpoint,
-		APIKey:   apiKey,
-		Timeout:  timeout,
+// loginWithCredentials calls the login endpoint and returns a session token.
+func loginWithCredentials(endpoint, username, password string, timeout time.Duration) (string, error) {
+	body, _ := json.Marshal(map[string]string{
+		"username": username,
+		"password": password,
 	})
-	if err != nil {
-		return fmt.Errorf("failed to create HTTP client: %w", err)
-	}
 
-	// Test health endpoint
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return httpClient.Health(ctx)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/auth/login", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("server returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+	if result.Data.Token == "" {
+		return "", fmt.Errorf("no token in response")
+	}
+
+	return result.Data.Token, nil
+}
+
+func testServerConnection(endpoint, apiKey string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/health", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("server unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func getAuthType(apiKey string) string {
