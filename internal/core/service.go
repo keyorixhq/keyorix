@@ -1525,6 +1525,15 @@ func generateSecureToken() (string, error) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
+// ExpiringSecret represents a secret that is expiring soon.
+type ExpiringSecret struct {
+	ID          uint      `json:"id"`
+	Name        string    `json:"name"`
+	Environment string    `json:"environment"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+	DaysLeft    int       `json:"daysLeft"`
+}
+
 // StatTrend contains trend data for a dashboard stat.
 type StatTrend struct {
 	Value      float64 `json:"value"`      // % change vs previous snapshot
@@ -1539,6 +1548,7 @@ type DashboardStats struct {
 	TotalSecretsTrend   *StatTrend     `json:"totalSecretsTrend,omitempty"`
 	SharedSecretsTrend  *StatTrend     `json:"sharedSecretsTrend,omitempty"`
 	SharedWithMeTrend   *StatTrend     `json:"sharedWithMeTrend,omitempty"`
+	ExpiringSecrets     []ExpiringSecret `json:"expiringSecrets,omitempty"`
 	RecentActivity      []ActivityItem `json:"recentActivity"`
 }
 
@@ -1593,11 +1603,15 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		recent = append(recent, mapAuditEventToActivity(e, username))
 	}
 
+	// Find secrets expiring within 30 days owned by this user
+	expiringSecrets := c.getExpiringSecrets(ctx, username)
+
 	stats := &DashboardStats{
 		TotalSecrets:        total,
 		SharedSecrets:       sharedSecrets,
 		SecretsSharedWithMe: sharedWithMe,
 		RecentActivity:      recent,
+		ExpiringSecrets:     expiringSecrets,
 	}
 
 	// Compute trends from previous snapshot
@@ -1622,6 +1636,50 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	}
 
 	return stats, nil
+}
+
+// getExpiringSecrets returns secrets owned by the user expiring within 30 days.
+func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) []ExpiringSecret {
+	now := time.Now().UTC()
+	cutoff := now.Add(30 * 24 * time.Hour)
+
+	secrets, _, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
+		CreatedBy: &username,
+		Page:      1,
+		PageSize:  100,
+	})
+	if err != nil {
+		return nil
+	}
+
+	var expiring []ExpiringSecret
+	for _, s := range secrets {
+		if s.Expiration == nil {
+			continue
+		}
+		exp := s.Expiration.UTC()
+		if exp.After(now) && exp.Before(cutoff) {
+			daysLeft := int(exp.Sub(now).Hours() / 24)
+			// Resolve environment name
+			envName := "unknown"
+			if envs, err := c.storage.ListEnvironments(ctx); err == nil {
+				for _, e := range envs {
+					if e.ID == s.EnvironmentID {
+						envName = e.Name
+						break
+					}
+				}
+			}
+			expiring = append(expiring, ExpiringSecret{
+				ID:          s.ID,
+				Name:        s.Name,
+				Environment: envName,
+				ExpiresAt:   exp,
+				DaysLeft:    daysLeft,
+			})
+		}
+	}
+	return expiring
 }
 
 // computeTrend calculates percentage change between previous and current values.

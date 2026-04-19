@@ -123,8 +123,25 @@ func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage
 // migrateDatabase performs database migrations
 func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	// Always run additive migrations for new tables (safe on existing DBs)
-	if err := db.AutoMigrate(&models.StatsSnapshot{}); err != nil {
-		return fmt.Errorf("failed to migrate stats_snapshots table: %w", err)
+	createStatsTable := `CREATE TABLE IF NOT EXISTS stats_snapshots (
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT,
+		total_secrets BIGINT DEFAULT 0,
+		shared_secrets INTEGER DEFAULT 0,
+		secrets_shared_with_me INTEGER DEFAULT 0,
+		snapshot_date TIMESTAMP WITH TIME ZONE,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+	)`
+	// Use raw SQL for cross-db compatibility check
+	if db.Migrator().HasTable("stats_snapshots") {
+		// Table exists, nothing to do
+	} else {
+		if err := db.Exec(createStatsTable).Error; err != nil {
+			return fmt.Errorf("failed to migrate stats_snapshots table: %w", err)
+		}
+		// Create indexes
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_stats_snapshots_user_id ON stats_snapshots(user_id)")
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_stats_snapshots_snapshot_date ON stats_snapshots(snapshot_date)")
 	}
 
 	// Check if namespaces table exists — if so, skip full migration (already initialized)
@@ -163,6 +180,5 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.GRPCService{},
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
-		&models.StatsSnapshot{},
 	)
 }
