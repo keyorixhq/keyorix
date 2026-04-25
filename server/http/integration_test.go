@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -39,9 +40,38 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.GroupRole{},
 		&models.ShareRecord{},
 		&models.AuditEvent{},
+		&models.Session{},
+		&models.Namespace{},
+		&models.Zone{},
+		&models.Environment{},
+		&models.Permission{},
+		&models.RolePermission{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(local.NewLocalStorage(db))
+}
+
+// createTestToken seeds the system and returns a real admin session token.
+func createTestToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+	// SeedSystem creates admin user, roles, permissions, namespace, zone, environments
+	_, err := c.SeedSystem(ctx, &core.SeedRequest{
+		Username: "testadmin",
+		Email:    "testadmin@example.com",
+		Password: "TestPassword123!",
+	})
+	if err != nil {
+		t.Logf("SeedSystem: %v (may already be seeded)", err)
+	}
+	session, _, err := c.Login(ctx, &core.LoginRequest{
+		Username: "testadmin",
+		Password: "TestPassword123!",
+	})
+	if err != nil {
+		t.Fatalf("createTestToken: login failed: %v", err)
+	}
+	return session.SessionToken
 }
 
 // Integration tests for the complete HTTP server
@@ -70,10 +100,18 @@ func TestHTTPServerIntegration(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
+	// Create a dedicated core + server for authenticated tests with a real token
+	testCore := newTestCore(t)
+	router2, err2 := NewRouter(cfg, testCore)
+	require.NoError(t, err2)
+	server2 := httptest.NewServer(router2)
+	defer server2.Close()
+	validToken := createTestToken(t, testCore)
+
 	// Test cases for complete workflow
 	t.Run("Complete Secret Management Workflow", func(t *testing.T) {
 		client := &http.Client{Timeout: 10 * time.Second}
-		baseURL := server.URL
+		baseURL := server2.URL
 
 		// Step 1: Health check (no auth required)
 		t.Run("Health Check", func(t *testing.T) {
@@ -107,7 +145,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("List Secrets", func(t *testing.T) {
 			req, err := http.NewRequest("GET", baseURL+"/api/v1/secrets", nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -149,7 +187,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 
 			req, err := http.NewRequest("POST", baseURL+"/api/v1/secrets", bytes.NewBuffer(body))
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 			req.Header.Set("Content-Type", "application/json")
 
 			resp, err := client.Do(req)
@@ -180,7 +218,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("Get Secret", func(t *testing.T) {
 			req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/secrets/%d", baseURL, secretID), nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -217,7 +255,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 
 			req, err := http.NewRequest("PUT", fmt.Sprintf("%s/api/v1/secrets/%d", baseURL, secretID), bytes.NewBuffer(body))
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 			req.Header.Set("Content-Type", "application/json")
 
 			resp, err := client.Do(req)
@@ -238,7 +276,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("Get Secret Versions", func(t *testing.T) {
 			req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/secrets/%d/versions", baseURL, secretID), nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -259,7 +297,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("Delete Secret", func(t *testing.T) {
 			req, err := http.NewRequest("DELETE", fmt.Sprintf("%s/api/v1/secrets/%d", baseURL, secretID), nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -272,7 +310,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("Verify Secret Deleted", func(t *testing.T) {
 			req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/secrets/%d", baseURL, secretID), nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -292,7 +330,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 			// List users
 			req, err := http.NewRequest("GET", baseURL+"/api/v1/users", nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -313,7 +351,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 
 			req, err = http.NewRequest("POST", baseURL+"/api/v1/users", bytes.NewBuffer(body))
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 			req.Header.Set("Content-Type", "application/json")
 
 			resp, err = client.Do(req)
@@ -328,7 +366,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 			// List roles
 			req, err := http.NewRequest("GET", baseURL+"/api/v1/roles", nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -348,7 +386,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 
 			req, err = http.NewRequest("POST", baseURL+"/api/v1/roles", bytes.NewBuffer(body))
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 			req.Header.Set("Content-Type", "application/json")
 
 			resp, err = client.Do(req)
@@ -368,7 +406,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("System Info", func(t *testing.T) {
 			req, err := http.NewRequest("GET", baseURL+"/api/v1/system/info", nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -391,7 +429,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("System Metrics", func(t *testing.T) {
 			req, err := http.NewRequest("GET", baseURL+"/api/v1/system/metrics", nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -420,7 +458,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("General Audit Logs", func(t *testing.T) {
 			req, err := http.NewRequest("GET", baseURL+"/api/v1/audit/logs", nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -442,7 +480,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 		t.Run("RBAC Audit Logs", func(t *testing.T) {
 			req, err := http.NewRequest("GET", baseURL+"/api/v1/audit/rbac-logs", nil)
 			require.NoError(t, err)
-			req.Header.Set("Authorization", "Bearer valid-token")
+			req.Header.Set("Authorization", "Bearer "+validToken)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
@@ -478,12 +516,14 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 		},
 	}
 
-	router, err := NewRouter(cfg, newTestCore(t))
+	testCore2 := newTestCore(t)
+	router, err := NewRouter(cfg, testCore2)
 	require.NoError(t, err)
 
 	server := httptest.NewServer(router)
 	defer server.Close()
-
+	defer server.Close()
+	validToken := createTestToken(t, testCore2)
 	client := &http.Client{Timeout: 5 * time.Second}
 	baseURL := server.URL
 
@@ -531,7 +571,7 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 		// Invalid JSON
 		req, err := http.NewRequest("POST", baseURL+"/api/v1/secrets", bytes.NewBufferString("{invalid json}"))
 		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer valid-token")
+		req.Header.Set("Authorization", "Bearer "+validToken)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
@@ -550,7 +590,7 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 
 		req, err = http.NewRequest("POST", baseURL+"/api/v1/secrets", bytes.NewBuffer(body))
 		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer valid-token")
+		req.Header.Set("Authorization", "Bearer "+validToken)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err = client.Do(req)
@@ -563,7 +603,7 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 		// Non-existent secret
 		req, err := http.NewRequest("GET", baseURL+"/api/v1/secrets/99999", nil)
 		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer valid-token")
+		req.Header.Set("Authorization", "Bearer "+validToken)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
@@ -573,7 +613,7 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 		// Non-existent endpoint
 		req, err = http.NewRequest("GET", baseURL+"/api/v1/nonexistent", nil)
 		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer valid-token")
+		req.Header.Set("Authorization", "Bearer "+validToken)
 
 		resp, err = client.Do(req)
 		require.NoError(t, err)

@@ -5,11 +5,52 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// loginRateLimiter tracks failed login attempts per IP.
+var loginRateLimiter = struct {
+	sync.Mutex
+	attempts map[string][]time.Time
+}{attempts: make(map[string][]time.Time)}
+
+const (
+	loginMaxAttempts = 10
+	loginWindow      = 15 * time.Minute
+)
+
+// checkLoginRateLimit returns true if the IP has exceeded the login attempt limit.
+func checkLoginRateLimit(ip string) bool {
+	loginRateLimiter.Lock()
+	defer loginRateLimiter.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-loginWindow)
+
+	var recent []time.Time
+	for _, t := range loginRateLimiter.attempts[ip] {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	loginRateLimiter.attempts[ip] = recent
+
+	if len(recent) >= loginMaxAttempts {
+		return true
+	}
+	return false
+}
+
+// recordLoginAttempt records a failed login attempt for the IP.
+func recordLoginAttempt(ip string) {
+	loginRateLimiter.Lock()
+	defer loginRateLimiter.Unlock()
+	loginRateLimiter.attempts[ip] = append(loginRateLimiter.attempts[ip], time.Now())
+}
 
 // AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
@@ -52,6 +93,16 @@ type initSystemRequestBody struct {
 // Login handles POST /auth/login.
 // Accepts username + password, returns a session token on success.
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	// Rate limit by IP — max 10 failed attempts per 15 minutes
+	ip := r.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	if checkLoginRateLimit(ip) {
+		sendError(w, "TooManyRequests", "Too many login attempts. Try again later.", http.StatusTooManyRequests, nil)
+		return
+	}
+
 	var body loginRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
@@ -63,6 +114,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Password: body.Password,
 	})
 	if err != nil {
+		recordLoginAttempt(ip)
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}

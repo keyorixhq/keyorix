@@ -164,42 +164,6 @@ func validateToken(ctx context.Context, coreService *core.KeyorixCore, token str
 		}
 	}
 
-	// Hardcoded test tokens — kept for integration test backwards compatibility
-	switch token {
-	case "valid-token":
-		return &UserContext{
-			UserID:      1,
-			Username:    "admin",
-			Email:       "admin@example.com",
-			Roles:       []string{"admin", "user"},
-			Permissions: adminPermissions,
-		}, nil
-	case "test-token":
-		return &UserContext{
-			UserID:      2,
-			Username:    "testuser",
-			Email:       "test@example.com",
-			Roles:       []string{"viewer"},
-			Permissions: readPermissions,
-		}, nil
-	case "recipient-token":
-		return &UserContext{
-			UserID:      2,
-			Username:    "user2",
-			Email:       "user2@test.com",
-			Roles:       []string{"user"},
-			Permissions: []string{"secrets.read"},
-		}, nil
-	case "owner-token":
-		return &UserContext{
-			UserID:      1,
-			Username:    "owner",
-			Email:       "owner@example.com",
-			Roles:       []string{"admin"},
-			Permissions: adminPermissions,
-		}, nil
-	}
-
 	return nil, http.ErrNotSupported
 }
 
