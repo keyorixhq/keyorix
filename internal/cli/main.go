@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/keyorixhq/keyorix/internal/cli/anomalies"
 	"github.com/keyorixhq/keyorix/internal/cli/auth"
 	"github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
@@ -43,6 +44,7 @@ func init() {
 	rootCmd.AddCommand(rbac.RbacCmd)
 	rootCmd.AddCommand(status.StatusCmd)
 	rootCmd.AddCommand(system.SystemCmd)
+	rootCmd.AddCommand(anomalies.AnomaliesCmd)
 }
 
 // Execute runs the root command

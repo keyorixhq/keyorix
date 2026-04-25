@@ -585,6 +585,30 @@ func (ls *LocalStorage) CreateSecretAccessLog(ctx context.Context, log *models.S
 	return ls.db.WithContext(ctx).Create(log).Error
 }
 
+func (ls *LocalStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error) {
+	var logs []models.SecretAccessLog
+	result := ls.db.WithContext(ctx).Where("secret_node_id = ? AND access_time >= ?", secretID, since).Find(&logs)
+	return logs, result.Error
+}
+
+func (ls *LocalStorage) CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error {
+	return ls.db.WithContext(ctx).Create(alert).Error
+}
+
+func (ls *LocalStorage) ListAnomalyAlerts(ctx context.Context, unacknowledgedOnly bool) ([]models.AnomalyAlert, error) {
+	var alerts []models.AnomalyAlert
+	query := ls.db.WithContext(ctx)
+	if unacknowledgedOnly {
+		query = query.Where("acknowledged = ?", false)
+	}
+	result := query.Order("detected_at DESC").Find(&alerts)
+	return alerts, result.Error
+}
+
+func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
+	return ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Update("acknowledged", true).Error
+}
+
 func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
 	query := ls.db.WithContext(ctx).Model(&models.AuditEvent{})
 	if filter != nil {

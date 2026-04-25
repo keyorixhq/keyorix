@@ -149,6 +149,23 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("failed to create HTTP router: %w", err)
 	}
 
+	// Start anomaly detection scheduler (runs every hour)
+	go func() {
+		detector := core.NewAnomalyDetector(coreService.Storage())
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		// Run once immediately on startup
+		_ = detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx))
+		for {
+			select {
+			case <-ticker.C:
+				_ = detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx))
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	// Create HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Server.HTTP.Port),

@@ -145,6 +145,27 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	}
 
 	// Check if namespaces table exists — if so, skip full migration (already initialized)
+	// Always create new tables that may have been added after initial setup
+	if !db.Migrator().HasTable("anomaly_alerts") {
+		if err := db.Exec(`CREATE TABLE IF NOT EXISTS anomaly_alerts (
+            id BIGSERIAL PRIMARY KEY,
+            secret_node_id BIGINT,
+            secret_name TEXT,
+            alert_type TEXT,
+            severity TEXT,
+            description TEXT,
+            accessed_by TEXT,
+            ip_address TEXT,
+            detected_at TIMESTAMP WITH TIME ZONE,
+            acknowledged BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )`).Error; err != nil {
+			return fmt.Errorf("failed to create anomaly_alerts table: %w", err)
+		}
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_secret_node_id ON anomaly_alerts(secret_node_id)")
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_detected_at ON anomaly_alerts(detected_at)")
+	}
+
 	if db.Migrator().HasTable("namespaces") {
 		return nil
 	}
@@ -180,5 +201,6 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.GRPCService{},
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
+		&models.AnomalyAlert{},
 	)
 }

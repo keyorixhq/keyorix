@@ -22,7 +22,8 @@ type UserContext struct {
 type contextKey string
 
 const (
-	userContextKey contextKey = "user"
+	userContextKey        contextKey = "user"
+	coreServiceContextKey contextKey = "coreService"
 )
 
 // Authentication returns a middleware that validates session tokens against the database.
@@ -55,8 +56,9 @@ func Authentication(coreService *core.KeyorixCore) func(next http.Handler) http.
 				return
 			}
 
-			// Add user context to request
+			// Add user context and core service to request
 			ctx := context.WithValue(r.Context(), userContextKey, userCtx)
+			ctx = context.WithValue(ctx, coreServiceContextKey, coreService)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -198,4 +200,12 @@ func forbiddenResponse(w http.ResponseWriter, message string) {
 // GetUserContextKey returns the context key for user context (for testing)
 func GetUserContextKey() contextKey {
 	return userContextKey
+}
+
+// GetCoreServiceFromContext retrieves the core service from the request context.
+func GetCoreServiceFromContext(ctx context.Context) *core.KeyorixCore {
+	if cs, ok := ctx.Value(coreServiceContextKey).(*core.KeyorixCore); ok {
+		return cs
+	}
+	return nil
 }

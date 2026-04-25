@@ -287,3 +287,18 @@ type ExternalIdentity struct {
 	Metadata   JSON
 	LinkedAt   time.Time
 }
+
+// AnomalyAlert represents a detected anomaly in secret access patterns.
+type AnomalyAlert struct {
+	ID           uint      `gorm:"primaryKey"`
+	SecretNodeID uint      `gorm:"index"`
+	SecretName   string
+	AlertType    string    // off_hours, new_ip, frequency_spike, new_user
+	Severity     string    // low, medium, high
+	Description  string
+	AccessedBy   string
+	IPAddress    string
+	DetectedAt   time.Time `gorm:"index"`
+	Acknowledged bool      `gorm:"default:false"`
+	CreatedAt    time.Time
+}

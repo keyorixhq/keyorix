@@ -205,6 +205,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission("audit.read"))
 			r.Get("/logs", handlers.GetAuditLogs)
 			r.Get("/rbac-logs", handlers.GetRBACAuditLogs)
+			r.Get("/anomalies", handlers.ListAnomalyAlerts)
+			r.Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})
 
 		// System endpoints

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -1250,4 +1251,20 @@ func (rs *RemoteStorage) SaveStatsSnapshot(ctx context.Context, snapshot *models
 // GetPreviousStatsSnapshot is not supported in remote storage mode.
 func (rs *RemoteStorage) GetPreviousStatsSnapshot(ctx context.Context, userID uint) (*models.StatsSnapshot, error) {
 	return nil, fmt.Errorf("stats snapshots not available in remote mode")
+}
+
+func (rs *RemoteStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error) {
+	return nil, fmt.Errorf("ListSecretAccessLogs not available in remote mode")
+}
+
+func (rs *RemoteStorage) CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error {
+	return fmt.Errorf("CreateAnomalyAlert not available in remote mode")
+}
+
+func (rs *RemoteStorage) ListAnomalyAlerts(ctx context.Context, unacknowledgedOnly bool) ([]models.AnomalyAlert, error) {
+	return nil, fmt.Errorf("ListAnomalyAlerts not available in remote mode")
+}
+
+func (rs *RemoteStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
+	return fmt.Errorf("AcknowledgeAnomalyAlert not available in remote mode")
 }
