@@ -131,7 +131,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Audit log (non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua)
+	go h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua) // #nosec G118
 
 	sendSuccess(w, resp, "Login successful")
 }
@@ -155,7 +155,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	// Audit log (non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogAuthLogout(context.Background(), logoutUserID, logoutUsername, ip, ua)
+	go h.coreService.LogAuthLogout(context.Background(), logoutUserID, logoutUsername, ip, ua) // #nosec G118
 
 	sendSuccess(w, nil, "Logged out successfully")
 }

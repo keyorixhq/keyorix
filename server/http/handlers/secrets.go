@@ -196,7 +196,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	// Audit log (non-blocking)
 	uid, sID, uname, sname := userCtx.UserID, response.ID, userCtx.Username, response.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretCreated(context.Background(), uid, sID, uname, sname, ip, ua)
+	go h.coreService.LogSecretCreated(context.Background(), uid, sID, uname, sname, ip, ua) // #nosec G118
 
 	// Send response
 	w.WriteHeader(http.StatusCreated)
@@ -261,7 +261,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	// Audit log (non-blocking)
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, secret.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretRead(context.Background(), uid, sID, uname, sname, ip, ua)
+	go h.coreService.LogSecretRead(context.Background(), uid, sID, uname, sname, ip, ua) // #nosec G118
 
 	// Send response
 	h.sendSuccess(w, response, "")
@@ -330,7 +330,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	// Audit log (non-blocking)
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, response.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretUpdated(context.Background(), uid, sID, uname, sname, ip, ua)
+	go h.coreService.LogSecretUpdated(context.Background(), uid, sID, uname, sname, ip, ua) // #nosec G118
 
 	// Send response
 	h.sendSuccess(w, response, i18n.T("SuccessSecretUpdated", nil))
@@ -376,7 +376,7 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	// Audit log (non-blocking)
 	uid, sID, uname := userCtx.UserID, uint(id), userCtx.Username
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretDeleted(context.Background(), uid, sID, uname, secretName, ip, ua)
+	go h.coreService.LogSecretDeleted(context.Background(), uid, sID, uname, secretName, ip, ua) // #nosec G118
 
 	// Send response
 	w.WriteHeader(http.StatusNoContent)

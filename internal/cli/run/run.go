@@ -295,7 +295,7 @@ func execChild(args []string, extraEnv map[string]string) error {
 		childEnv = append(childEnv, k+"="+v)
 	}
 
-	c := exec.Command(args[0], args[1:]...)
+	c := exec.Command(args[0], args[1:]...) // #nosec G204
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
