@@ -432,6 +432,11 @@ export const apiService = {
         return response.data;
     },
 
+    rotateSecret: async (id: number, newValue: string) => {
+        const response = await apiClient.post(`/api/v1/secrets/${id}/rotate`, { new_value: newValue });
+        return response.data;
+    },
+
     // Admin endpoints
     admin: {
         async getStats(): Promise<any> {
