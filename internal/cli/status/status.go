@@ -138,7 +138,7 @@ func runPing(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Pings sent:     %d\n", pingCount)
 	fmt.Printf("Successful:     %d\n", successCount)
 	fmt.Printf("Failed:         %d\n", pingCount-successCount)
-	
+
 	if successCount > 0 {
 		avgDuration := totalDuration / time.Duration(successCount)
 		fmt.Printf("Average time:   %v\n", avgDuration)

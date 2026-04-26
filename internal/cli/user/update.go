@@ -13,11 +13,11 @@ import (
 )
 
 var (
-	updateUserID       uint
-	updateUsername     string
-	updateEmail        string
-	updateDisplayName  string
-	updateActiveStr    string
+	updateUserID      uint
+	updateUsername    string
+	updateEmail       string
+	updateDisplayName string
+	updateActiveStr   string
 )
 
 var updateCmd = &cobra.Command{

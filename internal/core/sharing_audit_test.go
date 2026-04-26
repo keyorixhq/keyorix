@@ -59,7 +59,7 @@ func TestKeyorixCore_LogShareUpdated(t *testing.T) {
 
 	// Test data
 	auditCtx := &ShareAuditContext{
-		ActorID:     1,
+		ActorID:       1,
 		SecretID:      1,
 		RecipientID:   2,
 		IsGroup:       false,
@@ -129,7 +129,7 @@ func TestKeyorixCore_LogSharedSecretAccessed(t *testing.T) {
 
 	// Test data
 	auditCtx := &ShareAuditContext{
-		ActorID:     1,
+		ActorID:    1,
 		SecretID:   1,
 		Permission: "read",
 	}
@@ -197,7 +197,7 @@ func TestKeyorixCore_LogGroupShareUpdated(t *testing.T) {
 
 	// Test data
 	auditCtx := &ShareAuditContext{
-		ActorID:     1,
+		ActorID:       1,
 		SecretID:      1,
 		RecipientID:   2,
 		IsGroup:       true,
@@ -284,7 +284,7 @@ func TestShareAuditContext_Validation(t *testing.T) {
 		{
 			name: "context with update information",
 			ctx: &ShareAuditContext{
-				ActorID:     1,
+				ActorID:       1,
 				SecretID:      1,
 				RecipientID:   2,
 				IsGroup:       false,

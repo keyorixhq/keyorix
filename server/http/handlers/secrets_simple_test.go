@@ -43,7 +43,7 @@ func TestSecretHandlerBasicValidation(t *testing.T) {
 	handler, err := NewSecretHandler(nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, handler)
-	
+
 	// The handler will have a nil coreService, which would cause issues in actual use
 	// but the constructor doesn't validate this
 }

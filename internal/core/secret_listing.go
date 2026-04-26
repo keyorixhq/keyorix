@@ -358,7 +358,7 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 	// Check user's permission
 	isOwner := secret.OwnerID == userID
 	userPermission := ""
-	
+
 	if !isOwner {
 		// Find user's permission through shares
 		for _, share := range shares {
@@ -367,7 +367,7 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 				break
 			}
 		}
-		
+
 		// If no direct share found, user has no access
 		if userPermission == "" {
 			return nil, fmt.Errorf("user does not have permission to access this secret")
@@ -375,9 +375,9 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 	}
 
 	status := &models.SharingStatusWithIndicators{
-		IsShared:   len(shares) > 0,
-		ShareCount: len(shares),
-		IsOwner:    isOwner,
+		IsShared:       len(shares) > 0,
+		ShareCount:     len(shares),
+		IsOwner:        isOwner,
 		UserPermission: userPermission,
 	}
 
@@ -523,7 +523,7 @@ func (c *KeyorixCore) buildShareDetails(shares []*models.ShareRecord) *models.Sh
 
 	var directShares, groupShares int
 	var recentShares []*models.RecentShareInfo
-	
+
 	// Analyze shares
 	for _, share := range shares {
 		if share.IsGroup {

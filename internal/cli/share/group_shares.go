@@ -28,7 +28,7 @@ var groupSharesCmd = &cobra.Command{
 func init() {
 	groupSharesCmd.Flags().UintVar(&groupSharesGroupID, "group-id", 0, "Group ID (required)")
 	groupSharesCmd.MarkFlagRequired("group-id") // #nosec G104
-	
+
 	// Add to parent command
 	ShareCmd.AddCommand(groupSharesCmd)
 }

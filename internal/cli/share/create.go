@@ -14,10 +14,10 @@ import (
 )
 
 var (
-	createSecretID   uint
+	createSecretID    uint
 	createRecipientID uint
-	createIsGroup    bool
-	createPermission string
+	createIsGroup     bool
+	createPermission  string
 )
 
 var createCmd = &cobra.Command{
@@ -31,8 +31,8 @@ func init() {
 	createCmd.Flags().UintVar(&createRecipientID, "recipient-id", 0, "Recipient ID (required)")
 	createCmd.Flags().BoolVar(&createIsGroup, "is-group", false, "Whether the recipient is a group")
 	createCmd.Flags().StringVar(&createPermission, "permission", "read", "Permission level (read or write)")
-	
-	createCmd.MarkFlagRequired("secret-id")     // #nosec G104
+
+	createCmd.MarkFlagRequired("secret-id")    // #nosec G104
 	createCmd.MarkFlagRequired("recipient-id") // #nosec G104
 }
 
@@ -64,9 +64,9 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	// Create context
 	ctx := context.Background()
-	
+
 	var shareRecord *models.ShareRecord
-	
+
 	// Handle group sharing differently
 	if createIsGroup {
 		// Create group share request
@@ -76,7 +76,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			Permission: createPermission,
 			SharedBy:   1, // CLI user ID
 		}
-		
+
 		// Call service for group sharing
 		shareRecord, err = service.ShareSecretWithGroup(ctx, req)
 		if err != nil {
@@ -91,7 +91,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			Permission:  createPermission,
 			SharedBy:    1, // CLI user ID
 		}
-		
+
 		// Call service for user sharing
 		shareRecord, err = service.ShareSecret(ctx, req)
 		if err != nil {

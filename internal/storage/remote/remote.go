@@ -139,12 +139,12 @@ func (rs *RemoteStorage) DeleteSecret(ctx context.Context, id uint) error {
 // ListSecrets lists secrets with optional filtering via remote API
 func (rs *RemoteStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	path := "/api/v1/secrets"
-	
+
 	// Add query parameters for filtering
 	if filter != nil {
 		path += "?"
 		params := []string{}
-		
+
 		if filter.NamespaceID != nil {
 			params = append(params, fmt.Sprintf("namespace_id=%d", *filter.NamespaceID))
 		}
@@ -177,7 +177,7 @@ func (rs *RemoteStorage) ListSecrets(ctx context.Context, filter *storage.Secret
 		if filter.PageSize > 0 {
 			params = append(params, fmt.Sprintf("page_size=%d", filter.PageSize))
 		}
-		
+
 		// Join parameters
 		for i, param := range params {
 			if i > 0 {
@@ -621,12 +621,12 @@ func (rs *RemoteStorage) DeleteUser(ctx context.Context, id uint) error {
 // ListUsers lists users with optional filtering via remote API
 func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error) {
 	path := "/api/v1/users"
-	
+
 	// Add query parameters for filtering
 	if filter != nil {
 		path += "?"
 		params := []string{}
-		
+
 		if filter.Search != nil {
 			params = append(params, fmt.Sprintf("search=%s", *filter.Search))
 		}
@@ -648,7 +648,7 @@ func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilt
 		if filter.PageSize > 0 {
 			params = append(params, fmt.Sprintf("page_size=%d", filter.PageSize))
 		}
-		
+
 		// Join parameters
 		for i, param := range params {
 			if i > 0 {
@@ -962,12 +962,12 @@ func (rs *RemoteStorage) CreateSecretAccessLog(ctx context.Context, log *models.
 // GetAuditLogs retrieves audit logs with filtering via remote API
 func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
 	path := "/api/v1/audit/events"
-	
+
 	// Add query parameters for filtering
 	if filter != nil {
 		path += "?"
 		params := []string{}
-		
+
 		if filter.UserID != nil {
 			params = append(params, fmt.Sprintf("user_id=%d", *filter.UserID))
 		}
@@ -992,7 +992,7 @@ func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.Audit
 		if filter.PageSize > 0 {
 			params = append(params, fmt.Sprintf("page_size=%d", filter.PageSize))
 		}
-		
+
 		// Join parameters
 		for i, param := range params {
 			if i > 0 {
@@ -1025,12 +1025,12 @@ func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.Audit
 // GetRBACAuditLogs retrieves RBAC audit logs with filtering via remote API
 func (rs *RemoteStorage) GetRBACAuditLogs(ctx context.Context, filter *storage.RBACAuditFilter) ([]*storage.RBACAuditLog, int64, error) {
 	path := "/api/v1/audit/rbac"
-	
+
 	// Add query parameters for filtering
 	if filter != nil {
 		path += "?"
 		params := []string{}
-		
+
 		if filter.UserID != nil {
 			params = append(params, fmt.Sprintf("user_id=%d", *filter.UserID))
 		}
@@ -1055,7 +1055,7 @@ func (rs *RemoteStorage) GetRBACAuditLogs(ctx context.Context, filter *storage.R
 		if filter.PageSize > 0 {
 			params = append(params, fmt.Sprintf("page_size=%d", filter.PageSize))
 		}
-		
+
 		// Join parameters
 		for i, param := range params {
 			if i > 0 {
@@ -1243,6 +1243,7 @@ func (rs *RemoteStorage) GetStats(ctx context.Context) (*storage.StorageStats, e
 
 	return &result, nil
 }
+
 // SaveStatsSnapshot is a no-op for remote storage — snapshots are managed server-side.
 func (rs *RemoteStorage) SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error {
 	return nil

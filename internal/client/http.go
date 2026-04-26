@@ -229,10 +229,10 @@ func (c *HTTPClient) DeleteSecret(ctx context.Context, id uint) error {
 // ListSecrets lists secrets via HTTP API
 func (c *HTTPClient) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, error) {
 	path := "/api/v1/secrets"
-	
+
 	// Add query parameters for filtering if needed
 	// This is a simplified implementation - you can enhance it based on your filter struct
-	
+
 	resp, err := c.request(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list secrets: %w", err)

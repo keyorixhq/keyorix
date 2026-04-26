@@ -57,7 +57,7 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
 	page := 1
 	pageSize := 20
-	
+
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
 			page = p
@@ -72,9 +72,9 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 
 	// Build filter with sharing options
 	filter := &models.SecretListFilter{
-		Page:     page,
-		PageSize: pageSize,
-		SortBy:   r.URL.Query().Get("sort_by"),
+		Page:      page,
+		PageSize:  pageSize,
+		SortBy:    r.URL.Query().Get("sort_by"),
 		SortOrder: r.URL.Query().Get("sort_order"),
 	}
 
@@ -154,7 +154,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		Metadata      map[string]string `json:"metadata,omitempty"`
 		Tags          []string          `json:"tags,omitempty"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
 		return
@@ -237,7 +237,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	// Check if requesting decrypted value
 	includeValue := r.URL.Query().Get("include_value") == "true"
 	var response interface{} = secret
-	
+
 	if includeValue {
 		// Get the secret value with permission check
 		value, err := h.coreService.GetSecretValueWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
@@ -250,7 +250,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		
+
 		// Create response with value
 		response = map[string]interface{}{
 			"secret": secret,
@@ -289,7 +289,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		Value    string `json:"value,omitempty"`
 		MaxReads *int   `json:"max_reads,omitempty" validate:"omitempty,min=1"`
 	}
-	
+
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
 		return

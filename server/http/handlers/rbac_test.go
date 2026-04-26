@@ -64,17 +64,17 @@ func (h *RBACTestHelper) CreateTestUser(t *testing.T, username string, userID ui
 		Username: username,
 		Email:    username + "@test.com",
 	}
-	
+
 	result := h.DB.Create(user)
 	require.NoError(t, result.Error)
-	
+
 	return user
 }
 
 // addAuthContext adds authentication context to a request for testing
 func addAuthContext(ctx context.Context, token string) context.Context {
 	var userCtx *middleware.UserContext
-	
+
 	if token == "valid-token" {
 		userCtx = &middleware.UserContext{
 			UserID:   1,
@@ -100,17 +100,17 @@ func addAuthContext(ctx context.Context, token string) context.Context {
 			},
 		}
 	}
-	
+
 	if userCtx != nil {
 		return context.WithValue(ctx, middleware.GetUserContextKey(), userCtx)
 	}
-	
+
 	return ctx
 }
 
 func TestListUsers(t *testing.T) {
 	helper := NewRBACTestHelper(t)
-	
+
 	// Create test users
 	helper.CreateTestUser(t, "admin", 1)
 	helper.CreateTestUser(t, "user1", 2)
@@ -271,7 +271,7 @@ func TestCreateUser(t *testing.T) {
 
 func TestGetUser(t *testing.T) {
 	helper := NewRBACTestHelper(t)
-	
+
 	// Create test user
 	helper.CreateTestUser(t, "admin", 1)
 
@@ -336,7 +336,7 @@ func TestGetUser(t *testing.T) {
 
 func TestUpdateUser(t *testing.T) {
 	helper := NewRBACTestHelper(t)
-	
+
 	// Create test user
 	helper.CreateTestUser(t, "admin", 1)
 
@@ -410,7 +410,7 @@ func TestUpdateUser(t *testing.T) {
 
 func TestDeleteUser(t *testing.T) {
 	helper := NewRBACTestHelper(t)
-	
+
 	// Create test user
 	helper.CreateTestUser(t, "admin", 1)
 
@@ -774,7 +774,7 @@ func TestDeleteRole(t *testing.T) {
 
 func TestAssignRole(t *testing.T) {
 	helper := NewRBACTestHelper(t)
-	
+
 	// Create test users
 	helper.CreateTestUser(t, "admin", 1)
 	helper.CreateTestUser(t, "user1", 2)
@@ -840,7 +840,7 @@ func TestAssignRole(t *testing.T) {
 
 func TestRemoveRole(t *testing.T) {
 	helper := NewRBACTestHelper(t)
-	
+
 	// Create test users
 	helper.CreateTestUser(t, "admin", 1)
 	helper.CreateTestUser(t, "user1", 2)
@@ -906,7 +906,7 @@ func TestRemoveRole(t *testing.T) {
 
 func TestGetUserRoles(t *testing.T) {
 	helper := NewRBACTestHelper(t)
-	
+
 	// Create test users
 	helper.CreateTestUser(t, "admin", 1)
 	helper.CreateTestUser(t, "user1", 2)
@@ -967,7 +967,7 @@ func TestGetUserRoles(t *testing.T) {
 // Benchmark tests for RBAC handlers
 func BenchmarkListUsers(b *testing.B) {
 	_ = NewRBACTestHelper(&testing.T{})
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	ctx := addAuthContext(req.Context(), "valid-token")
@@ -982,7 +982,7 @@ func BenchmarkListUsers(b *testing.B) {
 
 func BenchmarkCreateUser(b *testing.B) {
 	_ = NewRBACTestHelper(&testing.T{})
-	
+
 	requestBody := map[string]interface{}{
 		"username":     "benchuser",
 		"email":        "bench@example.com",
@@ -1008,7 +1008,7 @@ func BenchmarkCreateUser(b *testing.B) {
 
 func BenchmarkListRoles(b *testing.B) {
 	_ = NewRBACTestHelper(&testing.T{})
-	
+
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/roles", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
 	ctx := addAuthContext(req.Context(), "valid-token")
@@ -1023,7 +1023,7 @@ func BenchmarkListRoles(b *testing.B) {
 
 func BenchmarkAssignRole(b *testing.B) {
 	_ = NewRBACTestHelper(&testing.T{})
-	
+
 	requestBody := map[string]interface{}{
 		"user_id": 2,
 		"role_id": 1,

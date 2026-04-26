@@ -94,8 +94,8 @@ type SecretNode struct {
 	Metadata      JSON
 	Status        string `gorm:"default:'active'"`
 	CreatedBy     string
-	OwnerID       uint   `gorm:"index"`
-	IsShared      bool   `gorm:"default:false"`
+	OwnerID       uint `gorm:"index"`
+	IsShared      bool `gorm:"default:false"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	LastRotatedAt *time.Time
@@ -195,8 +195,8 @@ type SystemMetadata struct {
 
 // StatsSnapshot stores daily dashboard stat counts for trend calculation
 type StatsSnapshot struct {
-	ID                  uint      `gorm:"primaryKey;autoIncrement"`
-	UserID              uint      `gorm:"index"`
+	ID                  uint `gorm:"primaryKey;autoIncrement"`
+	UserID              uint `gorm:"index"`
 	TotalSecrets        int64
 	SharedSecrets       int
 	SecretsSharedWithMe int
@@ -252,12 +252,12 @@ type APICallLog struct {
 }
 
 type ShareRecord struct {
-	ID          uint      `gorm:"primaryKey"`
-	SecretID    uint      `gorm:"index"`
-	OwnerID     uint      `gorm:"index"`
-	RecipientID uint      `gorm:"index"`
-	IsGroup     bool      `gorm:"default:false"`
-	Permission  string    `gorm:"default:read"` // "read" or "write"
+	ID          uint   `gorm:"primaryKey"`
+	SecretID    uint   `gorm:"index"`
+	OwnerID     uint   `gorm:"index"`
+	RecipientID uint   `gorm:"index"`
+	IsGroup     bool   `gorm:"default:false"`
+	Permission  string `gorm:"default:read"` // "read" or "write"
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	DeletedAt   gorm.DeletedAt `gorm:"index"`
@@ -291,11 +291,11 @@ type ExternalIdentity struct {
 
 // AnomalyAlert represents a detected anomaly in secret access patterns.
 type AnomalyAlert struct {
-	ID           uint      `gorm:"primaryKey"`
-	SecretNodeID uint      `gorm:"index"`
+	ID           uint `gorm:"primaryKey"`
+	SecretNodeID uint `gorm:"index"`
 	SecretName   string
-	AlertType    string    // off_hours, new_ip, frequency_spike, new_user
-	Severity     string    // low, medium, high
+	AlertType    string // off_hours, new_ip, frequency_spike, new_user
+	Severity     string // low, medium, high
 	Description  string
 	AccessedBy   string
 	IPAddress    string

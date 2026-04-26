@@ -372,12 +372,12 @@ func TestSharingHTTPIntegration(t *testing.T) {
 		// Step 1: Create a secret for group sharing
 		t.Run("Create Secret for Group", func(t *testing.T) {
 			secretData := map[string]interface{}{
-				"name":             "group-sharing-test-secret",
-				"value":            "group-sharing-secret-value",
-				"namespace_id":     uint(1),
-				"zone_id":          uint(1),
-				"environment_id":   uint(1),
-				"type":             "password",
+				"name":           "group-sharing-test-secret",
+				"value":          "group-sharing-secret-value",
+				"namespace_id":   uint(1),
+				"zone_id":        uint(1),
+				"environment_id": uint(1),
+				"type":           "password",
 				"metadata": map[string]string{
 					"test": "group-sharing",
 				},
@@ -629,12 +629,12 @@ func TestSharingHTTPIntegration(t *testing.T) {
 		// Step 1: Create a secret as owner
 		t.Run("Create Secret as Owner", func(t *testing.T) {
 			secretData := map[string]interface{}{
-				"name":             "permission-test-secret",
-				"value":            "permission-test-value",
-				"namespace_id":     uint(1),
-				"zone_id":          uint(1),
-				"environment_id":   uint(1),
-				"type":             "password",
+				"name":           "permission-test-secret",
+				"value":          "permission-test-value",
+				"namespace_id":   uint(1),
+				"zone_id":        uint(1),
+				"environment_id": uint(1),
+				"type":           "password",
 			}
 
 			body, err := json.Marshal(secretData)
@@ -801,12 +801,12 @@ func TestSharingHTTPConcurrency(t *testing.T) {
 		// Create a secret first
 		client := &http.Client{Timeout: 10 * time.Second}
 		secretData := map[string]interface{}{
-			"name":             "concurrent-test-secret",
-			"value":            "concurrent-test-value",
-			"namespace_id":     uint(1),
-			"zone_id":          uint(1),
-			"environment_id":   uint(1),
-			"type":             "password",
+			"name":           "concurrent-test-secret",
+			"value":          "concurrent-test-value",
+			"namespace_id":   uint(1),
+			"zone_id":        uint(1),
+			"environment_id": uint(1),
+			"type":           "password",
 		}
 
 		body, err := json.Marshal(secretData)

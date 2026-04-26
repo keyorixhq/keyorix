@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"
 )
 

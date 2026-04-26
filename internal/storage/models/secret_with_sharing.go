@@ -19,11 +19,11 @@ type SecretWithSharingInfo struct {
 	OwnerUsername  string `json:"owner_username,omitempty"`
 	UserPermission string `json:"user_permission,omitempty"` // "read", "write", or empty if owned
 	ShareCount     int    `json:"share_count"`               // Number of users/groups this secret is shared with
-	
+
 	// Additional metadata for shared secrets
-	SharedAt   *time.Time `json:"shared_at,omitempty"`   // When this secret was shared with the current user
-	SharedBy   string     `json:"shared_by,omitempty"`   // Who shared this secret with the current user
-	
+	SharedAt *time.Time `json:"shared_at,omitempty"` // When this secret was shared with the current user
+	SharedBy string     `json:"shared_by,omitempty"` // Who shared this secret with the current user
+
 	// UI indicators
 	SharingIndicators *SharingIndicators `json:"sharing_indicators,omitempty"`
 }
@@ -39,17 +39,17 @@ type SecretListFilter struct {
 	CreatedBy     *string
 	CreatedAfter  *time.Time
 	CreatedBefore *time.Time
-	
+
 	// Sharing filters
-	ShowOwnedOnly   bool   // Show only secrets owned by the user
-	ShowSharedOnly  bool   // Show only secrets shared with the user
-	Permission      string // Filter by permission level ("read", "write")
-	SharedBy        string // Filter by who shared the secret
-	
+	ShowOwnedOnly  bool   // Show only secrets owned by the user
+	ShowSharedOnly bool   // Show only secrets shared with the user
+	Permission     string // Filter by permission level ("read", "write")
+	SharedBy       string // Filter by who shared the secret
+
 	// Pagination
 	Page     int
 	PageSize int
-	
+
 	// Sorting
 	SortBy    string // "name", "created_at", "shared_at", "owner"
 	SortOrder string // "asc", "desc"
@@ -62,7 +62,7 @@ type SecretListResponse struct {
 	Page       int                      `json:"page"`
 	PageSize   int                      `json:"page_size"`
 	TotalPages int                      `json:"total_pages"`
-	
+
 	// Summary information
 	OwnedCount  int `json:"owned_count"`
 	SharedCount int `json:"shared_count"`
@@ -70,18 +70,18 @@ type SecretListResponse struct {
 
 // SharingStatus represents the sharing status of a secret
 type SharingStatus struct {
-	IsShared      bool                `json:"is_shared"`
-	ShareCount    int                 `json:"share_count"`
-	Shares        []*ShareSummary     `json:"shares,omitempty"`
+	IsShared   bool            `json:"is_shared"`
+	ShareCount int             `json:"share_count"`
+	Shares     []*ShareSummary `json:"shares,omitempty"`
 }
 
 // SharingStatusWithIndicators represents the sharing status with UI indicators
 type SharingStatusWithIndicators struct {
-	IsShared         bool                `json:"is_shared"`
-	ShareCount       int                 `json:"share_count"`
-	IsOwner          bool                `json:"is_owner"`
-	UserPermission   string              `json:"user_permission"`
-	Shares           []*ShareSummary     `json:"shares,omitempty"`
+	IsShared          bool               `json:"is_shared"`
+	ShareCount        int                `json:"share_count"`
+	IsOwner           bool               `json:"is_owner"`
+	UserPermission    string             `json:"user_permission"`
+	Shares            []*ShareSummary    `json:"shares,omitempty"`
 	SharingIndicators *SharingIndicators `json:"sharing_indicators,omitempty"`
 }
 
@@ -109,29 +109,29 @@ type UserSecretPermission struct {
 // SharingIndicators provides UI-specific indicators for shared secrets
 type SharingIndicators struct {
 	// Visual indicators
-	Icon        string `json:"icon"`         // Icon name for UI (e.g., "shared", "owned", "group")
-	Badge       string `json:"badge"`        // Badge text (e.g., "SHARED", "OWNER", "READ-ONLY")
-	BadgeColor  string `json:"badge_color"`  // Badge color (e.g., "blue", "green", "orange")
-	StatusText  string `json:"status_text"`  // Human-readable status text
-	
+	Icon       string `json:"icon"`        // Icon name for UI (e.g., "shared", "owned", "group")
+	Badge      string `json:"badge"`       // Badge text (e.g., "SHARED", "OWNER", "READ-ONLY")
+	BadgeColor string `json:"badge_color"` // Badge color (e.g., "blue", "green", "orange")
+	StatusText string `json:"status_text"` // Human-readable status text
+
 	// Permission indicators
-	CanRead     bool   `json:"can_read"`
-	CanWrite    bool   `json:"can_write"`
-	CanShare    bool   `json:"can_share"`
-	CanDelete   bool   `json:"can_delete"`
-	
+	CanRead   bool `json:"can_read"`
+	CanWrite  bool `json:"can_write"`
+	CanShare  bool `json:"can_share"`
+	CanDelete bool `json:"can_delete"`
+
 	// Sharing details for tooltips/details
 	ShareDetails *ShareDetails `json:"share_details,omitempty"`
 }
 
 // ShareDetails provides detailed sharing information for UI
 type ShareDetails struct {
-	TotalShares    int                    `json:"total_shares"`
-	DirectShares   int                    `json:"direct_shares"`
-	GroupShares    int                    `json:"group_shares"`
-	RecentShares   []*RecentShareInfo     `json:"recent_shares,omitempty"`
-	PermissionText string                 `json:"permission_text"`
-	ShareSummary   string                 `json:"share_summary"` // e.g., "Shared with 3 users and 2 groups"
+	TotalShares    int                `json:"total_shares"`
+	DirectShares   int                `json:"direct_shares"`
+	GroupShares    int                `json:"group_shares"`
+	RecentShares   []*RecentShareInfo `json:"recent_shares,omitempty"`
+	PermissionText string             `json:"permission_text"`
+	ShareSummary   string             `json:"share_summary"` // e.g., "Shared with 3 users and 2 groups"
 }
 
 // RecentShareInfo provides information about recent shares for UI

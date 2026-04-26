@@ -84,7 +84,7 @@ func TestCheckSecretPermission(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 1, "test-secret")
 				share := createTestShare(1, 1, 2, "read", false)
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 			},
@@ -100,7 +100,7 @@ func TestCheckSecretPermission(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 1, "test-secret")
 				share := createTestShare(1, 1, 2, "read", false)
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(2)).Return([]*models.Group{}, nil)
@@ -116,7 +116,7 @@ func TestCheckSecretPermission(t *testing.T) {
 				secret := createTestSecret(1, 1, "test-secret")
 				groupShare := createTestShare(2, 1, 10, "write", true)
 				group := createTestGroup(10, "test-group")
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{groupShare}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(3)).Return([]*models.Group{group}, nil)
@@ -132,7 +132,7 @@ func TestCheckSecretPermission(t *testing.T) {
 			requiredPermission: PermissionRead,
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 1, "test-secret")
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(4)).Return([]*models.Group{}, nil)
@@ -314,7 +314,7 @@ func TestCanUserModifySecret(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 2, "test-secret")
 				share := createTestShare(1, 1, 1, "write")
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 			},
@@ -325,7 +325,7 @@ func TestCanUserModifySecret(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 2, "test-secret")
 				share := createTestShare(1, 1, 1, "read")
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
@@ -402,7 +402,7 @@ func TestCanUserShareSecret(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 2, "test-secret")
 				share := createTestShare(1, 1, 1, "write")
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)
@@ -479,7 +479,7 @@ func TestGetEffectivePermission(t *testing.T) {
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 2, "test-secret")
 				share := createTestShare(1, 1, 1, "write")
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{share}, nil)
 			},
@@ -489,7 +489,7 @@ func TestGetEffectivePermission(t *testing.T) {
 			name: "User with no access",
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 2, "test-secret")
-				
+
 				ms.On("GetSecret", mock.Anything, uint(1)).Return(secret, nil)
 				ms.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
 				ms.On("GetUserGroups", mock.Anything, uint(1)).Return([]*models.Group{}, nil)

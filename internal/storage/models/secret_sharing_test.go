@@ -6,10 +6,10 @@ import (
 
 func TestSecretNode_IsOwner(t *testing.T) {
 	tests := []struct {
-		name    string
-		secret  *SecretNode
-		userID  uint
-		want    bool
+		name   string
+		secret *SecretNode
+		userID uint
+		want   bool
 	}{
 		{
 			name: "user is owner",
@@ -17,7 +17,7 @@ func TestSecretNode_IsOwner(t *testing.T) {
 				OwnerID: 1,
 			},
 			userID: 1,
-			want: true,
+			want:   true,
 		},
 		{
 			name: "user is not owner",
@@ -25,7 +25,7 @@ func TestSecretNode_IsOwner(t *testing.T) {
 				OwnerID: 1,
 			},
 			userID: 2,
-			want: false,
+			want:   false,
 		},
 		{
 			name: "zero user ID",
@@ -33,7 +33,7 @@ func TestSecretNode_IsOwner(t *testing.T) {
 				OwnerID: 1,
 			},
 			userID: 0,
-			want: false,
+			want:   false,
 		},
 	}
 
@@ -74,7 +74,7 @@ func TestSecretNode_SetOwner(t *testing.T) {
 				t.Errorf("SecretNode.SetOwner() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			if err == nil && tt.secret.OwnerID != tt.userID {
 				t.Errorf("SecretNode.SetOwner() did not set OwnerID correctly, got = %v, want %v", tt.secret.OwnerID, tt.userID)
 			}

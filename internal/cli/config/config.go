@@ -63,7 +63,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("📋 Current Configuration")
 	fmt.Println("========================")
-	
+
 	switch cfg.Storage.Type {
 	case "remote":
 		fmt.Printf("Storage Type: 🌐 Remote\n")

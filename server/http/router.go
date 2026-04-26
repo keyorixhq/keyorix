@@ -50,7 +50,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret handler: %w", err)
 	}
-	
+
 	shareHandler, err := handlers.NewShareHandler(coreService)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create share handler: %w", err)
@@ -70,7 +70,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	// Health check endpoint
 	r.Get("/health", handlers.HealthCheck)
-	
+
 	// Status page endpoint - serves stylish status dashboard
 	r.Get("/status", func(w http.ResponseWriter, r *http.Request) {
 		webDir := getWebAssetsPath(cfg)
@@ -143,19 +143,19 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Require secrets.delete permission for delete operations
 			r.With(customMiddleware.RequirePermission("secrets.delete")).Delete("/{id}", secretHandler.DeleteSecret)
 		})
-		
+
 		// Shares endpoints
 		r.Route("/shares", func(r chi.Router) {
 			// Require secrets.read permission for GET operations
 			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/", shareHandler.ListShares)
-			
+
 			// Require secrets.write permission for write operations
 			r.With(customMiddleware.RequirePermission("secrets.write")).Put("/{id}", shareHandler.UpdateSharePermission)
-			
+
 			// Require secrets.delete permission for delete operations
 			r.With(customMiddleware.RequirePermission("secrets.write")).Delete("/{id}", shareHandler.RevokeShare)
 		})
-		
+
 		// Shared secrets endpoint
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/shared-secrets", shareHandler.ListSharedSecrets)
 

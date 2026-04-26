@@ -65,7 +65,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var shareRecord *models.ShareRecord
-	
+
 	// Handle group sharing differently
 	if reqBody.IsGroup {
 		// Build group share request
@@ -75,7 +75,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 			Permission: reqBody.Permission,
 			SharedBy:   userCtx.UserID,
 		}
-		
+
 		// Call service for group sharing
 		shareRecord, err = h.coreService.ShareSecretWithGroup(r.Context(), groupReq)
 	} else {
@@ -87,11 +87,11 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 			Permission:  reqBody.Permission,
 			SharedBy:    userCtx.UserID,
 		}
-		
+
 		// Call service for user sharing
 		shareRecord, err = h.coreService.ShareSecret(r.Context(), userReq)
 	}
-	
+
 	// Handle errors
 	if err != nil {
 		log.Printf("Error sharing secret: %v", err)

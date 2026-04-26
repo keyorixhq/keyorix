@@ -89,7 +89,7 @@ func TestSecretServiceCreation(t *testing.T) {
 
 func TestSecretServiceCreateSecret(t *testing.T) {
 	helper := NewTestHelper(t)
-	
+
 	// Create test user
 	helper.CreateTestUser(t, "testuser", 1)
 
@@ -194,7 +194,7 @@ func TestSecretServiceCreateSecret(t *testing.T) {
 
 func TestSecretServiceGetSecret(t *testing.T) {
 	helper := NewTestHelper(t)
-	
+
 	// Create test user
 	helper.CreateTestUser(t, "testuser", 1)
 
@@ -270,7 +270,7 @@ func TestSecretServiceGetSecret(t *testing.T) {
 
 func TestSecretServiceListSecrets(t *testing.T) {
 	helper := NewTestHelper(t)
-	
+
 	// Create test user
 	helper.CreateTestUser(t, "testuser", 1)
 

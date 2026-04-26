@@ -78,7 +78,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *ShareSecretRequ
 
 	var shareRecord *models.ShareRecord
 	var err error
-	
+
 	// Guard against nil coreService (e.g. in tests that pass nil)
 	if s.coreService == nil {
 		return nil, status.Errorf(codes.Internal, "Share service not configured")
@@ -93,7 +93,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *ShareSecretRequ
 			Permission: req.Permission,
 			SharedBy:   user.UserID,
 		}
-		
+
 		// Call service for group sharing
 		shareRecord, err = s.coreService.ShareSecretWithGroup(ctx, groupReq)
 	} else {
@@ -105,11 +105,11 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *ShareSecretRequ
 			Permission:  req.Permission,
 			SharedBy:    user.UserID,
 		}
-		
+
 		// Call service for user sharing
 		shareRecord, err = s.coreService.ShareSecret(ctx, userReq)
 	}
-	
+
 	// Handle errors
 	if err != nil {
 		log.Printf("Error sharing secret via gRPC: %v", err)
@@ -534,8 +534,8 @@ func (s *ShareGRPCService) convertToGRPCSecretResponse(secret *models.SecretNode
 			return id
 		}(),
 		Name:        secret.Name,
-		Namespace:   fmt.Sprintf("%d", secret.NamespaceID), // TODO: Convert ID to name
-		Zone:        fmt.Sprintf("%d", secret.ZoneID),      // TODO: Convert ID to name
+		Namespace:   fmt.Sprintf("%d", secret.NamespaceID),   // TODO: Convert ID to name
+		Zone:        fmt.Sprintf("%d", secret.ZoneID),        // TODO: Convert ID to name
 		Environment: fmt.Sprintf("%d", secret.EnvironmentID), // TODO: Convert ID to name
 		Type:        secret.Type,
 		MaxReads:    maxReads,

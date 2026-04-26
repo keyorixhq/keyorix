@@ -1,3 +1,4 @@
+//go:build sharing
 // +build sharing
 
 package core

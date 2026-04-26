@@ -45,7 +45,7 @@ func TestShareServiceBasicValidation(t *testing.T) {
 	service, err := NewShareService(nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
-	
+
 	// The service will have a nil coreService, which would cause issues in actual use
 	// but the constructor doesn't validate this
 }

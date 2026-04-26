@@ -14,9 +14,9 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/run"
 	"github.com/keyorixhq/keyorix/internal/cli/secret"
 	"github.com/keyorixhq/keyorix/internal/cli/share"
-	"github.com/keyorixhq/keyorix/internal/cli/user"
 	"github.com/keyorixhq/keyorix/internal/cli/status"
 	"github.com/keyorixhq/keyorix/internal/cli/system"
+	"github.com/keyorixhq/keyorix/internal/cli/user"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/spf13/cobra"
 )

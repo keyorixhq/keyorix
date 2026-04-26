@@ -189,7 +189,7 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 			"users.read", "users.write",
 			"roles.read", "roles.assign",
 			"system.read", "audit.read"},
-		"editor": {"secrets.read", "secrets.write", "users.read"},
+		"editor":  {"secrets.read", "secrets.write", "users.read"},
 		"viewer":  {"secrets.read", "users.read"},
 		"auditor": {"audit.read", "audit.admin", "system.read", "users.read", "roles.read"},
 	}

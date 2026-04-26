@@ -27,15 +27,15 @@ type HTTPClient struct {
 	apiKey        string
 	retryAttempts int
 	userAgent     string
-	
+
 	// Circuit breaker state
 	failureCount    int
 	lastFailureTime time.Time
 	circuitOpen     bool
-	
+
 	// Response cache
-	cache     map[string]*cacheEntry
-	cacheMux  sync.RWMutex
+	cache    map[string]*cacheEntry
+	cacheMux sync.RWMutex
 }
 
 // NewHTTPClient creates a new HTTP client for remote API calls
@@ -123,7 +123,7 @@ func (c *HTTPClient) Request(ctx context.Context, method, path string, body inte
 		if err != nil {
 			lastErr = err
 			c.recordFailure()
-			
+
 			// Retry on network errors
 			if isRetryableError(err) {
 				continue
@@ -144,7 +144,7 @@ func (c *HTTPClient) Request(ctx context.Context, method, path string, body inte
 func (c *HTTPClient) recordFailure() {
 	c.failureCount++
 	c.lastFailureTime = time.Now()
-	
+
 	// Open circuit breaker after 5 consecutive failures
 	if c.failureCount >= 5 {
 		c.circuitOpen = true

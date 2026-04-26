@@ -73,7 +73,7 @@ func TestHTTPClient_Get(t *testing.T) {
 
 func TestHTTPClient_Get_WithCaching(t *testing.T) {
 	requestCount := 0
-	
+
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
@@ -145,7 +145,7 @@ func TestHTTPClient_Post(t *testing.T) {
 
 func TestHTTPClient_RetryLogic(t *testing.T) {
 	attemptCount := 0
-	
+
 	// Create a test server that fails first few times
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attemptCount++
@@ -158,7 +158,7 @@ func TestHTTPClient_RetryLogic(t *testing.T) {
 			}
 			return
 		}
-		
+
 		// Success on third attempt
 		response := APIResponse{
 			Success: true,
@@ -210,7 +210,7 @@ func TestHTTPClient_CircuitBreaker(t *testing.T) {
 		assert.Error(t, err)
 	}
 
-	// Circuit should now be open (we can't directly check the private field, 
+	// Circuit should now be open (we can't directly check the private field,
 	// but the next request should fail with circuit breaker error)
 
 	// Next request should fail immediately due to circuit breaker

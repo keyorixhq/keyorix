@@ -30,7 +30,7 @@ type Storage interface {
 	CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error)
 	GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error)
 	IncrementSecretReadCount(ctx context.Context, versionID uint) error
-	
+
 	// Secret Sharing Management
 	CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)
 	GetShareRecord(ctx context.Context, shareID uint) (*models.ShareRecord, error)

@@ -32,7 +32,7 @@ func GetGroupMembers(groupID uint) ([]uint, error) {
 	if groupID == 0 {
 		return nil, errors.New("group ID cannot be zero")
 	}
-	
+
 	// This will be implemented in the storage layer
 	return []uint{}, nil
 }
@@ -43,7 +43,7 @@ func ValidateGroupExists(groupID uint) error {
 	if groupID == 0 {
 		return errors.New("group ID cannot be zero")
 	}
-	
+
 	// This will be implemented in the storage layer
 	return nil
 }
@@ -57,7 +57,7 @@ func CanAccessViaGroup(secretID, userID uint) (bool, string, error) {
 	if userID == 0 {
 		return false, "", errors.New("user ID cannot be zero")
 	}
-	
+
 	// This will be implemented in the storage layer
 	// Returns: hasAccess, permissionLevel, error
 	return false, "", nil
@@ -69,7 +69,7 @@ func GetUserGroups(userID uint) ([]uint, error) {
 	if userID == 0 {
 		return nil, errors.New("user ID cannot be zero")
 	}
-	
+
 	// This will be implemented in the storage layer
 	return []uint{}, nil
 }
@@ -80,7 +80,7 @@ func GetGroupShares(groupID uint) ([]*ShareRecord, error) {
 	if groupID == 0 {
 		return nil, errors.New("group ID cannot be zero")
 	}
-	
+
 	// This will be implemented in the storage layer
 	return []*ShareRecord{}, nil
 }

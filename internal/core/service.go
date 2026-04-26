@@ -29,7 +29,7 @@ type KeyorixCore struct {
 func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 	return &KeyorixCore{
 		storage:    storage,
-		encryption: nil, // No encryption by default
+		encryption: nil,      // No encryption by default
 		now:        time.Now, // Use actual time by default
 	}
 }
@@ -527,7 +527,7 @@ func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte
 		if version.ReadCount >= *secret.MaxReads {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorMaxReadsExceeded", nil))
 		}
-		
+
 		// Increment read count
 		if err := c.storage.IncrementSecretReadCount(ctx, version.ID); err != nil {
 			// Log but don't fail the operation
@@ -539,7 +539,7 @@ func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte
 	if c.encryption != nil {
 		return c.encryption.RetrieveSecret(version.ID)
 	}
-	
+
 	// Return unencrypted value
 	return version.EncryptedValue, nil
 }
@@ -573,7 +573,7 @@ func (c *KeyorixCore) GetSecretValueWithPermissionCheck(ctx context.Context, sec
 		if version.ReadCount >= *secret.MaxReads {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorMaxReadsExceeded", nil))
 		}
-		
+
 		// Increment read count
 		if err := c.storage.IncrementSecretReadCount(ctx, version.ID); err != nil {
 			// Log but don't fail the operation
@@ -585,7 +585,7 @@ func (c *KeyorixCore) GetSecretValueWithPermissionCheck(ctx context.Context, sec
 	if c.encryption != nil {
 		return c.encryption.RetrieveSecret(version.ID)
 	}
-	
+
 	// Return unencrypted value
 	return version.EncryptedValue, nil
 }
@@ -620,7 +620,7 @@ func (c *KeyorixCore) GetSecretValueByVersion(ctx context.Context, secretID uint
 	if c.encryption != nil {
 		return c.encryption.RetrieveSecret(version.ID)
 	}
-	
+
 	// Return unencrypted value
 	return version.EncryptedValue, nil
 }
@@ -1102,6 +1102,7 @@ func (c *KeyorixCore) validateUpdateGroupRequest(req *UpdateGroupRequest) error 
 	}
 	return nil
 }
+
 // Permission Enforcement Methods
 
 // PermissionLevel represents the level of access a user has to a secret
@@ -1157,7 +1158,7 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 	for _, share := range shares {
 		if !share.IsGroup && share.RecipientID == userID {
 			permission := PermissionLevel(share.Permission)
-			
+
 			// Check if the user's permission meets the required level
 			if c.hasRequiredPermission(permission, requiredPermission) {
 				return &PermissionContext{
@@ -1229,7 +1230,7 @@ func (c *KeyorixCore) CheckGroupPermissions(ctx context.Context, secretID, userI
 			for _, group := range userGroups {
 				if group.ID == share.RecipientID {
 					permission := PermissionLevel(share.Permission)
-					
+
 					// Keep track of the highest permission level
 					if c.hasRequiredPermission(permission, highestPermission) {
 						highestPermission = permission
@@ -1350,6 +1351,7 @@ func (c *KeyorixCore) HealthCheck(ctx context.Context) error {
 	// Delegate to storage health check
 	return c.storage.HealthCheck(ctx)
 }
+
 // LoginRequest holds credentials for login.
 type LoginRequest struct {
 	Username string
@@ -1608,14 +1610,14 @@ type StatTrend struct {
 
 // DashboardStats contains summary statistics for the dashboard.
 type DashboardStats struct {
-	TotalSecrets        int64          `json:"totalSecrets"`
-	SharedSecrets       int            `json:"sharedSecrets"`
-	SecretsSharedWithMe int            `json:"secretsSharedWithMe"`
-	TotalSecretsTrend   *StatTrend     `json:"totalSecretsTrend,omitempty"`
-	SharedSecretsTrend  *StatTrend     `json:"sharedSecretsTrend,omitempty"`
-	SharedWithMeTrend   *StatTrend     `json:"sharedWithMeTrend,omitempty"`
+	TotalSecrets        int64            `json:"totalSecrets"`
+	SharedSecrets       int              `json:"sharedSecrets"`
+	SecretsSharedWithMe int              `json:"secretsSharedWithMe"`
+	TotalSecretsTrend   *StatTrend       `json:"totalSecretsTrend,omitempty"`
+	SharedSecretsTrend  *StatTrend       `json:"sharedSecretsTrend,omitempty"`
+	SharedWithMeTrend   *StatTrend       `json:"sharedWithMeTrend,omitempty"`
 	ExpiringSecrets     []ExpiringSecret `json:"expiringSecrets,omitempty"`
-	RecentActivity      []ActivityItem `json:"recentActivity"`
+	RecentActivity      []ActivityItem   `json:"recentActivity"`
 }
 
 // ActivityItem represents a single entry in the activity feed.
@@ -1765,8 +1767,6 @@ func computeTrend(prev, current float64) *StatTrend {
 		IsPositive: change > 0,
 	}
 }
-
-
 
 // GetActivityFeed returns a paginated activity feed for the given user.
 func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username string, page, pageSize int) (*ActivityFeed, error) {

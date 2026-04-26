@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 func TestRemoveSelfFromShare_Success(t *testing.T) {

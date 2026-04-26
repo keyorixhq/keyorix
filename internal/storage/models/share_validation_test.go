@@ -111,7 +111,7 @@ func TestValidateShareRecord(t *testing.T) {
 
 func TestValidateShareUpdate(t *testing.T) {
 	initialTime := time.Now().Add(-time.Hour)
-	
+
 	tests := []struct {
 		name    string
 		share   *ShareRecord

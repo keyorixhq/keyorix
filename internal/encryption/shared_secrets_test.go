@@ -26,16 +26,16 @@ func setupTestDBForSharing(t *testing.T) *gorm.DB {
 func TestShareEncryption_ShareSecret(t *testing.T) {
 	// Setup
 	db := setupTestDBForSharing(t)
-	
+
 	// Create test config with encryption disabled for simplicity
 	cfg := &config.EncryptionConfig{
 		Enabled: false,
 	}
-	
+
 	// Create encryption services
 	secretEncryption := NewSecretEncryption(cfg, ".", db)
 	shareEncryption := NewShareEncryption(secretEncryption)
-	
+
 	// Create test secret node
 	secretNode := &models.SecretNode{
 		ID:            1,
@@ -49,7 +49,7 @@ func TestShareEncryption_ShareSecret(t *testing.T) {
 	}
 	err := db.Create(secretNode).Error
 	require.NoError(t, err)
-	
+
 	// Create test secret version
 	secretVersion := &models.SecretVersion{
 		ID:             1,
@@ -60,7 +60,7 @@ func TestShareEncryption_ShareSecret(t *testing.T) {
 	}
 	err = db.Create(secretVersion).Error
 	require.NoError(t, err)
-	
+
 	// Test sharing the secret
 	err = shareEncryption.ShareSecret(secretVersion, 2)
 	assert.NoError(t, err)
@@ -69,16 +69,16 @@ func TestShareEncryption_ShareSecret(t *testing.T) {
 func TestShareEncryption_RevokeSharedSecret(t *testing.T) {
 	// Setup
 	db := setupTestDBForSharing(t)
-	
+
 	// Create test config with encryption disabled for simplicity
 	cfg := &config.EncryptionConfig{
 		Enabled: false,
 	}
-	
+
 	// Create encryption services
 	secretEncryption := NewSecretEncryption(cfg, ".", db)
 	shareEncryption := NewShareEncryption(secretEncryption)
-	
+
 	// Create test share record
 	shareRecord := &models.ShareRecord{
 		ID:          1,
@@ -92,7 +92,7 @@ func TestShareEncryption_RevokeSharedSecret(t *testing.T) {
 	}
 	err := db.Create(shareRecord).Error
 	require.NoError(t, err)
-	
+
 	// Test revoking the shared secret
 	err = shareEncryption.RevokeSharedSecret(shareRecord.ID)
 	assert.NoError(t, err)
@@ -101,16 +101,16 @@ func TestShareEncryption_RevokeSharedSecret(t *testing.T) {
 func TestShareEncryption_StoreSharedSecret(t *testing.T) {
 	// Setup
 	db := setupTestDBForSharing(t)
-	
+
 	// Create test config with encryption disabled for simplicity
 	cfg := &config.EncryptionConfig{
 		Enabled: false,
 	}
-	
+
 	// Create encryption services
 	secretEncryption := NewSecretEncryption(cfg, ".", db)
 	shareEncryption := NewShareEncryption(secretEncryption)
-	
+
 	// Create test secret node
 	secretNode := &models.SecretNode{
 		ID:            1,
@@ -124,17 +124,17 @@ func TestShareEncryption_StoreSharedSecret(t *testing.T) {
 	}
 	err := db.Create(secretNode).Error
 	require.NoError(t, err)
-	
+
 	// Test storing a shared secret
 	plaintext := []byte("test-shared-value")
 	recipientID := uint(2)
-	
+
 	version, err := shareEncryption.StoreSharedSecret(secretNode, plaintext, recipientID)
 	require.NoError(t, err)
 	assert.NotNil(t, version)
 	assert.Equal(t, secretNode.ID, version.SecretNodeID)
 	assert.Equal(t, 1, version.VersionNumber)
-	
+
 	// Verify the stored value
 	var storedVersion models.SecretVersion
 	err = db.First(&storedVersion, version.ID).Error
@@ -145,20 +145,20 @@ func TestShareEncryption_StoreSharedSecret(t *testing.T) {
 func TestShareEncryption_EncryptForRecipient(t *testing.T) {
 	// Setup
 	db := setupTestDBForSharing(t)
-	
+
 	// Create test config with encryption disabled for simplicity
 	cfg := &config.EncryptionConfig{
 		Enabled: false,
 	}
-	
+
 	// Create encryption services
 	secretEncryption := NewSecretEncryption(cfg, ".", db)
 	shareEncryption := NewShareEncryption(secretEncryption)
-	
+
 	// Test encrypting for a recipient
 	plaintext := []byte("test-value")
 	recipientID := uint(2)
-	
+
 	encryptedData, metadata, err := shareEncryption.EncryptForRecipient(plaintext, recipientID)
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, encryptedData) // Since encryption is disabled
@@ -168,20 +168,20 @@ func TestShareEncryption_EncryptForRecipient(t *testing.T) {
 func TestShareEncryption_DecryptSharedSecret(t *testing.T) {
 	// Setup
 	db := setupTestDBForSharing(t)
-	
+
 	// Create test config with encryption disabled for simplicity
 	cfg := &config.EncryptionConfig{
 		Enabled: false,
 	}
-	
+
 	// Create encryption services
 	secretEncryption := NewSecretEncryption(cfg, ".", db)
 	shareEncryption := NewShareEncryption(secretEncryption)
-	
+
 	// Test decrypting a shared secret
 	encryptedData := []byte("test-encrypted-value")
 	recipientID := uint(2)
-	
+
 	plaintext, err := shareEncryption.DecryptSharedSecret(encryptedData, recipientID)
 	require.NoError(t, err)
 	assert.Equal(t, encryptedData, plaintext) // Since encryption is disabled

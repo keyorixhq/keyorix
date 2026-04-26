@@ -52,18 +52,18 @@ func (s *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Shar
 
 	// Check if share already exists
 	var existingShare models.ShareRecord
-	result := s.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL", 
+	result := s.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
 		share.SecretID, share.RecipientID, share.IsGroup).First(&existingShare)
-	
+
 	if result.Error == nil {
 		// Share already exists, update it
 		existingShare.Permission = share.Permission
 		existingShare.UpdatedAt = time.Now()
-		
+
 		if err := s.db.Save(&existingShare).Error; err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 		}
-		
+
 		return &existingShare, nil
 	} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		// Some other error occurred
@@ -81,14 +81,14 @@ func (s *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Shar
 // GetShareRecord retrieves a share record by ID
 func (s *LocalStorage) GetShareRecord(ctx context.Context, shareID uint) (*models.ShareRecord, error) {
 	var share models.ShareRecord
-	
+
 	if err := s.db.First(&share, shareID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorShareNotFound", nil))
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	return &share, nil
 }
 
@@ -98,21 +98,21 @@ func (s *LocalStorage) UpdateShareRecord(ctx context.Context, share *models.Shar
 	if err := models.ValidateShareUpdate(share); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
-	
+
 	// Check if the share exists
 	existingShare, err := s.GetShareRecord(ctx, share.ID)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Update only allowed fields
 	existingShare.Permission = share.Permission
 	existingShare.UpdatedAt = time.Now()
-	
+
 	if err := s.db.Save(existingShare).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	return existingShare, nil
 }
 
@@ -123,34 +123,34 @@ func (s *LocalStorage) DeleteShareRecord(ctx context.Context, shareID uint) erro
 	if err != nil {
 		return err
 	}
-	
+
 	// Soft delete the share record
 	if err := s.db.Delete(share).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	return nil
 }
 
 // ListSharesBySecret lists all share records for a secret
 func (s *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord
-	
+
 	if err := s.db.Where("secret_id = ? AND deleted_at IS NULL", secretID).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	return shares, nil
 }
 
 // ListSharesByUser lists all share records where the user is the recipient
 func (s *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord
-	
+
 	if err := s.db.Where("recipient_id = ? AND is_group = ? AND deleted_at IS NULL", userID, false).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	return shares, nil
 }
 
@@ -166,18 +166,18 @@ func (s *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*
 // ListSharesByGroup lists all share records where the group is the recipient
 func (s *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord
-	
+
 	if err := s.db.Where("recipient_id = ? AND is_group = ? AND deleted_at IS NULL", groupID, true).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	return shares, nil
 }
 
 // ListSharedSecrets lists all secrets shared with a user
 func (s *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
 	var secrets []*models.SecretNode
-	
+
 	// Get secrets shared directly with the user
 	query := `
 		SELECT s.* FROM secret_nodes s
@@ -187,7 +187,7 @@ func (s *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*m
 	if err := s.db.Raw(query, userID, false).Scan(&secrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	// Get secrets shared with groups the user belongs to
 	groupQuery := `
 		SELECT s.* FROM secret_nodes s
@@ -199,10 +199,10 @@ func (s *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*m
 	if err := s.db.Raw(groupQuery, userID, true).Scan(&groupSharedSecrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	// Combine both sets of secrets
 	secrets = append(secrets, groupSharedSecrets...)
-	
+
 	return secrets, nil
 }
 
@@ -216,25 +216,25 @@ func (s *LocalStorage) CheckSharePermission(ctx context.Context, secretID, userI
 		}
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
-	
+
 	// If user is the owner, they have write permission
 	if secret.OwnerID == userID {
 		return "write", nil
 	}
-	
+
 	// Check direct shares
 	var directShare models.ShareRecord
 	directResult := s.db.Where(
-		"secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL", 
+		"secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
 		secretID, userID, false,
 	).First(&directShare)
-	
+
 	if directResult.Error == nil {
 		return directShare.Permission, nil
 	} else if !errors.Is(directResult.Error, gorm.ErrRecordNotFound) {
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), directResult.Error)
 	}
-	
+
 	// Check group shares
 	var groupShare models.ShareRecord
 	groupQuery := `
@@ -244,13 +244,13 @@ func (s *LocalStorage) CheckSharePermission(ctx context.Context, secretID, userI
 		LIMIT 1
 	`
 	groupResult := s.db.Raw(groupQuery, secretID, userID, true).Scan(&groupShare)
-	
+
 	if groupResult.Error == nil && groupShare.ID != 0 {
 		return groupShare.Permission, nil
 	} else if groupResult.Error != nil && !errors.Is(groupResult.Error, gorm.ErrRecordNotFound) {
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), groupResult.Error)
 	}
-	
+
 	// No permission found
 	return "", fmt.Errorf("%s", i18n.T("ErrorNotAuthorized", nil))
 }

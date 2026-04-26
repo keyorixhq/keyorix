@@ -40,11 +40,11 @@ func main() {
 	fmt.Println("===============================================")
 
 	expectedFiles := []string{
-		"keyorix.yaml",    // Main config file
+		"keyorix.yaml",     // Main config file
 		"keys/kek.key",     // Key Encryption Key
 		"keys/dek.key",     // Data Encryption Key
-		"keyorix.db",      // SQLite database
-		"keyorix.log",     // Application logs
+		"keyorix.db",       // SQLite database
+		"keyorix.log",      // Application logs
 		"certs/server.crt", // TLS certificate (if TLS enabled)
 		"certs/server.key", // TLS private key (if TLS enabled)
 	}

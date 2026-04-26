@@ -79,7 +79,7 @@ func TestRBACCoreServiceIntegration(t *testing.T) {
 	t.Run("remove role from user through storage", func(t *testing.T) {
 		// Create a fresh user for this test to avoid conflicts
 		testUser := helper.CreateTestUser(t, "testuser", 10)
-		
+
 		// First assign a role
 		err := helper.Storage.AssignRole(ctx, testUser.ID, 3) // editor role
 		require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestRBACGroupIntegration(t *testing.T) {
 	helper.AssignUserToGroup(t, user2.ID, adminGroup.ID)
 
 	// Assign roles to groups
-	helper.AssignGroupRole(t, devGroup.ID, 3, nil)  // editor role to developers
+	helper.AssignGroupRole(t, devGroup.ID, 3, nil)   // editor role to developers
 	helper.AssignGroupRole(t, adminGroup.ID, 2, nil) // admin role to admins
 
 	// Test that users inherit permissions from group roles
@@ -151,7 +151,7 @@ func TestRBACNamespaceIntegration(t *testing.T) {
 	user1 := helper.CreateTestUser(t, "user1", 1)
 
 	// Assign role with namespace scope
-	prodNamespaceID := uint(2) // production namespace
+	prodNamespaceID := uint(2)                              // production namespace
 	helper.AssignUserRole(t, user1.ID, 3, &prodNamespaceID) // editor role in production namespace
 
 	t.Run("user has role in specific namespace", func(t *testing.T) {
@@ -295,7 +295,7 @@ func TestRBACPermissionEnforcement(t *testing.T) {
 				hasPermission = helper.HasPermission(t, tt.userID, "secrets.delete")
 			}
 
-			assert.Equal(t, tt.expected, hasPermission, 
+			assert.Equal(t, tt.expected, hasPermission,
 				"Permission check for %s action by %s should be %v", tt.action, tt.username, tt.expected)
 
 			// Test actual core service operation if possible
@@ -407,7 +407,7 @@ func TestRBACErrorHandling(t *testing.T) {
 
 	t.Run("remove role that user doesn't have", func(t *testing.T) {
 		err := helper.Storage.RemoveRole(ctx, testUser.ID, 999) // non-existent role
-		assert.Error(t, err) // This implementation returns error when role not assigned
+		assert.Error(t, err)                                    // This implementation returns error when role not assigned
 		assert.Contains(t, err.Error(), "not assigned")
 	})
 }

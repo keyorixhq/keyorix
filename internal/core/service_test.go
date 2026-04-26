@@ -12,8 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
-
 func TestKeyorixCore_CreateSecret(t *testing.T) {
 	// i18n is initialized once for the package in TestMain (sharing_test.go)
 
@@ -47,11 +45,11 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		}
 
 		expectedVersion := &models.SecretVersion{
-			ID:            1,
-			SecretNodeID:  1,
-			VersionNumber: 1,
+			ID:             1,
+			SecretNodeID:   1,
+			VersionNumber:  1,
 			EncryptedValue: req.Value,
-			CreatedAt:     time.Now(),
+			CreatedAt:      time.Now(),
 		}
 
 		// Mock storage calls

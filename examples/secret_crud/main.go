@@ -56,7 +56,7 @@ func main() {
 	namespaceID := uint(1)
 	zoneID := uint(1)
 	environmentID := uint(1)
-	
+
 	secret, err := service.CreateSecret(ctx, createReq)
 	if err != nil {
 		log.Printf("Failed to create secret (might already exist): %v", err)
@@ -72,7 +72,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to list secrets: %v", err)
 		}
-		
+
 		// Find the secret by name
 		for _, s := range secrets {
 			if s.Name == "example-api-key" {
@@ -80,7 +80,7 @@ func main() {
 				break
 			}
 		}
-		
+
 		if secret == nil {
 			log.Fatalf("Failed to find or create secret")
 		}

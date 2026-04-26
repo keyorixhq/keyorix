@@ -220,10 +220,10 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *ListSecretsReq
 	}
 
 	// Convert to service request
-	namespaceID := uint(1) // TODO: Convert namespace string to ID
-	zoneID := uint(1)      // TODO: Convert zone string to ID
+	namespaceID := uint(1)   // TODO: Convert namespace string to ID
+	zoneID := uint(1)        // TODO: Convert zone string to ID
 	environmentID := uint(1) // TODO: Convert environment string to ID
-	
+
 	filter := &storage.SecretFilter{
 		NamespaceID:   &namespaceID,
 		ZoneID:        &zoneID,
@@ -327,8 +327,8 @@ func (s *SecretGRPCService) convertToGRPCSecretResponse(secret *models.SecretNod
 			return id
 		}(),
 		Name:        secret.Name,
-		Namespace:   fmt.Sprintf("%d", secret.NamespaceID), // TODO: Convert ID to name
-		Zone:        fmt.Sprintf("%d", secret.ZoneID),      // TODO: Convert ID to name
+		Namespace:   fmt.Sprintf("%d", secret.NamespaceID),   // TODO: Convert ID to name
+		Zone:        fmt.Sprintf("%d", secret.ZoneID),        // TODO: Convert ID to name
 		Environment: fmt.Sprintf("%d", secret.EnvironmentID), // TODO: Convert ID to name
 		Type:        secret.Type,
 		MaxReads:    maxReads,

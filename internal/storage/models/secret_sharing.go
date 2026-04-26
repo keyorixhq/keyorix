@@ -18,7 +18,7 @@ func (s *SecretNode) CanAccess(userID uint) bool {
 	if s.IsOwner(userID) {
 		return true
 	}
-	
+
 	// For non-owners, we'll need to check share records
 	// This will be implemented in the storage layer
 	return false
@@ -31,7 +31,7 @@ func (s *SecretNode) CanWrite(userID uint) bool {
 	if s.IsOwner(userID) {
 		return true
 	}
-	
+
 	// For non-owners, we'll need to check share records with write permission
 	// This will be implemented in the storage layer
 	return false
@@ -60,7 +60,7 @@ type SharePermissionLevel string
 const (
 	// SharePermissionRead allows reading the secret
 	SharePermissionRead SharePermissionLevel = "read"
-	
+
 	// SharePermissionWrite allows reading and writing to the secret
 	SharePermissionWrite SharePermissionLevel = "write"
 )

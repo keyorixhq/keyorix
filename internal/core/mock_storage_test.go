@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -411,6 +412,32 @@ func (m *MockStorage) CreateSecretAccessLog(ctx context.Context, log *models.Sec
 	return args.Error(0)
 }
 
+func (m *MockStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error) {
+	args := m.Called(ctx, secretID, since)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.SecretAccessLog), args.Error(1)
+}
+
+func (m *MockStorage) CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error {
+	args := m.Called(ctx, alert)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListAnomalyAlerts(ctx context.Context, unacknowledgedOnly bool) ([]models.AnomalyAlert, error) {
+	args := m.Called(ctx, unacknowledgedOnly)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.AnomalyAlert), args.Error(1)
+}
+
+func (m *MockStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 func (m *MockStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
 	args := m.Called(ctx, filter)
 	if args.Get(0) == nil {
@@ -491,4 +518,17 @@ func (m *MockStorage) GetStats(ctx context.Context) (*storage.StorageStats, erro
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*storage.StorageStats), args.Error(1)
+}
+
+func (m *MockStorage) SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error {
+	args := m.Called(ctx, snapshot)
+	return args.Error(0)
+}
+
+func (m *MockStorage) GetPreviousStatsSnapshot(ctx context.Context, userID uint) (*models.StatsSnapshot, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.StatsSnapshot), args.Error(1)
 }

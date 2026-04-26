@@ -92,7 +92,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("secret not found: %w", err)
 		}
-		
+
 		secretID = secret.ID
 		secretName = secret.Name
 	}

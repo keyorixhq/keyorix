@@ -21,7 +21,7 @@ func TestRBACCommandsExist(t *testing.T) {
 
 	expectedCommands := []string{
 		"assign-role",
-		"remove-role", 
+		"remove-role",
 		"list-roles",
 		"list-user-roles",
 		"list-permissions",
@@ -43,7 +43,7 @@ func TestAssignRoleCommandStructure(t *testing.T) {
 	// Test that required flags exist
 	userFlag := assignRoleCmd.Flags().Lookup("user")
 	assert.NotNil(t, userFlag, "user flag should exist")
-	
+
 	roleFlag := assignRoleCmd.Flags().Lookup("role")
 	assert.NotNil(t, roleFlag, "role flag should exist")
 }

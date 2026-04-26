@@ -228,4 +228,3 @@ func writeVault(w io.Writer, secrets []exportedSecret, envName string) error {
 	defer enc.Close()
 	return enc.Encode(doc)
 }
-

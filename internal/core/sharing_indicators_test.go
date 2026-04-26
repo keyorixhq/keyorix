@@ -5,19 +5,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 func setupTestCore(t *testing.T) *KeyorixCore {
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
 	require.NoError(t, err)
-	
+
 	mockStorage := new(MockStorage)
 	return &KeyorixCore{
 		storage: mockStorage,
@@ -34,13 +34,13 @@ func TestBuildSharingIndicators(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		isOwner        bool
-		userPermission string
-		shares         []*models.ShareRecord
-		expectedIcon   string
-		expectedBadge  string
-		expectedColor  string
+		name             string
+		isOwner          bool
+		userPermission   string
+		shares           []*models.ShareRecord
+		expectedIcon     string
+		expectedBadge    string
+		expectedColor    string
 		expectedCanWrite bool
 		expectedCanShare bool
 	}{
@@ -102,7 +102,7 @@ func TestBuildSharingIndicators(t *testing.T) {
 					Username: "alice",
 				}, nil)
 			}
-			
+
 			indicators := core.buildSharingIndicators(secret, tt.shares, tt.isOwner, tt.userPermission)
 
 			assert.Equal(t, tt.expectedIcon, indicators.Icon)
@@ -121,7 +121,7 @@ func TestBuildShareDetails(t *testing.T) {
 
 	// Mock user and group lookups
 	mockStorage := core.storage.(*MockStorage)
-	
+
 	// Mock user lookup
 	mockStorage.On("GetUser", mock.Anything, uint(2)).Return(&models.User{
 		ID:       2,
@@ -154,16 +154,16 @@ func TestBuildShareDetails(t *testing.T) {
 	assert.Equal(t, 1, details.GroupShares)
 	assert.Equal(t, "Shared with 1 users and 1 groups", details.ShareSummary)
 	assert.Equal(t, "1 with read access, 1 with write access", details.PermissionText)
-	
+
 	// Check recent shares
 	assert.Len(t, details.RecentShares, 2)
-	
+
 	// Check that user name was resolved
 	userShare := details.RecentShares[0]
 	assert.Equal(t, "alice", userShare.RecipientName)
 	assert.Equal(t, "user", userShare.RecipientType)
 	assert.True(t, userShare.IsRecent)
-	
+
 	// Check that group name shows as fallback (since group functionality is disabled)
 	groupShare := details.RecentShares[1]
 	assert.Equal(t, "Group 3", groupShare.RecipientName)
@@ -178,7 +178,7 @@ func TestListSecretsWithSharingInfo(t *testing.T) {
 	mockStorage := core.storage.(*MockStorage)
 
 	userID := uint(1)
-	
+
 	// Mock owned secrets
 	ownedSecret := &models.SecretNode{
 		ID:      1,
@@ -186,7 +186,7 @@ func TestListSecretsWithSharingInfo(t *testing.T) {
 		OwnerID: userID,
 		Type:    "password",
 	}
-	
+
 	// Mock shared secret
 	sharedSecret := &models.SecretNode{
 		ID:      2,
@@ -204,7 +204,7 @@ func TestListSecretsWithSharingInfo(t *testing.T) {
 	mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{
 		{ID: 1, SecretID: 1, RecipientID: 3, Permission: "read", CreatedAt: time.Now()},
 	}, nil)
-	
+
 	// Mock user lookups for various user IDs
 	mockStorage.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, Username: "owner"}, nil)
 	mockStorage.On("GetUser", mock.Anything, uint(2)).Return(&models.User{ID: 2, Username: "bob"}, nil)

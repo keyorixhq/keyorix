@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-
 // masterPassphrase reads the master passphrase from KEYORIX_MASTER_PASSWORD.
 // Returns an error if the variable is unset or empty.
 func masterPassphrase() (string, error) {

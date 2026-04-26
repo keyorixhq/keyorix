@@ -12,10 +12,10 @@ import (
 
 // NetworkStatus represents the current network connectivity status
 type NetworkStatus struct {
-	IsOnline      bool
-	LastChecked   time.Time
+	IsOnline        bool
+	LastChecked     time.Time
 	RemoteReachable bool
-	Error         error
+	Error           error
 }
 
 // CheckConnectivity checks if the system has network connectivity
@@ -26,7 +26,7 @@ func CheckConnectivity(ctx context.Context) *NetworkStatus {
 
 	// First, check basic internet connectivity
 	status.IsOnline = checkInternetConnectivity(ctx)
-	
+
 	if !status.IsOnline {
 		status.Error = fmt.Errorf("no internet connectivity")
 		return status
@@ -34,7 +34,7 @@ func CheckConnectivity(ctx context.Context) *NetworkStatus {
 
 	// If online, check if remote server is reachable
 	status.RemoteReachable = checkRemoteServerReachability(ctx)
-	
+
 	return status
 }
 
@@ -80,7 +80,7 @@ func IsOfflineMode() bool {
 	defer cancel()
 
 	status := CheckConnectivity(ctx)
-	
+
 	// We're in offline mode if we have no internet or remote server is unreachable
 	return !status.IsOnline || !status.RemoteReachable
 }
@@ -96,14 +96,14 @@ func HandleOfflineMode() error {
 	fmt.Println("2. Switch to local mode: keyorix config use-local")
 	fmt.Println("3. Wait for connectivity to be restored")
 	fmt.Println()
-	
+
 	return fmt.Errorf("offline mode - remote server not accessible")
 }
 
 // GracefulDegradation attempts to switch to local storage when remote is unavailable
 func GracefulDegradation() error {
 	fmt.Println("🔄 Attempting graceful degradation to local storage...")
-	
+
 	// Load current configuration
 	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
@@ -123,6 +123,6 @@ func GracefulDegradation() error {
 
 	fmt.Println("✅ Temporarily switched to local storage")
 	fmt.Println("💡 Use 'keyorix config set-remote' to switch back when connectivity is restored")
-	
+
 	return nil
 }
