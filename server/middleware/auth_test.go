@@ -85,7 +85,7 @@ func TestAuthentication(t *testing.T) {
 			})
 
 			// Wrap with authentication middleware
-			authMiddleware := Authentication()
+			authMiddleware := Authentication(nil)
 			handler := authMiddleware(testHandler)
 
 			// Create request
@@ -446,7 +446,7 @@ func TestValidateToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			userCtx, err := validateToken(tt.token)
+			userCtx, err := validateToken(context.Background(), nil, tt.token)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -467,7 +467,7 @@ func TestValidateToken(t *testing.T) {
 // Test middleware chaining
 func TestMiddlewareChaining(t *testing.T) {
 	// Chain authentication and permission middleware
-	authMiddleware := Authentication()
+	authMiddleware := Authentication(nil)
 	permissionMiddleware := RequirePermission("secrets.read")
 
 	t.Run("valid admin token", func(t *testing.T) {
@@ -528,7 +528,7 @@ func BenchmarkAuthentication(b *testing.B) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authMiddleware := Authentication()
+	authMiddleware := Authentication(nil)
 	handler := authMiddleware(testHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -574,7 +574,7 @@ func TestAuthenticationConcurrency(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authMiddleware := Authentication()
+	authMiddleware := Authentication(nil)
 	handler := authMiddleware(testHandler)
 
 	const numGoroutines = 100
