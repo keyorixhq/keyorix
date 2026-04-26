@@ -493,3 +493,39 @@ func (h *SecretHandler) sendError(w http.ResponseWriter, errorType, message stri
 		log.Printf("Error encoding JSON error response: %v", err)
 	}
 }
+
+// RotateSecret handles POST /api/v1/secrets/{id}/rotate
+func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		h.sendError(w, "BadRequest", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	var reqBody struct {
+		NewValue string `json:"new_value" validate:"required"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	if reqBody.NewValue == "" {
+		h.sendError(w, "ValidationError", "new_value is required", http.StatusBadRequest, nil)
+		return
+	}
+	secret, err := h.coreService.RotateSecret(r.Context(), uint(id), []byte(reqBody.NewValue), userCtx.Username)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+		} else {
+			h.sendError(w, "InternalError", "Failed to rotate secret", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+	h.sendSuccess(w, secret, "Secret rotated successfully")
+}

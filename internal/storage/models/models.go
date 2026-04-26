@@ -98,6 +98,7 @@ type SecretNode struct {
 	IsShared      bool   `gorm:"default:false"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	LastRotatedAt *time.Time
 }
 
 type SecretVersion struct {

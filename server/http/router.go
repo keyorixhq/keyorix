@@ -137,6 +137,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Require secrets.write permission for write operations
 			r.With(customMiddleware.RequirePermission("secrets.write")).Post("/", secretHandler.CreateSecret)
 			r.With(customMiddleware.RequirePermission("secrets.write")).Put("/{id}", secretHandler.UpdateSecret)
+			r.With(customMiddleware.RequirePermission("secrets.write")).Post("/{id}/rotate", secretHandler.RotateSecret)
 			r.With(customMiddleware.RequirePermission("secrets.write")).Post("/{id}/share", shareHandler.ShareSecret)
 
 			// Require secrets.delete permission for delete operations

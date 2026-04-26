@@ -120,6 +120,12 @@ func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage
 	return remote.NewRemoteStorage(remoteConfig)
 }
 
+func columnExists(db *gorm.DB, table, column string) bool {
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", table, column).Scan(&count)
+	return count > 0
+}
+
 // migrateDatabase performs database migrations
 func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	// Always run additive migrations for new tables (safe on existing DBs)
@@ -142,6 +148,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		// Create indexes
 		db.Exec("CREATE INDEX IF NOT EXISTS idx_stats_snapshots_user_id ON stats_snapshots(user_id)")
 		db.Exec("CREATE INDEX IF NOT EXISTS idx_stats_snapshots_snapshot_date ON stats_snapshots(snapshot_date)")
+	}
+
+	// Add LastRotatedAt to secret_nodes if not present
+	if !columnExists(db, "secret_nodes", "last_rotated_at") {
+		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
 	}
 
 	// Check if namespaces table exists — if so, skip full migration (already initialized)

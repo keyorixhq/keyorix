@@ -42,6 +42,26 @@ func NewKeyorixCoreWithEncryption(storage storage.Storage, encryption *encryptio
 	}
 }
 
+// Storage returns the underlying storage interface (used by ancillary services such as AnomalyDetector).
+func (c *KeyorixCore) Storage() storage.Storage {
+	return c.storage
+}
+
+// ListActiveSecrets returns all secrets for anomaly detection. Returns empty slice on error.
+func (c *KeyorixCore) ListActiveSecrets(ctx context.Context) []models.SecretNode {
+	secrets, _, err := c.ListSecrets(ctx, nil)
+	if err != nil || secrets == nil {
+		return nil
+	}
+	result := make([]models.SecretNode, 0, len(secrets))
+	for _, s := range secrets {
+		if s != nil {
+			result = append(result, *s)
+		}
+	}
+	return result
+}
+
 // Secret Management Operations
 
 // CreateSecretRequest represents a request to create a new secret
@@ -239,6 +259,47 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
+	return updatedSecret, nil
+}
+
+// RotateSecret creates a new version of the secret with a new value and updates LastRotatedAt.
+func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte, rotatedBy string) (*models.SecretNode, error) {
+	secret, err := c.storage.GetSecret(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("secret not found: %w", err)
+	}
+	// Store new version
+	if c.encryption != nil {
+		_, err = c.encryption.StoreSecret(secret, newValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to store rotated secret: %w", err)
+		}
+	} else {
+		latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
+		nextVersionNumber := 1
+		if err == nil && latestVersion != nil {
+			nextVersionNumber = latestVersion.VersionNumber + 1
+		}
+		newVersion := &models.SecretVersion{
+			SecretNodeID:       secret.ID,
+			VersionNumber:      nextVersionNumber,
+			EncryptedValue:     newValue,
+			EncryptionMetadata: []byte("{}"),
+			ReadCount:          0,
+			CreatedAt:          time.Now(),
+		}
+		if _, err = c.storage.CreateSecretVersion(ctx, newVersion); err != nil {
+			return nil, fmt.Errorf("failed to store rotated secret: %w", err)
+		}
+	}
+	// Update LastRotatedAt
+	now := time.Now()
+	secret.LastRotatedAt = &now
+	secret.UpdatedAt = now
+	updatedSecret, err := c.storage.UpdateSecret(ctx, secret)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update rotation timestamp: %w", err)
+	}
 	return updatedSecret, nil
 }
 
