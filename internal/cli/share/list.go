@@ -27,7 +27,7 @@ var listCmd = &cobra.Command{
 
 func init() {
 	listCmd.Flags().UintVar(&listSecretID, "secret-id", 0, "Secret ID (required)")
-	listCmd.MarkFlagRequired("secret-id")
+	listCmd.MarkFlagRequired("secret-id") // #nosec G104
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -78,7 +78,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			share.CreatedAt.Format("2006-01-02 15:04:05"),
 		)
 	}
-	w.Flush()
+	w.Flush() // #nosec G104
 
 	return nil
 }

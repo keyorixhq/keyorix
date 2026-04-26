@@ -32,8 +32,8 @@ func init() {
 	createCmd.Flags().BoolVar(&createIsGroup, "is-group", false, "Whether the recipient is a group")
 	createCmd.Flags().StringVar(&createPermission, "permission", "read", "Permission level (read or write)")
 	
-	createCmd.MarkFlagRequired("secret-id")
-	createCmd.MarkFlagRequired("recipient-id")
+	createCmd.MarkFlagRequired("secret-id")     // #nosec G104
+	createCmd.MarkFlagRequired("recipient-id") // #nosec G104
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {

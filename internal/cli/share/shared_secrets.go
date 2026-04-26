@@ -27,7 +27,7 @@ var sharedSecretsCmd = &cobra.Command{
 
 func init() {
 	sharedSecretsCmd.Flags().UintVar(&sharedSecretsUserID, "user-id", 0, "User ID (required)")
-	sharedSecretsCmd.MarkFlagRequired("user-id")
+	sharedSecretsCmd.MarkFlagRequired("user-id") // #nosec G104
 }
 
 func runSharedSecrets(cmd *cobra.Command, args []string) error {
@@ -79,7 +79,7 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 			secret.CreatedAt.Format("2006-01-02 15:04:05"),
 		)
 	}
-	w.Flush()
+	w.Flush() // #nosec G104
 
 	return nil
 }

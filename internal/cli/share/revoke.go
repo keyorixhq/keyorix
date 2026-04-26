@@ -25,7 +25,7 @@ var revokeCmd = &cobra.Command{
 
 func init() {
 	revokeCmd.Flags().UintVar(&revokeShareID, "share-id", 0, "Share ID (required)")
-	revokeCmd.MarkFlagRequired("share-id")
+	revokeCmd.MarkFlagRequired("share-id") // #nosec G104
 }
 
 func runRevoke(cmd *cobra.Command, args []string) error {

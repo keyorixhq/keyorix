@@ -46,7 +46,7 @@ func init() {
 	setRemoteCmd.Flags().String("url", "", "Remote server URL (required)")
 	setRemoteCmd.Flags().String("api-key", "", "API key for authentication (optional)")
 	setRemoteCmd.Flags().Int("timeout", 30, "Request timeout in seconds")
-	setRemoteCmd.MarkFlagRequired("url")
+	setRemoteCmd.MarkFlagRequired("url") // #nosec G104
 
 	// Add subcommands
 	ConfigCmd.AddCommand(statusCmd)

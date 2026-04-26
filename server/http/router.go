@@ -90,7 +90,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// Test route
 	r.Get("/test-route", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("Test route working"))
+		w.Write([]byte("Test route working")) // #nosec G104
 	})
 
 	// Spanish status page endpoint

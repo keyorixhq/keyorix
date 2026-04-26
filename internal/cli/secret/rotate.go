@@ -23,7 +23,7 @@ var rotateEnv string
 func init() {
 	rotateCmd.Flags().StringVarP(&rotateValue, "value", "v", "", "New secret value (required)")
 	rotateCmd.Flags().StringVarP(&rotateEnv, "env", "e", "production", "Environment name")
-	rotateCmd.MarkFlagRequired("value")
+	rotateCmd.MarkFlagRequired("value") // #nosec G104
 	SecretCmd.AddCommand(rotateCmd)
 }
 

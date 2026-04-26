@@ -72,7 +72,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 			server = cfg.Storage.Remote.BaseURL
 		} else {
 			fmt.Print("Enter server URL: ")
-			fmt.Scanln(&server)
+			fmt.Scanln(&server) // #nosec G104
 		}
 	}
 

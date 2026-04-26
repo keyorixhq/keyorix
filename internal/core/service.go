@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -134,7 +135,9 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		_, err = c.encryption.StoreSecret(createdSecret, req.Value)
 		if err != nil {
 			// If version creation fails, we should clean up the secret
-			c.storage.DeleteSecret(ctx, createdSecret.ID)
+			if delErr := c.storage.DeleteSecret(ctx, createdSecret.ID); delErr != nil {
+				log.Printf("warning: failed to cleanup orphaned secret %d after failed version creation: %v", createdSecret.ID, delErr)
+			}
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 	} else {
@@ -151,7 +154,9 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		_, err = c.storage.CreateSecretVersion(ctx, version)
 		if err != nil {
 			// If version creation fails, we should clean up the secret
-			c.storage.DeleteSecret(ctx, createdSecret.ID)
+			if delErr := c.storage.DeleteSecret(ctx, createdSecret.ID); delErr != nil {
+				log.Printf("warning: failed to cleanup orphaned secret %d after failed version creation: %v", createdSecret.ID, delErr)
+			}
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 	}

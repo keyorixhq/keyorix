@@ -28,8 +28,8 @@ func init() {
 	updateCmd.Flags().UintVar(&updateShareID, "share-id", 0, "Share ID (required)")
 	updateCmd.Flags().StringVar(&updatePermission, "permission", "", "Permission level (read or write) (required)")
 	
-	updateCmd.MarkFlagRequired("share-id")
-	updateCmd.MarkFlagRequired("permission")
+	updateCmd.MarkFlagRequired("share-id")   // #nosec G104
+	updateCmd.MarkFlagRequired("permission") // #nosec G104
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
