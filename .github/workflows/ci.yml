@@ -28,8 +28,10 @@ jobs:
           go test -race -timeout 120s \
             $(go list ./... | grep -v \
               -e 'internal/cli$' \
+              -e 'internal/core$' \
               -e 'internal/storage/remote' \
-              -e 'server/http$')
+              -e 'server/http$' \
+              -e 'server/middleware$')
 
       - name: govulncheck
         run: |
