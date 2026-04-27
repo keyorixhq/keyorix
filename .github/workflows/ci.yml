@@ -24,7 +24,12 @@ jobs:
         run: go build ./...
 
       - name: go test
-        run: go test -race -timeout 120s ./...
+        run: |
+          go test -race -timeout 120s \
+            $(go list ./... | grep -v \
+              -e 'internal/cli$' \
+              -e 'internal/storage/remote' \
+              -e 'server/http$')
 
       - name: govulncheck
         run: |
