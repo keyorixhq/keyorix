@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -21,11 +22,17 @@ var scanCmd = &cobra.Command{
 var scanImport bool
 var scanReport string
 var scanEnvID uint
+var scanSeverity string
+var scanStaged bool
+var scanCommit string
 
 func init() {
 	scanCmd.Flags().BoolVar(&scanImport, "import", false, "Import found secrets into Keyorix after scanning")
 	scanCmd.Flags().StringVar(&scanReport, "report", "", "Save scan report to file (JSON format)")
 	scanCmd.Flags().UintVar(&scanEnvID, "env-id", 1, "Environment ID for import (1=production, 2=staging, 3=development)")
+	scanCmd.Flags().StringVar(&scanSeverity, "severity", "", "Filter by severity: low, medium, high")
+	scanCmd.Flags().BoolVar(&scanStaged, "staged", false, "Scan only git staged files")
+	scanCmd.Flags().StringVar(&scanCommit, "commit", "", "Scan files changed in a specific commit (e.g. HEAD~1)")
 	SecretCmd.AddCommand(scanCmd)
 }
 
@@ -102,6 +109,35 @@ func runScan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid path: %w", err)
 	}
 
+	// If --staged, get list of staged files from git
+	var stagedFiles map[string]bool
+	if scanStaged {
+		out, err := exec.Command("git", "-C", absPath, "diff", "--cached", "--name-only").Output() // #nosec G204
+		if err == nil && len(out) > 0 {
+			stagedFiles = map[string]bool{}
+			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if f != "" {
+					stagedFiles[filepath.Join(absPath, f)] = true
+				}
+			}
+			fmt.Printf("Scanning %d staged files...\n\n", len(stagedFiles))
+		}
+	}
+
+	// If --commit, get list of files changed in that commit
+	if scanCommit != "" {
+		out, err := exec.Command("git", "-C", absPath, "diff-tree", "--no-commit-id", "-r", "--name-only", scanCommit).Output() // #nosec G204
+		if err == nil && len(out) > 0 {
+			stagedFiles = map[string]bool{}
+			for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				if f != "" {
+					stagedFiles[filepath.Join(absPath, f)] = true
+				}
+			}
+			fmt.Printf("Scanning %d files from commit %s...\n\n", len(stagedFiles), scanCommit)
+		}
+	}
+
 	fmt.Printf("🔍 Scanning %s for secrets...\n\n", absPath)
 
 	report := &ScanReport{ScannedPath: absPath}
@@ -115,6 +151,11 @@ func runScan(cmd *cobra.Command, args []string) error {
 			if skipDirs[info.Name()] {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+
+		// If scanning staged/commit files only, skip files not in the list
+		if stagedFiles != nil && !stagedFiles[path] {
 			return nil
 		}
 		// Skip large files (> 1MB)
@@ -164,8 +205,39 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 	report.TotalFound = len(report.Findings)
 
+	// Filter by severity if specified
+	if scanSeverity != "" {
+		filtered := []ScanFinding{}
+		for _, f := range report.Findings {
+			if f.RiskLevel == scanSeverity {
+				filtered = append(filtered, f)
+			}
+		}
+		report.Findings = filtered
+		report.TotalFound = len(filtered)
+		report.HighRisk = 0
+		report.MediumRisk = 0
+		report.LowRisk = 0
+		for _, f := range filtered {
+			switch f.RiskLevel {
+			case "high":
+				report.HighRisk++
+			case "medium":
+				report.MediumRisk++
+			case "low":
+				report.LowRisk++
+			}
+		}
+	}
+
 	// Print results
 	printScanReport(report)
+
+	if report.TotalFound > 0 {
+		fmt.Println("\nNext:")
+		fmt.Println("  keyorix secret explain <key-name>   Explain risk and how to fix")
+		fmt.Println("  keyorix secret fix <key-name>        Fix the issue automatically")
+	}
 
 	// Save report if requested
 	if scanReport != "" {
