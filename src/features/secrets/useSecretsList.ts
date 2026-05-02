@@ -8,7 +8,7 @@ import { useUIStore } from '../../store/uiStore';
 const ITEMS_PER_PAGE = 20;
 
 export const useSecretsList = () => {
-    const { openModal, closeModal } = useUIStore();
+    const { openModal, closeModal, activeModal, modalData } = useUIStore();
     const queryClient = useQueryClient();
 
     const [filters, setFilters] = useState<SecretFilters>({
@@ -142,6 +142,16 @@ export const useSecretsList = () => {
         onSuccess: () => { closeModal(); refetch(); },
     });
 
+    const rotateMutation = useMutation({
+        mutationFn: ({ id, newValue }: { id: number; newValue: string }) => apiService.rotateSecret(id, newValue),
+        onSuccess: () => { refetch(); },
+    });
+
+    const bulkDeleteMutation = useMutation({
+        mutationFn: (ids: number[]) => Promise.all(ids.map(id => apiService.secrets.delete(id))),
+        onSuccess: () => { closeModal(); clearSelectedItems(); setBulkActionMode(false); refetch(); },
+    });
+
     return {
         secrets, data, isLoading, error, refetch, isFetching,
         filters, setFilters, pagination, setPagination, sortBy, setSortBy,
@@ -151,7 +161,7 @@ export const useSecretsList = () => {
         environments,
         handleFilterChange, handleAddTag, handleRemoveTag, handleTagInputKeyPress,
         handlePageChange, handlePageSizeChange, handleClearFilters, hasActiveFilters,
-        createMutation, editMutation, deleteMutation,
-        openModal, closeModal,
+        createMutation, editMutation, deleteMutation, rotateMutation, bulkDeleteMutation,
+        openModal, closeModal, activeModal, modalData,
     };
 };

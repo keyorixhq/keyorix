@@ -55,8 +55,8 @@ export const SecretsListPage: React.FC = () => {
     const handleRotate = (secret: any) => {
         const newValue = window.prompt(`Enter new value for "${secret.name}":`);
         if (!newValue) return;
-        import('../../services/api').then(({ apiService }) => {
-            apiService.rotateSecret(secret.id, newValue).then(() => list.refetch()).catch(() => window.alert('Failed to rotate secret'));
+        list.rotateMutation.mutate({ id: secret.id, newValue }, {
+            onError: () => window.alert('Failed to rotate secret'),
         });
     };
 
@@ -306,6 +306,20 @@ export const SecretsListPage: React.FC = () => {
             {list.activeModal === 'share-secret' && list.modalData?.secret && (
                 <ShareSecretModal secret={list.modalData.secret} isOpen onClose={list.closeModal} onSuccess={() => { list.closeModal(); list.refetch(); }} />
             )}
+
+            <Modal isOpen={list.activeModal === 'bulk-delete-secrets'} onClose={list.closeModal} title="Delete Selected Secrets" size="sm">
+                <div className="space-y-4">
+                    <p className="text-sm text-gray-700 dark:text-gray-300">
+                        Are you sure you want to delete <span className="font-semibold">{list.modalData?.secretIds?.length}</span> secret(s)? They will be soft-deleted and can be restored within 30 days.
+                    </p>
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <Button variant="outline" onClick={list.closeModal} disabled={list.bulkDeleteMutation.isLoading}>Cancel</Button>
+                        <Button variant="danger" onClick={() => list.modalData?.secretIds && list.bulkDeleteMutation.mutate(list.modalData.secretIds)} disabled={list.bulkDeleteMutation.isLoading}>
+                            {list.bulkDeleteMutation.isLoading ? 'Deleting…' : `Delete ${list.modalData?.secretIds?.length ?? ''} Secret(s)`}
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };
