@@ -175,3 +175,6 @@ temp/
 *.sarif
 *.report.json
 
+# local MCP config (contains credentials)
+.claude/mcp.json
+
