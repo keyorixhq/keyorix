@@ -127,13 +127,33 @@ export const useAuthStore = create<AuthStore>()(
 
             checkAuth: async () => {
                 const state = get();
-                // If already authenticated, nothing to do
-                if (state.isAuthenticated && state.token) {
-                    set({ isLoading: false });
+                if (!state.token) {
+                    set({ isLoading: false, isAuthenticated: false, user: null });
                     return;
                 }
-                // Not authenticated, go straight to login
-                set({ isLoading: false, isAuthenticated: false, user: null, token: null });
+                set({ isLoading: true });
+                try {
+                    const profile = await authService.getProfile();
+                    const user: User = {
+                        id: profile.id,
+                        username: profile.username,
+                        email: profile.email,
+                        role: profile.role || 'user',
+                        permissions: profile.permissions || [],
+                        preferences: profile.preferences || {
+                            language: 'en',
+                            timezone: 'UTC',
+                            theme: 'system',
+                            notifications: { email: true, browser: true, sharing: true, security: true },
+                        },
+                        lastLogin: profile.lastLogin || new Date().toISOString(),
+                    };
+                    set({ user, isAuthenticated: true, isLoading: false, error: null });
+                } catch {
+                    set({ user: null, token: null, isAuthenticated: false, isLoading: false });
+                    clearPersistedAuthData();
+                    window.location.href = '/login';
+                }
             },
 
             clearError: () => {
