@@ -197,15 +197,8 @@ export const DashboardPage: React.FC = () => {
     };
 
     if (statsError) {
-        return (
-            <div className="p-6">
-                <Alert
-                    type="error"
-                    title="Failed to load dashboard"
-                    message="There was an error loading the dashboard data. Please try again."
-                />
-            </div>
-        );
+        // Don't block the whole page — show stats as zeroes and let the user proceed
+        console.warn('Dashboard stats failed to load:', statsError);
     }
 
     return (
@@ -236,6 +229,15 @@ export const DashboardPage: React.FC = () => {
                     </Button>
                 </div>
             </div>
+
+            {/* Stats error banner */}
+            {statsError && (
+                <Alert
+                    type="warning"
+                    title="Dashboard stats unavailable"
+                    message="Could not load statistics. Other features are still available."
+                />
+            )}
 
             {/* Statistics Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

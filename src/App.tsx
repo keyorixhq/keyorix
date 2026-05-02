@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { SecretsListPage } from "./pages/secrets/SecretsListPage";
-import { ProtectedRoute, PublicRoute, AdminRoute } from './components/layout';
+import { ProtectedRoute, PublicRoute, AdminRoute, Layout } from './components/layout';
 import { SessionTimeoutWarning } from './components/ui';
 import { LoginPage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';
@@ -37,71 +37,24 @@ function App() {
           }
         />
 
-        {/* Protected Routes */}
+        {/* Authenticated routes — all wrapped in Layout for sidebar + header */}
         <Route
-          path={ROUTES.DASHBOARD}
           element={
             <ProtectedRoute>
-              <DashboardPage />
+              <Layout>
+                <Routes>
+                  <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
+                  <Route path={ROUTES.SECRETS} element={<SecretsListPage />} />
+                  <Route path={ROUTES.AUDIT} element={<AuditLogPage />} />
+                  <Route path={ROUTES.SHARING} element={<div className="p-8 text-gray-500">Sharing — coming soon</div>} />
+                  <Route path={ROUTES.PROFILE} element={<div className="p-8 text-gray-500">Profile — coming soon</div>} />
+                  <Route path={ROUTES.ADMIN_USERS} element={<AdminPage />} />
+                  <Route path={ROUTES.ADMIN} element={<AdminPage />} />
+                </Routes>
+              </Layout>
             </ProtectedRoute>
           }
-        />
-
-        {/* Admin Routes */}
-        <Route
-          path={ROUTES.ADMIN}
-          element={
-            <AdminRoute>
-              <AdminPage />
-            </AdminRoute>
-          }
-        />
-
-        <Route
-          path={ROUTES.AUDIT}
-          element={
-            <ProtectedRoute>
-              <AuditLogPage />
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Placeholder routes for future implementation */}
-        <Route
-          path={ROUTES.SECRETS}
-          element={
-            <ProtectedRoute>
-              <SecretsListPage />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path={ROUTES.SHARING}
-          element={
-            <ProtectedRoute>
-              <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-                <div className="text-center">
-                  <h1 className="text-2xl font-bold text-gray-900 mb-4">Sharing Management</h1>
-                  <p className="text-gray-600">Sharing features will be implemented in subsequent tasks</p>
-                </div>
-              </div>
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path={ROUTES.PROFILE}
-          element={
-            <ProtectedRoute>
-              <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-                <div className="text-center">
-                  <h1 className="text-2xl font-bold text-gray-900 mb-4">User Profile</h1>
-                  <p className="text-gray-600">Profile features will be implemented in subsequent tasks</p>
-                </div>
-              </div>
-            </ProtectedRoute>
-          }
+          path="/*"
         />
 
         {/* Default redirect */}
