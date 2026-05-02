@@ -63,8 +63,18 @@ const PAGE_SIZE_OPTIONS = [
 ];
 
 export const SecretsListPage: React.FC = () => {
-    const { openModal, closeModal, activeModal, modalData, selectedItems, toggleSelectedItem, clearSelectedItems, bulkActionMode, setBulkActionMode } = useUIStore();
+    const { openModal, closeModal, activeModal, modalData } = useUIStore();
     const queryClient = useQueryClient();
+
+    const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
+    const [bulkActionMode, setBulkActionMode] = useState(false);
+
+    const toggleSelectedItem = (id: number) => setSelectedItems(prev => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+    });
+    const clearSelectedItems = () => setSelectedItems(new Set());
 
     // State for filters and pagination
     const [filters, setFilters] = useState<SecretFilters>({
