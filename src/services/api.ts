@@ -20,6 +20,7 @@ const config = getEnvConfig();
 // Request/Response logging utility
 const logRequest = (config: AxiosRequestConfig) => {
     if (getEnvConfig().ENABLE_DEBUG) {
+        // eslint-disable-next-line no-console
         console.log(`[API Request] ${config.method?.toUpperCase()} ${config.url}`, {
             headers: config.headers,
             data: config.data,
@@ -29,6 +30,7 @@ const logRequest = (config: AxiosRequestConfig) => {
 
 const logResponse = (response: AxiosResponse) => {
     if (getEnvConfig().ENABLE_DEBUG) {
+        // eslint-disable-next-line no-console
         console.log(`[API Response] ${response.status} ${response.config.url}`, {
             data: response.data,
             headers: response.headers,
@@ -77,12 +79,7 @@ apiClient.interceptors.request.use(
 
             // Check if token needs refresh
             if (shouldRefreshToken()) {
-                try {
-                    await authStore.refreshToken();
-                } catch (error) {
-                    // Refresh failed, logout will be handled by the store
-                    throw error;
-                }
+                await authStore.refreshToken();
             }
 
             // Add authorization header if we have a token
@@ -167,12 +164,8 @@ apiClient.interceptors.response.use(
 export const makeAuthenticatedRequest = async <T>(
     config: AxiosRequestConfig
 ): Promise<T> => {
-    try {
-        const response = await apiClient.request<T>(config);
-        return response.data;
-    } catch (error) {
-        throw error;
-    }
+    const response = await apiClient.request<T>(config);
+    return response.data;
 };
 
 // Helper function to handle API errors consistently

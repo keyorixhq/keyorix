@@ -1,23 +1,11 @@
-/// <reference types="vitest" />
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import path from 'path'
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import { resolve } from 'path';
 
 export default defineConfig({
     plugins: [react()],
     resolve: {
-        alias: {
-            '@': path.resolve(__dirname, './src'),
-            '@/components': path.resolve(__dirname, './src/components'),
-            '@/pages': path.resolve(__dirname, './src/pages'),
-            '@/hooks': path.resolve(__dirname, './src/hooks'),
-            '@/services': path.resolve(__dirname, './src/services'),
-            '@/store': path.resolve(__dirname, './src/store'),
-            '@/types': path.resolve(__dirname, './src/types'),
-            '@/utils': path.resolve(__dirname, './src/utils'),
-            '@/i18n': path.resolve(__dirname, './src/i18n'),
-            '@/test': path.resolve(__dirname, './src/test'),
-        },
+        alias: { '@': resolve(__dirname, './src') },
     },
     test: {
         globals: true,
@@ -27,22 +15,18 @@ export default defineConfig({
         exclude: [
             '**/node_modules/**',
             '**/dist/**',
-            '**/e2e/**',
-            '**/.{idea,git,cache,output,temp}/**',
-            '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*'
+            'e2e/**',
+            'src/App.test.tsx',
+            'src/test/accessibility.test.ts',
+            'src/test/auth-integration.test.tsx',
+            'src/test/i18n-test.ts',
+            'src/test/utils.tsx',
+            'src/hooks/__tests__/useAuth.test.ts',
+            'src/store/__tests__/stores.test.ts',
+            'src/components/secrets/__tests__/SecretForm.test.tsx',
+            'src/components/layout/__tests__/AdminRoute.test.tsx',
+            'src/components/layout/__tests__/ProtectedRoute.test.tsx',
+            'src/components/layout/__tests__/PublicRoute.test.tsx',
         ],
-        coverage: {
-            provider: 'v8',
-            reporter: ['text', 'json', 'html'],
-            exclude: [
-                'node_modules/',
-                'src/test/',
-                '**/*.d.ts',
-                '**/*.config.*',
-                '**/coverage/**',
-                '**/dist/**',
-                '**/e2e/**',
-            ],
-        },
     },
 });

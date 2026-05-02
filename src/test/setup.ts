@@ -36,6 +36,8 @@ Object.defineProperty(navigator, 'clipboard', {
     writeText: vi.fn().mockResolvedValue(undefined),
     readText: vi.fn().mockResolvedValue(''),
   },
+  writable: true,
+  configurable: true,
 });
 
 // Mock crypto API

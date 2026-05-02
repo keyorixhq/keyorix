@@ -66,7 +66,7 @@ export const useAuth = () => {
             };
         }
 
-        return () => { }; // Return empty cleanup function if not authenticated
+        return;
     }, [isAuthenticated, logout, setError]);
 
     return {

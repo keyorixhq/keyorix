@@ -40,7 +40,7 @@ export function formatRelativeTime(dateString: string): string {
 /**
  * Masks sensitive data for display
  */
-export function maskSensitiveData(value: string, visibleChars: number = 4): string {
+export function maskSensitiveData(value: string, visibleChars = 4): string {
     if (value.length <= visibleChars) {
         return '*'.repeat(value.length);
     }
@@ -50,7 +50,7 @@ export function maskSensitiveData(value: string, visibleChars: number = 4): stri
 /**
  * Copies text to clipboard and clears it after a timeout
  */
-export async function copyToClipboard(text: string, clearTimeout: number = 30000): Promise<void> {
+export async function copyToClipboard(text: string, clearTimeout = 30000): Promise<void> {
     try {
         await navigator.clipboard.writeText(text);
 

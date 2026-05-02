@@ -219,6 +219,7 @@ export const setupMocks = () => {
     Object.defineProperty(navigator, 'clipboard', {
         value: mockClipboard,
         writable: true,
+        configurable: true,
     });
 
     // Mock scrollTo
