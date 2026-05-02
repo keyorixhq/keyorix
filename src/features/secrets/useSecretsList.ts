@@ -125,7 +125,7 @@ export const useSecretsList = () => {
     // Mutations
     const createMutation = useMutation({
         mutationFn: (d: SecretFormData) => apiService.secrets.create(d),
-        onSuccess: () => { closeModal(); refetch(); },
+        onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
     const editMutation = useMutation({
@@ -134,22 +134,22 @@ export const useSecretsList = () => {
             if (value.trim()) updateData.value = value;
             return apiService.secrets.update(id, updateData);
         },
-        onSuccess: () => { closeModal(); refetch(); },
+        onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
     const deleteMutation = useMutation({
         mutationFn: (id: number) => apiService.secrets.delete(id),
-        onSuccess: () => { closeModal(); refetch(); },
+        onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
     const rotateMutation = useMutation({
         mutationFn: ({ id, newValue }: { id: number; newValue: string }) => apiService.rotateSecret(id, newValue),
-        onSuccess: () => { refetch(); },
+        onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
     const bulkDeleteMutation = useMutation({
         mutationFn: (ids: number[]) => Promise.all(ids.map(id => apiService.secrets.delete(id))),
-        onSuccess: () => { closeModal(); clearSelectedItems(); setBulkActionMode(false); refetch(); },
+        onSuccess: () => { closeModal(); clearSelectedItems(); setBulkActionMode(false); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
     return {

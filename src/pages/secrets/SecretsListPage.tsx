@@ -43,6 +43,7 @@ export const SecretsListPage: React.FC = () => {
     const [editName, setEditName] = React.useState('');
     const [editType, setEditType] = React.useState<SecretType>('text');
     const [editValue, setEditValue] = React.useState('');
+    const [rotateValue, setRotateValue] = React.useState('');
 
     React.useEffect(() => {
         if (list.activeModal === 'edit-secret' && list.modalData?.secret) {
@@ -50,14 +51,13 @@ export const SecretsListPage: React.FC = () => {
             setEditType(list.modalData.secret.type as SecretType);
             setEditValue('');
         }
+        if (list.activeModal === 'rotate-secret') {
+            setRotateValue('');
+        }
     }, [list.activeModal, list.modalData]);
 
     const handleRotate = (secret: any) => {
-        const newValue = window.prompt(`Enter new value for "${secret.name}":`);
-        if (!newValue) return;
-        list.rotateMutation.mutate({ id: secret.id, newValue }, {
-            onError: () => window.alert('Failed to rotate secret'),
-        });
+        list.openModal('rotate-secret', { secret });
     };
 
     if (list.error) {
@@ -81,7 +81,7 @@ export const SecretsListPage: React.FC = () => {
                     {list.bulkActionMode && (
                         <div className="flex items-center space-x-2">
                             <span className="text-sm text-gray-500 dark:text-gray-400">{list.selectedItems.size} selected</span>
-                            <Button variant="outline" size="sm" onClick={() => list.openModal('bulk-share-secrets', { secretIds: Array.from(list.selectedItems) })} disabled={list.selectedItems.size === 0}>
+                            <Button variant="outline" size="sm" disabled title="Share each secret individually — bulk sharing is not supported">
                                 <ShareIcon className="h-4 w-4 mr-1" />Share
                             </Button>
                             <Button variant="outline" size="sm" onClick={() => list.openModal('bulk-delete-secrets', { secretIds: Array.from(list.selectedItems) })} disabled={list.selectedItems.size === 0} className="text-red-600 hover:text-red-700">
@@ -306,6 +306,21 @@ export const SecretsListPage: React.FC = () => {
             {list.activeModal === 'share-secret' && list.modalData?.secret && (
                 <ShareSecretModal secret={list.modalData.secret} isOpen onClose={list.closeModal} onSuccess={() => { list.closeModal(); list.refetch(); }} />
             )}
+
+            <Modal isOpen={list.activeModal === 'rotate-secret'} onClose={list.closeModal} title={`Rotate Secret: ${list.modalData?.secret?.name ?? ''}`} size="sm">
+                <form onSubmit={(e) => { e.preventDefault(); if (!list.modalData?.secret) return; list.rotateMutation.mutate({ id: list.modalData.secret.id, newValue: rotateValue }); }} className="space-y-4">
+                    {list.rotateMutation.error && <Alert type="error" title="Failed to rotate secret" message={list.rotateMutation.error instanceof Error ? list.rotateMutation.error.message : 'An unexpected error occurred'} />}
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Enter a new value to replace the current secret value. A new version will be created.</p>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Value <span className="text-red-500">*</span></label>
+                        <input type="password" required value={rotateValue} onChange={(e) => setRotateValue(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.rotateMutation.isLoading}>Cancel</Button>
+                        <Button type="submit" disabled={list.rotateMutation.isLoading || !rotateValue.trim()}>{list.rotateMutation.isLoading ? 'Rotating…' : 'Rotate'}</Button>
+                    </div>
+                </form>
+            </Modal>
 
             <Modal isOpen={list.activeModal === 'bulk-delete-secrets'} onClose={list.closeModal} title="Delete Selected Secrets" size="sm">
                 <div className="space-y-4">
