@@ -1,0 +1,97 @@
+{
+  "common": {
+    "loading": "Laden...",
+    "error": "Fehler",
+    "success": "Erfolg",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "create": "Erstellen",
+    "search": "Suchen",
+    "filter": "Filtern",
+    "sort": "Sortieren",
+    "actions": "Aktionen",
+    "settings": "Einstellungen",
+    "profile": "Profil",
+    "logout": "Abmelden"
+  },
+  "auth": {
+    "login": "Anmelden",
+    "email": "E-Mail",
+    "password": "Passwort",
+    "rememberMe": "Angemeldet bleiben",
+    "forgotPassword": "Passwort vergessen?",
+    "loginButton": "Anmelden",
+    "loginError": "Ungültige Anmeldedaten",
+    "sessionExpired": "Sitzung abgelaufen"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "secrets": "Geheimnisse",
+    "sharing": "Teilen",
+    "admin": "Verwaltung"
+  },
+  "secrets": {
+    "title": "Geheimnisse",
+    "createSecret": "Geheimnis erstellen",
+    "secretName": "Geheimnis-Name",
+    "secretValue": "Geheimnis-Wert",
+    "secretType": "Geheimnis-Typ",
+    "namespace": "Namensraum",
+    "zone": "Zone",
+    "environment": "Umgebung",
+    "tags": "Tags",
+    "metadata": "Metadaten",
+    "lastModified": "Zuletzt geändert",
+    "owner": "Besitzer",
+    "shared": "Geteilt",
+    "deleteConfirm": "Sind Sie sicher, dass Sie dieses Geheimnis löschen möchten?"
+  },
+  "sharing": {
+    "title": "Teilen",
+    "shareSecret": "Geheimnis teilen",
+    "recipient": "Empfänger",
+    "permission": "Berechtigung",
+    "read": "Lesen",
+    "write": "Schreiben",
+    "sharedWith": "Geteilt mit",
+    "sharedBy": "Geteilt von",
+    "revokeAccess": "Zugriff widerrufen",
+    "selfRemove": "Selbst entfernen"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "totalSecrets": "Geheimnisse gesamt",
+    "sharedSecrets": "Geteilte Geheimnisse",
+    "recentActivity": "Letzte Aktivität",
+    "quickActions": "Schnellaktionen"
+  },
+  "profile": {
+    "title": "Profil",
+    "changePassword": "Passwort ändern",
+    "currentPassword": "Aktuelles Passwort",
+    "newPassword": "Neues Passwort",
+    "confirmPassword": "Passwort bestätigen",
+    "language": "Sprache",
+    "theme": "Design",
+    "timezone": "Zeitzone",
+    "notifications": "Benachrichtigungen"
+  },
+  "admin": {
+    "title": "Verwaltung",
+    "users": "Benutzer",
+    "roles": "Rollen",
+    "permissions": "Berechtigungen",
+    "systemSettings": "Systemeinstellungen",
+    "auditLogs": "Audit-Protokolle"
+  },
+  "errors": {
+    "generic": "Ein Fehler ist aufgetreten",
+    "network": "Netzwerkfehler",
+    "unauthorized": "Nicht autorisiert",
+    "forbidden": "Zugriff verweigert",
+    "notFound": "Nicht gefunden",
+    "validation": "Validierungsfehler"
+  }
+}
