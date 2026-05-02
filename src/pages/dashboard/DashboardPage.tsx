@@ -15,7 +15,11 @@ import {
 import { apiService } from '../../services/api';
 import { queryKeys } from '../../lib/queryClient';
 import { useAuthStore } from '../../store/authStore';
-import { usePreferencesStore } from '../../store/preferencesStore';
+
+const formatDate = (d: string | Date) =>
+    new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
+const formatTime = (d: string | Date) =>
+    new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 import { DashboardStats, ActivityItem, AnomalyAlert } from '../../types';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
@@ -86,7 +90,6 @@ interface ActivityItemProps {
 
 const ActivityItemComponent: React.FC<ActivityItemProps> = ({ activity }) => {
     
-    const { getFormattedDate, getFormattedTime } = usePreferencesStore();
 
     const getActivityIcon = (type: ActivityItem['type']) => {
         switch (type) {
@@ -144,7 +147,7 @@ const ActivityItemComponent: React.FC<ActivityItemProps> = ({ activity }) => {
                     {getActivityText(activity)}
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {getFormattedDate(activity.timestamp)} at {getFormattedTime(activity.timestamp)}
+                    {formatDate(activity.timestamp)} at {formatTime(activity.timestamp)}
                 </p>
             </div>
         </div>

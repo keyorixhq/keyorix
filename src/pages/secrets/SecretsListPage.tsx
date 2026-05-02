@@ -20,7 +20,9 @@ import {
 import { apiService } from '../../services/api';
 import { queryKeys } from '../../lib/queryClient';
 import { useUIStore } from '../../store/uiStore';
-import { usePreferencesStore } from '../../store/preferencesStore';
+
+const formatDate = (d: string | Date) =>
+    new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
 import { Secret, SecretFilters, PaginationState, SecretType, SecretFormData } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -63,7 +65,6 @@ const PAGE_SIZE_OPTIONS = [
 export const SecretsListPage: React.FC = () => {
     const { openModal, closeModal, activeModal, modalData, selectedItems, toggleSelectedItem, clearSelectedItems, bulkActionMode, setBulkActionMode } = useUIStore();
     const queryClient = useQueryClient();
-    const { getFormattedDate } = usePreferencesStore();
 
     // State for filters and pagination
     const [filters, setFilters] = useState<SecretFilters>({
@@ -759,7 +760,7 @@ export const SecretsListPage: React.FC = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                                             <div>
-                                                <div>{getFormattedDate(secret.lastModified)}</div>
+                                                <div>{formatDate(secret.lastModified)}</div>
                                                 <div className="text-xs">by {secret.owner}</div>
                                             </div>
                                         </td>

@@ -15,7 +15,11 @@ import {
 } from '@heroicons/react/24/outline';
 import { apiService } from '../../services/api';
 import { queryKeys } from '../../lib/queryClient';
-import { usePreferencesStore } from '../../store/preferencesStore';
+const CLIPBOARD_TIMEOUT = 30000;
+const formatDate = (d: string | Date) =>
+    new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
+const formatTime = (d: string | Date) =>
+    new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 import { Secret } from '../../types';
 import { Button } from '../ui/Button';
 import { Loading } from '../ui/Loading';
@@ -36,7 +40,6 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     onDelete,
     onClose
 }) => {
-    const { getFormattedDate, getFormattedTime, clipboardTimeout } = usePreferencesStore();
     const [showValue, setShowValue] = useState(false);
     const [copySuccess, setCopySuccess] = useState(false);
 
@@ -65,7 +68,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                 } catch (error) {
                     console.warn('Failed to clear clipboard:', error);
                 }
-            }, clipboardTimeout);
+            }, CLIPBOARD_TIMEOUT);
 
             // Reset success state
             setTimeout(() => {
@@ -127,7 +130,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                         </div>
                         <div className="flex items-center">
                             <ClockIcon className="h-4 w-4 mr-1" />
-                            {getFormattedDate(secret.lastModified)} at {getFormattedTime(secret.lastModified)}
+                            {formatDate(secret.lastModified)} at {formatTime(secret.lastModified)}
                         </div>
                     </div>
                 </div>
