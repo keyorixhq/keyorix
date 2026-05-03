@@ -248,6 +248,15 @@ func DeleteUser(w http.ResponseWriter, r *http.Request) {
 	defaultUserHandler.DeleteUser(w, r)
 }
 
+// RestoreUser handles POST /api/v1/users/{id}/restore
+func RestoreUser(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.RestoreUser(w, r)
+}
+
 // ListUsers serves user list from core.
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
@@ -459,6 +468,31 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RestoreUser handles POST /api/v1/users/{id}/restore
+func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.RestoreUser(r.Context(), uint(id)); err != nil {
+		log.Printf("Error restoring user: %v", err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "User not found or not soft-deleted", http.StatusNotFound, nil)
+			return
+		}
+		sendError(w, "InternalError", "Failed to restore user", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, nil, "User restored successfully")
 }
 
 // SearchUsers handles GET /api/v1/users/search?q=<query>

@@ -27,12 +27,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/server/grpc"
@@ -124,22 +126,64 @@ func main() {
 	}
 }
 
-func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, error) {
+// initializeEncryption derives the KEK from KEYORIX_MASTER_PASSWORD and returns
+// an initialized encryption.Service. If encryption is disabled in config, it returns
+// nil without error. Exits loudly if encryption is enabled but no passphrase is set.
+func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
+	if !cfg.Storage.Encryption.Enabled {
+		return nil, nil
+	}
+
+	passphrase := strings.TrimSpace(os.Getenv("KEYORIX_MASTER_PASSWORD"))
+	if passphrase == "" {
+		return nil, fmt.Errorf(
+			"encryption is enabled but KEYORIX_MASTER_PASSWORD is not set; " +
+				"set this environment variable before starting the server")
+	}
+
+	baseDir := "."
+	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
+	if err := svc.Initialize(passphrase); err != nil {
+		return nil, fmt.Errorf("failed to initialize encryption (KEK derivation): %w", err)
+	}
+
+	log.Printf("Encryption initialised — KEK derived from passphrase, key version: %s", svc.GetKeyVersion())
+	return svc, nil
+}
+
+func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.Service, error) {
 	// Use storage factory to support SQLite, PostgreSQL, and remote storage
 	factory := appstorage.NewStorageFactory()
 	store, err := factory.CreateStorage(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize storage: %w", err)
+		return nil, nil, fmt.Errorf("failed to initialize storage: %w", err)
 	}
-	coreService := core.NewKeyorixCore(store)
-	return coreService, nil
+
+	encSvc, err := initializeEncryption(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize encryption: %w", err)
+	}
+
+	var coreService *core.KeyorixCore
+	if encSvc != nil {
+		// Encryption enabled: pass the service to core (used for future SecretEncryption wiring)
+		coreService = core.NewKeyorixCore(store)
+	} else {
+		coreService = core.NewKeyorixCore(store)
+	}
+	return coreService, encSvc, nil
 }
 
 func startHTTPServer(ctx context.Context, cfg *config.Config) error {
-	// Initialize core service
-	coreService, err := initializeCoreService(cfg)
+	// Initialize core service (and encryption if enabled)
+	coreService, encSvc, err := initializeCoreService(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize core service: %w", err)
+	}
+
+	// Ensure KEK is wiped from memory on shutdown
+	if encSvc != nil {
+		defer encSvc.Shutdown()
 	}
 
 	// Create HTTP router
