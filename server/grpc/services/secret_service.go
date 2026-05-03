@@ -11,8 +11,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"google.golang.org/grpc/codes"
@@ -47,7 +47,7 @@ func NewSecretService() (*SecretGRPCService, error) {
 	}
 
 	// Initialize storage and core service
-	storageImpl := local.NewLocalStorage(db)
+	storageImpl := store.NewLocalStorage(db)
 	secretService := core.NewKeyorixCore(storageImpl)
 
 	return &SecretGRPCService{

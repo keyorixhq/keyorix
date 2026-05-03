@@ -8,7 +8,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -35,7 +35,7 @@ func main() {
 	}
 
 	// Create storage layer
-	storage := local.NewLocalStorage(db)
+	storage := store.NewLocalStorage(db)
 
 	// Create core business logic
 	coreService := core.NewKeyorixCore(storage)

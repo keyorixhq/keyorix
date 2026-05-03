@@ -6,9 +6,9 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -59,7 +59,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	return local.NewLocalStorage(db), nil
+	return store.NewLocalStorage(db), nil
 }
 
 // createPostgresStorage creates a PostgreSQL-backed local storage instance
@@ -82,7 +82,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
-	return local.NewLocalStorage(db), nil
+	return store.NewLocalStorage(db), nil
 }
 
 // applyPoolSettings configures the connection pool on the underlying *sql.DB
@@ -117,7 +117,7 @@ func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage
 		TLSVerify:      cfg.Storage.Remote.TLSVerify,
 	}
 
-	return remote.NewRemoteStorage(remoteConfig)
+	return store.NewRemoteStorage(remoteConfig)
 }
 
 func columnExists(db *gorm.DB, table, column string) bool {

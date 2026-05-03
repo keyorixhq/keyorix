@@ -13,8 +13,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -48,7 +48,7 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.RolePermission{},
 	)
 	require.NoError(t, err)
-	return core.NewKeyorixCore(local.NewLocalStorage(db))
+	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 
 // createTestToken seeds the system and returns a real admin session token.

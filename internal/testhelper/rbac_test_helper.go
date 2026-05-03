@@ -8,8 +8,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -20,7 +20,7 @@ type RBACTestHelper struct {
 	CoreService *core.KeyorixCore
 	DB          *gorm.DB
 	SqlDB       *sql.DB
-	Storage     *local.LocalStorage
+	Storage     *store.LocalStorage
 }
 
 // NewRBACTestHelper creates a new test helper with in-memory database and core service
@@ -60,7 +60,7 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 	require.NoError(t, err)
 
 	// Create storage and core service
-	storage := local.NewLocalStorage(db)
+	storage := store.NewLocalStorage(db)
 	coreService := core.NewKeyorixCore(storage)
 
 	helper := &RBACTestHelper{

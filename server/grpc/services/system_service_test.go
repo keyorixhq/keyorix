@@ -7,8 +7,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,7 +45,7 @@ func NewSystemTestHelper(t *testing.T) *SystemTestHelper {
 	require.NoError(t, err)
 
 	// Create storage
-	storage := local.NewLocalStorage(db)
+	storage := store.NewLocalStorage(db)
 
 	// Create core service
 	coreService := core.NewKeyorixCore(storage)

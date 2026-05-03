@@ -6,7 +6,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -29,7 +29,7 @@ func TestSecretHandlerCreation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create storage and core service
-	storage := local.NewLocalStorage(db)
+	storage := store.NewLocalStorage(db)
 	coreService := core.NewKeyorixCore(storage)
 
 	// Create secret handler

@@ -9,8 +9,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -37,7 +37,7 @@ func main() {
 	}
 
 	// Initialize storage and core service
-	storage := local.NewLocalStorage(db)
+	storage := store.NewLocalStorage(db)
 	service := core.NewKeyorixCore(storage)
 
 	// Example 1: Create a secret

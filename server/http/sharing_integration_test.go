@@ -12,8 +12,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -78,7 +78,7 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 		}).Error)
 	}
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group", Description: "HTTP sharing test"}).Error)
-	return core.NewKeyorixCore(local.NewLocalStorage(db))
+	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 
 // TestSharingHTTPIntegration tests the complete HTTP API sharing workflow

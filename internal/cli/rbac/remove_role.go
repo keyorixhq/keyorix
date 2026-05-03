@@ -6,7 +6,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -46,7 +46,7 @@ func runRemoveRole(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create storage layer
-	storage := local.NewLocalStorage(db)
+	storage := store.NewLocalStorage(db)
 
 	// Create core service
 	coreService := core.NewKeyorixCore(storage)

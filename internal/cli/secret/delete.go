@@ -9,8 +9,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -69,7 +69,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize storage and core service
-	storageImpl := local.NewLocalStorage(db)
+	storageImpl := store.NewLocalStorage(db)
 	service := core.NewKeyorixCore(storageImpl)
 
 	// Create context

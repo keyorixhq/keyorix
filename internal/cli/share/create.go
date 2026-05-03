@@ -6,8 +6,8 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/storage/local"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/spf13/cobra"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -59,7 +59,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize storage and service
-	storage := local.NewLocalStorage(db)
+	storage := store.NewLocalStorage(db)
 	service := core.NewKeyorixCore(storage)
 
 	// Create context
