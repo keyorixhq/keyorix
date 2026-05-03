@@ -23,3 +23,16 @@ repos:
         language: system
         files: \.go$
         pass_filenames: false
+
+      - id: gosec
+        name: gosec (HIGH/MEDIUM only)
+        entry: gosec
+        # -severity medium: only flag MEDIUM and HIGH findings
+        # -quiet:           suppress the per-file progress log
+        # -exclude-generated: skip generated protobuf/mock files
+        # All 26 existing LOW findings (G104 unhandled MarkFlagRequired /
+        # w.Flush / fmt.Scanln) are intentionally excluded by -severity medium.
+        args: [-severity, medium, -quiet, -exclude-generated, ./...]
+        language: system
+        files: \.go$
+        pass_filenames: false

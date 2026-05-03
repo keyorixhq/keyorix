@@ -149,7 +149,10 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	return updated, nil
 }
 
-// DeleteUser deletes a user by ID.
+// DeleteUser soft-deletes a user by ID.
+// The row is retained in the database with deleted_at set; active sessions
+// for this user will fail authentication on next request. Soft-deleted users
+// can be restored within the purge retention window (default 30 days).
 func (c *KeyorixCore) DeleteUser(ctx context.Context, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
@@ -158,6 +161,22 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, id uint) error {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
 	if err := c.storage.DeleteUser(ctx, id); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+// RestoreUser clears the deleted_at timestamp on a soft-deleted user,
+// making them active in all queries again. Returns an error if the user
+// does not exist or was not soft-deleted.
+func (c *KeyorixCore) RestoreUser(ctx context.Context, id uint) error {
+	if id == 0 {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+	}
+	if err := c.storage.RestoreUser(ctx, id); err != nil {
+		if strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
+			return fmt.Errorf("%s: user not found or not deleted", i18n.T("ErrorUserNotFound", nil))
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil

@@ -208,23 +208,95 @@ func computeTrend(prev, current float64) *StatTrend {
 }
 
 // mapAuditEventToActivity maps a raw audit event to an ActivityItem.
+//
+// Type mapping — what the frontend receives:
+//
+//	secret.read     → "accessed"
+//	secret.created  → "created"
+//	secret.updated  → "updated"
+//	secret.deleted  → "deleted"
+//	secret.rotated  → "rotated"
+//	secret.shared   → "shared"
+//	share.revoked   → "share_revoked"
+//	auth.login      → "login"      (secretName intentionally empty)
+//	auth.logout     → "logout"     (secretName intentionally empty)
+//	auth.*          → "auth"       (secretName intentionally empty)
+//	<other>         → raw EventType, secretName empty
+//
+// SecretName is extracted from the Description for secret/share events.
+// Auth and system events are not secret-related so secretName is left empty.
 func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
-	eventType := e.EventType
+	var eventType, secretName string
+
 	switch e.EventType {
+	// Secret events — extract secret name from description
 	case "secret.read":
 		eventType = "accessed"
+		secretName = extractSecretName(e.Description)
 	case "secret.created":
 		eventType = "created"
+		secretName = extractSecretName(e.Description)
 	case "secret.updated":
 		eventType = "updated"
+		secretName = extractSecretName(e.Description)
 	case "secret.deleted":
 		eventType = "deleted"
+		secretName = extractSecretName(e.Description)
+	case "secret.rotated":
+		eventType = "rotated"
+		secretName = extractSecretName(e.Description)
+	case "secret.shared":
+		eventType = "shared"
+		secretName = extractSecretName(e.Description)
+	case "share.revoked":
+		eventType = "share_revoked"
+		secretName = extractSecretName(e.Description)
+
+	// Auth events — not secret-related, leave secretName empty
+	case "auth.login":
+		eventType = "login"
+	case "auth.logout":
+		eventType = "logout"
+	case "auth.password_reset":
+		eventType = "password_reset"
+
+	// Fallback: pass event type through, no secret name
+	default:
+		eventType = e.EventType
 	}
+
 	return ActivityItem{
 		ID:         e.ID,
 		Type:       eventType,
-		SecretName: e.Description,
+		SecretName: secretName,
 		Timestamp:  e.EventTime,
 		Actor:      actor,
 	}
+}
+
+// extractSecretName pulls the secret name from audit description strings.
+// Descriptions follow the pattern: "User <actor> <verb> secret <name>"
+// e.g. "User admin deleted secret test bulk 1" → "test bulk 1"
+// Returns empty string if the pattern is not found.
+func extractSecretName(description string) string {
+	const marker = " secret "
+	if idx := lastIndex(description, marker); idx >= 0 {
+		return description[idx+len(marker):]
+	}
+	return ""
+}
+
+// lastIndex returns the index of the last occurrence of substr in s,
+// or -1 if not present. Avoids importing strings package.
+func lastIndex(s, substr string) int {
+	if len(substr) == 0 {
+		return len(s)
+	}
+	last := -1
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			last = i
+		}
+	}
+	return last
 }

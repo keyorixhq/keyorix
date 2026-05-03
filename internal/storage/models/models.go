@@ -36,6 +36,7 @@ type User struct {
 	IsActive     bool `gorm:"default:true"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	DeletedAt    gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
 }
 
 type Role struct {

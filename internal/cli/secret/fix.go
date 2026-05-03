@@ -148,7 +148,7 @@ func findAndPlanFix(basePath, envVarName string) ([]fixPlan, error) {
 			return nil
 		}
 
-		content, err := os.ReadFile(filepath.Clean(path)) // #nosec G304
+		content, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 G122 -- path comes from filepath.Walk rooted at operator-supplied absPath; symlink TOCTOU acceptable for a local developer tool
 		if err != nil {
 			return nil
 		}
@@ -181,7 +181,7 @@ func findAndPlanFix(basePath, envVarName string) ([]fixPlan, error) {
 }
 
 func applyFix(plan fixPlan) error {
-	content, err := os.ReadFile(filepath.Clean(plan.File)) // #nosec G304
+	content, err := os.ReadFile(filepath.Clean(plan.File)) // #nosec G304 G122 -- path sourced from filepath.Walk within operator-controlled basePath
 	if err != nil {
 		return err
 	}
@@ -190,5 +190,5 @@ func applyFix(plan fixPlan) error {
 		return fmt.Errorf("line %d out of range", plan.Line)
 	}
 	lines[plan.Line-1] = plan.NewLine
-	return os.WriteFile(plan.File, []byte(strings.Join(lines, "\n")), 0600)
+	return os.WriteFile(plan.File, []byte(strings.Join(lines, "\n")), 0600) // #nosec G703 -- plan.File is a relative path from filepath.Walk within operator-supplied basePath; path traversal not a realistic threat for this local CLI tool
 }

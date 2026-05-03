@@ -241,6 +241,11 @@ func (m *MockStorage) DeleteUser(ctx context.Context, id uint) error {
 	return args.Error(0)
 }
 
+func (m *MockStorage) RestoreUser(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 func (m *MockStorage) ListUsers(ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error) {
 	args := m.Called(ctx, filter)
 	if args.Get(0) == nil {

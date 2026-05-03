@@ -2,7 +2,7 @@
 //
 // Covers: CreateUser, GetUser, GetUserByEmail, GetUserByUsername, UpdateUser,
 //
-//	DeleteUser, ListUsers, GetUserGroups,
+//	DeleteUser, RestoreUser, ListUsers, GetUserGroups,
 //	CreateGroup, GetGroup, UpdateGroup, DeleteGroup, ListGroups,
 //	AddUserToGroup, RemoveUserFromGroup, ListGroupMembers.
 //
@@ -71,6 +71,18 @@ func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*mod
 
 func (ls *LocalStorage) DeleteUser(ctx context.Context, id uint) error {
 	result := ls.db.WithContext(ctx).Delete(&models.User{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+	}
+	return nil
+}
+
+func (ls *LocalStorage) RestoreUser(ctx context.Context, id uint) error {
+	// Use Unscoped to find and update the soft-deleted row.
+	result := ls.db.WithContext(ctx).Unscoped().Model(&models.User{}).Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}

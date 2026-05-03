@@ -49,6 +49,7 @@ type Storage interface {
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
 	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
 	DeleteUser(ctx context.Context, id uint) error
+	RestoreUser(ctx context.Context, id uint) error
 	ListUsers(ctx context.Context, filter *UserFilter) ([]*models.User, int64, error)
 	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
 	GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error)

@@ -2,7 +2,7 @@
 //
 // Covers: CreateUser, GetUser, GetUserByEmail, GetUserByUsername, UpdateUser,
 //
-//	DeleteUser, ListUsers, GetUserGroups,
+//	DeleteUser, RestoreUser, ListUsers, GetUserGroups,
 //	CreateGroup, GetGroup, UpdateGroup, DeleteGroup, ListGroups,
 //	AddUserToGroup, RemoveUserFromGroup, ListGroupMembers.
 //
@@ -102,6 +102,19 @@ func (rs *RemoteStorage) DeleteUser(ctx context.Context, id uint) error {
 	}
 	if !resp.Success {
 		return fmt.Errorf("delete user failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// RestoreUser restores a soft-deleted user via remote API.
+func (rs *RemoteStorage) RestoreUser(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/users/%d/restore", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to restore user: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("restore user failed: %s", resp.Error.Error())
 	}
 	return nil
 }
