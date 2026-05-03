@@ -56,13 +56,13 @@ func createTestToken(t *testing.T, c *core.KeyorixCore) string {
 	t.Helper()
 	ctx := context.Background()
 	// SeedSystem creates admin user, roles, permissions, namespace, zone, environments
-	_, err := c.SeedSystem(ctx, &core.SeedRequest{
+	_, err := c.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "testadmin",
 		Email:    "testadmin@example.com",
 		Password: "TestPassword123!",
 	})
 	if err != nil {
-		t.Logf("SeedSystem: %v (may already be seeded)", err)
+		t.Logf("BootstrapSystem: %v (may already be initialised)", err)
 	}
 	session, _, err := c.Login(ctx, &core.LoginRequest{
 		Username: "testadmin",

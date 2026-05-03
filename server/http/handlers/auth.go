@@ -226,7 +226,16 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 }
 
 // InitSystem handles POST /system/init.
-// Creates the first admin user; fails with 409 if users already exist.
+//
+// Bootstraps a Keyorix server in a single call:
+//   - Creates the admin user
+//   - Creates canonical RBAC roles and permissions (admin, viewer)
+//   - Creates the default namespace and zone ("default")
+//   - Creates three default environments (development, staging, production)
+//
+// Idempotent: if the server is already initialised, returns 200 with the
+// current state and already_initialized=true. Safe to call from automation,
+// Helm post-install hooks, and Docker Compose healthcheck scripts.
 func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 	var body initSystemRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -234,58 +243,14 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.coreService.InitializeSystem(r.Context(), &core.CreateUserRequest{
+	result, err := h.coreService.BootstrapSystem(r.Context(), &core.BootstrapRequest{
 		Username:    body.Username,
 		Email:       body.Email,
 		Password:    body.Password,
 		DisplayName: body.DisplayName,
 	})
 	if err != nil {
-		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "already initialized") {
-			status = http.StatusConflict
-		}
-		sendError(w, "Error", err.Error(), status, nil)
-		return
-	}
-
-	sendSuccess(w, map[string]interface{}{
-		"id":           user.ID,
-		"username":     user.Username,
-		"email":        user.Email,
-		"display_name": user.DisplayName,
-	}, "System initialized successfully")
-}
-
-type seedRequestBody struct {
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	Email       string `json:"email"`
-	DisplayName string `json:"display_name"`
-}
-
-// SeedSystem handles POST /api/v1/system/seed.
-// Creates the first admin user plus default namespace, zone, and environments.
-// Returns 409 if the system has already been seeded.
-func (h *AuthHandler) SeedSystem(w http.ResponseWriter, r *http.Request) {
-	var body seedRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
-		return
-	}
-
-	result, err := h.coreService.SeedSystem(r.Context(), &core.SeedRequest{
-		Username:    body.Username,
-		Email:       body.Email,
-		Password:    body.Password,
-		DisplayName: body.DisplayName,
-	})
-	if err != nil {
-		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "already seeded") {
-			status = http.StatusConflict
-		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
 		return
 	}
 
@@ -294,13 +259,29 @@ func (h *AuthHandler) SeedSystem(w http.ResponseWriter, r *http.Request) {
 		envNames = append(envNames, e.Name)
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{
-		"user":         map[string]interface{}{"id": result.User.ID, "username": result.User.Username, "email": result.User.Email},
-		"namespace":    result.Namespace.Name,
-		"zone":         result.Zone.Name,
-		"environments": envNames,
-	}, "System seeded successfully")
+	resp := map[string]interface{}{
+		"already_initialized": result.AlreadyInitialized,
+		"environments":        envNames,
+	}
+	if result.User != nil {
+		resp["user"] = map[string]interface{}{
+			"id":       result.User.ID,
+			"username": result.User.Username,
+			"email":    result.User.Email,
+		}
+	}
+	if result.Namespace != nil {
+		resp["namespace"] = result.Namespace.Name
+	}
+	if result.Zone != nil {
+		resp["zone"] = result.Zone.Name
+	}
+
+	msg := "System initialised successfully"
+	if result.AlreadyInitialized {
+		msg = "System already initialised"
+	}
+	sendSuccess(w, resp, msg)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

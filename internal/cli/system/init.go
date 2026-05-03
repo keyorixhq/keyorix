@@ -40,7 +40,8 @@ var InitCmd = &cobra.Command{
 Local mode (default): creates configuration files, encryption keys, and the database.
 
 Remote mode (--server): bootstraps a running Keyorix server — creates the admin
-user and default workspace (namespace + environments) via the HTTP API.
+user, default RBAC roles, and default workspace (namespace + 3 environments) via
+the HTTP API. Safe to run more than once: idempotent.
 
 Examples:
   keyorix system init                              # local file setup
@@ -193,9 +194,29 @@ func initializeLogging() error {
 
 // ── Remote bootstrap ──────────────────────────────────────────────────────────
 
+// bootstrapResponseData mirrors the JSON data block returned by POST /system/init.
+type bootstrapResponseData struct {
+	AlreadyInitialized bool `json:"already_initialized"`
+	User               *struct {
+		ID       uint   `json:"id"`
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	} `json:"user"`
+	Namespace    string   `json:"namespace"`
+	Zone         string   `json:"zone"`
+	Environments []string `json:"environments"`
+}
+
+type bootstrapAPIResponse struct {
+	Success bool                  `json:"success"`
+	Data    bootstrapResponseData `json:"data"`
+	Message string                `json:"message"`
+	Error   string                `json:"error"`
+}
+
 // runRemoteInit bootstraps a running Keyorix server by calling POST /system/init.
-// The server creates the admin user and seeds the default namespace, zone, and
-// environments (development, staging, production) in a single call.
+// The server creates the admin user, RBAC roles/permissions, and seeds the default
+// namespace, zone, and environments in a single idempotent call.
 func runRemoteInit() error {
 	server := strings.TrimRight(initServer, "/")
 	url := server + "/system/init"
@@ -220,18 +241,8 @@ func runRemoteInit() error {
 
 	respBody, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode == http.StatusConflict {
-		fmt.Fprintf(os.Stderr, "Server at %s is already initialized.\n", server)
-		fmt.Fprintf(os.Stderr, "Use 'keyorix auth login' to authenticate.\n")
-		return nil
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		// Try to extract a message from the JSON error body.
-		var errResp struct {
-			Message string `json:"message"`
-			Error   string `json:"error"`
-		}
+		var errResp bootstrapAPIResponse
 		msg := fmt.Sprintf("HTTP %d", resp.StatusCode)
 		if json.Unmarshal(respBody, &errResp) == nil {
 			if errResp.Message != "" {
@@ -240,17 +251,39 @@ func runRemoteInit() error {
 				msg = errResp.Error
 			}
 		}
-		return fmt.Errorf("initialization failed: %s", msg)
+		return fmt.Errorf("initialisation failed: %s", msg)
 	}
 
-	// Success — print the welcome banner.
-	fmt.Printf("Keyorix initialized successfully\n\n")
+	var apiResp bootstrapAPIResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return fmt.Errorf("unexpected response from server: %w", err)
+	}
+
+	d := apiResp.Data
+
+	if d.AlreadyInitialized {
+		fmt.Fprintf(os.Stderr, "Server at %s is already initialised.\n", server)
+		fmt.Fprintf(os.Stderr, "Use 'keyorix auth login' to authenticate.\n")
+		return nil
+	}
+
+	// Success banner — workspace details come from the actual server response.
+	envList := strings.Join(d.Environments, ", ")
+	if envList == "" {
+		envList = "development, staging, production"
+	}
+	username := initAdminUsername
+	if d.User != nil && d.User.Username != "" {
+		username = d.User.Username
+	}
+
+	fmt.Printf("Keyorix initialised successfully\n\n")
 	fmt.Printf("Your workspace is ready:\n")
-	fmt.Printf("  +-- Project: default\n")
-	fmt.Printf("  +-- Environments: development, staging, production\n")
-	fmt.Printf("  +-- Admin user: %s (change password after first login)\n", initAdminUsername)
+	fmt.Printf("  +-- Project: %s\n", d.Namespace)
+	fmt.Printf("  +-- Environments: %s\n", envList)
+	fmt.Printf("  +-- Admin user: %s (change password after first login)\n", username)
 	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  keyorix auth login --server %s\n", server)
+	fmt.Printf("  keyorix connect --server %s\n", server)
 	fmt.Printf("  keyorix secret create my-first-secret --value \"hello\"\n")
 	fmt.Printf("  keyorix run --env production -- your-app\n")
 
