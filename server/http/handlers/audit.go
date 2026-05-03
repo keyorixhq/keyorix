@@ -1,3 +1,6 @@
+// audit.go — GetAuditLogs, GetRBACAuditLogs, and audit log types.
+//
+// For anomaly alert handlers see audit_anomaly.go.
 package handlers
 
 import (
@@ -5,12 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// AuditLog represents an audit log entry
+// AuditLog represents an audit log entry.
 type AuditLog struct {
 	ID         uint      `json:"id"`
 	UserID     uint      `json:"user_id"`
@@ -26,7 +27,7 @@ type AuditLog struct {
 	Timestamp  time.Time `json:"timestamp"`
 }
 
-// RBACAuditLog represents an RBAC-specific audit log entry
+// RBACAuditLog represents an RBAC-specific audit log entry.
 type RBACAuditLog struct {
 	ID         uint      `json:"id"`
 	UserID     uint      `json:"user_id"`
@@ -50,7 +51,6 @@ func GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse query parameters
 	page := 1
 	pageSize := 50
 	action := r.URL.Query().Get("action")
@@ -64,7 +64,6 @@ func GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 			page = p
 		}
 	}
-
 	if pageSizeStr := r.URL.Query().Get("page_size"); pageSizeStr != "" {
 		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
 			pageSize = ps
@@ -91,98 +90,35 @@ func GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Mock audit logs data
 	now := time.Now()
 	auditLogs := []AuditLog{
-		{
-			ID:         1,
-			UserID:     1,
-			Username:   "admin",
-			Action:     "CREATE_SECRET",
-			Resource:   "secret",
-			ResourceID: uintPtr(1),
-			Details:    "Created secret 'database-password' in production environment",
-			IPAddress:  "192.168.1.100",
-			UserAgent:  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-			Success:    true,
-			Timestamp:  now.Add(-2 * time.Hour),
-		},
-		{
-			ID:         2,
-			UserID:     2,
-			Username:   "user1",
-			Action:     "READ_SECRET",
-			Resource:   "secret",
-			ResourceID: uintPtr(1),
-			Details:    "Accessed secret 'database-password'",
-			IPAddress:  "192.168.1.101",
-			UserAgent:  "curl/7.68.0",
-			Success:    true,
-			Timestamp:  now.Add(-1 * time.Hour),
-		},
-		{
-			ID:        3,
-			UserID:    3,
-			Username:  "user2",
-			Action:    "DELETE_SECRET",
-			Resource:  "secret",
-			Details:   "Attempted to delete secret 'api-key' without permission",
-			IPAddress: "192.168.1.102",
-			UserAgent: "PostmanRuntime/7.29.0",
-			Success:   false,
-			ErrorMsg:  stringPtr("Permission denied: insufficient privileges"),
-			Timestamp: now.Add(-30 * time.Minute),
-		},
-		{
-			ID:         4,
-			UserID:     1,
-			Username:   "admin",
-			Action:     "UPDATE_USER",
-			Resource:   "user",
-			ResourceID: uintPtr(2),
-			Details:    "Updated user profile for user1",
-			IPAddress:  "192.168.1.100",
-			UserAgent:  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-			Success:    true,
-			Timestamp:  now.Add(-15 * time.Minute),
-		},
-		{
-			ID:         5,
-			UserID:     1,
-			Username:   "admin",
-			Action:     "ASSIGN_ROLE",
-			Resource:   "role",
-			ResourceID: uintPtr(2),
-			Details:    "Assigned role 'user' to user 'user1'",
-			IPAddress:  "192.168.1.100",
-			UserAgent:  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-			Success:    true,
-			Timestamp:  now.Add(-5 * time.Minute),
-		},
+		{ID: 1, UserID: 1, Username: "admin", Action: "CREATE_SECRET", Resource: "secret", ResourceID: uintPtr(1), Details: "Created secret 'database-password' in production environment", IPAddress: "192.168.1.100", UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", Success: true, Timestamp: now.Add(-2 * time.Hour)},
+		{ID: 2, UserID: 2, Username: "user1", Action: "READ_SECRET", Resource: "secret", ResourceID: uintPtr(1), Details: "Accessed secret 'database-password'", IPAddress: "192.168.1.101", UserAgent: "curl/7.68.0", Success: true, Timestamp: now.Add(-1 * time.Hour)},
+		{ID: 3, UserID: 3, Username: "user2", Action: "DELETE_SECRET", Resource: "secret", Details: "Attempted to delete secret 'api-key' without permission", IPAddress: "192.168.1.102", UserAgent: "PostmanRuntime/7.29.0", Success: false, ErrorMsg: stringPtr("Permission denied: insufficient privileges"), Timestamp: now.Add(-30 * time.Minute)},
+		{ID: 4, UserID: 1, Username: "admin", Action: "UPDATE_USER", Resource: "user", ResourceID: uintPtr(2), Details: "Updated user profile for user1", IPAddress: "192.168.1.100", UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", Success: true, Timestamp: now.Add(-15 * time.Minute)},
+		{ID: 5, UserID: 1, Username: "admin", Action: "ASSIGN_ROLE", Resource: "role", ResourceID: uintPtr(2), Details: "Assigned role 'user' to user 'user1'", IPAddress: "192.168.1.100", UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", Success: true, Timestamp: now.Add(-5 * time.Minute)},
 	}
 
-	// Apply filters (simplified for demo)
 	filteredLogs := []AuditLog{}
-	for _, log := range auditLogs {
-		if action != "" && log.Action != action {
+	for _, l := range auditLogs {
+		if action != "" && l.Action != action {
 			continue
 		}
-		if resource != "" && log.Resource != resource {
+		if resource != "" && l.Resource != resource {
 			continue
 		}
-		if userID != nil && log.UserID != *userID {
+		if userID != nil && l.UserID != *userID {
 			continue
 		}
-		if startTime != nil && log.Timestamp.Before(*startTime) {
+		if startTime != nil && l.Timestamp.Before(*startTime) {
 			continue
 		}
-		if endTime != nil && log.Timestamp.After(*endTime) {
+		if endTime != nil && l.Timestamp.After(*endTime) {
 			continue
 		}
-		filteredLogs = append(filteredLogs, log)
+		filteredLogs = append(filteredLogs, l)
 	}
 
-	// Apply pagination (simplified)
 	start := (page - 1) * pageSize
 	end := start + pageSize
 	if start >= len(filteredLogs) {
@@ -193,24 +129,14 @@ func GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 		filteredLogs = filteredLogs[start:end]
 	}
 
-	totalPages := (len(auditLogs) + pageSize - 1) / pageSize
-
-	response := map[string]interface{}{
+	sendSuccess(w, map[string]interface{}{
 		"logs":        filteredLogs,
 		"page":        page,
 		"page_size":   pageSize,
 		"total":       len(auditLogs),
-		"total_pages": totalPages,
-		"filters": map[string]interface{}{
-			"action":     action,
-			"resource":   resource,
-			"user_id":    userID,
-			"start_time": startTime,
-			"end_time":   endTime,
-		},
-	}
-
-	sendSuccess(w, response, "")
+		"total_pages": (len(auditLogs) + pageSize - 1) / pageSize,
+		"filters":     map[string]interface{}{"action": action, "resource": resource, "user_id": userID, "start_time": startTime, "end_time": endTime},
+	}, "")
 }
 
 // GetRBACAuditLogs handles GET /api/v1/audit/rbac-logs
@@ -221,7 +147,6 @@ func GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse query parameters
 	page := 1
 	pageSize := 50
 	action := r.URL.Query().Get("action")
@@ -233,7 +158,6 @@ func GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) {
 			page = p
 		}
 	}
-
 	if pageSizeStr := r.URL.Query().Get("page_size"); pageSizeStr != "" {
 		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
 			pageSize = ps
@@ -248,93 +172,29 @@ func GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Mock RBAC audit logs data
 	now := time.Now()
 	rbacLogs := []RBACAuditLog{
-		{
-			ID:         1,
-			UserID:     1,
-			Username:   "admin",
-			Action:     "CREATE_USER",
-			TargetType: "user",
-			TargetID:   3,
-			TargetName: "user2",
-			Details:    "Created new user account",
-			IPAddress:  "192.168.1.100",
-			Success:    true,
-			Timestamp:  now.Add(-3 * time.Hour),
-		},
-		{
-			ID:         2,
-			UserID:     1,
-			Username:   "admin",
-			Action:     "CREATE_ROLE",
-			TargetType: "role",
-			TargetID:   3,
-			TargetName: "viewer",
-			Details:    "Created new role with read-only permissions",
-			IPAddress:  "192.168.1.100",
-			Success:    true,
-			Timestamp:  now.Add(-2 * time.Hour),
-		},
-		{
-			ID:         3,
-			UserID:     1,
-			Username:   "admin",
-			Action:     "ASSIGN_ROLE",
-			TargetType: "user_role",
-			TargetID:   2,
-			TargetName: "user1 -> user",
-			Details:    "Assigned role 'user' to user 'user1'",
-			IPAddress:  "192.168.1.100",
-			Success:    true,
-			Timestamp:  now.Add(-1 * time.Hour),
-		},
-		{
-			ID:         4,
-			UserID:     2,
-			Username:   "user1",
-			Action:     "UPDATE_ROLE",
-			TargetType: "role",
-			TargetID:   2,
-			TargetName: "user",
-			Details:    "Attempted to modify role permissions",
-			IPAddress:  "192.168.1.101",
-			Success:    false,
-			ErrorMsg:   stringPtr("Permission denied: insufficient privileges"),
-			Timestamp:  now.Add(-30 * time.Minute),
-		},
-		{
-			ID:         5,
-			UserID:     1,
-			Username:   "admin",
-			Action:     "REMOVE_ROLE",
-			TargetType: "user_role",
-			TargetID:   3,
-			TargetName: "user2 -> viewer",
-			Details:    "Removed role 'viewer' from user 'user2'",
-			IPAddress:  "192.168.1.100",
-			Success:    true,
-			Timestamp:  now.Add(-10 * time.Minute),
-		},
+		{ID: 1, UserID: 1, Username: "admin", Action: "CREATE_USER", TargetType: "user", TargetID: 3, TargetName: "user2", Details: "Created new user account", IPAddress: "192.168.1.100", Success: true, Timestamp: now.Add(-3 * time.Hour)},
+		{ID: 2, UserID: 1, Username: "admin", Action: "CREATE_ROLE", TargetType: "role", TargetID: 3, TargetName: "viewer", Details: "Created new role with read-only permissions", IPAddress: "192.168.1.100", Success: true, Timestamp: now.Add(-2 * time.Hour)},
+		{ID: 3, UserID: 1, Username: "admin", Action: "ASSIGN_ROLE", TargetType: "user_role", TargetID: 2, TargetName: "user1 -> user", Details: "Assigned role 'user' to user 'user1'", IPAddress: "192.168.1.100", Success: true, Timestamp: now.Add(-1 * time.Hour)},
+		{ID: 4, UserID: 2, Username: "user1", Action: "UPDATE_ROLE", TargetType: "role", TargetID: 2, TargetName: "user", Details: "Attempted to modify role permissions", IPAddress: "192.168.1.101", Success: false, ErrorMsg: stringPtr("Permission denied: insufficient privileges"), Timestamp: now.Add(-30 * time.Minute)},
+		{ID: 5, UserID: 1, Username: "admin", Action: "REMOVE_ROLE", TargetType: "user_role", TargetID: 3, TargetName: "user2 -> viewer", Details: "Removed role 'viewer' from user 'user2'", IPAddress: "192.168.1.100", Success: true, Timestamp: now.Add(-10 * time.Minute)},
 	}
 
-	// Apply filters (simplified for demo)
 	filteredLogs := []RBACAuditLog{}
-	for _, log := range rbacLogs {
-		if action != "" && log.Action != action {
+	for _, l := range rbacLogs {
+		if action != "" && l.Action != action {
 			continue
 		}
-		if targetType != "" && log.TargetType != targetType {
+		if targetType != "" && l.TargetType != targetType {
 			continue
 		}
-		if userID != nil && log.UserID != *userID {
+		if userID != nil && l.UserID != *userID {
 			continue
 		}
-		filteredLogs = append(filteredLogs, log)
+		filteredLogs = append(filteredLogs, l)
 	}
 
-	// Apply pagination (simplified)
 	start := (page - 1) * pageSize
 	end := start + pageSize
 	if start >= len(filteredLogs) {
@@ -345,67 +205,15 @@ func GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) {
 		filteredLogs = filteredLogs[start:end]
 	}
 
-	totalPages := (len(rbacLogs) + pageSize - 1) / pageSize
-
-	response := map[string]interface{}{
+	sendSuccess(w, map[string]interface{}{
 		"logs":        filteredLogs,
 		"page":        page,
 		"page_size":   pageSize,
 		"total":       len(rbacLogs),
-		"total_pages": totalPages,
-		"filters": map[string]interface{}{
-			"action":      action,
-			"target_type": targetType,
-			"user_id":     userID,
-		},
-	}
-
-	sendSuccess(w, response, "")
+		"total_pages": (len(rbacLogs) + pageSize - 1) / pageSize,
+		"filters":     map[string]interface{}{"action": action, "target_type": targetType, "user_id": userID},
+	}, "")
 }
 
-// Helper functions
-func uintPtr(u uint) *uint {
-	return &u
-}
-
-func stringPtr(s string) *string {
-	return &s
-}
-
-func ListAnomalyAlerts(w http.ResponseWriter, r *http.Request) {
-	coreService := middleware.GetCoreServiceFromContext(r.Context())
-	if coreService == nil {
-		sendError(w, "InternalError", "Core service not available", http.StatusInternalServerError, nil)
-		return
-	}
-	unacknowledgedOnly := r.URL.Query().Get("unacknowledged") == "true"
-	detector := core.NewAnomalyDetector(coreService.Storage())
-	alerts, err := detector.ListAlerts(r.Context(), unacknowledgedOnly)
-	if err != nil {
-		sendError(w, "InternalError", "Failed to list anomaly alerts", http.StatusInternalServerError, nil)
-		return
-	}
-	sendSuccess(w, map[string]interface{}{"alerts": alerts, "total": len(alerts)}, "")
-}
-
-func AcknowledgeAnomalyAlert(w http.ResponseWriter, r *http.Request) {
-	coreService := middleware.GetCoreServiceFromContext(r.Context())
-	if coreService == nil {
-		sendError(w, "InternalError", "Core service not available", http.StatusInternalServerError, nil)
-		return
-	}
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 64)
-	if err != nil {
-		sendError(w, "BadRequest", "Invalid alert ID", http.StatusBadRequest, nil)
-		return
-	}
-	detector := core.NewAnomalyDetector(coreService.Storage())
-	if err := detector.AcknowledgeAlert(r.Context(), uint(id)); err != nil {
-		sendError(w, "InternalError", "Failed to acknowledge alert", http.StatusInternalServerError, nil)
-		return
-	}
-	sendSuccess(w, map[string]interface{}{"acknowledged": true}, "")
-}
-
-// Helper functions are now in helpers.go
+func uintPtr(u uint) *uint       { return &u }
+func stringPtr(s string) *string { return &s }
