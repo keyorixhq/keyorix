@@ -143,6 +143,7 @@ func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 
 	baseDir := "."
 	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
+	svc.CleanPendingDEK() // remove leftover .pending file from any interrupted prior rotation
 	if err := svc.Initialize(passphrase); err != nil {
 		return nil, fmt.Errorf("failed to initialize encryption (KEK derivation): %w", err)
 	}

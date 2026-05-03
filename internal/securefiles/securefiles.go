@@ -38,10 +38,11 @@ func isPathInsideBase(baseDir, targetPath string) (bool, error) {
 	return absTarget == absBase || strings.HasPrefix(absTarget, baseWithSlash), nil
 }
 
-// SafeReadFile reads a file if it is inside the specified baseDir.
-// Returns an error if the file is outside the baseDir.
+// SafeReadFile reads a file at filepath.Join(baseDir, filePath), validating
+// that the resolved path remains inside baseDir.
 func SafeReadFile(baseDir, filePath string) ([]byte, error) {
-	cleanPath := filepath.Clean(filePath)
+	fullPath := filepath.Join(baseDir, filePath)
+	cleanPath := filepath.Clean(fullPath)
 
 	ok, err := isPathInsideBase(baseDir, cleanPath)
 	if err != nil {
@@ -54,9 +55,11 @@ func SafeReadFile(baseDir, filePath string) ([]byte, error) {
 	return os.ReadFile(cleanPath)
 }
 
-// SecureWriteFile writes data to a file with the given permissions, only if the path is within baseDir.
+// SecureWriteFile writes data to filepath.Join(baseDir, path), validating
+// that the resolved path remains inside baseDir.
 func SecureWriteFile(baseDir, path string, data []byte, perm os.FileMode) error {
-	cleanPath := filepath.Clean(path)
+	fullPath := filepath.Join(baseDir, path)
+	cleanPath := filepath.Clean(fullPath)
 
 	ok, err := isPathInsideBase(baseDir, cleanPath)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"gorm.io/gorm"
 )
 
 // Service provides high-level encryption operations for the application
@@ -266,6 +267,71 @@ func (s *Service) DecryptLargeSecret(encryptedChunks [][]byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+// RotateDEKWithSweep performs a true DEK rotation with a full re-encryption sweep
+// of all DEK-encrypted database rows (ADR-010).
+//
+// The DB transaction is owned here: if the sweep succeeds the transaction is
+// committed before the on-disk key file is promoted. If anything fails,
+// the transaction is rolled back and the old DEK remains active.
+//
+// This is a write-locking, offline operation. The server should not accept
+// write traffic during the sweep for consistency. See ADR-010 for rationale.
+func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
+	// Check initialization under read lock, then release before calling keyManager
+	// (keyManager.RotateDEKWithSweep takes its own write lock).
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return fmt.Errorf("encryption service not initialized")
+	}
+	s.mu.RUnlock()
+
+	// The sweepFn is called by keymanager inside its write lock, with two
+	// EncryptionService instances: old (current DEK) and new (next DEK).
+	sweepFn := func(oldSvc, newSvc *EncryptionService, newKeyVersion string) error {
+		tx := db.Begin()
+		if tx.Error != nil {
+			return fmt.Errorf("failed to begin transaction: %w", tx.Error)
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				tx.Rollback()
+			}
+		}()
+
+		result, err := SweepAllTables(tx, oldSvc, newSvc, newKeyVersion)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("sweep failed: %w", err)
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			return fmt.Errorf("failed to commit sweep transaction: %w", err)
+		}
+
+		log.Printf("✅ Sweep committed: %d secret_versions, %d sessions, %d api_tokens, %d api_clients, %d password_resets re-encrypted (%d legacy AAD upgraded)",
+			result.SecretVersionsSwept, result.SessionsSwept, result.APITokensSwept,
+			result.APIClientsSwept, result.PasswordResetsSwept, result.LegacyAADUpgraded)
+		return nil
+	}
+
+	if err := s.keyManager.RotateDEKWithSweep(passphrase, sweepFn); err != nil {
+		return fmt.Errorf("DEK rotation with sweep failed: %w", err)
+	}
+
+	// Recreate EncryptionService with new DEK (take write lock for this update)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dek := s.keyManager.GetDEK()
+	encSvc, err := NewEncryptionService(dek)
+	if err != nil {
+		return fmt.Errorf("failed to recreate encryption service after rotation: %w", err)
+	}
+	s.encryptionService = encSvc
+
+	return nil
+}
+
 // RotateDEK rotates the DEK. The passphrase is required to derive the KEK
 // for wrapping the new DEK. Note: existing secrets are NOT re-encrypted by
 // this call — a full re-encryption sweep is required (M2 backlog item).
@@ -312,6 +378,12 @@ func (s *Service) GetKeyVersion() string {
 	}
 
 	return s.keyManager.GetKeyVersion()
+}
+
+// CleanPendingDEK removes a leftover dek.key.pending file from a previously
+// interrupted rotation. Should be called at startup before Initialize.
+func (s *Service) CleanPendingDEK() {
+	s.keyManager.CleanPendingDEK()
 }
 
 // Shutdown cleanly shuts down the encryption service

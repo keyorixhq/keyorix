@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -226,10 +227,140 @@ func (km *KeyManager) GetKeyVersion() string {
 	return km.keyVersion
 }
 
+// RotateDEKWithSweep performs a true DEK rotation with a full re-encryption sweep.
+//
+// Algorithm (ADR-010):
+//  1. Derive KEK from passphrase + existing salt
+//  2. Generate new random DEK
+//  3. Wrap new DEK → write to keys/dek.key.pending
+//  4. Call sweepFn(oldEncSvc, newEncSvc, newKeyVersion) inside a DB transaction
+//     (sweepFn is provided by the caller to avoid import cycles)
+//  5. On sweep success: atomic rename pending → active, wipe old DEK, delete backups
+//  6. On any error: delete pending file, keep old DEK active
+//
+// The sweepFn receives two EncryptionService instances (old + new) so it can
+// decrypt with the old DEK and re-encrypt with the new. The caller is
+// responsible for running the sweep inside a DB transaction.
+//
+// Secret values NEVER leave the sweep function — they are transient in memory
+// only and are wiped immediately after re-encryption.
+func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc, newSvc *EncryptionService, newKeyVersion string) error) error {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+
+	if passphrase == "" {
+		return fmt.Errorf("master passphrase must not be empty")
+	}
+
+	if km.currentDEK == nil {
+		return fmt.Errorf("key manager not initialized — cannot rotate")
+	}
+
+	// Step 1: Derive KEK
+	salt, err := securefiles.SafeReadFile(km.baseDir, km.saltPath)
+	if err != nil {
+		return fmt.Errorf("failed to read salt for DEK rotation: %w", err)
+	}
+	kek := GenerateKEK(passphrase, salt, 600000)
+	defer wipeBytes(kek)
+
+	// Step 2: Generate new DEK
+	newDEK, err := GenerateRandomKey(32)
+	if err != nil {
+		return fmt.Errorf("failed to generate new DEK: %w", err)
+	}
+
+	// Step 3: Write wrapped new DEK to pending file
+	pendingDEKPath := km.dekPath + ".pending"
+	wrapped, err := wrapKey(newDEK, kek)
+	if err != nil {
+		wipeBytes(newDEK)
+		return fmt.Errorf("failed to wrap new DEK: %w", err)
+	}
+	if err := securefiles.SecureWriteFile(km.baseDir, pendingDEKPath, wrapped, 0600); err != nil {
+		wipeBytes(newDEK)
+		return fmt.Errorf("failed to write pending DEK: %w", err)
+	}
+
+	// Step 4: Build old and new EncryptionService instances for the sweep
+	oldEncSvc, err := NewEncryptionService(km.currentDEK)
+	if err != nil {
+		wipeBytes(newDEK)
+		_ = os.Remove(filepath.Join(km.baseDir, pendingDEKPath))
+		return fmt.Errorf("failed to create old encryption service: %w", err)
+	}
+	newEncSvc, err := NewEncryptionService(newDEK)
+	if err != nil {
+		wipeBytes(newDEK)
+		_ = os.Remove(filepath.Join(km.baseDir, pendingDEKPath))
+		return fmt.Errorf("failed to create new encryption service: %w", err)
+	}
+	newKeyVersion := fmt.Sprintf("v%d", time.Now().Unix())
+
+	// Step 5: Run sweep (caller provides this; runs inside a DB transaction)
+	if err := sweepFn(oldEncSvc, newEncSvc, newKeyVersion); err != nil {
+		wipeBytes(newDEK)
+		_ = os.Remove(filepath.Join(km.baseDir, pendingDEKPath))
+		return fmt.Errorf("re-encryption sweep failed — old DEK remains active: %w", err)
+	}
+
+	// Step 6: Atomic rename pending → active (POSIX atomic on same filesystem)
+	activePath := filepath.Join(km.baseDir, km.dekPath)
+	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
+	if err := os.Rename(pendingPath, activePath); err != nil {
+		wipeBytes(newDEK)
+		_ = os.Remove(pendingPath)
+		return fmt.Errorf("failed to promote pending DEK to active: %w", err)
+	}
+
+	// Step 7: Replace in-memory DEK, wipe old
+	wipeBytes(km.currentDEK)
+	km.currentDEK = newDEK
+	km.keyVersion = newKeyVersion
+
+	// Step 8: Delete all backup files (key proliferation cleanup)
+	km.deleteBackupFiles()
+
+	fmt.Printf("✅ DEK rotated and full re-encryption sweep complete. New version: %s\n", km.keyVersion)
+	return nil
+}
+
+// deleteBackupFiles removes all dek.key.backup.* files accumulated by the
+// old RotateDEK() key-proliferation behaviour.
+func (km *KeyManager) deleteBackupFiles() {
+	pattern := filepath.Join(km.baseDir, km.dekPath+".backup.*")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		log.Printf("[WARN] failed to glob backup DEK files: %v", err)
+		return
+	}
+	for _, f := range matches {
+		if err := os.Remove(f); err != nil {
+			log.Printf("[WARN] failed to delete backup DEK file %s: %v", f, err)
+		} else {
+			log.Printf("[sweep] deleted backup DEK file: %s", f)
+		}
+	}
+}
+
+// CleanPendingDEK removes a leftover dek.key.pending file from a previously
+// failed or interrupted rotation. Called at startup.
+func (km *KeyManager) CleanPendingDEK() {
+	pendingPath := filepath.Join(km.baseDir, km.dekPath+".pending")
+	if _, err := os.Stat(pendingPath); err == nil {
+		log.Printf("[WARN] found leftover pending DEK file %s — removing (previous rotation was interrupted)", pendingPath)
+		_ = os.Remove(pendingPath)
+	}
+}
+
 // RotateDEK generates a new DEK, wraps it with a freshly derived KEK, and
 // stores it. Secrets must be re-encrypted by the caller before the old DEK
 // is discarded — this method only rotates the key material on disk and in
 // memory. A full re-encryption sweep is an M2 item.
+//
+// DEPRECATED: Use RotateDEKWithSweep instead. This method is key proliferation,
+// not key rotation — existing secrets are NOT re-encrypted and old backup files
+// accumulate. See ADR-010.
 func (km *KeyManager) RotateDEK(passphrase string) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
