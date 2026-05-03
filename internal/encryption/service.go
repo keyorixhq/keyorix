@@ -112,6 +112,35 @@ func (s *Service) EncryptSecret(plaintext []byte) ([]byte, []byte, error) {
 	return encryptedBytes, metadataBytes, nil
 }
 
+// EncryptSecretWithAAD encrypts a secret value bound to the given AAD.
+// Use SecretAAD(secretID, namespaceID, versionNumber) to construct the AAD.
+func (s *Service) EncryptSecretWithAAD(plaintext []byte, aad []byte) ([]byte, []byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, nil, fmt.Errorf("encryption service not initialized")
+	}
+
+	keyVersion := s.keyManager.GetKeyVersion()
+	encrypted, err := s.encryptionService.EncryptWithAAD(plaintext, keyVersion, aad)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encrypt secret with AAD: %w", err)
+	}
+
+	encryptedBytes, err := SerializeEncryptedData(encrypted)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to serialize encrypted data: %w", err)
+	}
+
+	metadataBytes, err := json.Marshal(encrypted.Metadata)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to serialize metadata: %w", err)
+	}
+
+	return encryptedBytes, metadataBytes, nil
+}
+
 // DecryptSecret decrypts a secret value from encrypted data
 func (s *Service) DecryptSecret(encryptedData []byte) ([]byte, error) {
 	s.mu.RLock()
@@ -133,6 +162,42 @@ func (s *Service) DecryptSecret(encryptedData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to decrypt secret: %w", err)
 	}
 
+	return plaintext, nil
+}
+
+// DecryptSecretWithAAD decrypts a secret value, using AAD when the row was
+// encrypted with AAD (aad_version present in metadata), falling back to
+// legacy nil-AAD for rows encrypted before this change.
+// Log a warning on the legacy path — those rows should be re-encrypted
+// in the M2 migration sweep.
+func (s *Service) DecryptSecretWithAAD(encryptedData []byte, aad []byte) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if !s.initialized {
+		return nil, fmt.Errorf("encryption service not initialized")
+	}
+
+	encrypted, err := DeserializeEncryptedData(encryptedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize encrypted data: %w", err)
+	}
+
+	// AAD-bound row: strict path
+	if encrypted.Metadata.AADVersion != "" {
+		plaintext, err := s.encryptionService.DecryptWithAAD(encrypted, aad)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt secret with AAD: %w", err)
+		}
+		return plaintext, nil
+	}
+
+	// Legacy row (no AAD): fall back to nil-AAD decrypt + warn
+	log.Printf("[WARN] decrypting legacy secret row without AAD — schedule re-encryption in M2 migration")
+	plaintext, err := s.encryptionService.Decrypt(encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt legacy secret: %w", err)
+	}
 	return plaintext, nil
 }
 

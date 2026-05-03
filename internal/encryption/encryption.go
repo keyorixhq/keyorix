@@ -30,6 +30,7 @@ type EncryptionMetadata struct {
 	Iterations  int       `json:"iterations,omitempty"`
 	ChunkIndex  int       `json:"chunk_index,omitempty"`
 	TotalChunks int       `json:"total_chunks,omitempty"`
+	AADVersion  string    `json:"aad_version,omitempty"` // "v1" = secretID:namespaceID:versionNumber; absent = legacy (no AAD)
 }
 
 // EncryptedData represents encrypted content with metadata
@@ -113,6 +114,59 @@ func (es *EncryptionService) Decrypt(encryptedData *EncryptedData) ([]byte, erro
 	plaintext, err := es.gcm.Open(nil, nonce, encryptedData.Data, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+// SecretAAD returns the canonical Additional Authenticated Data for a secret version.
+// Format: "keyorix:v1:<secretID>:<namespaceID>:<versionNumber>"
+// This binds the ciphertext to a specific secret + namespace + version, preventing
+// ciphertext transplant attacks (copying an encrypted value between rows).
+func SecretAAD(secretID, namespaceID uint, versionNumber int) []byte {
+	return []byte(fmt.Sprintf("keyorix:v1:%d:%d:%d", secretID, namespaceID, versionNumber))
+}
+
+// EncryptWithAAD encrypts data using AES-GCM with Additional Authenticated Data.
+// The AAD is mixed into the GCM authentication tag — it is not stored in the
+// ciphertext but must be supplied identically on decryption.
+func (es *EncryptionService) EncryptWithAAD(plaintext []byte, keyVersion string, aad []byte) (*EncryptedData, error) {
+	nonce := make([]byte, es.gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	ciphertext := es.gcm.Seal(nil, nonce, plaintext, aad)
+
+	metadata := EncryptionMetadata{
+		Algorithm:   "AES-256-GCM",
+		KeyVersion:  keyVersion,
+		EncryptedAt: time.Now().UTC(),
+		Nonce:       base64.StdEncoding.EncodeToString(nonce),
+		AADVersion:  "v1",
+	}
+
+	return &EncryptedData{
+		Data:     ciphertext,
+		Metadata: metadata,
+	}, nil
+}
+
+// DecryptWithAAD decrypts data encrypted with EncryptWithAAD.
+// Returns an error if the AAD does not match — this catches ciphertext transplants.
+func (es *EncryptionService) DecryptWithAAD(encryptedData *EncryptedData, aad []byte) ([]byte, error) {
+	if encryptedData.Metadata.Algorithm != "AES-256-GCM" {
+		return nil, fmt.Errorf("unsupported algorithm: %s", encryptedData.Metadata.Algorithm)
+	}
+
+	nonce, err := base64.StdEncoding.DecodeString(encryptedData.Metadata.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode nonce: %w", err)
+	}
+
+	plaintext, err := es.gcm.Open(nil, nonce, encryptedData.Data, aad)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt data (AAD mismatch or corruption): %w", err)
 	}
 
 	return plaintext, nil
