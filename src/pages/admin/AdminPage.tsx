@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
     MagnifyingGlassIcon,
     PlusIcon,
@@ -9,7 +8,12 @@ import {
     PencilIcon,
     UserCircleIcon,
 } from '@heroicons/react/24/outline';
-import { apiClient } from '../../services/api';
+import {
+    useAdminUserList,
+    useAdminCreateUser,
+    useAdminUpdateUser,
+    useAdminDeleteUser,
+} from '../../features/admin/api';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
@@ -43,7 +47,6 @@ function formatDate(iso: string): string {
 }
 
 export const AdminPage: React.FC = () => {
-    const queryClient = useQueryClient();
     const PAGE_SIZE = 20;
 
     const [page, setPage] = useState(1);
@@ -62,42 +65,16 @@ export const AdminPage: React.FC = () => {
     const [editDisplayName, setEditDisplayName] = useState('');
     const [editActive, setEditActive] = useState(true);
 
-    const { data, isLoading, isError } = useQuery({
-        queryKey: ['admin-users', page, search],
-        queryFn: async () => {
-            const params: Record<string, any> = { page, page_size: PAGE_SIZE };
-            if (search) params.search = search;
-            const response = await apiClient.get('/api/v1/users', { params });
-            return response.data.data;
-        },
-        retry: 1,
-    });
+    const { data, isLoading, isError } = useAdminUserList({ page, search, pageSize: PAGE_SIZE });
 
     const rawData = data as any;
     const users: APIUser[] = rawData?.users ?? [];
     const total: number = rawData?.total ?? 0;
     const totalPages: number = rawData?.total_pages ?? 1;
 
-    const createMutation = useMutation({
-        mutationFn: (body: { username: string; email: string; display_name: string; password: string }) =>
-            apiClient.post('/api/v1/users', body).then((r) => r.data),
-        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin-users'] }); closeModal(); },
-        onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to create user'),
-    });
-
-    const updateMutation = useMutation({
-        mutationFn: ({ id, body }: { id: number; body: object }) =>
-            apiClient.put(`/api/v1/users/${id}`, body).then((r) => r.data),
-        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin-users'] }); closeModal(); },
-        onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to update user'),
-    });
-
-    const deleteMutation = useMutation({
-        mutationFn: (id: number) =>
-            apiClient.delete(`/api/v1/users/${id}`),
-        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['admin-users'] }); closeModal(); },
-        onError: (err: any) => setPageError(err.response?.data?.error ?? err.message ?? 'Failed to delete user'),
-    });
+    const createMutation = useAdminCreateUser();
+    const updateMutation = useAdminUpdateUser();
+    const deleteMutation = useAdminDeleteUser();
 
     function closeModal() {
         setActiveModal(null);
@@ -119,19 +96,34 @@ export const AdminPage: React.FC = () => {
         if (!createEmail.trim()) { setFormError('Email is required'); return; }
         if (!createDisplayName.trim()) { setFormError('Display name is required'); return; }
         if (createPassword.length < 8) { setFormError('Password must be at least 8 characters'); return; }
-        createMutation.mutate({ username: createUsername.trim(), email: createEmail.trim(), display_name: createDisplayName.trim(), password: createPassword });
+        createMutation.mutate(
+            { username: createUsername.trim(), email: createEmail.trim(), display_name: createDisplayName.trim(), password: createPassword },
+            {
+                onSuccess: closeModal,
+                onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to create user'),
+            }
+        );
     }
 
     function handleUpdate() {
         if (activeModal?.type !== 'edit') return;
         setFormError('');
         if (!editEmail.trim()) { setFormError('Email is required'); return; }
-        updateMutation.mutate({ id: activeModal.user.id, body: { email: editEmail.trim(), display_name: editDisplayName.trim(), active: editActive } });
+        updateMutation.mutate(
+            { id: activeModal.user.id, body: { email: editEmail.trim(), display_name: editDisplayName.trim(), active: editActive } },
+            {
+                onSuccess: closeModal,
+                onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to update user'),
+            }
+        );
     }
 
     function handleDelete() {
         if (activeModal?.type !== 'delete') return;
-        deleteMutation.mutate(activeModal.user.id);
+        deleteMutation.mutate(activeModal.user.id, {
+            onSuccess: closeModal,
+            onError: (err: any) => setPageError(err.response?.data?.error ?? err.message ?? 'Failed to delete user'),
+        });
     }
 
     return (
