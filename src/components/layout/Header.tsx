@@ -11,7 +11,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { Dropdown, DropdownItem } from '../ui/Dropdown';
 
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../features/auth';
 
 export interface HeaderProps {
     onMenuClick: () => void;

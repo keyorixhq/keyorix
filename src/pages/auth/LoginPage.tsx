@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { LoginForm, PasswordResetForm } from '../../components/forms';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../features/auth';
 import { authService } from '../../services/auth';
 import { LoginFormData, PasswordResetRequest } from '../../types';
 import { ROUTES } from '../../constants';

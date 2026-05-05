@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
-import { useAuthStore } from '../store/authStore';
-import { getEnvConfig } from '../utils';
+import { useAuthStore } from '../../store/authStore';
+import { getEnvConfig } from '../../utils';
 
 const config = getEnvConfig();
 
