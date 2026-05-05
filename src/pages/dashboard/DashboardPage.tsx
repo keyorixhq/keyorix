@@ -123,17 +123,22 @@ const ActivityItemComponent: React.FC<ActivityItemProps> = ({ activity }) => {
     };
 
     const getActivityText = (activity: ActivityItem) => {
+        const name = activity.secretName ? ` "${activity.secretName}"` : '';
         switch (activity.type) {
             case 'created':
-                return `created secret "${activity.secretName}"`;
+                return `created secret${name}`;
             case 'updated':
-                return `updated secret "${activity.secretName}"`;
+                return `updated secret${name}`;
             case 'shared':
-                return `shared secret "${activity.secretName}"`;
+                return `shared secret${name}`;
             case 'accessed':
-                return `accessed secret "${activity.secretName}"`;
+                return `accessed secret${name}`;
+            case 'login':
+                return 'logged in';
+            case 'logout':
+                return 'logged out';
             default:
-                return `performed action on "${activity.secretName}"`;
+                return name ? `performed action on${name}` : 'performed a system action';
         }
     };
 
