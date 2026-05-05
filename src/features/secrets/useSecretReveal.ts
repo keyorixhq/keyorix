@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiService } from '../../services/api';
+import { secretsApi } from '../../services/secrets';
 import { Secret } from '../../types';
 
 export const useSecretReveal = () => {
@@ -11,7 +11,7 @@ export const useSecretReveal = () => {
         setCopyingSecretId(secret.id);
         setCopyErrorId(null);
         try {
-            const versions = await apiService.secrets.getVersions(secret.id);
+            const versions = await secretsApi.getVersions(secret.id);
             if (!versions || versions.length === 0) throw new Error('No versions found');
             const latest = versions[0]!;
             const decoded = atob(latest.EncryptedValue as unknown as string);

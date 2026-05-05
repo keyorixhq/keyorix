@@ -1,10 +1,9 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiService } from '../services/api';
-import { queryKeys, invalidateQueries } from '../lib/queryClient';
-import { Secret, SecretFormData } from '../types';
+import { secretsApi } from '../../services/secrets';
+import { queryKeys, invalidateQueries } from '../../lib/queryClient';
+import { Secret, SecretFormData } from '../../types';
 
-// Hook for fetching secrets list
 export const useSecrets = (params?: {
     page?: number;
     pageSize?: number;
@@ -17,121 +16,86 @@ export const useSecrets = (params?: {
 }) => {
     return useQuery({
         queryKey: queryKeys.secrets.list(params),
-        queryFn: () => apiService.secrets.list(params),
+        queryFn: () => secretsApi.list(params),
         keepPreviousData: true,
     });
 };
 
-// Hook for fetching a single secret
 export const useSecret = (id: number, enabled = true) => {
     return useQuery({
         queryKey: queryKeys.secrets.detail(id),
-        queryFn: () => apiService.secrets.get(id),
+        queryFn: () => secretsApi.get(id),
         enabled,
     });
 };
 
-// Hook for fetching secret versions
 export const useSecretVersions = (id: number, enabled = true) => {
     return useQuery({
         queryKey: queryKeys.secrets.versions(id),
-        queryFn: () => apiService.secrets.getVersions(id),
+        queryFn: () => secretsApi.getVersions(id),
         enabled,
     });
 };
 
-// Hook for creating a secret
 export const useCreateSecret = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (data: SecretFormData) => apiService.secrets.create(data),
+        mutationFn: (data: SecretFormData) => secretsApi.create(data),
         onSuccess: (newSecret) => {
-            // Invalidate and refetch secrets list
             invalidateQueries.secrets.all();
-
-            // Add the new secret to the cache
-            queryClient.setQueryData(
-                queryKeys.secrets.detail(newSecret.id),
-                newSecret
-            );
+            queryClient.setQueryData(queryKeys.secrets.detail(newSecret.id), newSecret);
         },
     });
 };
 
-// Hook for updating a secret
 export const useUpdateSecret = (id: number) => {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (data: Partial<SecretFormData>) => apiService.secrets.update(id, data),
+        mutationFn: (data: Partial<SecretFormData>) => secretsApi.update(id, data),
         onSuccess: (updatedSecret) => {
-            // Update the secret in cache
-            queryClient.setQueryData(
-                queryKeys.secrets.detail(id),
-                updatedSecret
-            );
-
-            // Invalidate secrets list to reflect changes
+            queryClient.setQueryData(queryKeys.secrets.detail(id), updatedSecret);
             invalidateQueries.secrets.lists();
         },
     });
 };
 
-// Hook for deleting a secret
 export const useDeleteSecret = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (id: number) => apiService.secrets.delete(id),
+        mutationFn: (id: number) => secretsApi.delete(id),
         onSuccess: (_, deletedId) => {
-            // Remove from cache
-            queryClient.removeQueries({
-                queryKey: queryKeys.secrets.detail(deletedId)
-            });
-
-            // Invalidate secrets list
+            queryClient.removeQueries({ queryKey: queryKeys.secrets.detail(deletedId) });
             invalidateQueries.secrets.all();
         },
     });
 };
 
-// Hook for bulk operations
 export const useBulkDeleteSecrets = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
         mutationFn: async (secretIds: number[]) => {
-            // Delete secrets in parallel
-            await Promise.all(
-                secretIds.map(id => apiService.secrets.delete(id))
-            );
+            await Promise.all(secretIds.map(id => secretsApi.delete(id)));
             return secretIds;
         },
         onSuccess: (deletedIds) => {
-            // Remove from cache
             deletedIds.forEach(id => {
-                queryClient.removeQueries({
-                    queryKey: queryKeys.secrets.detail(id)
-                });
+                queryClient.removeQueries({ queryKey: queryKeys.secrets.detail(id) });
             });
-
-            // Invalidate secrets list
             invalidateQueries.secrets.all();
         },
     });
 };
 
-// Hook for duplicating a secret
 export const useDuplicateSecret = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
         mutationFn: async ({ originalId, newData }: { originalId: number; newData: Partial<SecretFormData> }) => {
-            // First get the original secret
-            const original = await apiService.secrets.get(originalId);
-
-            // Create new secret with modified data
+            const original = await secretsApi.get(originalId);
             const duplicateData: SecretFormData = {
                 name: newData.name || `${original.name}-copy`,
                 value: '',
@@ -142,71 +106,54 @@ export const useDuplicateSecret = () => {
                 metadata: { ...original.metadata, ...newData.metadata },
                 tags: newData.tags || original.tags,
             };
-
-            return apiService.secrets.create(duplicateData);
+            return secretsApi.create(duplicateData);
         },
         onSuccess: (newSecret) => {
-            // Add to cache
-            queryClient.setQueryData(
-                queryKeys.secrets.detail(newSecret.id),
-                newSecret
-            );
-
-            // Invalidate secrets list
+            queryClient.setQueryData(queryKeys.secrets.detail(newSecret.id), newSecret);
             invalidateQueries.secrets.all();
         },
     });
 };
 
-// Hook for searching secrets with debouncing
 export const useSearchSecrets = (query: string, delay = 300) => {
     const [debouncedQuery, setDebouncedQuery] = React.useState(query);
 
     React.useEffect(() => {
-        const timer = setTimeout(() => {
-            setDebouncedQuery(query);
-        }, delay);
-
+        const timer = setTimeout(() => { setDebouncedQuery(query); }, delay);
         return () => clearTimeout(timer);
     }, [query, delay]);
 
     return useQuery({
         queryKey: queryKeys.secrets.list({ search: debouncedQuery }),
-        queryFn: () => apiService.secrets.list({ search: debouncedQuery }),
-        enabled: debouncedQuery.length >= 2, // Only search if query is at least 2 characters
+        queryFn: () => secretsApi.list({ search: debouncedQuery }),
+        enabled: debouncedQuery.length >= 2,
         keepPreviousData: true,
     });
 };
 
-// Hook for getting secret statistics
 export const useSecretStats = () => {
     return useQuery({
         queryKey: ['secrets', 'stats'],
         queryFn: async () => {
-            const response = await apiService.secrets.list({ pageSize: 1 });
-            return {
-                total: response.total,
-                // Could add more stats here
-            };
+            const response = await secretsApi.list({ pageSize: 1 });
+            return { total: response.total };
         },
-        staleTime: 5 * 60 * 1000, // 5 minutes
+        staleTime: 5 * 60 * 1000,
     });
 };
 
-// Hook for prefetching secret details
 export const usePrefetchSecret = () => {
     const queryClient = useQueryClient();
 
     return React.useCallback((id: number) => {
         queryClient.prefetchQuery({
             queryKey: queryKeys.secrets.detail(id),
-            queryFn: () => apiService.secrets.get(id),
-            staleTime: 2 * 60 * 1000, // 2 minutes
+            queryFn: () => secretsApi.get(id),
+            staleTime: 2 * 60 * 1000,
         });
     }, [queryClient]);
 };
 
-// Hook for optimistic updates
 export const useOptimisticSecretUpdate = (id: number) => {
     const queryClient = useQueryClient();
 

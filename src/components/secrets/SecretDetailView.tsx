@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import {
     EyeIcon,
     EyeSlashIcon,
@@ -13,8 +12,7 @@ import {
     UserIcon,
     KeyIcon
 } from '@heroicons/react/24/outline';
-import { apiService } from '../../services/api';
-import { queryKeys } from '../../lib/queryClient';
+import { useSecretVersions } from '../../features/secrets/api';
 const CLIPBOARD_TIMEOUT = 30000;
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
@@ -43,12 +41,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const [showValue, setShowValue] = useState(false);
     const [copySuccess, setCopySuccess] = useState(false);
 
-    // Fetch secret versions to reveal the latest value
-    const { data: versions, isLoading, error } = useQuery({
-        queryKey: queryKeys.secrets.versions(secret.id),
-        queryFn: () => apiService.secrets.getVersions(secret.id),
-        enabled: showValue,
-    });
+    const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
 
     const latestVersion = versions && versions.length > 0
         ? versions.reduce((a, b) => a.VersionNumber >= b.VersionNumber ? a : b)

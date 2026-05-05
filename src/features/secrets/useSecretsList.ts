@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiService } from '../../services/api';
+import { secretsApi } from '../../services/secrets';
+import { environmentsApi } from '../../services/environments';
 import { queryKeys } from '../../lib/queryClient';
 import { SecretFilters, PaginationState, SecretType, SecretFormData } from '../../types';
 import { useUIStore } from '../../store/uiStore';
@@ -34,7 +35,7 @@ export const useSecretsList = () => {
 
     const { data: environments = [] } = useQuery({
         queryKey: ['environments'],
-        queryFn: () => apiService.environments.list(),
+        queryFn: () => environmentsApi.list(),
         staleTime: 5 * 60 * 1000,
     });
 
@@ -50,7 +51,7 @@ export const useSecretsList = () => {
         }),
         queryFn: () => {
             const envId = filters.environment ? environmentIdMap[filters.environment] : undefined;
-            return apiService.secrets.list({
+            return secretsApi.list({
                 page: pagination.page,
                 pageSize: pagination.pageSize,
                 ...(filters.search ? { search: filters.search } : {}),
@@ -126,7 +127,7 @@ export const useSecretsList = () => {
 
     // Mutations
     const createMutation = useMutation({
-        mutationFn: (d: SecretFormData) => apiService.secrets.create(d),
+        mutationFn: (d: SecretFormData) => secretsApi.create(d),
         onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
@@ -134,23 +135,23 @@ export const useSecretsList = () => {
         mutationFn: ({ id, name, type, value }: { id: number; name: string; type: SecretType; value: string }) => {
             const updateData: Partial<SecretFormData> = { name, type };
             if (value.trim()) updateData.value = value;
-            return apiService.secrets.update(id, updateData);
+            return secretsApi.update(id, updateData);
         },
         onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
     const deleteMutation = useMutation({
-        mutationFn: (id: number) => apiService.secrets.delete(id),
+        mutationFn: (id: number) => secretsApi.delete(id),
         onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
     const rotateMutation = useMutation({
-        mutationFn: ({ id, newValue }: { id: number; newValue: string }) => apiService.rotateSecret(id, newValue),
+        mutationFn: ({ id, newValue }: { id: number; newValue: string }) => secretsApi.rotate(id, newValue),
         onSuccess: () => { closeModal(); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
     const bulkDeleteMutation = useMutation({
-        mutationFn: (ids: number[]) => Promise.all(ids.map(id => apiService.secrets.delete(id))),
+        mutationFn: (ids: number[]) => Promise.all(ids.map(id => secretsApi.delete(id))),
         onSuccess: () => { closeModal(); clearSelectedItems(); setBulkActionMode(false); queryClient.invalidateQueries({ queryKey: queryKeys.secrets.all }); },
     });
 
