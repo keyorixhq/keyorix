@@ -2,492 +2,409 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ROUTES } from '../../constants';
-import {
-    KeyIcon,
-    ShareIcon,
-    EyeIcon,
-    ClockIcon,
-    ArrowTrendingUpIcon,
-    ShieldCheckIcon,
-    UserGroupIcon,
-    ExclamationTriangleIcon,
-    DocumentTextIcon,
-} from '@heroicons/react/24/outline';
 import { apiService } from '../../services/api';
 import { queryKeys } from '../../lib/queryClient';
 import { useAuthStore } from '../../store/authStore';
+import { ActivityItem, AnomalyAlert } from '../../types';
 
-const formatDate = (d: string | Date) =>
-    new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
-const formatTime = (d: string | Date) =>
-    new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
-import { DashboardStats, ActivityItem, AnomalyAlert } from '../../types';
-import { Loading } from '../../components/ui/Loading';
-import { Alert } from '../../components/ui/Alert';
-import { Button } from '../../components/ui/Button';
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+const fmt = (n: number) => n.toLocaleString();
+const fmtDate = (d: string | Date) =>
+    new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(d));
+
+function parseUptime(raw: string): string {
+    if (!raw) return '—';
+    const h = raw.match(/(\d+)h/)?.[1];
+    const m = raw.match(/(\d+)m/)?.[1];
+    if (h) return `${h}h ${m ?? '0'}m`;
+    if (m) return `${m}m`;
+    return raw.split('.')[0];
+}
+
+// ─── Sub-components ─────────────────────────────────────────────────────────
 
 interface StatCardProps {
-    title: string;
-    value: number | string;
-    icon: React.ComponentType<{ className?: string }>;
-    trend?: {
-        value: number;
-        isPositive: boolean;
-    };
-    color: 'blue' | 'green' | 'purple' | 'orange' | 'red';
+    label: string;
+    value: string | number;
+    sub?: string;
+    accent: string;   // tailwind bg class for the left bar
     onClick?: () => void;
 }
 
-const StatCard: React.FC<StatCardProps> = ({ title, value, icon: Icon, trend, color, onClick }) => {
-    const colorClasses = {
-        blue: 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400',
-        green: 'bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400',
-        purple: 'bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400',
-        orange: 'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400',
-        red: 'bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400',
-    };
+const StatCard: React.FC<StatCardProps> = ({ label, value, sub, accent, onClick }) => (
+    <div
+        onClick={onClick}
+        className={`relative bg-white border border-gray-100 rounded-xl p-6 flex flex-col gap-2 shadow-sm
+            ${onClick ? 'cursor-pointer hover:shadow-md hover:border-gray-200 transition-all duration-150' : ''}`}
+    >
+        <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accent}`} />
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-widest pl-3">{label}</span>
+        <span className="text-4xl font-bold text-gray-900 pl-3 tabular-nums leading-none">
+            {typeof value === 'number' ? fmt(value) : value}
+        </span>
+        {sub && <span className="text-xs text-gray-400 pl-3">{sub}</span>}
+    </div>
+);
 
-    return (
-        <div
-            className={`bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''
-                }`}
-            onClick={onClick}
-        >
-            <div className="flex items-center justify-between">
-                <div>
-                    <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
-                        {title}
-                    </p>
-                    <p className="text-3xl font-semibold text-gray-900 dark:text-white mt-2">
-                        {typeof value === 'number' ? value.toLocaleString() : value}
-                    </p>
-                    {trend && (
-                        <div className="flex items-center mt-2">
-                            <ArrowTrendingUpIcon
-                                className={`h-4 w-4 mr-1 ${trend.isPositive ? 'text-green-500' : 'text-red-500 transform rotate-180'
-                                    }`}
-                            />
-                            <span className={`text-sm font-medium ${trend.isPositive ? 'text-green-600' : 'text-red-600'
-                                }`}>
-                                {Math.abs(trend.value)}%
-                            </span>
-                            <span className="text-sm text-gray-500 dark:text-gray-400 ml-1">
-                                vs last month
-                            </span>
-                        </div>
-                    )}
-                </div>
-                <div className={`p-3 rounded-lg ${colorClasses[color]}`}>
-                    <Icon className="h-6 w-6" />
-                </div>
-            </div>
-        </div>
-    );
-};
-
-interface ActivityItemProps {
-    activity: ActivityItem;
+interface FeaturePillProps {
+    label: string;
+    active: boolean;
 }
 
-const ActivityItemComponent: React.FC<ActivityItemProps> = ({ activity }) => {
-    
+const FeaturePill: React.FC<FeaturePillProps> = ({ label, active }) => (
+    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border
+        ${active
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            : 'bg-gray-50 border-gray-200 text-gray-400'}`}
+    >
+        <div className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+        {label}
+    </div>
+);
 
-    const getActivityIcon = (type: ActivityItem['type']) => {
-        switch (type) {
-            case 'created':
-                return <KeyIcon className="h-5 w-5 text-green-500" />;
-            case 'updated':
-                return <KeyIcon className="h-5 w-5 text-blue-500" />;
-            case 'shared':
-                return <ShareIcon className="h-5 w-5 text-purple-500" />;
-            case 'accessed':
-                return <EyeIcon className="h-5 w-5 text-orange-500" />;
-            default:
-                return <ClockIcon className="h-5 w-5 text-gray-500" />;
-        }
-    };
+const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
+    created:      { dot: 'bg-emerald-500', label: 'created secret' },
+    updated:      { dot: 'bg-blue-500',    label: 'updated secret' },
+    accessed:     { dot: 'bg-amber-500',   label: 'accessed secret' },
+    shared:       { dot: 'bg-purple-500',  label: 'shared secret' },
+    login:        { dot: 'bg-gray-400',    label: 'logged in' },
+    logout:       { dot: 'bg-gray-300',    label: 'logged out' },
+    deleted:      { dot: 'bg-red-500',     label: 'deleted secret' },
+};
 
-    const getActivityColor = (type: ActivityItem['type']) => {
-        switch (type) {
-            case 'created':
-                return 'border-green-200 dark:border-green-800';
-            case 'updated':
-                return 'border-blue-200 dark:border-blue-800';
-            case 'shared':
-                return 'border-purple-200 dark:border-purple-800';
-            case 'accessed':
-                return 'border-orange-200 dark:border-orange-800';
-            default:
-                return 'border-gray-200 dark:border-gray-700';
-        }
-    };
-
-    const getActivityText = (activity: ActivityItem) => {
-        const name = activity.secretName ? ` "${activity.secretName}"` : '';
-        switch (activity.type) {
-            case 'created':
-                return `created secret${name}`;
-            case 'updated':
-                return `updated secret${name}`;
-            case 'shared':
-                return `shared secret${name}`;
-            case 'accessed':
-                return `accessed secret${name}`;
-            case 'login':
-                return 'logged in';
-            case 'logout':
-                return 'logged out';
-            default:
-                return name ? `performed action on${name}` : 'performed a system action';
-        }
-    };
-
+const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
+    const style = EVENT_STYLES[item.type] ?? { dot: 'bg-gray-400', label: item.type };
+    const secretPart = item.secretName ? ` "${item.secretName}"` : '';
     return (
-        <div className={`flex items-start space-x-3 p-4 border-l-4 ${getActivityColor(activity.type)} bg-gray-50 dark:bg-gray-700/50 rounded-r-lg`}>
-            <div className="flex-shrink-0 mt-1">
-                {getActivityIcon(activity.type)}
+        <div className="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
+            <div className="mt-1.5 flex-shrink-0">
+                <div className={`w-2 h-2 rounded-full ${style.dot}`} />
             </div>
             <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-900 dark:text-white">
-                    <span className="font-medium">{activity.actor}</span>{' '}
-                    {getActivityText(activity)}
+                <p className="text-sm text-gray-800">
+                    <span className="font-semibold">{item.actor}</span>
+                    {' '}<span className="text-gray-500">{style.label}{secretPart}</span>
                 </p>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {formatDate(activity.timestamp)} at {formatTime(activity.timestamp)}
-                </p>
+                <p className="text-xs text-gray-400 mt-0.5">{fmtDate(item.timestamp)}</p>
             </div>
         </div>
     );
 };
+
+// ─── Main Page ───────────────────────────────────────────────────────────────
 
 export const DashboardPage: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuthStore();
 
-    // Fetch dashboard statistics
-    const { data: stats, isLoading: statsLoading, error: statsError } = useQuery({
+    const { data: stats, error: statsError } = useQuery({
         queryKey: queryKeys.dashboard.stats(),
         queryFn: () => apiService.dashboard.getStats(),
-        staleTime: 2 * 60 * 1000, // 2 minutes
+        staleTime: 2 * 60 * 1000,
     });
 
-    // Fetch recent activity
-    const { data: activityData, isLoading: activityLoading } = useQuery({
-        queryKey: queryKeys.dashboard.activity({ pageSize: 10 }),
-        queryFn: () => apiService.dashboard.getActivity({ pageSize: 10 }),
-        staleTime: 1 * 60 * 1000, // 1 minute
+    const { data: activityData } = useQuery({
+        queryKey: queryKeys.dashboard.activity({ pageSize: 8 }),
+        queryFn: () => apiService.dashboard.getActivity({ pageSize: 8 }),
+        staleTime: 60 * 1000,
     });
 
-    const { data: anomalyData, refetch: refetchAnomalies } = useQuery({
+    const { data: metrics } = useQuery({
+        queryKey: ['systemMetrics'],
+        queryFn: () => apiService.system.getMetrics(),
+        staleTime: 30 * 1000,
+        refetchInterval: 60 * 1000,
+    });
+
+    const { data: sysInfo } = useQuery({
+        queryKey: ['systemInfo'],
+        queryFn: () => apiService.system.getInfo(),
+        staleTime: 5 * 60 * 1000,
+    });
+
+    const { data: anomalyData } = useQuery({
         queryKey: ['anomalyAlerts'],
         queryFn: () => apiService.getAnomalyAlerts(true),
         refetchInterval: 5 * 60 * 1000,
     });
-    const anomalyAlerts: AnomalyAlert[] = anomalyData?.data?.alerts || [];
 
-    // System health data from API
-    const systemHealth = {
-        status: 'healthy' as const,
-        uptime: '99.9%',
-        responseTime: stats?.avgResponseTime ? `${stats.avgResponseTime}ms` : '<1ms',
-        activeUsers: stats?.activeUsers ?? 0,
-    };
+    const anomalies: AnomalyAlert[] = anomalyData?.data?.alerts ?? [];
+    const expiring = stats?.expiringSecrets ?? [];
+    const alertCount = anomalies.length + expiring.length;
 
-    const handleNavigateToSecrets = () => {
-        navigate(ROUTES.SECRETS);
-    };
+    const features = sysInfo?.features ?? {};
+    const secretsMetrics = metrics?.secrets ?? {};
+    const httpMetrics = metrics?.http ?? {};
+    const dbMetrics = metrics?.database ?? {};
 
-    const handleNavigateToAudit = () => {
-        navigate(ROUTES.AUDIT);
-    };
-
-    const handleNavigateToUsers = () => {
-        navigate(ROUTES.ADMIN_USERS);
-    };
-
-    if (statsError) {
-        // Don't block the whole page — show stats as zeroes and let the user proceed
-        console.warn('Dashboard stats failed to load:', statsError);
-    }
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
     return (
-        <div className="p-6 space-y-6">
-            {/* Welcome Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
-                        Welcome back, {user?.username || 'User'}!
-                    </h1>
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                        Here's what's happening with your secrets today.
-                    </p>
+        <div className="min-h-screen bg-gray-50">
+            <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+
+                {/* ── Header ─────────────────────────────────────────────── */}
+                <div className="flex items-end justify-between">
+                    <div>
+                        <p className="text-sm text-gray-400 mb-1">{greeting}</p>
+                        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+                            {user?.username ?? 'admin'}
+                        </h1>
+                    </div>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={() => navigate(ROUTES.AUDIT)}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            Audit Logs
+                        </button>
+                        <button
+                            onClick={() => navigate(ROUTES.SECRETS)}
+                            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-all"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                            </svg>
+                            Manage Secrets
+                        </button>
+                    </div>
                 </div>
-                <div className="flex items-center space-x-3">
-                    <Button
-                        variant="outline"
-                        onClick={handleNavigateToAudit}
-                    >
-                        <DocumentTextIcon className="h-4 w-4 mr-2" />
-                        Audit Logs
-                    </Button>
-                    <Button
-                        onClick={handleNavigateToSecrets}
-                    >
-                        <KeyIcon className="h-4 w-4 mr-2" />
-                        Manage Secrets
-                    </Button>
+
+                {/* ── Stat Cards ─────────────────────────────────────────── */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <StatCard
+                        label="Total Secrets"
+                        value={stats?.totalSecrets ?? 0}
+                        sub={secretsMetrics.secrets_created_24h != null
+                            ? `+${secretsMetrics.secrets_created_24h} today`
+                            : undefined}
+                        accent="bg-blue-500"
+                        onClick={() => navigate(ROUTES.SECRETS)}
+                    />
+                    <StatCard
+                        label="Active Users"
+                        value={stats?.activeUsers ?? 0}
+                        sub="registered accounts"
+                        accent="bg-purple-500"
+                        onClick={() => navigate(ROUTES.ADMIN_USERS)}
+                    />
+                    <StatCard
+                        label="Accessed (24h)"
+                        value={secretsMetrics.secrets_accessed_24h ?? 0}
+                        sub={secretsMetrics.decryption_ops_24h != null
+                            ? `${fmt(secretsMetrics.decryption_ops_24h)} decryption ops`
+                            : undefined}
+                        accent="bg-amber-500"
+                        onClick={() => navigate(ROUTES.AUDIT)}
+                    />
+                    <StatCard
+                        label={alertCount > 0 ? `Alerts (${alertCount})` : 'Security'}
+                        value={alertCount > 0 ? alertCount : '✓'}
+                        sub={alertCount > 0
+                            ? `${anomalies.length} anomal${anomalies.length === 1 ? 'y' : 'ies'} · ${expiring.length} expiring`
+                            : 'No active alerts'}
+                        accent={alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500'}
+                        onClick={() => navigate(ROUTES.SECRETS)}
+                    />
                 </div>
-            </div>
 
-            {/* Stats error banner */}
-            {statsError && (
-                <Alert
-                    type="warning"
-                    title="Dashboard stats unavailable"
-                    message="Could not load statistics. Other features are still available."
-                />
-            )}
+                {/* ── Main Grid ──────────────────────────────────────────── */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-            {/* Statistics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {statsLoading ? (
-                    Array.from({ length: 4 }).map((_, i) => (
-                        <div key={i} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                            <Loading />
+                    {/* Recent Activity */}
+                    <div className="lg:col-span-2 bg-white border border-gray-100 rounded-xl shadow-sm">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-50">
+                            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-widest">Recent Activity</h2>
+                            <button
+                                onClick={() => navigate(ROUTES.AUDIT)}
+                                className="text-xs font-medium text-gray-400 hover:text-gray-700 transition-colors"
+                            >
+                                View all →
+                            </button>
                         </div>
-                    ))
-                ) : (
-                    <>
-                        <StatCard
-                            title="Total Secrets"
-                            value={stats?.totalSecrets || 0}
-                            icon={KeyIcon}
-                            color="blue"
-                            trend={stats?.totalSecretsTrend}
-                            onClick={handleNavigateToSecrets}
-                        />
-                        <StatCard
-                            title="Active Users"
-                            value={stats?.activeUsers || 0}
-                            icon={UserGroupIcon}
-                            color="purple"
-                            onClick={handleNavigateToUsers}
-                        />
-                        <StatCard
-                            title="Audit Events (30d)"
-                            value={stats?.auditEvents30d || 0}
-                            icon={DocumentTextIcon}
-                            color="green"
-                            onClick={handleNavigateToAudit}
-                        />
-                        <StatCard
-                            title="Expiring Soon"
-                            value={stats?.expiringSecrets?.length || 0}
-                            icon={ExclamationTriangleIcon}
-                            color={stats?.expiringSecrets?.length ? 'orange' : 'green'}
-                            onClick={handleNavigateToSecrets}
-                        />
-                    </>
-                )}
-            </div>
-
-            {/* Main Content Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Recent Activity */}
-                <div className="lg:col-span-2">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                            <div className="flex items-center justify-between">
-                                <h2 className="text-lg font-medium text-gray-900 dark:text-white">
-                                    Recent Activity
-                                </h2>
-                                <Button variant="ghost" size="sm" onClick={handleNavigateToAudit}>
-                                    View All
-                                </Button>
-                            </div>
-                        </div>
-                        <div className="p-6">
-                            {activityLoading ? (
-                                <Loading />
-                            ) : activityData?.items?.length === 0 ? (
-                                <div className="text-center py-8">
-                                    <ClockIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                                    <p className="text-gray-500 dark:text-gray-400">
-                                        No recent activity to display.
-                                    </p>
+                        <div className="px-6 py-2">
+                            {!activityData?.items?.length ? (
+                                <div className="py-12 text-center">
+                                    <p className="text-sm text-gray-400">No activity yet. Create your first secret to get started.</p>
                                 </div>
                             ) : (
-                                <div className="space-y-4">
-                                    {activityData?.items?.slice(0, 5).map((activity) => (
-                                        <ActivityItemComponent key={activity.id} activity={activity} />
-                                    ))}
-                                </div>
+                                activityData.items.slice(0, 8).map(item => (
+                                    <ActivityRow key={item.id} item={item} />
+                                ))
                             )}
                         </div>
                     </div>
-                </div>
 
-                {/* System Status & Quick Actions */}
-                <div className="space-y-6">
-                    {/* System Status */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                            <h2 className="text-lg font-medium text-gray-900 dark:text-white">
-                                System Status
-                            </h2>
-                        </div>
-                        <div className="p-6 space-y-4">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-600 dark:text-gray-400">Status</span>
-                                <div className="flex items-center">
-                                    <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                                    <span className="text-sm font-medium text-green-600 dark:text-green-400 capitalize">
-                                        {systemHealth.status}
+                    {/* Right column */}
+                    <div className="space-y-4">
+
+                        {/* System Health */}
+                        <div className="bg-white border border-gray-100 rounded-xl shadow-sm">
+                            <div className="px-5 py-4 border-b border-gray-50">
+                                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-widest">System Health</h2>
+                            </div>
+                            <div className="px-5 py-4 space-y-3">
+                                {/* Status row */}
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">Status</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                        <span className="text-sm font-semibold text-emerald-600">Healthy</span>
+                                    </div>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">Uptime</span>
+                                    <span className="text-sm font-medium text-gray-900">
+                                        {parseUptime(metrics?.uptime ?? sysInfo?.uptime ?? '')}
                                     </span>
                                 </div>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-600 dark:text-gray-400">Uptime</span>
-                                <span className="text-sm font-medium text-gray-900 dark:text-white">
-                                    {systemHealth.uptime}
-                                </span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-600 dark:text-gray-400">Response Time</span>
-                                <span className="text-sm font-medium text-gray-900 dark:text-white">
-                                    {systemHealth.responseTime}
-                                </span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-gray-600 dark:text-gray-400">Active Users</span>
-                                <span className="text-sm font-medium text-gray-900 dark:text-white">
-                                    {systemHealth.activeUsers}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Quick Actions */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                            <h2 className="text-lg font-medium text-gray-900 dark:text-white">
-                                Quick Actions
-                            </h2>
-                        </div>
-                        <div className="p-6 space-y-3">
-                            <Button
-                                variant="outline"
-                                className="w-full justify-start"
-                                onClick={handleNavigateToSecrets}
-                            >
-                                <KeyIcon className="h-4 w-4 mr-3" />
-                                Create New Secret
-                            </Button>
-                            <Button
-                                variant="outline"
-                                className="w-full justify-start"
-                                onClick={handleNavigateToAudit}
-                            >
-                                <DocumentTextIcon className="h-4 w-4 mr-3" />
-                                View Audit Logs
-                            </Button>
-                            <Button
-                                variant="outline"
-                                className="w-full justify-start"
-                                onClick={handleNavigateToUsers}
-                            >
-                                <UserGroupIcon className="h-4 w-4 mr-3" />
-                                Manage Users
-                            </Button>
-                        </div>
-                    </div>
-
-                    {/* Security Alerts */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                            <h2 className="text-lg font-medium text-gray-900 dark:text-white">
-                                Security Alerts
-                                {anomalyAlerts.length > 0 && (
-                                    <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
-                                        {anomalyAlerts.length}
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">Response time</span>
+                                    <span className="text-sm font-medium text-gray-900">
+                                        {httpMetrics.avg_response_time != null ? `${httpMetrics.avg_response_time}ms` : '<1ms'}
                                     </span>
-                                )}
-                            </h2>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">DB connections</span>
+                                    <span className="text-sm font-medium text-gray-900">
+                                        {dbMetrics.connections_active != null
+                                            ? `${dbMetrics.connections_active} active`
+                                            : '—'}
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">Encryption</span>
+                                    <span className="text-sm font-medium text-gray-900">
+                                        {sysInfo?.security?.encryption_method ?? 'AES-256-GCM'}
+                                    </span>
+                                </div>
+
+                                {/* Feature pills */}
+                                <div className="pt-2 flex flex-wrap gap-1.5">
+                                    <FeaturePill label="Encryption" active={features.encryption_enabled ?? true} />
+                                    <FeaturePill label="RBAC" active={features.rbac_enabled ?? true} />
+                                    <FeaturePill label="Audit" active={features.audit_enabled ?? true} />
+                                    <FeaturePill label="TLS" active={features.tls_enabled ?? true} />
+                                </div>
+                            </div>
                         </div>
-                        <div className="p-6 space-y-4">
-                            {/* Anomaly Alerts */}
-                            {anomalyAlerts.length > 0 && (
-                                <div className="space-y-2">
-                                    <p className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-2">
-                                        <ExclamationTriangleIcon className="h-4 w-4 text-red-500" />
-                                        {anomalyAlerts.length} anomalous access{anomalyAlerts.length > 1 ? 'es' : ''} detected
-                                    </p>
-                                    {anomalyAlerts.map((alert) => (
-                                        <div key={alert.ID} className="flex items-start justify-between text-xs bg-red-50 dark:bg-red-900/10 rounded px-3 py-2">
-                                            <div className="flex-1">
-                                                <span className={`font-medium ${alert.Severity === 'high' ? 'text-red-700' : 'text-yellow-700'}`}>
-                                                    [{alert.AlertType}]
-                                                </span>
-                                                <span className="ml-1 text-gray-700 dark:text-gray-300">{alert.SecretName}</span>
-                                                <p className="text-gray-500 mt-0.5">{alert.Description}</p>
-                                                <p className="text-gray-400 mt-0.5">by {alert.AccessedBy} from {alert.IPAddress}</p>
+
+                        {/* Quick Actions */}
+                        <div className="bg-white border border-gray-100 rounded-xl shadow-sm">
+                            <div className="px-5 py-4 border-b border-gray-50">
+                                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-widest">Quick Actions</h2>
+                            </div>
+                            <div className="p-3 space-y-1">
+                                {[
+                                    { label: 'Create New Secret', route: ROUTES.SECRETS, icon: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z' },
+                                    { label: 'View Audit Logs', route: ROUTES.AUDIT, icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+                                    { label: 'Manage Users', route: ROUTES.ADMIN_USERS, icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
+                                ].map(({ label, route, icon }) => (
+                                    <button
+                                        key={label}
+                                        onClick={() => navigate(route)}
+                                        className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-600 rounded-lg hover:bg-gray-50 hover:text-gray-900 transition-colors text-left"
+                                    >
+                                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={icon} />
+                                        </svg>
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Alerts panel — only if there are alerts */}
+                        {alertCount > 0 && (
+                            <div className="bg-white border border-red-100 rounded-xl shadow-sm">
+                                <div className="px-5 py-4 border-b border-red-50">
+                                    <h2 className="text-sm font-semibold text-red-700 uppercase tracking-widest flex items-center gap-2">
+                                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                                        Security Alerts ({alertCount})
+                                    </h2>
+                                </div>
+                                <div className="p-4 space-y-2">
+                                    {anomalies.map(a => (
+                                        <div key={a.ID} className="flex items-start justify-between gap-2 p-3 bg-red-50 rounded-lg">
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-xs font-semibold text-red-700">{a.AlertType}</p>
+                                                <p className="text-xs text-red-600 mt-0.5 truncate">{a.SecretName}</p>
+                                                <p className="text-xs text-gray-500 mt-0.5">{a.AccessedBy} · {a.IPAddress}</p>
                                             </div>
                                             <button
-                                                onClick={() => apiService.acknowledgeAnomalyAlert(alert.ID)}
-                                                className="ml-2 text-xs text-gray-400 hover:text-gray-600 flex-shrink-0"
-                                                title="Acknowledge"
-                                            >
-                                                ✓
-                                            </button>
+                                                onClick={() => apiService.acknowledgeAnomalyAlert(a.ID)}
+                                                className="text-xs text-gray-400 hover:text-gray-600 flex-shrink-0 mt-0.5"
+                                                title="Dismiss"
+                                            >✓</button>
+                                        </div>
+                                    ))}
+                                    {expiring.map(s => (
+                                        <div key={s.id} className="flex items-center justify-between p-3 bg-amber-50 rounded-lg">
+                                            <div>
+                                                <p className="text-xs font-semibold text-amber-700">{s.name}</p>
+                                                <p className="text-xs text-amber-600">{s.environment}</p>
+                                            </div>
+                                            <span className={`text-xs font-bold ${s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600'}`}>
+                                                {s.daysLeft}d
+                                            </span>
                                         </div>
                                     ))}
                                 </div>
-                            )}
+                            </div>
+                        )}
 
-                            {/* Expiry Alerts */}
-                            {!stats?.expiringSecrets || stats.expiringSecrets.length === 0 ? (
-                                anomalyAlerts.length === 0 ? (
-                                    <div className="flex items-center space-x-3 text-green-600 dark:text-green-400">
-                                        <ShieldCheckIcon className="h-5 w-5" />
-                                        <p className="text-sm font-medium">No security alerts</p>
-                                    </div>
-                                ) : null
-                            ) : (
-                                <div className="space-y-3">
-                                    <div className="flex items-start space-x-3">
-                                        <ExclamationTriangleIcon className="h-5 w-5 text-yellow-500 mt-0.5 flex-shrink-0" />
-                                        <div className="flex-1">
-                                            <p className="text-sm font-medium text-gray-900 dark:text-white">
-                                                Password Expiry Warning
-                                            </p>
-                                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                                {stats.expiringSecrets.length} secret{stats.expiringSecrets.length > 1 ? 's' : ''} expiring within 30 days
-                                            </p>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2 mt-2">
-                                        {stats.expiringSecrets.map((s) => (
-                                            <div key={s.id} className="flex items-center justify-between text-xs bg-yellow-50 dark:bg-yellow-900/10 rounded px-3 py-2">
-                                                <div>
-                                                    <span className="font-medium text-gray-900 dark:text-white">{s.name}</span>
-                                                    <span className="ml-2 text-gray-500 dark:text-gray-400 capitalize">{s.environment}</span>
-                                                </div>
-                                                <span className={`font-medium ${s.daysLeft <= 7 ? 'text-red-600' : 'text-yellow-600'}`}>
-                                                    {s.daysLeft}d left
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <Button variant="ghost" size="sm" className="mt-1 p-0 h-auto text-xs" onClick={handleNavigateToSecrets}>
-                                        Review Secrets →
-                                    </Button>
+                        {/* Encryption stats */}
+                        {secretsMetrics.encryption_ops_24h != null && (
+                            <div className="bg-gray-900 border border-gray-800 rounded-xl shadow-sm">
+                                <div className="px-5 py-4 border-b border-gray-800">
+                                    <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">Crypto Operations (24h)</h2>
                                 </div>
-                            )}
-                        </div>
+                                <div className="px-5 py-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-400">Encryptions</span>
+                                        <span className="text-sm font-semibold text-white tabular-nums">
+                                            {fmt(secretsMetrics.encryption_ops_24h)}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-400">Decryptions</span>
+                                        <span className="text-sm font-semibold text-white tabular-nums">
+                                            {fmt(secretsMetrics.decryption_ops_24h ?? 0)}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-400">Active secrets</span>
+                                        <span className="text-sm font-semibold text-white tabular-nums">
+                                            {fmt(secretsMetrics.active_secrets ?? 0)}
+                                        </span>
+                                    </div>
+                                    {secretsMetrics.expired_secrets > 0 && (
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-sm text-red-400">Expired</span>
+                                            <span className="text-sm font-semibold text-red-400 tabular-nums">
+                                                {fmt(secretsMetrics.expired_secrets)}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
                     </div>
                 </div>
-            </div>
 
+                {statsError && (
+                    <p className="text-xs text-amber-600 text-center">
+                        Some statistics unavailable — other features are unaffected.
+                    </p>
+                )}
+
+            </div>
         </div>
     );
 };

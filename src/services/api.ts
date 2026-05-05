@@ -415,6 +415,17 @@ export const apiService = {
         },
     },
 
+    system: {
+        async getInfo(): Promise<any> {
+            const response = await apiClient.get<ApiResponse<any>>('/api/v1/system/info');
+            return response.data.data;
+        },
+        async getMetrics(): Promise<any> {
+            const response = await apiClient.get<ApiResponse<any>>('/api/v1/system/metrics');
+            return response.data.data;
+        },
+    },
+
     getAnomalyAlerts: async (unacknowledgedOnly = true) => {
         const response = await apiClient.get(`/api/v1/audit/anomalies${unacknowledgedOnly ? '?unacknowledged=true' : ''}`);
         return response.data;
