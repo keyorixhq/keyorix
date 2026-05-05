@@ -6,11 +6,8 @@ import {
     XMarkIcon,
     HomeIcon,
     KeyIcon,
-    ShareIcon,
     UserGroupIcon,
-    ChartBarIcon,
     Cog6ToothIcon,
-    ShieldCheckIcon,
     DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 
@@ -44,21 +41,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
             icon: KeyIcon,
         },
         {
-            name: 'Shared with me',
-            href: '/shared',
-            icon: ShareIcon,
-        },
-        {
-            name: 'Groups',
-            href: '/groups',
-            icon: UserGroupIcon,
-        },
-        {
-            name: 'Analytics',
-            href: '/analytics',
-            icon: ChartBarIcon,
-        },
-        {
             name: 'Audit Logs',
             href: '/audit',
             icon: DocumentTextIcon,
@@ -70,18 +52,6 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
             name: 'User Management',
             href: '/admin/users',
             icon: UserGroupIcon,
-            adminOnly: true,
-        },
-        {
-            name: 'System Settings',
-            href: '/admin/settings',
-            icon: Cog6ToothIcon,
-            adminOnly: true,
-        },
-        {
-            name: 'Security',
-            href: '/admin/security',
-            icon: ShieldCheckIcon,
             adminOnly: true,
         },
     ];
@@ -167,12 +137,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
             {/* Footer */}
             <div className="px-4 py-4 border-t border-gray-200">
                 <div className="text-xs text-gray-500 text-center">
-                    <p>Keyorix v1.0.0</p>
-                    <p className="mt-1">
-                        <Link to="/help" className="hover:text-gray-700">
-                            Help & Support
-                        </Link>
-                    </p>
+                    <p>Keyorix v0.1.0</p>
                 </div>
             </div>
         </div>

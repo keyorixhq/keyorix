@@ -10,7 +10,8 @@ import {
     ArrowTrendingUpIcon,
     ShieldCheckIcon,
     UserGroupIcon,
-    ExclamationTriangleIcon
+    ExclamationTriangleIcon,
+    DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '../../services/api';
 import { queryKeys } from '../../lib/queryClient';
@@ -191,9 +192,12 @@ export const DashboardPage: React.FC = () => {
         navigate(ROUTES.SECRETS);
     };
 
-    const handleNavigateToSharing = () => {
-        // Navigation would be handled by router
-        console.log('Navigate to sharing');
+    const handleNavigateToAudit = () => {
+        navigate(ROUTES.AUDIT);
+    };
+
+    const handleNavigateToUsers = () => {
+        navigate(ROUTES.ADMIN_USERS);
     };
 
     if (statsError) {
@@ -216,16 +220,16 @@ export const DashboardPage: React.FC = () => {
                 <div className="flex items-center space-x-3">
                     <Button
                         variant="outline"
+                        onClick={handleNavigateToAudit}
+                    >
+                        <DocumentTextIcon className="h-4 w-4 mr-2" />
+                        Audit Logs
+                    </Button>
+                    <Button
                         onClick={handleNavigateToSecrets}
                     >
                         <KeyIcon className="h-4 w-4 mr-2" />
                         Manage Secrets
-                    </Button>
-                    <Button
-                        onClick={handleNavigateToSharing}
-                    >
-                        <ShareIcon className="h-4 w-4 mr-2" />
-                        Share Secret
                     </Button>
                 </div>
             </div>
@@ -258,25 +262,25 @@ export const DashboardPage: React.FC = () => {
                             onClick={handleNavigateToSecrets}
                         />
                         <StatCard
-                            title="Shared Secrets"
-                            value={stats?.sharedSecrets || 0}
-                            icon={ShareIcon}
-                            color="green"
-                            trend={stats?.sharedSecretsTrend}
-                            onClick={handleNavigateToSharing}
-                        />
-                        <StatCard
-                            title="Shared with Me"
-                            value={stats?.secretsSharedWithMe || 0}
+                            title="Active Users"
+                            value={stats?.activeUsers || 0}
                             icon={UserGroupIcon}
                             color="purple"
-                            trend={stats?.sharedWithMeTrend}
+                            onClick={handleNavigateToUsers}
                         />
                         <StatCard
-                            title="System Health"
-                            value={systemHealth.uptime}
-                            icon={ShieldCheckIcon}
+                            title="Audit Events (30d)"
+                            value={stats?.auditEvents30d || 0}
+                            icon={DocumentTextIcon}
                             color="green"
+                            onClick={handleNavigateToAudit}
+                        />
+                        <StatCard
+                            title="Expiring Soon"
+                            value={stats?.expiringSecrets?.length || 0}
+                            icon={ExclamationTriangleIcon}
+                            color={stats?.expiringSecrets?.length ? 'orange' : 'green'}
+                            onClick={handleNavigateToSecrets}
                         />
                     </>
                 )}
@@ -292,7 +296,7 @@ export const DashboardPage: React.FC = () => {
                                 <h2 className="text-lg font-medium text-gray-900 dark:text-white">
                                     Recent Activity
                                 </h2>
-                                <Button variant="ghost" size="sm">
+                                <Button variant="ghost" size="sm" onClick={handleNavigateToAudit}>
                                     View All
                                 </Button>
                             </div>
@@ -377,25 +381,18 @@ export const DashboardPage: React.FC = () => {
                             <Button
                                 variant="outline"
                                 className="w-full justify-start"
-                                onClick={handleNavigateToSharing}
+                                onClick={handleNavigateToAudit}
                             >
-                                <ShareIcon className="h-4 w-4 mr-3" />
-                                Share Existing Secret
-                            </Button>
-                            <Button
-                                variant="outline"
-                                className="w-full justify-start"
-                                onClick={() => navigate(ROUTES.AUDIT)}
-                            >
-                                <EyeIcon className="h-4 w-4 mr-3" />
+                                <DocumentTextIcon className="h-4 w-4 mr-3" />
                                 View Audit Logs
                             </Button>
                             <Button
                                 variant="outline"
                                 className="w-full justify-start"
+                                onClick={handleNavigateToUsers}
                             >
-                                <ShieldCheckIcon className="h-4 w-4 mr-3" />
-                                Security Settings
+                                <UserGroupIcon className="h-4 w-4 mr-3" />
+                                Manage Users
                             </Button>
                         </div>
                     </div>

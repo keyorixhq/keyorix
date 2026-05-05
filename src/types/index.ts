@@ -109,7 +109,8 @@ export interface DashboardStats {
     totalSecrets: number;
     sharedSecrets: number;
     secretsSharedWithMe: number;
-    recentActivity: ActivityItem[];
+    activeUsers: number;
+    auditEvents30d: number;
     totalSecretsTrend?: StatTrend;
     sharedSecretsTrend?: StatTrend;
     sharedWithMeTrend?: StatTrend;
