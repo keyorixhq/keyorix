@@ -178,8 +178,8 @@ export const DashboardPage: React.FC = () => {
                     <StatCard
                         label="Total Secrets"
                         value={stats?.totalSecrets ?? 0}
-                        sub={secretsMetrics.secrets_created_24h != null
-                            ? `+${secretsMetrics.secrets_created_24h} today`
+                        sub={stats?.totalSecretsTrend
+                            ? `${stats.totalSecretsTrend.isPositive ? '+' : ''}${stats.totalSecretsTrend.value}% vs last month`
                             : undefined}
                         accent="bg-blue-500"
                         onClick={() => navigate(ROUTES.SECRETS)}
