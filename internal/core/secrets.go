@@ -1,3 +1,7 @@
+// secrets.go — CreateSecretRequest, UpdateSecretRequest types, and core CRUD operations.
+//
+// For version storage and retrieval see secrets_versions.go.
+// For request validation see secrets_validation.go.
 package core
 
 import (
@@ -37,7 +41,7 @@ type UpdateSecretRequest struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	Tags       []string          `json:"tags,omitempty"`
 	UpdatedBy  string            `json:"updated_by" validate:"required"`
-	UserID     uint              `json:"user_id,omitempty"` // For permission checking
+	UserID     uint              `json:"user_id,omitempty"`
 }
 
 // CreateSecret creates a new secret with business logic validation.
@@ -82,25 +86,22 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	return createdSecret, nil
 }
 
-// GetSecret retrieves a secret by ID with business logic validation.
+// GetSecret retrieves a secret by ID, checking expiration.
 func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
-
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
-
 	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
 	}
-
 	return secret, nil
 }
 
-// GetSecretWithPermissionCheck retrieves a secret by ID with permission validation.
+// GetSecretWithPermissionCheck retrieves a secret by ID with read permission enforcement.
 func (c *KeyorixCore) GetSecretWithPermissionCheck(ctx context.Context, id, userID uint) (*models.SecretNode, error) {
 	if _, err := c.EnforceSecretReadPermission(ctx, id, userID); err != nil {
 		return nil, err
@@ -108,17 +109,15 @@ func (c *KeyorixCore) GetSecretWithPermissionCheck(ctx context.Context, id, user
 	return c.GetSecret(ctx, id)
 }
 
-// UpdateSecret updates an existing secret with business logic validation.
+// UpdateSecret updates an existing secret.
 func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
 	if err := c.validateUpdateSecretRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
-
 	secret, err := c.storage.GetSecret(ctx, req.ID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
-
 	if req.MaxReads != nil {
 		secret.MaxReads = req.MaxReads
 	}
@@ -149,11 +148,10 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-
 	return updatedSecret, nil
 }
 
-// UpdateSecretWithPermissionCheck updates an existing secret with permission validation.
+// UpdateSecretWithPermissionCheck updates a secret with write permission enforcement.
 func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *UpdateSecretRequest) (*models.SecretNode, error) {
 	if req.UserID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
@@ -164,13 +162,12 @@ func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *
 	return c.UpdateSecret(ctx, req)
 }
 
-// RotateSecret creates a new version of the secret with a new value and updates LastRotatedAt.
+// RotateSecret creates a new version with a new value and updates LastRotatedAt.
 func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte, rotatedBy string) (*models.SecretNode, error) {
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
 	}
-
 	latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
 	nextVersionNumber := 1
 	if err == nil && latestVersion != nil {
@@ -179,7 +176,6 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	if err := c.storeSecretVersion(ctx, secret, newValue, nextVersionNumber); err != nil {
 		return nil, fmt.Errorf("failed to store rotated secret: %w", err)
 	}
-
 	now := time.Now()
 	secret.LastRotatedAt = &now
 	secret.UpdatedAt = now
@@ -190,7 +186,7 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	return updatedSecret, nil
 }
 
-// DeleteSecret deletes a secret by ID.
+// DeleteSecret soft-deletes a secret by ID.
 func (c *KeyorixCore) DeleteSecret(ctx context.Context, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
@@ -204,7 +200,7 @@ func (c *KeyorixCore) DeleteSecret(ctx context.Context, id uint) error {
 	return nil
 }
 
-// DeleteSecretWithPermissionCheck deletes a secret by ID with permission validation.
+// DeleteSecretWithPermissionCheck deletes a secret with owner permission enforcement.
 func (c *KeyorixCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, userID uint) error {
 	if userID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
@@ -215,7 +211,7 @@ func (c *KeyorixCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, u
 	return c.DeleteSecret(ctx, id)
 }
 
-// ListSecrets lists secrets with filtering options.
+// ListSecrets lists secrets with filtering and pagination.
 func (c *KeyorixCore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	if filter == nil {
 		filter = &storage.SecretFilter{}
@@ -234,57 +230,4 @@ func (c *KeyorixCore) ListSecrets(ctx context.Context, filter *storage.SecretFil
 		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return secrets, total, nil
-}
-
-// storeSecretVersion is a shared helper used by Create, Update, and Rotate.
-// It routes through encryption if enabled, otherwise stores the raw value.
-func (c *KeyorixCore) storeSecretVersion(ctx context.Context, secret *models.SecretNode, value []byte, versionNumber int) error {
-	if c.encryption != nil {
-		_, err := c.encryption.StoreSecret(secret, value)
-		return err
-	}
-	version := &models.SecretVersion{
-		SecretNodeID:       secret.ID,
-		VersionNumber:      versionNumber,
-		EncryptedValue:     value,
-		EncryptionMetadata: []byte("{}"),
-		ReadCount:          0,
-		CreatedAt:          time.Now(),
-	}
-	_, err := c.storage.CreateSecretVersion(ctx, version)
-	return err
-}
-
-// validateCreateSecretRequest validates a create secret request.
-func (c *KeyorixCore) validateCreateSecretRequest(req *CreateSecretRequest) error {
-	if req.Name == "" {
-		return fmt.Errorf("%s", i18n.T("LabelName", nil))
-	}
-	if len(req.Value) == 0 {
-		return fmt.Errorf("%s", i18n.T("LabelValue", nil))
-	}
-	if req.NamespaceID == 0 {
-		return fmt.Errorf("%s", i18n.T("LabelNamespace", nil))
-	}
-	if req.ZoneID == 0 {
-		return fmt.Errorf("%s", i18n.T("LabelZone", nil))
-	}
-	if req.EnvironmentID == 0 {
-		return fmt.Errorf("%s", i18n.T("LabelEnvironment", nil))
-	}
-	if req.CreatedBy == "" {
-		return fmt.Errorf("%s", i18n.T("ErrorRequiredField", nil))
-	}
-	return nil
-}
-
-// validateUpdateSecretRequest validates an update secret request.
-func (c *KeyorixCore) validateUpdateSecretRequest(req *UpdateSecretRequest) error {
-	if req.ID == 0 {
-		return fmt.Errorf("secret ID is required")
-	}
-	if req.UpdatedBy == "" {
-		return fmt.Errorf("%s", i18n.T("ErrorRequiredField", nil))
-	}
-	return nil
 }
