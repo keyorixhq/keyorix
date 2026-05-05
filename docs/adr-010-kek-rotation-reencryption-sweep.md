@@ -170,3 +170,63 @@ Sessions are short-lived. On DEK rotation, delete all sessions and API tokens (f
 ### C: Keep `RotateDEK` as-is; accept key proliferation
 
 **Rejected explicitly.** This is what the backlog item exists to fix. Key proliferation violates the security promise of the product. An enterprise security customer asking about key rotation and receiving an answer that amounts to "we keep all old keys forever" is a sales-blocker.
+
+---
+
+## Addendum — CLI Wiring (May 2026)
+
+This addendum closes out the final implementation step of ADR-010: wiring the existing `keyorix encryption rotate` command to call `RotateDEKWithSweep` instead of the deprecated `RotateDEK`.
+
+### Why this is an addendum, not a new ADR
+
+The original ADR specified a `keyorix-server key rotate-dek` subcommand. While that command was being scaffolded, `keyorix encryption rotate` already shipped (calling the deprecated `RotateDEK`). Modifying the existing command in place reuses an existing surface that operators have already learned, avoids two competing rotate commands, and supersedes the M2 backlog item for `keyorix-server key rotate-dek`.
+
+### Decisions
+
+**1. Command surface: extend `keyorix encryption rotate` rather than add a new command.**
+
+The command's contract changes from "rotate keys, secrets get re-encrypted later somehow" to "rotate keys and re-encrypt all DEK-encrypted rows in one transaction." This is what operators already expected. The deprecation message previously printed (`⚠️ Note: Existing secrets will need to be re-encrypted with the new keys`) is removed because it is no longer true.
+
+**2. DB handle acquisition: open a fresh `*gorm.DB` in the CLI, do not expose `LocalStorage.db`.**
+
+`RotateDEKWithSweep(passphrase, db *gorm.DB)` requires a raw `*gorm.DB`. Two options were considered:
+
+- *(rejected)* Add a `DB() *gorm.DB` accessor to `LocalStorage`. This widens the storage abstraction's public API for a one-off CLI operation and invites future callers to bypass the `storage.Storage` interface.
+- *(chosen)* Mirror the connection logic from `internal/storage/factory.go` in a small private helper inside the CLI package. The CLI is already a separate process from the server, so opening its own DB connection is consistent with how other admin operations work.
+
+**3. Refuse to run against a remote storage backend.**
+
+If `cfg.Storage.Type == "remote"`, the command must error with a clear message instructing the operator to run rotation on the server host. Rotation must touch the server's actual database; running it against a remote API endpoint is meaningless.
+
+**4. Require an explicit `--confirm` flag.**
+
+ADR-010 documents that the sweep is a write-locking operation that holds a long-running transaction. A typo on `keyorix encryption rotate` must not silently kick off a downtime event. The command refuses to run without `--confirm` and prints a one-line warning explaining what is about to happen.
+
+No interactive `[y/N]` prompt — that would break CI/CD scripted invocations. The `--confirm` flag is the sole gate.
+
+**5. Keep `RotateDEK` as deprecated, do not delete it yet.**
+
+The deprecated function remains for any external integration that may import it directly. Its body already logs an explicit deprecation warning. Removal is M2 cleanup once we are confident no internal caller uses it.
+
+### Operator-facing behaviour
+
+```
+$ keyorix encryption rotate
+Error: this is a write-locking operation. Re-run with --confirm.
+
+$ keyorix encryption rotate --confirm
+⚠️  Rotating DEK and re-encrypting all DEK-encrypted rows. This holds a write lock on the database — stop write traffic before continuing.
+🔄 Rotating DEK with full re-encryption sweep...
+✅ Sweep committed: 142 secret_versions, 8 sessions, 3 api_tokens, 1 api_clients, 0 password_resets re-encrypted (12 legacy AAD upgraded)
+✅ DEK rotated successfully
+📋 New key version: v3
+```
+
+### Test plan addendum
+
+The sweep itself is already covered by the unit and integration tests listed in the original ADR. The CLI wiring needs only:
+
+- `TestRunRotate_RequiresConfirm` — without `--confirm`, the command returns a non-nil error and does not invoke the sweep.
+- `TestRunRotate_RejectsRemoteStorage` — with `cfg.Storage.Type == "remote"`, returns a clear error before opening any DB connection.
+
+These live in a new `encryption_test.go` next to `encryption.go` in the CLI package.
