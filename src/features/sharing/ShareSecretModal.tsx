@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Secret } from '../../types';
-import { Modal } from '../ui/Modal';
-import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
-import { Select } from '../ui/Select';
-import { Alert } from '../ui/Alert';
-import { useShareSecret } from '../../features/sharing/api';
+import { Modal } from '../../components/ui/Modal';
+import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
+import { Alert } from '../../components/ui/Alert';
+import { useShareSecret } from './api';
 
 interface ShareSecretModalProps {
     secret: Secret;
