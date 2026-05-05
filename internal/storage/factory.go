@@ -150,14 +150,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("CREATE INDEX IF NOT EXISTS idx_stats_snapshots_snapshot_date ON stats_snapshots(snapshot_date)")
 	}
 
-	// Add LastRotatedAt to secret_nodes if not present
-	if !columnExists(db, "secret_nodes", "last_rotated_at") {
+	// Add LastRotatedAt to secret_nodes if not present (only if table exists)
+	if db.Migrator().HasTable("secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
 	}
 
 	// Check if namespaces table exists — if so, skip full migration (already initialized)
 	// Always create new tables that may have been added after initial setup
-	if !db.Migrator().HasTable("anomaly_alerts") {
+	anomalyExists := db.Migrator().HasTable("anomaly_alerts")
+	if !anomalyExists {
 		if err := db.Exec(`CREATE TABLE IF NOT EXISTS anomaly_alerts (
             id BIGSERIAL PRIMARY KEY,
             secret_node_id BIGINT,

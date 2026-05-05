@@ -178,3 +178,4 @@ temp/
 # local MCP config (contains credentials)
 .claude/mcp.json
 
+data_key
