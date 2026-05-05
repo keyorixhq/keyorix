@@ -42,7 +42,7 @@ const Modal: React.FC<ModalProps> = ({
 
     return (
         <Transition appear show={isOpen} as={Fragment}>
-            <Dialog as="div" className="relative z-50" onClose={() => { if (closeOnOverlayClick) onClose(); }} initialFocus={initialFocusRef}>
+            <Dialog as="div" className="relative z-50" onClose={handleClose} initialFocus={initialFocusRef}>
                 <Transition.Child
                     as={Fragment}
                     enter="ease-out duration-300"

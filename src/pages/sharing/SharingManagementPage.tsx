@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import {
     ShareIcon,
     UserIcon,
@@ -8,17 +8,14 @@ import {
     TrashIcon,
     EyeIcon,
     MagnifyingGlassIcon,
-    FunnelIcon,
-    ClockIcon
 } from '@heroicons/react/24/outline';
 import { apiService } from '../../services/api';
 import { queryKeys, invalidateQueries } from '../../lib/queryClient';
 import { useUIStore } from '../../store/uiStore';
-import { usePreferencesStore } from '../../store/preferencesStore';
 import { ShareRecord, PaginationState } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
-import { Dropdown } from '../../components/ui/Dropdown';
+import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 
@@ -37,9 +34,15 @@ const PERMISSION_OPTIONS = [
 ];
 
 export const SharingManagementPage: React.FC = () => {
-    const { openModal, selectedItems, toggleSelectedItem, clearSelectedItems, bulkActionMode, setBulkActionMode } = useUIStore();
-    const { getFormattedDate, getFormattedTime } = usePreferencesStore();
-    const queryClient = useQueryClient();
+    const { openModal } = useUIStore();
+    const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
+    const [bulkActionMode, setBulkActionMode] = useState(false);
+    const toggleSelectedItem = (id: number) => setSelectedItems(prev => {
+        const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+    });
+    const clearSelectedItems = () => setSelectedItems(new Set());
+    const formatDate = (d: string) => new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
+    const formatTime = (d: string) => new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 
     // State for filters and pagination
     const [filters, setFilters] = useState({
@@ -66,8 +69,8 @@ export const SharingManagementPage: React.FC = () => {
         queryFn: () => apiService.sharing.list({
             page: pagination.page,
             pageSize: pagination.pageSize,
-            secretId: filters.secretId,
-            recipientType: filters.recipientType !== 'all' ? filters.recipientType as 'user' | 'group' : undefined,
+            ...(filters.secretId !== undefined ? { secretId: filters.secretId } : {}),
+            ...(filters.recipientType !== 'all' ? { recipientType: filters.recipientType as 'user' | 'group' } : {}),
         }),
         keepPreviousData: true,
     });
@@ -106,15 +109,6 @@ export const SharingManagementPage: React.FC = () => {
         },
     });
 
-    // Self-remove mutation
-    const selfRemoveMutation = useMutation({
-        mutationFn: (shareId: number) => apiService.sharing.selfRemove(shareId),
-        onSuccess: () => {
-            invalidateQueries.sharing.all();
-            invalidateQueries.secrets.all();
-        },
-    });
-
     // Handle filter changes
     const handleFilterChange = (key: string, value: any) => {
         setFilters(prev => ({ ...prev, [key]: value }));
@@ -149,14 +143,6 @@ export const SharingManagementPage: React.FC = () => {
             title: 'Delete Share',
             message: `Are you sure you want to revoke access for "${share.recipientName}"?`,
             onConfirm: () => deleteMutation.mutate(share.id),
-        });
-    };
-
-    const handleSelfRemove = (share: ShareRecord) => {
-        openModal('confirm-delete', {
-            title: 'Remove Yourself',
-            message: `Are you sure you want to remove your access to this secret?`,
-            onConfirm: () => selfRemoveMutation.mutate(share.id),
         });
     };
 
@@ -201,12 +187,9 @@ export const SharingManagementPage: React.FC = () => {
                     type="error"
                     title="Failed to load shares"
                     message="There was an error loading the sharing information. Please try again."
-                    action={
-                        <Button variant="outline" size="sm" onClick={() => refetch()}>
-                            Retry
-                        </Button>
-                    }
-                />
+                >
+                    <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+                </Alert>
             </div>
         );
     }
@@ -277,9 +260,9 @@ export const SharingManagementPage: React.FC = () => {
 
                     {/* Recipient Type Filter */}
                     <div>
-                        <Dropdown
+                        <Select
                             value={filters.recipientType}
-                            onChange={(value) => handleFilterChange('recipientType', value)}
+                            onChange={(e) => handleFilterChange('recipientType', e.target.value)}
                             options={RECIPIENT_TYPE_OPTIONS}
                             placeholder="Recipient Type"
                         />
@@ -287,9 +270,9 @@ export const SharingManagementPage: React.FC = () => {
 
                     {/* Permission Filter */}
                     <div>
-                        <Dropdown
+                        <Select
                             value={filters.permission}
-                            onChange={(value) => handleFilterChange('permission', value)}
+                            onChange={(e) => handleFilterChange('permission', e.target.value)}
                             options={PERMISSION_OPTIONS}
                             placeholder="Permission"
                         />
@@ -446,8 +429,8 @@ export const SharingManagementPage: React.FC = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                                             <div>
-                                                <div>{getFormattedDate(share.createdAt)}</div>
-                                                <div className="text-xs">{getFormattedTime(share.createdAt)}</div>
+                                                <div>{formatDate(share.createdAt)}</div>
+                                                <div className="text-xs">{formatTime(share.createdAt)}</div>
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">

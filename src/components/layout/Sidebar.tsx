@@ -7,7 +7,6 @@ import {
     HomeIcon,
     KeyIcon,
     UserGroupIcon,
-    Cog6ToothIcon,
     DocumentTextIcon,
 } from '@heroicons/react/24/outline';
 

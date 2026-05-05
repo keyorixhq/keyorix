@@ -2,7 +2,7 @@ import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiService } from '../services/api';
 import { queryKeys, invalidateQueries } from '../lib/queryClient';
-import { Secret, SecretFormData, SecretFilters, PaginatedResponse } from '../types';
+import { Secret, SecretFormData } from '../types';
 
 // Hook for fetching secrets list
 export const useSecrets = (params?: {
@@ -134,7 +134,7 @@ export const useDuplicateSecret = () => {
             // Create new secret with modified data
             const duplicateData: SecretFormData = {
                 name: newData.name || `${original.name}-copy`,
-                value: original.value,
+                value: '',
                 type: newData.type || original.type,
                 namespace: newData.namespace || original.namespace,
                 zone: newData.zone || original.zone,

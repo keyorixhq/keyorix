@@ -3,7 +3,7 @@ import {
     MagnifyingGlassIcon, PlusIcon, FunnelIcon,
     ChevronLeftIcon, ChevronRightIcon, TagIcon, XMarkIcon, ShareIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
-import { SecretType, SecretFormData } from '../../types';
+import { SecretType } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
@@ -63,8 +63,9 @@ export const SecretsListPage: React.FC = () => {
     if (list.error) {
         return (
             <div className="p-6">
-                <Alert type="error" title="Failed to load secrets" message="There was an error loading your secrets. Please try again."
-                    action={<Button variant="outline" size="sm" onClick={() => list.refetch()}>Retry</Button>} />
+                <Alert type="error" title="Failed to load secrets" message="There was an error loading your secrets. Please try again.">
+                    <Button variant="outline" size="sm" onClick={() => list.refetch()}>Retry</Button>
+                </Alert>
             </div>
         );
     }
@@ -245,7 +246,7 @@ export const SecretsListPage: React.FC = () => {
 
             <Modal isOpen={list.activeModal === 'edit-secret'} onClose={list.closeModal} title={`Edit Secret: ${list.modalData?.secret?.name ?? ''}`} size="md">
                 <form onSubmit={(e) => { e.preventDefault(); if (!list.modalData?.secret) return; list.editMutation.mutate({ id: list.modalData.secret.id, name: editName, type: editType, value: editValue }); }} className="space-y-4">
-                    {list.editMutation.error && <Alert type="error" title="Failed to update secret" message={list.editMutation.error instanceof Error ? list.editMutation.error.message : 'An unexpected error occurred'} />}
+                    {list.editMutation.isError && <Alert type="error" title="Failed to update secret" message={list.editMutation.error instanceof Error ? list.editMutation.error.message : 'An unexpected error occurred'} />}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
                         <input type="text" required value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -268,7 +269,7 @@ export const SecretsListPage: React.FC = () => {
 
             <Modal isOpen={list.activeModal === 'delete-secret'} onClose={list.closeModal} title="Delete Secret" size="sm">
                 <div className="space-y-4">
-                    {list.deleteMutation.error && <Alert type="error" title="Failed to delete secret" message={list.deleteMutation.error instanceof Error ? list.deleteMutation.error.message : 'An unexpected error occurred'} />}
+                    {list.deleteMutation.isError && <Alert type="error" title="Failed to delete secret" message={list.deleteMutation.error instanceof Error ? list.deleteMutation.error.message : 'An unexpected error occurred'} />}
                     <p className="text-sm text-gray-700 dark:text-gray-300">
                         Are you sure you want to delete <span className="font-semibold">{list.modalData?.secret?.name}</span>? The secret will be soft-deleted and can be restored within 30 days.
                     </p>
@@ -309,7 +310,7 @@ export const SecretsListPage: React.FC = () => {
 
             <Modal isOpen={list.activeModal === 'rotate-secret'} onClose={list.closeModal} title={`Rotate Secret: ${list.modalData?.secret?.name ?? ''}`} size="sm">
                 <form onSubmit={(e) => { e.preventDefault(); if (!list.modalData?.secret) return; list.rotateMutation.mutate({ id: list.modalData.secret.id, newValue: rotateValue }); }} className="space-y-4">
-                    {list.rotateMutation.error && <Alert type="error" title="Failed to rotate secret" message={list.rotateMutation.error instanceof Error ? list.rotateMutation.error.message : 'An unexpected error occurred'} />}
+                    {list.rotateMutation.isError && <Alert type="error" title="Failed to rotate secret" message={list.rotateMutation.error instanceof Error ? list.rotateMutation.error.message : 'An unexpected error occurred'} />}
                     <p className="text-sm text-gray-500 dark:text-gray-400">Enter a new value to replace the current secret value. A new version will be created.</p>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Value <span className="text-red-500">*</span></label>

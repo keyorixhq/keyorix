@@ -13,7 +13,7 @@ export const useSecretReveal = () => {
         try {
             const versions = await apiService.secrets.getVersions(secret.id);
             if (!versions || versions.length === 0) throw new Error('No versions found');
-            const latest = versions[0];
+            const latest = versions[0]!;
             const decoded = atob(latest.EncryptedValue as unknown as string);
             await navigator.clipboard.writeText(decoded);
             setCopiedSecretId(secret.id);

@@ -22,7 +22,7 @@ const formatTime = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 import { Secret } from '../../types';
 import { Button } from '../ui/Button';
-import { Loading } from '../ui/Loading';
+import { Spinner, Loading } from '../ui/Loading';
 import { Alert } from '../ui/Alert';
 
 interface SecretDetailViewProps {
@@ -179,7 +179,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             disabled={showValue && isLoading}
                         >
                             {(showValue && isLoading) ? (
-                                <Loading size="sm" />
+                                <Spinner size="sm" />
                             ) : showValue ? (
                                 <>
                                     <EyeSlashIcon className="h-4 w-4 mr-2" />
@@ -207,7 +207,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     </div>
                 </div>
 
-                {error && (
+                {!!error && (
                     <Alert
                         type="error"
                         title="Failed to load secret value"
@@ -247,7 +247,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                         <Alert
                             type="success"
                             title="Copied to clipboard"
-                            message={`Secret value copied. Clipboard will be cleared in ${Math.round(clipboardTimeout / 1000)} seconds.`}
+                            message={`Secret value copied. Clipboard will be cleared in ${Math.round(CLIPBOARD_TIMEOUT / 1000)} seconds.`}
                         />
                     </div>
                 )}

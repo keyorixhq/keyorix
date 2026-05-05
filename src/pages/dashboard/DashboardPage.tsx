@@ -19,7 +19,7 @@ function parseUptime(raw: string): string {
     const m = raw.match(/(\d+)m/)?.[1];
     if (h) return `${h}h ${m ?? '0'}m`;
     if (m) return `${m}m`;
-    return raw.split('.')[0];
+    return raw.split('.')[0] ?? '';
 }
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
@@ -178,9 +178,7 @@ export const DashboardPage: React.FC = () => {
                     <StatCard
                         label="Total Secrets"
                         value={stats?.totalSecrets ?? 0}
-                        sub={stats?.totalSecretsTrend
-                            ? `${stats.totalSecretsTrend.isPositive ? '+' : ''}${stats.totalSecretsTrend.value}% vs last month`
-                            : undefined}
+                        {...(stats?.totalSecretsTrend ? { sub: `${stats.totalSecretsTrend.isPositive ? '+' : ''}${stats.totalSecretsTrend.value}% vs last month` } : {})}
                         accent="bg-blue-500"
                         onClick={() => navigate(ROUTES.SECRETS)}
                     />
@@ -194,9 +192,7 @@ export const DashboardPage: React.FC = () => {
                     <StatCard
                         label="Audit Events (30d)"
                         value={stats?.auditEvents30d ?? 0}
-                        sub={stats?.auditFailure30d
-                            ? `${fmt(stats.auditFailure30d)} failed / denied`
-                            : 'all events logged'}
+                        sub="all events logged"
                         accent="bg-amber-500"
                         onClick={() => navigate(ROUTES.AUDIT)}
                     />
@@ -226,12 +222,12 @@ export const DashboardPage: React.FC = () => {
                             </button>
                         </div>
                         <div className="px-6 py-2">
-                            {!activityData?.items?.length ? (
+                            {!activityData?.data?.length ? (
                                 <div className="py-12 text-center">
                                     <p className="text-sm text-gray-400">No activity yet. Create your first secret to get started.</p>
                                 </div>
                             ) : (
-                                activityData.items.slice(0, 8).map(item => (
+                                activityData.data.slice(0, 8).map((item: ActivityItem) => (
                                     <ActivityRow key={item.id} item={item} />
                                 ))
                             )}
@@ -390,7 +386,7 @@ export const DashboardPage: React.FC = () => {
                     </div>
                 </div>
 
-                {statsError && (
+                {!!statsError && (
                     <p className="text-xs text-amber-600 text-center">
                         Some statistics unavailable — other features are unaffected.
                     </p>

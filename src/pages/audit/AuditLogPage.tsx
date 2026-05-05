@@ -2,6 +2,7 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ClockIcon } from '@heroicons/react/24/outline';
 import { apiService } from '../../services/api';
+import { ActivityItem } from '../../types';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 
@@ -45,7 +46,7 @@ export const AuditLogPage: React.FC = () => {
                 </p>
             </div>
 
-            {error && (
+            {!!error && (
                 <Alert
                     type="error"
                     title="Failed to load audit log"
@@ -58,7 +59,7 @@ export const AuditLogPage: React.FC = () => {
                     <div className="p-8">
                         <Loading />
                     </div>
-                ) : !data?.items?.length ? (
+                ) : !data?.data?.length ? (
                     <div className="p-8 text-center">
                         <ClockIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                         <p className="text-gray-500 dark:text-gray-400">
@@ -88,7 +89,7 @@ export const AuditLogPage: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                {data.items.map((item) => (
+                                {data.data.map((item: ActivityItem) => (
                                     <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                                             {formatTimestamp(item.timestamp)}

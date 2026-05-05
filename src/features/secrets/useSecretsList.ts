@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiService } from '../../services/api';
 import { queryKeys } from '../../lib/queryClient';
-import { Secret, SecretFilters, PaginationState, SecretType, SecretFormData } from '../../types';
+import { SecretFilters, PaginationState, SecretType, SecretFormData } from '../../types';
 import { useUIStore } from '../../store/uiStore';
 
 const ITEMS_PER_PAGE = 20;
@@ -48,17 +48,19 @@ export const useSecretsList = () => {
         queryKey: queryKeys.secrets.list({
             ...filters, page: pagination.page, pageSize: pagination.pageSize, sortBy,
         }),
-        queryFn: () => apiService.secrets.list({
-            page: pagination.page,
-            pageSize: pagination.pageSize,
-            search: filters.search || undefined,
-            type: filters.type !== 'all' ? filters.type : undefined,
-            namespace: filters.namespace || undefined,
-            zone: filters.zone || undefined,
-            environment_id: filters.environment && environmentIdMap[filters.environment]
-                ? environmentIdMap[filters.environment] : undefined,
-            tags: filters.tags.length > 0 ? filters.tags : undefined,
-        }),
+        queryFn: () => {
+            const envId = filters.environment ? environmentIdMap[filters.environment] : undefined;
+            return apiService.secrets.list({
+                page: pagination.page,
+                pageSize: pagination.pageSize,
+                ...(filters.search ? { search: filters.search } : {}),
+                ...(filters.type !== 'all' ? { type: filters.type } : {}),
+                ...(filters.namespace ? { namespace: filters.namespace } : {}),
+                ...(filters.zone ? { zone: filters.zone } : {}),
+                ...(envId ? { environment_id: envId } : {}),
+                ...(filters.tags.length > 0 ? { tags: filters.tags } : {}),
+            });
+        },
         keepPreviousData: true,
     });
 
