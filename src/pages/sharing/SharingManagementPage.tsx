@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
 import {
     ShareIcon,
     UserIcon,
@@ -9,8 +8,7 @@ import {
     EyeIcon,
     MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
-import { apiService } from '../../services/api';
-import { queryKeys, invalidateQueries } from '../../lib/queryClient';
+import { useShares, useDeleteShare, useBulkDeleteShares } from '../../features/sharing/api';
 import { useUIStore } from '../../store/uiStore';
 import { ShareRecord, PaginationState } from '../../types';
 import { Button } from '../../components/ui/Button';
@@ -59,20 +57,11 @@ export const SharingManagementPage: React.FC = () => {
         totalPages: 0,
     });
 
-    // Fetch shares with filters and pagination
-    const { data, isLoading, error, refetch } = useQuery({
-        queryKey: queryKeys.sharing.list({
-            ...filters,
-            page: pagination.page,
-            pageSize: pagination.pageSize
-        }),
-        queryFn: () => apiService.sharing.list({
-            page: pagination.page,
-            pageSize: pagination.pageSize,
-            ...(filters.secretId !== undefined ? { secretId: filters.secretId } : {}),
-            ...(filters.recipientType !== 'all' ? { recipientType: filters.recipientType as 'user' | 'group' } : {}),
-        }),
-        keepPreviousData: true,
+    const { data, isLoading, error, refetch } = useShares({
+        page: pagination.page,
+        pageSize: pagination.pageSize,
+        ...(filters.secretId !== undefined ? { secretId: filters.secretId } : {}),
+        ...(filters.recipientType !== 'all' ? { recipientType: filters.recipientType as 'user' | 'group' } : {}),
     });
 
     // Update pagination when data changes
@@ -86,28 +75,8 @@ export const SharingManagementPage: React.FC = () => {
         }
     }, [data]);
 
-    // Delete share mutation
-    const deleteMutation = useMutation({
-        mutationFn: (shareId: number) => apiService.sharing.delete(shareId),
-        onSuccess: () => {
-            invalidateQueries.sharing.all();
-            invalidateQueries.secrets.all();
-        },
-    });
-
-    // Bulk delete mutation
-    const bulkDeleteMutation = useMutation({
-        mutationFn: async (shareIds: number[]) => {
-            await Promise.all(shareIds.map(id => apiService.sharing.delete(id)));
-            return shareIds;
-        },
-        onSuccess: () => {
-            invalidateQueries.sharing.all();
-            invalidateQueries.secrets.all();
-            clearSelectedItems();
-            setBulkActionMode(false);
-        },
-    });
+    const deleteMutation = useDeleteShare();
+    const bulkDeleteMutation = useBulkDeleteShares();
 
     // Handle filter changes
     const handleFilterChange = (key: string, value: any) => {
@@ -146,14 +115,15 @@ export const SharingManagementPage: React.FC = () => {
         });
     };
 
-    // Handle bulk actions
     const handleBulkDelete = () => {
         if (selectedItems.size === 0) return;
 
         openModal('confirm-delete', {
             title: 'Delete Multiple Shares',
             message: `Are you sure you want to revoke ${selectedItems.size} share(s)?`,
-            onConfirm: () => bulkDeleteMutation.mutate(Array.from(selectedItems) as number[]),
+            onConfirm: () => bulkDeleteMutation.mutate(Array.from(selectedItems) as number[], {
+                onSuccess: () => { clearSelectedItems(); setBulkActionMode(false); },
+            }),
         });
     };
 
