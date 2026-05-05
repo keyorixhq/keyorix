@@ -31,6 +31,8 @@ type DashboardStats struct {
 	SecretsSharedWithMe int              `json:"secretsSharedWithMe"`
 	ActiveUsers         int64            `json:"activeUsers"`
 	AuditEvents30d      int64            `json:"auditEvents30d"`
+	AuditLogins30d      int64            `json:"auditLogins30d"`
+	AuditSecretReads30d int64            `json:"auditSecretReads30d"`
 	TotalSecretsTrend   *StatTrend       `json:"totalSecretsTrend,omitempty"`
 	SharedSecretsTrend  *StatTrend       `json:"sharedSecretsTrend,omitempty"`
 	SharedWithMeTrend   *StatTrend       `json:"sharedWithMeTrend,omitempty"`
@@ -97,10 +99,25 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		activeUsers = storageStats.TotalUsers
 	}
 
-	// Audit events in the last 30 days (global, not per-user — gives a sense of platform activity)
+	// Audit events in the last 30 days — total count only
 	thirtyDaysAgo := time.Now().UTC().Add(-30 * 24 * time.Hour)
 	_, auditCount, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
 		StartTime: &thirtyDaysAgo,
+		Page:      1,
+		PageSize:  1,
+	})
+	// Auth events (login/logout) vs secret events in last 30 days
+	authAction := "auth.login"
+	_, auditLogins, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		StartTime: &thirtyDaysAgo,
+		Action:    &authAction,
+		Page:      1,
+		PageSize:  1,
+	})
+	secretReadAction := "secret.read"
+	_, auditSecretReads, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		StartTime: &thirtyDaysAgo,
+		Action:    &secretReadAction,
 		Page:      1,
 		PageSize:  1,
 	})
@@ -111,6 +128,8 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		SecretsSharedWithMe: sharedWithMe,
 		ActiveUsers:         activeUsers,
 		AuditEvents30d:      auditCount,
+		AuditLogins30d:      auditLogins,
+		AuditSecretReads30d: auditSecretReads,
 		RecentActivity:      recent,
 		ExpiringSecrets:     expiringSecrets,
 	}
