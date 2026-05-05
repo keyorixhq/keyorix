@@ -29,6 +29,8 @@ type DashboardStats struct {
 	TotalSecrets        int64            `json:"totalSecrets"`
 	SharedSecrets       int              `json:"sharedSecrets"`
 	SecretsSharedWithMe int              `json:"secretsSharedWithMe"`
+	ActiveUsers         int64            `json:"activeUsers"`
+	AuditEvents30d      int64            `json:"auditEvents30d"`
 	TotalSecretsTrend   *StatTrend       `json:"totalSecretsTrend,omitempty"`
 	SharedSecretsTrend  *StatTrend       `json:"sharedSecretsTrend,omitempty"`
 	SharedWithMeTrend   *StatTrend       `json:"sharedWithMeTrend,omitempty"`
@@ -89,10 +91,26 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 
 	expiringSecrets := c.getExpiringSecrets(ctx, username)
 
+	// Active users from storage stats
+	var activeUsers int64
+	if storageStats, err := c.storage.GetStats(ctx); err == nil {
+		activeUsers = storageStats.TotalUsers
+	}
+
+	// Audit events in the last 30 days (global, not per-user — gives a sense of platform activity)
+	thirtyDaysAgo := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	_, auditCount, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		StartTime: &thirtyDaysAgo,
+		Page:      1,
+		PageSize:  1,
+	})
+
 	stats := &DashboardStats{
 		TotalSecrets:        total,
 		SharedSecrets:       sharedSecrets,
 		SecretsSharedWithMe: sharedWithMe,
+		ActiveUsers:         activeUsers,
+		AuditEvents30d:      auditCount,
 		RecentActivity:      recent,
 		ExpiringSecrets:     expiringSecrets,
 	}
