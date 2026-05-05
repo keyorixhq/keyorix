@@ -1,10 +1,9 @@
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { ClockIcon } from '@heroicons/react/24/outline';
-import { apiService } from '../../services/api';
 import { ActivityItem } from '../../types';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
+import { useAuditLog } from '../../features/audit/api';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
     'secret.read':    'Read',
@@ -12,7 +11,6 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
     'secret.updated': 'Updated',
     'secret.deleted': 'Deleted',
     'auth.login':     'Login',
-    // already-mapped values from the backend
     'accessed':       'Read',
     'created':        'Created',
     'updated':        'Updated',
@@ -30,10 +28,7 @@ function formatTimestamp(ts: string | number | Date): string {
 }
 
 export const AuditLogPage: React.FC = () => {
-    const { data, isLoading, error } = useQuery({
-        queryKey: ['audit-log'],
-        queryFn: () => apiService.dashboard.getActivity({ pageSize: 50 }),
-    });
+    const { data, isLoading, error } = useAuditLog({ pageSize: 50 });
 
     return (
         <div className="p-6 space-y-6">
