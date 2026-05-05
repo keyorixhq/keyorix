@@ -1,11 +1,16 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { ROUTES } from '../../constants';
-import { apiService } from '../../services/api';
-import { queryKeys } from '../../lib/queryClient';
 import { useAuthStore } from '../../store/authStore';
 import { ActivityItem, AnomalyAlert } from '../../types';
+import {
+    useDashboardStats,
+    useDashboardActivity,
+    useSystemInfo,
+    useSystemMetrics,
+    useAnomalyAlerts,
+    useAcknowledgeAnomaly,
+} from '../../features/dashboard/api';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -28,7 +33,7 @@ interface StatCardProps {
     label: string;
     value: string | number;
     sub?: string;
-    accent: string;   // tailwind bg class for the left bar
+    accent: string;
     onClick?: () => void;
 }
 
@@ -98,36 +103,12 @@ export const DashboardPage: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuthStore();
 
-    const { data: stats, error: statsError } = useQuery({
-        queryKey: queryKeys.dashboard.stats(),
-        queryFn: () => apiService.dashboard.getStats(),
-        staleTime: 2 * 60 * 1000,
-    });
-
-    const { data: activityData } = useQuery({
-        queryKey: queryKeys.dashboard.activity({ pageSize: 8 }),
-        queryFn: () => apiService.dashboard.getActivity({ pageSize: 8 }),
-        staleTime: 60 * 1000,
-    });
-
-    const { data: metrics } = useQuery({
-        queryKey: ['systemMetrics'],
-        queryFn: () => apiService.system.getMetrics(),
-        staleTime: 30 * 1000,
-        refetchInterval: 60 * 1000,
-    });
-
-    const { data: sysInfo } = useQuery({
-        queryKey: ['systemInfo'],
-        queryFn: () => apiService.system.getInfo(),
-        staleTime: 5 * 60 * 1000,
-    });
-
-    const { data: anomalyData } = useQuery({
-        queryKey: ['anomalyAlerts'],
-        queryFn: () => apiService.getAnomalyAlerts(true),
-        refetchInterval: 5 * 60 * 1000,
-    });
+    const { data: stats, error: statsError } = useDashboardStats();
+    const { data: activityData } = useDashboardActivity({ pageSize: 8 });
+    const { data: metrics } = useSystemMetrics();
+    const { data: sysInfo } = useSystemInfo();
+    const { data: anomalyData } = useAnomalyAlerts(true);
+    const acknowledgeAnomaly = useAcknowledgeAnomaly();
 
     const anomalies: AnomalyAlert[] = anomalyData?.data?.alerts ?? [];
     const expiring = stats?.expiringSecrets ?? [];
@@ -243,7 +224,6 @@ export const DashboardPage: React.FC = () => {
                                 <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-widest">System Health</h2>
                             </div>
                             <div className="px-5 py-4 space-y-3">
-                                {/* Status row */}
                                 <div className="flex items-center justify-between">
                                     <span className="text-sm text-gray-500">Status</span>
                                     <div className="flex items-center gap-1.5">
@@ -272,7 +252,6 @@ export const DashboardPage: React.FC = () => {
                                     </span>
                                 </div>
 
-                                {/* Feature pills */}
                                 <div className="pt-2 flex flex-wrap gap-1.5">
                                     <FeaturePill label="Encryption" active={features.encryption_enabled ?? true} />
                                     <FeaturePill label="RBAC" active={features.rbac_enabled ?? true} />
@@ -325,7 +304,7 @@ export const DashboardPage: React.FC = () => {
                                                 <p className="text-xs text-gray-500 mt-0.5">{a.AccessedBy} · {a.IPAddress}</p>
                                             </div>
                                             <button
-                                                onClick={() => apiService.acknowledgeAnomalyAlert(a.ID)}
+                                                onClick={() => acknowledgeAnomaly.mutate(a.ID)}
                                                 className="text-xs text-gray-400 hover:text-gray-600 flex-shrink-0 mt-0.5"
                                                 title="Dismiss"
                                             >✓</button>
@@ -346,7 +325,7 @@ export const DashboardPage: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Audit Health — real data */}
+                        {/* Audit Health */}
                         <div className="bg-white border border-gray-100 rounded-xl shadow-sm">
                             <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
                                 <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-widest">Audit (30d)</h2>
