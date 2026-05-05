@@ -1,12 +1,12 @@
 import React from 'react';
 import { clsx } from 'clsx';
-import { LucideIcon } from 'lucide-react';
+type IconComponent = React.ComponentType<React.SVGProps<SVGSVGElement>>;
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
     variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline';
     size?: 'sm' | 'md' | 'lg';
     loading?: boolean;
-    icon?: LucideIcon;
+    icon?: IconComponent;
     iconPosition?: 'left' | 'right';
     fullWidth?: boolean;
 }

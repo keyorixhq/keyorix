@@ -2,12 +2,13 @@ import React, { Fragment } from 'react';
 import { Menu, Transition } from '@headlessui/react';
 import { ChevronDownIcon } from '@heroicons/react/24/outline';
 import { clsx } from 'clsx';
-import { LucideIcon } from 'lucide-react';
+
+type IconComponent = React.ComponentType<React.SVGProps<SVGSVGElement>>;
 
 export interface DropdownItem {
     label: string;
     value: string;
-    icon?: LucideIcon;
+    icon?: IconComponent;
     disabled?: boolean;
     danger?: boolean;
     onClick?: () => void;

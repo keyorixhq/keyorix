@@ -6,7 +6,7 @@ import { BrowserRouter } from 'react-router-dom';
 const AllTheProviders = ({ children }: { children: React.ReactNode }) => {
     const queryClient = new QueryClient({
         defaultOptions: {
-            queries: { retry: false, gcTime: 0 },
+            queries: { retry: false, cacheTime: 0 },
         },
     });
 

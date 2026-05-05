@@ -5,7 +5,6 @@ import { authService } from '../services/auth';
 import {
     persistAuthData,
     clearPersistedAuthData,
-    getCurrentAuthState,
     updateTokenExpiry,
     isTokenValid,
     getTimeUntilExpiry

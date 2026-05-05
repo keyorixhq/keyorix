@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { SecretsListPage } from "./pages/secrets/SecretsListPage";
-import { ProtectedRoute, PublicRoute, AdminRoute, Layout } from './components/layout';
+import { ProtectedRoute, PublicRoute, Layout } from './components/layout';
 import { SessionTimeoutWarning } from './components/ui';
 import { LoginPage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';

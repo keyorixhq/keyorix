@@ -1,7 +1,6 @@
 // Custom React Hooks
 export * from './useAuth';
 export * from './useSecrets';
-export * from './useSharing';
 export * from './useDashboard';
 export * from './useAdmin';
 

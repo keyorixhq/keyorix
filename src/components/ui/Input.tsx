@@ -1,13 +1,15 @@
 import React from 'react';
 import { clsx } from 'clsx';
-import { LucideIcon } from 'lucide-react';
+
+type IconComponent = React.ComponentType<React.SVGProps<SVGSVGElement>>;
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
     label?: string;
     error?: string;
     helperText?: string;
-    leftIcon?: LucideIcon;
-    rightIcon?: LucideIcon;
+    icon?: IconComponent;
+    leftIcon?: IconComponent;
+    rightIcon?: IconComponent;
     onRightIconClick?: () => void;
     fullWidth?: boolean;
 }
@@ -19,7 +21,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             label,
             error,
             helperText,
-            leftIcon: LeftIcon,
+            icon: Icon,
+            leftIcon: LeftIconProp,
             rightIcon: RightIcon,
             onRightIconClick,
             fullWidth = true,
@@ -28,6 +31,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         },
         ref
     ) => {
+        const LeftIcon = Icon ?? LeftIconProp;
         const inputId = id || `input-${Math.random().toString(36).substr(2, 9)}`;
         const hasError = Boolean(error);
 
