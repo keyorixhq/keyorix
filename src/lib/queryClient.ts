@@ -1,4 +1,7 @@
 import { QueryClient, DefaultOptions } from '@tanstack/react-query';
+import { secretsApi } from '../services/secrets';
+import { usersApi } from '../services/users';
+import { groupsApi } from '../services/groups';
 
 // Default query options
 const defaultOptions: DefaultOptions = {
@@ -133,8 +136,8 @@ export const prefetchQueries = {
     secretDetail: (id: number) => {
         return queryClient.prefetchQuery({
             queryKey: queryKeys.secrets.detail(id),
-            queryFn: () => import('../services/api').then(({ apiService }) => apiService.secrets.get(id)),
-            staleTime: 2 * 60 * 1000, // 2 minutes
+            queryFn: () => secretsApi.get(id),
+            staleTime: 2 * 60 * 1000,
         });
     },
 
@@ -142,8 +145,8 @@ export const prefetchQueries = {
         if (query.length < 2) return;
         return queryClient.prefetchQuery({
             queryKey: queryKeys.users.search(query),
-            queryFn: () => import('../services/api').then(({ apiService }) => apiService.users.search(query)),
-            staleTime: 30 * 1000, // 30 seconds
+            queryFn: () => usersApi.search(query),
+            staleTime: 30 * 1000,
         });
     },
 
@@ -151,8 +154,8 @@ export const prefetchQueries = {
         if (query.length < 2) return;
         return queryClient.prefetchQuery({
             queryKey: queryKeys.groups.search(query),
-            queryFn: () => import('../services/api').then(({ apiService }) => apiService.groups.search(query)),
-            staleTime: 30 * 1000, // 30 seconds
+            queryFn: () => groupsApi.search(query),
+            staleTime: 30 * 1000,
         });
     },
 };
