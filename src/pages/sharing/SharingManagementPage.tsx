@@ -8,7 +8,7 @@ import {
     EyeIcon,
     MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
-import { useShares, useDeleteShare, useBulkDeleteShares } from '../../features/sharing/api';
+import { useShares, useDeleteShare, useBulkDeleteShares } from '../../features/sharing';
 import { useUIStore } from '../../store/uiStore';
 import { ShareRecord, PaginationState } from '../../types';
 import { Button } from '../../components/ui/Button';

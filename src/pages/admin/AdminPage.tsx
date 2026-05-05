@@ -13,7 +13,7 @@ import {
     useAdminCreateUser,
     useAdminUpdateUser,
     useAdminDeleteUser,
-} from '../../features/admin/api';
+} from '../../features/admin';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';

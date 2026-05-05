@@ -3,7 +3,7 @@ import { ClockIcon } from '@heroicons/react/24/outline';
 import { ActivityItem } from '../../types';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
-import { useAuditLog } from '../../features/audit/api';
+import { useAuditLog } from '../../features/audit';
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
     'secret.read':    'Read',

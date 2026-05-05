@@ -10,11 +10,8 @@ import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
-import { SecretDetailView } from '../../features/secrets';
+import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow } from '../../features/secrets';
 import { ShareSecretModal } from '../../features/sharing';
-import { useSecretsList } from '../../features/secrets/useSecretsList';
-import { useSecretReveal } from '../../features/secrets/useSecretReveal';
-import { SecretTableRow } from '../../features/secrets/SecretTableRow';
 
 const SECRET_TYPES: { value: SecretType | 'all'; label: string }[] = [
     { value: 'all', label: 'All Types' }, { value: 'text', label: 'Text' },

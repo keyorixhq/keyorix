@@ -10,7 +10,7 @@ import {
     useSystemMetrics,
     useAnomalyAlerts,
     useAcknowledgeAnomaly,
-} from '../../features/dashboard/api';
+} from '../../features/dashboard';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
