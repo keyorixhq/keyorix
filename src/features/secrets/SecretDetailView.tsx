@@ -12,16 +12,16 @@ import {
     UserIcon,
     KeyIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions } from '../../features/secrets/api';
+import { useSecretVersions } from './api';
 const CLIPBOARD_TIMEOUT = 30000;
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
 const formatTime = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 import { Secret } from '../../types';
-import { Button } from '../ui/Button';
-import { Spinner, Loading } from '../ui/Loading';
-import { Alert } from '../ui/Alert';
+import { Button } from '../../components/ui/Button';
+import { Spinner, Loading } from '../../components/ui/Loading';
+import { Alert } from '../../components/ui/Alert';
 
 interface SecretDetailViewProps {
     secret: Secret;

@@ -10,7 +10,7 @@ import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
-import { SecretDetailView } from '../../components/secrets/SecretDetailView';
+import { SecretDetailView } from '../../features/secrets';
 import { ShareSecretModal } from '../../components/sharing/ShareSecretModal';
 import { useSecretsList } from '../../features/secrets/useSecretsList';
 import { useSecretReveal } from '../../features/secrets/useSecretReveal';
