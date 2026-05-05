@@ -134,8 +134,6 @@ export const DashboardPage: React.FC = () => {
     const alertCount = anomalies.length + expiring.length;
 
     const features = sysInfo?.features ?? {};
-    const secretsMetrics = metrics?.secrets ?? {};
-    const httpMetrics = metrics?.http ?? {};
     const dbMetrics = metrics?.database ?? {};
 
     const hour = new Date().getHours();
@@ -194,11 +192,11 @@ export const DashboardPage: React.FC = () => {
                         onClick={() => navigate(ROUTES.ADMIN_USERS)}
                     />
                     <StatCard
-                        label="Accessed (24h)"
-                        value={secretsMetrics.secrets_accessed_24h ?? 0}
-                        sub={secretsMetrics.decryption_ops_24h != null
-                            ? `${fmt(secretsMetrics.decryption_ops_24h)} decryption ops`
-                            : undefined}
+                        label="Audit Events (30d)"
+                        value={stats?.auditEvents30d ?? 0}
+                        sub={stats?.auditFailure30d
+                            ? `${fmt(stats.auditFailure30d)} failed / denied`
+                            : 'all events logged'}
                         accent="bg-amber-500"
                         onClick={() => navigate(ROUTES.AUDIT)}
                     />
@@ -261,12 +259,6 @@ export const DashboardPage: React.FC = () => {
                                     <span className="text-sm text-gray-500">Uptime</span>
                                     <span className="text-sm font-medium text-gray-900">
                                         {parseUptime(metrics?.uptime ?? sysInfo?.uptime ?? '')}
-                                    </span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm text-gray-500">Response time</span>
-                                    <span className="text-sm font-medium text-gray-900">
-                                        {httpMetrics.avg_response_time != null ? `${httpMetrics.avg_response_time}ms` : '<1ms'}
                                     </span>
                                 </div>
                                 <div className="flex items-center justify-between">
@@ -358,42 +350,42 @@ export const DashboardPage: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Encryption stats */}
-                        {secretsMetrics.encryption_ops_24h != null && (
-                            <div className="bg-gray-900 border border-gray-800 rounded-xl shadow-sm">
-                                <div className="px-5 py-4 border-b border-gray-800">
-                                    <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">Crypto Operations (24h)</h2>
+                        {/* Audit Health — real data */}
+                        <div className="bg-white border border-gray-100 rounded-xl shadow-sm">
+                            <div className="px-5 py-4 border-b border-gray-50 flex items-center justify-between">
+                                <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-widest">Audit (30d)</h2>
+                                <button
+                                    onClick={() => navigate(ROUTES.AUDIT)}
+                                    className="text-xs text-gray-400 hover:text-gray-700 transition-colors"
+                                >View →</button>
+                            </div>
+                            <div className="px-5 py-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">Total events</span>
+                                    <span className="text-sm font-semibold text-gray-900 tabular-nums">
+                                        {fmt(stats?.auditEvents30d ?? 0)}
+                                    </span>
                                 </div>
-                                <div className="px-5 py-4 space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-sm text-gray-400">Encryptions</span>
-                                        <span className="text-sm font-semibold text-white tabular-nums">
-                                            {fmt(secretsMetrics.encryption_ops_24h)}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-sm text-gray-400">Decryptions</span>
-                                        <span className="text-sm font-semibold text-white tabular-nums">
-                                            {fmt(secretsMetrics.decryption_ops_24h ?? 0)}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-sm text-gray-400">Active secrets</span>
-                                        <span className="text-sm font-semibold text-white tabular-nums">
-                                            {fmt(secretsMetrics.active_secrets ?? 0)}
-                                        </span>
-                                    </div>
-                                    {secretsMetrics.expired_secrets > 0 && (
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-sm text-red-400">Expired</span>
-                                            <span className="text-sm font-semibold text-red-400 tabular-nums">
-                                                {fmt(secretsMetrics.expired_secrets)}
-                                            </span>
-                                        </div>
-                                    )}
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">Logins</span>
+                                    <span className="text-sm font-semibold text-blue-600 tabular-nums">
+                                        {fmt(stats?.auditLogins30d ?? 0)}
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">Secret reads</span>
+                                    <span className="text-sm font-semibold text-amber-600 tabular-nums">
+                                        {fmt(stats?.auditSecretReads30d ?? 0)}
+                                    </span>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-gray-500">Other events</span>
+                                    <span className="text-sm font-semibold text-gray-500 tabular-nums">
+                                        {fmt(Math.max(0, (stats?.auditEvents30d ?? 0) - (stats?.auditLogins30d ?? 0) - (stats?.auditSecretReads30d ?? 0)))}
+                                    </span>
                                 </div>
                             </div>
-                        )}
+                        </div>
 
                     </div>
                 </div>
