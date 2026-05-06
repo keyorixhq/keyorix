@@ -39,11 +39,16 @@ interface StatCardProps {
     value: string | number;
     sub?: string;
     trend?: { value: number; isPositive: boolean };
+    prevValue?: number;
     accent: string;
     onClick?: () => void;
 }
 
-const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, accent, onClick }) => (
+const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue, accent, onClick }) => {
+    const delta = trend && prevValue != null
+        ? Math.round((typeof value === 'number' ? value : 0) - prevValue)
+        : null;
+    return (
     <div
         onClick={onClick}
         className={`relative bg-white border border-gray-100 rounded-xl p-6 flex flex-col gap-2 shadow-sm
@@ -54,16 +59,22 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, accent, o
         <span className="text-4xl font-bold text-gray-900 pl-3 tabular-nums leading-none">
             {typeof value === 'number' ? fmt(value) : value}
         </span>
-        <div className="pl-3 flex items-center gap-2">
+        <div className="pl-3 flex items-center gap-2 flex-wrap">
             {trend && (
                 <span className={`text-xs font-semibold ${trend.isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
                     {trend.isPositive ? '↑' : '↓'} {trend.value}%
+                    {delta !== null && (
+                        <span className="font-normal opacity-70 ml-1">
+                            ({delta > 0 ? '+' : ''}{delta} {label.toLowerCase().replace(/\s*\(.*\)/, '')})
+                        </span>
+                    )}
                 </span>
             )}
             {sub && <span className="text-xs text-gray-400">{sub}</span>}
         </div>
     </div>
-);
+    );
+};
 
 interface FeaturePillProps {
     label: string;
@@ -187,6 +198,7 @@ export const DashboardPage: React.FC = () => {
                         label="Total Secrets"
                         value={stats?.totalSecrets ?? 0}
                         {...(stats?.totalSecretsTrend ? { trend: stats.totalSecretsTrend } : {})}
+                        {...(stats?.prevTotalSecrets != null ? { prevValue: stats.prevTotalSecrets } : {})}
                         sub={stats?.totalSecretsTrend ? 'vs last snapshot' : 'across all environments'}
                         accent="bg-blue-500"
                         onClick={() => navigate(ROUTES.SECRETS)}
