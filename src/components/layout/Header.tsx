@@ -76,6 +76,16 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
 
                     {/* Right — theme toggle + notifications + user menu */}
                     <div className="flex items-center space-x-2">
+                        {/* Notifications — coming soon, intentionally inert */}
+                        <div
+                            className="p-2 rounded-md relative"
+                            style={{ color: 'var(--text-muted)', opacity: 0.35, cursor: 'default' }}
+                            title="Notifications — coming soon"
+                            aria-hidden="true"
+                        >
+                            <BellIcon className="h-6 w-6" />
+                        </div>
+
                         {/* Theme toggle */}
                         <button
                             type="button"
@@ -92,16 +102,6 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                                     : <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Auto</span>
                             }
                         </button>
-
-                        {/* Notifications — coming soon, intentionally inert */}
-                        <div
-                            className="p-2 rounded-md relative"
-                            style={{ color: 'var(--text-muted)', opacity: 0.35, cursor: 'default' }}
-                            title="Notifications — coming soon"
-                            aria-hidden="true"
-                        >
-                            <BellIcon className="h-6 w-6" />
-                        </div>
 
                         {/* User menu */}
                         <Dropdown
