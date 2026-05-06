@@ -55,6 +55,8 @@ export const AdminPage: React.FC = () => {
     const [activeModal, setActiveModal] = useState<ActiveModal>(null);
     const [formError, setFormError] = useState('');
     const [pageError, setPageError] = useState('');
+    const [selected, setSelected] = useState<Set<number>>(new Set());
+    const [bulkPending, setBulkPending] = useState(false);
 
     const [createUsername, setCreateUsername] = useState('');
     const [createEmail, setCreateEmail] = useState('');
@@ -127,6 +129,45 @@ export const AdminPage: React.FC = () => {
         });
     }
 
+    function toggleSelect(id: number) {
+        setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+    }
+
+    function toggleAll() {
+        setSelected(prev => prev.size === users.length ? new Set() : new Set(users.map(u => u.id)));
+    }
+
+    async function bulkSetActive(active: boolean) {
+        const targets = users.filter(u => selected.has(u.id) && u.active !== active);
+        if (!targets.length) return;
+        setBulkPending(true);
+        try {
+            await Promise.all(targets.map(u =>
+                updateMutation.mutateAsync({ id: u.id, body: { email: u.email, display_name: u.display_name, active } })
+            ));
+            setSelected(new Set());
+        } catch (err: any) {
+            setPageError(err.response?.data?.error ?? err.message ?? 'Bulk action failed');
+        } finally {
+            setBulkPending(false);
+        }
+    }
+
+    async function bulkDelete() {
+        setBulkPending(true);
+        try {
+            await Promise.all(Array.from(selected).map(id => deleteMutation.mutateAsync(id)));
+            setSelected(new Set());
+        } catch (err: any) {
+            setPageError(err.response?.data?.error ?? err.message ?? 'Bulk delete failed');
+        } finally {
+            setBulkPending(false);
+        }
+    }
+
+    const hasActive = users.some(u => selected.has(u.id) && u.active);
+    const hasInactive = users.some(u => selected.has(u.id) && !u.active);
+
     return (
         <>
             <div className="max-w-6xl mx-auto px-4 py-8">
@@ -137,10 +178,30 @@ export const AdminPage: React.FC = () => {
                             {total > 0 ? `${total} user${total !== 1 ? 's' : ''}` : 'No users found'}
                         </p>
                     </div>
-                    <Button variant="primary" onClick={() => { setFormError(''); setActiveModal({ type: 'create' }); }}>
-                        <PlusIcon className="h-4 w-4 mr-1.5" />
-                        New User
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        {selected.size > 0 && (
+                            <>
+                                <span className="text-sm text-gray-500">{selected.size} selected</span>
+                                {hasInactive && (
+                                    <Button variant="outline" size="sm" onClick={() => bulkSetActive(true)} disabled={bulkPending}>
+                                        Activate
+                                    </Button>
+                                )}
+                                {hasActive && (
+                                    <Button variant="outline" size="sm" onClick={() => bulkSetActive(false)} disabled={bulkPending}>
+                                        Deactivate
+                                    </Button>
+                                )}
+                                <Button variant="outline" size="sm" onClick={bulkDelete} disabled={bulkPending} className="text-red-600 hover:text-red-700">
+                                    Delete
+                                </Button>
+                                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+                            </>
+                        )}
+                        <Button variant="primary" onClick={() => { setFormError(''); setActiveModal({ type: 'create' }); }}>
+                            <PlusIcon className="h-4 w-4 mr-1.5" />New User
+                        </Button>
+                    </div>
                 </div>
 
                 {pageError && (
@@ -178,6 +239,11 @@ export const AdminPage: React.FC = () => {
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-4 py-3 w-10">
+                                        <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                            checked={users.length > 0 && selected.size === users.length}
+                                            onChange={toggleAll} />
+                                    </th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
@@ -187,7 +253,12 @@ export const AdminPage: React.FC = () => {
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-100">
                                 {users.map((user) => (
-                                    <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                                    <tr key={user.id} className={`hover:bg-gray-50 transition-colors ${selected.has(user.id) ? 'bg-blue-50' : ''}`}>
+                                        <td className="px-4 py-4 w-10">
+                                            <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                                checked={selected.has(user.id)}
+                                                onChange={() => toggleSelect(user.id)} />
+                                        </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-3">
                                                 <div className="flex-shrink-0 h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
