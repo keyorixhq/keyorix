@@ -101,7 +101,10 @@ export const AuditLogPage: React.FC = () => {
                                             {item.secretName}
                                         </td>
                                         <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                                            {item.actor} {friendlyType(item.type).toLowerCase()} secret &quot;{item.secretName}&quot;
+                                            {item.secretName
+                                                ? `${item.actor} ${friendlyType(item.type).toLowerCase()} secret "${item.secretName}"`
+                                                : `${item.actor} ${friendlyType(item.type).toLowerCase()}`
+                                            }
                                         </td>
                                     </tr>
                                 ))}
