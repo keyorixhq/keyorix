@@ -284,8 +284,17 @@ export const SecretsListPage: React.FC = () => {
                         <input type="text" required value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Value <span className="text-red-500">*</span></label>
-                        <textarea required rows={4} value={createValue} onChange={(e) => setCreateValue(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="block text-sm font-medium text-base-secondary">Value <span className="text-red-500">*</span></label>
+                            <button type="button" onClick={() => setCreateValue(generateSecret())}
+                                className="text-xs font-medium transition-colors"
+                                style={{ color: 'var(--accent-text)' }}>
+                                ↻ Generate
+                            </button>
+                        </div>
+                        <textarea required rows={3} value={createValue} onChange={(e) => setCreateValue(e.target.value)}
+                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                            style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }} />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Type</label>
