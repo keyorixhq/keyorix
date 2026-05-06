@@ -7,6 +7,7 @@ import { LoginPage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';
 import { AuditLogPage } from './pages/audit/AuditLogPage';
 import { AdminPage } from './pages/admin';
+import { AppearancePage } from './pages/settings/AppearancePage';
 import { ROUTES } from './constants';
 
 function App() {
@@ -49,6 +50,7 @@ function App() {
                   <Route path={ROUTES.PROFILE} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Profile — coming soon</div>} />
                   <Route path={ROUTES.ADMIN_USERS} element={<AdminPage />} />
                   <Route path={ROUTES.ADMIN} element={<AdminPage />} />
+                  <Route path="/settings/appearance" element={<AppearancePage />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

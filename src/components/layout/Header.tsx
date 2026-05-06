@@ -82,13 +82,14 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                             onClick={toggleTheme}
                             className="p-2 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
                             style={{ color: 'var(--text-muted)' }}
-                            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                            title={theme === 'dark' ? 'Switch to light mode' : theme === 'light' ? 'Switch to dark mode' : 'Switch theme (system)'}
+                            aria-label={theme === 'dark' ? 'Switch to light mode' : theme === 'light' ? 'Switch to dark mode' : 'Switch theme'}
                         >
-                            {/* Icon shows what you'll switch TO */}
                             {theme === 'dark'
                                 ? <SunIcon className="h-5 w-5" aria-hidden="true" />
-                                : <MoonIcon className="h-5 w-5" aria-hidden="true" />
+                                : theme === 'light'
+                                    ? <MoonIcon className="h-5 w-5" aria-hidden="true" />
+                                    : <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Auto</span>
                             }
                         </button>
 

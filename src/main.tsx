@@ -7,14 +7,17 @@ import App from './App';
 import { queryClient } from './lib/queryClient';
 import './index.css';
 
-// Apply theme before first paint to prevent flash.
-// Reads from the same localStorage key that Zustand persist uses.
+// Apply theme before first paint — prevent flash.
+// Reads from Zustand persist key; handles system preference.
 (function () {
     try {
         const stored = localStorage.getItem('keyorix-ui');
         const parsed = stored ? JSON.parse(stored) : null;
         const theme = parsed?.state?.theme ?? 'dark';
-        document.documentElement.setAttribute('data-theme', theme);
+        const resolved = theme === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : theme;
+        document.documentElement.setAttribute('data-theme', resolved);
     } catch {
         document.documentElement.setAttribute('data-theme', 'dark');
     }

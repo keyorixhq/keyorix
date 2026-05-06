@@ -84,8 +84,9 @@ interface FeaturePillProps {
 const FeaturePill: React.FC<FeaturePillProps> = ({ label, active }) => (
     <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border
         ${active
-            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-            : 'bg-gray-50 border-base text-base-muted'}`}
+            ? 'border-emerald-500/30 text-emerald-400'
+            : 'border-base text-base-muted'}`}
+        style={{ backgroundColor: active ? 'rgba(16,185,129,0.08)' : 'var(--bg-subtle)' }}
     >
         <div className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-emerald-500' : 'bg-gray-300'}`} />
         {label}
@@ -132,19 +133,25 @@ interface SignalCardProps {
 const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, onClick }) => {
     const colors = {
         neutral: 'bg-subtle border-base text-base-secondary',
-        warn:    'bg-amber-50 border-amber-200 text-amber-700',
-        alert:   'bg-red-50 border-red-200 text-red-700',
+        warn:    'border-amber-500/40 text-amber-400',
+        alert:   'border-red-500/40 text-red-400',
     };
     const valueColors = {
         neutral: 'text-base-primary',
-        warn:    'text-amber-700',
-        alert:   'text-red-700',
+        warn:    'text-amber-400',
+        alert:   'text-red-400',
     };
+    const bgStyle: React.CSSProperties = severity === 'neutral'
+        ? { backgroundColor: 'var(--bg-subtle)' }
+        : severity === 'warn'
+            ? { backgroundColor: 'rgba(245,158,11,0.08)' }
+            : { backgroundColor: 'rgba(239,68,68,0.08)' };
     return (
         <div
             onClick={onClick}
             className={`flex items-center justify-between px-4 py-3 rounded-lg border ${colors[severity]}
                 ${onClick ? 'cursor-pointer hover:brightness-95 transition-all duration-100' : ''}`}
+            style={bgStyle}
         >
             <div>
                 <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
