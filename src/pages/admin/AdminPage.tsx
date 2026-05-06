@@ -216,7 +216,7 @@ export const AdminPage: React.FC = () => {
                             placeholder="Search by username or email…"
                             value={searchInput}
                             onChange={(e) => setSearchInput(e.target.value)}
-                            className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg bg-subtle text-base-primary placeholder-base-muted focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
                         />
                     </div>
                     <Button type="submit" variant="secondary">Search</Button>
@@ -240,7 +240,7 @@ export const AdminPage: React.FC = () => {
                             <thead>
                                 <tr>
                                     <th className="px-4 py-3 w-10">
-                                        <input type="checkbox" className="rounded border-base bg-subtle text-blue-600 focus:ring-blue-500"
+                                        <input type="checkbox" className="rounded border-base text-blue-600 focus:ring-blue-500" style={{ accentColor: 'var(--accent)' }}
                                             checked={users.length > 0 && selected.size === users.length}
                                             onChange={toggleAll} />
                                     </th>
@@ -255,7 +255,7 @@ export const AdminPage: React.FC = () => {
                                 {users.map((user) => (
                                     <tr key={user.id} className={`hover:bg-subtle transition-colors ${selected.has(user.id) ? 'bg-accent-subtle' : ''}`}>
                                         <td className="px-4 py-4 w-10">
-                                            <input type="checkbox" className="rounded border-base bg-subtle text-blue-600 focus:ring-blue-500"
+                                            <input type="checkbox" className="rounded border-base text-blue-600 focus:ring-blue-500" style={{ accentColor: 'var(--accent)' }}
                                                 checked={selected.has(user.id)}
                                                 onChange={() => toggleSelect(user.id)} />
                                         </td>
@@ -354,7 +354,7 @@ export const AdminPage: React.FC = () => {
                         <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div className="flex items-center gap-3">
-                        <input id="edit-active" type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 text-blue-600 border-base rounded" />
+                        <input id="edit-active" type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 text-blue-600 border-base rounded" style={{ accentColor: 'var(--accent)' }} />
                         <label htmlFor="edit-active" className="text-sm font-medium text-base-secondary">Active</label>
                     </div>
                     <div className="flex justify-end gap-3 pt-2">

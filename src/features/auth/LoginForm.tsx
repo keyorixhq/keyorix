@@ -56,7 +56,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     return (
         <form onSubmit={handleSubmit} className="space-y-6" noValidate>
             <div>
-                <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="username" className="block text-sm font-medium text-base-secondary mb-1">
                     Username
                 </label>
                 <input
@@ -68,12 +68,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                     value={formData.username}
                     onChange={(e) => handleInputChange('username', e.target.value)}
                     className={cn(
-                        'block w-full px-3 py-2 border rounded-md shadow-sm placeholder-gray-400',
+                        'block w-full px-3 py-2 border rounded-md shadow-sm',
                         'focus:outline-none focus:ring-2 focus:ring-offset-2',
                         validationErrors.username
                             ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                            : 'border-gray-300 focus:border-blue-500 focus:ring-blue-500'
+                            : 'border-base focus:border-blue-500 focus:ring-blue-500'
                     )}
+                    style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
                     placeholder="Username"
                     disabled={isLoading}
                 />
@@ -83,7 +84,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
             </div>
 
             <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="password" className="block text-sm font-medium text-base-secondary mb-1">
                     Password
                 </label>
                 <div className="relative">
@@ -96,12 +97,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                         value={formData.password}
                         onChange={(e) => handleInputChange('password', e.target.value)}
                         className={cn(
-                            'block w-full px-3 py-2 pr-10 border rounded-md shadow-sm placeholder-gray-400',
+                            'block w-full px-3 py-2 pr-10 border rounded-md shadow-sm',
                             'focus:outline-none focus:ring-2 focus:ring-offset-2',
                             validationErrors.password
                                 ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                                : 'border-gray-300 focus:border-blue-500 focus:ring-blue-500'
+                                : 'border-base focus:border-blue-500 focus:ring-blue-500'
                         )}
+                        style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
                         placeholder="Password"
                         disabled={isLoading}
                     />
@@ -113,9 +115,9 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                         aria-label={showPassword ? 'Hide password' : 'Show password'}
                     >
                         {showPassword ? (
-                            <EyeSlashIcon className="h-5 w-5 text-gray-400" />
+                            <EyeSlashIcon className="h-5 w-5 text-base-muted" />
                         ) : (
-                            <EyeIcon className="h-5 w-5 text-gray-400" />
+                            <EyeIcon className="h-5 w-5 text-base-muted" />
                         )}
                     </button>
                 </div>
@@ -132,10 +134,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                         type="checkbox"
                         checked={formData.rememberMe}
                         onChange={(e) => handleInputChange('rememberMe', e.target.checked)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-base rounded"
                         disabled={isLoading}
                     />
-                    <label htmlFor="rememberMe" className="ml-2 block text-sm text-gray-700">
+                    <label htmlFor="rememberMe" className="ml-2 block text-sm text-base-secondary">
                         Remember me
                     </label>
                 </div>
@@ -163,7 +165,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                 className={cn(
                     'w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white',
                     'focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500',
-                    isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                    isLoading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
                 )}
             >
                 {isLoading ? (

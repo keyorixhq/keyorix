@@ -6,8 +6,8 @@ import { useAuditLog, AuditLogEntry } from '../../features/audit';
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const EVENT_LABELS: Record<string, { label: string; color: string }> = {
-    'auth.login':      { label: 'Login',       color: 'bg-gray-100 text-base-secondary' },
-    'auth.logout':     { label: 'Logout',      color: 'bg-gray-100 text-base-secondary' },
+    'auth.login':      { label: 'Login',       color: 'bg-subtle text-base-secondary border border-base' },
+    'auth.logout':     { label: 'Logout',      color: 'bg-subtle text-base-secondary border border-base' },
     'secret.read':     { label: 'Read',        color: 'bg-amber-100 text-amber-700' },
     'secret.created':  { label: 'Created',     color: 'bg-emerald-100 text-emerald-700' },
     'secret.updated':  { label: 'Updated',     color: 'bg-blue-100 text-blue-700' },
@@ -20,7 +20,7 @@ const EVENT_LABELS: Record<string, { label: string; color: string }> = {
 function eventBadge(eventType: string) {
     const e = EVENT_LABELS[eventType];
     const label = e?.label ?? eventType;
-    const color = e?.color ?? 'bg-gray-100 text-base-secondary';
+    const color = e?.color ?? 'bg-subtle text-base-secondary border border-base';
     return (
         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}>
             {label}
@@ -70,7 +70,7 @@ export const AuditLogPage: React.FC = () => {
                         <div className="overflow-x-auto">
                             <table className="min-w-full divide-y divide-base">
                                 <thead>
-                                    <tr className="bg-gray-50">
+                                    <tr className="bg-subtle">
                                         <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider w-44">Time</th>
                                         <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider w-32">Event</th>
                                         <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider w-32">Actor</th>
