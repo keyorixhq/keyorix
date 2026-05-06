@@ -218,7 +218,7 @@ export const DashboardPage: React.FC = () => {
                         sub={(stats?.auditLogins30d != null && stats?.auditSecretReads30d != null)
                             ? `${stats.auditLogins30d} logins · ${stats.auditSecretReads30d} reads`
                             : 'all events logged'}
-                        accent="bg-amber-500"
+                        accent="bg-indigo-500"
                         onClick={() => navigate(ROUTES.AUDIT)}
                     />
                     <StatCard
