@@ -1,7 +1,6 @@
 import React from 'react';
 import {
-    EyeIcon, PencilIcon, TrashIcon, ShareIcon,
-    DocumentDuplicateIcon, CheckIcon, ArrowPathIcon,
+    EyeIcon, PencilIcon, TrashIcon, ShareIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { Secret } from '../../types';
 import { Button } from '../../components/ui/Button';
@@ -19,16 +18,11 @@ interface SecretTableRowProps {
     onDelete: (secret: Secret) => void;
     onShare: (secret: Secret) => void;
     onRotate: (secret: Secret) => void;
-    onCopy: (secret: Secret) => void;
-    copyingId: number | null;
-    copiedId: number | null;
-    copyErrorId: number | null;
 }
 
 export const SecretTableRow: React.FC<SecretTableRowProps> = ({
     secret, bulkActionMode, isSelected, onToggleSelect,
-    onView, onEdit, onDelete, onShare, onRotate, onCopy,
-    copyingId, copiedId, copyErrorId,
+    onView, onEdit, onDelete, onShare, onRotate,
 }) => (
     <tr className="hover:bg-gray-50 dark:hover:bg-gray-700">
         {bulkActionMode && (
@@ -80,8 +74,8 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                 <div className="text-xs">by {secret.owner}</div>
             </div>
         </td>
-        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium min-w-[180px]">
-            <div className="flex items-center justify-end space-x-2">
+        <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
+            <div className="flex items-center justify-end space-x-1">
                 <Button variant="ghost" size="sm" onClick={() => onView(secret)} title="View secret">
                     <EyeIcon className="h-4 w-4" />
                 </Button>
@@ -90,29 +84,13 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                 </Button>
                 <button
                     onClick={() => onRotate(secret)}
-                    className="p-1 text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition-colors"
+                    className="p-1 text-gray-400 hover:text-green-600 transition-colors"
                     title="Rotate secret"
                 >
                     <ArrowPathIcon className="h-4 w-4" />
                 </button>
                 <Button variant="ghost" size="sm" onClick={() => onShare(secret)} title="Share secret">
                     <ShareIcon className="h-4 w-4" />
-                </Button>
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onCopy(secret)}
-                    title="Copy value to clipboard"
-                    disabled={copyingId === secret.id}
-                    className={copyErrorId === secret.id ? 'text-red-500' : ''}
-                >
-                    {copyingId === secret.id ? (
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                    ) : copiedId === secret.id ? (
-                        <CheckIcon className="h-4 w-4 text-green-500" />
-                    ) : (
-                        <DocumentDuplicateIcon className="h-4 w-4" />
-                    )}
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => onDelete(secret)} title="Delete secret" className="text-red-600 hover:text-red-700">
                     <TrashIcon className="h-4 w-4" />

@@ -10,7 +10,7 @@ import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
-import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow } from '../../features/secrets';
+import { SecretDetailView, useSecretsList, SecretTableRow } from '../../features/secrets';
 import { ShareSecretModal } from '../../features/sharing';
 
 const SECRET_TYPES: { value: SecretType | 'all'; label: string }[] = [
@@ -31,7 +31,6 @@ const PAGE_SIZE_OPTIONS = [
 
 export const SecretsListPage: React.FC = () => {
     const list = useSecretsList();
-    const reveal = useSecretReveal();
     const [viewingSecret, setViewingSecret] = React.useState<any>(null);
     const [createName, setCreateName] = React.useState('');
     const [createValue, setCreateValue] = React.useState('');
@@ -182,10 +181,6 @@ export const SecretsListPage: React.FC = () => {
                                         onDelete={s => list.openModal('delete-secret', { secret: s })}
                                         onShare={s => list.openModal('share-secret', { secret: s })}
                                         onRotate={handleRotate}
-                                        onCopy={reveal.handleCopySecretValue}
-                                        copyingId={reveal.copyingSecretId}
-                                        copiedId={reveal.copiedSecretId}
-                                        copyErrorId={reveal.copyErrorId}
                                     />
                                 ))}
                             </tbody>
