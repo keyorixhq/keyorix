@@ -216,7 +216,7 @@ export const AdminPage: React.FC = () => {
                             placeholder="Search by username or email…"
                             value={searchInput}
                             onChange={(e) => setSearchInput(e.target.value)}
-                            className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
+                            className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
                         />
                     </div>
                     <Button type="submit" variant="secondary">Search</Button>

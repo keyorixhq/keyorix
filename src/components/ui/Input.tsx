@@ -94,7 +94,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                         ref={ref}
                         id={inputId}
                         className={clsx(inputClasses, className)}
-                        style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
+                        style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
                         {...props}
                     />
 

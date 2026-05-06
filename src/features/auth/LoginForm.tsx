@@ -74,7 +74,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                             ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
                             : 'border-base focus:border-blue-500 focus:ring-blue-500'
                     )}
-                    style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
+                    style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
                     placeholder="Username"
                     disabled={isLoading}
                 />
@@ -103,7 +103,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                                 ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
                                 : 'border-base focus:border-blue-500 focus:ring-blue-500'
                         )}
-                        style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-primary)' }}
+                        style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
                         placeholder="Password"
                         disabled={isLoading}
                     />

@@ -244,9 +244,9 @@
 [data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
 [data-theme="dark"] textarea,
 [data-theme="dark"] select {
-  background-color: var(--bg-subtle);
+  background-color: var(--bg-app);
   color: var(--text-primary);
-  border-color: var(--border);
+  border-color: var(--border-strong);
 }
 
 [data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"])::placeholder,
