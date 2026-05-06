@@ -93,15 +93,15 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                             }
                         </button>
 
-                        {/* Notifications */}
-                        <button
-                            type="button"
-                            className="p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 relative"
-                            style={{ color: 'var(--text-muted)' }}
+                        {/* Notifications — coming soon, intentionally inert */}
+                        <div
+                            className="p-2 rounded-md relative"
+                            style={{ color: 'var(--text-muted)', opacity: 0.35, cursor: 'default' }}
+                            title="Notifications — coming soon"
+                            aria-hidden="true"
                         >
-                            <span className="sr-only">View notifications</span>
-                            <BellIcon className="h-6 w-6" aria-hidden="true" />
-                        </button>
+                            <BellIcon className="h-6 w-6" />
+                        </div>
 
                         {/* User menu */}
                         <Dropdown
