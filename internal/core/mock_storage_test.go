@@ -537,3 +537,7 @@ func (m *MockStorage) GetPreviousStatsSnapshot(ctx context.Context, userID uint)
 	}
 	return args.Get(0).(*models.StatsSnapshot), args.Error(1)
 }
+
+func (m *MockStorage) GetDistinctActiveUserIDs(_ context.Context, _ time.Time) ([]uint, error) {
+	return nil, nil
+}

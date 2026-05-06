@@ -96,6 +96,7 @@ type Storage interface {
 	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
 	GetAuditLogs(ctx context.Context, filter *AuditFilter) ([]*models.AuditEvent, int64, error)
 	GetRBACAuditLogs(ctx context.Context, filter *RBACAuditFilter) ([]*RBACAuditLog, int64, error)
+	GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error)
 
 	// Session Management
 	CreateSession(ctx context.Context, session *models.Session) (*models.Session, error)

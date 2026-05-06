@@ -98,3 +98,14 @@ func (ls *LocalStorage) ListAnomalyAlerts(ctx context.Context, unacknowledgedOnl
 func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
 	return ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Update("acknowledged", true).Error
 }
+
+// GetDistinctActiveUserIDs returns the IDs of users who have logged in since the given time.
+func (ls *LocalStorage) GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error) {
+	var ids []uint
+	err := ls.db.WithContext(ctx).
+		Model(&models.AuditEvent{}).
+		Where("event_type = ? AND event_time >= ?", "auth.login", since).
+		Distinct("user_id").
+		Pluck("user_id", &ids).Error
+	return ids, err
+}

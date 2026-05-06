@@ -128,3 +128,8 @@ func (rs *RemoteStorage) ListAnomalyAlerts(_ context.Context, _ bool) ([]models.
 func (rs *RemoteStorage) AcknowledgeAnomalyAlert(_ context.Context, _ uint) error {
 	return fmt.Errorf("AcknowledgeAnomalyAlert not available in remote mode")
 }
+
+// GetDistinctActiveUserIDs is not available in remote mode.
+func (rs *RemoteStorage) GetDistinctActiveUserIDs(_ context.Context, _ time.Time) ([]uint, error) {
+	return nil, fmt.Errorf("GetDistinctActiveUserIDs not available in remote mode")
+}
