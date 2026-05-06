@@ -5,24 +5,28 @@ import { useAuditLog, AuditLogEntry } from '../../features/audit';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const EVENT_LABELS: Record<string, { label: string; color: string }> = {
-    'auth.login':      { label: 'Login',       color: 'bg-subtle text-base-secondary border border-base' },
-    'auth.logout':     { label: 'Logout',      color: 'bg-subtle text-base-secondary border border-base' },
-    'secret.read':     { label: 'Read',        color: 'bg-amber-100 text-amber-700' },
-    'secret.created':  { label: 'Created',     color: 'bg-emerald-100 text-emerald-700' },
-    'secret.updated':  { label: 'Updated',     color: 'bg-blue-100 text-blue-700' },
-    'secret.deleted':  { label: 'Deleted',     color: 'bg-red-100 text-red-700' },
-    'secret.rotated':  { label: 'Rotated',     color: 'bg-purple-100 text-purple-700' },
-    'secret.shared':   { label: 'Shared',      color: 'bg-indigo-100 text-indigo-700' },
-    'share.revoked':   { label: 'Unshared',    color: 'bg-orange-100 text-orange-700' },
+const EVENT_STYLES: Record<string, { label: string; bg: string; color: string }> = {
+    'auth.login':      { label: 'Login',    bg: 'rgba(148,163,184,0.10)', color: '#94a3b8' },
+    'auth.logout':     { label: 'Logout',   bg: 'rgba(148,163,184,0.10)', color: '#94a3b8' },
+    'secret.read':     { label: 'Read',     bg: 'rgba(251,191,36,0.12)',  color: '#fbbf24' },
+    'secret.created':  { label: 'Created',  bg: 'rgba(16,185,129,0.12)',  color: '#34d399' },
+    'secret.updated':  { label: 'Updated',  bg: 'rgba(59,130,246,0.12)',  color: '#60a5fa' },
+    'secret.deleted':  { label: 'Deleted',  bg: 'rgba(239,68,68,0.12)',   color: '#f87171' },
+    'secret.rotated':  { label: 'Rotated',  bg: 'rgba(168,85,247,0.12)',  color: '#c084fc' },
+    'secret.shared':   { label: 'Shared',   bg: 'rgba(99,102,241,0.12)',  color: '#818cf8' },
+    'share.revoked':   { label: 'Unshared', bg: 'rgba(251,146,60,0.12)',  color: '#fb923c' },
 };
 
 function eventBadge(eventType: string) {
-    const e = EVENT_LABELS[eventType];
+    const e = EVENT_STYLES[eventType];
     const label = e?.label ?? eventType;
-    const color = e?.color ?? 'bg-subtle text-base-secondary border border-base';
+    const bg = e?.bg ?? 'rgba(148,163,184,0.10)';
+    const color = e?.color ?? '#94a3b8';
     return (
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}>
+        <span
+            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+            style={{ backgroundColor: bg, color }}
+        >
             {label}
         </span>
     );
