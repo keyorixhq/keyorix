@@ -253,3 +253,13 @@
 [data-theme="dark"] textarea::placeholder {
   color: var(--text-muted);
 }
+
+/* ─── Checkbox / radio dark theme ──────────────────────────────── */
+/* Native checkboxes need background-color + border override.
+   accent-color sets the checkmark/fill colour when checked. */
+[data-theme="dark"] input[type="checkbox"],
+[data-theme="dark"] input[type="radio"] {
+  background-color: var(--bg-subtle);
+  border-color: var(--border-strong);
+  accent-color: var(--accent);
+}
