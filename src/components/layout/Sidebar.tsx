@@ -133,12 +133,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                 </div>
             </nav>
 
-            {/* Footer */}
-            <div className="px-4 py-4 border-t border-gray-200">
-                <div className="text-xs text-gray-500 text-center">
-                    <p>Keyorix v0.1.0</p>
-                </div>
-            </div>
+
         </div>
     );
 
