@@ -36,6 +36,9 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := &storage.UserFilter{Page: page, PageSize: pageSize}
+	if s := strings.TrimSpace(r.URL.Query().Get("search")); s != "" {
+		filter.Search = &s
+	}
 	if u := strings.TrimSpace(r.URL.Query().Get("username")); u != "" {
 		filter.Username = &u
 	}
