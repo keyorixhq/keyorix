@@ -18,6 +18,7 @@ import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
+import { useUIStore } from '../../store/uiStore';
 
 interface APIUser {
     id: number;
@@ -67,6 +68,8 @@ export const AdminPage: React.FC = () => {
     const [editDisplayName, setEditDisplayName] = useState('');
     const [editActive, setEditActive] = useState(true);
 
+    const { theme } = useUIStore();
+    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     const { data, isLoading, isError } = useAdminUserList({ page, search, pageSize: PAGE_SIZE });
 
     const rawData = data as any;
@@ -274,7 +277,12 @@ export const AdminPage: React.FC = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">{user.email}</td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-base-secondary'}`}>
+                                            <span
+                                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                                                style={user.active
+                                                    ? { backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7', color: isDark ? '#34d399' : '#166534' }
+                                                    : { backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9', color: isDark ? '#94a3b8' : '#475569' }}
+                                            >
                                                 {user.active ? 'Active' : 'Inactive'}
                                             </span>
                                         </td>

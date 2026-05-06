@@ -1,27 +1,29 @@
 import React from 'react';
 import { Loading } from '../../components/ui/Loading';
+import { useUIStore } from '../../store/uiStore';
 import { Alert } from '../../components/ui/Alert';
 import { useAuditLog, AuditLogEntry } from '../../features/audit';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const EVENT_STYLES: Record<string, { label: string; bg: string; color: string }> = {
-    'auth.login':      { label: 'Login',    bg: 'rgba(148,163,184,0.10)', color: '#94a3b8' },
-    'auth.logout':     { label: 'Logout',   bg: 'rgba(148,163,184,0.10)', color: '#94a3b8' },
-    'secret.read':     { label: 'Read',     bg: 'rgba(251,191,36,0.12)',  color: '#fbbf24' },
-    'secret.created':  { label: 'Created',  bg: 'rgba(16,185,129,0.12)',  color: '#34d399' },
-    'secret.updated':  { label: 'Updated',  bg: 'rgba(59,130,246,0.12)',  color: '#60a5fa' },
-    'secret.deleted':  { label: 'Deleted',  bg: 'rgba(239,68,68,0.12)',   color: '#f87171' },
-    'secret.rotated':  { label: 'Rotated',  bg: 'rgba(168,85,247,0.12)',  color: '#c084fc' },
-    'secret.shared':   { label: 'Shared',   bg: 'rgba(99,102,241,0.12)',  color: '#818cf8' },
-    'share.revoked':   { label: 'Unshared', bg: 'rgba(251,146,60,0.12)',  color: '#fb923c' },
+// dark: light text on tinted bg; light: darker text on tinted bg
+const EVENT_STYLES: Record<string, { label: string; darkBg: string; darkColor: string; lightBg: string; lightColor: string }> = {
+    'auth.login':      { label: 'Login',    darkBg: 'rgba(148,163,184,0.15)', darkColor: '#94a3b8', lightBg: '#f1f5f9', lightColor: '#475569' },
+    'auth.logout':     { label: 'Logout',   darkBg: 'rgba(148,163,184,0.15)', darkColor: '#94a3b8', lightBg: '#f1f5f9', lightColor: '#475569' },
+    'secret.read':     { label: 'Read',     darkBg: 'rgba(251,191,36,0.15)',  darkColor: '#fbbf24', lightBg: '#fef9c3', lightColor: '#854d0e' },
+    'secret.created':  { label: 'Created',  darkBg: 'rgba(16,185,129,0.15)',  darkColor: '#34d399', lightBg: '#dcfce7', lightColor: '#166534' },
+    'secret.updated':  { label: 'Updated',  darkBg: 'rgba(59,130,246,0.15)',  darkColor: '#60a5fa', lightBg: '#dbeafe', lightColor: '#1e40af' },
+    'secret.deleted':  { label: 'Deleted',  darkBg: 'rgba(239,68,68,0.15)',   darkColor: '#f87171', lightBg: '#fee2e2', lightColor: '#991b1b' },
+    'secret.rotated':  { label: 'Rotated',  darkBg: 'rgba(168,85,247,0.15)',  darkColor: '#c084fc', lightBg: '#f3e8ff', lightColor: '#6b21a8' },
+    'secret.shared':   { label: 'Shared',   darkBg: 'rgba(99,102,241,0.15)',  darkColor: '#818cf8', lightBg: '#e0e7ff', lightColor: '#3730a3' },
+    'share.revoked':   { label: 'Unshared', darkBg: 'rgba(251,146,60,0.15)',  darkColor: '#fb923c', lightBg: '#ffedd5', lightColor: '#9a3412' },
 };
 
-function eventBadge(eventType: string) {
+function eventBadge(eventType: string, isDark: boolean) {
     const e = EVENT_STYLES[eventType];
     const label = e?.label ?? eventType;
-    const bg = e?.bg ?? 'rgba(148,163,184,0.10)';
-    const color = e?.color ?? '#94a3b8';
+    const bg = e ? (isDark ? e.darkBg : e.lightBg) : (isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9');
+    const color = e ? (isDark ? e.darkColor : e.lightColor) : (isDark ? '#94a3b8' : '#475569');
     return (
         <span
             className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
@@ -45,6 +47,8 @@ function fmtTime(ts: string): string {
 
 export const AuditLogPage: React.FC = () => {
     const { data, isLoading, error } = useAuditLog({ pageSize: 50 });
+    const { theme } = useUIStore();
+    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
     return (
         <div className="min-h-screen bg-app">
@@ -88,7 +92,7 @@ export const AuditLogPage: React.FC = () => {
                                                 {fmtTime(entry.timestamp)}
                                             </td>
                                             <td className="px-5 py-3 whitespace-nowrap">
-                                                {eventBadge(entry.event_type)}
+                                                {eventBadge(entry.event_type, isDark)}
                                             </td>
                                             <td className="px-5 py-3 whitespace-nowrap text-sm font-medium text-base-primary">
                                                 {entry.actor}
