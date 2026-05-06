@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -141,7 +142,10 @@ func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 				"set this environment variable before starting the server")
 	}
 
-	baseDir := "."
+	baseDir := ""
+	if !filepath.IsAbs(cfg.Storage.Encryption.KEKPath) {
+		baseDir = "."
+	}
 	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 	svc.CleanPendingDEK() // remove leftover .pending file from any interrupted prior rotation
 	if err := svc.Initialize(passphrase); err != nil {
