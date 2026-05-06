@@ -155,6 +155,9 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Evict from auth cache immediately so the token is rejected without a DB hit.
+	middleware.InvalidateTokenCache(token)
+
 	// Audit log (non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
 	go h.coreService.LogAuthLogout(context.Background(), logoutUserID, logoutUsername, ip, ua) // #nosec G118

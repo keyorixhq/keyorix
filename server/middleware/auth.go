@@ -2,9 +2,13 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -32,9 +36,68 @@ type contextKey string
 const (
 	userContextKey        contextKey = "user"
 	coreServiceContextKey contextKey = "coreService"
+
+	// TTL for valid token cache entries (session is trusted for this window).
+	validTokenTTL = 30 * time.Second
+	// TTL for negative cache entries (stale/invalid tokens — MCP storm fix).
+	// Short enough that a legitimately re-issued token works after ~10s.
+	invalidTokenTTL = 10 * time.Second
 )
 
-// Authentication returns a middleware that validates session tokens against the database.
+// tokenCacheEntry holds a cached auth result.
+type tokenCacheEntry struct {
+	userCtx   *UserContext // nil for negative entries
+	expiresAt time.Time
+}
+
+// tokenCache is a process-wide cache keyed by SHA-256(token).
+// Prevents repeated DB hits from stale MCP tokens after server restart.
+var (
+	tokenCacheMu sync.Mutex
+	tokenCache   = map[string]tokenCacheEntry{}
+	lastPurge    = time.Now()
+)
+
+// tokenKey returns a safe cache key (SHA-256 hex of the raw token).
+func tokenKey(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", h)
+}
+
+// cacheGet returns (entry, found). Caller must hold no lock — acquires internally.
+func cacheGet(key string) (tokenCacheEntry, bool) {
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	e, ok := tokenCache[key]
+	if !ok {
+		return tokenCacheEntry{}, false
+	}
+	if time.Now().After(e.expiresAt) {
+		delete(tokenCache, key)
+		return tokenCacheEntry{}, false
+	}
+	return e, true
+}
+
+// cacheSet stores an entry. Caller must hold no lock.
+func cacheSet(key string, entry tokenCacheEntry) {
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	tokenCache[key] = entry
+	// Periodic O(n) purge — runs at most once per minute.
+	if time.Since(lastPurge) > time.Minute {
+		now := time.Now()
+		for k, v := range tokenCache {
+			if now.After(v.expiresAt) {
+				delete(tokenCache, k)
+			}
+		}
+		lastPurge = now
+	}
+}
+
+// Authentication returns a middleware that validates session tokens against the database,
+// with a short-circuit cache to absorb stale-token storms (e.g. MCP client retry bursts).
 func Authentication(coreService *core.KeyorixCore) func(next http.Handler) http.Handler {
 	return authenticationWithValidator(coreService, coreService)
 }
@@ -45,14 +108,12 @@ func Authentication(coreService *core.KeyorixCore) func(next http.Handler) http.
 func authenticationWithValidator(validator sessionValidator, coreService *core.KeyorixCore) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract token from Authorization header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				unauthorizedResponse(w, "Missing authorization header")
 				return
 			}
 
-			// Check for Bearer token format
 			parts := strings.SplitN(authHeader, " ", 2)
 			if len(parts) != 2 || parts[0] != "Bearer" {
 				unauthorizedResponse(w, "Invalid authorization header format")
@@ -65,13 +126,33 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 				return
 			}
 
+			key := tokenKey(token)
+
+			// Fast path: cache hit.
+			if entry, ok := cacheGet(key); ok {
+				if entry.userCtx == nil {
+					// Negative cache — known bad token, skip DB entirely.
+					unauthorizedResponse(w, "Invalid or expired token")
+					return
+				}
+				ctx := context.WithValue(r.Context(), userContextKey, entry.userCtx)
+				ctx = context.WithValue(ctx, coreServiceContextKey, coreService)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Slow path: DB lookup.
 			userCtx, err := validateToken(r.Context(), validator, token)
 			if err != nil {
+				// Cache the negative result so subsequent retries skip the DB.
+				cacheSet(key, tokenCacheEntry{userCtx: nil, expiresAt: time.Now().Add(invalidTokenTTL)})
 				unauthorizedResponse(w, "Invalid or expired token")
 				return
 			}
 
-			// Add user context and core service to request
+			// Cache the positive result.
+			cacheSet(key, tokenCacheEntry{userCtx: userCtx, expiresAt: time.Now().Add(validTokenTTL)})
+
 			ctx := context.WithValue(r.Context(), userContextKey, userCtx)
 			ctx = context.WithValue(ctx, coreServiceContextKey, coreService)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -88,22 +169,13 @@ func RequirePermission(permission string) func(next http.Handler) http.Handler {
 				unauthorizedResponse(w, "User context not found")
 				return
 			}
-
-			// Check if user has the required permission
-			hasPermission := false
 			for _, perm := range userCtx.Permissions {
 				if perm == permission {
-					hasPermission = true
-					break
+					next.ServeHTTP(w, r)
+					return
 				}
 			}
-
-			if !hasPermission {
-				forbiddenResponse(w, "Insufficient permissions")
-				return
-			}
-
-			next.ServeHTTP(w, r)
+			forbiddenResponse(w, "Insufficient permissions")
 		})
 	}
 }
@@ -117,22 +189,13 @@ func RequireRole(role string) func(next http.Handler) http.Handler {
 				unauthorizedResponse(w, "User context not found")
 				return
 			}
-
-			// Check if user has the required role
-			hasRole := false
 			for _, userRole := range userCtx.Roles {
 				if userRole == role {
-					hasRole = true
-					break
+					next.ServeHTTP(w, r)
+					return
 				}
 			}
-
-			if !hasRole {
-				forbiddenResponse(w, "Insufficient role")
-				return
-			}
-
-			next.ServeHTTP(w, r)
+			forbiddenResponse(w, "Insufficient role")
 		})
 	}
 }
@@ -158,8 +221,7 @@ var readPermissions = []string{
 }
 
 // validateToken validates a session token via the supplied validator and returns
-// the resolved UserContext. Returns an error if the validator is nil or if the
-// token cannot be resolved.
+// the resolved UserContext.
 func validateToken(ctx context.Context, validator sessionValidator, token string) (*UserContext, error) {
 	if validator == nil {
 		return nil, http.ErrNotSupported
@@ -188,28 +250,18 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 func unauthorizedResponse(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-
-	response := map[string]interface{}{
-		"error":   "Unauthorized",
-		"message": message,
-		"code":    http.StatusUnauthorized,
-	}
-
-	_ = json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "Unauthorized", "message": message, "code": http.StatusUnauthorized,
+	})
 }
 
 // forbiddenResponse sends a 403 Forbidden response
 func forbiddenResponse(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-
-	response := map[string]interface{}{
-		"error":   "Forbidden",
-		"message": message,
-		"code":    http.StatusForbidden,
-	}
-
-	_ = json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "Forbidden", "message": message, "code": http.StatusForbidden,
+	})
 }
 
 // GetUserContextKey returns the context key for user context (for testing)
@@ -223,4 +275,13 @@ func GetCoreServiceFromContext(ctx context.Context) *core.KeyorixCore {
 		return cs
 	}
 	return nil
+}
+
+// InvalidateTokenCache removes a specific token from the auth cache.
+// Call this on logout to ensure the token is rejected immediately.
+func InvalidateTokenCache(token string) {
+	key := tokenKey(token)
+	tokenCacheMu.Lock()
+	delete(tokenCache, key)
+	tokenCacheMu.Unlock()
 }
