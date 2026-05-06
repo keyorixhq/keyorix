@@ -70,11 +70,12 @@ type loginRequestBody struct {
 }
 
 type loginResponseBody struct {
-	Token     string `json:"token"`
-	ExpiresAt string `json:"expires_at,omitempty"`
-	UserID    uint   `json:"user_id"`
-	Username  string `json:"username"`
-	Email     string `json:"email"`
+	Token       string `json:"token"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+	UserID      uint   `json:"user_id"`
+	Username    string `json:"username"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
 }
 
 type passwordResetRequestBody struct {
@@ -120,10 +121,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := loginResponseBody{
-		Token:    session.SessionToken,
-		UserID:   user.ID,
-		Username: user.Username,
-		Email:    user.Email,
+		Token:       session.SessionToken,
+		UserID:      user.ID,
+		Username:    user.Username,
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
 	}
 	if session.ExpiresAt != nil {
 		resp.ExpiresAt = session.ExpiresAt.UTC().Format(time.RFC3339)
