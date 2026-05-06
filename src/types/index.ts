@@ -114,6 +114,8 @@ export interface DashboardStats {
     auditEvents30d: number;
     auditLogins30d: number;
     auditSecretReads30d: number;
+    failedAuthAttempts24h: number;
+    inactiveUsers: number;
     totalSecretsTrend?: StatTrend;
     sharedSecretsTrend?: StatTrend;
     sharedWithMeTrend?: StatTrend;

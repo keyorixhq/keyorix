@@ -22,8 +22,13 @@ function parseUptime(raw: string): string {
     if (!raw) return '—';
     const h = raw.match(/(\d+)h/)?.[1];
     const m = raw.match(/(\d+)m/)?.[1];
+    const s = raw.match(/(\d+)s/)?.[1];
     if (h) return `${h}h ${m ?? '0'}m`;
     if (m) return `${m}m`;
+    if (s) return `${s}s`;
+    // raw value with no unit — treat as seconds
+    const num = parseInt(raw, 10);
+    if (!isNaN(num)) return `${num}s`;
     return raw.split('.')[0] ?? '';
 }
 
@@ -33,11 +38,12 @@ interface StatCardProps {
     label: string;
     value: string | number;
     sub?: string;
+    trend?: { value: number; isPositive: boolean };
     accent: string;
     onClick?: () => void;
 }
 
-const StatCard: React.FC<StatCardProps> = ({ label, value, sub, accent, onClick }) => (
+const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, accent, onClick }) => (
     <div
         onClick={onClick}
         className={`relative bg-white border border-gray-100 rounded-xl p-6 flex flex-col gap-2 shadow-sm
@@ -48,7 +54,14 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, accent, onClick 
         <span className="text-4xl font-bold text-gray-900 pl-3 tabular-nums leading-none">
             {typeof value === 'number' ? fmt(value) : value}
         </span>
-        {sub && <span className="text-xs text-gray-400 pl-3">{sub}</span>}
+        <div className="pl-3 flex items-center gap-2">
+            {trend && (
+                <span className={`text-xs font-semibold ${trend.isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {trend.isPositive ? '↑' : '↓'} {trend.value}%
+                </span>
+            )}
+            {sub && <span className="text-xs text-gray-400">{sub}</span>}
+        </div>
     </div>
 );
 
@@ -97,6 +110,40 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
     );
 };
 
+interface SignalCardProps {
+    label: string;
+    value: number;
+    hint: string;
+    severity: 'neutral' | 'warn' | 'alert';
+    onClick?: () => void;
+}
+
+const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, onClick }) => {
+    const colors = {
+        neutral: 'bg-gray-50 border-gray-200 text-gray-700',
+        warn:    'bg-amber-50 border-amber-200 text-amber-700',
+        alert:   'bg-red-50 border-red-200 text-red-700',
+    };
+    const valueColors = {
+        neutral: 'text-gray-900',
+        warn:    'text-amber-700',
+        alert:   'text-red-700',
+    };
+    return (
+        <div
+            onClick={onClick}
+            className={`flex items-center justify-between px-4 py-3 rounded-lg border ${colors[severity]}
+                ${onClick ? 'cursor-pointer hover:brightness-95 transition-all duration-100' : ''}`}
+        >
+            <div>
+                <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
+                <p className="text-xs opacity-70 mt-0.5">{hint}</p>
+            </div>
+            <span className={`text-2xl font-bold tabular-nums ${valueColors[severity]}`}>{value}</span>
+        </div>
+    );
+};
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export const DashboardPage: React.FC = () => {
@@ -139,7 +186,8 @@ export const DashboardPage: React.FC = () => {
                     <StatCard
                         label="Total Secrets"
                         value={stats?.totalSecrets ?? 0}
-                        {...(stats?.totalSecretsTrend ? { sub: `${stats.totalSecretsTrend.isPositive ? '+' : ''}${stats.totalSecretsTrend.value}% vs last month` } : {})}
+                        {...(stats?.totalSecretsTrend ? { trend: stats.totalSecretsTrend } : {})}
+                        sub={stats?.totalSecretsTrend ? 'vs last snapshot' : 'across all environments'}
                         accent="bg-blue-500"
                         onClick={() => navigate(ROUTES.SECRETS)}
                     />
@@ -166,6 +214,43 @@ export const DashboardPage: React.FC = () => {
                         accent={alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500'}
                         onClick={() => navigate(ROUTES.SECRETS)}
                     />
+                </div>
+
+                {/* ── Operational Signals ────────────────────────────────── */}
+                <div className="bg-white border border-gray-100 rounded-xl shadow-sm">
+                    <div className="px-6 py-4 border-b border-gray-50">
+                        <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-widest">Operational Signals</h2>
+                    </div>
+                    <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <SignalCard
+                            label="Expiring Secrets"
+                            value={expiring.length}
+                            hint="within 30 days"
+                            severity={expiring.length === 0 ? 'neutral' : expiring.some(s => s.daysLeft <= 7) ? 'alert' : 'warn'}
+                            onClick={() => navigate(ROUTES.SECRETS)}
+                        />
+                        <SignalCard
+                            label="Failed Auth (24h)"
+                            value={stats?.failedAuthAttempts24h ?? 0}
+                            hint="unsuccessful attempts"
+                            severity={(stats?.failedAuthAttempts24h ?? 0) === 0 ? 'neutral' : (stats?.failedAuthAttempts24h ?? 0) >= 5 ? 'alert' : 'warn'}
+                            onClick={() => navigate(ROUTES.AUDIT)}
+                        />
+                        <SignalCard
+                            label="Inactive Users"
+                            value={stats?.inactiveUsers ?? 0}
+                            hint="no login in 30 days"
+                            severity={(stats?.inactiveUsers ?? 0) === 0 ? 'neutral' : 'warn'}
+                            onClick={() => navigate(ROUTES.ADMIN_USERS)}
+                        />
+                        <SignalCard
+                            label="Secret Reads (30d)"
+                            value={stats?.auditSecretReads30d ?? 0}
+                            hint="access events logged"
+                            severity="neutral"
+                            onClick={() => navigate(ROUTES.AUDIT)}
+                        />
+                    </div>
                 </div>
 
                 {/* ── Main Grid ──────────────────────────────────────────── */}
