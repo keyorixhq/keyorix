@@ -193,7 +193,7 @@ export const AdminPage: React.FC = () => {
                                     </Button>
                                 )}
                                 <Button variant="outline" size="sm" onClick={bulkDelete} disabled={bulkPending} className="text-red-600 hover:text-red-700">
-                                    Delete
+                                    <TrashIcon className="h-4 w-4 mr-1" />Delete
                                 </Button>
                                 <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
                             </>

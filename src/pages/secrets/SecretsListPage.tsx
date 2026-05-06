@@ -85,7 +85,7 @@ export const SecretsListPage: React.FC = () => {
                             <Button variant="outline" size="sm" onClick={() => list.openModal('bulk-delete-secrets', { secretIds: Array.from(list.selectedItems) })} disabled={list.selectedItems.size === 0} className="text-red-600 hover:text-red-700">
                                 <TrashIcon className="h-4 w-4 mr-1" />Delete
                             </Button>
-                            <Button variant="outline" size="sm" onClick={() => list.clearSelectedItems()}>Clear</Button>
+                            <Button variant="ghost" size="sm" onClick={() => list.clearSelectedItems()}>Clear</Button>
                         </div>
                     )}
                     <Button onClick={() => list.openModal('create-secret')} className="flex items-center">
