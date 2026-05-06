@@ -1,9 +1,9 @@
 import React from 'react';
 import {
-    EyeIcon, PencilIcon, TrashIcon, ShareIcon, ArrowPathIcon,
+    EyeIcon, PencilIcon, TrashIcon, ShareIcon,
+    DocumentDuplicateIcon, CheckIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { Secret } from '../../types';
-import { Button } from '../../components/ui/Button';
 
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
@@ -18,11 +18,16 @@ interface SecretTableRowProps {
     onDelete: (secret: Secret) => void;
     onShare: (secret: Secret) => void;
     onRotate: (secret: Secret) => void;
+    onCopy: (secret: Secret) => void;
+    copyingId: number | null;
+    copiedId: number | null;
+    copyErrorId: number | null;
 }
 
 export const SecretTableRow: React.FC<SecretTableRowProps> = ({
     secret, bulkActionMode, isSelected, onToggleSelect,
-    onView, onEdit, onDelete, onShare, onRotate,
+    onView, onEdit, onDelete, onShare, onRotate, onCopy,
+    copyingId, copiedId, copyErrorId,
 }) => (
     <tr className="hover:bg-gray-50 dark:hover:bg-gray-700">
         {bulkActionMode && (
@@ -74,27 +79,27 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                 <div className="text-xs">by {secret.owner}</div>
             </div>
         </td>
-        <td className="px-4 py-4 whitespace-nowrap text-right text-sm font-medium">
-            <div className="flex items-center justify-end space-x-1">
-                <Button variant="ghost" size="sm" onClick={() => onView(secret)} title="View secret">
-                    <EyeIcon className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => onEdit(secret)} title="Edit secret">
-                    <PencilIcon className="h-4 w-4" />
-                </Button>
+        <td className="px-3 py-4 whitespace-nowrap text-right text-sm font-medium">
+            <div className="flex items-center justify-end gap-0.5">
+                <button onClick={() => onView(secret)} title="View" className="p-1 text-gray-400 hover:text-gray-700 transition-colors"><EyeIcon className="h-4 w-4" /></button>
+                <button onClick={() => onEdit(secret)} title="Edit" className="p-1 text-gray-400 hover:text-gray-700 transition-colors"><PencilIcon className="h-4 w-4" /></button>
+                <button onClick={() => onRotate(secret)} title="Rotate" className="p-1 text-gray-400 hover:text-green-600 transition-colors"><ArrowPathIcon className="h-4 w-4" /></button>
+                <button onClick={() => onShare(secret)} title="Share" className="p-1 text-gray-400 hover:text-blue-600 transition-colors"><ShareIcon className="h-4 w-4" /></button>
                 <button
-                    onClick={() => onRotate(secret)}
-                    className="p-1 text-gray-400 hover:text-green-600 transition-colors"
-                    title="Rotate secret"
+                    onClick={() => onCopy(secret)}
+                    title="Copy value"
+                    disabled={copyingId === secret.id}
+                    className={`p-1 transition-colors ${copyErrorId === secret.id ? 'text-red-500' : 'text-gray-400 hover:text-gray-700'}`}
                 >
-                    <ArrowPathIcon className="h-4 w-4" />
+                    {copyingId === secret.id ? (
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                    ) : copiedId === secret.id ? (
+                        <CheckIcon className="h-4 w-4 text-green-500" />
+                    ) : (
+                        <DocumentDuplicateIcon className="h-4 w-4" />
+                    )}
                 </button>
-                <Button variant="ghost" size="sm" onClick={() => onShare(secret)} title="Share secret">
-                    <ShareIcon className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => onDelete(secret)} title="Delete secret" className="text-red-600 hover:text-red-700">
-                    <TrashIcon className="h-4 w-4" />
-                </Button>
+                <button onClick={() => onDelete(secret)} title="Delete" className="p-1 text-gray-400 hover:text-red-600 transition-colors"><TrashIcon className="h-4 w-4" /></button>
             </div>
         </td>
     </tr>
