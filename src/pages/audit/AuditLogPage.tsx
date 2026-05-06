@@ -1,117 +1,105 @@
 import React from 'react';
-import { ClockIcon } from '@heroicons/react/24/outline';
-import { ActivityItem } from '../../types';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
-import { useAuditLog } from '../../features/audit';
+import { useAuditLog, AuditLogEntry } from '../../features/audit';
 
-const EVENT_TYPE_LABELS: Record<string, string> = {
-    'secret.read':    'Read',
-    'secret.created': 'Created',
-    'secret.updated': 'Updated',
-    'secret.deleted': 'Deleted',
-    'auth.login':     'Login',
-    'accessed':       'Read',
-    'created':        'Created',
-    'updated':        'Updated',
-    'deleted':        'Deleted',
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+const EVENT_LABELS: Record<string, { label: string; color: string }> = {
+    'auth.login':      { label: 'Login',       color: 'bg-gray-100 text-gray-700' },
+    'auth.logout':     { label: 'Logout',      color: 'bg-gray-100 text-gray-600' },
+    'secret.read':     { label: 'Read',        color: 'bg-amber-100 text-amber-700' },
+    'secret.created':  { label: 'Created',     color: 'bg-emerald-100 text-emerald-700' },
+    'secret.updated':  { label: 'Updated',     color: 'bg-blue-100 text-blue-700' },
+    'secret.deleted':  { label: 'Deleted',     color: 'bg-red-100 text-red-700' },
+    'secret.rotated':  { label: 'Rotated',     color: 'bg-purple-100 text-purple-700' },
+    'secret.shared':   { label: 'Shared',      color: 'bg-indigo-100 text-indigo-700' },
+    'share.revoked':   { label: 'Unshared',    color: 'bg-orange-100 text-orange-700' },
 };
 
-function friendlyType(type: string): string {
-    return EVENT_TYPE_LABELS[type] ?? type;
+function eventBadge(eventType: string) {
+    const e = EVENT_LABELS[eventType];
+    const label = e?.label ?? eventType;
+    const color = e?.color ?? 'bg-gray-100 text-gray-600';
+    return (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}>
+            {label}
+        </span>
+    );
 }
 
-function formatTimestamp(ts: string | number | Date): string {
-    const d = new Date(ts as string);
-    if (isNaN(d.getTime())) return String(ts);
-    return d.toLocaleString();
+function fmtTime(ts: string): string {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    return d.toLocaleString('en', {
+        month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
 }
+
+// ─── Page ────────────────────────────────────────────────────────────────────
 
 export const AuditLogPage: React.FC = () => {
     const { data, isLoading, error } = useAuditLog({ pageSize: 50 });
 
     return (
-        <div className="p-6 space-y-6">
-            <div>
-                <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
-                    Audit Log
-                </h1>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                    Complete record of all secret access and changes
-                </p>
-            </div>
+        <div className="min-h-screen bg-gray-50">
+            <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
 
-            {!!error && (
-                <Alert
-                    type="error"
-                    title="Failed to load audit log"
-                    message="There was an error loading the audit log. Please try again."
-                />
-            )}
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Audit Log</h1>
+                    <p className="mt-1 text-sm text-gray-500">
+                        Complete record of all secret access and system events
+                        {data?.total ? ` · ${data.total} events` : ''}
+                    </p>
+                </div>
 
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                {isLoading ? (
-                    <div className="p-8">
-                        <Loading />
-                    </div>
-                ) : !data?.data?.length ? (
-                    <div className="p-8 text-center">
-                        <ClockIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                        <p className="text-gray-500 dark:text-gray-400">
-                            No activity recorded yet.
-                        </p>
-                    </div>
-                ) : (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                            <thead className="bg-gray-50 dark:bg-gray-900">
-                                <tr>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                        Time
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                        Event Type
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                        User
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                        Secret
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                        Description
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                {data.data.map((item: ActivityItem) => (
-                                    <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                                            {formatTimestamp(item.timestamp)}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                                                {friendlyType(item.type)}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                                            {item.actor}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                                            {item.secretName}
-                                        </td>
-                                        <td className="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                                            {item.secretName
-                                                ? `${item.actor} ${friendlyType(item.type).toLowerCase()} secret "${item.secretName}"`
-                                                : `${item.actor} ${friendlyType(item.type).toLowerCase()}`
-                                            }
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                {!!error && (
+                    <Alert type="error" title="Failed to load audit log"
+                        message="There was an error loading the audit log. Please try again." />
                 )}
+
+                <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+                    {isLoading ? (
+                        <div className="p-12 flex justify-center"><Loading /></div>
+                    ) : !data?.data?.length ? (
+                        <div className="p-12 text-center">
+                            <p className="text-sm text-gray-400">No audit events recorded yet.</p>
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-100">
+                                <thead>
+                                    <tr className="bg-gray-50">
+                                        <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-44">Time</th>
+                                        <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-32">Event</th>
+                                        <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-32">Actor</th>
+                                        <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Description</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50">
+                                    {data.data.map((entry: AuditLogEntry) => (
+                                        <tr key={entry.id} className="hover:bg-gray-50 transition-colors duration-75">
+                                            <td className="px-5 py-3 whitespace-nowrap text-xs text-gray-400 tabular-nums">
+                                                {fmtTime(entry.timestamp)}
+                                            </td>
+                                            <td className="px-5 py-3 whitespace-nowrap">
+                                                {eventBadge(entry.event_type)}
+                                            </td>
+                                            <td className="px-5 py-3 whitespace-nowrap text-sm font-medium text-gray-800">
+                                                {entry.actor}
+                                            </td>
+                                            <td className="px-5 py-3 text-sm text-gray-500">
+                                                {entry.description}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+
             </div>
         </div>
     );

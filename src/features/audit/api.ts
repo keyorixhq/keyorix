@@ -1,25 +1,37 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../../services/client';
 
+export interface AuditLogEntry {
+    id: number;
+    event_type: string;
+    actor: string;
+    description: string;
+    timestamp: string;
+}
+
 export const useAuditLog = (params?: {
     page?: number;
     pageSize?: number;
-    type?: string;
+    action?: string;
 }) => {
     return useQuery({
         queryKey: ['audit-log', params],
         queryFn: async () => {
-            // Try the real DB-backed activity feed first
-            const response = await apiClient.get('/api/v1/dashboard/activity', { params: { page: params?.page ?? 1, pageSize: params?.pageSize ?? 50 } });
-            const feed = response.data.data;
-            const items = (feed.items ?? []).map((item: any) => ({
-                id: item.id,
-                type: item.type,
-                secretName: item.secretName,
-                timestamp: item.timestamp,
-                actor: item.actor,
-            }));
-            return { data: items, total: feed.total ?? 0 };
+            const response = await apiClient.get('/api/v1/audit/logs', {
+                params: {
+                    page: params?.page ?? 1,
+                    page_size: params?.pageSize ?? 50,
+                    ...(params?.action ? { action: params.action } : {}),
+                },
+            });
+            const data = response.data.data;
+            return {
+                data: (data.logs ?? []) as AuditLogEntry[],
+                total: data.total ?? 0,
+                page: data.page ?? 1,
+                pageSize: data.page_size ?? 50,
+                totalPages: data.total_pages ?? 1,
+            };
         },
     });
 };
