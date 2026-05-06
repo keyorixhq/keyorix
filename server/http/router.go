@@ -212,7 +212,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// System endpoints
 		r.Route("/system", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("system.read"))
-			r.Get("/info", handlers.GetSystemInfo)
+			r.Get("/info", handlers.MakeSystemInfoHandler(cfg))
 			r.Get("/metrics", handlers.GetMetrics)
 		})
 	})

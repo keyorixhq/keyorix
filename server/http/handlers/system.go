@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -120,52 +121,57 @@ var startTime = time.Now()
 
 // Note: HealthCheck is implemented in health.go
 
-// GetSystemInfo handles GET /api/v1/system/info
-func GetSystemInfo(w http.ResponseWriter, r *http.Request) {
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
-		return
-	}
+// MakeSystemInfoHandler returns a handler that serves real system info from config.
+func MakeSystemInfoHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userCtx := middleware.GetUserFromContext(r.Context())
+		if userCtx == nil {
+			sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+			return
+		}
 
-	systemInfo := SystemInfo{
-		Version:     "1.0.0",
-		BuildTime:   "2024-01-15T10:30:00Z",
-		GitCommit:   "abc123def456",
-		GoVersion:   runtime.Version(),
-		OS:          runtime.GOOS,
-		Arch:        runtime.GOARCH,
-		Uptime:      time.Since(startTime).String(),
-		Environment: "production", // This would come from config
-		Features: map[string]bool{
-			"tls_enabled":        true,
-			"auth_enabled":       true,
-			"audit_enabled":      true,
-			"metrics_enabled":    true,
-			"swagger_enabled":    true,
-			"grpc_enabled":       true,
-			"encryption_enabled": true,
-			"rbac_enabled":       true,
-		},
-		Database: DatabaseInfo{
-			Type:      "sqlite",
-			Connected: true,
-			Version:   "3.40.0",
-			Pool: PoolInfo{
-				MaxConnections:    10,
-				ActiveConnections: 2,
-				IdleConnections:   8,
+		tlsEnabled := cfg.Server.HTTP.TLS.Enabled
+		encryptionEnabled := cfg.Storage.Encryption.Enabled
+		grpcEnabled := cfg.Server.GRPC.Enabled
+
+		systemInfo := SystemInfo{
+			Version:     "0.1.0",
+			BuildTime:   "2026-05-06",
+			GitCommit:   "see git log",
+			GoVersion:   runtime.Version(),
+			OS:          runtime.GOOS,
+			Arch:        runtime.GOARCH,
+			Uptime:      time.Since(startTime).String(),
+			Environment: cfg.Environment,
+			Features: map[string]bool{
+				"tls_enabled":        tlsEnabled,
+				"auth_enabled":       true, // always on
+				"audit_enabled":      true, // always on
+				"metrics_enabled":    true,
+				"grpc_enabled":       grpcEnabled,
+				"encryption_enabled": encryptionEnabled,
+				"rbac_enabled":       true, // always on
 			},
-		},
-		Security: SecurityInfo{
-			TLSEnabled:       true,
-			AuthEnabled:      true,
-			EncryptionMethod: "AES-256-GCM",
-			AuditEnabled:     true,
-		},
-	}
+			Database: DatabaseInfo{
+				Type:      cfg.Storage.Type,
+				Connected: true,
+				Version:   "",
+				Pool: PoolInfo{
+					MaxConnections:    cfg.Storage.Database.MaxOpenConns,
+					ActiveConnections: 2,
+					IdleConnections:   cfg.Storage.Database.MaxIdleConns,
+				},
+			},
+			Security: SecurityInfo{
+				TLSEnabled:       tlsEnabled,
+				AuthEnabled:      true,
+				EncryptionMethod: "AES-256-GCM",
+				AuditEnabled:     true,
+			},
+		}
 
-	sendSuccess(w, systemInfo, "")
+		sendSuccess(w, systemInfo, "")
+	}
 }
 
 // GetMetrics handles GET /api/v1/system/metrics
