@@ -49,9 +49,10 @@ const Dropdown: React.FC<DropdownProps> = ({
             >
                 <Menu.Items
                     className={clsx(
-                        'absolute z-10 mt-2 w-56 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none',
+                        'absolute z-10 mt-2 w-56 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none border border-base',
                         alignmentClasses[align]
                     )}
+                    style={{ backgroundColor: 'var(--bg-surface)' }}
                 >
                     <div className="py-1">
                         {(items ?? []).map((item) => {
@@ -63,7 +64,7 @@ const Dropdown: React.FC<DropdownProps> = ({
                                         <button
                                             className={clsx(
                                                 'group flex w-full items-center px-4 py-2 text-sm',
-                                                active && !item.disabled && 'bg-gray-100',
+                                                active && !item.disabled && 'bg-subtle',
                                                 item.disabled && 'opacity-50 cursor-not-allowed',
                                                 item.danger
                                                     ? 'text-red-700 hover:bg-red-50'
@@ -76,7 +77,7 @@ const Dropdown: React.FC<DropdownProps> = ({
                                                 <Icon
                                                     className={clsx(
                                                         'mr-3 h-4 w-4',
-                                                        item.danger ? 'text-red-500' : 'text-gray-400'
+                                                        item.danger ? 'text-red-500' : 'text-base-muted'
                                                     )}
                                                     aria-hidden="true"
                                                 />
@@ -127,11 +128,11 @@ const DropdownButton: React.FC<DropdownButtonProps> = ({
             'focus:ring-blue-500',
         ],
         secondary: [
-            'bg-gray-100 text-gray-900 hover:bg-gray-200',
+            'bg-subtle text-base-primary hover:bg-muted',
             'focus:ring-gray-500',
         ],
         ghost: [
-            'text-gray-700 hover:bg-gray-100',
+            'text-base-secondary hover:bg-subtle',
             'focus:ring-gray-500',
         ],
     };

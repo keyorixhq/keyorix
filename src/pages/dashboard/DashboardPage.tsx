@@ -131,7 +131,7 @@ interface SignalCardProps {
 
 const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, onClick }) => {
     const colors = {
-        neutral: 'bg-gray-50 border-base text-base-secondary',
+        neutral: 'bg-subtle border-base text-base-secondary',
         warn:    'bg-amber-50 border-amber-200 text-amber-700',
         alert:   'bg-red-50 border-red-200 text-red-700',
     };

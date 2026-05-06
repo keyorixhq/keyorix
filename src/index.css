@@ -235,3 +235,21 @@
   /* placeholder */
   .placeholder-base-muted::placeholder { color: var(--text-muted); }
 }
+
+/* ─── @tailwindcss/forms override ──────────────────────────────── */
+/* The forms plugin sets bg-white on all inputs globally via [type=*]
+   selectors. Override here at the same specificity level so CSS vars
+   control the background regardless of which component renders the input. */
+
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
+[data-theme="dark"] textarea,
+[data-theme="dark"] select {
+  background-color: var(--bg-subtle);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"])::placeholder,
+[data-theme="dark"] textarea::placeholder {
+  color: var(--text-muted);
+}
