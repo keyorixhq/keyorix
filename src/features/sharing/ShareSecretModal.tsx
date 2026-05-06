@@ -70,7 +70,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                 )}
 
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <label className="block text-sm font-medium text-base-secondary mb-1">
                         Recipient username
                     </label>
                     <Input
@@ -83,7 +83,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                 </div>
 
                 <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <label className="block text-sm font-medium text-base-secondary mb-1">
                         Permission
                     </label>
                     <Select

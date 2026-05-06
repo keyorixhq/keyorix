@@ -173,15 +173,15 @@ export const AdminPage: React.FC = () => {
             <div className="max-w-6xl mx-auto px-4 py-8">
                 <div className="flex items-center justify-between mb-6">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-                        <p className="text-sm text-gray-500 mt-1">
+                        <h1 className="text-2xl font-bold text-base-primary">User Management</h1>
+                        <p className="text-sm text-base-muted mt-1">
                             {total > 0 ? `${total} user${total !== 1 ? 's' : ''}` : 'No users found'}
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
                         {selected.size > 0 && (
                             <>
-                                <span className="text-sm text-gray-500">{selected.size} selected</span>
+                                <span className="text-sm text-base-muted">{selected.size} selected</span>
                                 {hasInactive && (
                                     <Button variant="outline" size="sm" onClick={() => bulkSetActive(true)} disabled={bulkPending}>
                                         Activate
@@ -210,13 +210,13 @@ export const AdminPage: React.FC = () => {
 
                 <form onSubmit={(e) => { e.preventDefault(); setSearch(searchInput); setPage(1); }} className="flex gap-2 mb-6">
                     <div className="relative flex-1">
-                        <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-base-muted" />
                         <input
                             type="text"
                             placeholder="Search by username or email…"
                             value={searchInput}
                             onChange={(e) => setSearchInput(e.target.value)}
-                            className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg bg-subtle text-base-primary placeholder-base-muted focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                     </div>
                     <Button type="submit" variant="secondary">Search</Button>
@@ -230,32 +230,32 @@ export const AdminPage: React.FC = () => {
                 ) : isError ? (
                     <Alert type="error" title="Failed to load users" message="Check that the server is running and you have admin access." />
                 ) : users.length === 0 ? (
-                    <div className="text-center py-20 text-gray-500">
-                        <UserCircleIcon className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                    <div className="text-center py-20 text-base-muted">
+                        <UserCircleIcon className="h-12 w-12 mx-auto mb-3 text-base-muted" />
                         <p className="text-sm">{search ? 'No users match your search.' : 'No users yet.'}</p>
                     </div>
                 ) : (
-                    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-                        <table className="min-w-full divide-y divide-gray-200">
-                            <thead className="bg-gray-50">
+                    <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-sm">
+                        <table className="min-w-full divide-y divide-base">
+                            <thead>
                                 <tr>
                                     <th className="px-4 py-3 w-10">
-                                        <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        <input type="checkbox" className="rounded border-base bg-subtle text-blue-600 focus:ring-blue-500"
                                             checked={users.length > 0 && selected.size === users.length}
                                             onChange={toggleAll} />
                                     </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">User</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Email</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Status</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Created</th>
+                                    <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="bg-white divide-y divide-gray-100">
+                            <tbody className="divide-y divide-base">
                                 {users.map((user) => (
-                                    <tr key={user.id} className={`hover:bg-gray-50 transition-colors ${selected.has(user.id) ? 'bg-blue-50' : ''}`}>
+                                    <tr key={user.id} className={`hover:bg-subtle transition-colors ${selected.has(user.id) ? 'bg-accent-subtle' : ''}`}>
                                         <td className="px-4 py-4 w-10">
-                                            <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                            <input type="checkbox" className="rounded border-base bg-subtle text-blue-600 focus:ring-blue-500"
                                                 checked={selected.has(user.id)}
                                                 onChange={() => toggleSelect(user.id)} />
                                         </td>
@@ -267,24 +267,24 @@ export const AdminPage: React.FC = () => {
                                                     </span>
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium text-gray-900">{user.display_name || user.username}</p>
-                                                    <p className="text-xs text-gray-400">@{user.username}</p>
+                                                    <p className="text-sm font-medium text-base-primary">{user.display_name || user.username}</p>
+                                                    <p className="text-xs text-base-muted">@{user.username}</p>
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{user.email}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">{user.email}</td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
+                                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-base-secondary'}`}>
                                                 {user.active ? 'Active' : 'Inactive'}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">{formatDate(user.created_at)}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">{formatDate(user.created_at)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right">
                                             <div className="flex items-center justify-end gap-2">
-                                                <button onClick={() => openEdit(user)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit user">
+                                                <button onClick={() => openEdit(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Edit user">
                                                     <PencilIcon className="h-4 w-4" />
                                                 </button>
-                                                <button onClick={() => setActiveModal({ type: 'delete', user })} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete user">
+                                                <button onClick={() => setActiveModal({ type: 'delete', user })} className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete user">
                                                     <TrashIcon className="h-4 w-4" />
                                                 </button>
                                             </div>
@@ -295,13 +295,13 @@ export const AdminPage: React.FC = () => {
                         </table>
 
                         {totalPages > 1 && (
-                            <div className="flex items-center justify-between px-6 py-3 border-t border-gray-100 bg-gray-50">
-                                <p className="text-sm text-gray-500">Page {page} of {totalPages}</p>
+                            <div className="flex items-center justify-between px-6 py-3 border-t border-base bg-subtle">
+                                <p className="text-sm text-base-muted">Page {page} of {totalPages}</p>
                                 <div className="flex gap-2">
-                                    <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                                         <ChevronLeftIcon className="h-4 w-4" />
                                     </button>
-                                    <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                                         <ChevronRightIcon className="h-4 w-4" />
                                     </button>
                                 </div>
@@ -315,20 +315,20 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                        <input type="text" value={createUsername} onChange={(e) => setCreateUsername(e.target.value)} placeholder="e.g. jsmith" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary mb-1">Username</label>
+                        <input type="text" value={createUsername} onChange={(e) => setCreateUsername(e.target.value)} placeholder="e.g. jsmith" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
-                        <input type="text" value={createDisplayName} onChange={(e) => setCreateDisplayName(e.target.value)} placeholder="e.g. Jane Smith" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
+                        <input type="text" value={createDisplayName} onChange={(e) => setCreateDisplayName(e.target.value)} placeholder="e.g. Jane Smith" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                        <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="jane@example.com" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
+                        <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="jane@example.com" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                        <input type="password" value={createPassword} onChange={(e) => setCreatePassword(e.target.value)} placeholder="Min. 8 characters" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary mb-1">Password</label>
+                        <input type="password" value={createPassword} onChange={(e) => setCreatePassword(e.target.value)} placeholder="Min. 8 characters" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>Cancel</Button>
@@ -343,19 +343,19 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
                     {activeModal?.type === 'edit' && (
-                        <p className="text-sm text-gray-500">Editing <span className="font-medium text-gray-700">@{activeModal.user.username}</span></p>
+                        <p className="text-sm text-base-muted">Editing <span className="font-medium text-base-secondary">@{activeModal.user.username}</span></p>
                     )}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
-                        <input type="text" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
+                        <input type="text" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                        <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
+                        <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div className="flex items-center gap-3">
-                        <input id="edit-active" type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 text-blue-600 border-gray-300 rounded" />
-                        <label htmlFor="edit-active" className="text-sm font-medium text-gray-700">Active</label>
+                        <input id="edit-active" type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 text-blue-600 border-base rounded" />
+                        <label htmlFor="edit-active" className="text-sm font-medium text-base-secondary">Active</label>
                     </div>
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={updateMutation.isPending}>Cancel</Button>
@@ -369,8 +369,8 @@ export const AdminPage: React.FC = () => {
             <Modal isOpen={activeModal?.type === 'delete'} onClose={closeModal} title="Delete User" size="sm">
                 <div className="space-y-4">
                     {activeModal?.type === 'delete' && (
-                        <p className="text-sm text-gray-600">
-                            Are you sure you want to delete <span className="font-semibold text-gray-900">@{activeModal.user.username}</span>? This action cannot be undone.
+                        <p className="text-sm text-base-secondary">
+                            Are you sure you want to delete <span className="font-semibold text-base-primary">@{activeModal.user.username}</span>? This action cannot be undone.
                         </p>
                     )}
                     <div className="flex justify-end gap-3 pt-2">

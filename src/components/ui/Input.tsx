@@ -36,10 +36,10 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         const hasError = Boolean(error);
 
         const baseInputClasses = [
-            'block px-3 py-2 border rounded-md shadow-sm',
-            'placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-offset-0',
+            'block px-3 py-2 border rounded-md shadow-sm bg-subtle text-base-primary',
+            'placeholder-base-muted focus:outline-none focus:ring-2 focus:ring-offset-0',
             'transition-colors duration-200',
-            'disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed',
+            'disabled:bg-gray-50 disabled:text-base-muted disabled:cursor-not-allowed',
         ];
 
         const inputStateClasses = hasError
@@ -48,7 +48,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                 'placeholder-red-300',
             ]
             : [
-                'border-gray-300 focus:ring-blue-500 focus:border-blue-500',
+                'border-base focus:ring-blue-500 focus:border-blue-500',
             ];
 
         const containerClasses = [
@@ -71,7 +71,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                         htmlFor={inputId}
                         className={clsx(
                             'block text-sm font-medium mb-1',
-                            hasError ? 'text-red-700' : 'text-gray-700'
+                            hasError ? 'text-red-600' : 'text-base-secondary'
                         )}
                     >
                         {label}
@@ -84,7 +84,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                             <LeftIcon
                                 className={clsx(
                                     'h-5 w-5',
-                                    hasError ? 'text-red-400' : 'text-gray-400'
+                                    hasError ? 'text-red-400' : 'text-base-muted'
                                 )}
                             />
                         </div>
@@ -108,8 +108,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                             <RightIcon
                                 className={clsx(
                                     'h-5 w-5',
-                                    hasError ? 'text-red-400' : 'text-gray-400',
-                                    onRightIconClick && 'hover:text-gray-600'
+                                    hasError ? 'text-red-400' : 'text-base-muted',
+                                    onRightIconClick && 'hover:text-base-secondary'
                                 )}
                             />
                         </div>
@@ -123,7 +123,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                 )}
 
                 {helperText && !error && (
-                    <p className="mt-1 text-sm text-gray-500">
+                    <p className="mt-1 text-sm text-base-muted">
                         {helperText}
                     </p>
                 )}

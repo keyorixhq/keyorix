@@ -224,4 +224,14 @@
   .text-base-muted     { color: var(--text-muted); }
 
   .border-base { border-color: var(--border); }
+  .border-strong { border-color: var(--border-strong); }
+
+  /* divide-base: use for table/list row dividers */
+  .divide-base > :not([hidden]) ~ :not([hidden]) { border-color: var(--border); }
+
+  /* accent-subtle bg for selected rows, callouts */
+  .bg-accent-subtle { background-color: var(--accent-subtle); }
+
+  /* placeholder */
+  .placeholder-base-muted::placeholder { color: var(--text-muted); }
 }

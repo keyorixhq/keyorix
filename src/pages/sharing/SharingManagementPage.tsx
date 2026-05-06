@@ -169,17 +169,17 @@ export const SharingManagementPage: React.FC = () => {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                    <h1 className="text-2xl font-semibold text-base-primary dark:text-white">
                         Sharing Management
                     </h1>
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    <p className="mt-1 text-sm text-base-muted dark:text-base-muted">
                         Manage secret sharing permissions and access
                     </p>
                 </div>
                 <div className="flex items-center space-x-3">
                     {bulkActionMode && (
                         <div className="flex items-center space-x-2">
-                            <span className="text-sm text-gray-500 dark:text-gray-400">
+                            <span className="text-sm text-base-muted dark:text-base-muted">
                                 {selectedItems.size} selected
                             </span>
                             <Button
@@ -215,7 +215,7 @@ export const SharingManagementPage: React.FC = () => {
             </div>
 
             {/* Filters */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <div className="bg-surface dark:bg-gray-800 rounded-lg border border-base dark:border-gray-700 p-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* Search */}
                     <div className="lg:col-span-2">
@@ -252,7 +252,7 @@ export const SharingManagementPage: React.FC = () => {
                 {/* Active Filters */}
                 {(filters.search || filters.recipientType !== 'all' || filters.permission !== 'all') && (
                     <div className="mt-4 flex items-center space-x-2">
-                        <span className="text-sm text-gray-500 dark:text-gray-400">Active filters:</span>
+                        <span className="text-sm text-base-muted dark:text-base-muted">Active filters:</span>
                         {filters.search && (
                             <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
                                 Search: {filters.search}
@@ -289,20 +289,20 @@ export const SharingManagementPage: React.FC = () => {
             </div>
 
             {/* Shares List */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+            <div className="bg-surface dark:bg-gray-800 rounded-lg border border-base dark:border-gray-700">
                 {isLoading ? (
                     <div className="p-8">
                         <Loading />
                     </div>
                 ) : filteredShares.length === 0 ? (
                     <div className="p-8 text-center">
-                        <div className="text-gray-400 dark:text-gray-500 mb-4">
+                        <div className="text-base-muted dark:text-base-muted mb-4">
                             <ShareIcon className="h-12 w-12 mx-auto" />
                         </div>
-                        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                        <h3 className="text-lg font-medium text-base-primary dark:text-white mb-2">
                             No shares found
                         </h3>
-                        <p className="text-gray-500 dark:text-gray-400">
+                        <p className="text-base-muted dark:text-base-muted">
                             {filters.search || filters.recipientType !== 'all' || filters.permission !== 'all'
                                 ? 'Try adjusting your filters.'
                                 : 'No secrets have been shared yet.'}
@@ -310,8 +310,8 @@ export const SharingManagementPage: React.FC = () => {
                     </div>
                 ) : (
                     <div className="overflow-hidden">
-                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                            <thead className="bg-gray-50 dark:bg-gray-900">
+                        <table className="min-w-full divide-y divide-base dark:divide-gray-700">
+                            <thead className="bg-subtle dark:bg-gray-900">
                                 <tr>
                                     {bulkActionMode && (
                                         <th className="px-6 py-3 text-left">
@@ -329,29 +329,29 @@ export const SharingManagementPage: React.FC = () => {
                                             />
                                         </th>
                                     )}
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
                                         Secret
                                     </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
                                         Recipient
                                     </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
                                         Permission
                                     </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
                                         Shared By
                                     </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
                                         Created
                                     </th>
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                    <th className="px-6 py-3 text-right text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
                                         Actions
                                     </th>
                                 </tr>
                             </thead>
-                            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                            <tbody className="bg-surface dark:bg-gray-800 divide-y divide-base dark:divide-gray-700">
                                 {filteredShares.map((share) => (
-                                    <tr key={share.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                                    <tr key={share.id} className="hover:bg-subtle dark:hover:bg-gray-700">
                                         {bulkActionMode && (
                                             <td className="px-6 py-4">
                                                 <input
@@ -363,7 +363,7 @@ export const SharingManagementPage: React.FC = () => {
                                             </td>
                                         )}
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                            <div className="text-sm font-medium text-base-primary dark:text-white">
                                                 Secret #{share.secretId}
                                             </div>
                                         </td>
@@ -371,16 +371,16 @@ export const SharingManagementPage: React.FC = () => {
                                             <div className="flex items-center">
                                                 <div className="flex-shrink-0 mr-3">
                                                     {share.recipientType === 'user' ? (
-                                                        <UserIcon className="h-5 w-5 text-gray-400" />
+                                                        <UserIcon className="h-5 w-5 text-base-muted" />
                                                     ) : (
-                                                        <UserGroupIcon className="h-5 w-5 text-gray-400" />
+                                                        <UserGroupIcon className="h-5 w-5 text-base-muted" />
                                                     )}
                                                 </div>
                                                 <div>
-                                                    <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                                    <div className="text-sm font-medium text-base-primary dark:text-white">
                                                         {share.recipientName}
                                                     </div>
-                                                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                                                    <div className="text-xs text-base-muted dark:text-base-muted">
                                                         {share.recipientType}
                                                     </div>
                                                 </div>
@@ -394,10 +394,10 @@ export const SharingManagementPage: React.FC = () => {
                                                 {share.permission === 'write' ? 'Read & Write' : 'Read Only'}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
                                             {share.createdBy}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
                                             <div>
                                                 <div>{formatDate(share.createdAt)}</div>
                                                 <div className="text-xs">{formatTime(share.createdAt)}</div>
@@ -439,7 +439,7 @@ export const SharingManagementPage: React.FC = () => {
 
                         {/* Pagination */}
                         {pagination.totalPages > 1 && (
-                            <div className="bg-white dark:bg-gray-800 px-4 py-3 border-t border-gray-200 dark:border-gray-700 sm:px-6">
+                            <div className="bg-surface dark:bg-gray-800 px-4 py-3 border-t border-base dark:border-gray-700 sm:px-6">
                                 <div className="flex items-center justify-between">
                                     <div className="flex-1 flex justify-between sm:hidden">
                                         <Button
@@ -459,7 +459,7 @@ export const SharingManagementPage: React.FC = () => {
                                     </div>
                                     <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
                                         <div>
-                                            <p className="text-sm text-gray-700 dark:text-gray-300">
+                                            <p className="text-sm text-base-secondary dark:text-base-muted">
                                                 Showing{' '}
                                                 <span className="font-medium">
                                                     {(pagination.page - 1) * pagination.pageSize + 1}

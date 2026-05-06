@@ -72,13 +72,13 @@ export const SecretsListPage: React.FC = () => {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">Secrets</h1>
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Manage your secrets and access controls</p>
+                    <h1 className="text-2xl font-semibold text-base-primary ">Secrets</h1>
+                    <p className="mt-1 text-sm text-base-muted ">Manage your secrets and access controls</p>
                 </div>
                 <div className="flex items-center space-x-3">
                     {list.selectedItems.size > 0 && (
                         <div className="flex items-center space-x-2">
-                            <span className="text-sm text-gray-500">{list.selectedItems.size} selected</span>
+                            <span className="text-sm text-base-muted">{list.selectedItems.size} selected</span>
                             <Button variant="outline" size="sm" disabled title="Share each secret individually — bulk sharing is not supported">
                                 <ShareIcon className="h-4 w-4 mr-1" />Share
                             </Button>
@@ -95,7 +95,7 @@ export const SecretsListPage: React.FC = () => {
             </div>
 
             {/* Filters */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <div className="bg-surface rounded-lg border border-base  p-4">
                 <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
                         <div className="lg:col-span-2">
@@ -115,35 +115,35 @@ export const SecretsListPage: React.FC = () => {
                         </Button>
                     </div>
                     {list.showAdvancedFilters && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-base ">
                             <Input type="text" placeholder="Namespace" value={list.filters.namespace} onChange={(e) => list.handleFilterChange('namespace', e.target.value)} />
                             <Input type="text" placeholder="Zone" value={list.filters.zone} onChange={(e) => list.handleFilterChange('zone', e.target.value)} />
                         </div>
                     )}
                     {/* Tag filter hidden — tags not yet implemented on secrets */}
                     {list.hasActiveFilters && (
-                        <div className="flex items-center justify-end pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <div className="flex items-center justify-end pt-4 border-t border-base ">
                             <Button variant="ghost" size="sm" onClick={list.handleClearFilters} className="text-xs">Clear all</Button>
                         </div>
                     )}
                     {list.isFetching && (
                         <div className="flex items-center justify-center py-2">
                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                            <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">Updating results...</span>
+                            <span className="ml-2 text-sm text-base-muted ">Updating results...</span>
                         </div>
                     )}
                 </div>
             </div>
 
             {/* Table */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+            <div className="bg-surface rounded-lg border border-base ">
                 {list.isLoading ? (
                     <div className="p-8"><Loading /></div>
                 ) : list.secrets.length === 0 ? (
                     <div className="p-8 text-center">
-                        <FunnelIcon className="h-12 w-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
-                        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">No secrets found</h3>
-                        <p className="text-gray-500 dark:text-gray-400 mb-4">
+                        <FunnelIcon className="h-12 w-12 mx-auto text-base-muted  mb-4" />
+                        <h3 className="text-lg font-medium text-base-primary  mb-2">No secrets found</h3>
+                        <p className="text-base-muted  mb-4">
                             {list.hasActiveFilters ? 'Try adjusting your filters or search terms.' : 'Get started by creating your first secret.'}
                         </p>
                         {!list.hasActiveFilters && (
@@ -154,8 +154,8 @@ export const SecretsListPage: React.FC = () => {
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                            <thead className="bg-gray-50 dark:bg-gray-900">
+                        <table className="min-w-full divide-y divide-base dark:divide-gray-700">
+                            <thead className="bg-subtle dark:bg-gray-900">
                                 <tr>
                                     <th className="px-4 py-3 text-left w-10">
                                         <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -163,12 +163,12 @@ export const SecretsListPage: React.FC = () => {
                                             onChange={(e) => { if (e.target.checked) list.secrets.forEach(s => list.toggleSelectedItem(s.id)); else list.clearSelectedItems(); }} />
                                     </th>
                                     {['Name', 'Type', 'Environment', 'Sharing', 'Modified'].map(h => (
-                                        <th key={h} className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{h}</th>
+                                        <th key={h} className="px-6 py-3 text-left text-xs font-medium text-base-muted  uppercase tracking-wider">{h}</th>
                                     ))}
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider min-w-[180px]">Actions</th>
+                                    <th className="px-6 py-3 text-right text-xs font-medium text-base-muted  uppercase tracking-wider min-w-[180px]">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                            <tbody className="bg-surface divide-y divide-base dark:divide-gray-700">
                                 {list.secrets.map(secret => (
                                     <SecretTableRow key={secret.id} secret={secret}
                                         isSelected={list.selectedItems.has(secret.id)}
@@ -188,8 +188,8 @@ export const SecretsListPage: React.FC = () => {
                         </table>
 
                         {list.pagination.totalPages > 1 && (
-                            <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                                <p className="text-sm text-gray-700 dark:text-gray-300">
+                            <div className="px-4 py-3 border-t border-base  flex items-center justify-between">
+                                <p className="text-sm text-base-secondary dark:text-base-muted">
                                     Showing <span className="font-medium">{(list.pagination.page - 1) * list.pagination.pageSize + 1}</span> to{' '}
                                     <span className="font-medium">{Math.min(list.pagination.page * list.pagination.pageSize, list.pagination.total)}</span> of{' '}
                                     <span className="font-medium">{list.pagination.total}</span> results
@@ -198,7 +198,7 @@ export const SecretsListPage: React.FC = () => {
                                     <Button variant="outline" size="sm" onClick={() => list.handlePageChange(list.pagination.page - 1)} disabled={list.pagination.page === 1}>
                                         <ChevronLeftIcon className="h-4 w-4" />
                                     </Button>
-                                    <span className="text-sm text-gray-700 dark:text-gray-300">Page {list.pagination.page} of {list.pagination.totalPages}</span>
+                                    <span className="text-sm text-base-secondary dark:text-base-muted">Page {list.pagination.page} of {list.pagination.totalPages}</span>
                                     <Button variant="outline" size="sm" onClick={() => list.handlePageChange(list.pagination.page + 1)} disabled={list.pagination.page === list.pagination.totalPages}>
                                         <ChevronRightIcon className="h-4 w-4" />
                                     </Button>
@@ -223,19 +223,19 @@ export const SecretsListPage: React.FC = () => {
                 <form onSubmit={(e) => { e.preventDefault(); if (!list.modalData?.secret) return; list.editMutation.mutate({ id: list.modalData.secret.id, name: editName, type: editType, value: editValue }); }} className="space-y-4">
                     {list.editMutation.isError && <Alert type="error" title="Failed to update secret" message={list.editMutation.error instanceof Error ? list.editMutation.error.message : 'An unexpected error occurred'} />}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
-                        <input type="text" required value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name</label>
+                        <input type="text" required value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
+                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Type</label>
                         <Select value={editType} onChange={(e) => setEditType(e.target.value as SecretType)} options={SECRET_TYPES.filter(t => t.value !== 'all') as { value: SecretType; label: string }[]} />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Value</label>
-                        <input type="password" value={editValue} onChange={(e) => setEditValue(e.target.value)} placeholder="Leave blank to keep existing value" className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Leave blank to keep the existing value.</p>
+                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">New Value</label>
+                        <input type="password" value={editValue} onChange={(e) => setEditValue(e.target.value)} placeholder="Leave blank to keep existing value" className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <p className="mt-1 text-xs text-base-muted ">Leave blank to keep the existing value.</p>
                     </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
                         <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.editMutation.isLoading}>Cancel</Button>
                         <Button type="submit" disabled={list.editMutation.isLoading}>{list.editMutation.isLoading ? 'Saving…' : 'Save Changes'}</Button>
                     </div>
@@ -245,10 +245,10 @@ export const SecretsListPage: React.FC = () => {
             <Modal isOpen={list.activeModal === 'delete-secret'} onClose={list.closeModal} title="Delete Secret" size="sm">
                 <div className="space-y-4">
                     {list.deleteMutation.isError && <Alert type="error" title="Failed to delete secret" message={list.deleteMutation.error instanceof Error ? list.deleteMutation.error.message : 'An unexpected error occurred'} />}
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
+                    <p className="text-sm text-base-secondary dark:text-base-muted">
                         Are you sure you want to delete <span className="font-semibold">{list.modalData?.secret?.name}</span>? The secret will be soft-deleted and can be restored within 30 days.
                     </p>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
                         <Button variant="outline" onClick={list.closeModal} disabled={list.deleteMutation.isLoading}>Cancel</Button>
                         <Button variant="danger" onClick={() => list.modalData?.secret && list.deleteMutation.mutate(list.modalData.secret.id)} disabled={list.deleteMutation.isLoading}>
                             {list.deleteMutation.isLoading ? 'Deleting…' : 'Delete'}
@@ -261,18 +261,18 @@ export const SecretsListPage: React.FC = () => {
                 <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); list.createMutation.mutate({ name: createName, value: createValue, type: createType, namespace_id: 1, zone_id: 1, environment_id: 1 } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); } }); }} className="space-y-4">
                     {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name <span className="text-red-500">*</span></label>
-                        <input type="text" required value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name <span className="text-red-500">*</span></label>
+                        <input type="text" required value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Value <span className="text-red-500">*</span></label>
-                        <textarea required rows={4} value={createValue} onChange={(e) => setCreateValue(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Value <span className="text-red-500">*</span></label>
+                        <textarea required rows={4} value={createValue} onChange={(e) => setCreateValue(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
+                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Type</label>
                         <Select value={createType} onChange={(e) => setCreateType(e.target.value as SecretType)} options={[{ value: 'text', label: 'Generic' }, { value: 'password', label: 'Password' }, { value: 'api_key', label: 'API Key' }, { value: 'certificate', label: 'Certificate' }, { value: 'json', label: 'JSON' }]} />
                     </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
                         <Button type="button" variant="outline" onClick={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} disabled={list.createMutation.isLoading}>Cancel</Button>
                         <Button type="submit" disabled={list.createMutation.isLoading}>{list.createMutation.isLoading ? 'Creating…' : 'Create Secret'}</Button>
                     </div>
@@ -286,12 +286,12 @@ export const SecretsListPage: React.FC = () => {
             <Modal isOpen={list.activeModal === 'rotate-secret'} onClose={list.closeModal} title={`Rotate Secret: ${list.modalData?.secret?.name ?? ''}`} size="sm">
                 <form onSubmit={(e) => { e.preventDefault(); if (!list.modalData?.secret) return; list.rotateMutation.mutate({ id: list.modalData.secret.id, newValue: rotateValue }); }} className="space-y-4">
                     {list.rotateMutation.isError && <Alert type="error" title="Failed to rotate secret" message={list.rotateMutation.error instanceof Error ? list.rotateMutation.error.message : 'An unexpected error occurred'} />}
-                    <p className="text-sm text-gray-500 dark:text-gray-400">Enter a new value to replace the current secret value. A new version will be created.</p>
+                    <p className="text-sm text-base-muted ">Enter a new value to replace the current secret value. A new version will be created.</p>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Value <span className="text-red-500">*</span></label>
-                        <input type="password" required value={rotateValue} onChange={(e) => setRotateValue(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">New Value <span className="text-red-500">*</span></label>
+                        <input type="password" required value={rotateValue} onChange={(e) => setRotateValue(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
                         <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.rotateMutation.isLoading}>Cancel</Button>
                         <Button type="submit" disabled={list.rotateMutation.isLoading || !rotateValue.trim()}>{list.rotateMutation.isLoading ? 'Rotating…' : 'Rotate'}</Button>
                     </div>
@@ -300,10 +300,10 @@ export const SecretsListPage: React.FC = () => {
 
             <Modal isOpen={list.activeModal === 'bulk-delete-secrets'} onClose={list.closeModal} title="Delete Selected Secrets" size="sm">
                 <div className="space-y-4">
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
+                    <p className="text-sm text-base-secondary dark:text-base-muted">
                         Are you sure you want to delete <span className="font-semibold">{list.modalData?.secretIds?.length}</span> secret(s)? They will be soft-deleted and can be restored within 30 days.
                     </p>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
                         <Button variant="outline" onClick={list.closeModal} disabled={list.bulkDeleteMutation.isLoading}>Cancel</Button>
                         <Button variant="danger" onClick={() => list.modalData?.secretIds && list.bulkDeleteMutation.mutate(list.modalData.secretIds)} disabled={list.bulkDeleteMutation.isLoading}>
                             {list.bulkDeleteMutation.isLoading ? 'Deleting…' : `Delete ${list.modalData?.secretIds?.length ?? ''} Secret(s)`}

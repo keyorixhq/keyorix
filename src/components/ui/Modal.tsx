@@ -68,17 +68,17 @@ const Modal: React.FC<ModalProps> = ({
                         >
                             <Dialog.Panel
                                 className={clsx(
-                                    'w-full transform overflow-hidden rounded-lg bg-white text-left align-middle shadow-xl transition-all',
+                                    'w-full transform overflow-hidden rounded-lg text-left align-middle shadow-xl transition-all border border-base bg-surface',
                                     sizeClasses[size],
                                     className
                                 )}
                             >
                                 {(title || showCloseButton) && (
-                                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                                    <div className="flex items-center justify-between px-6 py-4 border-b border-base">
                                         {title && (
                                             <Dialog.Title
                                                 as="h3"
-                                                className="text-lg font-medium leading-6 text-gray-900"
+                                                className="text-lg font-medium leading-6 text-base-primary"
                                             >
                                                 {title}
                                             </Dialog.Title>
@@ -86,7 +86,7 @@ const Modal: React.FC<ModalProps> = ({
                                         {showCloseButton && (
                                             <button
                                                 type="button"
-                                                className="rounded-md text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                className="rounded-md text-base-muted hover:text-base-muted focus:outline-none focus:ring-2 focus:ring-blue-500"
                                                 onClick={onClose}
                                             >
                                                 <span className="sr-only">Close</span>

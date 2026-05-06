@@ -6,8 +6,8 @@ import { useAuditLog, AuditLogEntry } from '../../features/audit';
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const EVENT_LABELS: Record<string, { label: string; color: string }> = {
-    'auth.login':      { label: 'Login',       color: 'bg-gray-100 text-gray-700' },
-    'auth.logout':     { label: 'Logout',      color: 'bg-gray-100 text-gray-600' },
+    'auth.login':      { label: 'Login',       color: 'bg-gray-100 text-base-secondary' },
+    'auth.logout':     { label: 'Logout',      color: 'bg-gray-100 text-base-secondary' },
     'secret.read':     { label: 'Read',        color: 'bg-amber-100 text-amber-700' },
     'secret.created':  { label: 'Created',     color: 'bg-emerald-100 text-emerald-700' },
     'secret.updated':  { label: 'Updated',     color: 'bg-blue-100 text-blue-700' },
@@ -20,7 +20,7 @@ const EVENT_LABELS: Record<string, { label: string; color: string }> = {
 function eventBadge(eventType: string) {
     const e = EVENT_LABELS[eventType];
     const label = e?.label ?? eventType;
-    const color = e?.color ?? 'bg-gray-100 text-gray-600';
+    const color = e?.color ?? 'bg-gray-100 text-base-secondary';
     return (
         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}>
             {label}
@@ -43,12 +43,12 @@ export const AuditLogPage: React.FC = () => {
     const { data, isLoading, error } = useAuditLog({ pageSize: 50 });
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="min-h-screen bg-app">
             <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
 
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Audit Log</h1>
-                    <p className="mt-1 text-sm text-gray-500">
+                    <h1 className="text-2xl font-bold text-base-primary tracking-tight">Audit Log</h1>
+                    <p className="mt-1 text-sm text-base-muted">
                         Complete record of all secret access and system events
                         {data?.total ? ` · ${data.total} events` : ''}
                     </p>
@@ -59,37 +59,37 @@ export const AuditLogPage: React.FC = () => {
                         message="There was an error loading the audit log. Please try again." />
                 )}
 
-                <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+                <div className="bg-surface border border-base rounded-xl shadow-sm overflow-hidden">
                     {isLoading ? (
                         <div className="p-12 flex justify-center"><Loading /></div>
                     ) : !data?.data?.length ? (
                         <div className="p-12 text-center">
-                            <p className="text-sm text-gray-400">No audit events recorded yet.</p>
+                            <p className="text-sm text-base-muted">No audit events recorded yet.</p>
                         </div>
                     ) : (
                         <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-100">
+                            <table className="min-w-full divide-y divide-base">
                                 <thead>
                                     <tr className="bg-gray-50">
-                                        <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-44">Time</th>
-                                        <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-32">Event</th>
-                                        <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider w-32">Actor</th>
-                                        <th className="px-5 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider">Description</th>
+                                        <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider w-44">Time</th>
+                                        <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider w-32">Event</th>
+                                        <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider w-32">Actor</th>
+                                        <th className="px-5 py-3 text-left text-xs font-semibold text-base-muted uppercase tracking-wider">Description</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-50">
+                                <tbody className="divide-y divide-base">
                                     {data.data.map((entry: AuditLogEntry) => (
-                                        <tr key={entry.id} className="hover:bg-gray-50 transition-colors duration-75">
-                                            <td className="px-5 py-3 whitespace-nowrap text-xs text-gray-400 tabular-nums">
+                                        <tr key={entry.id} className="hover:bg-subtle transition-colors duration-75">
+                                            <td className="px-5 py-3 whitespace-nowrap text-xs text-base-muted tabular-nums">
                                                 {fmtTime(entry.timestamp)}
                                             </td>
                                             <td className="px-5 py-3 whitespace-nowrap">
                                                 {eventBadge(entry.event_type)}
                                             </td>
-                                            <td className="px-5 py-3 whitespace-nowrap text-sm font-medium text-gray-800">
+                                            <td className="px-5 py-3 whitespace-nowrap text-sm font-medium text-base-primary">
                                                 {entry.actor}
                                             </td>
-                                            <td className="px-5 py-3 text-sm text-gray-500">
+                                            <td className="px-5 py-3 text-sm text-base-muted">
                                                 {entry.description}
                                             </td>
                                         </tr>

@@ -28,41 +28,41 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
     onView, onEdit, onDelete, onShare, onRotate, onCopy,
     copyingId, copiedId, copyErrorId,
 }) => (
-    <tr className={`hover:bg-gray-50 dark:hover:bg-gray-700 ${isSelected ? 'bg-blue-50' : ''}`}>
+    <tr className={`hover:bg-subtle ${isSelected ? 'bg-accent-subtle' : ''}`}>
         <td className="px-4 py-4 w-10">
             <input
                 type="checkbox"
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                className="rounded border-base text-blue-600 focus:ring-blue-500"
                 checked={isSelected}
                 onChange={() => onToggleSelect(secret.id)}
             />
         </td>
         <td className="px-6 py-4">
-            <div className="text-sm font-medium text-gray-900 dark:text-white">{secret.name}</div>
+            <div className="text-sm font-medium text-base-primary">{secret.name}</div>
             {secret.tags.length > 0 && (
                 <div className="flex items-center space-x-1 mt-1">
                     {secret.tags.slice(0, 3).map(tag => (
-                        <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+                        <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-subtle text-base-secondary">
                             {tag}
                         </span>
                     ))}
                     {secret.tags.length > 3 && (
-                        <span className="text-xs text-gray-500 dark:text-gray-400">+{secret.tags.length - 3} more</span>
+                        <span className="text-xs text-base-muted">+{secret.tags.length - 3} more</span>
                     )}
                 </div>
             )}
         </td>
         <td className="px-6 py-4 whitespace-nowrap">
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                 {secret.type}
             </span>
         </td>
-        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 capitalize">
+        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-subtle text-base-secondary capitalize">
                 {secret.environment || 'production'}
             </span>
         </td>
-        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
             {secret.isShared ? (
                 <div className="flex items-center">
                     <ShareIcon className="h-4 w-4 mr-1 text-green-500" />
@@ -70,7 +70,7 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                 </div>
             ) : <span>Private</span>}
         </td>
-        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
             <div>
                 <div>{formatDate(secret.lastModified)}</div>
                 <div className="text-xs">by {secret.owner}</div>
@@ -78,15 +78,15 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
         </td>
         <td className="px-3 py-4 whitespace-nowrap text-right text-sm font-medium">
             <div className="flex items-center justify-end gap-0.5">
-                <button onClick={() => onView(secret)} title="View" className="p-1 text-gray-400 hover:text-gray-700 transition-colors"><EyeIcon className="h-4 w-4" /></button>
-                <button onClick={() => onEdit(secret)} title="Edit" className="p-1 text-gray-400 hover:text-gray-700 transition-colors"><PencilIcon className="h-4 w-4" /></button>
-                <button onClick={() => onRotate(secret)} title="Rotate" className="p-1 text-gray-400 hover:text-green-600 transition-colors"><ArrowPathIcon className="h-4 w-4" /></button>
-                <button onClick={() => onShare(secret)} title="Share" className="p-1 text-gray-400 hover:text-blue-600 transition-colors"><ShareIcon className="h-4 w-4" /></button>
+                <button onClick={() => onView(secret)} title="View" className="p-1 text-base-muted hover:text-base-primary transition-colors"><EyeIcon className="h-4 w-4" /></button>
+                <button onClick={() => onEdit(secret)} title="Edit" className="p-1 text-base-muted hover:text-base-primary transition-colors"><PencilIcon className="h-4 w-4" /></button>
+                <button onClick={() => onRotate(secret)} title="Rotate" className="p-1 text-base-muted hover:text-green-600 transition-colors"><ArrowPathIcon className="h-4 w-4" /></button>
+                <button onClick={() => onShare(secret)} title="Share" className="p-1 text-base-muted hover:text-blue-600 transition-colors"><ShareIcon className="h-4 w-4" /></button>
                 <button
                     onClick={() => onCopy(secret)}
                     title="Copy value"
                     disabled={copyingId === secret.id}
-                    className={`p-1 transition-colors ${copyErrorId === secret.id ? 'text-red-500' : 'text-gray-400 hover:text-gray-700'}`}
+                    className={`p-1 transition-colors ${copyErrorId === secret.id ? 'text-red-500' : 'text-base-muted hover:text-base-primary'}`}
                 >
                     {copyingId === secret.id ? (
                         <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -96,7 +96,7 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                         <DocumentDuplicateIcon className="h-4 w-4" />
                     )}
                 </button>
-                <button onClick={() => onDelete(secret)} title="Delete" className="p-1 text-gray-400 hover:text-red-600 transition-colors"><TrashIcon className="h-4 w-4" /></button>
+                <button onClick={() => onDelete(secret)} title="Delete" className="p-1 text-base-muted hover:text-red-600 transition-colors"><TrashIcon className="h-4 w-4" /></button>
             </div>
         </td>
     </tr>

@@ -36,10 +36,10 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         const hasError = Boolean(error);
 
         const baseSelectClasses = [
-            'block px-3 py-2 pr-10 border rounded-md shadow-sm',
-            'bg-white focus:outline-none focus:ring-2 focus:ring-offset-0',
+            'block px-3 py-2 pr-10 border rounded-md shadow-sm bg-subtle text-base-primary',
+            'focus:outline-none focus:ring-2 focus:ring-offset-0',
             'transition-colors duration-200 appearance-none',
-            'disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed',
+            'disabled:bg-gray-50 disabled:text-base-muted disabled:cursor-not-allowed',
         ];
 
         const selectStateClasses = hasError
@@ -47,7 +47,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                 'border-red-300 text-red-900 focus:ring-red-500 focus:border-red-500',
             ]
             : [
-                'border-gray-300 focus:ring-blue-500 focus:border-blue-500',
+                'border-base focus:ring-blue-500 focus:border-blue-500',
             ];
 
         const containerClasses = [
@@ -67,7 +67,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                         htmlFor={selectId}
                         className={clsx(
                             'block text-sm font-medium mb-1',
-                            hasError ? 'text-red-700' : 'text-gray-700'
+                            hasError ? 'text-red-700' : 'text-base-secondary'
                         )}
                     >
                         {label}
@@ -101,7 +101,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                         <ChevronDownIcon
                             className={clsx(
                                 'h-5 w-5',
-                                hasError ? 'text-red-400' : 'text-gray-400'
+                                hasError ? 'text-red-400' : 'text-base-muted'
                             )}
                         />
                     </div>
@@ -114,7 +114,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
                 )}
 
                 {helperText && !error && (
-                    <p className="mt-1 text-sm text-gray-500">
+                    <p className="mt-1 text-sm text-base-muted">
                         {helperText}
                     </p>
                 )}
