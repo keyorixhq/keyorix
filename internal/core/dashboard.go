@@ -35,6 +35,7 @@ type DashboardStats struct {
 	AuditSecretReads30d   int64            `json:"auditSecretReads30d"`
 	FailedAuthAttempts24h int64            `json:"failedAuthAttempts24h"`
 	InactiveUsers         int64            `json:"inactiveUsers"`
+	PrevTotalSecrets      *int64           `json:"prevTotalSecrets,omitempty"`
 	TotalSecretsTrend     *StatTrend       `json:"totalSecretsTrend,omitempty"`
 	SharedSecretsTrend    *StatTrend       `json:"sharedSecretsTrend,omitempty"`
 	SharedWithMeTrend     *StatTrend       `json:"sharedWithMeTrend,omitempty"`
@@ -176,6 +177,7 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		stats.TotalSecretsTrend = computeTrend(float64(prev.TotalSecrets), float64(total))
 		stats.SharedSecretsTrend = computeTrend(float64(prev.SharedSecrets), float64(sharedSecrets))
 		stats.SharedWithMeTrend = computeTrend(float64(prev.SecretsSharedWithMe), float64(sharedWithMe))
+		stats.PrevTotalSecrets = &prev.TotalSecrets
 	}
 
 	today := time.Now().UTC().Truncate(24 * time.Hour)
