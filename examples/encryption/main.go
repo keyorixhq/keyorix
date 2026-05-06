@@ -54,8 +54,7 @@ func main() {
 	fmt.Println("\n📝 Example 1: Simple Secret")
 	secretNode := &models.SecretNode{
 		Name:          "database_password",
-		NamespaceID:   1,
-		ZoneID:        1,
+		ProjectID:     1,
 		EnvironmentID: 1,
 		IsSecret:      true,
 		Type:          "password",
@@ -87,8 +86,7 @@ func main() {
 	fmt.Println("\n📝 Example 2: Large Secret with Chunking")
 	largeSecretNode := &models.SecretNode{
 		Name:          "large_config_file",
-		NamespaceID:   1,
-		ZoneID:        1,
+		ProjectID:     1,
 		EnvironmentID: 1,
 		IsSecret:      true,
 		Type:          "config",

@@ -64,16 +64,10 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	if typeParam := strings.TrimSpace(r.URL.Query().Get("type")); typeParam != "" {
 		filter.Type = &typeParam
 	}
-	if namespaceStr := r.URL.Query().Get("namespace_id"); namespaceStr != "" {
-		if nsID, err := strconv.ParseUint(namespaceStr, 10, 32); err == nil {
-			nsIDUint := uint(nsID)
-			filter.NamespaceID = &nsIDUint
-		}
-	}
-	if zoneStr := r.URL.Query().Get("zone_id"); zoneStr != "" {
-		if zID, err := strconv.ParseUint(zoneStr, 10, 32); err == nil {
-			zIDUint := uint(zID)
-			filter.ZoneID = &zIDUint
+	if projectStr := r.URL.Query().Get("project_id"); projectStr != "" {
+		if pID, err := strconv.ParseUint(projectStr, 10, 32); err == nil {
+			pIDUint := uint(pID)
+			filter.ProjectID = &pIDUint
 		}
 	}
 	if envStr := r.URL.Query().Get("environment_id"); envStr != "" {

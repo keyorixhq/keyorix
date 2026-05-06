@@ -20,10 +20,10 @@ import (
 )
 
 var (
-	createName          string
-	createType          string
-	createNamespaceID   uint
-	createZoneID        uint
+	createName      string
+	createType      string
+	createProjectID uint
+
 	createEnvironmentID uint
 	createMaxReads      int
 	createExpiration    string
@@ -41,8 +41,7 @@ var createCmd = &cobra.Command{
 func init() {
 	createCmd.Flags().StringVar(&createName, "name", "", "Secret name (required)")
 	createCmd.Flags().StringVar(&createType, "type", "generic", "Secret type")
-	createCmd.Flags().UintVar(&createNamespaceID, "namespace", 1, "Namespace ID")
-	createCmd.Flags().UintVar(&createZoneID, "zone", 1, "Zone ID")
+	createCmd.Flags().UintVar(&createProjectID, "project", 1, "Project ID")
 	createCmd.Flags().UintVar(&createEnvironmentID, "environment", 1, "Environment ID")
 	createCmd.Flags().IntVar(&createMaxReads, "max-reads", 0, "Maximum number of reads (0 = unlimited)")
 	createCmd.Flags().StringVar(&createExpiration, "expires", "", "Expiration time (RFC3339 format)")
@@ -78,8 +77,7 @@ func runCreateRemote(ctx context.Context, rc *common.RemoteClient, req *core.Cre
 		"name":           req.Name,
 		"value":          string(req.Value),
 		"type":           req.Type,
-		"namespace_id":   req.NamespaceID,
-		"zone_id":        req.ZoneID,
+		"project_id":     req.ProjectID,
 		"environment_id": req.EnvironmentID,
 	}
 	if req.MaxReads != nil {
@@ -115,8 +113,7 @@ func printCreatedSecret(secret *models.SecretNode) {
 	fmt.Printf("ID:          %d\n", secret.ID)
 	fmt.Printf("Name:        %s\n", secret.Name)
 	fmt.Printf("Type:        %s\n", secret.Type)
-	fmt.Printf("Namespace:   %d\n", secret.NamespaceID)
-	fmt.Printf("Zone:        %d\n", secret.ZoneID)
+	fmt.Printf("Project:     %d\n", secret.ProjectID)
 	fmt.Printf("Environment: %d\n", secret.EnvironmentID)
 	fmt.Printf("Created:     %s\n", secret.CreatedAt.Format(time.RFC3339))
 	if secret.Expiration != nil {
@@ -158,8 +155,7 @@ func buildCreateRequest() (*core.CreateSecretRequest, error) {
 		Name:          createName,
 		Value:         value,
 		Type:          createType,
-		NamespaceID:   createNamespaceID,
-		ZoneID:        createZoneID,
+		ProjectID:     createProjectID,
 		EnvironmentID: createEnvironmentID,
 		CreatedBy:     "cli-user",
 	}
@@ -217,8 +213,7 @@ func interactiveCreate() (*core.CreateSecretRequest, error) {
 	}
 
 	secretType := ask("Secret type", "generic")
-	namespaceID := askUint("Namespace ID", 1)
-	zoneID := askUint("Zone ID", 1)
+	projectID := askUint("Project ID", 1)
 	environmentID := askUint("Environment ID", 1)
 
 	fmt.Print("Secret value (hidden): ")
@@ -234,8 +229,7 @@ func interactiveCreate() (*core.CreateSecretRequest, error) {
 	req := &core.CreateSecretRequest{
 		Name:          name,
 		Type:          secretType,
-		NamespaceID:   namespaceID,
-		ZoneID:        zoneID,
+		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Value:         valueBytes,
 		CreatedBy:     "cli-user",

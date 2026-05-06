@@ -15,11 +15,10 @@ import (
 )
 
 var (
-	exportFormat    string
-	exportOutput    string
-	exportEnv       string
-	exportNamespace string
-	exportZone      string
+	exportFormat  string
+	exportOutput  string
+	exportEnv     string
+	exportProject string
 )
 
 var exportCmd = &cobra.Command{
@@ -46,8 +45,7 @@ func init() {
 	exportCmd.Flags().StringVar(&exportFormat, "format", "dotenv", "Output format: dotenv, json, vault")
 	exportCmd.Flags().StringVar(&exportOutput, "output", "", "Output file path (default: stdout)")
 	exportCmd.Flags().StringVar(&exportEnv, "env", "development", "Environment name (e.g. production)")
-	exportCmd.Flags().StringVar(&exportNamespace, "namespace", "default", "Namespace name")
-	exportCmd.Flags().StringVar(&exportZone, "zone", "default", "Zone name")
+	exportCmd.Flags().StringVar(&exportProject, "project", "default", "Project name")
 }
 
 // exportedSecret holds a secret's name and decrypted value.
@@ -65,26 +63,17 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	// Resolve namespace name → ID.
-	nsID, err := resolveNamespaceID(ctx, rc, exportNamespace)
+	nsID, err := resolveProjectID(ctx, rc, exportProject)
 	if err != nil {
 		return err
 	}
 
-	// Resolve zone name → ID.
-	zoneID, err := resolveZoneID(ctx, rc, exportZone)
-	if err != nil {
-		return err
-	}
-
-	// Resolve environment name → ID.
 	envID, err := resolveEnvironmentID(ctx, rc, exportEnv)
 	if err != nil {
 		return err
 	}
 
-	// Fetch secrets list.
-	secrets, err := fetchSecretList(ctx, rc, nsID, zoneID, envID)
+	secrets, err := listSecretsForExport(ctx, rc, nsID, envID)
 	if err != nil {
 		return err
 	}
@@ -94,13 +83,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Fetch decrypted values for each secret.
 	fetched, err := fetchSecretValues(ctx, rc, secrets)
 	if err != nil {
 		return err
 	}
 
-	// Open output destination.
 	var out io.Writer = os.Stdout
 	if exportOutput != "" {
 		f, err := os.Create(exportOutput) // #nosec G304
@@ -111,10 +98,8 @@ func runExport(cmd *cobra.Command, args []string) error {
 		out = f
 	}
 
-	// Warn before writing (always to stderr).
 	fmt.Fprintln(os.Stderr, "WARNING: exported secrets are in plaintext. Handle with care.")
 
-	// Write formatted output.
 	switch strings.ToLower(exportFormat) {
 	case "dotenv", "env":
 		err = writeDotenv(out, fetched)
@@ -135,13 +120,13 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 
-func fetchSecretList(ctx context.Context, rc *common.RemoteClient, nsID, zoneID, envID uint) ([]struct {
+func listSecretsForExport(ctx context.Context, rc *common.RemoteClient, projectID, envID uint) ([]struct {
 	ID   uint   `json:"id"`
 	Name string `json:"name"`
 }, error) {
 	path := fmt.Sprintf(
-		"/api/v1/secrets?namespace_id=%d&zone_id=%d&environment_id=%d&page_size=1000&page=1",
-		nsID, zoneID, envID,
+		"/api/v1/secrets?project_id=%d&environment_id=%d&page_size=1000&page=1",
+		projectID, envID,
 	)
 	var body struct {
 		Secrets []struct {
@@ -176,12 +161,10 @@ func fetchSecretValues(ctx context.Context, rc *common.RemoteClient, list []stru
 
 // ── Format writers ────────────────────────────────────────────────────────────
 
-// writeDotenv writes KEY=VALUE lines with a header comment.
 func writeDotenv(w io.Writer, secrets []exportedSecret) error {
 	fmt.Fprintf(w, "# Exported by Keyorix — %s\n", time.Now().Format("2006-01-02"))
 	for _, s := range secrets {
 		val := s.Value
-		// Quote if value contains whitespace, quotes, or = signs.
 		if strings.ContainsAny(val, " \t\n\"'=\\") {
 			val = `"` + strings.ReplaceAll(strings.ReplaceAll(val, `\`, `\\`), `"`, `\"`) + `"`
 		}
@@ -190,7 +173,6 @@ func writeDotenv(w io.Writer, secrets []exportedSecret) error {
 	return nil
 }
 
-// writeExportJSON writes a flat JSON object {"name": "value", ...}.
 func writeExportJSON(w io.Writer, secrets []exportedSecret) error {
 	m := make(map[string]string, len(secrets))
 	for _, s := range secrets {
@@ -201,12 +183,7 @@ func writeExportJSON(w io.Writer, secrets []exportedSecret) error {
 	return enc.Encode(m)
 }
 
-// writeVault writes a Medusa/Vault-compatible YAML export.
-//
-//	secret/<envName>/<secret-name>:
-//	  value: <plaintext>
 func writeVault(w io.Writer, secrets []exportedSecret, envName string) error {
-	// Use yaml.v3 Node API to emit a deterministic key order.
 	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	for _, s := range secrets {
 		pathKey := fmt.Sprintf("secret/%s/%s", envName, s.Name)

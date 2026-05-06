@@ -202,7 +202,7 @@ type bootstrapResponseData struct {
 		Username string `json:"username"`
 		Email    string `json:"email"`
 	} `json:"user"`
-	Namespace    string   `json:"namespace"`
+	Project      string   `json:"project"`
 	Zone         string   `json:"zone"`
 	Environments []string `json:"environments"`
 }
@@ -279,7 +279,7 @@ func runRemoteInit() error {
 
 	fmt.Printf("Keyorix initialised successfully\n\n")
 	fmt.Printf("Your workspace is ready:\n")
-	fmt.Printf("  +-- Project: %s\n", d.Namespace)
+	fmt.Printf("  +-- Project: %s\n", d.Project)
 	fmt.Printf("  +-- Environments: %s\n", envList)
 	fmt.Printf("  +-- Admin user: %s (change password after first login)\n", username)
 	fmt.Printf("\nNext steps:\n")

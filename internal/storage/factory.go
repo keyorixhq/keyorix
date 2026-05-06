@@ -184,12 +184,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_detected_at ON anomaly_alerts(detected_at)")
 	}
 
-	if tableExists(db, "namespaces") {
+	if db.Migrator().HasTable("projects") {
 		return nil
 	}
 	return db.AutoMigrate(
-		&models.Namespace{},
-		&models.Zone{},
+		&models.Project{},
 		&models.Environment{},
 		&models.User{},
 		&models.Role{},

@@ -25,8 +25,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		req := &CreateSecretRequest{
 			Name:          "test-secret",
 			Value:         []byte("secret-value"),
-			NamespaceID:   1,
-			ZoneID:        1,
+			ProjectID:     1,
 			EnvironmentID: 1,
 			Type:          "password",
 			CreatedBy:     "test-user",
@@ -35,8 +34,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		expectedSecret := &models.SecretNode{
 			ID:            1,
 			Name:          req.Name,
-			NamespaceID:   req.NamespaceID,
-			ZoneID:        req.ZoneID,
+			ProjectID:     req.ProjectID,
 			EnvironmentID: req.EnvironmentID,
 			Type:          req.Type,
 			CreatedBy:     req.CreatedBy,
@@ -53,7 +51,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		}
 
 		// Mock storage calls
-		mockStorage.On("GetSecretByName", ctx, req.Name, req.NamespaceID, req.ZoneID, req.EnvironmentID).Return(nil, assert.AnError)
+		mockStorage.On("GetSecretByName", ctx, req.Name, req.ProjectID, req.EnvironmentID).Return(nil, assert.AnError)
 		mockStorage.On("CreateSecret", ctx, mock.AnythingOfType("*models.SecretNode")).Return(expectedSecret, nil)
 		mockStorage.On("CreateSecretVersion", ctx, mock.AnythingOfType("*models.SecretVersion")).Return(expectedVersion, nil)
 
@@ -72,8 +70,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		req := &CreateSecretRequest{
 			Name:          "", // Missing name
 			Value:         []byte("secret-value"),
-			NamespaceID:   1,
-			ZoneID:        1,
+			ProjectID:     1,
 			EnvironmentID: 1,
 			Type:          "password",
 			CreatedBy:     "test-user",
@@ -93,8 +90,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		req := &CreateSecretRequest{
 			Name:          "existing-secret",
 			Value:         []byte("secret-value"),
-			NamespaceID:   1,
-			ZoneID:        1,
+			ProjectID:     1,
 			EnvironmentID: 1,
 			Type:          "password",
 			CreatedBy:     "test-user",
@@ -106,7 +102,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		}
 
 		// Mock storage calls
-		mockStorage.On("GetSecretByName", ctx, req.Name, req.NamespaceID, req.ZoneID, req.EnvironmentID).Return(existingSecret, nil)
+		mockStorage.On("GetSecretByName", ctx, req.Name, req.ProjectID, req.EnvironmentID).Return(existingSecret, nil)
 
 		// Execute
 		result, err := core.CreateSecret(ctx, req)

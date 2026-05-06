@@ -6,15 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type Namespace struct {
-	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"unique;not null"`
-	Description string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-}
-
-type Zone struct {
+type Project struct {
 	ID          uint   `gorm:"primaryKey"`
 	Name        string `gorm:"unique;not null"`
 	Description string
@@ -59,9 +51,9 @@ type RolePermission struct {
 }
 
 type UserRole struct {
-	UserID      uint `gorm:"primaryKey"`
-	RoleID      uint `gorm:"primaryKey"`
-	NamespaceID *uint
+	UserID    uint `gorm:"primaryKey"`
+	RoleID    uint `gorm:"primaryKey"`
+	ProjectID *uint
 }
 
 type Group struct {
@@ -76,16 +68,15 @@ type UserGroup struct {
 }
 
 type GroupRole struct {
-	GroupID     uint `gorm:"primaryKey"`
-	RoleID      uint `gorm:"primaryKey"`
-	NamespaceID *uint
+	GroupID   uint `gorm:"primaryKey"`
+	RoleID    uint `gorm:"primaryKey"`
+	ProjectID *uint
 }
 
 type SecretNode struct {
 	ID            uint `gorm:"primaryKey"`
 	ParentID      *uint
-	NamespaceID   uint
-	ZoneID        uint
+	ProjectID     uint
 	EnvironmentID uint
 	Name          string `gorm:"not null"`
 	IsSecret      bool   `gorm:"default:false"`

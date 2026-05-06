@@ -74,7 +74,7 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 // sweepSecretVersions re-encrypts all secret_versions rows in batches.
 //
 // Two cases:
-//   - AAD-bound rows (aad_version="v1"): reconstruct AAD, decrypt with old
+//   - AAD-bound rows (aad_version="v2"): reconstruct AAD, decrypt with old
 //     AAD-aware path, re-encrypt with new DEK + same AAD.
 //   - Legacy rows (no aad_version): decrypt without AAD, re-encrypt with new
 //     DEK + correct AAD (completes the M2 AAD migration).
@@ -84,14 +84,14 @@ func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *Encrypt
 	var offset int
 	var totalSwept, totalLegacyUpgraded int
 
-	// Pre-fetch secretNodeID → namespaceID to avoid N+1 queries.
-	nodeNamespaceMap := make(map[uint]uint)
+	// Pre-fetch secretNodeID → projectID to avoid N+1 queries.
+	nodeProjectMap := make(map[uint]uint)
 	var nodes []models.SecretNode
-	if err := tx.Select("id, namespace_id").Find(&nodes).Error; err != nil {
+	if err := tx.Select("id, project_id").Find(&nodes).Error; err != nil {
 		return 0, 0, fmt.Errorf("failed to fetch secret nodes for AAD reconstruction: %w", err)
 	}
 	for _, n := range nodes {
-		nodeNamespaceMap[n.ID] = n.NamespaceID
+		nodeProjectMap[n.ID] = n.ProjectID
 	}
 
 	for {
@@ -113,11 +113,11 @@ func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *Encrypt
 				return totalSwept, totalLegacyUpgraded, fmt.Errorf("failed to deserialize secret_version id=%d: %w", version.ID, err)
 			}
 
-			namespaceID, ok := nodeNamespaceMap[version.SecretNodeID]
+			projectID, ok := nodeProjectMap[version.SecretNodeID]
 			if !ok {
-				return totalSwept, totalLegacyUpgraded, fmt.Errorf("no namespace found for secret_node_id=%d (version id=%d)", version.SecretNodeID, version.ID)
+				return totalSwept, totalLegacyUpgraded, fmt.Errorf("no project found for secret_node_id=%d (version id=%d)", version.SecretNodeID, version.ID)
 			}
-			aad := SecretAAD(version.SecretNodeID, namespaceID, version.VersionNumber)
+			aad := SecretAAD(version.SecretNodeID, projectID, version.VersionNumber)
 
 			isLegacy := encrypted.Metadata.AADVersion == ""
 			var plaintext []byte

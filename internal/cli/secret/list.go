@@ -12,13 +12,12 @@ import (
 )
 
 var (
-	listNamespace uint
-	listZone      uint
-	listEnv       uint
-	listLimit     int
-	listOffset    int
-	listSearch    string
-	listFormat    string
+	listProject uint
+	listEnv     uint
+	listLimit   int
+	listOffset  int
+	listSearch  string
+	listFormat  string
 )
 
 var listCmd = &cobra.Command{
@@ -39,8 +38,7 @@ Examples:
 }
 
 func init() {
-	listCmd.Flags().UintVar(&listNamespace, "namespace", 0, "Filter by namespace ID (0 = all)")
-	listCmd.Flags().UintVar(&listZone, "zone", 0, "Filter by zone ID (0 = all)")
+	listCmd.Flags().UintVar(&listProject, "project", 0, "Filter by project ID (0 = all)")
 	listCmd.Flags().UintVar(&listEnv, "environment", 0, "Filter by environment ID (0 = all)")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "Maximum number of results")
 	listCmd.Flags().IntVar(&listOffset, "offset", 0, "Number of results to skip")
@@ -62,11 +60,8 @@ func runList(cmd *cobra.Command, args []string) error {
 func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 	page := (listOffset / listLimit) + 1
 	path := fmt.Sprintf("/api/v1/secrets?page=%d&page_size=%d", page, listLimit)
-	if listNamespace != 0 {
-		path += fmt.Sprintf("&namespace_id=%d", listNamespace)
-	}
-	if listZone != 0 {
-		path += fmt.Sprintf("&zone_id=%d", listZone)
+	if listProject != 0 {
+		path += fmt.Sprintf("&project_id=%d", listProject)
 	}
 	if listEnv != 0 {
 		path += fmt.Sprintf("&environment_id=%d", listEnv)
@@ -89,11 +84,8 @@ func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 		Page:     page,
 		PageSize: listLimit,
 	}
-	if listNamespace != 0 {
-		filter.NamespaceID = &listNamespace
-	}
-	if listZone != 0 {
-		filter.ZoneID = &listZone
+	if listProject != 0 {
+		filter.ProjectID = &listProject
 	}
 	if listEnv != 0 {
 		filter.EnvironmentID = &listEnv
@@ -122,11 +114,8 @@ func runListEmbedded(ctx context.Context) error {
 		Page:     (listOffset / listLimit) + 1,
 		PageSize: listLimit,
 	}
-	if listNamespace != 0 {
-		filter.NamespaceID = &listNamespace
-	}
-	if listZone != 0 {
-		filter.ZoneID = &listZone
+	if listProject != 0 {
+		filter.ProjectID = &listProject
 	}
 	if listEnv != 0 {
 		filter.EnvironmentID = &listEnv
@@ -159,18 +148,14 @@ func displaySecretsTable(secrets []*models.SecretNode, total int64, filter *core
 	}
 
 	nsLabel := "all"
-	if filter.NamespaceID != nil {
-		nsLabel = fmt.Sprintf("%d", *filter.NamespaceID)
-	}
-	zoneLabel := "all"
-	if filter.ZoneID != nil {
-		zoneLabel = fmt.Sprintf("%d", *filter.ZoneID)
+	if filter.ProjectID != nil {
+		nsLabel = fmt.Sprintf("%d", *filter.ProjectID)
 	}
 	envLabel := "all"
 	if filter.EnvironmentID != nil {
 		envLabel = fmt.Sprintf("%d", *filter.EnvironmentID)
 	}
-	fmt.Printf("Namespace: %s, Zone: %s, Environment: %s\n", nsLabel, zoneLabel, envLabel)
+	fmt.Printf("Project: %s, Environment: %s\n", nsLabel, envLabel)
 
 	offset := (filter.Page - 1) * filter.PageSize
 	fmt.Printf("Total: %d, Showing: %d (offset: %d, limit: %d)\n\n", total, len(secrets), offset, filter.PageSize)
@@ -229,8 +214,7 @@ func displaySecretsJSON(secrets []*models.SecretNode, total int64, filter *coreS
 		fmt.Printf("      \"name\": \"%s\",\n", secret.Name)
 		fmt.Printf("      \"type\": \"%s\",\n", secret.Type)
 		fmt.Printf("      \"status\": \"%s\",\n", secret.Status)
-		fmt.Printf("      \"namespace_id\": %d,\n", secret.NamespaceID)
-		fmt.Printf("      \"zone_id\": %d,\n", secret.ZoneID)
+		fmt.Printf("      \"project_id\": %d,\n", secret.ProjectID)
 		fmt.Printf("      \"environment_id\": %d,\n", secret.EnvironmentID)
 		fmt.Printf("      \"created_by\": \"%s\",\n", secret.CreatedBy)
 		fmt.Printf("      \"created_at\": \"%s\",\n", secret.CreatedAt.Format(time.RFC3339))

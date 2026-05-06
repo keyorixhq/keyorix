@@ -113,9 +113,9 @@ func seedLegacySecretVersion(t *testing.T, db *gorm.DB, svc *Service, nodeID uin
 func seedSecretNode(t *testing.T, db *gorm.DB, namespaceID uint) uint {
 	t.Helper()
 	n := &models.SecretNode{
-		NamespaceID: namespaceID,
-		Name:        fmt.Sprintf("node-%d", namespaceID),
-		IsSecret:    true,
+		ProjectID: namespaceID,
+		Name:      fmt.Sprintf("node-%d", namespaceID),
+		IsSecret:  true,
 	}
 	if err := db.Create(n).Error; err != nil {
 		t.Fatalf("failed to insert SecretNode: %v", err)
@@ -218,7 +218,7 @@ func TestRotateDEKWithSweep_UpgradesLegacyAAD(t *testing.T) {
 		t.Fatalf("RotateDEKWithSweep failed: %v", err)
 	}
 
-	// Verify the row now has aad_version = "v1"
+	// Verify the row now has aad_version = "v2"
 	var after models.SecretVersion
 	if err := db.First(&after, versionID).Error; err != nil {
 		t.Fatalf("failed to fetch post-sweep version: %v", err)
@@ -227,8 +227,8 @@ func TestRotateDEKWithSweep_UpgradesLegacyAAD(t *testing.T) {
 	if err := json.Unmarshal([]byte(after.EncryptionMetadata), &afterMeta); err != nil {
 		t.Fatalf("failed to unmarshal post-sweep metadata: %v", err)
 	}
-	if afterMeta.AADVersion != "v1" {
-		t.Errorf("expected AADVersion = v1 after sweep, got %q", afterMeta.AADVersion)
+	if afterMeta.AADVersion != "v2" {
+		t.Errorf("expected AADVersion = v2 after sweep, got %q", afterMeta.AADVersion)
 	}
 
 	// And it should decrypt correctly with the new DEK + AAD
@@ -262,7 +262,7 @@ func TestRotateDEKWithSweep_RollbackOnError(t *testing.T) {
 
 	oldDEK := captureCurrentDEK(t, svc)
 
-	// Drop the secret_nodes table to force a sweep error (nodeNamespaceMap query fails)
+	// Drop the secret_nodes table to force a sweep error (nodeProjectMap query fails)
 	if err := db.Migrator().DropTable(&models.SecretNode{}); err != nil {
 		t.Fatalf("failed to drop table: %v", err)
 	}

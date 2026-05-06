@@ -33,8 +33,8 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 	sqlDB.SetMaxOpenConns(1)
 
 	err = db.AutoMigrate(
-		&models.Namespace{},
-		&models.Zone{},
+		&models.Project{},
+		&models.Project{},
 		&models.Environment{},
 		&models.User{},
 		&models.Role{},
@@ -119,7 +119,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			secretData := map[string]interface{}{
 				"name":           "http-sharing-test-secret",
 				"value":          "http-sharing-secret-value",
-				"namespace_id":   uint(1),
+				"project_id":     uint(1),
 				"zone_id":        uint(1),
 				"environment_id": uint(1),
 				"type":           "password",
@@ -374,7 +374,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			secretData := map[string]interface{}{
 				"name":           "group-sharing-test-secret",
 				"value":          "group-sharing-secret-value",
-				"namespace_id":   uint(1),
+				"project_id":     uint(1),
 				"zone_id":        uint(1),
 				"environment_id": uint(1),
 				"type":           "password",
@@ -631,7 +631,7 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			secretData := map[string]interface{}{
 				"name":           "permission-test-secret",
 				"value":          "permission-test-value",
-				"namespace_id":   uint(1),
+				"project_id":     uint(1),
 				"zone_id":        uint(1),
 				"environment_id": uint(1),
 				"type":           "password",
@@ -803,7 +803,7 @@ func TestSharingHTTPConcurrency(t *testing.T) {
 		secretData := map[string]interface{}{
 			"name":           "concurrent-test-secret",
 			"value":          "concurrent-test-value",
-			"namespace_id":   uint(1),
+			"project_id":     uint(1),
 			"zone_id":        uint(1),
 			"environment_id": uint(1),
 			"type":           "password",

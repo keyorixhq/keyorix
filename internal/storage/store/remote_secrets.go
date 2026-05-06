@@ -52,9 +52,9 @@ func (rs *RemoteStorage) GetSecret(ctx context.Context, id uint) (*models.Secret
 }
 
 // GetSecretByName retrieves a secret by name and scope context via remote API.
-func (rs *RemoteStorage) GetSecretByName(ctx context.Context, name string, namespaceID, zoneID, environmentID uint) (*models.SecretNode, error) {
-	path := fmt.Sprintf("/api/v1/secrets/by-name/%s?namespace_id=%d&zone_id=%d&environment_id=%d",
-		name, namespaceID, zoneID, environmentID)
+func (rs *RemoteStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
+	path := fmt.Sprintf("/api/v1/secrets/by-name/%s?project_id=%d&environment_id=%d",
+		name, projectID, environmentID)
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret by name: %w", err)
@@ -126,8 +126,7 @@ func buildSecretFilterPath(filter *storage.SecretFilter) string {
 		return "/api/v1/secrets"
 	}
 	params := newQueryBuilder()
-	params.addUint("namespace_id", filter.NamespaceID)
-	params.addUint("zone_id", filter.ZoneID)
+	params.addUint("project_id", filter.ProjectID)
 	params.addUint("environment_id", filter.EnvironmentID)
 	params.addString("type", filter.Type)
 	params.addString("created_by", filter.CreatedBy)

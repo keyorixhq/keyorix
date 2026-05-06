@@ -4,7 +4,7 @@
 //
 //	AssignRole, RemoveRole, GetUserRoles, CheckPermission, GetUserPermissions,
 //	CreatePermission, AssignPermissionToRole,
-//	Namespace/Zone/Environment stubs.
+//	Project/Environment stubs.
 //
 // For the local (GORM) equivalent see local_rbac.go.
 package store
@@ -209,13 +209,9 @@ func (rs *RemoteStorage) AssignPermissionToRole(_ context.Context, _, _ uint) er
 	return fmt.Errorf("not supported in remote storage")
 }
 
-// --- Namespace / Zone / Environment (not supported in remote mode) ---
+// --- Project / Environment (not supported in remote mode) ---
 
-func (rs *RemoteStorage) CreateNamespace(_ context.Context, _ *models.Namespace) (*models.Namespace, error) {
-	return nil, fmt.Errorf("not supported in remote storage")
-}
-
-func (rs *RemoteStorage) CreateZone(_ context.Context, _ *models.Zone) (*models.Zone, error) {
+func (rs *RemoteStorage) CreateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
 	return nil, fmt.Errorf("not supported in remote storage")
 }
 
@@ -223,11 +219,7 @@ func (rs *RemoteStorage) CreateEnvironment(_ context.Context, _ *models.Environm
 	return nil, fmt.Errorf("not supported in remote storage")
 }
 
-func (rs *RemoteStorage) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
-}
-
-func (rs *RemoteStorage) ListZones(_ context.Context) ([]*models.Zone, error) {
+func (rs *RemoteStorage) ListProjects(_ context.Context) ([]*models.Project, error) {
 	return nil, fmt.Errorf("not implemented in remote storage")
 }
 

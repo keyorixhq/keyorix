@@ -95,7 +95,7 @@ func (m *MockStorageSharing) AssignPermissionToRole(_ context.Context, _, _ uint
 	return nil
 }
 
-func (m *MockStorageSharing) CreateNamespace(_ context.Context, namespace *models.Namespace) (*models.Namespace, error) {
+func (m *MockStorageSharing) CreateNamespace(_ context.Context, namespace *models.Project) (*models.Project, error) {
 	return namespace, nil
 }
 
@@ -107,11 +107,11 @@ func (m *MockStorageSharing) CreateEnvironment(_ context.Context, env *models.En
 	return env, nil
 }
 
-func (m *MockStorageSharing) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
+func (m *MockStorageSharing) ListNamespaces(_ context.Context) ([]*models.Project, error) {
 	return nil, nil
 }
 
-func (m *MockStorageSharing) ListZones(_ context.Context) ([]*models.Zone, error) {
+func (m *MockStorageSharing) ListZones(_ context.Context) ([]*models.Project, error) {
 	return nil, nil
 }
 
