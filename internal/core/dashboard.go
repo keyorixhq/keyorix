@@ -81,8 +81,8 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	}
 
 	uid := userID
+	_ = uid // recent activity shows all users' events
 	events, _, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-		UserID:   &uid,
 		Page:     1,
 		PageSize: 5,
 	})
@@ -166,8 +166,8 @@ func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username
 	}
 
 	uid := userID
+	_ = uid // admin sees all events
 	events, total, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-		UserID:   &uid,
 		Page:     page,
 		PageSize: pageSize,
 	})

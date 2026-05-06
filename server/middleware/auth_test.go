@@ -2,10 +2,12 @@ package middleware
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -16,6 +18,38 @@ const (
 )
 
 const wrongKey contextKey = "wrong-key"
+
+// fakeValidator is a test double for sessionValidator. It returns a fixed
+// admin user for validToken, a viewer user for testToken, and an error for
+// anything else.
+type fakeValidator struct{}
+
+func (fakeValidator) ValidateSessionToken(_ context.Context, token string) (*models.User, []string, error) {
+	switch token {
+	case validToken:
+		return &models.User{
+			ID:       1,
+			Username: "admin",
+			Email:    "admin@example.com",
+		}, []string{"admin", "user"}, nil
+	case testToken:
+		return &models.User{
+			ID:       2,
+			Username: "testuser",
+			Email:    "test@example.com",
+		}, []string{"viewer"}, nil
+	default:
+		return nil, nil, fmt.Errorf("session not found")
+	}
+}
+
+// newTestAuthMiddleware builds the Authentication middleware with the fake
+// validator. The coreService passed to authenticationWithValidator is nil here
+// because none of these tests exercise downstream handlers that pull the core
+// service out of context.
+func newTestAuthMiddleware() func(next http.Handler) http.Handler {
+	return authenticationWithValidator(fakeValidator{}, nil)
+}
 
 func TestAuthentication(t *testing.T) {
 	tests := []struct {
@@ -85,7 +119,7 @@ func TestAuthentication(t *testing.T) {
 			})
 
 			// Wrap with authentication middleware
-			authMiddleware := Authentication(nil)
+			authMiddleware := newTestAuthMiddleware()
 			handler := authMiddleware(testHandler)
 
 			// Create request
@@ -446,7 +480,7 @@ func TestValidateToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			userCtx, err := validateToken(context.Background(), nil, tt.token)
+			userCtx, err := validateToken(context.Background(), fakeValidator{}, tt.token)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -467,7 +501,7 @@ func TestValidateToken(t *testing.T) {
 // Test middleware chaining
 func TestMiddlewareChaining(t *testing.T) {
 	// Chain authentication and permission middleware
-	authMiddleware := Authentication(nil)
+	authMiddleware := newTestAuthMiddleware()
 	permissionMiddleware := RequirePermission("secrets.read")
 
 	t.Run("valid admin token", func(t *testing.T) {
@@ -528,7 +562,7 @@ func BenchmarkAuthentication(b *testing.B) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authMiddleware := Authentication(nil)
+	authMiddleware := newTestAuthMiddleware()
 	handler := authMiddleware(testHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -574,7 +608,7 @@ func TestAuthenticationConcurrency(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	authMiddleware := Authentication(nil)
+	authMiddleware := newTestAuthMiddleware()
 	handler := authMiddleware(testHandler)
 
 	const numGoroutines = 100

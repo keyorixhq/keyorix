@@ -7,7 +7,15 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// sessionValidator is the subset of *core.KeyorixCore that the auth middleware
+// needs. Defined here (not in core) so tests can supply a fake validator without
+// constructing a full core service. *core.KeyorixCore satisfies this implicitly.
+type sessionValidator interface {
+	ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error)
+}
 
 // UserContext represents the authenticated user context
 type UserContext struct {
@@ -28,6 +36,13 @@ const (
 
 // Authentication returns a middleware that validates session tokens against the database.
 func Authentication(coreService *core.KeyorixCore) func(next http.Handler) http.Handler {
+	return authenticationWithValidator(coreService, coreService)
+}
+
+// authenticationWithValidator is the test seam: it accepts a sessionValidator for
+// validating tokens (so tests can inject a fake) and a separate *core.KeyorixCore
+// to store in the request context for downstream handlers.
+func authenticationWithValidator(validator sessionValidator, coreService *core.KeyorixCore) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract token from Authorization header
@@ -50,7 +65,7 @@ func Authentication(coreService *core.KeyorixCore) func(next http.Handler) http.
 				return
 			}
 
-			userCtx, err := validateToken(r.Context(), coreService, token)
+			userCtx, err := validateToken(r.Context(), validator, token)
 			if err != nil {
 				unauthorizedResponse(w, "Invalid or expired token")
 				return
@@ -142,31 +157,31 @@ var readPermissions = []string{
 	"users.read",
 }
 
-// validateToken first checks the database for a real session, then falls back to
-// hardcoded test tokens for backwards compatibility with integration tests.
-func validateToken(ctx context.Context, coreService *core.KeyorixCore, token string) (*UserContext, error) {
-	// Real DB lookup — try this before hardcoded tokens
-	if coreService != nil {
-		user, roleNames, err := coreService.ValidateSessionToken(ctx, token)
-		if err == nil {
-			perms := readPermissions
-			for _, r := range roleNames {
-				if r == "admin" {
-					perms = adminPermissions
-					break
-				}
-			}
-			return &UserContext{
-				UserID:      user.ID,
-				Username:    user.Username,
-				Email:       user.Email,
-				Roles:       roleNames,
-				Permissions: perms,
-			}, nil
+// validateToken validates a session token via the supplied validator and returns
+// the resolved UserContext. Returns an error if the validator is nil or if the
+// token cannot be resolved.
+func validateToken(ctx context.Context, validator sessionValidator, token string) (*UserContext, error) {
+	if validator == nil {
+		return nil, http.ErrNotSupported
+	}
+	user, roleNames, err := validator.ValidateSessionToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	perms := readPermissions
+	for _, r := range roleNames {
+		if r == "admin" {
+			perms = adminPermissions
+			break
 		}
 	}
-
-	return nil, http.ErrNotSupported
+	return &UserContext{
+		UserID:      user.ID,
+		Username:    user.Username,
+		Email:       user.Email,
+		Roles:       roleNames,
+		Permissions: perms,
+	}, nil
 }
 
 // unauthorizedResponse sends a 401 Unauthorized response
