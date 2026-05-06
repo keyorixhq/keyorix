@@ -286,3 +286,14 @@
   border-color: #d1d5db;
   accent-color: var(--accent);
 }
+
+/* ─── Checkbox checked state fix ────────────────────────────────── */
+/* @tailwindcss/forms resets appearance which can suppress accent-color.
+   Force appearance:auto so the OS renders the native checkmark. */
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: auto;
+  -webkit-appearance: auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
