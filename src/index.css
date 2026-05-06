@@ -276,3 +276,13 @@
   -webkit-text-fill-color: var(--text-primary) !important;
   caret-color: var(--text-primary);
 }
+
+/* ─── Checkbox / radio light theme ─────────────────────────────── */
+/* On light theme the table bg is white and the default checkbox bg
+   is also white — invisible. Force a light-grey background. */
+[data-theme="light"] input[type="checkbox"],
+[data-theme="light"] input[type="radio"] {
+  background-color: #f3f4f6;
+  border-color: #d1d5db;
+  accent-color: var(--accent);
+}
