@@ -23,6 +23,27 @@ interface SecretTableRowProps {
     copyErrorId: number | null;
 }
 
+
+const TYPE_STYLES: Record<string, { bg: string; color: string; label: string }> = {
+    password:    { bg: 'rgba(99,102,241,0.12)',  color: '#818cf8', label: 'password' },
+    api_key:     { bg: 'rgba(16,185,129,0.12)',  color: '#34d399', label: 'api_key' },
+    text:        { bg: 'rgba(148,163,184,0.12)', color: '#94a3b8', label: 'text' },
+    certificate: { bg: 'rgba(251,191,36,0.12)',  color: '#fbbf24', label: 'cert' },
+    json:        { bg: 'rgba(251,146,60,0.12)',  color: '#fb923c', label: 'json' },
+};
+
+const TypeBadge: React.FC<{ type: string }> = ({ type }) => {
+    const s = TYPE_STYLES[type] ?? { bg: 'rgba(148,163,184,0.12)', color: '#94a3b8', label: type };
+    return (
+        <span
+            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium tracking-wide"
+            style={{ backgroundColor: s.bg, color: s.color }}
+        >
+            {s.label}
+        </span>
+    );
+};
+
 export const SecretTableRow: React.FC<SecretTableRowProps> = ({
     secret, isSelected, onToggleSelect,
     onView, onEdit, onDelete, onShare, onRotate, onCopy,
@@ -53,9 +74,7 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
             )}
         </td>
         <td className="px-6 py-4 whitespace-nowrap">
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                {secret.type}
-            </span>
+            <TypeBadge type={secret.type} />
         </td>
         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-subtle text-base-secondary capitalize">
