@@ -93,13 +93,13 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                             onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark')}
                             className="p-2 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
                             style={{ color: 'var(--text-muted)' }}
-                            title={theme === 'dark' ? 'Switch to light mode' : theme === 'light' ? 'Switch to system mode' : 'Switch to dark mode'}
-                            aria-label={theme === 'dark' ? 'Switch to light mode' : theme === 'light' ? 'Switch to system mode' : 'Switch to dark mode'}
+                            title={theme === 'dark' ? 'Dark mode (click for light)' : theme === 'light' ? 'Light mode (click for system)' : 'System mode (click for dark)'}
+                            aria-label={theme === 'dark' ? 'Dark mode' : theme === 'light' ? 'Light mode' : 'System mode'}
                         >
                             {theme === 'dark'
-                                ? <SunIcon className="h-5 w-5" aria-hidden="true" />
+                                ? <MoonIcon className="h-5 w-5" aria-hidden="true" />
                                 : theme === 'light'
-                                    ? <MoonIcon className="h-5 w-5" aria-hidden="true" />
+                                    ? <SunIcon className="h-5 w-5" aria-hidden="true" />
                                     : <ComputerDesktopIcon className="h-5 w-5" aria-hidden="true" />
                             }
                         </button>
