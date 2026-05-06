@@ -128,7 +128,7 @@ export function throttle<T extends (...args: unknown[]) => unknown>(
  */
 export function getEnvConfig() {
     return {
-        API_BASE_URL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080',
+        API_BASE_URL: import.meta.env.VITE_API_BASE_URL || '',
         API_TIMEOUT: parseInt(import.meta.env.VITE_API_TIMEOUT || '30000'),
         APP_NAME: import.meta.env.VITE_APP_NAME || 'Keyorix',
         APP_VERSION: import.meta.env.VITE_APP_VERSION || '1.0.0',
