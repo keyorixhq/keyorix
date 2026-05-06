@@ -20,13 +20,13 @@ const fmtDate = (d: string | Date) =>
 
 function parseUptime(raw: string): string {
     if (!raw) return '—';
+    // Go duration format: "2h34m12.456s", "45m3s", "1m3.139s", "30s", or bare integer seconds
     const h = raw.match(/(\d+)h/)?.[1];
     const m = raw.match(/(\d+)m/)?.[1];
-    const s = raw.match(/(\d+)s/)?.[1];
+    const s = raw.match(/(\d+)(?:\.\d+)?s/)?.[1];
     if (h) return `${h}h ${m ?? '0'}m`;
-    if (m) return `${m}m`;
+    if (m) return `${m}m ${s ?? '0'}s`;
     if (s) return `${s}s`;
-    // raw value with no unit — treat as seconds
     const num = parseInt(raw, 10);
     if (!isNaN(num)) return `${num}s`;
     return raw.split('.')[0] ?? '';
@@ -65,7 +65,7 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue
                     {trend.isPositive ? '↑' : '↓'} {trend.value}%
                     {delta !== null && (
                         <span className="font-normal opacity-70 ml-1">
-                            ({delta > 0 ? '+' : ''}{delta} {label.toLowerCase().replace(/\s*\(.*\)/, '')})
+                            ({delta > 0 ? '+' : ''}{delta})
                         </span>
                     )}
                 </span>
