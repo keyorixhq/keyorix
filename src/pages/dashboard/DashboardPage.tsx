@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ROUTES } from '../../constants';
 import { useAuthStore } from '../../store/authStore';
+import { useUIStore } from '../../store/uiStore';
 import { ActivityItem, AnomalyAlert } from '../../types';
 import {
     useDashboardStats,
@@ -76,22 +77,29 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue
     );
 };
 
-interface FeaturePillProps {
-    label: string;
-    active: boolean;
-}
+// FeaturePillProps removed — inline props used directly
 
-const FeaturePill: React.FC<FeaturePillProps> = ({ label, active }) => (
-    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border
-        ${active
-            ? 'border-emerald-500/30 text-emerald-400'
-            : 'border-base text-base-muted'}`}
-        style={{ backgroundColor: active ? 'rgba(16,185,129,0.08)' : 'var(--bg-subtle)' }}
-    >
-        <div className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-        {label}
-    </div>
-);
+const FeaturePill: React.FC<{ label: string; active: boolean }> = ({ label, active }) => {
+    const { theme } = useUIStore();
+    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    return (
+        <div
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border"
+            style={active ? {
+                backgroundColor: isDark ? 'rgba(16,185,129,0.10)' : '#dcfce7',
+                borderColor: isDark ? 'rgba(16,185,129,0.25)' : '#86efac',
+                color: isDark ? '#34d399' : '#166534',
+            } : {
+                backgroundColor: 'var(--bg-subtle)',
+                borderColor: 'var(--border)',
+                color: 'var(--text-muted)',
+            }}
+        >
+            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: active ? (isDark ? '#34d399' : '#16a34a') : 'var(--text-muted)' }} />
+            {label}
+        </div>
+    );
+};
 
 const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
     created:      { dot: 'bg-emerald-500', label: 'created secret' },
@@ -131,33 +139,40 @@ interface SignalCardProps {
 }
 
 const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, onClick }) => {
-    const colors = {
-        neutral: 'bg-subtle border-base text-base-secondary',
-        warn:    'border-amber-500/40 text-amber-400',
-        alert:   'border-red-500/40 text-red-400',
-    };
-    const valueColors = {
-        neutral: 'text-base-primary',
-        warn:    'text-amber-400',
-        alert:   'text-red-400',
-    };
-    const bgStyle: React.CSSProperties = severity === 'neutral'
-        ? { backgroundColor: 'var(--bg-subtle)' }
-        : severity === 'warn'
-            ? { backgroundColor: 'rgba(245,158,11,0.08)' }
-            : { backgroundColor: 'rgba(239,68,68,0.08)' };
+    const { theme } = useUIStore();
+    const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+    const styles: React.CSSProperties =
+        severity === 'neutral' ? {
+            backgroundColor: 'var(--bg-subtle)',
+            borderColor: 'var(--border)',
+            color: 'var(--text-secondary)',
+        } : severity === 'warn' ? {
+            backgroundColor: isDark ? 'rgba(245,158,11,0.08)' : 'rgba(245,158,11,0.06)',
+            borderColor: isDark ? 'rgba(245,158,11,0.25)' : 'rgba(245,158,11,0.30)',
+            color: isDark ? '#fbbf24' : '#92400e',
+        } : {
+            backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : 'rgba(239,68,68,0.06)',
+            borderColor: isDark ? 'rgba(239,68,68,0.25)' : 'rgba(239,68,68,0.30)',
+            color: isDark ? '#f87171' : '#991b1b',
+        };
+
+    const valueColor = severity === 'neutral'
+        ? 'var(--text-primary)'
+        : styles.color as string;
+
     return (
         <div
             onClick={onClick}
-            className={`flex items-center justify-between px-4 py-3 rounded-lg border ${colors[severity]}
-                ${onClick ? 'cursor-pointer hover:brightness-95 transition-all duration-100' : ''}`}
-            style={bgStyle}
+            className={`flex items-center justify-between px-4 py-3 rounded-lg border transition-all duration-100
+                ${onClick ? 'cursor-pointer hover:brightness-95' : ''}`}
+            style={styles}
         >
             <div>
                 <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
-                <p className="text-xs opacity-70 mt-0.5">{hint}</p>
+                <p className="text-xs opacity-60 mt-0.5">{hint}</p>
             </div>
-            <span className={`text-2xl font-bold tabular-nums ${valueColors[severity]}`}>{value}</span>
+            <span className="text-2xl font-bold tabular-nums" style={{ color: valueColor }}>{value}</span>
         </div>
     );
 };
