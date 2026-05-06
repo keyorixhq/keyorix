@@ -23,7 +23,7 @@ install-server: build-server
 install: install-cli install-server
 
 run:
-	KEYORIX_DB_PASSWORD=testpassword123 go run server/main.go
+	KEYORIX_DB_PASSWORD=keyorix123 KEYORIX_MASTER_PASSWORD=keyorix123 go run server/main.go
 
 dev: install-cli
 	@echo "✓ keyorix CLI installed to /usr/local/bin"
