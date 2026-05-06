@@ -76,19 +76,18 @@ export const SecretsListPage: React.FC = () => {
                     <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Manage your secrets and access controls</p>
                 </div>
                 <div className="flex items-center space-x-3">
-                    {list.bulkActionMode && (
+                    {list.selectedItems.size > 0 && (
                         <div className="flex items-center space-x-2">
-                            <span className="text-sm text-gray-500 dark:text-gray-400">{list.selectedItems.size} selected</span>
+                            <span className="text-sm text-gray-500">{list.selectedItems.size} selected</span>
                             <Button variant="outline" size="sm" disabled title="Share each secret individually — bulk sharing is not supported">
                                 <ShareIcon className="h-4 w-4 mr-1" />Share
                             </Button>
                             <Button variant="outline" size="sm" onClick={() => list.openModal('bulk-delete-secrets', { secretIds: Array.from(list.selectedItems) })} disabled={list.selectedItems.size === 0} className="text-red-600 hover:text-red-700">
                                 <TrashIcon className="h-4 w-4 mr-1" />Delete
                             </Button>
-                            <Button variant="outline" size="sm" onClick={() => { list.setBulkActionMode(false); list.clearSelectedItems(); }}>Cancel</Button>
+                            <Button variant="outline" size="sm" onClick={() => list.clearSelectedItems()}>Clear</Button>
                         </div>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => list.setBulkActionMode(!list.bulkActionMode)}>Select</Button>
                     <Button onClick={() => list.openModal('create-secret')} className="flex items-center">
                         <PlusIcon className="h-4 w-4 mr-2" />New Secret
                     </Button>
@@ -158,13 +157,11 @@ export const SecretsListPage: React.FC = () => {
                         <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                             <thead className="bg-gray-50 dark:bg-gray-900">
                                 <tr>
-                                    {list.bulkActionMode && (
-                                        <th className="px-6 py-3 text-left">
-                                            <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                                checked={list.secrets.length > 0 && list.secrets.every(s => list.selectedItems.has(s.id))}
-                                                onChange={(e) => { if (e.target.checked) list.secrets.forEach(s => list.toggleSelectedItem(s.id)); else list.clearSelectedItems(); }} />
-                                        </th>
-                                    )}
+                                    <th className="px-4 py-3 text-left w-10">
+                                        <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                            checked={list.secrets.length > 0 && list.secrets.every(s => list.selectedItems.has(s.id))}
+                                            onChange={(e) => { if (e.target.checked) list.secrets.forEach(s => list.toggleSelectedItem(s.id)); else list.clearSelectedItems(); }} />
+                                    </th>
                                     {['Name', 'Type', 'Environment', 'Sharing', 'Modified'].map(h => (
                                         <th key={h} className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{h}</th>
                                     ))}
@@ -174,7 +171,6 @@ export const SecretsListPage: React.FC = () => {
                             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                                 {list.secrets.map(secret => (
                                     <SecretTableRow key={secret.id} secret={secret}
-                                        bulkActionMode={list.bulkActionMode}
                                         isSelected={list.selectedItems.has(secret.id)}
                                         onToggleSelect={list.toggleSelectedItem}
                                         onView={setViewingSecret}

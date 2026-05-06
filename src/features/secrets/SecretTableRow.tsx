@@ -10,7 +10,6 @@ const formatDate = (d: string | Date) =>
 
 interface SecretTableRowProps {
     secret: Secret;
-    bulkActionMode: boolean;
     isSelected: boolean;
     onToggleSelect: (id: number) => void;
     onView: (secret: Secret) => void;
@@ -25,21 +24,19 @@ interface SecretTableRowProps {
 }
 
 export const SecretTableRow: React.FC<SecretTableRowProps> = ({
-    secret, bulkActionMode, isSelected, onToggleSelect,
+    secret, isSelected, onToggleSelect,
     onView, onEdit, onDelete, onShare, onRotate, onCopy,
     copyingId, copiedId, copyErrorId,
 }) => (
-    <tr className="hover:bg-gray-50 dark:hover:bg-gray-700">
-        {bulkActionMode && (
-            <td className="px-6 py-4">
-                <input
-                    type="checkbox"
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    checked={isSelected}
-                    onChange={() => onToggleSelect(secret.id)}
-                />
-            </td>
-        )}
+    <tr className={`hover:bg-gray-50 dark:hover:bg-gray-700 ${isSelected ? 'bg-blue-50' : ''}`}>
+        <td className="px-4 py-4 w-10">
+            <input
+                type="checkbox"
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                checked={isSelected}
+                onChange={() => onToggleSelect(secret.id)}
+            />
+        </td>
         <td className="px-6 py-4">
             <div className="text-sm font-medium text-gray-900 dark:text-white">{secret.name}</div>
             {secret.tags.length > 0 && (
