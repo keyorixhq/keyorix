@@ -1,7 +1,7 @@
 import React from 'react';
 import {
     MagnifyingGlassIcon, PlusIcon, FunnelIcon,
-    ChevronLeftIcon, ChevronRightIcon, TagIcon, XMarkIcon, ShareIcon, TrashIcon,
+    ChevronLeftIcon, ChevronRightIcon, ShareIcon, TrashIcon,
 } from '@heroicons/react/24/outline';
 import { SecretType } from '../../types';
 import { Button } from '../../components/ui/Button';
@@ -103,14 +103,14 @@ export const SecretsListPage: React.FC = () => {
                             <Input type="text" placeholder="Search by name, type, or tags..." value={list.searchInput}
                                 onChange={(e) => list.setSearchInput(e.target.value)} icon={MagnifyingGlassIcon} />
                         </div>
-                        <Select value={list.filters.type} onChange={(e) => list.handleFilterChange('type', e.target.value)} options={SECRET_TYPES} placeholder="All Types" />
+                        <Select value={list.filters.type} onChange={(e) => list.handleFilterChange('type', e.target.value)} options={SECRET_TYPES} />
                         <Select
                             value={list.filters.environment || 'all'}
                             onChange={(e) => list.handleFilterChange('environment', e.target.value === 'all' ? '' : e.target.value)}
                             options={[{ value: 'all', label: 'All Environments' }, ...list.environments.map(e => ({ value: e.name, label: e.name.charAt(0).toUpperCase() + e.name.slice(1) }))]}
                         />
                         <Select value={list.sortBy} onChange={(e) => list.setSortBy(e.target.value)} options={SORT_OPTIONS} placeholder="Sort by" />
-                        <Select value={String(list.pagination.pageSize)} onChange={(e) => list.handlePageSizeChange(Number(e.target.value))} options={PAGE_SIZE_OPTIONS} placeholder="Page size" />
+                        <Select value={String(list.pagination.pageSize)} onChange={(e) => list.handlePageSizeChange(Number(e.target.value))} options={PAGE_SIZE_OPTIONS} />
                         <Button variant="outline" onClick={() => list.setShowAdvancedFilters(!list.showAdvancedFilters)} className="w-full">
                             <FunnelIcon className="h-4 w-4 mr-2" />{list.showAdvancedFilters ? 'Hide' : 'More'} Filters
                         </Button>
@@ -121,25 +121,7 @@ export const SecretsListPage: React.FC = () => {
                             <Input type="text" placeholder="Zone" value={list.filters.zone} onChange={(e) => list.handleFilterChange('zone', e.target.value)} />
                         </div>
                     )}
-                    <div className="space-y-2">
-                        <div className="flex items-center space-x-2">
-                            <TagIcon className="h-4 w-4 text-gray-500" />
-                            <Input type="text" placeholder="Add tag filter (press Enter)" value={list.tagInput}
-                                onChange={(e) => list.setTagInput(e.target.value)} onKeyPress={list.handleTagInputKeyPress} className="flex-1" />
-                        </div>
-                        {list.filters.tags.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                                {list.filters.tags.map(tag => (
-                                    <span key={tag} className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-                                        {tag}
-                                        <button onClick={() => list.handleRemoveTag(tag)} className="ml-1 hover:text-blue-600">
-                                            <XMarkIcon className="h-3 w-3" />
-                                        </button>
-                                    </span>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                    {/* Tag filter hidden — tags not yet implemented on secrets */}
                     {list.hasActiveFilters && (
                         <div className="flex items-center justify-end pt-4 border-t border-gray-200 dark:border-gray-700">
                             <Button variant="ghost" size="sm" onClick={list.handleClearFilters} className="text-xs">Clear all</Button>
