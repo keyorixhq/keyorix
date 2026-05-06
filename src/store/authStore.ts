@@ -42,6 +42,7 @@ export const useAuthStore = create<AuthStore>()(
                     const user: User = {
                         id: response.user_id,
                         username: response.username,
+                        displayName: response.display_name || response.username,
                         email: response.email,
                         role: 'user',
                         permissions: [],

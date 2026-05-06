@@ -2,6 +2,7 @@
 export interface User {
     id: number;
     username: string;
+    displayName?: string;
     email: string;
     role: string;
     permissions: string[];
@@ -211,6 +212,7 @@ export interface LoginResponse {
     user_id: number;
     username: string;
     email: string;
+    display_name?: string;
 }
 
 export interface RefreshTokenResponse {

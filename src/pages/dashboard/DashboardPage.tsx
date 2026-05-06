@@ -129,7 +129,7 @@ export const DashboardPage: React.FC = () => {
                     <div>
                         <p className="text-sm text-gray-400 mb-1">{greeting}</p>
                         <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-                            {user?.username ?? 'admin'}
+                            {(user?.displayName || user?.username || 'admin').split(' ')[0]}
                         </h1>
                     </div>
                 </div>
