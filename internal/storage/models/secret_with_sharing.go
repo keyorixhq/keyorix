@@ -31,6 +31,7 @@ type SecretWithSharingInfo struct {
 // SecretListFilter extends the basic SecretFilter with sharing-specific options
 type SecretListFilter struct {
 	// Basic filters
+	Search        *string
 	NamespaceID   *uint
 	ZoneID        *uint
 	EnvironmentID *uint

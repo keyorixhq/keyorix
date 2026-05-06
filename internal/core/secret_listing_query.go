@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -164,6 +165,12 @@ func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo
 		}
 		if filter.Type != nil && secret.Type != *filter.Type {
 			continue
+		}
+		if filter.Search != nil && *filter.Search != "" {
+			term := strings.ToLower(*filter.Search)
+			if !strings.Contains(strings.ToLower(secret.Name), term) {
+				continue
+			}
 		}
 		if filter.NamespaceID != nil && secret.NamespaceID != *filter.NamespaceID {
 			continue

@@ -35,12 +35,21 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 			pageSize = ps
 		}
 	}
+	if pageSizeStr := r.URL.Query().Get("pageSize"); pageSizeStr != "" {
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps > 0 && ps <= 100 {
+			pageSize = ps
+		}
+	}
 
 	filter := &models.SecretListFilter{
 		Page:      page,
 		PageSize:  pageSize,
 		SortBy:    r.URL.Query().Get("sort_by"),
 		SortOrder: r.URL.Query().Get("sort_order"),
+	}
+
+	if search := strings.TrimSpace(r.URL.Query().Get("search")); search != "" {
+		filter.Search = &search
 	}
 
 	if r.URL.Query().Get("show_owned_only") == "true" {
