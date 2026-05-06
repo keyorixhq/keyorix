@@ -16,6 +16,30 @@ export const useSecretReveal = () => {
             const latest = versions[0]!;
             const decoded = atob(latest.EncryptedValue as unknown as string);
             await navigator.clipboard.writeText(decoded);
+
+            // Clear clipboard after 30s
+            const CLEAR_MS = 30000;
+            const clearClipboard = async () => {
+                try {
+                    const text = await navigator.clipboard.readText();
+                    if (text === decoded) await navigator.clipboard.writeText('');
+                } catch {
+                    try { await navigator.clipboard.writeText(''); } catch {}
+                }
+            };
+            setTimeout(async () => {
+                if (document.hasFocus()) {
+                    await clearClipboard();
+                } else {
+                    const onVisible = async () => {
+                        if (document.visibilityState === 'visible') {
+                            document.removeEventListener('visibilitychange', onVisible);
+                            await clearClipboard();
+                        }
+                    };
+                    document.addEventListener('visibilitychange', onVisible);
+                }
+            }, CLEAR_MS);
             setCopiedSecretId(secret.id);
             setTimeout(() => setCopiedSecretId(null), 2000);
         } catch {

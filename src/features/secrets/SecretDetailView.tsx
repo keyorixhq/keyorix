@@ -48,25 +48,45 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
         : null;
     const secretValue = latestVersion ? atob(latestVersion.EncryptedValue) : null;
 
-    // Copy to clipboard with auto-clear
-    const handleCopyValue = async (value: string) => {
+    // Copy to clipboard with auto-clear after CLIPBOARD_TIMEOUT
+    const handleCopyValue = async (value: string): Promise<void> => {
         try {
             await navigator.clipboard.writeText(value);
             setCopySuccess(true);
 
-            // Clear clipboard after timeout
-            setTimeout(async () => {
+            // Clear clipboard after timeout — requires document focus.
+            // Register a visibilitychange listener as fallback for when
+            // the user returns to the tab after the timeout has elapsed.
+            const clearClipboard = async () => {
                 try {
-                    await navigator.clipboard.writeText('');
-                } catch (error) {
-                    console.warn('Failed to clear clipboard:', error);
+                    // Only clear if we still own the clipboard content
+                    const text = await navigator.clipboard.readText();
+                    if (text === value) {
+                        await navigator.clipboard.writeText('');
+                    }
+                } catch {
+                    // readText may be denied — fall back to blind clear
+                    try { await navigator.clipboard.writeText(''); } catch {}
+                }
+            };
+
+            setTimeout(async () => {
+                if (document.hasFocus()) {
+                    await clearClipboard();
+                } else {
+                    // Tab not focused — clear when user returns
+                    const onVisible = async () => {
+                        if (document.visibilityState === 'visible') {
+                            document.removeEventListener('visibilitychange', onVisible);
+                            await clearClipboard();
+                        }
+                    };
+                    document.addEventListener('visibilitychange', onVisible);
                 }
             }, CLIPBOARD_TIMEOUT);
 
-            // Reset success state
-            setTimeout(() => {
-                setCopySuccess(false);
-            }, 2000);
+            // Reset success indicator after 2s
+            setTimeout(() => setCopySuccess(false), 2000);
         } catch (error) {
             console.error('Failed to copy to clipboard:', error);
         }
