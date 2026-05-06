@@ -75,7 +75,6 @@ export const LoginPage: React.FC = () => {
                             onSubmit={handleLogin}
                             isLoading={isLoading}
                             error={error}
-                            onForgotPassword={() => setMode('reset')}
                         />
                     )}
                     {(mode === 'reset' || mode === 'reset-success') && (
@@ -89,9 +88,7 @@ export const LoginPage: React.FC = () => {
                     )}
                 </div>
 
-                <div className="text-center text-sm text-gray-500">
-                    <p>Secure Login • Protected by SSL</p>
-                </div>
+
             </div>
         </div>
     );

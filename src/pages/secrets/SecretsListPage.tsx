@@ -280,7 +280,7 @@ export const SecretsListPage: React.FC = () => {
             </Modal>
 
             <Modal isOpen={list.activeModal === 'create-secret'} onClose={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} title="Create New Secret" size="md">
-                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); list.createMutation.mutate({ name: createName, value: createValue, type: createType, namespace_id: 1, zone_id: 1, environment_id: 1 } as any); }} className="space-y-4">
+                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); list.createMutation.mutate({ name: createName, value: createValue, type: createType, namespace_id: 1, zone_id: 1, environment_id: 1 } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); } }); }} className="space-y-4">
                     {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name <span className="text-red-500">*</span></label>

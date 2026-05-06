@@ -6,7 +6,6 @@ import {
     BellIcon,
     MagnifyingGlassIcon,
     UserCircleIcon,
-    Cog6ToothIcon,
     ArrowRightOnRectangleIcon
 } from '@heroicons/react/24/outline';
 import { Dropdown, DropdownItem } from '../ui/Dropdown';
@@ -32,18 +31,6 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
     };
 
     const userMenuItems: DropdownItem[] = [
-        {
-            label: 'Profile',
-            value: 'profile',
-            icon: UserCircleIcon,
-            onClick: () => navigate('/profile'),
-        },
-        {
-            label: 'Settings',
-            value: 'settings',
-            icon: Cog6ToothIcon,
-            onClick: () => navigate('/settings'),
-        },
         {
             label: 'Sign out',
             value: 'logout',
@@ -124,8 +111,6 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                         >
                             <span className="sr-only">View notifications</span>
                             <BellIcon className="h-6 w-6" aria-hidden="true" />
-                            {/* Notification badge */}
-                            <span className="absolute top-1 right-1 block h-2 w-2 rounded-full bg-red-400 ring-2 ring-white" />
                         </button>
 
                         {/* User menu */}

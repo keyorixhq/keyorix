@@ -12,7 +12,7 @@ export type AlertType = 'success' | 'error' | 'warning' | 'info';
 
 export interface AlertProps {
     type: AlertType;
-    title: string;
+    title?: string;
     message?: string;
     children?: React.ReactNode;
     dismissible?: boolean;
@@ -83,9 +83,11 @@ const Alert: React.FC<AlertProps> = ({
                     <Icon className={clsx('h-5 w-5', config.iconColor)} aria-hidden="true" />
                 </div>
                 <div className="ml-3 flex-1">
-                    <h3 className={clsx('text-sm font-medium', config.titleColor)}>
-                        {title}
-                    </h3>
+                    {title && (
+                        <h3 className={clsx('text-sm font-medium', config.titleColor)}>
+                            {title}
+                        </h3>
+                    )}
                     {message && (
                         <div className={clsx('mt-2 text-sm', config.messageColor)}>
                             <p>{message}</p>

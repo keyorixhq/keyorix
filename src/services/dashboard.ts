@@ -12,10 +12,17 @@ export const dashboardApi = {
         pageSize?: number;
         type?: string;
     }): Promise<PaginatedResponse<ActivityItem>> {
-        const response = await apiClient.get<ApiResponse<PaginatedResponse<ActivityItem>>>(
+        const response = await apiClient.get<ApiResponse<any>>(
             '/api/v1/dashboard/activity',
             { params }
         );
-        return response.data.data;
+        const feed = response.data.data;
+        return {
+            data: feed.items ?? [],
+            total: feed.total ?? 0,
+            page: feed.page ?? 1,
+            pageSize: feed.pageSize ?? 10,
+            totalPages: Math.max(1, Math.ceil((feed.total ?? 0) / (feed.pageSize ?? 10))),
+        };
     },
 };

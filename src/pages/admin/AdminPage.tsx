@@ -94,6 +94,7 @@ export const AdminPage: React.FC = () => {
         setFormError('');
         if (!createUsername.trim()) { setFormError('Username is required'); return; }
         if (!createEmail.trim()) { setFormError('Email is required'); return; }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(createEmail.trim())) { setFormError('Please enter a valid email address'); return; }
         if (!createDisplayName.trim()) { setFormError('Display name is required'); return; }
         if (createPassword.length < 8) { setFormError('Password must be at least 8 characters'); return; }
         createMutation.mutate(
@@ -241,7 +242,7 @@ export const AdminPage: React.FC = () => {
 
             <Modal isOpen={activeModal?.type === 'create'} onClose={closeModal} title="Create User" size="md">
                 <div className="space-y-4">
-                    {formError && <Alert type="error" title={formError} />}
+                    {formError && <Alert type="error" message={formError} />}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
                         <input type="text" value={createUsername} onChange={(e) => setCreateUsername(e.target.value)} placeholder="e.g. jsmith" className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -269,7 +270,7 @@ export const AdminPage: React.FC = () => {
 
             <Modal isOpen={activeModal?.type === 'edit'} onClose={closeModal} title="Edit User" size="md">
                 <div className="space-y-4">
-                    {formError && <Alert type="error" title={formError} />}
+                    {formError && <Alert type="error" message={formError} />}
                     {activeModal?.type === 'edit' && (
                         <p className="text-sm text-gray-500">Editing <span className="font-medium text-gray-700">@{activeModal.user.username}</span></p>
                     )}

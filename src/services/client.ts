@@ -4,33 +4,15 @@ import { getEnvConfig } from '../utils';
 
 const config = getEnvConfig();
 
-const logRequest = (reqConfig: AxiosRequestConfig) => {
-    if (getEnvConfig().ENABLE_DEBUG) {
-        // eslint-disable-next-line no-console
-        console.log(`[API Request] ${reqConfig.method?.toUpperCase()} ${reqConfig.url}`, {
-            headers: reqConfig.headers,
-            data: reqConfig.data,
-        });
-    }
-};
-
-const logResponse = (response: AxiosResponse) => {
-    if (getEnvConfig().ENABLE_DEBUG) {
-        // eslint-disable-next-line no-console
-        console.log(`[API Response] ${response.status} ${response.config.url}`, {
-            data: response.data,
-            headers: response.headers,
-        });
-    }
-};
-
 const logError = (error: AxiosError) => {
-    console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data,
-        message: error.message,
-    });
+    if (getEnvConfig().ENABLE_DEBUG) {
+        // eslint-disable-next-line no-console
+        console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
+            status: error.response?.status,
+            data: error.response?.data,
+            message: error.message,
+        });
+    }
 };
 
 export const apiClient: AxiosInstance = axios.create({
@@ -44,7 +26,6 @@ export const apiClient: AxiosInstance = axios.create({
 
 apiClient.interceptors.request.use(
     async (interceptorConfig) => {
-        logRequest(interceptorConfig);
 
         const authStore = useAuthStore.getState();
 
@@ -78,7 +59,6 @@ apiClient.interceptors.request.use(
 
 apiClient.interceptors.response.use(
     (response: AxiosResponse) => {
-        logResponse(response);
         return response;
     },
     async (error: AxiosError) => {
