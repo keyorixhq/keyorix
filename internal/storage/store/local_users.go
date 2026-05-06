@@ -97,7 +97,7 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 
 	if filter.Search != nil {
 		pattern := "%" + *filter.Search + "%"
-		query = query.Where("username LIKE ? OR email LIKE ?", pattern, pattern)
+		query = query.Where("username ILIKE ? OR email ILIKE ?", pattern, pattern)
 	}
 	if filter.Username != nil {
 		query = query.Where("username LIKE ?", "%"+*filter.Username+"%")
