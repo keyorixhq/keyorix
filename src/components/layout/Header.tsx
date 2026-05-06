@@ -8,6 +8,7 @@ import {
     ArrowRightOnRectangleIcon,
     SunIcon,
     MoonIcon,
+    ComputerDesktopIcon,
 } from '@heroicons/react/24/outline';
 import { Dropdown, DropdownItem } from '../ui/Dropdown';
 
@@ -22,7 +23,7 @@ export interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
-    const { theme, toggleTheme } = useUIStore();
+    const { theme, setTheme } = useUIStore();
 
     const handleLogout = async () => {
         try {
@@ -86,20 +87,20 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                             <BellIcon className="h-6 w-6" />
                         </div>
 
-                        {/* Theme toggle */}
+                        {/* Theme toggle — cycles dark → light → system */}
                         <button
                             type="button"
-                            onClick={toggleTheme}
+                            onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark')}
                             className="p-2 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
                             style={{ color: 'var(--text-muted)' }}
-                            title={theme === 'dark' ? 'Switch to light mode' : theme === 'light' ? 'Switch to dark mode' : 'Switch theme (system)'}
-                            aria-label={theme === 'dark' ? 'Switch to light mode' : theme === 'light' ? 'Switch to dark mode' : 'Switch theme'}
+                            title={theme === 'dark' ? 'Switch to light mode' : theme === 'light' ? 'Switch to system mode' : 'Switch to dark mode'}
+                            aria-label={theme === 'dark' ? 'Switch to light mode' : theme === 'light' ? 'Switch to system mode' : 'Switch to dark mode'}
                         >
                             {theme === 'dark'
                                 ? <SunIcon className="h-5 w-5" aria-hidden="true" />
                                 : theme === 'light'
                                     ? <MoonIcon className="h-5 w-5" aria-hidden="true" />
-                                    : <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Auto</span>
+                                    : <ComputerDesktopIcon className="h-5 w-5" aria-hidden="true" />
                             }
                         </button>
 
