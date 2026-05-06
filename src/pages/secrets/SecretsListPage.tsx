@@ -29,6 +29,15 @@ const PAGE_SIZE_OPTIONS = [
     { value: '50', label: '50 per page' }, { value: '100', label: '100 per page' },
 ];
 
+
+// Generates a cryptographically random secret value (32 chars, URL-safe)
+function generateSecret(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const arr = new Uint8Array(32);
+    window.crypto.getRandomValues(arr);
+    return Array.from(arr).map(b => chars[b % chars.length]).join('');
+}
+
 export const SecretsListPage: React.FC = () => {
     const list = useSecretsList();
     const reveal = useSecretReveal();
@@ -49,7 +58,7 @@ export const SecretsListPage: React.FC = () => {
             setEditValue('');
         }
         if (list.activeModal === 'rotate-secret') {
-            setRotateValue('');
+            setRotateValue(generateSecret());
         }
     }, [list.activeModal, list.modalData]);
 
@@ -286,12 +295,21 @@ export const SecretsListPage: React.FC = () => {
             <Modal isOpen={list.activeModal === 'rotate-secret'} onClose={list.closeModal} title={`Rotate Secret: ${list.modalData?.secret?.name ?? ''}`} size="sm">
                 <form onSubmit={(e) => { e.preventDefault(); if (!list.modalData?.secret) return; list.rotateMutation.mutate({ id: list.modalData.secret.id, newValue: rotateValue }); }} className="space-y-4">
                     {list.rotateMutation.isError && <Alert type="error" title="Failed to rotate secret" message={list.rotateMutation.error instanceof Error ? list.rotateMutation.error.message : 'An unexpected error occurred'} />}
-                    <p className="text-sm text-base-muted ">Enter a new value to replace the current secret value. A new version will be created.</p>
+                    <p className="text-sm text-base-muted">A new random value has been generated. Edit it or regenerate, then click Rotate to create a new version.</p>
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">New Value <span className="text-red-500">*</span></label>
-                        <input type="password" required value={rotateValue} onChange={(e) => setRotateValue(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="block text-sm font-medium text-base-secondary">New Value</label>
+                            <button type="button" onClick={() => setRotateValue(generateSecret())}
+                                className="text-xs font-medium transition-colors"
+                                style={{ color: 'var(--accent-text)' }}>
+                                ↻ Regenerate
+                            </button>
+                        </div>
+                        <input type="text" value={rotateValue} onChange={(e) => setRotateValue(e.target.value)}
+                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }} />
                     </div>
-                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">
                         <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.rotateMutation.isLoading}>Cancel</Button>
                         <Button type="submit" disabled={list.rotateMutation.isLoading || !rotateValue.trim()}>{list.rotateMutation.isLoading ? 'Rotating…' : 'Rotate'}</Button>
                     </div>
