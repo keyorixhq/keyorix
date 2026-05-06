@@ -26,18 +26,20 @@ type StatTrend struct {
 
 // DashboardStats contains summary statistics for the dashboard.
 type DashboardStats struct {
-	TotalSecrets        int64            `json:"totalSecrets"`
-	SharedSecrets       int              `json:"sharedSecrets"`
-	SecretsSharedWithMe int              `json:"secretsSharedWithMe"`
-	ActiveUsers         int64            `json:"activeUsers"`
-	AuditEvents30d      int64            `json:"auditEvents30d"`
-	AuditLogins30d      int64            `json:"auditLogins30d"`
-	AuditSecretReads30d int64            `json:"auditSecretReads30d"`
-	TotalSecretsTrend   *StatTrend       `json:"totalSecretsTrend,omitempty"`
-	SharedSecretsTrend  *StatTrend       `json:"sharedSecretsTrend,omitempty"`
-	SharedWithMeTrend   *StatTrend       `json:"sharedWithMeTrend,omitempty"`
-	ExpiringSecrets     []ExpiringSecret `json:"expiringSecrets,omitempty"`
-	RecentActivity      []ActivityItem   `json:"recentActivity"`
+	TotalSecrets          int64            `json:"totalSecrets"`
+	SharedSecrets         int              `json:"sharedSecrets"`
+	SecretsSharedWithMe   int              `json:"secretsSharedWithMe"`
+	ActiveUsers           int64            `json:"activeUsers"`
+	AuditEvents30d        int64            `json:"auditEvents30d"`
+	AuditLogins30d        int64            `json:"auditLogins30d"`
+	AuditSecretReads30d   int64            `json:"auditSecretReads30d"`
+	FailedAuthAttempts24h int64            `json:"failedAuthAttempts24h"`
+	InactiveUsers         int64            `json:"inactiveUsers"`
+	TotalSecretsTrend     *StatTrend       `json:"totalSecretsTrend,omitempty"`
+	SharedSecretsTrend    *StatTrend       `json:"sharedSecretsTrend,omitempty"`
+	SharedWithMeTrend     *StatTrend       `json:"sharedWithMeTrend,omitempty"`
+	ExpiringSecrets       []ExpiringSecret `json:"expiringSecrets,omitempty"`
+	RecentActivity        []ActivityItem   `json:"recentActivity"`
 }
 
 // ActivityItem represents a single entry in the activity feed.
@@ -122,16 +124,51 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		PageSize:  1,
 	})
 
+	// Failed auth attempts in the last 24 hours (success=false, any action).
+	twentyFourHoursAgo := time.Now().UTC().Add(-24 * time.Hour)
+	successFalse := false
+	_, failedAuth24h, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		StartTime: &twentyFourHoursAgo,
+		Success:   &successFalse,
+		Page:      1,
+		PageSize:  1,
+	})
+
+	// Inactive users: registered users who have had no auth.login event in 30 days.
+	var inactiveUsers int64
+	if storageStats, err := c.storage.GetStats(ctx); err == nil {
+		// Count users who logged in during the last 30 days.
+		authLoginAction := "auth.login"
+		_, recentLoginCount, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+			StartTime: &thirtyDaysAgo,
+			Action:    &authLoginAction,
+			Page:      1,
+			PageSize:  1,
+		})
+		// Users with no login in 30d = total users minus those with recent logins.
+		// recentLoginCount is event count not unique user count; clamp to totalUsers.
+		active := recentLoginCount
+		if active > storageStats.TotalUsers {
+			active = storageStats.TotalUsers
+		}
+		inactiveUsers = storageStats.TotalUsers - active
+		if inactiveUsers < 0 {
+			inactiveUsers = 0
+		}
+	}
+
 	stats := &DashboardStats{
-		TotalSecrets:        total,
-		SharedSecrets:       sharedSecrets,
-		SecretsSharedWithMe: sharedWithMe,
-		ActiveUsers:         activeUsers,
-		AuditEvents30d:      auditCount,
-		AuditLogins30d:      auditLogins,
-		AuditSecretReads30d: auditSecretReads,
-		RecentActivity:      recent,
-		ExpiringSecrets:     expiringSecrets,
+		TotalSecrets:          total,
+		SharedSecrets:         sharedSecrets,
+		SecretsSharedWithMe:   sharedWithMe,
+		ActiveUsers:           activeUsers,
+		AuditEvents30d:        auditCount,
+		AuditLogins30d:        auditLogins,
+		AuditSecretReads30d:   auditSecretReads,
+		FailedAuthAttempts24h: failedAuth24h,
+		InactiveUsers:         inactiveUsers,
+		RecentActivity:        recent,
+		ExpiringSecrets:       expiringSecrets,
 	}
 
 	prev, err := c.storage.GetPreviousStatsSnapshot(ctx, userID)
