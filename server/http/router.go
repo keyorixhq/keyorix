@@ -58,6 +58,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	catalogHandler := handlers.NewCatalogHandler(coreService)
 	dashboardHandler := handlers.NewDashboardHandler(coreService)
+	auditHandler := handlers.NewAuditHandler(coreService)
 
 	// Auth endpoints (no authentication middleware)
 	r.Post("/auth/login", authHandler.Login)
@@ -203,8 +204,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Audit logs endpoints
 		r.Route("/audit", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("audit.read"))
-			r.Get("/logs", handlers.GetAuditLogs)
-			r.Get("/rbac-logs", handlers.GetRBACAuditLogs)
+			r.Get("/logs", auditHandler.GetAuditLogs)
+			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
 			r.Get("/anomalies", handlers.ListAnomalyAlerts)
 			r.Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})

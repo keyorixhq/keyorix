@@ -72,3 +72,23 @@ func (c *KeyorixCore) HealthCheck(ctx context.Context) error {
 	}
 	return c.storage.HealthCheck(ctx)
 }
+
+// ResolveUsernames maps UserID → username for a slice of audit events.
+// Nil UserIDs (system events) map to key 0 → "system".
+func (c *KeyorixCore) ResolveUsernames(ctx context.Context, events []*models.AuditEvent) map[uint]string {
+	seen := map[uint]bool{}
+	for _, e := range events {
+		if e.UserID != nil {
+			seen[*e.UserID] = true
+		}
+	}
+	byID := map[uint]string{0: "system"}
+	for uid := range seen {
+		if user, err := c.storage.GetUser(ctx, uid); err == nil && user != nil {
+			byID[uid] = user.Username
+		} else {
+			byID[uid] = "unknown"
+		}
+	}
+	return byID
+}
