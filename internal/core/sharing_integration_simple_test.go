@@ -71,8 +71,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		// Step 1: Create a secret
 		secret := &models.SecretNode{
 			Name:          "integration-test-secret",
-			NamespaceID:   1,
-			ZoneID:        1,
+			ProjectID:     1,
 			EnvironmentID: 1,
 			Type:          "password",
 			OwnerID:       1,
@@ -143,8 +142,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		// Create a secret for group sharing
 		secret := &models.SecretNode{
 			Name:          "group-test-secret",
-			NamespaceID:   1,
-			ZoneID:        1,
+			ProjectID:     1,
 			EnvironmentID: 1,
 			Type:          "password",
 			OwnerID:       1,
@@ -194,8 +192,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		// Create a secret
 		secret := &models.SecretNode{
 			Name:          "permission-test-secret",
-			NamespaceID:   1,
-			ZoneID:        1,
+			ProjectID:     1,
 			EnvironmentID: 1,
 			Type:          "password",
 			OwnerID:       1,
@@ -263,8 +260,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		// Test invalid permission
 		secret := &models.SecretNode{
 			Name:          "error-test-secret",
-			NamespaceID:   1,
-			ZoneID:        1,
+			ProjectID:     1,
 			EnvironmentID: 1,
 			Type:          "password",
 			OwnerID:       1,
@@ -305,8 +301,7 @@ func TestSharingIntegrationSimple(t *testing.T) {
 		// Create a secret for concurrent testing
 		secret := &models.SecretNode{
 			Name:          "concurrent-test-secret",
-			NamespaceID:   1,
-			ZoneID:        1,
+			ProjectID:     1,
 			EnvironmentID: 1,
 			Type:          "password",
 			OwnerID:       1,

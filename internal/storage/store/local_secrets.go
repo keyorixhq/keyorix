@@ -4,7 +4,7 @@
 //
 //	ListSecrets, CreateSecretVersion, GetSecretVersion (via GORM),
 //	GetSecretVersions, GetLatestSecretVersion, IncrementSecretReadCount,
-//	Namespace/Zone/Environment CRUD.
+//	Project/Environment CRUD.
 //
 // All operations use direct GORM queries; no network calls.
 // For the remote (HTTP) equivalent see remote_secrets.go.
@@ -20,28 +20,19 @@ import (
 	"gorm.io/gorm"
 )
 
-// --- Namespace / Zone / Environment ---
+// --- Project / Environment ---
 
-func (ls *LocalStorage) CreateNamespace(ctx context.Context, namespace *models.Namespace) (*models.Namespace, error) {
-	return namespace, ls.db.WithContext(ctx).Create(namespace).Error
-}
-
-func (ls *LocalStorage) CreateZone(ctx context.Context, zone *models.Zone) (*models.Zone, error) {
-	return zone, ls.db.WithContext(ctx).Create(zone).Error
+func (ls *LocalStorage) CreateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
+	return project, ls.db.WithContext(ctx).Create(project).Error
 }
 
 func (ls *LocalStorage) CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error) {
 	return env, ls.db.WithContext(ctx).Create(env).Error
 }
 
-func (ls *LocalStorage) ListNamespaces(ctx context.Context) ([]*models.Namespace, error) {
-	var namespaces []*models.Namespace
-	return namespaces, ls.db.WithContext(ctx).Find(&namespaces).Error
-}
-
-func (ls *LocalStorage) ListZones(ctx context.Context) ([]*models.Zone, error) {
-	var zones []*models.Zone
-	return zones, ls.db.WithContext(ctx).Find(&zones).Error
+func (ls *LocalStorage) ListProjects(ctx context.Context) ([]*models.Project, error) {
+	var projects []*models.Project
+	return projects, ls.db.WithContext(ctx).Find(&projects).Error
 }
 
 func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
@@ -72,11 +63,11 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 }
 
 // GetSecretByName retrieves a secret by name and scope.
-func (ls *LocalStorage) GetSecretByName(ctx context.Context, name string, namespaceID, zoneID, environmentID uint) (*models.SecretNode, error) {
+func (ls *LocalStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
 	var secret models.SecretNode
 	err := ls.db.WithContext(ctx).Where(
-		"name = ? AND namespace_id = ? AND zone_id = ? AND environment_id = ?",
-		name, namespaceID, zoneID, environmentID,
+		"name = ? AND project_id = ? AND environment_id = ?",
+		name, projectID, environmentID,
 	).First(&secret).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -111,11 +102,8 @@ func (ls *LocalStorage) DeleteSecret(ctx context.Context, id uint) error {
 func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	query := ls.db.WithContext(ctx).Model(&models.SecretNode{})
 
-	if filter.NamespaceID != nil {
-		query = query.Where("namespace_id = ?", *filter.NamespaceID)
-	}
-	if filter.ZoneID != nil {
-		query = query.Where("zone_id = ?", *filter.ZoneID)
+	if filter.ProjectID != nil {
+		query = query.Where("project_id = ?", *filter.ProjectID)
 	}
 	if filter.EnvironmentID != nil {
 		query = query.Where("environment_id = ?", *filter.EnvironmentID)

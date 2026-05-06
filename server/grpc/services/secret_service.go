@@ -115,8 +115,7 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *CreateSecretR
 	serviceReq := &core.CreateSecretRequest{
 		Name:          req.Name,
 		Value:         []byte(req.Value),
-		NamespaceID:   1, // TODO: Convert namespace string to ID
-		ZoneID:        1, // TODO: Convert zone string to ID
+		ProjectID:     1, // TODO: Convert project string to ID
 		EnvironmentID: 1, // TODO: Convert environment string to ID
 		Type:          req.Type,
 		MaxReads:      maxReads,
@@ -220,13 +219,11 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *ListSecretsReq
 	}
 
 	// Convert to service request
-	namespaceID := uint(1)   // TODO: Convert namespace string to ID
-	zoneID := uint(1)        // TODO: Convert zone string to ID
+	projectID := uint(1)     // TODO: Convert project string to ID
 	environmentID := uint(1) // TODO: Convert environment string to ID
 
 	filter := &storage.SecretFilter{
-		NamespaceID:   &namespaceID,
-		ZoneID:        &zoneID,
+		ProjectID:     &projectID,
 		EnvironmentID: &environmentID,
 		Page:          int(req.Page),
 		PageSize:      int(req.PageSize),
@@ -290,9 +287,6 @@ func (s *SecretGRPCService) validateCreateSecretRequest(req *CreateSecretRequest
 	if req.Namespace == "" {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelNamespace", nil))
 	}
-	if req.Zone == "" {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelZone", nil))
-	}
 	if req.Environment == "" {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEnvironment", nil))
 	}
@@ -327,8 +321,7 @@ func (s *SecretGRPCService) convertToGRPCSecretResponse(secret *models.SecretNod
 			return id
 		}(),
 		Name:        secret.Name,
-		Namespace:   fmt.Sprintf("%d", secret.NamespaceID),   // TODO: Convert ID to name
-		Zone:        fmt.Sprintf("%d", secret.ZoneID),        // TODO: Convert ID to name
+		Namespace:   fmt.Sprintf("%d", secret.ProjectID),     // TODO: Convert ID to name
 		Environment: fmt.Sprintf("%d", secret.EnvironmentID), // TODO: Convert ID to name
 		Type:        secret.Type,
 		MaxReads:    maxReads,

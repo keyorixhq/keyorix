@@ -76,26 +76,19 @@ func (h *SecretHandler) sendError(w http.ResponseWriter, errorType, message stri
 	}
 }
 
-// resolveSecretNames populates NamespaceName, ZoneName, and EnvironmentName on
-// each secret in the list. Performs one lookup per catalog type (3 queries total
-// regardless of list size) and builds ID→name maps.
+// resolveSecretNames populates ProjectName and EnvironmentName on
+// each secret in the list. Performs one lookup per catalog type and builds ID→name maps.
 func (h *SecretHandler) resolveSecretNames(ctx context.Context, secrets []*models.SecretWithSharingInfo) {
 	if len(secrets) == 0 {
 		return
 	}
 
-	namespaceNames := make(map[uint]string)
-	zoneNames := make(map[uint]string)
+	projectNames := make(map[uint]string)
 	environmentNames := make(map[uint]string)
 
-	if namespaces, err := h.coreService.ListNamespaces(ctx); err == nil {
-		for _, ns := range namespaces {
-			namespaceNames[ns.ID] = ns.Name
-		}
-	}
-	if zones, err := h.coreService.ListZones(ctx); err == nil {
-		for _, z := range zones {
-			zoneNames[z.ID] = z.Name
+	if projects, err := h.coreService.ListProjects(ctx); err == nil {
+		for _, p := range projects {
+			projectNames[p.ID] = p.Name
 		}
 	}
 	if environments, err := h.coreService.ListEnvironments(ctx); err == nil {
@@ -108,8 +101,7 @@ func (h *SecretHandler) resolveSecretNames(ctx context.Context, secrets []*model
 		if s.SecretNode == nil {
 			continue
 		}
-		s.NamespaceName = namespaceNames[s.NamespaceID]
-		s.ZoneName = zoneNames[s.ZoneID]
+		s.ProjectName = projectNames[s.ProjectID]
 		s.EnvironmentName = environmentNames[s.EnvironmentID]
 	}
 }

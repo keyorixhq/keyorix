@@ -172,10 +172,7 @@ func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo
 				continue
 			}
 		}
-		if filter.NamespaceID != nil && secret.NamespaceID != *filter.NamespaceID {
-			continue
-		}
-		if filter.ZoneID != nil && secret.ZoneID != *filter.ZoneID {
+		if filter.ProjectID != nil && secret.ProjectID != *filter.ProjectID {
 			continue
 		}
 		if filter.EnvironmentID != nil && secret.EnvironmentID != *filter.EnvironmentID {
@@ -232,8 +229,7 @@ func (c *KeyorixCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortB
 // convertToStorageFilter converts SecretListFilter to storage.SecretFilter.
 func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
 	return &storage.SecretFilter{
-		NamespaceID:   filter.NamespaceID,
-		ZoneID:        filter.ZoneID,
+		ProjectID:     filter.ProjectID,
 		EnvironmentID: filter.EnvironmentID,
 		Type:          filter.Type,
 		Tags:          filter.Tags,

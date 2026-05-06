@@ -30,8 +30,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
 		Name          string            `json:"name" validate:"required,min=1,max=255"`
 		Value         string            `json:"value" validate:"required"`
-		NamespaceID   uint              `json:"namespace_id" validate:"required"`
-		ZoneID        uint              `json:"zone_id" validate:"required"`
+		ProjectID     uint              `json:"project_id"`
 		EnvironmentID uint              `json:"environment_id" validate:"required"`
 		Type          string            `json:"type" validate:"required"`
 		MaxReads      *int              `json:"max_reads,omitempty" validate:"omitempty,min=1"`
@@ -51,8 +50,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	req := &core.CreateSecretRequest{
 		Name:          reqBody.Name,
 		Value:         []byte(reqBody.Value),
-		NamespaceID:   reqBody.NamespaceID,
-		ZoneID:        reqBody.ZoneID,
+		ProjectID:     reqBody.ProjectID,
 		EnvironmentID: reqBody.EnvironmentID,
 		Type:          reqBody.Type,
 		MaxReads:      reqBody.MaxReads,

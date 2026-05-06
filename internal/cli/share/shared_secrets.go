@@ -66,14 +66,13 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 
 	// Create a tabwriter for formatted output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tTYPE\tNAMESPACE\tZONE\tENVIRONMENT\tCREATED BY\tCREATED AT")
+	fmt.Fprintln(w, "ID\tNAME\tTYPE\tPROJECT\tENVIRONMENT\tCREATED BY\tCREATED AT")
 	for _, secret := range secrets {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n",
+		fmt.Fprintf(w, "%d\t%s\t%s\t%d\t%d\t%s\t%s\n",
 			secret.ID,
 			secret.Name,
 			secret.Type,
-			secret.NamespaceID,
-			secret.ZoneID,
+			secret.ProjectID,
 			secret.EnvironmentID,
 			secret.CreatedBy,
 			secret.CreatedAt.Format("2006-01-02 15:04:05"),

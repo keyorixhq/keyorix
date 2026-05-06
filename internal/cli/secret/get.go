@@ -16,8 +16,7 @@ var (
 	getID        uint
 	getName      string
 	getShowValue bool
-	getNamespace uint
-	getZone      uint
+	getProject   uint
 	getEnv       uint
 )
 
@@ -36,8 +35,7 @@ Examples:
 func init() {
 	getCmd.Flags().UintVar(&getID, "id", 0, "Secret ID")
 	getCmd.Flags().StringVar(&getName, "name", "", "Secret name")
-	getCmd.Flags().UintVar(&getNamespace, "namespace", 1, "Namespace ID (required with --name)")
-	getCmd.Flags().UintVar(&getZone, "zone", 1, "Zone ID (required with --name)")
+	getCmd.Flags().UintVar(&getProject, "project", 1, "Project ID (required with --name)")
 	getCmd.Flags().UintVar(&getEnv, "environment", 1, "Environment ID (required with --name)")
 	getCmd.Flags().BoolVar(&getShowValue, "show-value", false, "Show decrypted secret value")
 }
@@ -82,8 +80,8 @@ func runGetRemote(ctx context.Context, rc *common.RemoteClient) error {
 	} else {
 		// Resolve name → secret via filtered list, then optionally fetch value.
 		path := fmt.Sprintf(
-			"/api/v1/secrets?namespace_id=%d&zone_id=%d&environment_id=%d&page_size=1000&page=1",
-			getNamespace, getZone, getEnv,
+			"/api/v1/secrets?project_id=%d&environment_id=%d&page_size=1000&page=1",
+			getProject, getEnv,
 		)
 		var body struct {
 			Secrets []*models.SecretNode `json:"secrets"`
@@ -138,11 +136,8 @@ func runGetEmbedded(ctx context.Context) error {
 		}
 	} else {
 		filter := &coreStorage.SecretFilter{Page: 1, PageSize: 1000}
-		if getNamespace != 0 {
-			filter.NamespaceID = &getNamespace
-		}
-		if getZone != 0 {
-			filter.ZoneID = &getZone
+		if getProject != 0 {
+			filter.ProjectID = &getProject
 		}
 		if getEnv != 0 {
 			filter.EnvironmentID = &getEnv
@@ -184,8 +179,7 @@ func displaySecret(secret *models.SecretNode, value string) {
 	fmt.Printf("Name:        %s\n", secret.Name)
 	fmt.Printf("Type:        %s\n", secret.Type)
 	fmt.Printf("Status:      %s\n", secret.Status)
-	fmt.Printf("Namespace:   %d\n", secret.NamespaceID)
-	fmt.Printf("Zone:        %d\n", secret.ZoneID)
+	fmt.Printf("Project:     %d\n", secret.ProjectID)
 	fmt.Printf("Environment: %d\n", secret.EnvironmentID)
 	fmt.Printf("Created By:  %s\n", secret.CreatedBy)
 	fmt.Printf("Created:     %s\n", secret.CreatedAt.Format(time.RFC3339))

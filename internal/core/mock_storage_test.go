@@ -26,23 +26,15 @@ func (m *MockStorage) AssignPermissionToRole(_ context.Context, _, _ uint) error
 
 // Namespace / Zone / Environment
 
-func (m *MockStorage) CreateNamespace(_ context.Context, namespace *models.Namespace) (*models.Namespace, error) {
-	return namespace, nil
-}
-
-func (m *MockStorage) CreateZone(_ context.Context, zone *models.Zone) (*models.Zone, error) {
-	return zone, nil
+func (m *MockStorage) CreateProject(_ context.Context, project *models.Project) (*models.Project, error) {
+	return project, nil
 }
 
 func (m *MockStorage) CreateEnvironment(_ context.Context, env *models.Environment) (*models.Environment, error) {
 	return env, nil
 }
 
-func (m *MockStorage) ListNamespaces(_ context.Context) ([]*models.Namespace, error) {
-	return nil, nil
-}
-
-func (m *MockStorage) ListZones(_ context.Context) ([]*models.Zone, error) {
+func (m *MockStorage) ListProjects(_ context.Context) ([]*models.Project, error) {
 	return nil, nil
 }
 
@@ -68,8 +60,8 @@ func (m *MockStorage) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 	return args.Get(0).(*models.SecretNode), args.Error(1)
 }
 
-func (m *MockStorage) GetSecretByName(ctx context.Context, name string, namespaceID, zoneID, environmentID uint) (*models.SecretNode, error) {
-	args := m.Called(ctx, name, namespaceID, zoneID, environmentID)
+func (m *MockStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
+	args := m.Called(ctx, name, projectID, environmentID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

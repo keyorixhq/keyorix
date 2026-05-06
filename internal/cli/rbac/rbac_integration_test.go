@@ -162,7 +162,7 @@ func TestRBACNamespaceIntegration(t *testing.T) {
 		}
 
 		rows := helper.QueryRawSQL(t, `
-			SELECT r.name, ur.namespace_id 
+			SELECT r.name, ur.project_id 
 			FROM user_roles ur 
 			JOIN roles r ON ur.role_id = r.id 
 			WHERE ur.user_id = ?`, user1.ID)

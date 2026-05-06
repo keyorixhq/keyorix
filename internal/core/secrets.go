@@ -20,8 +20,7 @@ import (
 type CreateSecretRequest struct {
 	Name          string            `json:"name" validate:"required,min=1,max=255"`
 	Value         []byte            `json:"value" validate:"required"`
-	NamespaceID   uint              `json:"namespace_id" validate:"required"`
-	ZoneID        uint              `json:"zone_id" validate:"required"`
+	ProjectID     uint              `json:"project_id" validate:"required"`
 	EnvironmentID uint              `json:"environment_id" validate:"required"`
 	Type          string            `json:"type" validate:"required"`
 	MaxReads      *int              `json:"max_reads,omitempty" validate:"omitempty,min=1"`
@@ -50,15 +49,14 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
-	existing, err := c.storage.GetSecretByName(ctx, req.Name, req.NamespaceID, req.ZoneID, req.EnvironmentID)
+	existing, err := c.storage.GetSecretByName(ctx, req.Name, req.ProjectID, req.EnvironmentID)
 	if err == nil && existing != nil {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretAlreadyExists", nil))
 	}
 
 	secret := &models.SecretNode{
 		Name:          req.Name,
-		NamespaceID:   req.NamespaceID,
-		ZoneID:        req.ZoneID,
+		ProjectID:     req.ProjectID,
 		EnvironmentID: req.EnvironmentID,
 		Type:          req.Type,
 		MaxReads:      req.MaxReads,

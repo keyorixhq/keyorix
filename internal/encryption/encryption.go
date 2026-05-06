@@ -123,8 +123,8 @@ func (es *EncryptionService) Decrypt(encryptedData *EncryptedData) ([]byte, erro
 // Format: "keyorix:v1:<secretID>:<namespaceID>:<versionNumber>"
 // This binds the ciphertext to a specific secret + namespace + version, preventing
 // ciphertext transplant attacks (copying an encrypted value between rows).
-func SecretAAD(secretID, namespaceID uint, versionNumber int) []byte {
-	return []byte(fmt.Sprintf("keyorix:v1:%d:%d:%d", secretID, namespaceID, versionNumber))
+func SecretAAD(secretID, projectID uint, versionNumber int) []byte {
+	return []byte(fmt.Sprintf("keyorix:v2:%d:%d:%d", secretID, projectID, versionNumber))
 }
 
 // EncryptWithAAD encrypts data using AES-GCM with Additional Authenticated Data.
@@ -143,7 +143,7 @@ func (es *EncryptionService) EncryptWithAAD(plaintext []byte, keyVersion string,
 		KeyVersion:  keyVersion,
 		EncryptedAt: time.Now().UTC(),
 		Nonce:       base64.StdEncoding.EncodeToString(nonce),
-		AADVersion:  "v1",
+		AADVersion:  "v2",
 	}
 
 	return &EncryptedData{

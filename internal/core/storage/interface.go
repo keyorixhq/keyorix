@@ -11,18 +11,16 @@ import (
 // This interface abstracts away the underlying storage implementation,
 // allowing for both local database access and remote API calls
 type Storage interface {
-	// Namespace / Zone / Environment management
-	CreateNamespace(ctx context.Context, namespace *models.Namespace) (*models.Namespace, error)
-	CreateZone(ctx context.Context, zone *models.Zone) (*models.Zone, error)
+	// Project / Environment management
+	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
-	ListNamespaces(ctx context.Context) ([]*models.Namespace, error)
-	ListZones(ctx context.Context) ([]*models.Zone, error)
+	ListProjects(ctx context.Context) ([]*models.Project, error)
 	ListEnvironments(ctx context.Context) ([]*models.Environment, error)
 
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	GetSecret(ctx context.Context, id uint) (*models.SecretNode, error)
-	GetSecretByName(ctx context.Context, name string, namespaceID, zoneID, environmentID uint) (*models.SecretNode, error)
+	GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error)
 	UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	DeleteSecret(ctx context.Context, id uint) error
 	ListSecrets(ctx context.Context, filter *SecretFilter) ([]*models.SecretNode, int64, error)
@@ -116,8 +114,7 @@ type Storage interface {
 
 // SecretFilter defines filtering options for secret queries
 type SecretFilter struct {
-	NamespaceID   *uint
-	ZoneID        *uint
+	ProjectID     *uint
 	EnvironmentID *uint
 	Type          *string
 	Tags          []string

@@ -19,8 +19,7 @@ var (
 	importFile         string
 	importFormat       string
 	importEnv          string
-	importNamespace    string
-	importZone         string
+	importProject      string
 	importDryRun       bool
 	importSkipExisting bool
 )
@@ -47,8 +46,7 @@ func init() {
 	importCmd.Flags().StringVar(&importFile, "file", "", "Path to the file to import (required)")
 	importCmd.Flags().StringVar(&importFormat, "format", "dotenv", "File format: dotenv, vault, json")
 	importCmd.Flags().StringVar(&importEnv, "env", "development", "Environment name (e.g. production)")
-	importCmd.Flags().StringVar(&importNamespace, "namespace", "default", "Namespace name")
-	importCmd.Flags().StringVar(&importZone, "zone", "default", "Zone name")
+	importCmd.Flags().StringVar(&importProject, "project", "default", "Project name")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "Show what would be imported without creating anything")
 	importCmd.Flags().BoolVar(&importSkipExisting, "skip-existing", true, "Skip secrets that already exist instead of failing")
 	_ = importCmd.MarkFlagRequired("file")
@@ -96,11 +94,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	nsID, err := resolveNamespaceID(ctx, rc, importNamespace)
-	if err != nil {
-		return err
-	}
-	zoneID, err := resolveZoneID(ctx, rc, importZone)
+	nsID, err := resolveProjectID(ctx, rc, importProject)
 	if err != nil {
 		return err
 	}
@@ -109,39 +103,24 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return doImport(ctx, rc, entries, nsID, zoneID, envID)
+	return doImport(ctx, rc, entries, nsID, envID)
 }
 
 // ── Name resolution ───────────────────────────────────────────────────────────
 
-func resolveNamespaceID(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
+func resolveProjectID(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
 	var body struct {
-		Namespaces []*models.Namespace `json:"namespaces"`
+		Projects []*models.Project `json:"projects"`
 	}
-	if err := rc.Get(ctx, "/api/v1/namespaces", &body); err != nil {
-		return 0, fmt.Errorf("list namespaces: %w", err)
+	if err := rc.Get(ctx, "/api/v1/projects", &body); err != nil {
+		return 0, fmt.Errorf("list projects: %w", err)
 	}
-	for _, ns := range body.Namespaces {
-		if strings.EqualFold(ns.Name, name) {
-			return ns.ID, nil
+	for _, p := range body.Projects {
+		if strings.EqualFold(p.Name, name) {
+			return p.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("namespace %q not found", name)
-}
-
-func resolveZoneID(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
-	var body struct {
-		Zones []*models.Zone `json:"zones"`
-	}
-	if err := rc.Get(ctx, "/api/v1/zones", &body); err != nil {
-		return 0, fmt.Errorf("list zones: %w", err)
-	}
-	for _, z := range body.Zones {
-		if strings.EqualFold(z.Name, name) {
-			return z.ID, nil
-		}
-	}
-	return 0, fmt.Errorf("zone %q not found", name)
+	return 0, fmt.Errorf("project %q not found", name)
 }
 
 func resolveEnvironmentID(ctx context.Context, rc *common.RemoteClient, name string) (uint, error) {
@@ -161,7 +140,7 @@ func resolveEnvironmentID(ctx context.Context, rc *common.RemoteClient, name str
 
 // ── Import logic ──────────────────────────────────────────────────────────────
 
-func doImport(ctx context.Context, rc *common.RemoteClient, entries []secretEntry, nsID, zoneID, envID uint) error {
+func doImport(ctx context.Context, rc *common.RemoteClient, entries []secretEntry, nsID, envID uint) error {
 	imported, skipped, failed := 0, 0, 0
 
 	for _, e := range entries {
@@ -169,8 +148,7 @@ func doImport(ctx context.Context, rc *common.RemoteClient, entries []secretEntr
 			"name":           e.Name,
 			"value":          e.Value,
 			"type":           "generic",
-			"namespace_id":   nsID,
-			"zone_id":        zoneID,
+			"project_id":     nsID,
 			"environment_id": envID,
 		}
 		var created models.SecretNode

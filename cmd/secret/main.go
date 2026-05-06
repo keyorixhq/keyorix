@@ -24,8 +24,7 @@ func main() {
 	}
 
 	err = db.AutoMigrate(
-		&models.Namespace{},
-		&models.Zone{},
+		&models.Project{},
 		&models.Environment{},
 		&models.User{},
 		&models.Role{},

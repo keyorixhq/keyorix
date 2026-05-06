@@ -71,7 +71,7 @@ func (se *SecretEncryption) StoreSecret(secretNode *models.SecretNode, plaintext
 	}
 
 	// Encrypt the secret with AAD bound to secretID + namespaceID + versionNumber
-	aad := SecretAAD(secretNode.ID, secretNode.NamespaceID, nextVersion)
+	aad := SecretAAD(secretNode.ID, secretNode.ProjectID, nextVersion)
 	encryptedData, metadata, err := se.service.EncryptSecretWithAAD(plaintext, aad)
 	if err != nil {
 		tx.Rollback()
@@ -114,7 +114,7 @@ func (se *SecretEncryption) RetrieveSecret(versionID uint) ([]byte, error) {
 	}
 
 	// Decrypt using AAD-aware path (falls back gracefully for legacy rows)
-	aad := SecretAAD(version.SecretNodeID, secretNode.NamespaceID, version.VersionNumber)
+	aad := SecretAAD(version.SecretNodeID, secretNode.ProjectID, version.VersionNumber)
 	plaintext, err := se.service.DecryptSecretWithAAD(version.EncryptedValue, aad)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt secret: %w", err)

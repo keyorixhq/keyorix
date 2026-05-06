@@ -47,8 +47,7 @@ func main() {
 	createReq := &core.CreateSecretRequest{
 		Name:          "example-secret",
 		Value:         []byte("super-secret-value"),
-		NamespaceID:   1,
-		ZoneID:        1,
+		ProjectID:     1,
 		EnvironmentID: 1,
 		Type:          "password",
 		CreatedBy:     "example-user",
@@ -95,8 +94,7 @@ func main() {
 	invalidReq := &core.CreateSecretRequest{
 		Name:          "", // Missing name
 		Value:         []byte("value"),
-		NamespaceID:   1,
-		ZoneID:        1,
+		ProjectID:     1,
 		EnvironmentID: 1,
 		Type:          "password",
 		CreatedBy:     "user",

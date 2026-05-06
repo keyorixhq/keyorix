@@ -235,7 +235,7 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 // Bootstraps a Keyorix server in a single call:
 //   - Creates the admin user
 //   - Creates canonical RBAC roles and permissions (admin, viewer)
-//   - Creates the default namespace and zone ("default")
+//   - Creates the default project ("default")
 //   - Creates three default environments (development, staging, production)
 //
 // Idempotent: if the server is already initialised, returns 200 with the
@@ -275,11 +275,8 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 			"email":    result.User.Email,
 		}
 	}
-	if result.Namespace != nil {
-		resp["namespace"] = result.Namespace.Name
-	}
-	if result.Zone != nil {
-		resp["zone"] = result.Zone.Name
+	if result.Project != nil {
+		resp["project"] = result.Project.Name
 	}
 
 	msg := "System initialised successfully"

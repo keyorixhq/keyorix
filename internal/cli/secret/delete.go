@@ -40,7 +40,7 @@ Examples:
 func init() {
 	deleteCmd.Flags().UintVar(&deleteID, "id", 0, "Secret ID")
 	deleteCmd.Flags().StringVar(&deleteName, "name", "", "Secret name")
-	deleteCmd.Flags().UintVar(&deleteNS, "namespace", 1, "Namespace ID (required with --name)")
+	deleteCmd.Flags().UintVar(&deleteNS, "project", 1, "Project ID (required with --name)")
 	deleteCmd.Flags().UintVar(&deleteZone, "zone", 1, "Zone ID (required with --name)")
 	deleteCmd.Flags().UintVar(&deleteEnv, "environment", 1, "Environment ID (required with --name)")
 	deleteCmd.Flags().BoolVar(&deleteForce, "force", false, "Skip confirmation prompt")
@@ -88,7 +88,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		secretName = secret.Name
 	} else {
 		// Find by name using storage method
-		secret, err := storageImpl.GetSecretByName(ctx, deleteName, deleteNS, deleteZone, deleteEnv)
+		secret, err := storageImpl.GetSecretByName(ctx, deleteName, deleteNS, deleteEnv)
 		if err != nil {
 			return fmt.Errorf("secret not found: %w", err)
 		}

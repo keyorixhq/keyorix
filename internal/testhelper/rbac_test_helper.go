@@ -51,8 +51,7 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 		&models.Group{},
 		&models.UserGroup{},
 		&models.GroupRole{},
-		&models.Namespace{},
-		&models.Zone{},
+		&models.Project{},
 		&models.Environment{},
 		&models.SecretNode{},
 		&models.ShareRecord{},
@@ -79,23 +78,13 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 // seedTestData creates basic test data for RBAC tests
 func (h *RBACTestHelper) seedTestData(t *testing.T) {
 	// Create default namespaces
-	namespaces := []models.Namespace{
+	projects := []models.Project{
 		{ID: 1, Name: "default", Description: "Default namespace"},
 		{ID: 2, Name: "production", Description: "Production namespace"},
 		{ID: 3, Name: "staging", Description: "Staging namespace"},
 	}
-	for _, ns := range namespaces {
-		result := h.DB.Create(&ns)
-		require.NoError(t, result.Error)
-	}
-
-	// Create default zones
-	zones := []models.Zone{
-		{ID: 1, Name: "global", Description: "Global zone"},
-		{ID: 2, Name: "us-east-1", Description: "US East 1 zone"},
-	}
-	for _, zone := range zones {
-		result := h.DB.Create(&zone)
+	for _, p := range projects {
+		result := h.DB.Create(&p)
 		require.NoError(t, result.Error)
 	}
 
@@ -248,9 +237,9 @@ func (h *RBACTestHelper) CreateTestGroup(t *testing.T, name, description string,
 // AssignUserRole assigns a role to a user
 func (h *RBACTestHelper) AssignUserRole(t *testing.T, userID, roleID uint, namespaceID *uint) {
 	userRole := &models.UserRole{
-		UserID:      userID,
-		RoleID:      roleID,
-		NamespaceID: namespaceID,
+		UserID:    userID,
+		RoleID:    roleID,
+		ProjectID: namespaceID,
 	}
 
 	result := h.DB.Create(userRole)
@@ -271,9 +260,9 @@ func (h *RBACTestHelper) AssignUserToGroup(t *testing.T, userID, groupID uint) {
 // AssignGroupRole assigns a role to a group
 func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, namespaceID *uint) {
 	groupRole := &models.GroupRole{
-		GroupID:     groupID,
-		RoleID:      roleID,
-		NamespaceID: namespaceID,
+		GroupID:   groupID,
+		RoleID:    roleID,
+		ProjectID: namespaceID,
 	}
 
 	result := h.DB.Create(groupRole)
@@ -284,8 +273,7 @@ func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, nam
 func (h *RBACTestHelper) CreateTestSecret(t *testing.T, name string, ownerID uint, secretID uint) *models.SecretNode {
 	secret := &models.SecretNode{
 		ID:            secretID,
-		NamespaceID:   1, // default namespace
-		ZoneID:        1, // global zone
+		ProjectID:     1, // default project
 		EnvironmentID: 1, // production environment
 		Name:          name,
 		IsSecret:      true,

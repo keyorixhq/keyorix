@@ -1,6 +1,6 @@
 // auth_bootstrap.go — First-boot system initialisation (BootstrapSystem).
 //
-// Seeds admin user, RBAC roles/permissions, default namespace/zone/environments.
+// Seeds admin user, RBAC roles/permissions, default project/environments.
 // Idempotent: if users already exist, returns current state with AlreadyInitialized=true.
 // For session auth see auth.go.
 package core
@@ -25,8 +25,7 @@ type BootstrapRequest struct {
 type BootstrapResult struct {
 	AlreadyInitialized bool
 	User               *models.User
-	Namespace          *models.Namespace
-	Zone               *models.Zone
+	Project            *models.Project
 	Environments       []*models.Environment
 }
 
@@ -70,7 +69,7 @@ var defaultEnvironmentNames = []string{"development", "staging", "production"}
 // BootstrapSystem ensures the server has a fully-configured initial state:
 //   - admin user (with the supplied credentials)
 //   - canonical RBAC roles and permissions (admin, viewer)
-//   - default namespace and zone ("default")
+//   - default project ("default")
 //   - three default environments (development, staging, production)
 //
 // Idempotent: if users already exist, returns the current state with
@@ -142,19 +141,12 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 		return nil, fmt.Errorf("failed to assign admin role to user: %w", err)
 	}
 
-	ns, err := c.storage.CreateNamespace(ctx, &models.Namespace{
+	project, err := c.storage.CreateProject(ctx, &models.Project{
 		Name:        "default",
-		Description: "Default namespace",
+		Description: "Default project",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create default namespace: %w", err)
-	}
-	zone, err := c.storage.CreateZone(ctx, &models.Zone{
-		Name:        "default",
-		Description: "Default zone",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create default zone: %w", err)
+		return nil, fmt.Errorf("failed to create default project: %w", err)
 	}
 
 	envs := make([]*models.Environment, 0, len(defaultEnvironmentNames))
@@ -169,8 +161,7 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 	return &BootstrapResult{
 		AlreadyInitialized: false,
 		User:               user,
-		Namespace:          ns,
-		Zone:               zone,
+		Project:            project,
 		Environments:       envs,
 	}, nil
 }
@@ -184,16 +175,10 @@ func (c *KeyorixCore) currentBootstrapState(ctx context.Context) (*BootstrapResu
 		firstUser = users[0]
 	}
 
-	namespaces, nsErr := c.storage.ListNamespaces(ctx)
-	var ns *models.Namespace
-	if nsErr == nil && len(namespaces) > 0 {
-		ns = namespaces[0]
-	}
-
-	zones, zErr := c.storage.ListZones(ctx)
-	var zone *models.Zone
-	if zErr == nil && len(zones) > 0 {
-		zone = zones[0]
+	projects, projErr := c.storage.ListProjects(ctx)
+	var project *models.Project
+	if projErr == nil && len(projects) > 0 {
+		project = projects[0]
 	}
 
 	envs, envErr := c.storage.ListEnvironments(ctx)
@@ -204,8 +189,7 @@ func (c *KeyorixCore) currentBootstrapState(ctx context.Context) (*BootstrapResu
 	return &BootstrapResult{
 		AlreadyInitialized: true,
 		User:               firstUser,
-		Namespace:          ns,
-		Zone:               zone,
+		Project:            project,
 		Environments:       envs,
 	}, nil
 }

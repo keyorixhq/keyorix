@@ -16,11 +16,8 @@ func (c *KeyorixCore) validateCreateSecretRequest(req *CreateSecretRequest) erro
 	if len(req.Value) == 0 {
 		return fmt.Errorf("%s", i18n.T("LabelValue", nil))
 	}
-	if req.NamespaceID == 0 {
+	if req.ProjectID == 0 {
 		return fmt.Errorf("%s", i18n.T("LabelNamespace", nil))
-	}
-	if req.ZoneID == 0 {
-		return fmt.Errorf("%s", i18n.T("LabelZone", nil))
 	}
 	if req.EnvironmentID == 0 {
 		return fmt.Errorf("%s", i18n.T("LabelEnvironment", nil))

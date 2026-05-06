@@ -90,20 +90,20 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 		return nil, fmt.Errorf("failed to initialize service: %w", err)
 	}
 
-	// Resolve namespace → ID
-	namespaces, err := svc.ListNamespaces(ctx)
+	// Resolve project → ID
+	projects, err := svc.ListProjects(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+		return nil, fmt.Errorf("failed to list projects: %w", err)
 	}
-	var nsID uint
-	for _, ns := range namespaces {
-		if strings.EqualFold(ns.Name, project) {
-			nsID = ns.ID
+	var projectID uint
+	for _, p := range projects {
+		if strings.EqualFold(p.Name, project) {
+			projectID = p.ID
 			break
 		}
 	}
-	if nsID == 0 {
-		return nil, fmt.Errorf("namespace %q not found", project)
+	if projectID == 0 {
+		return nil, fmt.Errorf("project %q not found", project)
 	}
 
 	// Resolve environment → ID
@@ -124,7 +124,7 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 
 	// List all secrets in the namespace + environment
 	filter := &coreStorage.SecretFilter{
-		NamespaceID:   &nsID,
+		ProjectID:     &projectID,
 		EnvironmentID: &envID,
 		Page:          1,
 		PageSize:      1000,
@@ -197,22 +197,22 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 		http:     &http.Client{},
 	}
 
-	// ── 1. Resolve namespace name → ID ────────────────────────────────────────
-	var nsBody struct {
-		Namespaces []*models.Namespace `json:"namespaces"`
+	// ── 1. Resolve project name → ID ─────────────────────────────────────────
+	var projBody struct {
+		Projects []*models.Project `json:"projects"`
 	}
-	if err := api.get(ctx, "/api/v1/namespaces", &nsBody); err != nil {
-		return nil, fmt.Errorf("list namespaces: %w", err)
+	if err := api.get(ctx, "/api/v1/projects", &projBody); err != nil {
+		return nil, fmt.Errorf("list projects: %w", err)
 	}
 	var nsID uint
-	for _, ns := range nsBody.Namespaces {
-		if strings.EqualFold(ns.Name, project) {
-			nsID = ns.ID
+	for _, p := range projBody.Projects {
+		if strings.EqualFold(p.Name, project) {
+			nsID = p.ID
 			break
 		}
 	}
 	if nsID == 0 {
-		return nil, fmt.Errorf("namespace %q not found on server", project)
+		return nil, fmt.Errorf("project %q not found on server", project)
 	}
 
 	// ── 2. Resolve environment name → ID ──────────────────────────────────────
@@ -235,7 +235,7 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 
 	// ── 3. List secrets ────────────────────────────────────────────────────────
 	listPath := fmt.Sprintf(
-		"/api/v1/secrets?namespace_id=%d&environment_id=%d&page_size=1000&page=1",
+		"/api/v1/secrets?project_id=%d&environment_id=%d&page_size=1000&page=1",
 		nsID, envID,
 	)
 	// The list endpoint returns SecretWithSharingInfo; we only need ID + Name.

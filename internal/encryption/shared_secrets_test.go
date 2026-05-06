@@ -40,8 +40,7 @@ func TestShareEncryption_ShareSecret(t *testing.T) {
 	secretNode := &models.SecretNode{
 		ID:            1,
 		Name:          "test-secret",
-		NamespaceID:   1,
-		ZoneID:        1,
+		ProjectID:     1,
 		EnvironmentID: 1,
 		OwnerID:       1,
 		CreatedAt:     time.Now(),
@@ -115,8 +114,7 @@ func TestShareEncryption_StoreSharedSecret(t *testing.T) {
 	secretNode := &models.SecretNode{
 		ID:            1,
 		Name:          "test-secret",
-		NamespaceID:   1,
-		ZoneID:        1,
+		ProjectID:     1,
 		EnvironmentID: 1,
 		OwnerID:       1,
 		CreatedAt:     time.Now(),
