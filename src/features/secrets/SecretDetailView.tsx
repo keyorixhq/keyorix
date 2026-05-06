@@ -13,7 +13,6 @@ import {
     KeyIcon
 } from '@heroicons/react/24/outline';
 import { useSecretVersions } from './api';
-const CLIPBOARD_TIMEOUT = 30000;
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
 const formatTime = (d: string | Date) =>
@@ -48,44 +47,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
         : null;
     const secretValue = latestVersion ? atob(latestVersion.EncryptedValue) : null;
 
-    // Copy to clipboard with auto-clear after CLIPBOARD_TIMEOUT
     const handleCopyValue = async (value: string): Promise<void> => {
         try {
             await navigator.clipboard.writeText(value);
             setCopySuccess(true);
-
-            // Clear clipboard after timeout — requires document focus.
-            // Register a visibilitychange listener as fallback for when
-            // the user returns to the tab after the timeout has elapsed.
-            const clearClipboard = async () => {
-                try {
-                    // Only clear if we still own the clipboard content
-                    const text = await navigator.clipboard.readText();
-                    if (text === value) {
-                        await navigator.clipboard.writeText('');
-                    }
-                } catch {
-                    // readText may be denied — fall back to blind clear
-                    try { await navigator.clipboard.writeText(''); } catch {}
-                }
-            };
-
-            setTimeout(async () => {
-                if (document.hasFocus()) {
-                    await clearClipboard();
-                } else {
-                    // Tab not focused — clear when user returns
-                    const onVisible = async () => {
-                        if (document.visibilityState === 'visible') {
-                            document.removeEventListener('visibilitychange', onVisible);
-                            await clearClipboard();
-                        }
-                    };
-                    document.addEventListener('visibilitychange', onVisible);
-                }
-            }, CLIPBOARD_TIMEOUT);
-
-            // Reset success indicator after 2s
             setTimeout(() => setCopySuccess(false), 2000);
         } catch (error) {
             console.error('Failed to copy to clipboard:', error);
@@ -260,7 +225,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                         <Alert
                             type="success"
                             title="Copied to clipboard"
-                            message={`Secret value copied. Clipboard will be cleared in ${Math.round(CLIPBOARD_TIMEOUT / 1000)} seconds.`}
+                            message="Secret value copied to clipboard."
                         />
                     </div>
                 )}
