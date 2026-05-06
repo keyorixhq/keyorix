@@ -154,7 +154,7 @@ export const SecretsListPage: React.FC = () => {
                         )}
                     </div>
                 ) : (
-                    <div className="overflow-hidden">
+                    <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                             <thead className="bg-gray-50 dark:bg-gray-900">
                                 <tr>
@@ -168,7 +168,7 @@ export const SecretsListPage: React.FC = () => {
                                     {['Name', 'Type', 'Environment', 'Sharing', 'Modified'].map(h => (
                                         <th key={h} className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{h}</th>
                                     ))}
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider min-w-[180px]">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
