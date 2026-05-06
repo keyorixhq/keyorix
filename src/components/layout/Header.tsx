@@ -5,11 +5,14 @@ import {
     Bars3Icon,
     BellIcon,
     UserCircleIcon,
-    ArrowRightOnRectangleIcon
+    ArrowRightOnRectangleIcon,
+    SunIcon,
+    MoonIcon,
 } from '@heroicons/react/24/outline';
 import { Dropdown, DropdownItem } from '../ui/Dropdown';
 
 import { useAuth } from '../../features/auth';
+import { useUIStore } from '../../store/uiStore';
 
 export interface HeaderProps {
     onMenuClick: () => void;
@@ -19,6 +22,7 @@ export interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
+    const { theme, toggleTheme } = useUIStore();
 
     const handleLogout = async () => {
         try {
@@ -41,27 +45,28 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
 
     const userMenuTrigger = (
         <button className="flex items-center space-x-2 text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 p-1">
-            <div className="h-8 w-8 rounded-full bg-gray-300 flex items-center justify-center">
-                <UserCircleIcon className="h-6 w-6 text-gray-600" />
+            <div className="h-8 w-8 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--bg-muted)' }}>
+                <UserCircleIcon className="h-6 w-6" style={{ color: 'var(--text-secondary)' }} />
             </div>
-            <span className="hidden md:block text-gray-700 font-medium">
-                {user?.username || 'User'}
+            <span className="hidden md:block font-medium" style={{ color: 'var(--text-secondary)' }}>
+                {user?.displayName || user?.username || 'User'}
             </span>
         </button>
     );
 
     return (
-        <header className={clsx(
-            'bg-white shadow-sm border-b border-gray-200',
-            className
-        )}>
+        <header
+            className={clsx('shadow-sm border-b', className)}
+            style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+        >
             <div className="px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between items-center h-16">
-                    {/* Left side - Menu button (mobile only) */}
+                    {/* Left — mobile menu button */}
                     <div className="flex items-center">
                         <button
                             type="button"
-                            className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 lg:hidden"
+                            className="p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 lg:hidden"
+                            style={{ color: 'var(--text-muted)' }}
                             onClick={onMenuClick}
                         >
                             <span className="sr-only">Open sidebar</span>
@@ -69,14 +74,29 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                         </button>
                     </div>
 
-                    {/* Search intentionally omitted — not implemented */}
+                    {/* Right — theme toggle + notifications + user menu */}
+                    <div className="flex items-center space-x-2">
+                        {/* Theme toggle */}
+                        <button
+                            type="button"
+                            onClick={toggleTheme}
+                            className="p-2 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                            style={{ color: 'var(--text-muted)' }}
+                            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                        >
+                            {/* Icon shows what you'll switch TO */}
+                            {theme === 'dark'
+                                ? <SunIcon className="h-5 w-5" aria-hidden="true" />
+                                : <MoonIcon className="h-5 w-5" aria-hidden="true" />
+                            }
+                        </button>
 
-                    {/* Right side - Notifications and user menu */}
-                    <div className="flex items-center space-x-4">
                         {/* Notifications */}
                         <button
                             type="button"
-                            className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 relative"
+                            className="p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 relative"
+                            style={{ color: 'var(--text-muted)' }}
                         >
                             <span className="sr-only">View notifications</span>
                             <BellIcon className="h-6 w-6" aria-hidden="true" />

@@ -12,13 +12,12 @@ import { ROUTES } from './constants';
 function App() {
   const { isLoading } = useAuth();
 
-  // Show loading screen while checking authentication
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg-app)' }}>
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p style={{ color: 'var(--text-secondary)' }}>Loading...</p>
         </div>
       </div>
     );
@@ -37,7 +36,7 @@ function App() {
           }
         />
 
-        {/* Authenticated routes — all wrapped in Layout for sidebar + header */}
+        {/* Authenticated routes */}
         <Route
           element={
             <ProtectedRoute>
@@ -46,8 +45,8 @@ function App() {
                   <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
                   <Route path={ROUTES.SECRETS} element={<SecretsListPage />} />
                   <Route path={ROUTES.AUDIT} element={<AuditLogPage />} />
-                  <Route path={ROUTES.SHARING} element={<div className="p-8 text-gray-500">Sharing — coming soon</div>} />
-                  <Route path={ROUTES.PROFILE} element={<div className="p-8 text-gray-500">Profile — coming soon</div>} />
+                  <Route path={ROUTES.SHARING} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Sharing — coming soon</div>} />
+                  <Route path={ROUTES.PROFILE} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Profile — coming soon</div>} />
                   <Route path={ROUTES.ADMIN_USERS} element={<AdminPage />} />
                   <Route path={ROUTES.ADMIN} element={<AdminPage />} />
                 </Routes>
@@ -58,23 +57,17 @@ function App() {
         />
 
         {/* Default redirect */}
-        <Route
-          path={ROUTES.HOME}
-          element={<Navigate to={ROUTES.DASHBOARD} replace />}
-        />
+        <Route path={ROUTES.HOME} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
 
-        {/* Catch all route */}
+        {/* Catch all */}
         <Route
           path="*"
           element={
-            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+            <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg-app)' }}>
               <div className="text-center">
-                <h1 className="text-4xl font-bold text-gray-900 mb-4">404</h1>
-                <p className="text-gray-600 mb-4">Page not found</p>
-                <a
-                  href={ROUTES.DASHBOARD}
-                  className="text-blue-600 hover:text-blue-500"
-                >
+                <h1 className="text-4xl font-bold mb-4" style={{ color: 'var(--text-primary)' }}>404</h1>
+                <p className="mb-4" style={{ color: 'var(--text-secondary)' }}>Page not found</p>
+                <a href={ROUTES.DASHBOARD} style={{ color: 'var(--accent)' }}>
                   Go to Dashboard
                 </a>
               </div>
@@ -83,7 +76,6 @@ function App() {
         />
       </Routes>
 
-      {/* Session timeout warning */}
       <SessionTimeoutWarning />
     </>
   );

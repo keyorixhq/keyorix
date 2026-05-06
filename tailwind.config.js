@@ -4,6 +4,8 @@ export default {
         "./index.html",
         "./src/**/*.{js,ts,jsx,tsx}",
     ],
+    // Use data-theme="dark" on <html> — avoids conflicts with OS dark mode media queries
+    darkMode: ['selector', '[data-theme="dark"]'],
     theme: {
         extend: {
             colors: {

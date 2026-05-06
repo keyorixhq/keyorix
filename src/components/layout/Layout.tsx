@@ -20,29 +20,21 @@ const Layout: React.FC<LayoutProps> = ({
 }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
-    const handleMenuClick = () => {
-        setSidebarOpen(true);
-    };
-
-    const handleSidebarClose = () => {
-        setSidebarOpen(false);
-    };
-
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-app)' }}>
             {/* Sidebar */}
-            <Sidebar isOpen={sidebarOpen} onClose={handleSidebarClose} />
+            <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
             {/* Main content area */}
             <div className="lg:pl-64 flex flex-col min-h-screen">
                 {/* Header */}
-                <Header onMenuClick={handleMenuClick} />
+                <Header onMenuClick={() => setSidebarOpen(true)} />
 
                 {/* Main content */}
                 <main className="flex-1">
                     {/* Breadcrumbs */}
                     {breadcrumbs && breadcrumbs.length > 0 && (
-                        <div className="bg-white border-b border-gray-200">
+                        <div className="border-b" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
                             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                                 <div className="py-4">
                                     <Breadcrumb items={breadcrumbs} />
@@ -87,12 +79,12 @@ const Page: React.FC<PageProps> = ({
                     <div className="md:flex md:items-center md:justify-between">
                         <div className="flex-1 min-w-0">
                             {title && (
-                                <h1 className="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
+                                <h1 className="text-2xl font-bold leading-7 sm:text-3xl sm:truncate" style={{ color: 'var(--text-primary)' }}>
                                     {title}
                                 </h1>
                             )}
                             {subtitle && (
-                                <p className="mt-1 text-sm text-gray-500">
+                                <p className="mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
                                     {subtitle}
                                 </p>
                             )}

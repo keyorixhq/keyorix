@@ -18,13 +18,67 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Theme tokens ──────────────────────────────────────────────── */
+
+:root,
+[data-theme="light"] {
+  --bg-app:        #f9fafb;   /* page background */
+  --bg-surface:    #ffffff;   /* cards, panels, sidebar */
+  --bg-subtle:     #f3f4f6;   /* hover, alt rows */
+  --bg-muted:      #e5e7eb;   /* dividers, inputs */
+
+  --text-primary:  #111827;
+  --text-secondary:#4b5563;
+  --text-muted:    #9ca3af;
+  --text-inverse:  #ffffff;
+
+  --border:        #e5e7eb;
+  --border-strong: #d1d5db;
+
+  --accent:        #2563eb;   /* blue-600 */
+  --accent-hover:  #1d4ed8;   /* blue-700 */
+  --accent-subtle: #eff6ff;   /* blue-50 */
+  --accent-text:   #1d4ed8;   /* blue-700 */
+
+  --shadow-sm:     0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow:        0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
+[data-theme="dark"] {
+  --bg-app:        #0a0a0b;
+  --bg-surface:    #141416;
+  --bg-subtle:     #1c1c1f;
+  --bg-muted:      #2a2a2e;
+
+  --text-primary:  #e8e8ea;
+  --text-secondary:#a0a0ab;
+  --text-muted:    #6b6b76;
+  --text-inverse:  #0a0a0b;
+
+  --border:        #2a2a2e;
+  --border-strong: #3a3a3f;
+
+  --accent:        #3b82f6;   /* blue-500 — slightly lighter for dark bg */
+  --accent-hover:  #60a5fa;   /* blue-400 */
+  --accent-subtle: #1e2d47;   /* custom dark-blue tint */
+  --accent-text:   #60a5fa;   /* blue-400 */
+
+  --shadow-sm:     0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow:        0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+}
+
+/* ─── Base ──────────────────────────────────────────────────────── */
+
 @layer base {
   html {
     font-family: 'Inter', system-ui, sans-serif;
   }
 
   body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+    @apply antialiased;
+    transition: background-color 0.15s ease, color 0.15s ease;
   }
 
   /* Custom scrollbar */
@@ -33,39 +87,54 @@
   }
 
   ::-webkit-scrollbar-track {
-    @apply bg-gray-100;
+    background: var(--bg-subtle);
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 rounded-full;
+    background: var(--bg-muted);
+    @apply rounded-full;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-400;
+    background: var(--border-strong);
   }
 }
+
+/* ─── Components ────────────────────────────────────────────────── */
 
 @layer components {
   /* Button variants */
   .btn {
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+
   }
 
   .btn-primary {
-    @apply btn bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800;
+    @apply btn text-white;
+    background-color: var(--accent);
   }
+  .btn-primary:hover { background-color: var(--accent-hover); }
 
   .btn-secondary {
-    @apply btn bg-gray-100 text-gray-900 hover:bg-gray-200 active:bg-gray-300;
+    @apply btn;
+    background-color: var(--bg-subtle);
+    color: var(--text-primary);
   }
+  .btn-secondary:hover { background-color: var(--bg-muted); }
 
   .btn-outline {
-    @apply btn border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100;
+    @apply btn border;
+    border-color: var(--border-strong);
+    background-color: var(--bg-surface);
+    color: var(--text-secondary);
   }
+  .btn-outline:hover { background-color: var(--bg-subtle); }
 
   .btn-ghost {
-    @apply btn text-gray-700 hover:bg-gray-100 active:bg-gray-200;
+    @apply btn;
+    color: var(--text-secondary);
   }
+  .btn-ghost:hover { background-color: var(--bg-subtle); }
 
   .btn-danger {
     @apply btn bg-red-600 text-white hover:bg-red-700 active:bg-red-800;
@@ -73,7 +142,10 @@
 
   /* Input styles */
   .input {
-    @apply block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm;
+    @apply block w-full rounded-md shadow-sm sm:text-sm;
+    border-color: var(--border-strong);
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
   }
 
   .input-error {
@@ -82,11 +154,14 @@
 
   /* Card styles */
   .card {
-    @apply bg-white rounded-lg border border-gray-200 shadow-sm;
+    @apply rounded-lg border shadow-sm;
+    background-color: var(--bg-surface);
+    border-color: var(--border);
   }
 
   .card-header {
-    @apply px-6 py-4 border-b border-gray-200;
+    @apply px-6 py-4 border-b;
+    border-color: var(--border);
   }
 
   .card-body {
@@ -94,22 +169,28 @@
   }
 
   .card-footer {
-    @apply px-6 py-4 border-t border-gray-200 bg-gray-50;
+    @apply px-6 py-4 border-t;
+    background-color: var(--bg-subtle);
+    border-color: var(--border);
   }
 
   /* Loading animation */
   .loading-spinner {
-    @apply animate-spin rounded-full border-2 border-gray-300 border-t-primary-600;
+    @apply animate-spin rounded-full border-2;
+    border-color: var(--bg-muted);
+    border-top-color: var(--accent);
   }
 
-  /* Focus styles for accessibility */
+  /* Focus styles */
   .focus-ring {
-    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-2;
+    --tw-ring-color: var(--accent);
   }
 }
 
+/* ─── Utilities ─────────────────────────────────────────────────── */
+
 @layer utilities {
-  /* Text truncation */
   .truncate-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -124,7 +205,6 @@
     overflow: hidden;
   }
 
-  /* Animations */
   .animate-fade-in {
     animation: fadeIn 0.2s ease-in-out;
   }
@@ -132,4 +212,16 @@
   .animate-slide-in {
     animation: slideIn 0.3s ease-out;
   }
+
+  /* Semantic surface helpers — use these in components instead of bg-white/bg-gray-50 */
+  .bg-app     { background-color: var(--bg-app); }
+  .bg-surface { background-color: var(--bg-surface); }
+  .bg-subtle  { background-color: var(--bg-subtle); }
+  .bg-muted   { background-color: var(--bg-muted); }
+
+  .text-base-primary   { color: var(--text-primary); }
+  .text-base-secondary { color: var(--text-secondary); }
+  .text-base-muted     { color: var(--text-muted); }
+
+  .border-base { border-color: var(--border); }
 }

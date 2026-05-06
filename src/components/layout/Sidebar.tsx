@@ -29,121 +29,95 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
     const location = useLocation();
 
     const navigation: NavigationItem[] = [
-        {
-            name: 'Dashboard',
-            href: '/dashboard',
-            icon: HomeIcon,
-        },
-        {
-            name: 'Secrets',
-            href: '/secrets',
-            icon: KeyIcon,
-        },
-        {
-            name: 'Audit Logs',
-            href: '/audit',
-            icon: DocumentTextIcon,
-        },
+        { name: 'Dashboard',    href: '/dashboard', icon: HomeIcon },
+        { name: 'Secrets',      href: '/secrets',   icon: KeyIcon },
+        { name: 'Audit Logs',   href: '/audit',     icon: DocumentTextIcon },
     ];
 
     const adminNavigation: NavigationItem[] = [
-        {
-            name: 'User Management',
-            href: '/admin/users',
-            icon: UserGroupIcon,
-            adminOnly: true,
-        },
+        { name: 'User Management', href: '/admin/users', icon: UserGroupIcon, adminOnly: true },
     ];
 
-    const isCurrentPath = (href: string) => {
-        return location.pathname === href || location.pathname.startsWith(href + '/');
+    const isCurrentPath = (href: string) =>
+        location.pathname === href || location.pathname.startsWith(href + '/');
+
+    const NavLink: React.FC<{ item: NavigationItem }> = ({ item }) => {
+        const current = isCurrentPath(item.href);
+        return (
+            <Link
+                to={item.href}
+                className={clsx(
+                    'group flex items-center px-3 py-2 text-sm font-medium border-l-4 transition-colors duration-150',
+                    current ? 'border-blue-500' : 'border-transparent'
+                )}
+                style={{
+                    backgroundColor: current ? 'var(--accent-subtle)' : undefined,
+                    color: current ? 'var(--accent-text)' : 'var(--text-secondary)',
+                }}
+                onMouseEnter={(e) => {
+                    if (!current) {
+                        (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)';
+                        (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)';
+                    }
+                }}
+                onMouseLeave={(e) => {
+                    if (!current) {
+                        (e.currentTarget as HTMLElement).style.backgroundColor = '';
+                        (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)';
+                    }
+                }}
+                onClick={() => onClose()}
+            >
+                <item.icon
+                    className="mr-3 h-5 w-5 flex-shrink-0"
+                    style={{ color: current ? 'var(--accent)' : 'var(--text-muted)' }}
+                    aria-hidden="true"
+                />
+                <span className="truncate">{item.name}</span>
+                {item.badge != null && (
+                    <span
+                        className="ml-auto inline-block py-0.5 px-2 text-xs font-medium rounded-full"
+                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}
+                    >
+                        {item.badge}
+                    </span>
+                )}
+            </Link>
+        );
     };
 
     const SidebarContent = () => (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--bg-surface)' }}>
             {/* Logo */}
-            <div className="flex items-center px-5 py-5 border-b border-gray-100">
+            <div className="flex items-center px-5 py-5 border-b" style={{ borderColor: 'var(--border)' }}>
                 <Link to="/dashboard" className="flex items-center space-x-2" onClick={() => onClose()}>
                     <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
                         <span className="text-white font-bold text-sm">K</span>
                     </div>
-                    <span className="text-xl font-semibold text-gray-900">Keyorix</span>
+                    <span className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        Keyorix
+                    </span>
                 </Link>
             </div>
 
             {/* Navigation */}
             <nav className="flex-1 px-4 py-6 space-y-1">
                 <div className="space-y-1">
-                    {navigation.map((item) => {
-                        const current = isCurrentPath(item.href);
-                        return (
-                            <Link
-                                key={item.name}
-                                to={item.href}
-                                className={clsx(
-                                    current
-                                        ? 'bg-blue-50 border-blue-500 text-blue-700'
-                                        : 'border-transparent text-gray-600 hover:bg-gray-50 hover:text-gray-900',
-                                    'group flex items-center px-3 py-2 text-sm font-medium border-l-4 transition-colors duration-200'
-                                )}
-                                onClick={() => onClose()}
-                            >
-                                <item.icon
-                                    className={clsx(
-                                        current ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-500',
-                                        'mr-3 h-5 w-5 flex-shrink-0'
-                                    )}
-                                    aria-hidden="true"
-                                />
-                                <span className="truncate">{item.name}</span>
-                                {item.badge && (
-                                    <span className="ml-auto inline-block py-0.5 px-2 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
-                                        {item.badge}
-                                    </span>
-                                )}
-                            </Link>
-                        );
-                    })}
+                    {navigation.map((item) => <NavLink key={item.name} item={item} />)}
                 </div>
 
                 {/* Admin section */}
                 <div className="pt-6">
                     <div className="px-3 mb-2">
-                        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                             Administration
                         </h3>
                     </div>
                     <div className="space-y-1">
-                        {adminNavigation.map((item) => {
-                            const current = isCurrentPath(item.href);
-                            return (
-                                <Link
-                                    key={item.name}
-                                    to={item.href}
-                                    className={clsx(
-                                        current
-                                            ? 'bg-blue-50 border-blue-500 text-blue-700'
-                                            : 'border-transparent text-gray-600 hover:bg-gray-50 hover:text-gray-900',
-                                        'group flex items-center px-3 py-2 text-sm font-medium border-l-4 transition-colors duration-200'
-                                    )}
-                                    onClick={() => onClose()}
-                                >
-                                    <item.icon
-                                        className={clsx(
-                                            current ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-500',
-                                            'mr-3 h-5 w-5 flex-shrink-0'
-                                        )}
-                                        aria-hidden="true"
-                                    />
-                                    <span className="truncate">{item.name}</span>
-                                </Link>
-                            );
-                        })}
+                        {adminNavigation.map((item) => <NavLink key={item.name} item={item} />)}
                     </div>
                 </div>
             </nav>
-
-
         </div>
     );
 
@@ -174,7 +148,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                             leaveFrom="translate-x-0"
                             leaveTo="-translate-x-full"
                         >
-                            <Dialog.Panel className="relative flex-1 flex flex-col max-w-xs w-full bg-white">
+                            <Dialog.Panel className="relative flex-1 flex flex-col max-w-xs w-full" style={{ backgroundColor: 'var(--bg-surface)' }}>
                                 <Transition.Child
                                     as={Fragment}
                                     enter="ease-in-out duration-300"
@@ -198,16 +172,17 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                                 <SidebarContent />
                             </Dialog.Panel>
                         </Transition.Child>
-                        <div className="flex-shrink-0 w-14" aria-hidden="true">
-                            {/* Force sidebar to shrink to fit close icon */}
-                        </div>
+                        <div className="flex-shrink-0 w-14" aria-hidden="true" />
                     </div>
                 </Dialog>
             </Transition.Root>
 
             {/* Desktop sidebar */}
             <div className={clsx('hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0', className)}>
-                <div className="flex flex-col flex-grow bg-white border-r border-gray-200 overflow-y-auto">
+                <div
+                    className="flex flex-col flex-grow border-r overflow-y-auto"
+                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                >
                     <SidebarContent />
                 </div>
             </div>

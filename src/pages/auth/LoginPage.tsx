@@ -52,24 +52,27 @@ export const LoginPage: React.FC = () => {
 
     if (isLoading && isAuthenticated) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+            <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--bg-app)' }}>
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className="text-gray-600">Loading...</p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                    <p style={{ color: 'var(--text-secondary)' }}>Loading...</p>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8" style={{ backgroundColor: 'var(--bg-app)' }}>
             <div className="max-w-md w-full space-y-8">
                 <div className="text-center">
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Keyorix</h1>
-                    <p className="text-gray-600">Welcome to Keyorix</p>
+                    <div className="inline-flex items-center justify-center h-12 w-12 bg-blue-600 rounded-xl mb-4">
+                        <span className="text-white font-bold text-lg">K</span>
+                    </div>
+                    <h1 className="text-3xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>Keyorix</h1>
+                    <p style={{ color: 'var(--text-secondary)' }}>Secrets management for your infrastructure</p>
                 </div>
 
-                <div className="bg-white py-8 px-6 shadow-lg rounded-lg">
+                <div className="py-8 px-6 shadow-lg rounded-lg border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
                     {mode === 'login' && (
                         <LoginForm
                             onSubmit={handleLogin}
@@ -87,8 +90,6 @@ export const LoginPage: React.FC = () => {
                         />
                     )}
                 </div>
-
-
             </div>
         </div>
     );
