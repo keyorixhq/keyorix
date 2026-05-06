@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
     Bars3Icon,
@@ -57,8 +57,8 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
         )}>
             <div className="px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between items-center h-16">
-                    {/* Left side - Menu button and logo */}
-                    <div className="flex items-center space-x-4">
+                    {/* Left side - Menu button (mobile only) */}
+                    <div className="flex items-center">
                         <button
                             type="button"
                             className="p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 lg:hidden"
@@ -67,15 +67,6 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                             <span className="sr-only">Open sidebar</span>
                             <Bars3Icon className="h-6 w-6" aria-hidden="true" />
                         </button>
-
-                        <Link to="/dashboard" className="flex items-center space-x-2">
-                            <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                                <span className="text-white font-bold text-sm">S</span>
-                            </div>
-                            <span className="hidden sm:block text-xl font-semibold text-gray-900">
-                                Keyorix
-                            </span>
-                        </Link>
                     </div>
 
                     {/* Search intentionally omitted — not implemented */}

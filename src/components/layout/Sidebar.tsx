@@ -61,6 +61,16 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
 
     const SidebarContent = () => (
         <div className="flex flex-col h-full">
+            {/* Logo */}
+            <div className="flex items-center px-5 py-5 border-b border-gray-100">
+                <Link to="/dashboard" className="flex items-center space-x-2" onClick={() => onClose()}>
+                    <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <span className="text-white font-bold text-sm">K</span>
+                    </div>
+                    <span className="text-xl font-semibold text-gray-900">Keyorix</span>
+                </Link>
+            </div>
+
             {/* Navigation */}
             <nav className="flex-1 px-4 py-6 space-y-1">
                 <div className="space-y-1">
