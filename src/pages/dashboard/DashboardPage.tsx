@@ -224,7 +224,7 @@ export const DashboardPage: React.FC = () => {
                             ? `${anomalies.length} anomal${anomalies.length === 1 ? 'y' : 'ies'} · ${expiring.length} expiring`
                             : 'No active alerts'}
                         accent={alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500'}
-                        onClick={() => navigate(ROUTES.SECRETS)}
+                        {...(alertCount > 0 ? { onClick: () => navigate(ROUTES.AUDIT) } : {})}
                     />
                 </div>
 
