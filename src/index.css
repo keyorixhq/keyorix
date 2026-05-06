@@ -263,3 +263,16 @@
   border-color: var(--border-strong);
   accent-color: var(--accent);
 }
+
+/* ─── Autofill override ─────────────────────────────────────────── */
+/* Browser autofill (-webkit-autofill) overrides background-color
+   with its own highlight regardless of inline styles or CSS.
+   The only reliable override is box-shadow inset to fake the bg. */
+[data-theme="dark"] input:-webkit-autofill,
+[data-theme="dark"] input:-webkit-autofill:hover,
+[data-theme="dark"] input:-webkit-autofill:focus,
+[data-theme="dark"] input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 9999px var(--bg-app) inset !important;
+  -webkit-text-fill-color: var(--text-primary) !important;
+  caret-color: var(--text-primary);
+}
