@@ -94,7 +94,7 @@ const FeaturePill: React.FC<FeaturePillProps> = ({ label, active }) => (
 
 const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
     created:      { dot: 'bg-emerald-500', label: 'created secret' },
-    updated:      { dot: 'bg-accent-subtle0',    label: 'updated secret' },
+    updated:      { dot: 'bg-blue-500',    label: 'updated secret' },
     accessed:     { dot: 'bg-amber-500',   label: 'accessed secret' },
     shared:       { dot: 'bg-purple-500',  label: 'shared secret' },
     login:        { dot: 'bg-gray-400',    label: 'logged in' },
@@ -200,20 +200,24 @@ export const DashboardPage: React.FC = () => {
                         {...(stats?.totalSecretsTrend ? { trend: stats.totalSecretsTrend } : {})}
                         {...(stats?.prevTotalSecrets != null ? { prevValue: stats.prevTotalSecrets } : {})}
                         sub={stats?.totalSecretsTrend ? 'vs last snapshot' : 'across all environments'}
-                        accent="bg-accent-subtle0"
+                        accent="bg-blue-500"
                         onClick={() => navigate(ROUTES.SECRETS)}
                     />
                     <StatCard
                         label="Active Users"
                         value={stats?.activeUsers ?? 0}
-                        sub="registered accounts"
+                        sub={(stats?.sharedSecrets ?? 0) > 0
+                            ? `${stats!.sharedSecrets} shared secret${stats!.sharedSecrets === 1 ? '' : 's'}`
+                            : 'registered accounts'}
                         accent="bg-purple-500"
                         onClick={() => navigate(ROUTES.ADMIN_USERS)}
                     />
                     <StatCard
                         label="Audit Events (30d)"
                         value={stats?.auditEvents30d ?? 0}
-                        sub="all events logged"
+                        sub={(stats?.auditLogins30d != null && stats?.auditSecretReads30d != null)
+                            ? `${stats.auditLogins30d} logins · ${stats.auditSecretReads30d} reads`
+                            : 'all events logged'}
                         accent="bg-amber-500"
                         onClick={() => navigate(ROUTES.AUDIT)}
                     />
