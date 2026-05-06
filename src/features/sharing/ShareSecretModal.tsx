@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { MagnifyingGlassIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { Secret } from '../../types';
 import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
-import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Alert } from '../../components/ui/Alert';
 import { useShareSecret } from './api';
+import { usersApi } from '../../services/users';
 
 interface ShareSecretModalProps {
     secret: Secret;
@@ -14,42 +15,85 @@ interface ShareSecretModalProps {
     onSuccess?: () => void;
 }
 
+interface UserOption {
+    id: number;
+    username: string;
+    display_name: string;
+    email: string;
+}
+
 const PERMISSION_OPTIONS = [
     { value: 'read', label: 'Read Only' },
     { value: 'write', label: 'Read & Write' },
 ];
 
 export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
-    secret,
-    isOpen,
-    onClose,
-    onSuccess,
+    secret, isOpen, onClose, onSuccess,
 }) => {
-    const [username, setUsername] = useState('');
+    const [query, setQuery] = useState('');
+    const [results, setResults] = useState<UserOption[]>([]);
+    const [selected, setSelected] = useState<UserOption | null>(null);
+    const [open, setOpen] = useState(false);
+    const [loading, setLoading] = useState(false);
     const [permission, setPermission] = useState<'read' | 'write'>('read');
     const [success, setSuccess] = useState(false);
-
+    const inputRef = useRef<HTMLInputElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
     const shareSecret = useShareSecret(secret.id);
 
+    // Search users as query changes
+    useEffect(() => {
+        if (!query.trim()) { setResults([]); return; }
+        let cancelled = false;
+        const timer = setTimeout(async () => {
+            setLoading(true);
+            try {
+                const data = await usersApi.list({ search: query, pageSize: 8 });
+                if (!cancelled) setResults((data as any).users ?? []);
+            } catch {
+                if (!cancelled) setResults([]);
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        }, 200);
+        return () => { cancelled = true; clearTimeout(timer); };
+    }, [query]);
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (listRef.current && !listRef.current.contains(e.target as Node) &&
+                inputRef.current && !inputRef.current.contains(e.target as Node)) {
+                setOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
     const handleClose = () => {
-        setUsername('');
+        setQuery(''); setResults([]); setSelected(null);
+        setOpen(false); setSuccess(false); shareSecret.reset();
         setPermission('read');
-        setSuccess(false);
-        shareSecret.reset();
         onClose();
+    };
+
+    const handleSelect = (user: UserOption) => {
+        setSelected(user);
+        setQuery(user.display_name || user.username);
+        setOpen(false);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!username.trim()) return;
-
+        if (!selected) return;
         shareSecret.mutate(
-            { username, permission },
+            { username: selected.username, permission },
             {
                 onSuccess: () => {
                     setSuccess(true);
                     onSuccess?.();
-                    setTimeout(handleClose, 1000);
+                    setTimeout(handleClose, 1200);
                 },
             }
         );
@@ -59,46 +103,99 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
         <Modal isOpen={isOpen} onClose={handleClose} title={`Share "${secret.name}"`} size="md">
             <form onSubmit={handleSubmit} className="space-y-4">
                 {shareSecret.isError && (
-                    <Alert
-                        type="error"
-                        title="Error"
-                        message={shareSecret.error instanceof Error ? shareSecret.error.message : 'Failed to share secret.'}
-                    />
+                    <Alert type="error" title="Error"
+                        message={shareSecret.error instanceof Error ? shareSecret.error.message : 'Failed to share secret.'} />
                 )}
-                {success && (
-                    <Alert type="success" title="Shared!" message="Secret shared successfully." />
-                )}
+                {success && <Alert type="success" title="Shared!" message="Secret shared successfully." />}
 
+                {/* User search */}
                 <div>
-                    <label className="block text-sm font-medium text-base-secondary mb-1">
-                        Recipient username
+                    <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Recipient
                     </label>
-                    <Input
-                        type="text"
-                        placeholder="Enter username"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        disabled={shareSecret.isPending || success}
-                    />
+                    <div className="relative">
+                        {/* Input */}
+                        <div className="relative">
+                            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none"
+                                style={{ color: 'var(--text-muted)' }} />
+                            <input
+                                ref={inputRef}
+                                type="text"
+                                placeholder="Search by name or username…"
+                                value={query}
+                                onChange={e => { setQuery(e.target.value); setSelected(null); setOpen(true); }}
+                                onFocus={() => { if (query) setOpen(true); }}
+                                disabled={shareSecret.isPending || success}
+                                className="w-full pl-9 pr-4 py-2 text-sm rounded-md border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: selected ? 'var(--accent)' : 'var(--border-strong)' }}
+                            />
+                            {selected && (
+                                <CheckIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4"
+                                    style={{ color: 'var(--accent)' }} />
+                            )}
+                        </div>
+
+                        {/* Dropdown */}
+                        {open && query.trim() && (
+                            <div
+                                ref={listRef}
+                                className="absolute z-20 w-full mt-1 rounded-md border shadow-lg overflow-hidden"
+                                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                            >
+                                {loading ? (
+                                    <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+                                        Searching…
+                                    </div>
+                                ) : results.length === 0 ? (
+                                    <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+                                        No users found for "{query}"
+                                    </div>
+                                ) : (
+                                    results.map(user => (
+                                        <button
+                                            key={user.id}
+                                            type="button"
+                                            onClick={() => handleSelect(user)}
+                                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
+                                            style={{ color: 'var(--text-primary)' }}
+                                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
+                                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
+                                        >
+                                            <div className="flex-shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
+                                                <span className="text-xs font-semibold" style={{ color: 'var(--accent-text)' }}>
+                                                    {(user.display_name || user.username).charAt(0).toUpperCase()}
+                                                </span>
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-medium truncate">{user.display_name || user.username}</p>
+                                                <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>@{user.username} · {user.email}</p>
+                                            </div>
+                                        </button>
+                                    ))
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
+                {/* Permission */}
                 <div>
-                    <label className="block text-sm font-medium text-base-secondary mb-1">
+                    <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
                         Permission
                     </label>
                     <Select
                         value={permission}
-                        onChange={(e) => setPermission(e.target.value as 'read' | 'write')}
+                        onChange={e => setPermission(e.target.value as 'read' | 'write')}
                         options={PERMISSION_OPTIONS}
                         disabled={shareSecret.isPending || success}
                     />
                 </div>
 
-                <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex items-center justify-end space-x-3 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
                     <Button type="button" variant="outline" onClick={handleClose} disabled={shareSecret.isPending}>
                         Cancel
                     </Button>
-                    <Button type="submit" disabled={shareSecret.isPending || success || !username.trim()}>
+                    <Button type="submit" disabled={shareSecret.isPending || success || !selected}>
                         {shareSecret.isPending ? 'Sharing…' : 'Share'}
                     </Button>
                 </div>
