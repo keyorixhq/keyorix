@@ -240,9 +240,19 @@ export const SecretsListPage: React.FC = () => {
                         <Select value={editType} onChange={(e) => setEditType(e.target.value as SecretType)} options={SECRET_TYPES.filter(t => t.value !== 'all') as { value: SecretType; label: string }[]} />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">New Value</label>
-                        <input type="password" value={editValue} onChange={(e) => setEditValue(e.target.value)} placeholder="Leave blank to keep existing value" className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                        <p className="mt-1 text-xs text-base-muted ">Leave blank to keep the existing value.</p>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="block text-sm font-medium text-base-secondary">New Value</label>
+                            <button type="button" onClick={() => setEditValue(generateSecret())}
+                                className="text-xs font-medium transition-colors"
+                                style={{ color: 'var(--accent-text)' }}>
+                                ↻ Generate
+                            </button>
+                        </div>
+                        <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)}
+                            placeholder="Leave blank to keep existing value"
+                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }} />
+                        <p className="mt-1 text-xs text-base-muted">Leave blank to keep the existing value.</p>
                     </div>
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
                         <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.editMutation.isLoading}>Cancel</Button>
