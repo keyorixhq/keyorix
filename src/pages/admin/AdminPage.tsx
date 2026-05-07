@@ -7,12 +7,16 @@ import {
     TrashIcon,
     PencilIcon,
     UserCircleIcon,
+    ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
 import {
     useAdminUserList,
     useAdminCreateUser,
     useAdminUpdateUser,
     useAdminDeleteUser,
+    useAdminRoles,
+    useUserRoles,
+    useUpdateUserRoles,
 } from '../../features/admin';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
@@ -34,7 +38,8 @@ type ActiveModal =
     | null
     | { type: 'create' }
     | { type: 'edit'; user: APIUser }
-    | { type: 'delete'; user: APIUser };
+    | { type: 'delete'; user: APIUser }
+    | { type: 'roles'; user: APIUser };
 
 function formatDate(iso: string): string {
     if (!iso) return '—';
@@ -77,14 +82,59 @@ export const AdminPage: React.FC = () => {
     const total: number = rawData?.total ?? 0;
     const totalPages: number = rawData?.total_pages ?? 1;
 
+    const [rolesUserId, setRolesUserId] = useState<number | null>(null);
+    const [selectedRoleIds, setSelectedRoleIds] = useState<Set<number>>(new Set());
+
     const createMutation = useAdminCreateUser();
     const updateMutation = useAdminUpdateUser();
     const deleteMutation = useAdminDeleteUser();
+    const { data: allRoles } = useAdminRoles();
+    const { data: userRolesData, isLoading: rolesLoading } = useUserRoles(rolesUserId);
+    const updateRolesMutation = useUpdateUserRoles();
 
     function closeModal() {
         setActiveModal(null);
         setFormError('');
         setCreateUsername(''); setCreateEmail(''); setCreateDisplayName(''); setCreatePassword('');
+        setRolesUserId(null);
+        setSelectedRoleIds(new Set());
+    }
+
+    function openRoles(user: APIUser) {
+        setRolesUserId(user.id);
+        setFormError('');
+        setActiveModal({ type: 'roles', user });
+    }
+
+    function handleRolesOpen(user: APIUser) {
+        openRoles(user);
+    }
+
+    React.useEffect(() => {
+        if (userRolesData && activeModal?.type === 'roles') {
+            setSelectedRoleIds(new Set(userRolesData.map((r: { id: number }) => r.id)));
+        }
+    }, [userRolesData, activeModal?.type]);
+
+    function toggleRoleId(id: number) {
+        setSelectedRoleIds(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    }
+
+    function handleSaveRoles() {
+        if (activeModal?.type !== 'roles') return;
+        if (selectedRoleIds.size === 0) { setFormError('User must have at least one role'); return; }
+        setFormError('');
+        updateRolesMutation.mutate(
+            { userId: activeModal.user.id, roleIds: Array.from(selectedRoleIds) },
+            {
+                onSuccess: () => { closeModal(); },
+                onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to update roles'),
+            }
+        );
     }
 
     function openEdit(user: APIUser) {
@@ -289,6 +339,9 @@ export const AdminPage: React.FC = () => {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">{formatDate(user.created_at)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right">
                                             <div className="flex items-center justify-end gap-2">
+                                                <button onClick={() => handleRolesOpen(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Manage roles">
+                                                    <ShieldCheckIcon className="h-4 w-4" />
+                                                </button>
                                                 <button onClick={() => openEdit(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Edit user">
                                                     <PencilIcon className="h-4 w-4" />
                                                 </button>
@@ -385,6 +438,57 @@ export const AdminPage: React.FC = () => {
                         <Button variant="ghost" onClick={closeModal} disabled={deleteMutation.isPending}>Cancel</Button>
                         <Button variant="danger" onClick={handleDelete} disabled={deleteMutation.isPending}>
                             {deleteMutation.isPending ? 'Deleting…' : 'Delete User'}
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
+
+            <Modal
+                isOpen={activeModal?.type === 'roles'}
+                onClose={closeModal}
+                title={activeModal?.type === 'roles' ? `Manage Roles — ${activeModal.user.display_name || activeModal.user.username}` : 'Manage Roles'}
+                size="md"
+            >
+                <div className="space-y-4">
+                    {formError && <Alert type="error" message={formError} />}
+                    {rolesLoading ? (
+                        <div className="flex justify-center py-6">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2" style={{ borderColor: 'var(--accent)' }} />
+                        </div>
+                    ) : (
+                        <div className="space-y-1">
+                            {(allRoles as any[] ?? []).map((role: any) => (
+                                <label key={role.id} className="flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
+                                    style={{ backgroundColor: selectedRoleIds.has(role.id) ? 'var(--accent-subtle)' : undefined }}
+                                    onMouseEnter={e => { if (!selectedRoleIds.has(role.id)) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'; }}
+                                    onMouseLeave={e => { if (!selectedRoleIds.has(role.id)) (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        className="mt-0.5 h-4 w-4 rounded border-base"
+                                        style={{ accentColor: 'var(--accent)' }}
+                                        checked={selectedRoleIds.has(role.id)}
+                                        onChange={() => toggleRoleId(role.id)}
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{role.name}</p>
+                                        {role.description && (
+                                            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{role.description}</p>
+                                        )}
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+                    )}
+                    <div className="flex justify-end gap-3 pt-2">
+                        <Button variant="ghost" onClick={closeModal} disabled={updateRolesMutation.isPending}>Cancel</Button>
+                        <Button
+                            variant="primary"
+                            onClick={handleSaveRoles}
+                            disabled={updateRolesMutation.isPending || selectedRoleIds.size === 0}
+                            title={selectedRoleIds.size === 0 ? 'User must have at least one role' : undefined}
+                        >
+                            {updateRolesMutation.isPending ? 'Saving…' : 'Save'}
                         </Button>
                     </div>
                 </div>

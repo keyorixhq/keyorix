@@ -98,3 +98,23 @@ export const useAdminDeleteUser = () => {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
     });
 };
+
+export const useUserRoles = (userId: number | null) => {
+    return useQuery({
+        queryKey: ['user-roles', userId],
+        queryFn: () => adminApi.getUserRoles(userId!),
+        enabled: userId !== null,
+    });
+};
+
+export const useUpdateUserRoles = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ userId, roleIds }: { userId: number; roleIds: number[] }) =>
+            adminApi.updateUserRoles(userId, roleIds),
+        onSuccess: (_data, { userId }) => {
+            queryClient.invalidateQueries({ queryKey: ['user-roles', userId] });
+            queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+        },
+    });
+};

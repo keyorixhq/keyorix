@@ -39,4 +39,15 @@ export const adminApi = {
         );
         return response.data.data;
     },
+
+    async getUserRoles(userId: number): Promise<{ id: number; name: string }[]> {
+        const response = await apiClient.get<ApiResponse<{ roles: { id: number; name: string }[] }>>(
+            `/api/v1/users/${userId}/roles`
+        );
+        return response.data.data?.roles ?? [];
+    },
+
+    async updateUserRoles(userId: number, roleIds: number[]): Promise<void> {
+        await apiClient.put(`/api/v1/users/${userId}/roles`, { role_ids: roleIds });
+    },
 };
