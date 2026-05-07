@@ -38,13 +38,20 @@ function useGlobalSearch(query: string) {
         apiClient.get('/api/v1/secrets', { params: { search: query, pageSize: 8 } })
             .then(res => {
                 const secrets: any[] = res.data.data?.secrets ?? [];
-                const secretHits: SearchResult[] = secrets.map(s => ({
-                    type: 'secret' as const,
-                    id: s.ID ?? s.id,
-                    label: s.Name ?? s.name,
-                    sub: [s.environment_name ?? s.environment ?? '', s.namespace_name ?? ''].filter(Boolean).join(' / '),
-                    href: ROUTES.SECRETS,
-                }));
+                const secretHits: SearchResult[] = secrets.map(s => {
+                    const projectId = s.ProjectID ?? s.project_id ?? null;
+                    const envName = s.environment_name ?? s.environment ?? '';
+                    const href = projectId
+                        ? `${ROUTES.PROJECT_DETAIL(projectId)}?env=${encodeURIComponent(envName)}`
+                        : ROUTES.SECRETS;
+                    return {
+                        type: 'secret' as const,
+                        id: s.ID ?? s.id,
+                        label: s.Name ?? s.name,
+                        sub: envName ? `${envName}` : '',
+                        href,
+                    };
+                });
                 setResults([...projectHits, ...secretHits]);
             })
             .catch(() => setResults(projectHits))
