@@ -174,6 +174,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Put("/{id}", handlers.UpdateUser)
 			r.Delete("/{id}", handlers.DeleteUser)
 			r.Post("/{id}/restore", handlers.RestoreUser)
+			r.Get("/{id}/roles", handlers.GetUserRolesForUser)
+			r.Put("/{id}/roles", handlers.UpdateUserRoles)
 		})
 
 		// Groups endpoints
