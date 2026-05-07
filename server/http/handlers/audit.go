@@ -59,6 +59,12 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 			filter.UserID = &u
 		}
 	}
+	if pidStr := r.URL.Query().Get("project_id"); pidStr != "" {
+		if pid, err := strconv.ParseUint(pidStr, 10, 32); err == nil {
+			p := uint(pid)
+			filter.ProjectID = &p
+		}
+	}
 	if st := r.URL.Query().Get("start_time"); st != "" {
 		if t, err := time.Parse(time.RFC3339, st); err == nil {
 			filter.StartTime = &t

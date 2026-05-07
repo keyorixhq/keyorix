@@ -35,6 +35,17 @@ func (ls *LocalStorage) ListProjects(ctx context.Context) ([]*models.Project, er
 	return projects, ls.db.WithContext(ctx).Find(&projects).Error
 }
 
+func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
+	var project models.Project
+	if err := ls.db.WithContext(ctx).First(&project, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("project not found")
+		}
+		return nil, fmt.Errorf("failed to get project: %w", err)
+	}
+	return &project, nil
+}
+
 func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
 	var environments []*models.Environment
 	return environments, ls.db.WithContext(ctx).Find(&environments).Error

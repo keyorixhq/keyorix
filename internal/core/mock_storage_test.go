@@ -38,6 +38,10 @@ func (m *MockStorage) ListProjects(_ context.Context) ([]*models.Project, error)
 	return nil, nil
 }
 
+func (m *MockStorage) GetProject(_ context.Context, id uint) (*models.Project, error) {
+	return &models.Project{}, nil
+}
+
 func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
 	return nil, nil
 }

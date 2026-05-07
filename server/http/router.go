@@ -122,6 +122,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// Catalog endpoints (projects, environments)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects", catalogHandler.ListProjects)
+		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects/{id}", catalogHandler.GetProject)
 		r.With(customMiddleware.RequirePermission("secrets.write")).Post("/projects", catalogHandler.CreateProject)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects/{id}/environments", catalogHandler.ListProjectEnvironments)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/environments", catalogHandler.ListEnvironments)
