@@ -169,6 +169,8 @@ type AuditEvent struct {
 	EventType    string
 	UserID       *uint
 	SecretNodeID *uint
+	ProjectID    *uint  `gorm:"index"` // project context for NIS2/DORA audit trail
+	IPAddress    string // source IP, populated from HTTP layer
 	Description  string
 	EventTime    time.Time
 }
