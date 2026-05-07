@@ -39,10 +39,7 @@ func checkLoginRateLimit(ip string) bool {
 	}
 	loginRateLimiter.attempts[ip] = recent
 
-	if len(recent) >= loginMaxAttempts {
-		return true
-	}
-	return false
+	return len(recent) >= loginMaxAttempts
 }
 
 // recordLoginAttempt records a failed login attempt for the IP.

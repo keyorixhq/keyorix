@@ -126,6 +126,3 @@ func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) 
 		"logs": []interface{}{}, "page": 1, "page_size": 50, "total": 0, "total_pages": 0,
 	}, "")
 }
-
-func uintPtr(u uint) *uint       { return &u }
-func stringPtr(s string) *string { return &s }

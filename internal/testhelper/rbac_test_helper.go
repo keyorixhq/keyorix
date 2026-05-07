@@ -15,6 +15,13 @@ import (
 	"gorm.io/gorm"
 )
 
+type testContextKey string
+
+const (
+	testContextKeyUserID   testContextKey = "user_id"
+	testContextKeyUsername testContextKey = "username"
+)
+
 // RBACTestHelper provides consistent test setup for RBAC tests
 type RBACTestHelper struct {
 	CoreService *core.KeyorixCore
@@ -358,9 +365,8 @@ func (h *RBACTestHelper) HasPermission(t *testing.T, userID uint, permission str
 // CreateTestContext creates a context with user information for testing
 func (h *RBACTestHelper) CreateTestContext(userID uint, username string) context.Context {
 	ctx := context.Background()
-	// Add user context information that the core service expects
-	ctx = context.WithValue(ctx, "user_id", userID)
-	ctx = context.WithValue(ctx, "username", username)
+	ctx = context.WithValue(ctx, testContextKeyUserID, userID)
+	ctx = context.WithValue(ctx, testContextKeyUsername, username)
 	return ctx
 }
 

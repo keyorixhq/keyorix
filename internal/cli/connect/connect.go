@@ -10,7 +10,6 @@ import (
 	"time"
 
 	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
-	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -234,18 +233,4 @@ func testServerConnection(endpoint, apiKey string, timeout time.Duration) error 
 		return fmt.Errorf("server returned %d", resp.StatusCode)
 	}
 	return nil
-}
-
-func getAuthType(apiKey string) string {
-	if apiKey == "" {
-		return "none"
-	}
-	return "api_key"
-}
-
-func getLocalDatabasePath(cfg *config.Config) string {
-	if cfg.Storage.Database.Path != "" {
-		return cfg.Storage.Database.Path
-	}
-	return "./secrets.db"
 }

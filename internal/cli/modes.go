@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
-	"github.com/keyorixhq/keyorix/internal/client"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage"
@@ -35,8 +34,7 @@ func (m CLIMode) String() string {
 type CLI struct {
 	mode        CLIMode
 	config      *cliconfig.CLIConfig
-	coreService *core.KeyorixCore  // For embedded mode
-	httpClient  *client.HTTPClient // For client mode
+	coreService *core.KeyorixCore // For embedded mode
 }
 
 // NewCLI creates a new CLI instance with automatic mode detection

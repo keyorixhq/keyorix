@@ -1,4 +1,4 @@
-// scan_files.go — Per-file-type scanning: scanEnvFile, scanConfigFile, scanSourceFile, validatePath.
+// scan_files.go — Per-file-type scanning: scanEnvFile, scanConfigFile, scanSourceFile.
 //
 // Each scanner reads a file and returns a slice of ScanFinding.
 // Types, patterns, and the main runScan orchestrator live in scan.go.
@@ -10,22 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 )
-
-// validatePath ensures filePath is within basePath (no path traversal).
-func validatePath(basePath, filePath string) error {
-	absBase, err := filepath.Abs(basePath)
-	if err != nil {
-		return err
-	}
-	absFile, err := filepath.Abs(filePath)
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(absFile, absBase) {
-		return fmt.Errorf("path traversal detected: %s", filePath)
-	}
-	return nil
-}
 
 func scanEnvFile(path, relPath string) []ScanFinding {
 	// #nosec G304 -- path is validated against scan root and comes from filepath.Walk
