@@ -40,6 +40,12 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 		return nil, err
 	}
 
+	// Only the secret owner may share it.
+	// Sharing semantics: same-project only (RBAC is global; ownership enforces project boundary).
+	if secret.OwnerID != req.SharedBy {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
+	}
+
 	shareRecord := &models.ShareRecord{
 		SecretID:    req.SecretID,
 		OwnerID:     secret.OwnerID,
