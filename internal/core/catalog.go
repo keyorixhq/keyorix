@@ -38,7 +38,23 @@ func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, descript
 }
 
 // DeleteProject deletes a project by ID.
-func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint) error {
+// By default (force=false) it returns an error if the project still contains secrets (ADR-019).
+// Pass force=true to delete the project and all its secrets (cascade).
+func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) error {
+	if !force {
+		projectID := id
+		_, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
+			ProjectID: &projectID,
+			Page:      1,
+			PageSize:  1,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to check project secrets: %w", err)
+		}
+		if total > 0 {
+			return fmt.Errorf("project has %d secret(s) — delete them first or use --force to cascade", total)
+		}
+	}
 	return c.storage.DeleteProject(ctx, id)
 }
 
@@ -80,4 +96,22 @@ func (c *KeyorixCore) ListEnvironmentsByProject(ctx context.Context, projectID u
 // GetEnvironment returns a single environment by ID.
 func (c *KeyorixCore) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
 	return c.storage.GetEnvironment(ctx, id)
+}
+
+// CreateProjectWithEnvs creates a new project seeded with the specified environment names.
+// Used when the CLI --envs flag overrides the default development/staging/production set.
+func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, description string, envNames []string) (*models.Project, error) {
+	if name == "" {
+		return nil, fmt.Errorf("project name is required")
+	}
+	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create project: %w", err)
+	}
+	for _, envName := range envNames {
+		if _, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: envName, ProjectID: project.ID}); err != nil {
+			_ = err // non-fatal; log and continue
+		}
+	}
+	return project, nil
 }
