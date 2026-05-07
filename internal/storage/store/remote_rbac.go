@@ -223,8 +223,20 @@ func (rs *RemoteStorage) ListProjects(_ context.Context) ([]*models.Project, err
 	return nil, fmt.Errorf("not implemented in remote storage")
 }
 
+func (rs *RemoteStorage) ListProjectsWithCounts(_ context.Context) ([]storage.ProjectWithCounts, error) {
+	return nil, fmt.Errorf("not implemented in remote storage")
+}
+
 func (rs *RemoteStorage) GetProject(_ context.Context, _ uint) (*models.Project, error) {
 	return nil, fmt.Errorf("not implemented in remote storage")
+}
+
+func (rs *RemoteStorage) UpdateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
+	return nil, fmt.Errorf("not implemented in remote storage")
+}
+
+func (rs *RemoteStorage) DeleteProject(_ context.Context, _ uint) error {
+	return fmt.Errorf("not implemented in remote storage")
 }
 
 func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
@@ -237,4 +249,8 @@ func (rs *RemoteStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([
 
 func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {
 	return nil, fmt.Errorf("not implemented in remote storage")
+}
+
+func (rs *RemoteStorage) DeleteEnvironment(_ context.Context, _ uint) error {
+	return fmt.Errorf("not implemented in remote storage")
 }

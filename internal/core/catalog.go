@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -12,9 +13,38 @@ func (c *KeyorixCore) ListProjects(ctx context.Context) ([]*models.Project, erro
 	return c.storage.ListProjects(ctx)
 }
 
+// ListProjectsWithCounts returns projects with secret and environment counts.
+func (c *KeyorixCore) ListProjectsWithCounts(ctx context.Context) ([]storage.ProjectWithCounts, error) {
+	return c.storage.ListProjectsWithCounts(ctx)
+}
+
 // GetProject returns a single project by ID.
 func (c *KeyorixCore) GetProject(ctx context.Context, id uint) (*models.Project, error) {
 	return c.storage.GetProject(ctx, id)
+}
+
+// UpdateProject updates an existing project's name and description.
+func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, description string) (*models.Project, error) {
+	if name == "" {
+		return nil, fmt.Errorf("project name is required")
+	}
+	project, err := c.storage.GetProject(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	project.Name = name
+	project.Description = description
+	return c.storage.UpdateProject(ctx, project)
+}
+
+// DeleteProject deletes a project by ID.
+func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint) error {
+	return c.storage.DeleteProject(ctx, id)
+}
+
+// DeleteEnvironment deletes an environment by ID.
+func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
+	return c.storage.DeleteEnvironment(ctx, id)
 }
 
 // CreateProject creates a new project and seeds it with default environments.
