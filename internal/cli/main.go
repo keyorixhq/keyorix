@@ -10,6 +10,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
 	"github.com/keyorixhq/keyorix/internal/cli/encryption"
 	"github.com/keyorixhq/keyorix/internal/cli/group"
+	"github.com/keyorixhq/keyorix/internal/cli/project"
 	"github.com/keyorixhq/keyorix/internal/cli/rbac"
 	"github.com/keyorixhq/keyorix/internal/cli/run"
 	"github.com/keyorixhq/keyorix/internal/cli/secret"
@@ -34,6 +35,7 @@ func init() {
 	// Add all available commands
 	rootCmd.AddCommand(run.RunCmd)
 	rootCmd.AddCommand(secret.SecretCmd)
+	rootCmd.AddCommand(project.ProjectCmd)
 	rootCmd.AddCommand(user.UserCmd)
 	rootCmd.AddCommand(group.GroupCmd)
 	rootCmd.AddCommand(share.ShareCmd)
