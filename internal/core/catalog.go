@@ -41,3 +41,8 @@ func (c *KeyorixCore) ListEnvironments(ctx context.Context) ([]*models.Environme
 func (c *KeyorixCore) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	return c.storage.ListEnvironmentsByProject(ctx, projectID)
 }
+
+// GetEnvironment returns a single environment by ID.
+func (c *KeyorixCore) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
+	return c.storage.GetEnvironment(ctx, id)
+}

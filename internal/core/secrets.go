@@ -49,6 +49,15 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
+	// Verify the environment belongs to the stated project.
+	env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID)
+	if err != nil {
+		return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
+	}
+	if env.ProjectID != req.ProjectID {
+		return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
+	}
+
 	existing, err := c.storage.GetSecretByName(ctx, req.Name, req.ProjectID, req.EnvironmentID)
 	if err == nil && existing != nil {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretAlreadyExists", nil))
