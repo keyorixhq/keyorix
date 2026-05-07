@@ -12,6 +12,7 @@ export const secretsApi = {
         zone?: string;
         environment?: string;
         environment_id?: number;
+        project_id?: number;
         tags?: string[];
     }): Promise<PaginatedResponse<Secret>> {
         const response = await apiClient.get(API_ENDPOINTS.SECRETS.LIST, { params });

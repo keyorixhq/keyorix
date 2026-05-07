@@ -1,7 +1,8 @@
 import React from 'react';
-import { Link, useParams, useNavigate, Routes, Route, Navigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { useProject } from '../../features/projects/api';
+import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ROUTES } from '../../constants';
 
 // ── Tab definition ───────────────────────────────────────────────────────────
@@ -33,14 +34,16 @@ const Breadcrumb: React.FC<{ projectName: string }> = ({ projectName }) => (
 
 // ── TabNav ───────────────────────────────────────────────────────────────────
 
-const TabNav: React.FC<{ projectId: number; activePath: string }> = ({ projectId, activePath }) => {
+const TabNav: React.FC<{ projectId: number }> = ({ projectId }) => {
+    const location = useLocation();
     const base = `/projects/${projectId}`;
-    // Determine active tab by matching end of current path
+
     const isActive = (tab: Tab) => {
         if (tab.path === '') {
-            return activePath === base || activePath === `${base}/`;
+            // Secrets tab: active when path is exactly /projects/:id (no sub-path)
+            return location.pathname === base || location.pathname === `${base}/`;
         }
-        return activePath.startsWith(`${base}${tab.path}`);
+        return location.pathname.startsWith(`${base}${tab.path}`);
     };
 
     return (
@@ -78,23 +81,6 @@ const ComingSoonTab: React.FC<{ label: string }> = ({ label }) => (
     </div>
 );
 
-// ── Secrets tab placeholder (replaced in Phase 3C) ──────────────────────────
-
-const SecretsTab: React.FC<{ projectId: number }> = ({ projectId }) => (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
-        <div className="h-10 w-10 rounded-lg flex items-center justify-center mb-3"
-            style={{ backgroundColor: 'var(--accent-subtle)' }}>
-            <FolderIcon className="h-5 w-5" style={{ color: 'var(--accent)' }} />
-        </div>
-        <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-            Secrets with environment pills — coming in Phase 3C
-        </p>
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            Project ID: {projectId}
-        </p>
-    </div>
-);
-
 // ── ProjectDetailPage ────────────────────────────────────────────────────────
 
 export const ProjectDetailPage: React.FC = () => {
@@ -102,9 +88,6 @@ export const ProjectDetailPage: React.FC = () => {
     const projectId = Number(id);
     const navigate = useNavigate();
     const { data: project, isLoading, isError } = useProject(projectId);
-
-    // Current path for tab highlighting
-    const currentPath = window.location.pathname;
 
     if (isLoading) {
         return (
@@ -152,11 +135,11 @@ export const ProjectDetailPage: React.FC = () => {
             </div>
 
             {/* Tabs */}
-            <TabNav projectId={projectId} activePath={currentPath} />
+            <TabNav projectId={projectId} />
 
             {/* Tab content via nested routes */}
             <Routes>
-                <Route index element={<SecretsTab projectId={projectId} />} />
+                <Route index element={<ProjectSecretsTab projectId={projectId} />} />
                 <Route path="members" element={<ComingSoonTab label="Members" />} />
                 <Route path="activity" element={<ComingSoonTab label="Activity" />} />
                 <Route path="settings" element={<ComingSoonTab label="Settings" />} />
