@@ -230,3 +230,7 @@ func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environm
 func (rs *RemoteStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([]*models.Environment, error) {
 	return nil, fmt.Errorf("not implemented in remote storage")
 }
+
+func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {
+	return nil, fmt.Errorf("not implemented in remote storage")
+}

@@ -45,6 +45,17 @@ func (ls *LocalStorage) ListEnvironmentsByProject(ctx context.Context, projectID
 	return environments, ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&environments).Error
 }
 
+func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
+	var env models.Environment
+	if err := ls.db.WithContext(ctx).First(&env, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("environment not found")
+		}
+		return nil, fmt.Errorf("failed to get environment: %w", err)
+	}
+	return &env, nil
+}
+
 // --- Secrets ---
 
 // CreateSecret creates a new secret in the database.
