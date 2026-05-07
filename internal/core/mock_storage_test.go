@@ -38,8 +38,20 @@ func (m *MockStorage) ListProjects(_ context.Context) ([]*models.Project, error)
 	return nil, nil
 }
 
+func (m *MockStorage) ListProjectsWithCounts(_ context.Context) ([]storage.ProjectWithCounts, error) {
+	return nil, nil
+}
+
 func (m *MockStorage) GetProject(_ context.Context, id uint) (*models.Project, error) {
 	return &models.Project{}, nil
+}
+
+func (m *MockStorage) UpdateProject(_ context.Context, project *models.Project) (*models.Project, error) {
+	return project, nil
+}
+
+func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
+	return nil
 }
 
 func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
@@ -52,6 +64,10 @@ func (m *MockStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([]*m
 
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
+}
+
+func (m *MockStorage) DeleteEnvironment(_ context.Context, _ uint) error {
+	return nil
 }
 
 // Secret Management

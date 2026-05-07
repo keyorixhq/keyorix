@@ -14,9 +14,13 @@ type Storage interface {
 	// Project / Environment management
 	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
+	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
+	DeleteProject(ctx context.Context, id uint) error
+	ListProjects(ctx context.Context) ([]*models.Project, error)
+	ListProjectsWithCounts(ctx context.Context) ([]ProjectWithCounts, error)
 	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
 	GetEnvironment(ctx context.Context, id uint) (*models.Environment, error)
-	ListProjects(ctx context.Context) ([]*models.Project, error)
+	DeleteEnvironment(ctx context.Context, id uint) error
 	ListEnvironments(ctx context.Context) ([]*models.Environment, error)
 	ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error)
 
@@ -197,4 +201,14 @@ type StorageStats struct {
 	TotalAuditLogs int64      `json:"total_audit_logs"`
 	DatabaseSize   int64      `json:"database_size_bytes"`
 	LastBackup     *time.Time `json:"last_backup"`
+}
+
+// ProjectWithCounts is returned by ListProjectsWithCounts, adding aggregate
+// counts so the frontend project list page can show secret/env totals.
+type ProjectWithCounts struct {
+	ID               uint   `json:"ID"`
+	Name             string `json:"Name"`
+	Description      string `json:"Description"`
+	SecretCount      int64  `json:"secret_count"`
+	EnvironmentCount int64  `json:"environment_count"`
 }

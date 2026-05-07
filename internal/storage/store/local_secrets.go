@@ -35,6 +35,44 @@ func (ls *LocalStorage) ListProjects(ctx context.Context) ([]*models.Project, er
 	return projects, ls.db.WithContext(ctx).Find(&projects).Error
 }
 
+// ListProjectsWithCounts returns projects with aggregated secret and environment counts.
+func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context) ([]storage.ProjectWithCounts, error) {
+	type row struct {
+		ID               uint
+		Name             string
+		Description      string
+		SecretCount      int64
+		EnvironmentCount int64
+		CreatedAt        string
+		UpdatedAt        string
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).Raw(`
+		SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+		       COUNT(DISTINCT s.id) AS secret_count,
+		       COUNT(DISTINCT e.id) AS environment_count
+		FROM projects p
+		LEFT JOIN secret_nodes s ON s.project_id = p.id
+		LEFT JOIN environments e ON e.project_id = p.id
+		GROUP BY p.id
+		ORDER BY p.id
+	`).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects with counts: %w", err)
+	}
+	result := make([]storage.ProjectWithCounts, 0, len(rows))
+	for _, r := range rows {
+		result = append(result, storage.ProjectWithCounts{
+			ID:               r.ID,
+			Name:             r.Name,
+			Description:      r.Description,
+			SecretCount:      r.SecretCount,
+			EnvironmentCount: r.EnvironmentCount,
+		})
+	}
+	return result, nil
+}
+
 func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
 	var project models.Project
 	if err := ls.db.WithContext(ctx).First(&project, id).Error; err != nil {
@@ -44,6 +82,24 @@ func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Projec
 		return nil, fmt.Errorf("failed to get project: %w", err)
 	}
 	return &project, nil
+}
+
+func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
+	if err := ls.db.WithContext(ctx).Save(project).Error; err != nil {
+		return nil, fmt.Errorf("failed to update project: %w", err)
+	}
+	return project, nil
+}
+
+func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
+	result := ls.db.WithContext(ctx).Delete(&models.Project{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete project: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("project not found")
+	}
+	return nil
 }
 
 func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
@@ -65,6 +121,17 @@ func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.En
 		return nil, fmt.Errorf("failed to get environment: %w", err)
 	}
 	return &env, nil
+}
+
+func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
+	result := ls.db.WithContext(ctx).Delete(&models.Environment{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete environment: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("environment not found")
+	}
+	return nil
 }
 
 // --- Secrets ---

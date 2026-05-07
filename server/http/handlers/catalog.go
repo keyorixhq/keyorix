@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // CatalogHandler handles project and environment endpoints.
@@ -19,9 +20,9 @@ func NewCatalogHandler(svc *core.KeyorixCore) *CatalogHandler {
 	return &CatalogHandler{coreService: svc}
 }
 
-// ListProjects handles GET /api/v1/projects
+// ListProjects handles GET /api/v1/projects — returns projects with secret and environment counts.
 func (h *CatalogHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := h.coreService.ListProjects(r.Context())
+	projects, err := h.coreService.ListProjectsWithCounts(r.Context())
 	if err != nil {
 		sendError(w, "Failed to list projects", err.Error(), http.StatusInternalServerError, nil)
 		return
@@ -72,6 +73,91 @@ func (h *CatalogHandler) ListEnvironments(w http.ResponseWriter, r *http.Request
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"environments": environments}, "")
+}
+
+// UpdateProject handles PUT /api/v1/projects/:id
+func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	project, err := h.coreService.UpdateProject(r.Context(), uint(id), body.Name, body.Description)
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, project, "Project updated")
+}
+
+// DeleteProject handles DELETE /api/v1/projects/:id
+func (h *CatalogHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.DeleteProject(r.Context(), uint(id)); err != nil {
+		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, nil, "Project deleted")
+}
+
+// CreateProjectEnvironment handles POST /api/v1/projects/:id/environments
+func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	if body.Name == "" {
+		sendError(w, "ValidationError", "Environment name is required", http.StatusBadRequest, nil)
+		return
+	}
+	env, err := h.coreService.Storage().CreateEnvironment(r.Context(), &models.Environment{
+		ProjectID: uint(id),
+		Name:      body.Name,
+	})
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	sendSuccess(w, env, "Environment created")
+}
+
+// DeleteEnvironment handles DELETE /api/v1/environments/:id
+func (h *CatalogHandler) DeleteEnvironment(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid environment ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.DeleteEnvironment(r.Context(), uint(id)); err != nil {
+		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, nil, "Environment deleted")
 }
 
 // ListProjectEnvironments handles GET /api/v1/projects/:id/environments
