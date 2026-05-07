@@ -67,7 +67,7 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 	if dn == "" {
 		dn = u.Username
 	}
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"id":           u.ID,
 		"username":     u.Username,
 		"email":        u.Email,
@@ -75,7 +75,12 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 		"active":       u.IsActive,
 		"created_at":   u.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":   u.UpdatedAt.UTC().Format(time.RFC3339),
+		"deleted_at":   nil,
 	}
+	if u.DeletedAt.Valid {
+		out["deleted_at"] = u.DeletedAt.Time.UTC().Format(time.RFC3339)
+	}
+	return out
 }
 
 func listUsersLegacy(w http.ResponseWriter, r *http.Request) {
