@@ -41,8 +41,12 @@ func NewTestHelper(t *testing.T) *TestHelper {
 	require.NoError(t, err)
 
 	// Auto-migrate models
-	err = db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Role{}, &models.ShareRecord{})
+	err = db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Role{}, &models.ShareRecord{})
 	require.NoError(t, err)
+
+	// Seed a default project and environment so CreateSecret env-project validation passes.
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "development"}).Error)
 
 	// Create storage
 	storage := store.NewLocalStorage(db)
