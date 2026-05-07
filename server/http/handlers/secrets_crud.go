@@ -65,6 +65,8 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error creating secret: %v", err)
 		if strings.Contains(err.Error(), "already exists") {
 			h.sendError(w, "ConflictError", "Secret with this name already exists", http.StatusConflict, nil)
+		} else if strings.Contains(err.Error(), "does not belong to project") || strings.Contains(err.Error(), "environment") && strings.Contains(err.Error(), "not found") {
+			h.sendError(w, "ValidationError", err.Error(), http.StatusUnprocessableEntity, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to create secret", http.StatusInternalServerError, nil)
 		}
