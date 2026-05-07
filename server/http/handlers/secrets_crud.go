@@ -73,7 +73,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname, sname := userCtx.UserID, response.ID, userCtx.Username, response.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretCreated(context.Background(), uid, sID, uname, sname, ip, ua) // #nosec G118
+	go h.coreService.LogSecretCreatedWithProject(context.Background(), uid, sID, response.ProjectID, uname, sname, ip, ua) // #nosec G118
 
 	w.WriteHeader(http.StatusCreated)
 	h.sendSuccess(w, response, i18n.T("SuccessSecretCreated", nil))
@@ -124,7 +124,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, secret.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretRead(context.Background(), uid, sID, uname, sname, ip, ua) // #nosec G118
+	go h.coreService.LogSecretReadWithProject(context.Background(), uid, sID, secret.ProjectID, uname, sname, ip, ua) // #nosec G118
 
 	h.sendSuccess(w, response, "")
 }
@@ -182,7 +182,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, response.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretUpdated(context.Background(), uid, sID, uname, sname, ip, ua) // #nosec G118
+	go h.coreService.LogSecretUpdatedWithProject(context.Background(), uid, sID, response.ProjectID, uname, sname, ip, ua) // #nosec G118
 
 	h.sendSuccess(w, response, i18n.T("SuccessSecretUpdated", nil))
 }
@@ -202,10 +202,12 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-fetch name for audit log before the record is deleted.
+	// Pre-fetch name and project for audit log before the record is deleted.
 	secretName := fmt.Sprintf("id=%d", id)
+	var secretProjectID uint
 	if s, err := h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID); err == nil {
 		secretName = s.Name
+		secretProjectID = s.ProjectID
 	}
 
 	if err := h.coreService.DeleteSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID); err != nil {
@@ -222,7 +224,7 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname := userCtx.UserID, uint(id), userCtx.Username
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretDeleted(context.Background(), uid, sID, uname, secretName, ip, ua) // #nosec G118
+	go h.coreService.LogSecretDeletedWithProject(context.Background(), uid, sID, secretProjectID, uname, secretName, ip, ua) // #nosec G118
 
 	w.WriteHeader(http.StatusNoContent)
 }
