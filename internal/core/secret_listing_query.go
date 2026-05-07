@@ -156,7 +156,7 @@ func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo
 	for _, secret := range secrets {
 		if filter.Permission != "" {
 			if secret.IsOwnedByUser {
-				if filter.Permission != "read" && filter.Permission != "write" {
+				if filter.Permission != string(PermissionRead) && filter.Permission != string(PermissionWrite) {
 					continue
 				}
 			} else if secret.UserPermission != filter.Permission {

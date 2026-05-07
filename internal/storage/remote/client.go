@@ -179,7 +179,7 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

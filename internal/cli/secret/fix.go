@@ -92,7 +92,7 @@ func runFix(cmd *cobra.Command, args []string) error {
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')
 		answer = strings.TrimSpace(strings.ToLower(answer))
-		if answer != "y" && answer != "yes" {
+		if answer != "y" && answer != "yes" { //nolint:goconst
 			fmt.Println("Cancelled.")
 			return nil
 		}
@@ -111,8 +111,8 @@ func runFix(cmd *cobra.Command, args []string) error {
 	envPath := filepath.Join(absPath, fixEnvFile)
 	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) // #nosec G304
 	if err == nil {
-		fmt.Fprintf(f, "\n# Added by keyorix fix\n%s=\n", envVarName) // #nosec G104
-		f.Close()                                                     // #nosec G104
+		_, _ = fmt.Fprintf(f, "\n# Added by keyorix fix\n%s=\n", envVarName) // #nosec G104
+		_ = f.Close()                                                        // #nosec G104
 		fmt.Printf("Added %s= to %s (fill in the value)\n", envVarName, fixEnvFile)
 	}
 

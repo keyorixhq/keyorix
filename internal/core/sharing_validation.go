@@ -13,7 +13,7 @@ func (c *KeyorixCore) validateShareSecretRequest(req *ShareSecretRequest) error 
 	if req.RecipientID == 0 {
 		return fmt.Errorf("recipient ID is required")
 	}
-	if req.Permission != "read" && req.Permission != "write" {
+	if req.Permission != string(PermissionRead) && req.Permission != string(PermissionWrite) {
 		return fmt.Errorf("invalid permission: %s (must be 'read' or 'write')", req.Permission)
 	}
 	if req.SharedBy == 0 {
@@ -29,7 +29,7 @@ func (c *KeyorixCore) validateUpdateShareRequest(req *UpdateShareRequest) error 
 	if req.ShareID == 0 {
 		return fmt.Errorf("share ID is required")
 	}
-	if req.Permission != "read" && req.Permission != "write" {
+	if req.Permission != string(PermissionRead) && req.Permission != string(PermissionWrite) {
 		return fmt.Errorf("invalid permission: %s (must be 'read' or 'write')", req.Permission)
 	}
 	if req.UpdatedBy == 0 {

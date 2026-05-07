@@ -198,7 +198,7 @@ func interactiveUpdate(current *models.SecretNode) (*core.UpdateSecretRequest, e
 		for {
 			input := ask(prompt+" (y/n)", "n")
 			switch strings.ToLower(input) {
-			case "y", "yes":
+			case "y", "yes": //nolint:goconst
 				return true
 			case "n", "no", "":
 				return false

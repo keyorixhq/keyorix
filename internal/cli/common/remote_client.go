@@ -88,7 +88,7 @@ func (c *RemoteClient) Get(ctx context.Context, path string, out interface{}) er
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -115,7 +115,7 @@ func (c *RemoteClient) Post(ctx context.Context, path string, body interface{}, 
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -155,7 +155,7 @@ func (c *RemoteClient) Put(ctx context.Context, path string, body interface{}, o
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
@@ -178,7 +178,7 @@ func (c *RemoteClient) Delete(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)

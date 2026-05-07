@@ -166,7 +166,7 @@ func TestRBACNamespaceIntegration(t *testing.T) {
 			FROM user_roles ur 
 			JOIN roles r ON ur.role_id = r.id 
 			WHERE ur.user_id = ?`, user1.ID)
-		defer rows.Close()
+		defer rows.Close() //nolint:errcheck
 
 		for rows.Next() {
 			var ur struct {
@@ -451,8 +451,8 @@ func BenchmarkRBACOperations(b *testing.B) {
 // TestMain sets up and tears down test environment
 func TestMain(m *testing.M) {
 	// Setup test environment
-	os.Setenv("KEYORIX_ENV", "test")
-	os.Setenv("KEYORIX_LOG_LEVEL", "error")
+	_ = os.Setenv("KEYORIX_ENV", "test")
+	_ = os.Setenv("KEYORIX_LOG_LEVEL", "error")
 
 	// Run tests
 	code := m.Run()

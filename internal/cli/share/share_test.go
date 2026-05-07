@@ -23,7 +23,7 @@ func TestShareCommandHelp(t *testing.T) {
 	buf := new(bytes.Buffer)
 	ShareCmd.SetOut(buf)
 	ShareCmd.SetArgs([]string{"--help"})
-	ShareCmd.Execute()
+	_ = ShareCmd.Execute()
 
 	output := buf.String()
 	assert.Contains(t, output, "Commands for sharing secrets with other users and managing shared secrets.")

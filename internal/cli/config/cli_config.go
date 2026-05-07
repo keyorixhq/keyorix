@@ -105,7 +105,7 @@ func LoadCLIConfig(configPath string) (*CLIConfig, error) {
 
 	// Set defaults for missing fields
 	if config.Mode == "" {
-		config.Mode = "embedded"
+		config.Mode = "embedded" //nolint:goconst
 	}
 	if config.Client.Timeout == "" {
 		config.Client.Timeout = "30s"

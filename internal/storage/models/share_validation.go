@@ -26,7 +26,7 @@ func ValidateShareRecord(share *ShareRecord) error {
 
 	// Set default values if not provided
 	if share.Permission == "" {
-		share.Permission = "read"
+		share.Permission = string(SharePermissionRead)
 	}
 
 	if share.Permission != "read" && share.Permission != "write" {

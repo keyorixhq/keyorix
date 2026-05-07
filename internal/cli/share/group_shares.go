@@ -27,7 +27,7 @@ var groupSharesCmd = &cobra.Command{
 
 func init() {
 	groupSharesCmd.Flags().UintVar(&groupSharesGroupID, "group-id", 0, "Group ID (required)")
-	groupSharesCmd.MarkFlagRequired("group-id") // #nosec G104
+	_ = groupSharesCmd.MarkFlagRequired("group-id") // #nosec G104
 
 	// Add to parent command
 	ShareCmd.AddCommand(groupSharesCmd)
@@ -69,9 +69,9 @@ func runGroupShares(cmd *cobra.Command, args []string) error {
 
 	// Create a tabwriter for formatted output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tSECRET ID\tOWNER ID\tGROUP ID\tPERMISSION\tCREATED AT")
+	fmt.Fprintln(w, "ID\tSECRET ID\tOWNER ID\tGROUP ID\tPERMISSION\tCREATED AT") //nolint:errcheck
 	for _, share := range shares {
-		fmt.Fprintf(w, "%d\t%d\t%d\t%d\t%s\t%s\n",
+		fmt.Fprintf(w, "%d\t%d\t%d\t%d\t%s\t%s\n", //nolint:errcheck
 			share.ID,
 			share.SecretID,
 			share.OwnerID,
@@ -80,7 +80,7 @@ func runGroupShares(cmd *cobra.Command, args []string) error {
 			share.CreatedAt.Format("2006-01-02 15:04:05"),
 		)
 	}
-	w.Flush() // #nosec G104
+	_ = w.Flush() // #nosec G104
 
 	return nil
 }

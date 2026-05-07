@@ -167,10 +167,7 @@ func (c *KeyorixCore) readVersionValue(ctx context.Context, secret *models.Secre
 		if version.ReadCount >= *secret.MaxReads {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorMaxReadsExceeded", nil))
 		}
-		if err := c.storage.IncrementSecretReadCount(ctx, version.ID); err != nil {
-			// Log but don't fail the read operation.
-			// TODO: structured logging
-		}
+		_ = c.storage.IncrementSecretReadCount(ctx, version.ID) // non-fatal; don't fail the read
 	}
 	if c.encryption != nil {
 		return c.encryption.RetrieveSecret(version.ID)

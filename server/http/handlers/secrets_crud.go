@@ -110,7 +110,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var response interface{} = secret
-	if r.URL.Query().Get("include_value") == "true" {
+	if r.URL.Query().Get("include_value") == "true" { //nolint:goconst
 		value, err := h.coreService.GetSecretValueWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
 		if err != nil {
 			log.Printf("Error getting secret value: %v", err)

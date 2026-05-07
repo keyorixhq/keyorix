@@ -50,7 +50,7 @@ func TestHTTPClient_Get(t *testing.T) {
 			Success: true,
 			Data:    json.RawMessage(`{"message": "success"}`),
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -79,9 +79,9 @@ func TestHTTPClient_Get_WithCaching(t *testing.T) {
 		requestCount++
 		response := APIResponse{
 			Success: true,
-			Data:    json.RawMessage(`{"message": "success", "count": ` + string(rune(requestCount+'0')) + `}`),
+			Data:    json.RawMessage(`{"message": "success", "count": ` + string(rune(requestCount+'0')) + `}`), // #nosec G115
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -121,7 +121,7 @@ func TestHTTPClient_Post(t *testing.T) {
 			Success: true,
 			Data:    json.RawMessage(`{"message": "created"}`),
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -154,7 +154,7 @@ func TestHTTPClient_RetryLogic(t *testing.T) {
 			hj, ok := w.(http.Hijacker)
 			if ok {
 				conn, _, _ := hj.Hijack()
-				conn.Close()
+				_ = conn.Close()
 			}
 			return
 		}
@@ -164,7 +164,7 @@ func TestHTTPClient_RetryLogic(t *testing.T) {
 			Success: true,
 			Data:    json.RawMessage(`{"message": "success"}`),
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -227,7 +227,7 @@ func TestHTTPClient_Timeout(t *testing.T) {
 			Success: true,
 			Data:    json.RawMessage(`{"message": "success"}`),
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 

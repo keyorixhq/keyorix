@@ -46,7 +46,7 @@ func init() {
 	setRemoteCmd.Flags().String("url", "", "Remote server URL (required)")
 	setRemoteCmd.Flags().String("api-key", "", "API key for authentication (optional)")
 	setRemoteCmd.Flags().Int("timeout", 30, "Request timeout in seconds")
-	setRemoteCmd.MarkFlagRequired("url") // #nosec G104
+	_ = setRemoteCmd.MarkFlagRequired("url") // #nosec G104
 
 	// Add subcommands
 	ConfigCmd.AddCommand(statusCmd)
@@ -65,7 +65,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("========================")
 
 	switch cfg.Storage.Type {
-	case "remote":
+	case "remote": //nolint:goconst
 		fmt.Printf("Storage Type: 🌐 Remote\n")
 		fmt.Printf("Server URL:   %s\n", cfg.Storage.Remote.BaseURL)
 		if cfg.Storage.Remote.APIKey != "" {
@@ -131,7 +131,7 @@ func runUseLocal(cmd *cobra.Command, args []string) error {
 	// Configure local storage
 	cfg.Storage.Type = "local"
 	if cfg.Storage.Database.Path == "" {
-		cfg.Storage.Database.Path = "./secrets.db"
+		cfg.Storage.Database.Path = "./secrets.db" //nolint:goconst
 	}
 
 	if err := config.Save("keyorix.yaml", cfg); err != nil {

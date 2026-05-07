@@ -152,8 +152,8 @@ func TestSharingGRPCConcurrency(t *testing.T) {
 			go func(goroutineID int) {
 				for j := 0; j < requestsPerGoroutine; j++ {
 					req := &services.ShareSecretRequest{
-						SecretID:    uint32(goroutineID + 1),
-						RecipientID: uint32(goroutineID*requestsPerGoroutine + j + 10),
+						SecretID:    uint32(goroutineID + 1),                           // #nosec G115
+						RecipientID: uint32(goroutineID*requestsPerGoroutine + j + 10), // #nosec G115
 						Permission:  "read",
 					}
 					_, err := shareService.ShareSecret(authed, req)

@@ -75,7 +75,8 @@ func (h *RBACTestHelper) CreateTestUser(t *testing.T, username string, userID ui
 func addAuthContext(ctx context.Context, token string) context.Context {
 	var userCtx *middleware.UserContext
 
-	if token == "valid-token" {
+	switch token {
+	case "valid-token":
 		userCtx = &middleware.UserContext{
 			UserID:   1,
 			Username: "admin",
@@ -88,7 +89,7 @@ func addAuthContext(ctx context.Context, token string) context.Context {
 				"audit.read", "system.read",
 			},
 		}
-	} else if token == "test-token" {
+	case "test-token":
 		userCtx = &middleware.UserContext{
 			UserID:   2,
 			Username: "testuser",

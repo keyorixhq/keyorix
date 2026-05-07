@@ -57,7 +57,7 @@ func TestRemoteStorage_CreateSecret(t *testing.T) {
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "/api/v1/secrets", r.URL.Path)
 		assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
-		w.Write(apiOK(map[string]interface{}{"id": 1, "name": "test-secret", "type": "password"}))
+		_, _ = w.Write(apiOK(map[string]interface{}{"id": 1, "name": "test-secret", "type": "password"}))
 	}))
 	defer srv.Close()
 
@@ -73,7 +73,7 @@ func TestRemoteStorage_CreateSecret(t *testing.T) {
 func TestRemoteStorage_GetSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/secrets/1", r.URL.Path)
-		w.Write(apiOK(map[string]interface{}{"id": 1, "name": "test-secret", "type": "password"}))
+		_, _ = w.Write(apiOK(map[string]interface{}{"id": 1, "name": "test-secret", "type": "password"}))
 	}))
 	defer srv.Close()
 
@@ -89,7 +89,7 @@ func TestRemoteStorage_GetSecret(t *testing.T) {
 func TestRemoteStorage_ListSecrets(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/secrets", r.URL.Path)
-		w.Write(apiOK(map[string]interface{}{
+		_, _ = w.Write(apiOK(map[string]interface{}{
 			"secrets": []map[string]interface{}{
 				{"id": 1, "name": "secret1", "type": "password"},
 				{"id": 2, "name": "secret2", "type": "api_key"},
@@ -112,7 +112,7 @@ func TestRemoteStorage_ListSecrets(t *testing.T) {
 func TestRemoteStorage_Health(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/health", r.URL.Path)
-		w.Write(apiOK(map[string]string{"status": "healthy"}))
+		_, _ = w.Write(apiOK(map[string]string{"status": "healthy"}))
 	}))
 	defer srv.Close()
 
@@ -124,7 +124,7 @@ func TestRemoteStorage_Health(t *testing.T) {
 func TestRemoteStorage_Health_Error(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
 			"error":   map[string]string{"code": "SERVICE_UNAVAILABLE", "message": "unavailable"},
 		})

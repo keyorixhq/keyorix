@@ -188,7 +188,7 @@ func loginWithCredentials(endpoint, username, password string, timeout time.Dura
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	respBody, _ := io.ReadAll(resp.Body)
 
@@ -227,7 +227,7 @@ func testServerConnection(endpoint, apiKey string, timeout time.Duration) error 
 	if err != nil {
 		return fmt.Errorf("server unreachable: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("server returned %d", resp.StatusCode)

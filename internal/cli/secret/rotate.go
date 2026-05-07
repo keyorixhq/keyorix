@@ -23,7 +23,7 @@ var rotateEnv string
 func init() {
 	rotateCmd.Flags().StringVarP(&rotateValue, "value", "v", "", "New secret value (required)")
 	rotateCmd.Flags().StringVarP(&rotateEnv, "env", "e", "production", "Environment name")
-	rotateCmd.MarkFlagRequired("value") // #nosec G104
+	_ = rotateCmd.MarkFlagRequired("value") // #nosec G104
 	SecretCmd.AddCommand(rotateCmd)
 }
 
@@ -46,7 +46,7 @@ func runRotate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	var listResult struct {
 		Data struct {
@@ -84,7 +84,7 @@ func runRotate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("rotate request failed: %w", err)
 	}
-	defer resp2.Body.Close()
+	defer resp2.Body.Close() //nolint:errcheck
 
 	if resp2.StatusCode != 200 {
 		return fmt.Errorf("server returned %d", resp2.StatusCode)
