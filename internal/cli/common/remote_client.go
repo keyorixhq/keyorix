@@ -136,3 +136,52 @@ func decodeEnvelope(resp *http.Response, out interface{}, path string) error {
 	}
 	return json.Unmarshal(env.Data, out)
 }
+
+// Put serialises body as JSON, PUTs to path, strips the envelope, and decodes into out.
+func (c *RemoteClient) Put(ctx context.Context, path string, body interface{}, out interface{}) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal request body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.Endpoint+path, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
+	}
+	if out != nil {
+		return decodeEnvelope(resp, out, path)
+	}
+	return nil
+}
+
+// Delete sends a DELETE to path. No response body is expected.
+func (c *RemoteClient) Delete(ctx context.Context, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.Endpoint+path, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
+	}
+	return nil
+}

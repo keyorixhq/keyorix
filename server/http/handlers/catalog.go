@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -100,6 +101,7 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteProject handles DELETE /api/v1/projects/:id
+// Accepts ?force=true to cascade-delete even when the project contains secrets.
 func (h *CatalogHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -107,8 +109,13 @@ func (h *CatalogHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.DeleteProject(r.Context(), uint(id)); err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+	force := r.URL.Query().Get("force") == "true"
+	if err := h.coreService.DeleteProject(r.Context(), uint(id), force); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "secret(s)") {
+			status = http.StatusConflict
+		}
+		sendError(w, "Error", err.Error(), status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Project deleted")

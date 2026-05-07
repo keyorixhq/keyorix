@@ -11,10 +11,11 @@ import (
 
 // CLIConfig represents the CLI-specific configuration
 type CLIConfig struct {
-	Mode        string             `yaml:"mode"`        // "embedded" or "client"
-	Embedded    EmbeddedConfig     `yaml:"embedded"`    // For embedded mode
-	Client      ClientConfig       `yaml:"client"`      // For client mode
-	Connections []ConnectionConfig `yaml:"connections"` // Saved connections
+	Mode          string             `yaml:"mode"`           // "embedded" or "client"
+	ActiveProject string             `yaml:"active_project"` // set by 'keyorix project use'
+	Embedded      EmbeddedConfig     `yaml:"embedded"`       // For embedded mode
+	Client        ClientConfig       `yaml:"client"`         // For client mode
+	Connections   []ConnectionConfig `yaml:"connections"`    // Saved connections
 }
 
 // EmbeddedConfig holds configuration for embedded mode (local database)
@@ -248,6 +249,16 @@ func (c *CLIConfig) GetDefaultConnection() *ConnectionConfig {
 		}
 	}
 	return nil
+}
+
+// SetActiveProject sets the active project name.
+func (c *CLIConfig) SetActiveProject(name string) {
+	c.ActiveProject = name
+}
+
+// GetActiveProject returns the active project name.
+func (c *CLIConfig) GetActiveProject() string {
+	return c.ActiveProject
 }
 
 // getDefaultCLIConfigPath returns the default path for CLI config

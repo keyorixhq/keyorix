@@ -3,6 +3,7 @@ package secret
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -12,12 +13,12 @@ import (
 )
 
 var (
-	listProject uint
-	listEnv     uint
-	listLimit   int
-	listOffset  int
-	listSearch  string
-	listFormat  string
+	listProjectName string // project name; resolved via ADR-016 chain when --project is omitted
+	listEnv         uint
+	listLimit       int
+	listOffset      int
+	listSearch      string
+	listFormat      string
 )
 
 var listCmd = &cobra.Command{
@@ -31,14 +32,14 @@ applies authentication-based filtering automatically.
 
 Examples:
   keyorix secret list
-  keyorix secret list --namespace 1 --zone 1 --environment 1
+  keyorix secret list --project my-project --environment 1
   keyorix secret list --limit 10
   keyorix secret list --format json`,
 	RunE: runList,
 }
 
 func init() {
-	listCmd.Flags().UintVar(&listProject, "project", 0, "Filter by project ID (0 = all)")
+	listCmd.Flags().StringVar(&listProjectName, "project", "", "Project name (overrides KEYORIX_PROJECT and active project)")
 	listCmd.Flags().UintVar(&listEnv, "environment", 0, "Filter by environment ID (0 = all)")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "Maximum number of results")
 	listCmd.Flags().IntVar(&listOffset, "offset", 0, "Number of results to skip")
@@ -60,9 +61,35 @@ func runList(cmd *cobra.Command, args []string) error {
 func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 	page := (listOffset / listLimit) + 1
 	path := fmt.Sprintf("/api/v1/secrets?page=%d&page_size=%d", page, listLimit)
-	if listProject != 0 {
-		path += fmt.Sprintf("&project_id=%d", listProject)
+
+	// Resolve project name → ID if a project scope is requested.
+	// ResolveProject ignores the error when nothing is set (project scope is optional for list).
+	projectName, _ := common.ResolveProject(listProjectName)
+	if projectName != "" {
+		var resp struct {
+			Data struct {
+				Projects []struct {
+					ID   uint   `json:"id"`
+					Name string `json:"name"`
+				} `json:"projects"`
+			} `json:"data"`
+		}
+		if err := rc.Get(ctx, "/api/v1/projects", &resp); err != nil {
+			return fmt.Errorf("failed to list projects: %w", err)
+		}
+		var projectID uint
+		for _, p := range resp.Data.Projects {
+			if strings.EqualFold(p.Name, projectName) {
+				projectID = p.ID
+				break
+			}
+		}
+		if projectID == 0 {
+			return fmt.Errorf("project %q not found — run 'keyorix project list' to see available projects", projectName)
+		}
+		path += fmt.Sprintf("&project_id=%d", projectID)
 	}
+
 	if listEnv != 0 {
 		path += fmt.Sprintf("&environment_id=%d", listEnv)
 	}
@@ -83,9 +110,6 @@ func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 	filter := &coreStorage.SecretFilter{
 		Page:     page,
 		PageSize: listLimit,
-	}
-	if listProject != 0 {
-		filter.ProjectID = &listProject
 	}
 	if listEnv != 0 {
 		filter.EnvironmentID = &listEnv
@@ -114,9 +138,17 @@ func runListEmbedded(ctx context.Context) error {
 		Page:     (listOffset / listLimit) + 1,
 		PageSize: listLimit,
 	}
-	if listProject != 0 {
-		filter.ProjectID = &listProject
+
+	// Resolve project name → ID if a project scope is requested.
+	projectName, _ := common.ResolveProject(listProjectName)
+	if projectName != "" {
+		projectID, err := common.LookupProjectIDByName(ctx, service.Storage(), projectName)
+		if err != nil {
+			return err
+		}
+		filter.ProjectID = &projectID
 	}
+
 	if listEnv != 0 {
 		filter.EnvironmentID = &listEnv
 	}
@@ -150,6 +182,8 @@ func displaySecretsTable(secrets []*models.SecretNode, total int64, filter *core
 	nsLabel := "all"
 	if filter.ProjectID != nil {
 		nsLabel = fmt.Sprintf("%d", *filter.ProjectID)
+	} else if listProjectName != "" {
+		nsLabel = listProjectName
 	}
 	envLabel := "all"
 	if filter.EnvironmentID != nil {

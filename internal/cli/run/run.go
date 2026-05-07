@@ -33,6 +33,9 @@ variables, then execute the supplied command.
   keyorix run --env development -- flask run
   keyorix run --env staging -- npm start
 
+Project is resolved via: --project flag → KEYORIX_PROJECT env → active project
+(set with 'keyorix project use') → "default" fallback.
+
 Each secret name is uppercased and non-alphanumeric characters are
 replaced with underscores before becoming an env var key:
 
@@ -50,16 +53,23 @@ Authentication:
 
 func init() {
 	RunCmd.Flags().StringVar(&runEnv, "env", "development", "Environment name (e.g. production)")
-	RunCmd.Flags().StringVar(&runProject, "project", "default", "Project / namespace name")
+	RunCmd.Flags().StringVar(&runProject, "project", "", "Project name (overrides KEYORIX_PROJECT and active project)")
 	RunCmd.Flags().StringVar(&runToken, "token", "", "Service or session token (overrides KEYORIX_TOKEN env var)")
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
+	// Resolve project via ADR-016 chain: --project → KEYORIX_PROJECT → cli.yaml → "default"
+	projectName, err := common.ResolveProject(runProject)
+	if err != nil {
+		// Graceful fallback for CI/CD scripts that pre-date project context
+		projectName = "default"
+	}
+
 	var (
-		envVars map[string]string
-		err     error
+		envVars  map[string]string
+		fetchErr error
 	)
 
 	// --token flag overrides the token resolved by ResolveRemote.
@@ -70,12 +80,12 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	if remoteOK {
-		envVars, err = fetchSecretsRemote(ctx, endpoint, tok, runProject, runEnv)
+		envVars, fetchErr = fetchSecretsRemote(ctx, endpoint, tok, projectName, runEnv)
 	} else {
-		envVars, err = fetchSecretsEmbedded(ctx, runProject, runEnv)
+		envVars, fetchErr = fetchSecretsEmbedded(ctx, projectName, runEnv)
 	}
-	if err != nil {
-		return err
+	if fetchErr != nil {
+		return fetchErr
 	}
 
 	return execChild(args, envVars)
@@ -122,7 +132,7 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 		return nil, fmt.Errorf("environment %q not found", env)
 	}
 
-	// List all secrets in the namespace + environment
+	// List all secrets in the project + environment
 	filter := &coreStorage.SecretFilter{
 		ProjectID:     &projectID,
 		EnvironmentID: &envID,
@@ -149,8 +159,6 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 // ── Remote / client mode ──────────────────────────────────────────────────────
 
 // apiClient makes authenticated requests to the Keyorix HTTP API.
-// It handles the server's {"data": ...} envelope directly so it is not
-// affected by the Success flag mismatch in the shared remote storage client.
 type apiClient struct {
 	endpoint string
 	token    string
@@ -176,7 +184,6 @@ func (c *apiClient) get(ctx context.Context, path string, out interface{}) error
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
 	}
 
-	// Server wraps every success response in {"data": ...}
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
 	}
@@ -238,7 +245,6 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 		"/api/v1/secrets?project_id=%d&environment_id=%d&page_size=1000&page=1",
 		nsID, envID,
 	)
-	// The list endpoint returns SecretWithSharingInfo; we only need ID + Name.
 	var secretsBody struct {
 		Secrets []struct {
 			ID   uint   `json:"id"`
@@ -250,8 +256,6 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 	}
 
 	// ── 4. Fetch each secret's decrypted value ─────────────────────────────────
-	// GET /api/v1/secrets/{id}?include_value=true returns:
-	//   {"secret": {...}, "value": "plaintext"}
 	result := make(map[string]string, len(secretsBody.Secrets))
 	for _, s := range secretsBody.Secrets {
 		var secretBody struct {
@@ -270,10 +274,6 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // toEnvKey converts a secret name to a valid environment variable key.
-//
-//	"db-password"   → "DB_PASSWORD"
-//	"api.endpoint"  → "API_ENDPOINT"
-//	"MY SECRET"     → "MY_SECRET"
 func toEnvKey(name string) string {
 	var b strings.Builder
 	b.Grow(len(name))
@@ -288,7 +288,6 @@ func toEnvKey(name string) string {
 }
 
 // execChild builds the child environment and executes the command.
-// It propagates the child's exit code exactly.
 func execChild(args []string, extraEnv map[string]string) error {
 	childEnv := os.Environ()
 	for k, v := range extraEnv {

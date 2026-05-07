@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -12,6 +13,7 @@ import (
 var (
 	createName        string
 	createDescription string
+	createEnvs        string // comma-separated env names; empty = use defaults
 )
 
 var createCmd = &cobra.Command{
@@ -23,6 +25,8 @@ var createCmd = &cobra.Command{
 func init() {
 	createCmd.Flags().StringVar(&createName, "name", "", "Project name (required)")
 	createCmd.Flags().StringVar(&createDescription, "description", "", "Project description")
+	createCmd.Flags().StringVar(&createEnvs, "envs", "",
+		`Comma-separated environment names to seed (default: "development,staging,production")`)
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
@@ -31,17 +35,24 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	}
 	ctx := context.Background()
 
-	if rc, ok := common.NewRemoteClient(); ok {
-		body := map[string]interface{}{
-			"name":        createName,
-			"description": createDescription,
+	body := map[string]interface{}{
+		"name":        createName,
+		"description": createDescription,
+	}
+	if createEnvs != "" {
+		envList := splitEnvNames(createEnvs)
+		if len(envList) == 0 {
+			return fmt.Errorf("--envs must not be empty")
 		}
+		body["envs"] = envList
+	}
+
+	if rc, ok := common.NewRemoteClient(); ok {
 		var project models.Project
 		if err := rc.Post(ctx, "/api/v1/projects", body, &project); err != nil {
 			return fmt.Errorf("failed to create project: %w", err)
 		}
-		fmt.Printf("Project created: id=%d name=%q\n", project.ID, project.Name)
-		fmt.Println("Default environments (development, staging, production) have been seeded.")
+		printCreateResult(project.ID, project.Name, createEnvs)
 		return nil
 	}
 
@@ -49,11 +60,42 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	project, err := svc.CreateProject(ctx, createName, createDescription)
-	if err != nil {
-		return fmt.Errorf("failed to create project: %w", err)
+
+	var project *models.Project
+	if createEnvs != "" {
+		envList := splitEnvNames(createEnvs)
+		var createErr error
+		project, createErr = svc.CreateProjectWithEnvs(ctx, createName, createDescription, envList)
+		if createErr != nil {
+			return fmt.Errorf("failed to create project: %w", createErr)
+		}
+	} else {
+		var createErr error
+		project, createErr = svc.CreateProject(ctx, createName, createDescription)
+		if createErr != nil {
+			return fmt.Errorf("failed to create project: %w", createErr)
+		}
 	}
-	fmt.Printf("Project created: id=%d name=%q\n", project.ID, project.Name)
-	fmt.Println("Default environments (development, staging, production) have been seeded.")
+	printCreateResult(project.ID, project.Name, createEnvs)
 	return nil
+}
+
+func splitEnvNames(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func printCreateResult(id uint, name, envsFlag string) {
+	fmt.Printf("Project created: id=%d name=%q\n", id, name)
+	if envsFlag != "" {
+		fmt.Printf("Environments seeded: %s\n", envsFlag)
+	} else {
+		fmt.Println("Default environments (development, staging, production) have been seeded.")
+	}
 }
