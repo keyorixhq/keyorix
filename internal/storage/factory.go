@@ -126,65 +126,26 @@ func columnExists(db *gorm.DB, table, column string) bool {
 	return count > 0
 }
 
+// tableExists checks whether a table exists without relying on GORM's HasTable
+// (which can fail with "insufficient arguments" on some Postgres driver versions).
 func tableExists(db *gorm.DB, table string) bool {
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", table).Scan(&count)
 	return count > 0
 }
 
-// migrateDatabase performs database migrations
+// migrateDatabase performs database migrations via GORM AutoMigrate.
+// Idempotent: safe to run on both fresh and existing databases.
+// On a fresh DB, AutoMigrate creates all tables. On an existing DB,
+// it adds missing columns and indexes without dropping anything.
 func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
-	// Always run additive migrations for new tables (safe on existing DBs)
-	createStatsTable := `CREATE TABLE IF NOT EXISTS stats_snapshots (
-		id BIGSERIAL PRIMARY KEY,
-		user_id BIGINT,
-		total_secrets BIGINT DEFAULT 0,
-		shared_secrets INTEGER DEFAULT 0,
-		secrets_shared_with_me INTEGER DEFAULT 0,
-		snapshot_date TIMESTAMP WITH TIME ZONE,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-	)`
-	// Use raw SQL for cross-db compatibility check
-	if tableExists(db, "stats_snapshots") {
-		// Table exists, nothing to do
-	} else {
-		if err := db.Exec(createStatsTable).Error; err != nil {
-			return fmt.Errorf("failed to migrate stats_snapshots table: %w", err)
-		}
-		// Create indexes
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_stats_snapshots_user_id ON stats_snapshots(user_id)")
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_stats_snapshots_snapshot_date ON stats_snapshots(snapshot_date)")
-	}
-
-	// Add LastRotatedAt to secret_nodes if not present (only if table exists)
+	// Additive column migration for existing databases (no-op on fresh DBs).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
 	}
 
-	// Check if namespaces table exists — if so, skip full migration (already initialized)
-	// Always create new tables that may have been added after initial setup
-	anomalyExists := tableExists(db, "anomaly_alerts")
-	if !anomalyExists {
-		if err := db.Exec(`CREATE TABLE IF NOT EXISTS anomaly_alerts (
-            id BIGSERIAL PRIMARY KEY,
-            secret_node_id BIGINT,
-            secret_name TEXT,
-            alert_type TEXT,
-            severity TEXT,
-            description TEXT,
-            accessed_by TEXT,
-            ip_address TEXT,
-            detected_at TIMESTAMP WITH TIME ZONE,
-            acknowledged BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )`).Error; err != nil {
-			return fmt.Errorf("failed to create anomaly_alerts table: %w", err)
-		}
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_secret_node_id ON anomaly_alerts(secret_node_id)")
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_detected_at ON anomaly_alerts(detected_at)")
-	}
-
-	if db.Migrator().HasTable("projects") {
+	// Skip AutoMigrate if already initialised (projects table present).
+	if tableExists(db, "projects") {
 		return nil
 	}
 	return db.AutoMigrate(
