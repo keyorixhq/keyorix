@@ -13,6 +13,7 @@ import {
     Cog6ToothIcon,
     PuzzlePieceIcon,
     ScaleIcon,
+    RocketLaunchIcon,
 } from '@heroicons/react/24/outline';
 import { useUIStore } from '../../store/uiStore';
 
@@ -90,7 +91,7 @@ const NAV: NavItem[] = [
         icon: PuzzlePieceIcon,
         children: [
             { kind: 'leaf', name: 'SDKs & CLI', href: '/integrations/sdks', soon: true },
-            { kind: 'leaf', name: 'Keyorix Connect', href: '/integrations/connect', soon: true },
+            { kind: 'leaf', name: 'Keyorix Connect', href: '/integrations/connect' },
             { kind: 'leaf', name: 'Webhooks', href: '/integrations/webhooks', soon: true },
         ],
     },
@@ -99,7 +100,12 @@ const NAV: NavItem[] = [
         name: 'Compliance',
         href: '/compliance',
         icon: ScaleIcon,
-        soon: true,
+    },
+    {
+        kind: 'leaf',
+        name: 'Roadmap',
+        href: '/roadmap',
+        icon: RocketLaunchIcon,
     },
     {
         kind: 'group',

@@ -9,6 +9,9 @@ import { DashboardPage } from './pages/dashboard';
 import { AuditLogPage } from './pages/audit/AuditLogPage';
 import { AdminPage } from './pages/admin';
 import { AppearancePage } from './pages/settings/AppearancePage';
+import { CompliancePage } from './pages/compliance/CompliancePage';
+import { KeyorixConnectPage } from './pages/integrations/KeyorixConnectPage';
+import { RoadmapPage } from './pages/roadmap/RoadmapPage';
 import { ROUTES } from './constants';
 
 function App() {
@@ -56,6 +59,9 @@ function App() {
                   <Route path={ROUTES.ADMIN_USERS} element={<AdminPage />} />
                   <Route path={ROUTES.ADMIN} element={<AdminPage />} />
                   <Route path="/settings/appearance" element={<AppearancePage />} />
+                  <Route path={ROUTES.COMPLIANCE} element={<CompliancePage />} />
+                  <Route path={ROUTES.CONNECT} element={<KeyorixConnectPage />} />
+                  <Route path={ROUTES.ROADMAP} element={<RoadmapPage />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

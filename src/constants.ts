@@ -84,6 +84,9 @@ export const ROUTES = {
     ADMIN_USERS: '/admin/users',
     ADMIN_ROLES: '/admin/roles',
     ADMIN_SETTINGS: '/admin/settings',
+    COMPLIANCE: '/compliance',
+    CONNECT: '/integrations/connect',
+    ROADMAP: '/roadmap',
 } as const;
 
 export const SECRET_TYPES = {
