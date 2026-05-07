@@ -94,6 +94,9 @@ func (ls *LocalStorage) RestoreUser(ctx context.Context, id uint) error {
 
 func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error) {
 	query := ls.db.WithContext(ctx).Model(&models.User{})
+	if filter.IncludeDeleted {
+		query = query.Unscoped()
+	}
 
 	if filter.Search != nil {
 		pattern := "%" + *filter.Search + "%"

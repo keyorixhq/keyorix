@@ -49,6 +49,9 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		v := a == "true" || a == "1"
 		filter.IsActive = &v
 	}
+	if d := r.URL.Query().Get("include_deleted"); d == "true" || d == "1" {
+		filter.IncludeDeleted = true
+	}
 
 	users, total, err := h.coreService.ListUsers(r.Context(), filter)
 	if err != nil {

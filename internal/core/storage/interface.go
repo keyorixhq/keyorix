@@ -134,13 +134,14 @@ type SecretFilter struct {
 
 // UserFilter defines filtering options for user queries
 type UserFilter struct {
-	Search       *string // OR match across username and email (LIKE %search%)
-	Username     *string
-	Email        *string
-	IsActive     *bool
-	CreatedAfter *time.Time
-	Page         int
-	PageSize     int
+	Search         *string // OR match across username and email (LIKE %search%)
+	Username       *string
+	Email          *string
+	IsActive       *bool
+	CreatedAfter   *time.Time
+	IncludeDeleted bool // when true, also return soft-deleted users
+	Page           int
+	PageSize       int
 }
 
 // AuditFilter defines filtering options for audit log queries
