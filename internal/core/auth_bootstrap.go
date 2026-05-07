@@ -151,7 +151,7 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 
 	envs := make([]*models.Environment, 0, len(defaultEnvironmentNames))
 	for _, name := range defaultEnvironmentNames {
-		env, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: name})
+		env, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: name, ProjectID: project.ID})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create environment %s: %w", name, err)
 		}

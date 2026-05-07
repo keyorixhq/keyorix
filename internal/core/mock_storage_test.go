@@ -42,6 +42,10 @@ func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment
 	return nil, nil
 }
 
+func (m *MockStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([]*models.Environment, error) {
+	return nil, nil
+}
+
 // Secret Management
 
 func (m *MockStorage) CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
