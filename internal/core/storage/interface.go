@@ -16,6 +16,7 @@ type Storage interface {
 	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
 	ListProjects(ctx context.Context) ([]*models.Project, error)
 	ListEnvironments(ctx context.Context) ([]*models.Environment, error)
+	ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error)
 
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)

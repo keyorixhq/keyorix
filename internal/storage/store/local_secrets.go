@@ -40,6 +40,11 @@ func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environ
 	return environments, ls.db.WithContext(ctx).Find(&environments).Error
 }
 
+func (ls *LocalStorage) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
+	var environments []*models.Environment
+	return environments, ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&environments).Error
+}
+
 // --- Secrets ---
 
 // CreateSecret creates a new secret in the database.

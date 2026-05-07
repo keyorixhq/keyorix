@@ -15,8 +15,9 @@ type Project struct {
 }
 
 type Environment struct {
-	ID   uint   `gorm:"primaryKey"`
-	Name string `gorm:"unique;not null"`
+	ID        uint   `gorm:"primaryKey"`
+	ProjectID uint   `gorm:"not null;index"`
+	Name      string `gorm:"not null"`
 }
 
 type User struct {
