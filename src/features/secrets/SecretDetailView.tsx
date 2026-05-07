@@ -100,7 +100,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     <div className="mt-2 flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
                         <div className="flex items-center">
                             <MapPinIcon className="h-4 w-4 mr-1" />
-                            {secret.namespace} / {secret.zone} / {secret.environment}
+                            {secret.environment || 'No environment'}
                         </div>
                         <div className="flex items-center">
                             <UserIcon className="h-4 w-4 mr-1" />

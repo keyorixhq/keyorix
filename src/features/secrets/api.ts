@@ -9,8 +9,6 @@ export const useSecrets = (params?: {
     pageSize?: number;
     search?: string;
     type?: string;
-    namespace?: string;
-    zone?: string;
     environment?: string;
     tags?: string[];
 }) => {
@@ -100,8 +98,6 @@ export const useDuplicateSecret = () => {
                 name: newData.name || `${original.name}-copy`,
                 value: '',
                 type: newData.type || original.type,
-                namespace: newData.namespace || original.namespace,
-                zone: newData.zone || original.zone,
                 environment: newData.environment || original.environment,
                 metadata: { ...original.metadata, ...newData.metadata },
                 tags: newData.tags || original.tags,

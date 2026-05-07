@@ -13,7 +13,7 @@ export const useSecretsList = () => {
     const queryClient = useQueryClient();
 
     const [filters, setFilters] = useState<SecretFilters>({
-        search: '', type: 'all', namespace: '', zone: '', environment: '', tags: [],
+        search: '', type: 'all', environment: '', tags: [],
     });
     const [pagination, setPagination] = useState<PaginationState>({
         page: 1, pageSize: ITEMS_PER_PAGE, total: 0, totalPages: 0,
@@ -56,8 +56,6 @@ export const useSecretsList = () => {
                 pageSize: pagination.pageSize,
                 ...(filters.search ? { search: filters.search } : {}),
                 ...(filters.type !== 'all' ? { type: filters.type } : {}),
-                ...(filters.namespace ? { namespace: filters.namespace } : {}),
-                ...(filters.zone ? { zone: filters.zone } : {}),
                 ...(envId ? { environment_id: envId } : {}),
                 ...(filters.tags.length > 0 ? { tags: filters.tags } : {}),
             });
@@ -115,14 +113,14 @@ export const useSecretsList = () => {
         setPagination(prev => ({ ...prev, pageSize, page: 1 })), []);
 
     const handleClearFilters = useCallback(() => {
-        setFilters({ search: '', type: 'all', namespace: '', zone: '', environment: '', tags: [] });
+        setFilters({ search: '', type: 'all', environment: '', tags: [] });
         setSearchInput('');
         setTagInput('');
         setPagination(prev => ({ ...prev, page: 1 }));
     }, []);
 
     const hasActiveFilters = useMemo(() =>
-        !!(filters.search || filters.type !== 'all' || filters.namespace || filters.zone ||
+        !!(filters.search || filters.type !== 'all' ||
             filters.environment || filters.tags.length > 0), [filters]);
 
     // Mutations

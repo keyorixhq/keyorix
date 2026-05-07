@@ -29,8 +29,7 @@ export interface Secret {
     id: number;
     name: string;
     type: SecretType;
-    namespace: string;
-    zone: string;
+    projectId?: number;
     environment: string;
     isShared: boolean;
     shareCount: number;
@@ -47,8 +46,8 @@ export interface SecretFormData {
     name: string;
     value: string;
     type: SecretType;
-    namespace: string;
-    zone: string;
+    project_id?: number;
+    environment_id?: number;
     environment: string;
     metadata: Record<string, string>;
     tags: string[];
@@ -181,8 +180,6 @@ export interface AppNotification {
 export interface SecretFilters {
     search: string;
     type: SecretType | 'all';
-    namespace: string;
-    zone: string;
     environment: string;
     tags: string[];
 }

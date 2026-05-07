@@ -125,8 +125,7 @@ export const SecretsListPage: React.FC = () => {
                     </div>
                     {list.showAdvancedFilters && (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-4 border-t border-base ">
-                            <Input type="text" placeholder="Namespace" value={list.filters.namespace} onChange={(e) => list.handleFilterChange('namespace', e.target.value)} />
-                            <Input type="text" placeholder="Zone" value={list.filters.zone} onChange={(e) => list.handleFilterChange('zone', e.target.value)} />
+                            {/* Project filter — Phase 3: replace with project selector dropdown */}
                         </div>
                     )}
                     {/* Tag filter hidden — tags not yet implemented on secrets */}
@@ -277,7 +276,7 @@ export const SecretsListPage: React.FC = () => {
             </Modal>
 
             <Modal isOpen={list.activeModal === 'create-secret'} onClose={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} title="Create New Secret" size="md">
-                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); list.createMutation.mutate({ name: createName, value: createValue, type: createType, namespace_id: 1, zone_id: 1, environment_id: 1 } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); } }); }} className="space-y-4">
+                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); list.createMutation.mutate({ name: createName, value: createValue, type: createType, project_id: 1, environment_id: 1 } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); } }); }} className="space-y-4">
                     {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name <span className="text-red-500">*</span></label>
