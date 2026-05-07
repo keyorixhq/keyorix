@@ -115,26 +115,33 @@ func (ls *LocalStorage) DeleteSecret(ctx context.Context, id uint) error {
 }
 
 // ListSecrets lists secrets with filtering and pagination.
+// When project_id is provided, results are always scoped to that project via
+// a JOIN through environments — prevents cross-project leakage if a caller
+// passes a mismatched environment_id.
 func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	query := ls.db.WithContext(ctx).Model(&models.SecretNode{})
 
 	if filter.ProjectID != nil {
-		query = query.Where("project_id = ?", *filter.ProjectID)
+		// JOIN ensures environment_id is always verified against the project,
+		// preventing cross-project leakage.
+		query = query.Joins("JOIN environments ON environments.id = secret_nodes.environment_id").
+			Where("secret_nodes.project_id = ?", *filter.ProjectID).
+			Where("environments.project_id = ?", *filter.ProjectID)
 	}
 	if filter.EnvironmentID != nil {
-		query = query.Where("environment_id = ?", *filter.EnvironmentID)
+		query = query.Where("secret_nodes.environment_id = ?", *filter.EnvironmentID)
 	}
 	if filter.Type != nil {
-		query = query.Where("type = ?", *filter.Type)
+		query = query.Where("secret_nodes.type = ?", *filter.Type)
 	}
 	if filter.CreatedBy != nil {
-		query = query.Where("created_by = ?", *filter.CreatedBy)
+		query = query.Where("secret_nodes.created_by = ?", *filter.CreatedBy)
 	}
 	if filter.CreatedAfter != nil {
-		query = query.Where("created_at > ?", *filter.CreatedAfter)
+		query = query.Where("secret_nodes.created_at > ?", *filter.CreatedAfter)
 	}
 	if filter.CreatedBefore != nil {
-		query = query.Where("created_at < ?", *filter.CreatedBefore)
+		query = query.Where("secret_nodes.created_at < ?", *filter.CreatedBefore)
 	}
 
 	var total int64
