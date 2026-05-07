@@ -119,6 +119,5 @@ func InitCoreHandlers(cs *core.KeyorixCore) (*UserHandler, *GroupHandler, error)
 		return nil, nil, err
 	}
 	defaultUserHandler = uh
-	defaultGroupHandler = gh
 	return uh, gh, nil
 }

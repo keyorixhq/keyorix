@@ -1,15 +1,7 @@
-// sharing_validation.go — Request validation and logShareAction audit helper.
-//
-// validateShareSecretRequest, validateUpdateShareRequest, logShareAction.
-// Used by sharing.go only.
+// sharing_validation.go — Request validation helpers used by sharing.go.
 package core
 
-import (
-	"context"
-	"fmt"
-
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-)
+import "fmt"
 
 func (c *KeyorixCore) validateShareSecretRequest(req *ShareSecretRequest) error {
 	if req == nil {
@@ -44,19 +36,4 @@ func (c *KeyorixCore) validateUpdateShareRequest(req *UpdateShareRequest) error 
 		return fmt.Errorf("updatedBy is required")
 	}
 	return nil
-}
-
-// logShareAction writes a generic share audit event. Used internally by sharing.go.
-func (c *KeyorixCore) logShareAction(ctx context.Context, actorID string, action string, secretID, recipientID uint, isGroup bool) {
-	recipientType := "user"
-	if isGroup {
-		recipientType = "group"
-	}
-	event := &models.AuditEvent{
-		EventType:    action,
-		Description:  fmt.Sprintf("%s %s secret %d with %s %d", actorID, action, secretID, recipientType, recipientID),
-		SecretNodeID: &secretID,
-		EventTime:    c.now(),
-	}
-	_ = c.storage.LogAuditEvent(ctx, event)
 }

@@ -2,7 +2,6 @@ package grpc
 
 import (
 	"context"
-	"net"
 	"testing"
 	"time"
 
@@ -15,15 +14,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 )
-
-const bufSize = 1024 * 1024
-
-var lis *bufconn.Listener
-
-// bufDialer is a helper function for testing with bufconn
-func bufDialer(context.Context, string) (net.Conn, error) {
-	return lis.Dial()
-}
 
 // newTestServer creates a gRPC server with the share service registered for testing.
 func newTestServer(t *testing.T) (*grpc.Server, *services.ShareGRPCService) {

@@ -25,8 +25,6 @@ type GroupHandler struct {
 	validator   *validation.Validator
 }
 
-var defaultGroupHandler *GroupHandler
-
 // NewGroupHandler constructs a GroupHandler.
 func NewGroupHandler(coreService *core.KeyorixCore) (*GroupHandler, error) {
 	return &GroupHandler{
