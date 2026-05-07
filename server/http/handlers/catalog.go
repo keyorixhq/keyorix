@@ -29,6 +29,22 @@ func (h *CatalogHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, map[string]interface{}{"projects": projects}, "")
 }
 
+// GetProject handles GET /api/v1/projects/:id
+func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	project, err := h.coreService.GetProject(r.Context(), uint(id))
+	if err != nil {
+		sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
+		return
+	}
+	sendSuccess(w, project, "")
+}
+
 // CreateProject handles POST /api/v1/projects
 func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {

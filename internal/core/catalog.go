@@ -12,6 +12,11 @@ func (c *KeyorixCore) ListProjects(ctx context.Context) ([]*models.Project, erro
 	return c.storage.ListProjects(ctx)
 }
 
+// GetProject returns a single project by ID.
+func (c *KeyorixCore) GetProject(ctx context.Context, id uint) (*models.Project, error) {
+	return c.storage.GetProject(ctx, id)
+}
+
 // CreateProject creates a new project and seeds it with default environments.
 func (c *KeyorixCore) CreateProject(ctx context.Context, name, description string) (*models.Project, error) {
 	if name == "" {

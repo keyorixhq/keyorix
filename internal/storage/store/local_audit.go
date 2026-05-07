@@ -40,6 +40,9 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 	page, pageSize := 1, 20
 
 	if filter != nil {
+		if filter.ProjectID != nil {
+			query = query.Where("project_id = ?", *filter.ProjectID)
+		}
 		if filter.UserID != nil {
 			query = query.Where("user_id = ?", *filter.UserID)
 		}

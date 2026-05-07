@@ -13,6 +13,7 @@ import (
 type Storage interface {
 	// Project / Environment management
 	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
+	GetProject(ctx context.Context, id uint) (*models.Project, error)
 	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
 	GetEnvironment(ctx context.Context, id uint) (*models.Environment, error)
 	ListProjects(ctx context.Context) ([]*models.Project, error)
@@ -140,6 +141,7 @@ type UserFilter struct {
 
 // AuditFilter defines filtering options for audit log queries
 type AuditFilter struct {
+	ProjectID *uint
 	UserID    *uint
 	Action    *string
 	Resource  *string
