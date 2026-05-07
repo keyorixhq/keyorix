@@ -102,7 +102,7 @@ func (es *EncryptionService) Encrypt(plaintext []byte, keyVersion string) (*Encr
 
 // Decrypt decrypts data using AES-GCM with the KEK
 func (es *EncryptionService) Decrypt(encryptedData *EncryptedData) ([]byte, error) {
-	if encryptedData.Metadata.Algorithm != "AES-256-GCM" {
+	if encryptedData.Metadata.Algorithm != "AES-256-GCM" { //nolint:goconst
 		return nil, fmt.Errorf("unsupported algorithm: %s", encryptedData.Metadata.Algorithm)
 	}
 

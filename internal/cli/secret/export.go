@@ -94,7 +94,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("cannot create output file %q: %w", exportOutput, err)
 		}
-		defer f.Close()
+		defer f.Close() //nolint:errcheck
 		out = f
 	}
 
@@ -162,13 +162,13 @@ func fetchSecretValues(ctx context.Context, rc *common.RemoteClient, list []stru
 // ── Format writers ────────────────────────────────────────────────────────────
 
 func writeDotenv(w io.Writer, secrets []exportedSecret) error {
-	fmt.Fprintf(w, "# Exported by Keyorix — %s\n", time.Now().Format("2006-01-02"))
+	fmt.Fprintf(w, "# Exported by Keyorix — %s\n", time.Now().Format("2006-01-02")) //nolint:errcheck
 	for _, s := range secrets {
 		val := s.Value
 		if strings.ContainsAny(val, " \t\n\"'=\\") {
 			val = `"` + strings.ReplaceAll(strings.ReplaceAll(val, `\`, `\\`), `"`, `\"`) + `"`
 		}
-		fmt.Fprintf(w, "%s=%s\n", s.Name, val)
+		fmt.Fprintf(w, "%s=%s\n", s.Name, val) //nolint:errcheck
 	}
 	return nil
 }
@@ -202,6 +202,6 @@ func writeVault(w io.Writer, secrets []exportedSecret, envName string) error {
 	doc := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}}
 	enc := yaml.NewEncoder(w)
 	enc.SetIndent(2)
-	defer enc.Close()
+	defer enc.Close() //nolint:errcheck
 	return enc.Encode(doc)
 }

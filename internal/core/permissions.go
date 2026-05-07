@@ -116,7 +116,7 @@ func (c *KeyorixCore) CheckGroupPermissions(ctx context.Context, secretID, userI
 		return PermissionNone, nil, err
 	}
 
-	var highestPermission PermissionLevel = PermissionNone
+	highestPermission := PermissionNone
 	var shareID *uint
 
 	for _, share := range shares {

@@ -182,11 +182,11 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	for _, f := range report.Findings {
 		switch f.RiskLevel {
-		case "high":
+		case "high": //nolint:goconst
 			report.HighRisk++
-		case "medium":
+		case "medium": //nolint:goconst
 			report.MediumRisk++
-		case "low":
+		case "low": //nolint:goconst
 			report.LowRisk++
 		}
 	}

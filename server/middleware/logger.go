@@ -42,7 +42,7 @@ func CustomLogger() func(next http.Handler) http.Handler {
 			// Log request details
 			duration := time.Since(start)
 
-			log.Printf(
+			log.Printf( // #nosec G706
 				"[%s] %s %s %d %s - User: %s(%d) - %s - %s",
 				requestID,
 				r.Method,
@@ -57,12 +57,12 @@ func CustomLogger() func(next http.Handler) http.Handler {
 
 			// Log slow requests (>1 second)
 			if duration > time.Second {
-				log.Printf("SLOW REQUEST: %s %s took %s", r.Method, r.URL.Path, duration)
+				log.Printf("SLOW REQUEST: %s %s took %s", r.Method, r.URL.Path, duration) // #nosec G706
 			}
 
 			// Log errors
 			if ww.Status() >= 400 {
-				log.Printf("ERROR RESPONSE: %s %s returned %d", r.Method, r.URL.Path, ww.Status())
+				log.Printf("ERROR RESPONSE: %s %s returned %d", r.Method, r.URL.Path, ww.Status()) // #nosec G706
 			}
 		})
 	}

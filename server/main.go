@@ -339,6 +339,6 @@ func resolveOutboundIP() string {
 	if err != nil {
 		return "127.0.0.1"
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }

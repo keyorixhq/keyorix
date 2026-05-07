@@ -68,7 +68,7 @@ func checkRemoteServerReachability(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	// Consider any response (even errors) as reachable
 	return true

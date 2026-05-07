@@ -165,7 +165,7 @@ func (c *KeyorixCore) GetUserSecretPermission(ctx context.Context, secretID, use
 func (c *KeyorixCore) buildSharingIndicators(secret *models.SecretNode, shares []*models.ShareRecord, isOwner bool, userPermission string) *models.SharingIndicators {
 	indicators := &models.SharingIndicators{
 		CanRead:   true,
-		CanWrite:  isOwner || userPermission == "write",
+		CanWrite:  isOwner || userPermission == string(PermissionWrite),
 		CanShare:  isOwner,
 		CanDelete: isOwner,
 	}
@@ -184,12 +184,12 @@ func (c *KeyorixCore) buildSharingIndicators(secret *models.SecretNode, shares [
 		}
 	} else {
 		switch userPermission {
-		case "read":
+		case string(PermissionRead):
 			indicators.Icon = "shared-read"
 			indicators.Badge = "READ-ONLY"
 			indicators.BadgeColor = "orange"
 			indicators.StatusText = "Shared with you (read-only)"
-		case "write":
+		case string(PermissionWrite):
 			indicators.Icon = "shared-write"
 			indicators.Badge = "SHARED"
 			indicators.BadgeColor = "blue"
@@ -221,18 +221,19 @@ func (c *KeyorixCore) buildShareDetails(shares []*models.ShareRecord) *models.Sh
 		} else {
 			directShares++
 		}
-		if share.Permission == "read" {
+		switch share.Permission {
+		case string(PermissionRead):
 			readCount++
-		} else if share.Permission == "write" {
+		case string(PermissionWrite):
 			writeCount++
 		}
 
 		isRecent := time.Since(share.CreatedAt).Hours() < 168 // 7 days
 
 		recipientName := fmt.Sprintf("User %d", share.RecipientID)
-		recipientType := "user"
+		recipientType := "user" //nolint:goconst
 		if share.IsGroup {
-			recipientType = "group"
+			recipientType = "group" //nolint:goconst
 			recipientName = fmt.Sprintf("Group %d", share.RecipientID)
 		} else {
 			if user, err := c.storage.GetUser(context.Background(), share.RecipientID); err == nil && user != nil {

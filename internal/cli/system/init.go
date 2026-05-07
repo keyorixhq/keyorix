@@ -237,7 +237,7 @@ func runRemoteInit() error {
 	if err != nil {
 		return fmt.Errorf("could not reach server at %s: %w", server, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	respBody, _ := io.ReadAll(resp.Body)
 

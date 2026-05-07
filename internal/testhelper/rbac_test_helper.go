@@ -120,7 +120,7 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 	}
 
 	for _, role := range roles {
-		h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, description) VALUES (?, ?, ?)",
+		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, description) VALUES (?, ?, ?)",
 			role.ID, role.Name, role.Description)
 	}
 
@@ -153,7 +153,7 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 	}
 
 	// Create permissions table if it doesn't exist
-	h.SqlDB.Exec(`CREATE TABLE IF NOT EXISTS permissions (
+	_, _ = h.SqlDB.Exec(`CREATE TABLE IF NOT EXISTS permissions (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL UNIQUE,
 		description TEXT,
@@ -163,14 +163,14 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 	)`)
 
 	// Create role_permissions table if it doesn't exist
-	h.SqlDB.Exec(`CREATE TABLE IF NOT EXISTS role_permissions (
+	_, _ = h.SqlDB.Exec(`CREATE TABLE IF NOT EXISTS role_permissions (
 		role_id INTEGER NOT NULL,
 		permission_id INTEGER NOT NULL,
 		PRIMARY KEY (role_id, permission_id)
 	)`)
 
 	for _, perm := range permissions {
-		h.SqlDB.Exec("INSERT OR IGNORE INTO permissions (id, name, description, resource, action) VALUES (?, ?, ?, ?, ?)",
+		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO permissions (id, name, description, resource, action) VALUES (?, ?, ?, ?, ?)",
 			perm.ID, perm.Name, perm.Description, perm.Resource, perm.Action)
 	}
 
@@ -192,8 +192,8 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 
 	for roleName, permNames := range rolePermissions {
 		for _, permName := range permNames {
-			h.SqlDB.Exec(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
-				SELECT r.id, p.id FROM roles r, permissions p 
+			_, _ = h.SqlDB.Exec(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+				SELECT r.id, p.id FROM roles r, permissions p
 				WHERE r.name = ? AND p.name = ?`, roleName, permName)
 		}
 	}
@@ -320,7 +320,7 @@ func (h *RBACTestHelper) GetUserPermissions(t *testing.T, userID uint) []string 
 		WHERE ur.user_id = ?
 	`, userID)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	for rows.Next() {
 		var permission string
@@ -339,7 +339,7 @@ func (h *RBACTestHelper) GetUserPermissions(t *testing.T, userID uint) []string 
 		WHERE ug.user_id = ?
 	`, userID)
 	require.NoError(t, err)
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	for rows.Next() {
 		var permission string
@@ -373,7 +373,7 @@ func (h *RBACTestHelper) CreateTestContext(userID uint, username string) context
 // Cleanup cleans up test resources
 func (h *RBACTestHelper) Cleanup() {
 	if h.SqlDB != nil {
-		h.SqlDB.Close()
+		_ = h.SqlDB.Close()
 	}
 }
 

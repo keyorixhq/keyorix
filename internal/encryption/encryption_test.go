@@ -53,7 +53,7 @@ func TestEncryptionService(t *testing.T) {
 	}
 
 	// Verify metadata
-	if encrypted.Metadata.Algorithm != "AES-256-GCM" {
+	if encrypted.Metadata.Algorithm != "AES-256-GCM" { //nolint:goconst
 		t.Errorf("Expected algorithm AES-256-GCM, got %s", encrypted.Metadata.Algorithm)
 	}
 

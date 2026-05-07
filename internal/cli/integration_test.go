@@ -40,12 +40,12 @@ func TestRemoteCLIIntegration(t *testing.T) {
 	// Create a temporary directory for test configuration
 	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer os.RemoveAll(tempDir) //nolint:errcheck
 
 	// Change to temp directory for test
 	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
+	require.NoError(t, os.Chdir(tempDir))
+	defer os.Chdir(oldWd) //nolint:errcheck
 
 	// Create a mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,9 +55,10 @@ func TestRemoteCLIIntegration(t *testing.T) {
 				Success: true,
 				Data:    json.RawMessage(`{"status": "healthy"}`),
 			}
-			json.NewEncoder(w).Encode(response)
+			_ = json.NewEncoder(w).Encode(response)
 		case "/api/v1/secrets":
-			if r.Method == "GET" {
+			switch r.Method {
+			case "GET":
 				response := remote.APIResponse{
 					Success: true,
 					Data: json.RawMessage(`{
@@ -65,13 +66,13 @@ func TestRemoteCLIIntegration(t *testing.T) {
 						"total": 0
 					}`),
 				}
-				json.NewEncoder(w).Encode(response)
-			} else if r.Method == "POST" {
+				_ = json.NewEncoder(w).Encode(response)
+			case "POST":
 				response := remote.APIResponse{
 					Success: true,
 					Data:    json.RawMessage(`{"id": 1, "name": "test-secret", "type": "password"}`),
 				}
-				json.NewEncoder(w).Encode(response)
+				_ = json.NewEncoder(w).Encode(response)
 			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -114,12 +115,12 @@ func TestLocalToRemoteSwitching(t *testing.T) {
 	// Create a temporary directory for test configuration
 	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer os.RemoveAll(tempDir) //nolint:errcheck
 
 	// Change to temp directory for test
 	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
+	require.NoError(t, os.Chdir(tempDir))
+	defer os.Chdir(oldWd) //nolint:errcheck
 
 	// Start with local configuration
 	localCfg := &config.Config{
@@ -145,7 +146,7 @@ func TestLocalToRemoteSwitching(t *testing.T) {
 			Success: true,
 			Data:    json.RawMessage(`{"status": "healthy"}`),
 		}
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	}))
 	defer server.Close()
 
@@ -183,12 +184,12 @@ func TestConfigurationPersistence(t *testing.T) {
 	// Create a temporary directory for test configuration
 	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer os.RemoveAll(tempDir) //nolint:errcheck
 
 	// Change to temp directory for test
 	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
+	require.NoError(t, os.Chdir(tempDir))
+	defer os.Chdir(oldWd) //nolint:errcheck
 
 	// Create and save configuration
 	originalCfg := &config.Config{
@@ -229,12 +230,12 @@ func TestErrorHandling(t *testing.T) {
 	// Create a temporary directory for test configuration
 	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer os.RemoveAll(tempDir) //nolint:errcheck
 
 	// Change to temp directory for test
 	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
+	require.NoError(t, os.Chdir(tempDir))
+	defer os.Chdir(oldWd) //nolint:errcheck
 
 	// Test with invalid remote configuration
 	invalidCfg := &config.Config{
@@ -259,22 +260,22 @@ func TestEnvironmentVariableSupport(t *testing.T) {
 	// Create a temporary directory for test configuration
 	tempDir, err := os.MkdirTemp("", "keyorix-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer os.RemoveAll(tempDir) //nolint:errcheck
 
 	// Change to temp directory for test
 	oldWd, _ := os.Getwd()
-	os.Chdir(tempDir)
-	defer os.Chdir(oldWd)
+	require.NoError(t, os.Chdir(tempDir))
+	defer os.Chdir(oldWd) //nolint:errcheck
 
 	// Set environment variable
-	os.Setenv("TEST_API_KEY", "env-api-key-123")
-	defer os.Unsetenv("TEST_API_KEY")
+	_ = os.Setenv("TEST_API_KEY", "env-api-key-123")
+	defer os.Unsetenv("TEST_API_KEY") //nolint:errcheck
 
 	// Create configuration with environment variable reference
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Type: "remote",
-			Remote: &config.RemoteConfig{
+			Remote: &config.RemoteConfig{ // #nosec G101
 				BaseURL:        "https://api.example.com",
 				APIKey:         "${TEST_API_KEY}",
 				TimeoutSeconds: 30,

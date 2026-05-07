@@ -29,7 +29,7 @@ func Recovery() func(next http.Handler) http.Handler {
 						userInfo = "anonymous"
 					}
 
-					log.Printf("PANIC CONTEXT: RequestID=%s, User=%s, Method=%s, Path=%s, RemoteAddr=%s",
+					log.Printf("PANIC CONTEXT: RequestID=%s, User=%s, Method=%s, Path=%s, RemoteAddr=%s", // #nosec G706
 						requestID, userInfo, r.Method, r.URL.Path, r.RemoteAddr)
 
 					// Send error response

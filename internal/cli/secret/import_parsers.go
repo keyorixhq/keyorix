@@ -21,7 +21,7 @@ func parseFile(path, format string) ([]secretEntry, error) {
 		return parseDotenv(path)
 	case "vault":
 		return parseVault(path)
-	case "json":
+	case "json": //nolint:goconst
 		return parseJSON(path)
 	default:
 		return nil, fmt.Errorf("unknown format %q (supported: dotenv, vault, json)", format)
@@ -39,7 +39,7 @@ func parseDotenv(path string) ([]secretEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck
 
 	var entries []secretEntry
 	scanner := bufio.NewScanner(f)

@@ -95,7 +95,7 @@ func TestValidateShareRecord(t *testing.T) {
 
 			// Check default values are set when validation passes
 			if err == nil && tt.share != nil {
-				if tt.share.Permission == "" && tt.share.Permission != "read" {
+				if tt.share.Permission == "" && tt.share.Permission != string(SharePermissionRead) {
 					t.Errorf("Default permission not set, got: %s, want: read", tt.share.Permission)
 				}
 				if tt.share.CreatedAt.IsZero() {

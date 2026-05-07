@@ -27,7 +27,7 @@ var listCmd = &cobra.Command{
 
 func init() {
 	listCmd.Flags().UintVar(&listSecretID, "secret-id", 0, "Secret ID (required)")
-	listCmd.MarkFlagRequired("secret-id") // #nosec G104
+	_ = listCmd.MarkFlagRequired("secret-id") // #nosec G104
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -66,9 +66,9 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	// Create a tabwriter for formatted output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tSECRET ID\tOWNER ID\tRECIPIENT ID\tIS GROUP\tPERMISSION\tCREATED AT")
+	fmt.Fprintln(w, "ID\tSECRET ID\tOWNER ID\tRECIPIENT ID\tIS GROUP\tPERMISSION\tCREATED AT") //nolint:errcheck
 	for _, share := range shares {
-		fmt.Fprintf(w, "%d\t%d\t%d\t%d\t%t\t%s\t%s\n",
+		fmt.Fprintf(w, "%d\t%d\t%d\t%d\t%t\t%s\t%s\n", //nolint:errcheck
 			share.ID,
 			share.SecretID,
 			share.OwnerID,
@@ -78,7 +78,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			share.CreatedAt.Format("2006-01-02 15:04:05"),
 		)
 	}
-	w.Flush() // #nosec G104
+	_ = w.Flush() // #nosec G104
 
 	return nil
 }

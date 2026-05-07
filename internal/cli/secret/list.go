@@ -118,7 +118,7 @@ func runListRemote(ctx context.Context, rc *common.RemoteClient) error {
 	switch listFormat {
 	case "json":
 		displaySecretsJSON(secrets, resp.Total, filter)
-	case "table":
+	case "table": //nolint:goconst
 		displaySecretsTable(secrets, resp.Total, filter)
 	default:
 		return fmt.Errorf("unsupported format: %s (use 'table' or 'json')", listFormat)

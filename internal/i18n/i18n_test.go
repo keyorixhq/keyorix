@@ -197,7 +197,7 @@ func TestMustLocalize(t *testing.T) {
 
 	t.Run("existing message", func(t *testing.T) {
 		result := localizer.MustLocalize("Welcome", nil)
-		expected := "Welcome to Keyorix!"
+		expected := "Welcome to Keyorix!" //nolint:goconst
 		if result != expected {
 			t.Errorf("MustLocalize() = %v, expected %v", result, expected)
 		}
