@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { Footer } from './Footer';
 import { Breadcrumb, BreadcrumbItem } from './Breadcrumb';
+import { CmdKSearch } from '../ui/CmdKSearch';
 
 export interface LayoutProps {
     children: React.ReactNode;
@@ -19,6 +20,19 @@ const Layout: React.FC<LayoutProps> = ({
     className,
 }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [cmdkOpen, setCmdkOpen] = useState(false);
+
+    // Global Cmd-K / Ctrl-K listener
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                setCmdkOpen(prev => !prev);
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, []);
 
     return (
         <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-app)' }}>
@@ -52,6 +66,9 @@ const Layout: React.FC<LayoutProps> = ({
                 {/* Footer */}
                 {showFooter && <Footer />}
             </div>
+
+            {/* Cmd-K global search overlay */}
+            {cmdkOpen && <CmdKSearch onClose={() => setCmdkOpen(false)} />}
         </div>
     );
 };

@@ -135,9 +135,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                 className={clsx(
                     'group flex items-center justify-between px-3 py-1.5 text-sm rounded-md transition-colors duration-100',
                     indent ? 'ml-6' : '',
-                    active
-                        ? 'font-medium'
-                        : 'font-normal',
+                    active ? 'font-medium' : 'font-normal',
                     item.soon && 'cursor-default'
                 )}
                 style={{
@@ -235,9 +233,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
             </nav>
 
             {/* Footer */}
-            <div className="px-4 py-3 border-t flex-shrink-0"
+            <div className="px-4 py-3 border-t flex-shrink-0 flex items-center justify-between"
                 style={{ borderColor: 'var(--border)' }}>
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Keyorix v0.1.0</p>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    <kbd className="px-1 py-0.5 rounded text-[10px]"
+                        style={{ backgroundColor: 'var(--bg-muted)' }}>⌘K</kbd>
+                    {' '}search
+                </span>
             </div>
         </div>
     );
