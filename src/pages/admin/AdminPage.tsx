@@ -8,12 +8,14 @@ import {
     PencilIcon,
     UserCircleIcon,
     ShieldCheckIcon,
+    ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import {
     useAdminUserList,
     useAdminCreateUser,
     useAdminUpdateUser,
     useAdminDeleteUser,
+    useAdminRestoreUser,
     useAdminRoles,
     useUserRoles,
     useUpdateUserRoles,
@@ -32,6 +34,7 @@ interface APIUser {
     active: boolean;
     created_at: string;
     updated_at: string;
+    deleted_at: string | null;
 }
 
 type ActiveModal =
@@ -39,6 +42,7 @@ type ActiveModal =
     | { type: 'create' }
     | { type: 'edit'; user: APIUser }
     | { type: 'delete'; user: APIUser }
+    | { type: 'restore'; user: APIUser }
     | { type: 'roles'; user: APIUser };
 
 function formatDate(iso: string): string {
@@ -58,6 +62,7 @@ export const AdminPage: React.FC = () => {
     const [page, setPage] = useState(1);
     const [search, setSearch] = useState('');
     const [searchInput, setSearchInput] = useState('');
+    const [showDeleted, setShowDeleted] = useState(false);
     const [activeModal, setActiveModal] = useState<ActiveModal>(null);
     const [formError, setFormError] = useState('');
     const [pageError, setPageError] = useState('');
@@ -75,7 +80,7 @@ export const AdminPage: React.FC = () => {
 
     const { theme } = useUIStore();
     const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    const { data, isLoading, isError } = useAdminUserList({ page, search, pageSize: PAGE_SIZE });
+    const { data, isLoading, isError } = useAdminUserList({ page, search, pageSize: PAGE_SIZE, includeDeleted: showDeleted });
 
     const rawData = data as any;
     const users: APIUser[] = rawData?.users ?? [];
@@ -88,6 +93,7 @@ export const AdminPage: React.FC = () => {
     const createMutation = useAdminCreateUser();
     const updateMutation = useAdminUpdateUser();
     const deleteMutation = useAdminDeleteUser();
+    const restoreMutation = useAdminRestoreUser();
     const { data: allRoles } = useAdminRoles();
     const { data: userRolesData, isLoading: rolesLoading } = useUserRoles(rolesUserId);
     const updateRolesMutation = useUpdateUserRoles();
@@ -182,6 +188,14 @@ export const AdminPage: React.FC = () => {
         });
     }
 
+    function handleRestore() {
+        if (activeModal?.type !== 'restore') return;
+        restoreMutation.mutate(activeModal.user.id, {
+            onSuccess: closeModal,
+            onError: (err: any) => setPageError(err.response?.data?.error ?? err.message ?? 'Failed to restore user'),
+        });
+    }
+
     function toggleSelect(id: number) {
         setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
     }
@@ -261,22 +275,34 @@ export const AdminPage: React.FC = () => {
                     <Alert type="error" title={pageError} dismissible onDismiss={() => setPageError('')} className="mb-4" />
                 )}
 
-                <form onSubmit={(e) => { e.preventDefault(); setSearch(searchInput); setPage(1); }} className="flex gap-2 mb-6">
-                    <div className="relative flex-1">
-                        <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-base-muted" />
+                <div className="flex flex-col gap-3 mb-6">
+                    <form onSubmit={(e) => { e.preventDefault(); setSearch(searchInput); setPage(1); }} className="flex gap-2">
+                        <div className="relative flex-1">
+                            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-base-muted" />
+                            <input
+                                type="text"
+                                placeholder="Search by username or email…"
+                                value={searchInput}
+                                onChange={(e) => setSearchInput(e.target.value)}
+                                className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
+                            />
+                        </div>
+                        <Button type="submit" variant="secondary">Search</Button>
+                        {search && (
+                            <Button type="button" variant="ghost" onClick={() => { setSearchInput(''); setSearch(''); setPage(1); }}>Clear</Button>
+                        )}
+                    </form>
+                    <label className="flex items-center gap-2 cursor-pointer w-fit">
                         <input
-                            type="text"
-                            placeholder="Search by username or email…"
-                            value={searchInput}
-                            onChange={(e) => setSearchInput(e.target.value)}
-                            className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
+                            type="checkbox"
+                            checked={showDeleted}
+                            onChange={(e) => { setShowDeleted(e.target.checked); setPage(1); setSelected(new Set()); }}
+                            className="h-4 w-4 rounded border-base"
+                            style={{ accentColor: 'var(--accent)' }}
                         />
-                    </div>
-                    <Button type="submit" variant="secondary">Search</Button>
-                    {search && (
-                        <Button type="button" variant="ghost" onClick={() => { setSearchInput(''); setSearch(''); setPage(1); }}>Clear</Button>
-                    )}
-                </form>
+                        <span className="text-sm text-base-muted">Show deleted users</span>
+                    </label>
+                </div>
 
                 {isLoading ? (
                     <Loading className="py-20" />
@@ -327,27 +353,44 @@ export const AdminPage: React.FC = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">{user.email}</td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            <span
-                                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-                                                style={user.active
-                                                    ? { backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7', color: isDark ? '#34d399' : '#166534' }
-                                                    : { backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9', color: isDark ? '#94a3b8' : '#475569' }}
-                                            >
-                                                {user.active ? 'Active' : 'Inactive'}
-                                            </span>
+                                            {user.deleted_at ? (
+                                                <span
+                                                    className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                                                    style={{ backgroundColor: isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2', color: isDark ? '#f87171' : '#991b1b' }}
+                                                >
+                                                    Deleted
+                                                </span>
+                                            ) : (
+                                                <span
+                                                    className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                                                    style={user.active
+                                                        ? { backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7', color: isDark ? '#34d399' : '#166534' }
+                                                        : { backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9', color: isDark ? '#94a3b8' : '#475569' }}
+                                                >
+                                                    {user.active ? 'Active' : 'Inactive'}
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">{formatDate(user.created_at)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right">
                                             <div className="flex items-center justify-end gap-2">
-                                                <button onClick={() => handleRolesOpen(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Manage roles">
-                                                    <ShieldCheckIcon className="h-4 w-4" />
-                                                </button>
-                                                <button onClick={() => openEdit(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Edit user">
-                                                    <PencilIcon className="h-4 w-4" />
-                                                </button>
-                                                <button onClick={() => setActiveModal({ type: 'delete', user })} className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete user">
-                                                    <TrashIcon className="h-4 w-4" />
-                                                </button>
+                                                {user.deleted_at ? (
+                                                    <button onClick={() => setActiveModal({ type: 'restore', user })} className="p-1.5 text-base-muted hover:text-green-600 hover:bg-green-50 rounded transition-colors" title="Restore user">
+                                                        <ArrowPathIcon className="h-4 w-4" />
+                                                    </button>
+                                                ) : (
+                                                    <>
+                                                        <button onClick={() => handleRolesOpen(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Manage roles">
+                                                            <ShieldCheckIcon className="h-4 w-4" />
+                                                        </button>
+                                                        <button onClick={() => openEdit(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Edit user">
+                                                            <PencilIcon className="h-4 w-4" />
+                                                        </button>
+                                                        <button onClick={() => setActiveModal({ type: 'delete', user })} className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete user">
+                                                            <TrashIcon className="h-4 w-4" />
+                                                        </button>
+                                                    </>
+                                                )}
                                             </div>
                                         </td>
                                     </tr>
@@ -431,13 +474,29 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {activeModal?.type === 'delete' && (
                         <p className="text-sm text-base-secondary">
-                            Are you sure you want to delete <span className="font-semibold text-base-primary">@{activeModal.user.username}</span>? This action cannot be undone.
+                            Are you sure you want to delete <span className="font-semibold text-base-primary">@{activeModal.user.username}</span>? The user can be restored later from the "Show deleted users" view.
                         </p>
                     )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={deleteMutation.isPending}>Cancel</Button>
                         <Button variant="danger" onClick={handleDelete} disabled={deleteMutation.isPending}>
                             {deleteMutation.isPending ? 'Deleting…' : 'Delete User'}
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
+
+            <Modal isOpen={activeModal?.type === 'restore'} onClose={closeModal} title="Restore User" size="sm">
+                <div className="space-y-4">
+                    {activeModal?.type === 'restore' && (
+                        <p className="text-sm text-base-secondary">
+                            Restore <span className="font-semibold text-base-primary">@{activeModal.user.username}</span>? The account will become active again.
+                        </p>
+                    )}
+                    <div className="flex justify-end gap-3 pt-2">
+                        <Button variant="ghost" onClick={closeModal} disabled={restoreMutation.isPending}>Cancel</Button>
+                        <Button variant="primary" onClick={handleRestore} disabled={restoreMutation.isPending}>
+                            {restoreMutation.isPending ? 'Restoring…' : 'Restore User'}
                         </Button>
                     </div>
                 </div>

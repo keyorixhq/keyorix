@@ -57,16 +57,19 @@ export const useAdminUserList = ({
     page,
     search,
     pageSize,
+    includeDeleted,
 }: {
     page: number;
     search: string;
     pageSize: number;
+    includeDeleted?: boolean;
 }) => {
     return useQuery({
-        queryKey: ['admin-users', page, search],
+        queryKey: ['admin-users', page, search, includeDeleted],
         queryFn: () => {
             const params: Record<string, any> = { page, page_size: pageSize };
             if (search) params.search = search;
+            if (includeDeleted) params.include_deleted = true;
             return usersApi.list(params as any);
         },
         retry: 1,
@@ -95,6 +98,14 @@ export const useAdminDeleteUser = () => {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: (id: number) => usersApi.delete(id),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
+    });
+};
+
+export const useAdminRestoreUser = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (id: number) => usersApi.restore(id),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
     });
 };
