@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './features/auth';
 import { SecretsListPage } from "./pages/secrets/SecretsListPage";
+import { ProjectsListPage, ProjectDetailPage } from './pages/projects';
 import { ProtectedRoute, PublicRoute, Layout } from './components/layout';
 import { SessionTimeoutWarning } from './components/ui';
 import { LoginPage } from './pages/auth';
@@ -45,6 +46,10 @@ function App() {
                 <Routes>
                   <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
                   <Route path={ROUTES.SECRETS} element={<SecretsListPage />} />
+                  {/* Projects hierarchy */}
+                  <Route path={ROUTES.PROJECTS} element={<ProjectsListPage />} />
+                  <Route path="/projects/:id/*" element={<ProjectDetailPage />} />
+                  {/* Other */}
                   <Route path={ROUTES.AUDIT} element={<AuditLogPage />} />
                   <Route path={ROUTES.SHARING} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Sharing — coming soon</div>} />
                   <Route path={ROUTES.PROFILE} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Profile — coming soon</div>} />

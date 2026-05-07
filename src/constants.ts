@@ -13,6 +13,12 @@ export const API_ENDPOINTS = {
         REFRESH: '/auth/refresh',
         PROFILE: '/api/v1/auth/profile',
     },
+    PROJECTS: {
+        LIST: '/api/v1/projects',
+        CREATE: '/api/v1/projects',
+        GET: (id: number) => `/api/v1/projects/${id}`,
+        ENVIRONMENTS: (id: number) => `/api/v1/projects/${id}/environments`,
+    },
     SECRETS: {
         LIST: '/api/v1/secrets',
         CREATE: '/api/v1/secrets',
@@ -54,10 +60,19 @@ export const ROUTES = {
     HOME: '/',
     LOGIN: '/login',
     DASHBOARD: '/dashboard',
+    // Legacy flat secrets (keep for sidebar "All Secrets" child link)
     SECRETS: '/secrets',
     SECRET_DETAIL: (id: number) => `/secrets/${id}`,
     CREATE_SECRET: '/secrets/new',
     EDIT_SECRET: (id: number) => `/secrets/${id}/edit`,
+    // Projects hierarchy
+    PROJECTS: '/projects',
+    PROJECT_DETAIL: (id: number) => `/projects/${id}`,
+    PROJECT_SECRETS: (id: number) => `/projects/${id}`,
+    PROJECT_MEMBERS: (id: number) => `/projects/${id}/members`,
+    PROJECT_ACTIVITY: (id: number) => `/projects/${id}/activity`,
+    PROJECT_SETTINGS: (id: number) => `/projects/${id}/settings`,
+    // Other
     SHARING: '/sharing',
     SHARED_WITH_ME: '/sharing/with-me',
     SHARED_BY_ME: '/sharing/by-me',

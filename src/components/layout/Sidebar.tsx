@@ -6,6 +6,7 @@ import {
     XMarkIcon,
     HomeIcon,
     KeyIcon,
+    FolderIcon,
     DocumentTextIcon,
     ChevronDownIcon,
     ShieldCheckIcon,
@@ -45,6 +46,12 @@ const NAV: NavItem[] = [
         name: 'Dashboard',
         href: '/dashboard',
         icon: HomeIcon,
+    },
+    {
+        kind: 'leaf',
+        name: 'Projects',
+        href: '/projects',
+        icon: FolderIcon,
     },
     {
         kind: 'group',

@@ -3,6 +3,7 @@ export * from './client';
 export * from './secrets';
 export * from './sharing';
 export * from './environments';
+export * from './projects';
 export * from './users';
 export * from './groups';
 export * from './dashboard';
