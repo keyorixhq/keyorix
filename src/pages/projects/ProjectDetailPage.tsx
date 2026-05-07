@@ -3,15 +3,14 @@ import { Link, useParams, useNavigate, Routes, Route, Navigate, useLocation } fr
 import { ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { useProject } from '../../features/projects/api';
 import { ProjectSecretsTab } from './ProjectSecretsTab';
+import { ProjectMembersTab } from './ProjectMembersTab';
+import { ProjectActivityTab } from './ProjectActivityTab';
+import { ProjectSettingsTab } from './ProjectSettingsTab';
 import { ROUTES } from '../../constants';
 
 // ── Tab definition ───────────────────────────────────────────────────────────
 
-interface Tab {
-    id: string;
-    label: string;
-    path: string;
-}
+interface Tab { id: string; label: string; path: string; }
 
 const TABS: Tab[] = [
     { id: 'secrets',  label: 'Secrets',  path: '' },
@@ -39,10 +38,7 @@ const TabNav: React.FC<{ projectId: number }> = ({ projectId }) => {
     const base = `/projects/${projectId}`;
 
     const isActive = (tab: Tab) => {
-        if (tab.path === '') {
-            // Secrets tab: active when path is exactly /projects/:id (no sub-path)
-            return location.pathname === base || location.pathname === `${base}/`;
-        }
+        if (tab.path === '') return location.pathname === base || location.pathname === `${base}/`;
         return location.pathname.startsWith(`${base}${tab.path}`);
     };
 
@@ -51,15 +47,12 @@ const TabNav: React.FC<{ projectId: number }> = ({ projectId }) => {
             {TABS.map(tab => {
                 const active = isActive(tab);
                 return (
-                    <Link
-                        key={tab.id}
-                        to={`${base}${tab.path}`}
+                    <Link key={tab.id} to={`${base}${tab.path}`}
                         className="px-4 py-2.5 text-sm font-medium -mb-px border-b-2 transition-colors duration-100"
                         style={{
                             borderBottomColor: active ? 'var(--accent)' : 'transparent',
                             color: active ? 'var(--accent-text)' : 'var(--text-secondary)',
-                        }}
-                    >
+                        }}>
                         {tab.label}
                     </Link>
                 );
@@ -67,19 +60,6 @@ const TabNav: React.FC<{ projectId: number }> = ({ projectId }) => {
         </div>
     );
 };
-
-// ── Stub tab content ─────────────────────────────────────────────────────────
-
-const ComingSoonTab: React.FC<{ label: string }> = ({ label }) => (
-    <div className="flex flex-col items-center justify-center py-24 text-center">
-        <div className="h-10 w-10 rounded-lg flex items-center justify-center mb-3"
-            style={{ backgroundColor: 'var(--bg-subtle)' }}>
-            <FolderIcon className="h-5 w-5" style={{ color: 'var(--text-muted)' }} />
-        </div>
-        <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>{label}</p>
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Coming in a future session.</p>
-    </div>
-);
 
 // ── ProjectDetailPage ────────────────────────────────────────────────────────
 
@@ -91,11 +71,9 @@ export const ProjectDetailPage: React.FC = () => {
 
     if (isLoading) {
         return (
-            <div className="p-6 max-w-5xl mx-auto">
-                <div className="animate-pulse">
-                    <div className="h-4 w-32 rounded mb-5" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                    <div className="h-8 w-56 rounded mb-6" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                </div>
+            <div className="p-6 max-w-5xl mx-auto animate-pulse">
+                <div className="h-4 w-32 rounded mb-5" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                <div className="h-8 w-56 rounded mb-6" style={{ backgroundColor: 'var(--bg-muted)' }} />
             </div>
         );
     }
@@ -106,9 +84,7 @@ export const ProjectDetailPage: React.FC = () => {
                 <Breadcrumb projectName="Unknown" />
                 <div className="rounded-lg px-4 py-3 text-sm" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
                     Failed to load project.{' '}
-                    <button onClick={() => navigate(ROUTES.PROJECTS)} className="underline">
-                        Back to Projects
-                    </button>
+                    <button onClick={() => navigate(ROUTES.PROJECTS)} className="underline">Back to Projects</button>
                 </div>
             </div>
         );
@@ -125,24 +101,20 @@ export const ProjectDetailPage: React.FC = () => {
                     <FolderIcon className="h-5 w-5" style={{ color: 'var(--accent)' }} />
                 </div>
                 <div>
-                    <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
-                        {project.name}
-                    </h1>
+                    <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>{project.name}</h1>
                     {project.description && (
                         <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{project.description}</p>
                     )}
                 </div>
             </div>
 
-            {/* Tabs */}
             <TabNav projectId={projectId} />
 
-            {/* Tab content via nested routes */}
             <Routes>
                 <Route index element={<ProjectSecretsTab projectId={projectId} />} />
-                <Route path="members" element={<ComingSoonTab label="Members" />} />
-                <Route path="activity" element={<ComingSoonTab label="Activity" />} />
-                <Route path="settings" element={<ComingSoonTab label="Settings" />} />
+                <Route path="members" element={<ProjectMembersTab projectId={projectId} />} />
+                <Route path="activity" element={<ProjectActivityTab projectId={projectId} />} />
+                <Route path="settings" element={<ProjectSettingsTab projectId={projectId} />} />
                 <Route path="*" element={<Navigate to={`/projects/${projectId}`} replace />} />
             </Routes>
         </div>

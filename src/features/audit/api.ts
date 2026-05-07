@@ -13,6 +13,7 @@ export const useAuditLog = (params?: {
     page?: number;
     pageSize?: number;
     action?: string;
+    projectId?: number;
 }) => {
     return useQuery({
         queryKey: ['audit-log', params],
@@ -22,6 +23,7 @@ export const useAuditLog = (params?: {
                     page: params?.page ?? 1,
                     page_size: params?.pageSize ?? 50,
                     ...(params?.action ? { action: params.action } : {}),
+                    ...(params?.projectId ? { project_id: params.projectId } : {}),
                 },
             });
             const data = response.data.data;
