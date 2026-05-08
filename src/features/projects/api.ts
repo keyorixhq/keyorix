@@ -43,3 +43,13 @@ export function useCreateProject() {
         },
     });
 }
+
+export function useDeleteProject() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (projectId: number) => projectsApi.delete(projectId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.list() });
+        },
+    });
+}

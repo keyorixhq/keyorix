@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { ROUTES } from '../../constants';
 import {
     MagnifyingGlassIcon,
     PlusIcon,
@@ -56,13 +58,22 @@ function formatDate(iso: string): string {
     }
 }
 
+function generatePassword(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%^&*';
+    const arr = new Uint8Array(16);
+    window.crypto.getRandomValues(arr);
+    return Array.from(arr).map(b => chars[b % chars.length]).join('');
+}
+
 export const AdminPage: React.FC = () => {
     const PAGE_SIZE = 20;
 
+    const [searchParams] = useSearchParams();
     const [page, setPage] = useState(1);
     const [search, setSearch] = useState('');
     const [searchInput, setSearchInput] = useState('');
     const [showDeleted, setShowDeleted] = useState(false);
+    const filterInactive = searchParams.get('filter') === 'inactive';
     const [activeModal, setActiveModal] = useState<ActiveModal>(null);
     const [formError, setFormError] = useState('');
     const [pageError, setPageError] = useState('');
@@ -73,11 +84,13 @@ export const AdminPage: React.FC = () => {
     const [createEmail, setCreateEmail] = useState('');
     const [createDisplayName, setCreateDisplayName] = useState('');
     const [createPassword, setCreatePassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
 
     const [editEmail, setEditEmail] = useState('');
     const [editDisplayName, setEditDisplayName] = useState('');
     const [editActive, setEditActive] = useState(true);
 
+    const navigate = useNavigate();
     const { theme } = useUIStore();
     const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     const { data, isLoading, isError } = useAdminUserList({ page, search, pageSize: PAGE_SIZE, includeDeleted: showDeleted });
@@ -102,6 +115,7 @@ export const AdminPage: React.FC = () => {
         setActiveModal(null);
         setFormError('');
         setCreateUsername(''); setCreateEmail(''); setCreateDisplayName(''); setCreatePassword('');
+        setShowPassword(false);
         setRolesUserId(null);
         setSelectedRoleIds(new Set());
     }
@@ -275,6 +289,20 @@ export const AdminPage: React.FC = () => {
                     <Alert type="error" title={pageError} dismissible onDismiss={() => setPageError('')} className="mb-4" />
                 )}
 
+                {filterInactive && (
+                    <div className="flex items-center justify-between px-4 py-2.5 mb-4 rounded-lg border"
+                        style={{ backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fffbeb', borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d', color: isDark ? '#fbbf24' : '#92400e' }}>
+                        <span className="text-sm font-medium">Inactive users = no login in 30 days. All users shown — check Audit Log for login history.</span>
+                        <button
+                            type="button"
+                            onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=logins')}
+                            className="text-sm font-medium underline underline-offset-2 hover:opacity-75 transition-opacity ml-4 whitespace-nowrap"
+                        >
+                            View login history →
+                        </button>
+                    </div>
+                )}
+
                 <div className="flex flex-col gap-3 mb-6">
                     <form onSubmit={(e) => { e.preventDefault(); setSearch(searchInput); setPage(1); }} className="flex gap-2">
                         <div className="relative flex-1">
@@ -431,8 +459,28 @@ export const AdminPage: React.FC = () => {
                         <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="jane@example.com" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-base-secondary mb-1">Password</label>
-                        <input type="password" value={createPassword} onChange={(e) => setCreatePassword(e.target.value)} placeholder="Min. 8 characters" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-sm font-medium text-base-secondary">Password</label>
+                            <button type="button"
+                                onClick={() => { setCreatePassword(generatePassword()); setShowPassword(true); }}
+                                className="text-xs font-medium text-accent-text hover:opacity-75 transition-opacity">
+                                ↻ Generate
+                            </button>
+                        </div>
+                        <div className="relative">
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                value={createPassword}
+                                onChange={(e) => setCreatePassword(e.target.value)}
+                                placeholder="Min. 8 characters"
+                                className="w-full px-3 py-2 pr-14 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                            />
+                            <button type="button"
+                                onClick={() => setShowPassword(p => !p)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-base-muted hover:text-base-secondary transition-colors select-none">
+                                {showPassword ? 'Hide' : 'Show'}
+                            </button>
+                        </div>
                     </div>
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>Cancel</Button>
@@ -457,9 +505,11 @@ export const AdminPage: React.FC = () => {
                         <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
                         <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
-                    <div className="flex items-center gap-3">
-                        <input id="edit-active" type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 text-blue-600 border-base rounded" style={{ accentColor: 'var(--accent)' }} />
-                        <label htmlFor="edit-active" className="text-sm font-medium text-base-secondary">Active</label>
+                    <div>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 rounded border-base" style={{ accentColor: 'var(--accent)' }} />
+                            <span className="text-sm font-medium text-base-secondary">Active</span>
+                        </label>
                     </div>
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={updateMutation.isPending}>Cancel</Button>
@@ -474,7 +524,7 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {activeModal?.type === 'delete' && (
                         <p className="text-sm text-base-secondary">
-                            Are you sure you want to delete <span className="font-semibold text-base-primary">@{activeModal.user.username}</span>? The user can be restored later from the "Show deleted users" view.
+                            Delete <span className="font-semibold">@{activeModal.user.username}</span>? The user will be soft-deleted and can be restored within 30 days.
                         </p>
                     )}
                     <div className="flex justify-end gap-3 pt-2">
@@ -490,7 +540,7 @@ export const AdminPage: React.FC = () => {
                 <div className="space-y-4">
                     {activeModal?.type === 'restore' && (
                         <p className="text-sm text-base-secondary">
-                            Restore <span className="font-semibold text-base-primary">@{activeModal.user.username}</span>? The account will become active again.
+                            Restore <span className="font-semibold">@{activeModal.user.username}</span>? Their account will become active again.
                         </p>
                     )}
                     <div className="flex justify-end gap-3 pt-2">
@@ -502,38 +552,28 @@ export const AdminPage: React.FC = () => {
                 </div>
             </Modal>
 
-            <Modal
-                isOpen={activeModal?.type === 'roles'}
-                onClose={closeModal}
-                title={activeModal?.type === 'roles' ? `Manage Roles — ${activeModal.user.display_name || activeModal.user.username}` : 'Manage Roles'}
-                size="md"
-            >
+            <Modal isOpen={activeModal?.type === 'roles'} onClose={closeModal} title="Manage Roles" size="md">
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
+                    {activeModal?.type === 'roles' && (
+                        <p className="text-sm text-base-muted">Roles for <span className="font-medium text-base-secondary">@{activeModal.user.username}</span></p>
+                    )}
                     {rolesLoading ? (
-                        <div className="flex justify-center py-6">
-                            <div className="animate-spin rounded-full h-6 w-6 border-b-2" style={{ borderColor: 'var(--accent)' }} />
-                        </div>
+                        <Loading />
                     ) : (
-                        <div className="space-y-1">
+                        <div className="space-y-2">
                             {(allRoles as any[] ?? []).map((role: any) => (
-                                <label key={role.id} className="flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors"
-                                    style={{ backgroundColor: selectedRoleIds.has(role.id) ? 'var(--accent-subtle)' : undefined }}
-                                    onMouseEnter={e => { if (!selectedRoleIds.has(role.id)) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'; }}
-                                    onMouseLeave={e => { if (!selectedRoleIds.has(role.id)) (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}
-                                >
+                                <label key={role.id} className="flex items-start gap-3 p-3 rounded-lg border border-base hover:bg-subtle cursor-pointer transition-colors">
                                     <input
                                         type="checkbox"
-                                        className="mt-0.5 h-4 w-4 rounded border-base"
-                                        style={{ accentColor: 'var(--accent)' }}
                                         checked={selectedRoleIds.has(role.id)}
                                         onChange={() => toggleRoleId(role.id)}
+                                        className="mt-0.5 h-4 w-4 rounded border-base"
+                                        style={{ accentColor: 'var(--accent)' }}
                                     />
-                                    <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{role.name}</p>
-                                        {role.description && (
-                                            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{role.description}</p>
-                                        )}
+                                    <div>
+                                        <p className="text-sm font-medium text-base-primary">{role.name}</p>
+                                        {role.description && <p className="text-xs text-base-muted mt-0.5">{role.description}</p>}
                                     </div>
                                 </label>
                             ))}
@@ -541,13 +581,8 @@ export const AdminPage: React.FC = () => {
                     )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={updateRolesMutation.isPending}>Cancel</Button>
-                        <Button
-                            variant="primary"
-                            onClick={handleSaveRoles}
-                            disabled={updateRolesMutation.isPending || selectedRoleIds.size === 0}
-                            title={selectedRoleIds.size === 0 ? 'User must have at least one role' : undefined}
-                        >
-                            {updateRolesMutation.isPending ? 'Saving…' : 'Save'}
+                        <Button variant="primary" onClick={handleSaveRoles} disabled={updateRolesMutation.isPending || rolesLoading}>
+                            {updateRolesMutation.isPending ? 'Saving…' : 'Save Roles'}
                         </Button>
                     </div>
                 </div>

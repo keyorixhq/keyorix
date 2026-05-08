@@ -58,6 +58,10 @@ export const projectsApi = {
         return normalize(p);
     },
 
+    async delete(projectId: number): Promise<void> {
+        await apiClient.delete(`/api/v1/projects/${projectId}`);
+    },
+
     async listEnvironments(projectId: number): Promise<ProjectEnvironment[]> {
         const response = await apiClient.get(`/api/v1/projects/${projectId}/environments`);
         const envs = response.data.data?.environments ?? response.data.environments ?? [];

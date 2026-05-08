@@ -192,6 +192,8 @@ export const DashboardPage: React.FC = () => {
 
     const anomalies: AnomalyAlert[] = anomalyData?.data?.alerts ?? [];
     const expiring = stats?.expiringSecrets ?? [];
+    const expiredSecrets = expiring.filter((s: any) => s.expired);
+    const expiringSecrets = expiring.filter((s: any) => !s.expired);
     const alertCount = anomalies.length + expiring.length;
 
     const features = sysInfo?.features ?? {};
@@ -223,7 +225,7 @@ export const DashboardPage: React.FC = () => {
                         {...(stats?.prevTotalSecrets != null ? { prevValue: stats.prevTotalSecrets } : {})}
                         sub={stats?.totalSecretsTrend ? 'vs last snapshot' : 'across all environments'}
                         accent="bg-blue-500"
-                        onClick={() => navigate(ROUTES.SECRETS)}
+                        onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc')}
                     />
                     <StatCard
                         label="Active Users"
@@ -247,10 +249,10 @@ export const DashboardPage: React.FC = () => {
                         label={alertCount > 0 ? `Alerts (${alertCount})` : 'Security'}
                         value={alertCount > 0 ? alertCount : '✓'}
                         sub={alertCount > 0
-                            ? `${anomalies.length} anomal${anomalies.length === 1 ? 'y' : 'ies'} · ${expiring.length} expiring`
+                            ? `${anomalies.length} anomal${anomalies.length === 1 ? 'y' : 'ies'} · ${expiredSecrets.length} expired · ${expiringSecrets.length} expiring`
                             : 'No active alerts'}
                         accent={alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500'}
-                        {...(alertCount > 0 ? { onClick: () => navigate(ROUTES.AUDIT) } : {})}
+                        {...(alertCount > 0 ? { onClick: () => navigate(ROUTES.AUDIT + '?tab=anomalies') } : {})}
                     />
                 </div>
 
@@ -263,30 +265,30 @@ export const DashboardPage: React.FC = () => {
                         <SignalCard
                             label="Expiring Secrets"
                             value={expiring.length}
-                            hint="within 30 days"
-                            severity={expiring.length === 0 ? 'neutral' : expiring.some(s => s.daysLeft <= 7) ? 'alert' : 'warn'}
-                            onClick={() => navigate(ROUTES.SECRETS)}
+                            hint={expiredSecrets.length > 0 ? `${expiredSecrets.length} expired · ${expiringSecrets.length} expiring in 30d` : 'within 30 days'}
+                            severity={expiring.length === 0 ? 'neutral' : expiredSecrets.length > 0 ? 'alert' : expiringSecrets.some((s: any) => s.daysLeft <= 7) ? 'alert' : 'warn'}
+                            onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc&filter=expiring')}
                         />
                         <SignalCard
                             label="Failed Auth (24h)"
                             value={stats?.failedAuthAttempts24h ?? 0}
                             hint="unsuccessful attempts"
                             severity={(stats?.failedAuthAttempts24h ?? 0) === 0 ? 'neutral' : (stats?.failedAuthAttempts24h ?? 0) >= 5 ? 'alert' : 'warn'}
-                            onClick={() => navigate(ROUTES.AUDIT)}
+                            onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=failed')}
                         />
                         <SignalCard
                             label="Inactive Users"
                             value={stats?.inactiveUsers ?? 0}
                             hint="no login in 30 days"
                             severity={(stats?.inactiveUsers ?? 0) === 0 ? 'neutral' : 'warn'}
-                            onClick={() => navigate(ROUTES.ADMIN_USERS)}
+                            onClick={() => navigate(ROUTES.ADMIN_USERS + '?filter=inactive')}
                         />
                         <SignalCard
                             label="Secret Reads (30d)"
                             value={stats?.auditSecretReads30d ?? 0}
                             hint="access events logged"
                             severity="neutral"
-                            onClick={() => navigate(ROUTES.AUDIT)}
+                            onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=reads')}
                         />
                     </div>
                 </div>
@@ -390,14 +392,14 @@ export const DashboardPage: React.FC = () => {
                                             >✓</button>
                                         </div>
                                     ))}
-                                    {expiring.map(s => (
-                                        <div key={s.id} className="flex items-center justify-between p-3 bg-amber-50 rounded-lg">
+                                    {expiring.map((s: any) => (
+                                        <div key={s.id} className={`flex items-center justify-between p-3 rounded-lg ${s.expired ? 'bg-red-950/30 border border-red-900/40' : 'bg-amber-50 dark:bg-amber-950/20'}`}>
                                             <div>
-                                                <p className="text-xs font-semibold text-amber-700">{s.name}</p>
-                                                <p className="text-xs text-amber-600">{s.environment}</p>
+                                                <p className={`text-xs font-semibold ${s.expired ? 'text-red-400' : 'text-amber-700'}`}>{s.name}</p>
+                                                <p className={`text-xs ${s.expired ? 'text-red-500' : 'text-amber-600'}`}>{s.environment}</p>
                                             </div>
-                                            <span className={`text-xs font-bold ${s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600'}`}>
-                                                {s.daysLeft}d
+                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${s.expired ? 'bg-red-500/20 text-red-400' : s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600'}`}>
+                                                {s.expired ? `${Math.abs(s.daysLeft)}d overdue` : `${s.daysLeft}d`}
                                             </span>
                                         </div>
                                     ))}

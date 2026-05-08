@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { PlusIcon, FolderIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
-import { useProjects, useCreateProject } from '../../features/projects/api';
+import { useNavigate } from 'react-router-dom';
+import { PlusIcon, FolderIcon, MagnifyingGlassIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { useProjects, useCreateProject, useDeleteProject } from '../../features/projects/api';
 import { ROUTES } from '../../constants';
+import { Modal } from '../../components/ui/Modal';
+import { Alert } from '../../components/ui/Alert';
+import { Button } from '../../components/ui/Button';
 import type { Project } from '../../services/projects';
 
 // ── Create Project Modal ─────────────────────────────────────────────────────
@@ -49,11 +52,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                             placeholder="e.g. backend-api"
                             autoFocus
                             className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                border: '1px solid var(--border)',
-                                color: 'var(--text-primary)',
-                            }}
+                            style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                         />
                     </div>
                     <div>
@@ -66,11 +65,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                             onChange={e => setDescription(e.target.value)}
                             placeholder="Optional"
                             className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                border: '1px solid var(--border)',
-                                color: 'var(--text-primary)',
-                            }}
+                            style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                         />
                     </div>
                 </div>
@@ -80,19 +75,13 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                 </p>
 
                 <div className="flex justify-end gap-2 mt-6">
-                    <button
-                        onClick={onClose}
-                        className="px-4 py-2 text-sm rounded-lg"
-                        style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-subtle)' }}
-                    >
+                    <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg"
+                        style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-subtle)' }}>
                         Cancel
                     </button>
-                    <button
-                        onClick={handleSubmit}
-                        disabled={!name.trim() || createProject.isPending}
+                    <button onClick={handleSubmit} disabled={!name.trim() || createProject.isPending}
                         className="px-4 py-2 text-sm rounded-lg font-medium disabled:opacity-50"
-                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
-                    >
+                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>
                         {createProject.isPending ? 'Creating…' : 'Create Project'}
                     </button>
                 </div>
@@ -103,15 +92,17 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
 
 // ── Project Row ──────────────────────────────────────────────────────────────
 
-const ProjectRow: React.FC<{ project: Project }> = ({ project }) => {
-    const lastActivity = project.lastActivity
-        ? new Date(project.lastActivity).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-        : '—';
+interface ProjectRowProps {
+    project: Project;
+    onDeleteRequest: (project: Project) => void;
+}
 
+const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest }) => {
+    const navigate = useNavigate();
     return (
-        <Link
-            to={ROUTES.PROJECT_DETAIL(project.id)}
-            className="flex items-center gap-4 px-4 py-3 rounded-lg transition-colors duration-100 group"
+        <div
+            onClick={() => navigate(ROUTES.PROJECT_DETAIL(project.id))}
+            className="flex items-center gap-4 px-4 py-3 rounded-lg transition-colors duration-100 group cursor-pointer"
             style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-surface)' }}
             onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)'}
@@ -132,12 +123,24 @@ const ProjectRow: React.FC<{ project: Project }> = ({ project }) => {
                 )}
             </div>
 
-            <div className="hidden sm:flex items-center gap-6 text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+            <div className="hidden sm:flex items-center gap-4 text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                 <span>{project.secretCount ?? 0} secrets</span>
                 <span>{project.environmentCount ?? 0} envs</span>
-                <span className="hidden md:block">{lastActivity}</span>
+                {project.lastActivity && (
+                    <span className="hidden md:block">
+                        {new Date(project.lastActivity).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                )}
+                <button
+                    onClick={e => { e.stopPropagation(); onDeleteRequest(project); }}
+                    className="p-1.5 rounded transition-colors hover:bg-red-50"
+                    style={{ color: 'var(--error)' }}
+                    title="Delete project"
+                >
+                    <TrashIcon className="h-4 w-4" />
+                </button>
             </div>
-        </Link>
+        </div>
     );
 };
 
@@ -145,15 +148,38 @@ const ProjectRow: React.FC<{ project: Project }> = ({ project }) => {
 
 export const ProjectsListPage: React.FC = () => {
     const { data: projects = [], isLoading, isError } = useProjects();
+    const deleteProject = useDeleteProject();
     const [search, setSearch] = useState('');
     const [showCreate, setShowCreate] = useState(false);
+    const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
+    const [deleteConfirm, setDeleteConfirm] = useState('');
+    const [deleteError, setDeleteError] = useState('');
+
+    const closeDeleteModal = () => {
+        setProjectToDelete(null);
+        setDeleteConfirm('');
+        setDeleteError('');
+        deleteProject.reset();
+    };
+
+    const handleDelete = () => {
+        if (!projectToDelete) return;
+        setDeleteError('');
+        deleteProject.mutate(projectToDelete.id, {
+            onSuccess: closeDeleteModal,
+            onError: (err: any) => {
+                setDeleteError(
+                    err?.response?.data?.error ?? err?.response?.data?.message ?? 'Failed to delete project.'
+                );
+            },
+        });
+    };
 
     const filtered = search.trim()
         ? projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) ||
             (p.description ?? '').toLowerCase().includes(search.toLowerCase()))
         : projects;
 
-    // Recent = last 5 by updatedAt
     const recent = [...projects]
         .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
         .slice(0, 5);
@@ -187,11 +213,7 @@ export const ProjectsListPage: React.FC = () => {
                     onChange={e => setSearch(e.target.value)}
                     placeholder="Search projects…"
                     className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-none"
-                    style={{
-                        backgroundColor: 'var(--bg-surface)',
-                        border: '1px solid var(--border)',
-                        color: 'var(--text-primary)',
-                    }}
+                    style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                 />
             </div>
 
@@ -210,14 +232,16 @@ export const ProjectsListPage: React.FC = () => {
 
             {!isLoading && !isError && (
                 <>
-                    {/* Recent section — only when no search */}
+                    {/* Recent — only when no search */}
                     {!search && recent.length > 0 && (
                         <section className="mb-8">
                             <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
                                 Recent
                             </h2>
                             <div className="space-y-2">
-                                {recent.map(p => <ProjectRow key={p.id} project={p} />)}
+                                {recent.map(p => (
+                                    <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} />
+                                ))}
                             </div>
                         </section>
                     )}
@@ -259,7 +283,9 @@ export const ProjectsListPage: React.FC = () => {
 
                         {filtered.length > 0 && (
                             <div className="space-y-2">
-                                {filtered.map(p => <ProjectRow key={p.id} project={p} />)}
+                                {filtered.map(p => (
+                                    <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} />
+                                ))}
                             </div>
                         )}
                     </section>
@@ -267,6 +293,47 @@ export const ProjectsListPage: React.FC = () => {
             )}
 
             {showCreate && <CreateProjectModal onClose={() => setShowCreate(false)} />}
+
+            {/* Delete confirmation modal */}
+            <Modal isOpen={projectToDelete !== null} onClose={closeDeleteModal} title="Delete Project" size="sm">
+                <div className="space-y-4">
+                    {deleteError && (
+                        <Alert type="error" title="Cannot delete project" message={deleteError} />
+                    )}
+                    {!deleteError && (
+                        <>
+                            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                Delete project <span className="font-semibold">{projectToDelete?.name}</span>?
+                                All secrets and environments will be soft-deleted.
+                                Type the project name to confirm.
+                            </p>
+                            <input
+                                type="text"
+                                value={deleteConfirm}
+                                onChange={e => setDeleteConfirm(e.target.value)}
+                                placeholder={projectToDelete?.name}
+                                autoFocus
+                                className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+                                style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                            />
+                        </>
+                    )}
+                    <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                        <Button variant="outline" onClick={closeDeleteModal}>
+                            {deleteError ? 'Close' : 'Cancel'}
+                        </Button>
+                        {!deleteError && (
+                            <Button
+                                variant="danger"
+                                disabled={deleteConfirm !== projectToDelete?.name || deleteProject.isPending}
+                                onClick={handleDelete}
+                            >
+                                {deleteProject.isPending ? 'Deleting…' : 'Delete'}
+                            </Button>
+                        )}
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };

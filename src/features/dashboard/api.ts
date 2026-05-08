@@ -12,8 +12,10 @@ export const useDashboardStats = () => {
     return useQuery({
         queryKey: queryKeys.dashboard.stats(),
         queryFn: () => dashboardApi.getStats(),
-        staleTime: 2 * 60 * 1000,
-        refetchInterval: 5 * 60 * 1000,
+        staleTime: 0,
+        refetchInterval: 10 * 1000,
+        refetchOnWindowFocus: true,
+        refetchOnMount: true,
     });
 };
 

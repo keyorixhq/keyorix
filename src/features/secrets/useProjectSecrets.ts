@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { secretsApi } from '../../services/secrets';
 import { queryKeys } from '../../lib/queryClient';
 import { SecretType, SecretFormData } from '../../types';
-import { useUIStore } from '../../store/uiStore';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -14,11 +13,16 @@ interface UseProjectSecretsOptions {
 
 /**
  * Like useSecretsList but scoped to a specific project + environment.
- * Used by ProjectSecretsTab (Phase 3C).
+ * Uses local modal state (not global UIStore) to avoid conflicts with AllSecretsPage.
  */
 export const useProjectSecrets = ({ projectId, environmentId }: UseProjectSecretsOptions) => {
-    const { openModal, closeModal, activeModal, modalData } = useUIStore();
     const queryClient = useQueryClient();
+
+    // ── Local modal state (independent of global UIStore) ─────────────────
+    const [activeModal, setActiveModal] = useState<string | null>(null);
+    const [modalData, setModalData]     = useState<any>(null);
+    const openModal  = useCallback((modalId: string, data: any = null) => { setActiveModal(modalId); setModalData(data); }, []);
+    const closeModal = useCallback(() => { setActiveModal(null); setModalData(null); }, []);
 
     const [search, setSearch] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');

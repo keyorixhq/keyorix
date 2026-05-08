@@ -1,4 +1,5 @@
 import React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
     MagnifyingGlassIcon, PlusIcon, FunnelIcon,
     ChevronLeftIcon, ChevronRightIcon, ShareIcon, TrashIcon,
@@ -23,6 +24,7 @@ const SORT_OPTIONS = [
     { value: 'modified_desc', label: 'Recently Modified' }, { value: 'modified_asc', label: 'Oldest Modified' },
     { value: 'type_asc', label: 'Type (A-Z)' }, { value: 'type_desc', label: 'Type (Z-A)' },
     { value: 'created_desc', label: 'Recently Created' }, { value: 'created_asc', label: 'Oldest Created' },
+    { value: 'expiry_asc', label: 'Expiring Soonest' }, { value: 'expiry_desc', label: 'Expiring Latest' },
 ];
 const PAGE_SIZE_OPTIONS = [
     { value: '10', label: '10 per page' }, { value: '20', label: '20 per page' },
@@ -41,6 +43,20 @@ function generateSecret(): string {
 export const SecretsListPage: React.FC = () => {
     const list = useSecretsList();
     const reveal = useSecretReveal();
+    const [searchParams] = useSearchParams();
+
+    // Apply URL-driven sort on mount (e.g. ?sort=expiry_asc from dashboard)
+    React.useEffect(() => {
+        const sort = searchParams.get('sort');
+        if (sort && sort !== list.sortBy) {
+            list.setSortBy(sort);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const urlFilter = searchParams.get('filter'); // 'expiring' | null
+    const displayedSecrets = urlFilter === 'expiring'
+        ? list.secrets.filter((s: any) => s.Expiration != null)
+        : list.secrets;
     const [viewingSecret, setViewingSecret] = React.useState<any>(null);
     const [createName, setCreateName] = React.useState('');
     const [createValue, setCreateValue] = React.useState('');
@@ -143,11 +159,27 @@ export const SecretsListPage: React.FC = () => {
                 </div>
             </div>
 
+            {/* Expiring filter banner */}
+            {urlFilter === 'expiring' && (
+                <div className="flex items-center justify-between px-4 py-2.5 rounded-lg border"
+                    style={{ backgroundColor: 'rgba(217,119,6,0.06)', borderColor: 'rgba(217,119,6,0.30)', color: '#92400e' }}>
+                    <span className="text-sm font-medium" style={{ color: 'inherit' }}>Showing secrets with expiration set</span>
+                    <button
+                        type="button"
+                        onClick={() => window.history.replaceState({}, '', window.location.pathname)}
+                        className="text-sm font-medium underline underline-offset-2 hover:opacity-75 transition-opacity ml-4"
+                        style={{ color: 'inherit' }}
+                    >
+                        ✕ Clear filter
+                    </button>
+                </div>
+            )}
+
             {/* Table */}
             <div className="bg-surface rounded-lg border border-base ">
                 {list.isLoading ? (
                     <div className="p-8"><Loading /></div>
-                ) : list.secrets.length === 0 ? (
+                ) : displayedSecrets.length === 0 ? (
                     <div className="p-8 text-center">
                         <FunnelIcon className="h-12 w-12 mx-auto text-base-muted  mb-4" />
                         <h3 className="text-lg font-medium text-base-primary  mb-2">No secrets found</h3>
@@ -167,8 +199,8 @@ export const SecretsListPage: React.FC = () => {
                                 <tr>
                                     <th className="px-4 py-3 text-left w-10">
                                         <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                            checked={list.secrets.length > 0 && list.secrets.every(s => list.selectedItems.has(s.id))}
-                                            onChange={(e) => { if (e.target.checked) list.secrets.forEach(s => list.toggleSelectedItem(s.id)); else list.clearSelectedItems(); }} />
+                                            checked={displayedSecrets.length > 0 && displayedSecrets.every(s => list.selectedItems.has(s.id))}
+                                            onChange={(e) => { if (e.target.checked) displayedSecrets.forEach(s => list.toggleSelectedItem(s.id)); else list.clearSelectedItems(); }} />
                                     </th>
                                     {['Name', 'Type', 'Environment', 'Sharing', 'Modified'].map(h => (
                                         <th key={h} className="px-6 py-3 text-left text-xs font-medium text-base-muted  uppercase tracking-wider">{h}</th>
@@ -177,7 +209,7 @@ export const SecretsListPage: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody className="bg-surface divide-y divide-base dark:divide-gray-700">
-                                {list.secrets.map(secret => (
+                                {displayedSecrets.map(secret => (
                                     <SecretTableRow key={secret.id} secret={secret}
                                         isSelected={list.selectedItems.has(secret.id)}
                                         onToggleSelect={list.toggleSelectedItem}

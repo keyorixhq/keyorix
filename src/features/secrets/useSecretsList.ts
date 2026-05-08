@@ -76,6 +76,13 @@ export const useSecretsList = () => {
             if (sortField === 'name') { aVal = a.name.toLowerCase(); bVal = b.name.toLowerCase(); }
             else if (sortField === 'modified') { aVal = new Date(a.lastModified); bVal = new Date(b.lastModified); }
             else if (sortField === 'type') { aVal = a.type; bVal = b.type; }
+            else if (sortField === 'expiry') {
+                // nulls last regardless of direction
+                if (!a.Expiration && !b.Expiration) return 0;
+                if (!a.Expiration) return 1;
+                if (!b.Expiration) return -1;
+                aVal = new Date(a.Expiration); bVal = new Date(b.Expiration);
+            }
             else return 0;
             if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
             if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
