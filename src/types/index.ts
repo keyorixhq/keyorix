@@ -38,6 +38,7 @@ export interface Secret {
     permissions: string[];
     metadata: Record<string, string>;
     tags: string[];
+    Expiration?: string | null;
 }
 
 export type SecretType = 'text' | 'password' | 'api_key' | 'certificate' | 'json';
