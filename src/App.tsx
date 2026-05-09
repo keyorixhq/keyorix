@@ -1,13 +1,14 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './features/auth';
 import { SecretsListPage } from "./pages/secrets/SecretsListPage";
+import { SecretExpiryPage, SecretsHealthPage, RotationPoliciesPage } from "./pages/secrets";
 import { ProjectsListPage, ProjectDetailPage } from './pages/projects';
 import { ProtectedRoute, PublicRoute, Layout } from './components/layout';
 import { SessionTimeoutWarning } from './components/ui';
 import { LoginPage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';
 import { AuditLogPage } from './pages/audit/AuditLogPage';
-import { AdminPage } from './pages/admin';
+import { AdminPage, RolesPoliciesPage, GroupsPage, ServiceAccountsPage, APITokensPage } from './pages/admin';
 import { AppearancePage } from './pages/settings/AppearancePage';
 import { CompliancePage } from './pages/compliance/CompliancePage';
 import { KeyorixConnectPage } from './pages/integrations/KeyorixConnectPage';
@@ -49,6 +50,10 @@ function App() {
                 <Routes>
                   <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
                   <Route path={ROUTES.SECRETS} element={<SecretsListPage />} />
+                  <Route path="/secrets/dynamic" element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Dynamic Secrets — coming soon</div>} />
+                  <Route path="/secrets/rotation" element={<RotationPoliciesPage />} />
+                  <Route path="/secrets/expiry" element={<SecretExpiryPage />} />
+                  <Route path="/secrets/health" element={<SecretsHealthPage />} />
                   {/* Projects hierarchy */}
                   <Route path={ROUTES.PROJECTS} element={<ProjectsListPage />} />
                   <Route path="/projects/:id/*" element={<ProjectDetailPage />} />
@@ -58,6 +63,10 @@ function App() {
                   <Route path={ROUTES.PROFILE} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Profile — coming soon</div>} />
                   <Route path={ROUTES.ADMIN_USERS} element={<AdminPage />} />
                   <Route path={ROUTES.ADMIN} element={<AdminPage />} />
+                  <Route path="/admin/roles" element={<RolesPoliciesPage />} />
+                  <Route path="/admin/groups" element={<GroupsPage />} />
+                  <Route path="/admin/service-accounts" element={<ServiceAccountsPage />} />
+                  <Route path="/admin/api-tokens" element={<APITokensPage />} />
                   <Route path="/settings/appearance" element={<AppearancePage />} />
                   <Route path={ROUTES.COMPLIANCE} element={<CompliancePage />} />
                   <Route path={ROUTES.CONNECT} element={<KeyorixConnectPage />} />

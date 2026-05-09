@@ -231,6 +231,45 @@ export interface PasswordResetConfirm {
     confirmPassword: string;
 }
 
+// Rotation policy types
+export interface RotationPolicy {
+    id: number;
+    name: string;
+    description: string;
+    scope: 'project' | 'environment';
+    project_id: number | null;
+    environment_id: number | null;
+    interval_days: number;
+    alert_days_before: number;
+    notify_on_breach: boolean;
+    is_active: boolean;
+    created_by: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface RotationPolicyEvaluation {
+    policy_id: number;
+    policy_name: string;
+    secret_id: number;
+    secret_name: string;
+    last_rotated_at: string | null;
+    days_overdue: number;
+    is_overdue: boolean;
+    is_approaching: boolean;
+}
+
+export interface CreateRotationPolicyPayload {
+    name: string;
+    description: string;
+    scope: 'project' | 'environment';
+    project_id: number | null;
+    environment_id: number | null;
+    interval_days: number;
+    alert_days_before: number;
+    notify_on_breach: boolean;
+}
+
 // Environment types
 export interface EnvironmentConfig {
     API_BASE_URL: string;

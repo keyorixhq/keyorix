@@ -1,10 +1,18 @@
 import { apiClient } from './client';
 import { ApiResponse, PaginatedResponse, User } from '../types';
-import { API_ENDPOINTS } from '../constants';
+
+// Normalize role object — handles Go-serialized uppercase field names
+function normalizeRole(r: any): { id: number; name: string; description: string } {
+    return {
+        id: r.id ?? r.ID ?? 0,
+        name: r.name ?? r.Name ?? '',
+        description: r.description ?? r.Description ?? '',
+    };
+}
 
 export const adminApi = {
     async getStats(): Promise<any> {
-        const response = await apiClient.get<ApiResponse<any>>(API_ENDPOINTS.ADMIN.STATS);
+        const response = await apiClient.get<ApiResponse<any>>('/api/v1/dashboard/stats');
         return response.data.data;
     },
 
@@ -14,15 +22,17 @@ export const adminApi = {
         search?: string;
     }): Promise<PaginatedResponse<User>> {
         const response = await apiClient.get<ApiResponse<PaginatedResponse<User>>>(
-            API_ENDPOINTS.ADMIN.USERS,
+            '/api/v1/users',
             { params }
         );
         return response.data.data;
     },
 
-    async getRoles(): Promise<any[]> {
-        const response = await apiClient.get<ApiResponse<any[]>>(API_ENDPOINTS.ADMIN.ROLES);
-        return response.data.data;
+    async getRoles(): Promise<{ id: number; name: string; description: string }[]> {
+        const response = await apiClient.get('/api/v1/roles');
+        const data = response.data.data;
+        const roles = Array.isArray(data) ? data : (data?.roles ?? []);
+        return roles.map(normalizeRole);
     },
 
     async getAuditLogs(params?: {
@@ -34,17 +44,19 @@ export const adminApi = {
         endDate?: string;
     }): Promise<PaginatedResponse<any>> {
         const response = await apiClient.get<ApiResponse<PaginatedResponse<any>>>(
-            API_ENDPOINTS.ADMIN.AUDIT,
+            '/api/v1/audit/logs',
             { params }
         );
         return response.data.data;
     },
 
     async getUserRoles(userId: number): Promise<{ id: number; name: string }[]> {
-        const response = await apiClient.get<ApiResponse<{ roles: { id: number; name: string }[] }>>(
+        const response = await apiClient.get(
             `/api/v1/users/${userId}/roles`
         );
-        return response.data.data?.roles ?? [];
+        const data = response.data.data;
+        const roles = data?.roles ?? data ?? [];
+        return Array.isArray(roles) ? roles.map(normalizeRole) : [];
     },
 
     async updateUserRoles(userId: number, roleIds: number[]): Promise<void> {

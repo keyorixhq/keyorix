@@ -31,6 +31,7 @@ export const secretsApi = {
             tags: [],
             permissions: [],
             metadata: {},
+            Expiration: s.Expiration ?? null,
         }));
         return {
             data: mappedSecrets,

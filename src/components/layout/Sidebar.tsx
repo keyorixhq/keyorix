@@ -61,8 +61,10 @@ const NAV: NavItem[] = [
         icon: KeyIcon,
         children: [
             { kind: 'leaf', name: 'All Secrets', href: '/secrets' },
-            { kind: 'leaf', name: 'Rotation Policies', href: '/secrets/rotation', soon: true },
+            { kind: 'leaf', name: 'Secret Expiry', href: '/secrets/expiry' },
+            { kind: 'leaf', name: 'Secrets Health', href: '/secrets/health' },
             { kind: 'leaf', name: 'Dynamic Secrets', href: '/secrets/dynamic', soon: true },
+            { kind: 'leaf', name: 'Rotation Policies', href: '/secrets/rotation' },
         ],
     },
     {
@@ -78,10 +80,10 @@ const NAV: NavItem[] = [
         icon: ShieldCheckIcon,
         children: [
             { kind: 'leaf', name: 'Users', href: '/admin/users' },
-            { kind: 'leaf', name: 'Groups', href: '/admin/groups', soon: true },
-            { kind: 'leaf', name: 'Roles & Policies', href: '/admin/roles', soon: true },
-            { kind: 'leaf', name: 'Service Accounts', href: '/admin/service-accounts', soon: true },
-            { kind: 'leaf', name: 'API Tokens', href: '/admin/tokens', soon: true },
+            { kind: 'leaf', name: 'Groups', href: '/admin/groups' },
+            { kind: 'leaf', name: 'Roles & Policies', href: '/admin/roles' },
+            { kind: 'leaf', name: 'Service Accounts', href: '/admin/service-accounts' },
+            { kind: 'leaf', name: 'API Tokens', href: '/admin/api-tokens' },
         ],
     },
     {

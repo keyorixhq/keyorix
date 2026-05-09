@@ -66,13 +66,20 @@ export const RoadmapPage: React.FC = () => (
             items={[
                 'Secret CRUD, versioning, and rotation',
                 'AES-256-GCM envelope encryption with key rotation',
-                'Full RBAC with groups and sharing',
+                'Full RBAC — users, groups, roles, permissions',
+                'Service accounts and API tokens for CI/CD',
+                'User role assignment backed by real DB',
                 'Two-layer audit logging (system + per-secret)',
+                'Anomaly detection (off-hours, new IP, frequency spike)',
+                'Secret expiry tracking and alerts',
+                'Rotation policies (time-based, per environment)',
+                'Secrets Health dashboard',
                 'PostgreSQL + SQLite backends',
                 'Go, Python, Node.js SDKs',
                 'CLI with project context (keyorix project use)',
                 'Docker Compose with auto-seeding',
                 'Dark / light / system theme',
+                'NIS2, DORA, ISO 27001 compliance page',
             ]}
         />
 
@@ -80,11 +87,13 @@ export const RoadmapPage: React.FC = () => (
             quarter="Q3 2026"
             badge="in-progress"
             items={[
+                'Project-scoped role assignments',
+                'RBAC audit log UI',
+                'Role creation and management UI',
                 'Compliance mapping reports (NIS2, DORA, ISO 27001)',
                 'OIDC service account authentication for CI/CD',
-                'Secret rotation trigger via UI',
-                'Machine identity support (non-human tokens)',
                 'Project switcher in sidebar header',
+                'demo.keyorix.com hosted demo environment',
             ]}
         />
 
@@ -92,7 +101,7 @@ export const RoadmapPage: React.FC = () => (
             quarter="Q4 2026"
             badge="planned"
             items={[
-                'Two-tier permission model (system + project roles)',
+                'Dynamic secrets (database credentials, cloud keys)',
                 'User invitation and access request flows',
                 'Webhook notifications for rotation events',
                 'Kubernetes operator (alpha)',
@@ -106,9 +115,9 @@ export const RoadmapPage: React.FC = () => (
             items={[
                 'Keyorix Connect federation UI',
                 'Cross-environment drift detection',
-                'Dynamic secrets (PostgreSQL, AWS, Azure)',
                 'ML-based anomaly detection',
                 'gRPC client library',
+                'Multi-region replication',
             ]}
         />
 
