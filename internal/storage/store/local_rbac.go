@@ -152,6 +152,98 @@ func (ls *LocalStorage) CheckPermission(ctx context.Context, userID uint, resour
 	return count > 0, nil
 }
 
+// ListPermissions returns all permissions.
+func (ls *LocalStorage) ListPermissions(ctx context.Context) ([]*models.Permission, error) {
+	var permissions []*models.Permission
+	if err := ls.db.WithContext(ctx).Find(&permissions).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return permissions, nil
+}
+
+// GetPermission returns a single permission by ID.
+func (ls *LocalStorage) GetPermission(ctx context.Context, id uint) (*models.Permission, error) {
+	var permission models.Permission
+	if err := ls.db.WithContext(ctx).First(&permission, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &permission, nil
+}
+
+// GetRolePermissions returns all permissions assigned to a role.
+func (ls *LocalStorage) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
+	var permissions []*models.Permission
+	err := ls.db.WithContext(ctx).Table("permissions").
+		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
+		Where("role_permissions.role_id = ?", roleID).
+		Find(&permissions).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return permissions, nil
+}
+
+// RemovePermissionFromRole removes a permission from a role.
+func (ls *LocalStorage) RemovePermissionFromRole(ctx context.Context, roleID, permissionID uint) error {
+	result := ls.db.WithContext(ctx).
+		Where("role_id = ? AND permission_id = ?", roleID, permissionID).
+		Delete(&models.RolePermission{})
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	return nil
+}
+
+// GetGroupRoles returns all roles assigned to a group.
+func (ls *LocalStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error) {
+	var roles []*models.Role
+	err := ls.db.WithContext(ctx).Table("roles").
+		Joins("JOIN group_roles ON roles.id = group_roles.role_id").
+		Where("group_roles.group_id = ?", groupID).
+		Find(&roles).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return roles, nil
+}
+
+// AssignRoleToGroup assigns a role to a group; returns an error if already assigned.
+func (ls *LocalStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint) error {
+	var existing models.GroupRole
+	err := ls.db.WithContext(ctx).Where("group_id = ? AND role_id = ?", groupID, roleID).First(&existing).Error
+	if err == nil {
+		return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
+	}
+	if err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+	}
+	groupRole := models.GroupRole{GroupID: groupID, RoleID: roleID}
+	if err := ls.db.WithContext(ctx).Create(&groupRole).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+// RemoveRoleFromGroup removes a role from a group.
+func (ls *LocalStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint) error {
+	result := ls.db.WithContext(ctx).
+		Where("group_id = ? AND role_id = ?", groupID, roleID).
+		Delete(&models.GroupRole{})
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s", i18n.T("ErrorRoleNotAssigned", nil))
+	}
+	return nil
+}
+
 // GetUserPermissions retrieves all distinct permissions for userID via role membership.
 func (ls *LocalStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
 	var permissions []*storage.Permission

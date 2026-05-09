@@ -161,7 +161,14 @@ func (h *CatalogHandler) DeleteEnvironment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := h.coreService.DeleteEnvironment(r.Context(), uint(id)); err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		msg := err.Error()
+		status := http.StatusInternalServerError
+		if strings.Contains(msg, "active secret") {
+			status = http.StatusConflict
+		} else if strings.Contains(msg, "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Environment deleted")

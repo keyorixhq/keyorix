@@ -1,8 +1,9 @@
-// remote_auth.go — Session and API Client operations for RemoteStorage.
+// remote_auth.go — Session and API Client/Token operations for RemoteStorage.
 //
 // Covers: CreateSession, GetSession, DeleteSession, CleanupExpiredSessions,
 //
-//	CreateAPIClient, GetAPIClient, RevokeAPIClient.
+//	CreateAPIClient, GetAPIClient, RevokeAPIClient, ListAPIClients, UpdateAPIClient,
+//	CreateAPIToken, GetAPIToken, ListAPITokens, RevokeAPIToken.
 //
 // For the local (GORM) equivalent see local_auth.go.
 package store
@@ -119,6 +120,107 @@ func (rs *RemoteStorage) RevokeAPIClient(ctx context.Context, clientID string) e
 	}
 	if !resp.Success {
 		return fmt.Errorf("revoke API client failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// ListAPIClients retrieves all API clients via remote API.
+func (rs *RemoteStorage) ListAPIClients(ctx context.Context) ([]*models.APIClient, error) {
+	resp, err := rs.client.Get(ctx, "/api/v1/service-accounts")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list API clients: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list API clients failed: %s", resp.Error.Error())
+	}
+	var result []*models.APIClient
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// UpdateAPIClient updates an API client via remote API.
+func (rs *RemoteStorage) UpdateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {
+	path := fmt.Sprintf("/api/v1/service-accounts/%s", client.ClientID)
+	resp, err := rs.client.Put(ctx, path, client)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update API client: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("update API client failed: %s", resp.Error.Error())
+	}
+	var result models.APIClient
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// --- API Tokens ---
+
+// CreateAPIToken creates a new API token via remote API.
+func (rs *RemoteStorage) CreateAPIToken(ctx context.Context, token *models.APIToken) (*models.APIToken, error) {
+	resp, err := rs.client.Post(ctx, "/api/v1/api-tokens", token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create API token: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("create API token failed: %s", resp.Error.Error())
+	}
+	var result models.APIToken
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetAPIToken retrieves an API token by ID via remote API.
+func (rs *RemoteStorage) GetAPIToken(ctx context.Context, id uint) (*models.APIToken, error) {
+	path := fmt.Sprintf("/api/v1/api-tokens/%d", id)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get API token: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get API token failed: %s", resp.Error.Error())
+	}
+	var result models.APIToken
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListAPITokens retrieves API tokens, optionally filtered by clientID, via remote API.
+func (rs *RemoteStorage) ListAPITokens(ctx context.Context, clientID *uint) ([]*models.APIToken, error) {
+	path := "/api/v1/api-tokens"
+	if clientID != nil {
+		path = fmt.Sprintf("%s?client_id=%d", path, *clientID)
+	}
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list API tokens: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("list API tokens failed: %s", resp.Error.Error())
+	}
+	var result []*models.APIToken
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+// RevokeAPIToken revokes an API token via remote API.
+func (rs *RemoteStorage) RevokeAPIToken(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/api-tokens/%d/revoke", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to revoke API token: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("revoke API token failed: %s", resp.Error.Error())
 	}
 	return nil
 }

@@ -2,15 +2,18 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
-	"strconv"
+	"strings"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
+	"github.com/keyorixhq/keyorix/server/validation"
 )
 
 type updateUserRolesRequest struct {
-	RoleIDs []uint `json:"role_ids" validate:"required,min=1"`
+	RoleIDs []uint `json:"role_ids" validate:"omitempty"`
 }
 
 type apiRole struct {
@@ -18,36 +21,59 @@ type apiRole struct {
 	Name string `json:"name"`
 }
 
-// GetUserRolesForUser handles GET /api/v1/users/{id}/roles
-func GetUserRolesForUser(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
-		return
-	}
-
-	userIDStr := chi.URLParam(r, "id")
-	if _, err := strconv.ParseUint(userIDStr, 10, 32); err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
-		return
-	}
-
-	// Mock: all users start with the "user" role assigned
-	roles := []apiRole{
-		{ID: 2, Name: "user"},
-	}
-	sendSuccess(w, map[string]interface{}{"roles": roles}, "")
+// UsersRolesHandler handles user role management HTTP requests.
+type UsersRolesHandler struct {
+	coreService *core.KeyorixCore
+	validator   *validation.Validator
 }
 
-// UpdateUserRoles handles PUT /api/v1/users/{id}/roles
-func UpdateUserRoles(w http.ResponseWriter, r *http.Request) {
+// NewUsersRolesHandler creates a new UsersRolesHandler.
+func NewUsersRolesHandler(coreService *core.KeyorixCore) *UsersRolesHandler {
+	return &UsersRolesHandler{
+		coreService: coreService,
+		validator:   validation.NewValidator(),
+	}
+}
+
+// GetUserRolesForUser handles GET /api/v1/users/{id}/roles
+func (h *UsersRolesHandler) GetUserRolesForUser(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
 
-	userIDStr := chi.URLParam(r, "id")
-	if _, err := strconv.ParseUint(userIDStr, 10, 32); err != nil {
-		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+	userID, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	roles, err := h.coreService.GetUserRolesByID(r.Context(), userID)
+	if err != nil {
+		log.Printf("Error getting roles for user %d: %v", userID, err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		} else {
+			sendError(w, "InternalError", "Failed to get user roles", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+
+	apiRoles := make([]apiRole, 0, len(roles))
+	for _, role := range roles {
+		apiRoles = append(apiRoles, apiRole{ID: role.ID, Name: role.Name})
+	}
+	sendSuccess(w, map[string]interface{}{"roles": apiRoles}, "")
+}
+
+// UpdateUserRoles handles PUT /api/v1/users/{id}/roles — full role replacement.
+func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	userID, ok := parseUintParam(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -56,10 +82,50 @@ func UpdateUserRoles(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
 		return
 	}
-	if err := validator.Validate(&req); err != nil {
+	if err := h.validator.Validate(&req); err != nil {
 		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
 
-	sendSuccess(w, map[string]interface{}{"role_ids": req.RoleIDs}, "Roles updated successfully")
+	if len(req.RoleIDs) > 0 {
+		allRoles, err := h.coreService.Storage().ListRoles(r.Context())
+		if err != nil {
+			log.Printf("Error listing roles for validation: %v", err)
+			sendError(w, "InternalError", "Failed to validate role IDs", http.StatusInternalServerError, nil)
+			return
+		}
+		existingIDs := make(map[uint]bool, len(allRoles))
+		for _, role := range allRoles {
+			existingIDs[role.ID] = true
+		}
+		for _, id := range req.RoleIDs {
+			if !existingIDs[id] {
+				sendError(w, "NotFound", fmt.Sprintf("Role ID %d does not exist", id), http.StatusBadRequest, nil)
+				return
+			}
+		}
+	}
+
+	if err := h.coreService.SetUserRoles(r.Context(), userID, req.RoleIDs); err != nil {
+		log.Printf("Error setting roles for user %d: %v", userID, err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		} else {
+			sendError(w, "InternalError", "Failed to update user roles", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+
+	roles, err := h.coreService.GetUserRolesByID(r.Context(), userID)
+	if err != nil {
+		log.Printf("Error fetching updated roles for user %d: %v", userID, err)
+		sendError(w, "InternalError", "Roles updated but failed to retrieve updated list", http.StatusInternalServerError, nil)
+		return
+	}
+
+	apiRoles := make([]apiRole, 0, len(roles))
+	for _, role := range roles {
+		apiRoles = append(apiRoles, apiRole{ID: role.ID, Name: role.Name})
+	}
+	sendSuccess(w, map[string]interface{}{"roles": apiRoles}, "Roles updated successfully")
 }

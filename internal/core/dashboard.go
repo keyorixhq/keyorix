@@ -3,19 +3,21 @@ package core
 import (
 	"context"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// ExpiringSecret represents a secret that is expiring soon.
+// ExpiringSecret represents a secret that is expiring soon or has already expired.
 type ExpiringSecret struct {
 	ID          uint      `json:"id"`
 	Name        string    `json:"name"`
 	Environment string    `json:"environment"`
 	ExpiresAt   time.Time `json:"expiresAt"`
-	DaysLeft    int       `json:"daysLeft"`
+	DaysLeft    int       `json:"daysLeft"` // negative = already expired N days ago
+	Expired     bool      `json:"expired"`  // true when expiration is in the past
 }
 
 // StatTrend contains trend data for a dashboard stat.
@@ -209,7 +211,8 @@ func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username
 	return &ActivityFeed{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-// getExpiringSecrets returns secrets owned by the user expiring within 30 days.
+// getExpiringSecrets returns secrets expiring within 30 days OR already expired,
+// sorted by expiration ascending (expired first, then soonest-expiring).
 func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) []ExpiringSecret {
 	now := time.Now().UTC()
 	cutoff := now.Add(30 * 24 * time.Hour)
@@ -223,33 +226,50 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) [
 		return nil
 	}
 
-	var expiring []ExpiringSecret
+	// Build environment name lookup once
+	envNames := map[uint]string{}
+	if envs, err := c.storage.ListEnvironments(ctx); err == nil {
+		for _, e := range envs {
+			envNames[e.ID] = e.Name
+		}
+	}
+
+	var result []ExpiringSecret
 	for _, s := range secrets {
 		if s.Expiration == nil {
 			continue
 		}
 		exp := s.Expiration.UTC()
-		if exp.After(now) && exp.Before(cutoff) {
-			daysLeft := int(exp.Sub(now).Hours() / 24)
-			envName := "unknown"
-			if envs, err := c.storage.ListEnvironments(ctx); err == nil {
-				for _, e := range envs {
-					if e.ID == s.EnvironmentID {
-						envName = e.Name
-						break
-					}
-				}
-			}
-			expiring = append(expiring, ExpiringSecret{
-				ID:          s.ID,
-				Name:        s.Name,
-				Environment: envName,
-				ExpiresAt:   exp,
-				DaysLeft:    daysLeft,
-			})
+		expired := exp.Before(now)
+		expiring := exp.Before(cutoff) // within 30 days from now
+
+		if !expired && !expiring {
+			continue // more than 30 days away, skip
 		}
+
+		daysLeft := int(exp.Sub(now).Hours() / 24) // negative when expired
+
+		envName := envNames[s.EnvironmentID]
+		if envName == "" {
+			envName = "unknown"
+		}
+
+		result = append(result, ExpiringSecret{
+			ID:          s.ID,
+			Name:        s.Name,
+			Environment: envName,
+			ExpiresAt:   exp,
+			DaysLeft:    daysLeft,
+			Expired:     expired,
+		})
 	}
-	return expiring
+
+	// Sort: expired first (most overdue first), then soonest-expiring
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].ExpiresAt.Before(result[j].ExpiresAt)
+	})
+
+	return result
 }
 
 // computeTrend calculates percentage change between previous and current values.

@@ -113,6 +113,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		recordLoginAttempt(ip)
+		go h.coreService.LogAuthFailure(context.Background(), body.Username, ip) // #nosec G118
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}

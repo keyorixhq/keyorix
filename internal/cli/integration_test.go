@@ -50,7 +50,7 @@ func TestRemoteCLIIntegration(t *testing.T) {
 	// Create a mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/health":
+		case "/health":
 			response := remote.APIResponse{
 				Success: true,
 				Data:    json.RawMessage(`{"status": "healthy"}`),

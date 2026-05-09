@@ -144,7 +144,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
 	}
 
-	// Skip AutoMigrate if already initialised (projects table present).
+	// Create rotation_policies table if it doesn't exist yet (additive, safe on existing DBs).
+	if !tableExists(db, "rotation_policies") {
+		if err := db.AutoMigrate(&models.RotationPolicy{}); err != nil {
+			return fmt.Errorf("failed to migrate rotation_policies table: %w", err)
+		}
+	}
+
+	// Skip full AutoMigrate if already initialised (projects table present).
 	if tableExists(db, "projects") {
 		return nil
 	}
@@ -180,5 +187,6 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
 		&models.AnomalyAlert{},
+		&models.RotationPolicy{},
 	)
 }
