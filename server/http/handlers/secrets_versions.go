@@ -5,6 +5,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -41,6 +42,13 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 			h.sendError(w, "InternalError", "Failed to get secret versions", http.StatusInternalServerError, nil)
 		}
 		return
+	}
+
+	// Log as a secret read — fetching versions means the caller is accessing the secret value.
+	secret, sErr := h.coreService.GetSecret(r.Context(), uint(id))
+	if sErr == nil && secret != nil {
+		ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+		go h.coreService.LogSecretReadWithProject(context.Background(), userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua) // #nosec G118
 	}
 
 	h.sendSuccess(w, map[string]interface{}{"versions": versions}, "")

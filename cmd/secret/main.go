@@ -51,6 +51,7 @@ func main() {
 		&models.GRPCService{},
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
+		&models.RotationPolicy{},
 	)
 	if err != nil {
 		log.Fatalf("❌ Migration error: %v", err)

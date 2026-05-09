@@ -50,6 +50,7 @@ var defaultPermissions = []bootstrapPermissionDef{
 	{"roles.assign", "Assign roles to users", "roles", "assign"},
 	{"audit.read", "View audit logs", "audit", "read"},
 	{"system.read", "View system information", "system", "read"},
+	{"system.write", "Manage service accounts and API tokens", "system", "write"},
 }
 
 // adminPermissions lists the permission names granted to the admin role.
@@ -57,7 +58,7 @@ var adminPermissions = []string{
 	"secrets.read", "secrets.write", "secrets.delete",
 	"users.read", "users.write", "users.delete",
 	"roles.read", "roles.write", "roles.assign",
-	"audit.read", "system.read",
+	"audit.read", "system.read", "system.write",
 }
 
 // viewerPermissions lists the permission names granted to the viewer role.

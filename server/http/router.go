@@ -59,6 +59,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	catalogHandler := handlers.NewCatalogHandler(coreService)
 	dashboardHandler := handlers.NewDashboardHandler(coreService)
 	auditHandler := handlers.NewAuditHandler(coreService)
+	rotationPolicyHandler := handlers.NewRotationPolicyHandler(coreService)
+	rbacHandler := handlers.NewRBACHandler(coreService)
+	usersRolesHandler := handlers.NewUsersRolesHandler(coreService)
 
 	// Auth endpoints (no authentication middleware)
 	r.Post("/auth/login", authHandler.Login)
@@ -164,6 +167,20 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Shared secrets endpoint
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/shared-secrets", shareHandler.ListSharedSecrets)
 
+		// Rotation policies endpoints
+		r.Route("/rotation-policies", func(r chi.Router) {
+			r.Use(customMiddleware.RequirePermission("secrets.read"))
+			r.Get("/", rotationPolicyHandler.List)
+			r.Get("/evaluate", rotationPolicyHandler.Evaluate)
+			r.Get("/{id}", rotationPolicyHandler.Get)
+			r.With(customMiddleware.RequirePermission("secrets.write")).
+				Post("/", rotationPolicyHandler.Create)
+			r.With(customMiddleware.RequirePermission("secrets.write")).
+				Put("/{id}", rotationPolicyHandler.Update)
+			r.With(customMiddleware.RequirePermission("secrets.write")).
+				Delete("/{id}", rotationPolicyHandler.Delete)
+		})
+
 		// Users endpoints (RBAC)
 		r.Route("/users", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("users.read"))
@@ -174,8 +191,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Put("/{id}", handlers.UpdateUser)
 			r.Delete("/{id}", handlers.DeleteUser)
 			r.Post("/{id}/restore", handlers.RestoreUser)
-			r.Get("/{id}/roles", handlers.GetUserRolesForUser)
-			r.Put("/{id}/roles", handlers.UpdateUserRoles)
+			r.Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
+			r.Put("/{id}/roles", usersRolesHandler.UpdateUserRoles)
 		})
 
 		// Groups endpoints
@@ -189,24 +206,54 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/{id}/members", groupHandler.GetGroupMembers)
 			r.Post("/{id}/members", groupHandler.AddGroupMember)
 			r.Delete("/{id}/members/{userId}", groupHandler.RemoveGroupMember)
+			r.Get("/{id}/roles", rbacHandler.GetGroupRoles)
+			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/roles", rbacHandler.AssignRoleToGroup)
+			r.With(customMiddleware.RequirePermission("roles.assign")).Delete("/{id}/roles/{roleId}", rbacHandler.RemoveRoleFromGroup)
 		})
 
 		// Roles endpoints (RBAC)
 		r.Route("/roles", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("roles.read"))
-			r.Get("/", handlers.ListRoles)
-			r.Post("/", handlers.CreateRole)
-			r.Get("/{id}", handlers.GetRole)
-			r.Put("/{id}", handlers.UpdateRole)
-			r.Delete("/{id}", handlers.DeleteRole)
+			r.Get("/", rbacHandler.ListRoles)
+			r.With(customMiddleware.RequirePermission("roles.write")).Post("/", rbacHandler.CreateRole)
+			r.Get("/{id}", rbacHandler.GetRole)
+			r.With(customMiddleware.RequirePermission("roles.write")).Put("/{id}", rbacHandler.UpdateRole)
+			r.With(customMiddleware.RequirePermission("roles.write")).Delete("/{id}", rbacHandler.DeleteRole)
+			r.Get("/{id}/permissions", rbacHandler.GetRolePermissions)
+			r.With(customMiddleware.RequirePermission("roles.write")).Post("/{id}/permissions", rbacHandler.AssignPermissionToRole)
+			r.With(customMiddleware.RequirePermission("roles.write")).Delete("/{id}/permissions/{permissionId}", rbacHandler.RemovePermissionFromRole)
+		})
+
+		// Permissions endpoints
+		r.Route("/permissions", func(r chi.Router) {
+			r.Use(customMiddleware.RequirePermission("roles.read"))
+			r.Get("/", rbacHandler.ListPermissions)
+		})
+
+		saHandler := handlers.NewServiceAccountHandler(coreService)
+		r.Route("/service-accounts", func(r chi.Router) {
+			r.Use(customMiddleware.RequirePermission("users.read"))
+			r.Get("/", saHandler.ListServiceAccounts)
+			r.With(customMiddleware.RequirePermission("users.write")).
+				Post("/", saHandler.CreateServiceAccount)
+			r.Get("/{clientId}", saHandler.GetServiceAccount)
+			r.With(customMiddleware.RequirePermission("users.write")).
+				Put("/{clientId}", saHandler.UpdateServiceAccount)
+			r.With(customMiddleware.RequirePermission("users.write")).
+				Delete("/{clientId}", saHandler.DeactivateServiceAccount)
+			r.Get("/{clientId}/tokens", saHandler.ListTokens)
+			r.With(customMiddleware.RequirePermission("users.write")).
+				Post("/{clientId}/tokens", saHandler.CreateToken)
+			r.With(customMiddleware.RequirePermission("users.write")).
+				Delete("/{clientId}/tokens/{tokenId}", saHandler.RevokeToken)
 		})
 
 		// User roles endpoints
 		r.Route("/user-roles", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("roles.assign"))
-			r.Post("/", handlers.AssignRole)
-			r.Delete("/", handlers.RemoveRole)
-			r.Get("/user/{userId}", handlers.GetUserRoles)
+			r.Post("/", rbacHandler.AssignRole)
+			r.Delete("/", rbacHandler.RemoveRole)
+			r.Get("/user/{userId}", rbacHandler.GetUserRoles)
 		})
 
 		// Audit logs endpoints

@@ -195,9 +195,9 @@ func TestListSecretsWithSharingInfo(t *testing.T) {
 		Type:    "password",
 	}
 
-	// Mock storage calls for owned secrets
+	// Mock storage calls for owned secrets (CreatedBy is resolved to username, not numeric ID)
 	mockStorage.On("ListSecrets", mock.Anything, mock.MatchedBy(func(filter *storage.SecretFilter) bool {
-		return filter.CreatedBy != nil && *filter.CreatedBy == "1"
+		return filter.CreatedBy != nil && *filter.CreatedBy == "owner"
 	})).Return([]*models.SecretNode{ownedSecret}, int64(1), nil)
 
 	// Mock shares for owned secret
@@ -280,8 +280,9 @@ func TestSecretListFiltering(t *testing.T) {
 			Type:    "password",
 		}
 
+		mockStorage.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, Username: "owner"}, nil)
 		mockStorage.On("ListSecrets", mock.Anything, mock.MatchedBy(func(filter *storage.SecretFilter) bool {
-			return filter.CreatedBy != nil && *filter.CreatedBy == "1"
+			return filter.CreatedBy != nil && *filter.CreatedBy == "owner"
 		})).Return([]*models.SecretNode{ownedSecret}, int64(1), nil)
 
 		mockStorage.On("ListSharesBySecret", mock.Anything, uint(1)).Return([]*models.ShareRecord{}, nil)
@@ -314,10 +315,6 @@ func TestSecretListFiltering(t *testing.T) {
 		}, nil)
 
 		mockStorage.On("GetSecret", mock.Anything, uint(2)).Return(sharedSecret, nil)
-		mockStorage.On("GetUser", mock.Anything, uint(1)).Return(&models.User{
-			ID:       1,
-			Username: "owner",
-		}, nil)
 		mockStorage.On("GetUser", mock.Anything, uint(2)).Return(&models.User{
 			ID:       2,
 			Username: "alice",

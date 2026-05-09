@@ -82,7 +82,4 @@ ADR-010 lives in `docs/`. ADR-014 onward live in `keyorix-private/adrs/`.
 
 ## Known Pre-existing Test Failures (not regressions)
 
-- `server/middleware` — build failure (`validateToken` signature mismatch)
-- `TestRemoteCLIIntegration` — requires running server
-- `TestListSecretsWithSharingInfo` — mock mismatch
-- `TestRemoteStorage_Health` — timeout
+None — `go test ./...` passes clean as of May 9, 2026.

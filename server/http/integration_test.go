@@ -74,6 +74,29 @@ func createTestToken(t *testing.T, c *core.KeyorixCore) string {
 	return session.SessionToken
 }
 
+// createLimitedToken creates a non-admin user and returns a valid session token.
+// The user has only read permissions (no write/delete), so restricted endpoints return 403.
+func createLimitedToken(t *testing.T, c *core.KeyorixCore) string {
+	t.Helper()
+	ctx := context.Background()
+	_, err := c.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "limiteduser",
+		Email:    "limited@example.com",
+		Password: "LimitedPass123!",
+	})
+	if err != nil {
+		t.Fatalf("createLimitedToken: create user failed: %v", err)
+	}
+	session, _, err := c.Login(ctx, &core.LoginRequest{
+		Username: "limiteduser",
+		Password: "LimitedPass123!",
+	})
+	if err != nil {
+		t.Fatalf("createLimitedToken: login failed: %v", err)
+	}
+	return session.SessionToken
+}
+
 // Integration tests for the complete HTTP server
 func TestHTTPServerIntegration(t *testing.T) {
 	// Initialize i18n for testing
@@ -522,8 +545,8 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 
 	server := httptest.NewServer(router)
 	defer server.Close()
-	defer server.Close()
 	validToken := createTestToken(t, testCore2)
+	limitedToken := createLimitedToken(t, testCore2)
 	client := &http.Client{Timeout: 5 * time.Second}
 	baseURL := server.URL
 
@@ -559,7 +582,7 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 		// Test user trying to delete (insufficient permissions)
 		req, err := http.NewRequest("DELETE", baseURL+"/api/v1/secrets/1", nil)
 		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer test-token") // test-token lacks delete permission
+		req.Header.Set("Authorization", "Bearer "+limitedToken) // limited user lacks delete permission
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)

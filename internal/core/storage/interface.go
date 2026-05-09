@@ -88,6 +88,17 @@ type Storage interface {
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 
+	// Permission queries
+	ListPermissions(ctx context.Context) ([]*models.Permission, error)
+	GetPermission(ctx context.Context, id uint) (*models.Permission, error)
+	GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error)
+	RemovePermissionFromRole(ctx context.Context, roleID, permissionID uint) error
+
+	// Group-Role assignments
+	GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error)
+	AssignRoleToGroup(ctx context.Context, groupID, roleID uint) error
+	RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint) error
+
 	// Stats Snapshots
 	SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error
 	GetPreviousStatsSnapshot(ctx context.Context, userID uint) (*models.StatsSnapshot, error)
@@ -113,6 +124,21 @@ type Storage interface {
 	CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
 	GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error)
 	RevokeAPIClient(ctx context.Context, clientID string) error
+	ListAPIClients(ctx context.Context) ([]*models.APIClient, error)
+	UpdateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
+
+	// API Token Management
+	CreateAPIToken(ctx context.Context, token *models.APIToken) (*models.APIToken, error)
+	GetAPIToken(ctx context.Context, id uint) (*models.APIToken, error)
+	ListAPITokens(ctx context.Context, clientID *uint) ([]*models.APIToken, error)
+	RevokeAPIToken(ctx context.Context, id uint) error
+
+	// Rotation Policy Management
+	CreateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
+	GetRotationPolicy(ctx context.Context, id uint) (*models.RotationPolicy, error)
+	ListRotationPolicies(ctx context.Context, projectID *uint, environmentID *uint) ([]*models.RotationPolicy, error)
+	UpdateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
+	DeleteRotationPolicy(ctx context.Context, id uint) error
 
 	// Health and Maintenance
 	HealthCheck(ctx context.Context) error

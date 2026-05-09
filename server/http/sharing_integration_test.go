@@ -78,6 +78,21 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 		}).Error)
 	}
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "test-group", Description: "HTTP sharing test"}).Error)
+
+	// Seed project + environment so secret creation with environment_id=1 succeeds.
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "test-project"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "test-env"}).Error)
+
+	// Seed an admin role + user_role so user 1 gets adminPermissions in the auth middleware.
+	adminRole := &models.Role{ID: 1, Name: "admin", Description: "Administrator"}
+	require.NoError(t, db.Create(adminRole).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
+
+	// Seed sessions for "valid-token" and "owner-token" (user 1, admin), "recipient-token" (user 2, reader).
+	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "valid-token"}).Error)
+	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "owner-token"}).Error)
+	require.NoError(t, db.Create(&models.Session{UserID: 2, SessionToken: "recipient-token"}).Error)
+
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }
 

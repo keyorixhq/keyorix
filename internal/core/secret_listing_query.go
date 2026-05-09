@@ -1,6 +1,5 @@
-// secret_listing_query.go — ListSecretsWithSharingInfo and supporting query/filter/sort helpers.
+// secret_listing_query.go — ListSecretsWithSharingInfo and helpers.
 //
-// Handles the main listing flow: fetch owned + shared secrets, deduplicate, filter, sort, paginate.
 // For sharing status and UI indicators see secret_listing_sharing.go.
 package core
 
@@ -17,83 +16,102 @@ import (
 
 // ListSecretsWithSharingInfo lists secrets with sharing information for a specific user.
 func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) {
-	if userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
-	}
 	if filter == nil {
 		filter = &models.SecretListFilter{}
 	}
-	if filter.Page <= 0 {
-		filter.Page = 1
-	}
-	if filter.PageSize <= 0 {
-		filter.PageSize = 20
-	}
-	if filter.PageSize > 100 {
-		filter.PageSize = 100
-	}
 
-	var allSecrets []*models.SecretWithSharingInfo
-	var ownedCount, sharedCount int
-
+	// Fetch owned secrets (skip when user only wants to see what's shared with them).
+	var ownedSecrets []*models.SecretWithSharingInfo
 	if !filter.ShowSharedOnly {
-		ownedSecrets, err := c.getOwnedSecretsWithSharingInfo(ctx, userID, filter)
+		var err error
+		ownedSecrets, err = c.getOwnedSecretsWithSharingInfo(ctx, userID, filter)
 		if err != nil {
 			return nil, err
 		}
-		allSecrets = append(allSecrets, ownedSecrets...)
-		ownedCount = len(ownedSecrets)
 	}
 
-	if !filter.ShowOwnedOnly {
-		sharedSecrets, err := c.getSharedSecretsWithSharingInfo(ctx, userID, filter)
+	// Fetch shared secrets (only when not filtering by project — project view shows owned only).
+	var sharedSecrets []*models.SecretWithSharingInfo
+	if !filter.ShowOwnedOnly && filter.ProjectID == nil {
+		var err error
+		sharedSecrets, err = c.getSharedSecretsWithSharingInfo(ctx, userID, filter)
 		if err != nil {
 			return nil, err
 		}
-		allSecrets = append(allSecrets, sharedSecrets...)
-		sharedCount = len(sharedSecrets)
 	}
 
-	// Deduplicate by secret ID — a secret can appear in both owned and shared lists.
+	// Merge owned + shared, deduplicating by secret ID
 	seen := make(map[uint]bool)
-	deduped := allSecrets[:0]
-	for _, s := range allSecrets {
+	var all []*models.SecretWithSharingInfo
+	for _, s := range ownedSecrets {
 		if !seen[s.ID] {
 			seen[s.ID] = true
-			deduped = append(deduped, s)
+			all = append(all, s)
 		}
 	}
-	allSecrets = deduped
-
-	filteredSecrets := c.applySecretFilters(allSecrets, filter)
-	c.sortSecrets(filteredSecrets, filter.SortBy, filter.SortOrder)
-
-	total := int64(len(filteredSecrets))
-	start := (filter.Page - 1) * filter.PageSize
-	end := start + filter.PageSize
-	if start > len(filteredSecrets) {
-		start = len(filteredSecrets)
-	}
-	if end > len(filteredSecrets) {
-		end = len(filteredSecrets)
+	for _, s := range sharedSecrets {
+		if !seen[s.ID] {
+			seen[s.ID] = true
+			all = append(all, s)
+		}
 	}
 
-	totalPages := int((total + int64(filter.PageSize) - 1) / int64(filter.PageSize))
+	// Apply post-fetch filters (search, type, shared-only)
+	all = c.applySecretFilters(all, filter)
+
+	// Sort
+	c.sortSecrets(all, filter.SortBy, filter.SortOrder)
+
+	total := int64(len(all))
+
+	// Paginate
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := filter.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	totalInt := int(total)
+	if start > totalInt {
+		start = totalInt
+	}
+	if end > totalInt {
+		end = totalInt
+	}
+	paged := all[start:end]
+
+	totalPages := (totalInt + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
 
 	return &models.SecretListResponse{
-		Secrets:     filteredSecrets[start:end],
+		Secrets:     paged,
 		Total:       total,
-		Page:        filter.Page,
-		PageSize:    filter.PageSize,
+		Page:        page,
+		PageSize:    pageSize,
 		TotalPages:  totalPages,
-		OwnedCount:  ownedCount,
-		SharedCount: sharedCount,
+		OwnedCount:  len(ownedSecrets),
+		SharedCount: len(sharedSecrets),
 	}, nil
 }
 
 // getOwnedSecretsWithSharingInfo retrieves secrets owned by the user with sharing information.
 func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
 	storageFilter := c.convertToStorageFilter(filter)
+
+	// created_by stores the username string, not the numeric ID.
+	// Look up the user to get the correct username for filtering.
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil || user == nil {
+		return nil, fmt.Errorf("failed to resolve user for secret listing: %w", err)
+	}
+	storageFilter.CreatedBy = &user.Username
+
 	secrets, _, err := c.storage.ListSecrets(ctx, storageFilter)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -118,7 +136,6 @@ func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID
 	return result, nil
 }
 
-// getSharedSecretsWithSharingInfo retrieves secrets shared with the user.
 func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
 	shares, err := c.storage.ListSharesByUser(ctx, userID)
 	if err != nil {
@@ -128,7 +145,7 @@ func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userI
 	var result []*models.SecretWithSharingInfo
 	for _, share := range shares {
 		secret, err := c.storage.GetSecret(ctx, share.SecretID)
-		if err != nil {
+		if err != nil || secret == nil {
 			continue
 		}
 		ownerUsername := ""
@@ -140,103 +157,87 @@ func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userI
 			IsShared:          true,
 			IsOwnedByUser:     false,
 			OwnerUsername:     ownerUsername,
-			UserPermission:    share.Permission,
-			ShareCount:        1,
-			SharedAt:          &share.CreatedAt,
-			SharingIndicators: c.buildSharingIndicators(secret, []*models.ShareRecord{share}, false, share.Permission),
+			UserPermission:    string(share.Permission),
+			ShareCount:        0,
+			SharingIndicators: c.buildSharingIndicators(secret, nil, false, string(share.Permission)),
 		}
 		result = append(result, s)
 	}
 	return result, nil
 }
 
-// applySecretFilters filters the secret list by permission, type, namespace, zone, environment, and date.
 func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo, filter *models.SecretListFilter) []*models.SecretWithSharingInfo {
-	var filtered []*models.SecretWithSharingInfo
-	for _, secret := range secrets {
-		if filter.Permission != "" {
-			if secret.IsOwnedByUser {
-				if filter.Permission != string(PermissionRead) && filter.Permission != string(PermissionWrite) {
-					continue
-				}
-			} else if secret.UserPermission != filter.Permission {
-				continue
-			}
-		}
-		if filter.Type != nil && secret.Type != *filter.Type {
+	var out []*models.SecretWithSharingInfo
+	for _, s := range secrets {
+		if filter.ShowSharedOnly && !s.IsShared {
 			continue
 		}
 		if filter.Search != nil && *filter.Search != "" {
-			term := strings.ToLower(*filter.Search)
-			if !strings.Contains(strings.ToLower(secret.Name), term) {
+			if !strings.Contains(strings.ToLower(s.Name), strings.ToLower(*filter.Search)) {
 				continue
 			}
 		}
-		if filter.ProjectID != nil && secret.ProjectID != *filter.ProjectID {
+		if filter.Type != nil && *filter.Type != "" && s.Type != *filter.Type {
 			continue
 		}
-		if filter.EnvironmentID != nil && secret.EnvironmentID != *filter.EnvironmentID {
-			continue
-		}
-		if filter.CreatedAfter != nil && secret.CreatedAt.Before(*filter.CreatedAfter) {
-			continue
-		}
-		if filter.CreatedBefore != nil && secret.CreatedAt.After(*filter.CreatedBefore) {
-			continue
-		}
-		filtered = append(filtered, secret)
+		out = append(out, s)
 	}
-	return filtered
+	return out
 }
 
-// sortSecrets sorts the secret list by name, created_at, shared_at, or owner.
+// sortSecrets sorts the secret list by name, created_at, updated_at, or owner.
+// Uses strict comparators (Before/After, <, >) so equal elements return false in
+// both directions, letting sort.SliceStable preserve insertion order as a tie-break.
 func (c *KeyorixCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortBy, sortOrder string) {
 	if sortBy == "" {
-		sortBy = "name"
+		sortBy = "updated_at"
 	}
 	if sortOrder == "" {
-		sortOrder = "asc"
+		sortOrder = "desc"
 	}
-	sort.Slice(secrets, func(i, j int) bool {
-		var less bool
+	desc := sortOrder == "desc"
+	sort.SliceStable(secrets, func(i, j int) bool {
+		a, b := secrets[i], secrets[j]
 		switch sortBy {
 		case "name":
-			less = secrets[i].Name < secrets[j].Name
-		case "created_at":
-			less = secrets[i].CreatedAt.Before(secrets[j].CreatedAt)
-		case "shared_at":
-			if secrets[i].SharedAt == nil && secrets[j].SharedAt == nil {
-				less = false
-			} else if secrets[i].SharedAt == nil {
-				less = false
-			} else if secrets[j].SharedAt == nil {
-				less = true
-			} else {
-				less = secrets[i].SharedAt.Before(*secrets[j].SharedAt)
+			if desc {
+				return a.Name > b.Name
 			}
+			return a.Name < b.Name
+		case "created_at":
+			if desc {
+				return a.CreatedAt.After(b.CreatedAt)
+			}
+			return a.CreatedAt.Before(b.CreatedAt)
 		case "owner":
-			less = secrets[i].OwnerUsername < secrets[j].OwnerUsername
-		default:
-			less = secrets[i].Name < secrets[j].Name
+			if desc {
+				return a.OwnerUsername > b.OwnerUsername
+			}
+			return a.OwnerUsername < b.OwnerUsername
+		default: // updated_at / recently modified
+			if desc {
+				return a.UpdatedAt.After(b.UpdatedAt)
+			}
+			return a.UpdatedAt.Before(b.UpdatedAt)
 		}
-		if sortOrder == "desc" {
-			return !less
-		}
-		return less
 	})
 }
 
 // convertToStorageFilter converts SecretListFilter to storage.SecretFilter.
 func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
-	return &storage.SecretFilter{
-		ProjectID:     filter.ProjectID,
-		EnvironmentID: filter.EnvironmentID,
-		Type:          filter.Type,
-		Tags:          filter.Tags,
-		CreatedBy:     filter.CreatedBy,
-		CreatedAfter:  filter.CreatedAfter,
-		CreatedBefore: filter.CreatedBefore,
+	f := &storage.SecretFilter{
 		Page:          filter.Page,
 		PageSize:      filter.PageSize,
+		Type:          filter.Type,
+		CreatedBy:     filter.CreatedBy,
+		ProjectID:     filter.ProjectID,
+		EnvironmentID: filter.EnvironmentID,
 	}
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PageSize < 1 {
+		f.PageSize = 20
+	}
+	return f
 }

@@ -92,14 +92,25 @@ func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Proje
 }
 
 func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
-	result := ls.db.WithContext(ctx).Delete(&models.Project{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete project: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("project not found")
-	}
-	return nil
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Soft-delete all secrets in the project
+		if err := tx.Where("project_id = ?", id).Delete(&models.SecretNode{}).Error; err != nil {
+			return fmt.Errorf("failed to soft-delete project secrets: %w", err)
+		}
+		// Soft-delete all environments in the project
+		if err := tx.Where("project_id = ?", id).Delete(&models.Environment{}).Error; err != nil {
+			return fmt.Errorf("failed to soft-delete project environments: %w", err)
+		}
+		// Soft-delete the project itself
+		result := tx.Delete(&models.Project{}, id)
+		if result.Error != nil {
+			return fmt.Errorf("failed to delete project: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("project not found")
+		}
+		return nil
+	})
 }
 
 func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
@@ -124,6 +135,17 @@ func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.En
 }
 
 func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
+	// Block deletion if active secrets exist in this environment.
+	var secretCount int64
+	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("environment_id = ? AND status = 'active'", id).
+		Count(&secretCount).Error; err != nil {
+		return fmt.Errorf("failed to count secrets in environment: %w", err)
+	}
+	if secretCount > 0 {
+		return fmt.Errorf("environment has %d active secret(s); move or delete them before removing this environment", secretCount)
+	}
+
 	result := ls.db.WithContext(ctx).Delete(&models.Environment{}, id)
 	if result.Error != nil {
 		return fmt.Errorf("failed to delete environment: %w", result.Error)

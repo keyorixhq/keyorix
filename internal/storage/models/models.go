@@ -8,16 +8,20 @@ import (
 
 type Project struct {
 	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"unique;not null"`
+	Name        string `gorm:"uniqueIndex;not null"`
 	Description string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	DeletedAt   gorm.DeletedAt `gorm:"index"` // soft delete
 }
 
 type Environment struct {
 	ID        uint   `gorm:"primaryKey"`
 	ProjectID uint   `gorm:"not null;uniqueIndex:idx_env_project_name"`
 	Name      string `gorm:"not null;uniqueIndex:idx_env_project_name"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"` // soft delete
 }
 
 type User struct {
@@ -169,9 +173,10 @@ type AuditEvent struct {
 	EventType    string
 	UserID       *uint
 	SecretNodeID *uint
-	ProjectID    *uint  `gorm:"index"` // project context for NIS2/DORA audit trail
-	IPAddress    string // source IP, populated from HTTP layer
+	ProjectID    *uint `gorm:"index"`
+	IPAddress    string
 	Description  string
+	Success      *bool `gorm:"default:true"`
 	EventTime    time.Time
 }
 
@@ -282,6 +287,23 @@ type ExternalIdentity struct {
 	Name       string
 	Metadata   JSON
 	LinkedAt   time.Time
+}
+
+type RotationPolicy struct {
+	ID              uint   `gorm:"primaryKey"`
+	Name            string `gorm:"not null"`
+	Description     string
+	Scope           string `gorm:"not null;default:'environment'"` // "project" or "environment"
+	ProjectID       *uint  `gorm:"index"`
+	EnvironmentID   *uint  `gorm:"index"`
+	IntervalDays    int    `gorm:"not null"`
+	AlertDaysBefore int    `gorm:"not null;default:7"`
+	NotifyOnBreach  bool   `gorm:"not null;default:true"`
+	IsActive        bool   `gorm:"not null;default:true"`
+	CreatedBy       string `gorm:"not null"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	DeletedAt       gorm.DeletedAt `gorm:"index"`
 }
 
 // AnomalyAlert represents a detected anomaly in secret access patterns.

@@ -530,6 +530,32 @@ func (m *MockStorage) RevokeAPIClient(ctx context.Context, clientID string) erro
 	return args.Error(0)
 }
 
+func (m *MockStorage) ListAPIClients(_ context.Context) ([]*models.APIClient, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) UpdateAPIClient(_ context.Context, client *models.APIClient) (*models.APIClient, error) {
+	return client, nil
+}
+
+// API Token Management
+
+func (m *MockStorage) CreateAPIToken(_ context.Context, token *models.APIToken) (*models.APIToken, error) {
+	return token, nil
+}
+
+func (m *MockStorage) GetAPIToken(_ context.Context, id uint) (*models.APIToken, error) {
+	return &models.APIToken{ID: id}, nil
+}
+
+func (m *MockStorage) ListAPITokens(_ context.Context, _ *uint) ([]*models.APIToken, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) RevokeAPIToken(_ context.Context, _ uint) error {
+	return nil
+}
+
 // Health and Maintenance
 
 func (m *MockStorage) HealthCheck(ctx context.Context) error {
@@ -560,4 +586,58 @@ func (m *MockStorage) GetPreviousStatsSnapshot(ctx context.Context, userID uint)
 
 func (m *MockStorage) GetDistinctActiveUserIDs(_ context.Context, _ time.Time) ([]uint, error) {
 	return nil, nil
+}
+
+// Permission queries
+
+func (m *MockStorage) ListPermissions(_ context.Context) ([]*models.Permission, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) GetPermission(_ context.Context, id uint) (*models.Permission, error) {
+	return &models.Permission{ID: id}, nil
+}
+
+func (m *MockStorage) GetRolePermissions(_ context.Context, _ uint) ([]*models.Permission, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) RemovePermissionFromRole(_ context.Context, _, _ uint) error {
+	return nil
+}
+
+// Group-Role assignments
+
+func (m *MockStorage) GetGroupRoles(_ context.Context, _ uint) ([]*models.Role, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) AssignRoleToGroup(_ context.Context, _, _ uint) error {
+	return nil
+}
+
+func (m *MockStorage) RemoveRoleFromGroup(_ context.Context, _, _ uint) error {
+	return nil
+}
+
+// Rotation Policy Management
+
+func (m *MockStorage) CreateRotationPolicy(_ context.Context, _ *models.RotationPolicy) error {
+	return nil
+}
+
+func (m *MockStorage) GetRotationPolicy(_ context.Context, id uint) (*models.RotationPolicy, error) {
+	return &models.RotationPolicy{ID: id}, nil
+}
+
+func (m *MockStorage) ListRotationPolicies(_ context.Context, _ *uint, _ *uint) ([]*models.RotationPolicy, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) UpdateRotationPolicy(_ context.Context, _ *models.RotationPolicy) error {
+	return nil
+}
+
+func (m *MockStorage) DeleteRotationPolicy(_ context.Context, _ uint) error {
+	return nil
 }

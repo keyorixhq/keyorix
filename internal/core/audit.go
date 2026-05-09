@@ -15,6 +15,7 @@ func (c *KeyorixCore) writeAuditEvent(ctx context.Context, eventType string, use
 
 // writeAuditEventFull persists an audit_events row with full NIS2/DORA context.
 func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) {
+	t := true
 	event := &models.AuditEvent{
 		EventType:    eventType,
 		UserID:       userID,
@@ -22,7 +23,22 @@ func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string,
 		ProjectID:    projectID,
 		IPAddress:    ip,
 		Description:  description,
+		Success:      &t,
 		EventTime:    time.Now(),
+	}
+	_ = c.storage.LogAuditEvent(ctx, event)
+}
+
+// writeAuditEventFailed persists a failed audit event (Success=false).
+func (c *KeyorixCore) writeAuditEventFailed(ctx context.Context, eventType string, userID *uint, ip string, description string) {
+	f := false
+	event := &models.AuditEvent{
+		EventType:   eventType,
+		UserID:      userID,
+		IPAddress:   ip,
+		Description: description,
+		Success:     &f,
+		EventTime:   time.Now(),
 	}
 	_ = c.storage.LogAuditEvent(ctx, event)
 }
@@ -109,6 +125,12 @@ func (c *KeyorixCore) LogAuthLogin(ctx context.Context, userID uint, username, i
 	uid := userID
 	c.writeAuditEventFull(ctx, "auth.login", &uid, nil, nil, ip,
 		fmt.Sprintf("User %s logged in", username))
+}
+
+// LogAuthFailure writes an auth.login_failed audit event (Success=false).
+func (c *KeyorixCore) LogAuthFailure(ctx context.Context, username, ip string) {
+	c.writeAuditEventFailed(ctx, "auth.login_failed", nil, ip,
+		fmt.Sprintf("Failed login attempt for username: %s", username))
 }
 
 // LogAuthLogout writes an auth.logout audit event.

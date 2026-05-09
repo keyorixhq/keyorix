@@ -135,6 +135,7 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowOwnedOnly(t *testing.T) {
 	}
 
 	// Mock expectations
+	mockStorage.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "testuser"}, nil)
 	mockStorage.On("ListSecrets", ctx, mock.AnythingOfType("*storage.SecretFilter")).Return(ownedSecrets, int64(1), nil)
 	mockStorage.On("ListSharesBySecret", ctx, uint(1)).Return([]*models.ShareRecord{}, nil)
 
@@ -192,11 +193,10 @@ func TestKeyorixCore_ListSecretsWithSharingInfo_ShowSharedOnly(t *testing.T) {
 		Username: "owner-user",
 	}
 
-	// Mock expectations
+	// Mock expectations (ShowSharedOnly=true skips getOwnedSecretsWithSharingInfo, so GetUser(1) is not called)
 	mockStorage.On("ListSharesByUser", ctx, userID).Return(userShares, nil)
 	mockStorage.On("GetSecret", ctx, uint(2)).Return(sharedSecret, nil)
 	mockStorage.On("GetUser", ctx, uint(2)).Return(owner, nil)
-	mockStorage.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: "testuser"}, nil)
 
 	// Execute
 	result, err := core.ListSecretsWithSharingInfo(ctx, userID, filter)

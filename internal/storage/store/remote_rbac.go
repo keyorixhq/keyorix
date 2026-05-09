@@ -209,6 +209,41 @@ func (rs *RemoteStorage) AssignPermissionToRole(_ context.Context, _, _ uint) er
 	return fmt.Errorf("not supported in remote storage")
 }
 
+// ListPermissions is not implemented in remote storage.
+func (rs *RemoteStorage) ListPermissions(_ context.Context) ([]*models.Permission, error) {
+	return nil, fmt.Errorf("not implemented: ListPermissions")
+}
+
+// GetPermission is not implemented in remote storage.
+func (rs *RemoteStorage) GetPermission(_ context.Context, _ uint) (*models.Permission, error) {
+	return nil, fmt.Errorf("not implemented: GetPermission")
+}
+
+// GetRolePermissions is not implemented in remote storage.
+func (rs *RemoteStorage) GetRolePermissions(_ context.Context, _ uint) ([]*models.Permission, error) {
+	return nil, fmt.Errorf("not implemented: GetRolePermissions")
+}
+
+// RemovePermissionFromRole is not implemented in remote storage.
+func (rs *RemoteStorage) RemovePermissionFromRole(_ context.Context, _, _ uint) error {
+	return fmt.Errorf("not implemented: RemovePermissionFromRole")
+}
+
+// GetGroupRoles is not implemented in remote storage.
+func (rs *RemoteStorage) GetGroupRoles(_ context.Context, _ uint) ([]*models.Role, error) {
+	return nil, fmt.Errorf("not implemented: GetGroupRoles")
+}
+
+// AssignRoleToGroup is not implemented in remote storage.
+func (rs *RemoteStorage) AssignRoleToGroup(_ context.Context, _, _ uint) error {
+	return fmt.Errorf("not implemented: AssignRoleToGroup")
+}
+
+// RemoveRoleFromGroup is not implemented in remote storage.
+func (rs *RemoteStorage) RemoveRoleFromGroup(_ context.Context, _, _ uint) error {
+	return fmt.Errorf("not implemented: RemoveRoleFromGroup")
+}
+
 // --- Project / Environment (not supported in remote mode) ---
 
 func (rs *RemoteStorage) CreateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
