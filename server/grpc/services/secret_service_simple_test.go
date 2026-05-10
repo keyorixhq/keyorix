@@ -119,7 +119,7 @@ func TestSecretServiceCreateSecret(t *testing.T) {
 			request: &CreateSecretRequest{
 				Name:        "test-secret",
 				Value:       "secret-value",
-				Namespace:   "default",
+				Project:     "default",
 				Zone:        "us-east-1",
 				Environment: "dev",
 				Type:        "password",
@@ -146,7 +146,7 @@ func TestSecretServiceCreateSecret(t *testing.T) {
 			request: &CreateSecretRequest{
 				Name:        "test-secret",
 				Value:       "secret-value",
-				Namespace:   "default",
+				Project:     "default",
 				Zone:        "us-east-1",
 				Environment: "dev",
 			},

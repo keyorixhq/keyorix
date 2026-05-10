@@ -32,7 +32,7 @@ var deleteCmd = &cobra.Command{
 
 Examples:
   keyorix secret delete --id 123
-  keyorix secret delete --name "db-password" --namespace 1 --zone 1 --environment 1
+  keyorix secret delete --name "db-password" --project 1 --zone 1 --environment 1
   keyorix secret delete --id 123 --force  # Skip confirmation`,
 	RunE: runDelete,
 }

@@ -54,10 +54,10 @@ components:
           type: string
           description: Name of the secret
           example: "database-password"
-        namespace:
-          type: string
-          description: Namespace the secret belongs to
-          example: "production"
+        project_id:
+          type: integer
+          description: Project the secret belongs to
+          example: 1
         zone:
           type: string
           description: Zone where the secret is stored
@@ -108,7 +108,7 @@ components:
 
     SecretRequest:
       type: object
-      required: [name, value, namespace, zone, environment]
+      required: [name, value, project_id, environment]
       properties:
         name:
           type: string
@@ -118,10 +118,10 @@ components:
           type: string
           description: The secret value (will be encrypted)
           example: "super-secret-password"
-        namespace:
-          type: string
-          description: Namespace the secret belongs to
-          example: "production"
+        project_id:
+          type: integer
+          description: Project the secret belongs to
+          example: 1
         zone:
           type: string
           description: Zone where the secret should be stored
@@ -262,10 +262,10 @@ components:
           type: integer
           description: Role ID
           example: 2
-        namespace_id:
+        project_id:
           type: integer
           nullable: true
-          description: Optional namespace ID for scoped role assignment
+          description: Optional project ID for scoped role assignment
           example: 1
 
     # Audit schemas
@@ -405,13 +405,13 @@ components:
         default: 20
       example: 20
 
-    NamespaceParam:
-      name: namespace
+    ProjectParam:
+      name: project_id
       in: query
-      description: Filter by namespace
+      description: Filter by project
       schema:
-        type: string
-      example: "production"
+        type: integer
+      example: 1
 
     ZoneParam:
       name: zone
@@ -511,7 +511,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/PageParam'
         - $ref: '#/components/parameters/PageSizeParam'
-        - $ref: '#/components/parameters/NamespaceParam'
+        - $ref: '#/components/parameters/ProjectParam'
         - $ref: '#/components/parameters/ZoneParam'
         - $ref: '#/components/parameters/EnvironmentParam'
       responses:
@@ -1072,10 +1072,10 @@ tags:
           format: date-time
           description: When the secret was shared with you
           example: "2025-07-22T10:30:00Z"
-        namespace:
-          type: string
-          description: Secret namespace
-          example: "production"
+        project_id:
+          type: integer
+          description: Secret project
+          example: 1
         zone:
           type: string
           description: Secret zone

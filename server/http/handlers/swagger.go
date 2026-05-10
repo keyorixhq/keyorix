@@ -111,7 +111,7 @@ func serveSwaggerSpec(w http.ResponseWriter, r *http.Request) {
         "properties": {
           "id": {"type": "integer"},
           "name": {"type": "string"},
-          "namespace": {"type": "string"},
+          "project_id": {"type": "integer"},
           "zone": {"type": "string"},
           "environment": {"type": "string"},
           "type": {"type": "string"},
@@ -126,11 +126,11 @@ func serveSwaggerSpec(w http.ResponseWriter, r *http.Request) {
       },
       "SecretRequest": {
         "type": "object",
-        "required": ["name", "value", "namespace", "zone", "environment"],
+        "required": ["name", "value", "project_id", "environment"],
         "properties": {
           "name": {"type": "string"},
           "value": {"type": "string"},
-          "namespace": {"type": "string"},
+          "project_id": {"type": "integer"},
           "zone": {"type": "string"},
           "environment": {"type": "string"},
           "type": {"type": "string"},
@@ -196,7 +196,7 @@ func serveSwaggerSpec(w http.ResponseWriter, r *http.Request) {
       "get": {
         "summary": "List secrets",
         "parameters": [
-          {"name": "namespace", "in": "query", "schema": {"type": "string"}},
+          {"name": "project_id", "in": "query", "schema": {"type": "integer"}},
           {"name": "zone", "in": "query", "schema": {"type": "string"}},
           {"name": "environment", "in": "query", "schema": {"type": "string"}},
           {"name": "page", "in": "query", "schema": {"type": "integer", "default": 1}},
@@ -334,8 +334,8 @@ components:
           type: integer
         name:
           type: string
-        namespace:
-          type: string
+        project_id:
+          type: integer
         zone:
           type: string
         environment:
@@ -375,10 +375,10 @@ paths:
     get:
       summary: List secrets
       parameters:
-        - name: namespace
+        - name: project_id
           in: query
           schema:
-            type: string
+            type: integer
         - name: zone
           in: query
           schema:

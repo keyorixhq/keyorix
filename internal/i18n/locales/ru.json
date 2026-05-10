@@ -204,10 +204,10 @@
         "one": "Значение",
         "other": "Значение"
     },
-    "LabelNamespace": {
-        "description": "Label for namespace field",
-        "one": "Пространство имен",
-        "other": "Пространство имен"
+    "LabelProject": {
+        "description": "Label for project field",
+        "one": "Проект",
+        "other": "Проект"
     },
     "LabelZone": {
         "description": "Label for zone field",

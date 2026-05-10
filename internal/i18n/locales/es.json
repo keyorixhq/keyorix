@@ -204,10 +204,10 @@
         "one": "Valor",
         "other": "Valor"
     },
-    "LabelNamespace": {
-        "description": "Label for namespace field",
-        "one": "Espacio de nombres",
-        "other": "Espacio de nombres"
+    "LabelProject": {
+        "description": "Label for project field",
+        "one": "Proyecto",
+        "other": "Proyecto"
     },
     "LabelZone": {
         "description": "Label for zone field",
