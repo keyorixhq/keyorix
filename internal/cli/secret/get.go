@@ -27,7 +27,7 @@ var getCmd = &cobra.Command{
 
 Examples:
   keyorix secret get --id 123
-  keyorix secret get --name "db-password" --namespace 1 --zone 1 --environment 1
+  keyorix secret get --name "db-password" --project 1 --zone 1 --environment 1
   keyorix secret get --id 123 --show-value  # Show decrypted value`,
 	RunE: runGet,
 }

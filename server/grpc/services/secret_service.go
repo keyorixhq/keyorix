@@ -59,7 +59,7 @@ func NewSecretService() (*SecretGRPCService, error) {
 type CreateSecretRequest struct {
 	Name        string            `json:"name"`
 	Value       string            `json:"value"`
-	Namespace   string            `json:"namespace"`
+	Project     string            `json:"project"`
 	Zone        string            `json:"zone"`
 	Environment string            `json:"environment"`
 	Type        string            `json:"type,omitempty"`
@@ -72,7 +72,7 @@ type CreateSecretRequest struct {
 type SecretResponse struct {
 	Id          uint32            `json:"id"`
 	Name        string            `json:"name"`
-	Namespace   string            `json:"namespace"`
+	Project     string            `json:"project"`
 	Zone        string            `json:"zone"`
 	Environment string            `json:"environment"`
 	Type        string            `json:"type"`
@@ -177,7 +177,7 @@ type GetSecretRequest struct {
 
 // ListSecretsRequest represents a gRPC list secrets request
 type ListSecretsRequest struct {
-	Namespace   string   `json:"namespace,omitempty"`
+	Project     string   `json:"project,omitempty"`
 	Zone        string   `json:"zone,omitempty"`
 	Environment string   `json:"environment,omitempty"`
 	Type        string   `json:"type,omitempty"`
@@ -284,8 +284,8 @@ func (s *SecretGRPCService) validateCreateSecretRequest(req *CreateSecretRequest
 	if req.Value == "" {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelValue", nil))
 	}
-	if req.Namespace == "" {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelNamespace", nil))
+	if req.Project == "" {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelProject", nil))
 	}
 	if req.Environment == "" {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEnvironment", nil))
@@ -321,7 +321,7 @@ func (s *SecretGRPCService) convertToGRPCSecretResponse(secret *models.SecretNod
 			return id
 		}(),
 		Name:        secret.Name,
-		Namespace:   fmt.Sprintf("%d", secret.ProjectID),     // TODO: Convert ID to name
+		Project:     fmt.Sprintf("%d", secret.ProjectID),     // TODO: Convert ID to name
 		Environment: fmt.Sprintf("%d", secret.EnvironmentID), // TODO: Convert ID to name
 		Type:        secret.Type,
 		MaxReads:    maxReads,

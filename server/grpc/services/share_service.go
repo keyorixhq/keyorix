@@ -534,7 +534,7 @@ func (s *ShareGRPCService) convertToGRPCSecretResponse(secret *models.SecretNode
 			return id
 		}(),
 		Name:        secret.Name,
-		Namespace:   fmt.Sprintf("%d", secret.ProjectID),     // TODO: Convert ID to name
+		Project:     fmt.Sprintf("%d", secret.ProjectID),     // TODO: Convert ID to name
 		Environment: fmt.Sprintf("%d", secret.EnvironmentID), // TODO: Convert ID to name
 		Type:        secret.Type,
 		MaxReads:    maxReads,

@@ -17,7 +17,7 @@ func (c *KeyorixCore) validateCreateSecretRequest(req *CreateSecretRequest) erro
 		return fmt.Errorf("%s", i18n.T("LabelValue", nil))
 	}
 	if req.ProjectID == 0 {
-		return fmt.Errorf("%s", i18n.T("LabelNamespace", nil))
+		return fmt.Errorf("%s", i18n.T("LabelProject", nil))
 	}
 	if req.EnvironmentID == 0 {
 		return fmt.Errorf("%s", i18n.T("LabelEnvironment", nil))
