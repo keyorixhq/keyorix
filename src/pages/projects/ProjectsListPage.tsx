@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PlusIcon, FolderIcon, MagnifyingGlassIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useProjects, useCreateProject, useDeleteProject } from '../../features/projects/api';
 import { ROUTES } from '../../constants';
@@ -150,7 +150,8 @@ export const ProjectsListPage: React.FC = () => {
     const { data: projects = [], isLoading, isError } = useProjects();
     const deleteProject = useDeleteProject();
     const [search, setSearch] = useState('');
-    const [showCreate, setShowCreate] = useState(false);
+    const [searchParams] = useSearchParams();
+    const [showCreate, setShowCreate] = useState(searchParams.get('new') === '1');
     const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState('');
     const [deleteError, setDeleteError] = useState('');

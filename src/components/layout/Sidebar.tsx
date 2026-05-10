@@ -16,6 +16,7 @@ import {
     RocketLaunchIcon,
 } from '@heroicons/react/24/outline';
 import { useUIStore } from '../../store/uiStore';
+import { ProjectSwitcher } from './ProjectSwitcher';
 
 export interface SidebarProps {
     isOpen: boolean;
@@ -229,6 +230,11 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                         Keyorix
                     </span>
                 </Link>
+            </div>
+
+            {/* Project switcher */}
+            <div className="pt-3" style={{ borderBottom: '1px solid var(--border)' }}>
+                <ProjectSwitcher onNavigate={onClose} />
             </div>
 
             {/* Nav */}
