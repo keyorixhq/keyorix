@@ -184,6 +184,9 @@ export const ProjectsListPage: React.FC = () => {
         .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
         .slice(0, 5);
 
+    const recentIds = new Set(recent.map(p => p.id));
+    const nonRecent = filtered.filter(p => !recentIds.has(p.id));
+
     return (
         <div className="p-6 max-w-4xl mx-auto">
             {/* Header */}
@@ -246,49 +249,49 @@ export const ProjectsListPage: React.FC = () => {
                         </section>
                     )}
 
-                    {/* All projects */}
-                    <section>
-                        {!search && (
-                            <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
-                                All Projects
-                            </h2>
-                        )}
-
-                        {filtered.length === 0 && (
-                            <div className="text-center py-16 rounded-xl" style={{ border: '1px dashed var(--border)' }}>
-                                <FolderIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
-                                {search ? (
-                                    <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                                        No projects match "<strong>{search}</strong>"
-                                    </p>
-                                ) : (
-                                    <>
-                                        <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
-                                            No projects yet
-                                        </p>
-                                        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                                            Create your first project to start managing secrets.
-                                        </p>
-                                        <button
-                                            onClick={() => setShowCreate(true)}
-                                            className="px-4 py-2 rounded-lg text-sm font-medium"
-                                            style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
-                                        >
-                                            Create Project
-                                        </button>
-                                    </>
-                                )}
-                            </div>
-                        )}
-
-                        {filtered.length > 0 && (
+                    {/* All projects — only those not already shown in Recent */}
+                    {(!search ? nonRecent : filtered).length > 0 && (
+                        <section>
+                            {!search && (
+                                <h2 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+                                    All Projects
+                                </h2>
+                            )}
                             <div className="space-y-2">
-                                {filtered.map(p => (
+                                {(!search ? nonRecent : filtered).map(p => (
                                     <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} />
                                 ))}
                             </div>
-                        )}
-                    </section>
+                        </section>
+                    )}
+
+                    {/* Empty state — only when nothing at all */}
+                    {filtered.length === 0 && (
+                        <div className="text-center py-16 rounded-xl" style={{ border: '1px dashed var(--border)' }}>
+                            <FolderIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
+                            {search ? (
+                                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                                    No projects match "<strong>{search}</strong>"
+                                </p>
+                            ) : (
+                                <>
+                                    <p className="text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                                        No projects yet
+                                    </p>
+                                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                                        Create your first project to start managing secrets.
+                                    </p>
+                                    <button
+                                        onClick={() => setShowCreate(true)}
+                                        className="px-4 py-2 rounded-lg text-sm font-medium"
+                                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                                    >
+                                        Create Project
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    )}
                 </>
             )}
 
