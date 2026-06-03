@@ -1,75 +1,324 @@
-@font-face {
-  font-family: 'Inter';
-  font-style: normal;
-  font-weight: 100 900;
-  font-display: swap;
-  src: url('/fonts/inter.woff2') format('woff2');
+@import 'tailwindcss';
+
+@plugin '@tailwindcss/forms';
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+  --color-primary-800: #1e40af;
+  --color-primary-900: #1e3a8a;
+  --color-primary-950: #172554;
+
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+  --color-gray-950: #030712;
+
+  --font-sans: Inter, system-ui, sans-serif;
+  --font-mono: JetBrains Mono, Consolas, monospace;
+
+  --animate-fade-in: fadeIn 0.2s ease-in-out;
+  --animate-slide-in: slideIn 0.3s ease-out;
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+
+  @keyframes fadeIn {
+    0% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes slideIn {
+    0% {
+      transform: translateY(-10px);
+      opacity: 0;
+    }
+    100% {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
 }
 
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 100 800;
-  font-display: swap;
-  src: url('/fonts/jetbrains-mono.woff2') format('woff2');
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
 }
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* ─── Components ────────────────────────────────────────────────── */
 
-/* ─── Theme tokens ──────────────────────────────────────────────── */
-
-:root,
-[data-theme="light"] {
-  --bg-app:        #f9fafb;   /* page background */
-  --bg-surface:    #ffffff;   /* cards, panels, sidebar */
-  --bg-subtle:     #f3f4f6;   /* hover, alt rows */
-  --bg-muted:      #e5e7eb;   /* dividers, inputs */
-
-  --text-primary:  #111827;
-  --text-secondary:#4b5563;
-  --text-muted:    #9ca3af;
-  --text-inverse:  #ffffff;
-
-  --border:        #e5e7eb;
-  --border-strong: #d1d5db;
-
-  --accent:        #2563eb;   /* blue-600 */
-  --accent-hover:  #1d4ed8;   /* blue-700 */
-  --accent-subtle: #eff6ff;   /* blue-50 */
-  --accent-text:   #1d4ed8;   /* blue-700 */
-
-  --shadow-sm:     0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow:        0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  color-scheme:    light;
+@utility btn {
+  /* Button variants */
+  @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
 }
 
-[data-theme="dark"] {
-  --bg-app:        #0a0a0b;
-  --bg-surface:    #141416;
-  --bg-subtle:     #1c1c1f;
-  --bg-muted:      #2a2a2e;
-
-  --text-primary:  #e8e8ea;
-  --text-secondary:#a0a0ab;
-  --text-muted:    #6b6b76;
-  --text-inverse:  #0a0a0b;
-
-  --border:        #2a2a2e;
-  --border-strong: #3a3a3f;
-
-  --accent:        #3b82f6;   /* blue-500 — slightly lighter for dark bg */
-  --accent-hover:  #60a5fa;   /* blue-400 */
-  --accent-subtle: #1e2d47;   /* custom dark-blue tint */
-  --accent-text:   #60a5fa;   /* blue-400 */
-
-  --shadow-sm:     0 1px 2px 0 rgb(0 0 0 / 0.4);
-  --shadow:        0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
-  color-scheme:    dark;
+@utility btn-primary {
+  @apply btn text-white;
+  background-color: var(--accent);
+  &:hover {
+    background-color: var(--accent-hover);
+  }
 }
 
-/* ─── Base ──────────────────────────────────────────────────────── */
+@utility btn-secondary {
+  @apply btn;
+  background-color: var(--bg-subtle);
+  color: var(--text-primary);
+  &:hover {
+    background-color: var(--bg-muted);
+  }
+}
+
+@utility btn-outline {
+  @apply btn border;
+  border-color: var(--border-strong);
+  background-color: var(--bg-surface);
+  color: var(--text-secondary);
+  &:hover {
+    background-color: var(--bg-subtle);
+  }
+}
+
+@utility btn-ghost {
+  @apply btn;
+  color: var(--text-secondary);
+  &:hover {
+    background-color: var(--bg-subtle);
+  }
+}
+
+@utility btn-danger {
+  @apply btn bg-red-600 text-white hover:bg-red-700 active:bg-red-800;
+}
+
+@utility input {
+  /* Input styles */
+  @apply block w-full rounded-md shadow-xs sm:text-sm;
+  border-color: var(--border-strong);
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+@utility input-error {
+  @apply border-red-300 text-red-900 placeholder-red-300 focus:border-red-500 focus:ring-red-500;
+}
+
+@utility card {
+  /* Card styles */
+  @apply rounded-lg border shadow-xs;
+  background-color: var(--bg-surface);
+  border-color: var(--border);
+}
+
+@utility card-header {
+  @apply px-6 py-4 border-b;
+  border-color: var(--border);
+}
+
+@utility card-body {
+  @apply px-6 py-4;
+}
+
+@utility card-footer {
+  @apply px-6 py-4 border-t;
+  background-color: var(--bg-subtle);
+  border-color: var(--border);
+}
+
+@utility loading-spinner {
+  /* Loading animation */
+  @apply animate-spin rounded-full border-2;
+  border-color: var(--bg-muted);
+  border-top-color: var(--accent);
+}
+
+@utility focus-ring {
+  /* Focus styles */
+  @apply focus:outline-hidden focus:ring-2 focus:ring-offset-2;
+  --tw-ring-color: var(--accent);
+}
+
+/* ─── Utilities ─────────────────────────────────────────────────── */
+
+@utility truncate-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@utility truncate-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@utility animate-fade-in {
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+@utility animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+@utility bg-app {
+  /* Semantic surface helpers — use these in components instead of bg-white/bg-gray-50 */
+  background-color: var(--bg-app);
+}
+
+@utility bg-surface {
+  background-color: var(--bg-surface);
+}
+
+@utility bg-subtle {
+  background-color: var(--bg-subtle);
+}
+
+@utility bg-muted {
+  background-color: var(--bg-muted);
+}
+
+@utility text-base-primary {
+  color: var(--text-primary);
+}
+
+@utility text-base-secondary {
+  color: var(--text-secondary);
+}
+
+@utility text-base-muted {
+  color: var(--text-muted);
+}
+
+@utility border-base {
+  border-color: var(--border);
+}
+
+@utility border-strong {
+  border-color: var(--border-strong);
+}
+
+@utility divide-base {
+  /* divide-base: use for table/list row dividers */
+  & > :not([hidden]) ~ :not([hidden]) {
+    border-color: var(--border);
+  }
+}
+
+@utility bg-accent-subtle {
+  /* accent-subtle bg for selected rows, callouts */
+  background-color: var(--accent-subtle);
+}
+
+@utility placeholder-base-muted {
+  /* placeholder */
+  &::placeholder {
+    color: var(--text-muted);
+  }
+}
+
+@layer base {
+  @font-face {
+    font-family: 'Inter';
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url('/fonts/inter.woff2') format('woff2');
+  }
+
+  @font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 100 800;
+    font-display: swap;
+    src: url('/fonts/jetbrains-mono.woff2') format('woff2');
+  }
+}
+
+@layer utilities {
+  /* ─── Theme tokens ──────────────────────────────────────────────── */
+
+  :root,
+  [data-theme='light'] {
+    --bg-app: #f9fafb; /* page background */
+    --bg-surface: #ffffff; /* cards, panels, sidebar */
+    --bg-subtle: #f3f4f6; /* hover, alt rows */
+    --bg-muted: #e5e7eb; /* dividers, inputs */
+
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --text-muted: #9ca3af;
+    --text-inverse: #ffffff;
+
+    --border: #e5e7eb;
+    --border-strong: #d1d5db;
+
+    --accent: #2563eb; /* blue-600 */
+    --accent-hover: #1d4ed8; /* blue-700 */
+    --accent-subtle: #eff6ff; /* blue-50 */
+    --accent-text: #1d4ed8; /* blue-700 */
+
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    color-scheme: light;
+  }
+
+  [data-theme='dark'] {
+    --bg-app: #0a0a0b;
+    --bg-surface: #141416;
+    --bg-subtle: #1c1c1f;
+    --bg-muted: #2a2a2e;
+
+    --text-primary: #e8e8ea;
+    --text-secondary: #a0a0ab;
+    --text-muted: #6b6b76;
+    --text-inverse: #0a0a0b;
+
+    --border: #2a2a2e;
+    --border-strong: #3a3a3f;
+
+    --accent: #3b82f6; /* blue-500 — slightly lighter for dark bg */
+    --accent-hover: #60a5fa; /* blue-400 */
+    --accent-subtle: #1e2d47; /* custom dark-blue tint */
+    --accent-text: #60a5fa; /* blue-400 */
+
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    color-scheme: dark;
+  }
+
+  /* ─── Base ──────────────────────────────────────────────────────── */
+}
 
 @layer base {
   html {
@@ -100,142 +349,6 @@
   ::-webkit-scrollbar-thumb:hover {
     background: var(--border-strong);
   }
-}
-
-/* ─── Components ────────────────────────────────────────────────── */
-
-@layer components {
-  /* Button variants */
-  .btn {
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
-
-  }
-
-  .btn-primary {
-    @apply btn text-white;
-    background-color: var(--accent);
-  }
-  .btn-primary:hover { background-color: var(--accent-hover); }
-
-  .btn-secondary {
-    @apply btn;
-    background-color: var(--bg-subtle);
-    color: var(--text-primary);
-  }
-  .btn-secondary:hover { background-color: var(--bg-muted); }
-
-  .btn-outline {
-    @apply btn border;
-    border-color: var(--border-strong);
-    background-color: var(--bg-surface);
-    color: var(--text-secondary);
-  }
-  .btn-outline:hover { background-color: var(--bg-subtle); }
-
-  .btn-ghost {
-    @apply btn;
-    color: var(--text-secondary);
-  }
-  .btn-ghost:hover { background-color: var(--bg-subtle); }
-
-  .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700 active:bg-red-800;
-  }
-
-  /* Input styles */
-  .input {
-    @apply block w-full rounded-md shadow-sm sm:text-sm;
-    border-color: var(--border-strong);
-    background-color: var(--bg-surface);
-    color: var(--text-primary);
-  }
-
-  .input-error {
-    @apply border-red-300 text-red-900 placeholder-red-300 focus:border-red-500 focus:ring-red-500;
-  }
-
-  /* Card styles */
-  .card {
-    @apply rounded-lg border shadow-sm;
-    background-color: var(--bg-surface);
-    border-color: var(--border);
-  }
-
-  .card-header {
-    @apply px-6 py-4 border-b;
-    border-color: var(--border);
-  }
-
-  .card-body {
-    @apply px-6 py-4;
-  }
-
-  .card-footer {
-    @apply px-6 py-4 border-t;
-    background-color: var(--bg-subtle);
-    border-color: var(--border);
-  }
-
-  /* Loading animation */
-  .loading-spinner {
-    @apply animate-spin rounded-full border-2;
-    border-color: var(--bg-muted);
-    border-top-color: var(--accent);
-  }
-
-  /* Focus styles */
-  .focus-ring {
-    @apply focus:outline-none focus:ring-2 focus:ring-offset-2;
-    --tw-ring-color: var(--accent);
-  }
-}
-
-/* ─── Utilities ─────────────────────────────────────────────────── */
-
-@layer utilities {
-  .truncate-2 {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .truncate-3 {
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .animate-fade-in {
-    animation: fadeIn 0.2s ease-in-out;
-  }
-
-  .animate-slide-in {
-    animation: slideIn 0.3s ease-out;
-  }
-
-  /* Semantic surface helpers — use these in components instead of bg-white/bg-gray-50 */
-  .bg-app     { background-color: var(--bg-app); }
-  .bg-surface { background-color: var(--bg-surface); }
-  .bg-subtle  { background-color: var(--bg-subtle); }
-  .bg-muted   { background-color: var(--bg-muted); }
-
-  .text-base-primary   { color: var(--text-primary); }
-  .text-base-secondary { color: var(--text-secondary); }
-  .text-base-muted     { color: var(--text-muted); }
-
-  .border-base { border-color: var(--border); }
-  .border-strong { border-color: var(--border-strong); }
-
-  /* divide-base: use for table/list row dividers */
-  .divide-base > :not([hidden]) ~ :not([hidden]) { border-color: var(--border); }
-
-  /* accent-subtle bg for selected rows, callouts */
-  .bg-accent-subtle { background-color: var(--accent-subtle); }
-
-  /* placeholder */
-  .placeholder-base-muted::placeholder { color: var(--text-muted); }
 }
 
 /* ─── @tailwindcss/forms override ──────────────────────────────── */

@@ -49,7 +49,7 @@ const Dropdown: React.FC<DropdownProps> = ({
             >
                 <Menu.Items
                     className={clsx(
-                        'absolute z-10 mt-2 w-56 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none border border-base',
+                        'absolute z-10 mt-2 w-56 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-hidden border border-base',
                         alignmentClasses[align]
                     )}
                     style={{ backgroundColor: 'var(--bg-surface)' }}
@@ -117,7 +117,7 @@ const DropdownButton: React.FC<DropdownButtonProps> = ({
 }) => {
     const baseClasses = [
         'inline-flex items-center justify-center font-medium rounded-md',
-        'focus:outline-none focus:ring-2 focus:ring-offset-2',
+        'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
         'transition-colors duration-200',
         'disabled:opacity-50 disabled:cursor-not-allowed',
     ];

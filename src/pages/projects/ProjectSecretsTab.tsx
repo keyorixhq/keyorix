@@ -146,7 +146,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                         value={list.search}
                         onChange={e => list.setSearch(e.target.value)}
                         placeholder="Search secrets…"
-                        className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-none"
+                        className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-hidden"
                         style={{
                             backgroundColor: 'var(--bg-surface)',
                             border: '1px solid var(--border)',
@@ -217,7 +217,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                                 <tr>
                                     <th className="px-4 py-3 text-left w-10">
                                         <input type="checkbox"
-                                            className="rounded border-gray-300 text-blue-600"
+                                            className="rounded-sm border-gray-300 text-blue-600"
                                             checked={list.secrets.length > 0 && list.secrets.every(s => selectedItems.has(s.id))}
                                             onChange={e => {
                                                 if (e.target.checked) list.secrets.forEach(s => toggleSelected(s.id));
@@ -339,7 +339,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                         <input type="text" required value={createName}
                             onChange={e => setCreateName(e.target.value)}
                             autoFocus
-                            className="w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-blue-500"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
                         />
                     </div>
@@ -356,7 +356,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                         </div>
                         <textarea required rows={3} value={createValue}
                             onChange={e => setCreateValue(e.target.value)}
-                            className="w-full rounded-lg border px-3 py-2 text-sm font-mono outline-none resize-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full rounded-lg border px-3 py-2 text-sm font-mono outline-hidden resize-none focus:ring-2 focus:ring-blue-500"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
                         />
                     </div>
@@ -395,7 +395,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                     <div>
                         <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Name</label>
                         <input type="text" required value={editName} onChange={e => setEditName(e.target.value)}
-                            className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+                            className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }} />
                     </div>
                     <div>
@@ -411,7 +411,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                         </div>
                         <input type="text" value={editValue} onChange={e => setEditValue(e.target.value)}
                             placeholder="Leave blank to keep existing"
-                            className="w-full rounded-lg border px-3 py-2 text-sm font-mono outline-none"
+                            className="w-full rounded-lg border px-3 py-2 text-sm font-mono outline-hidden"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }} />
                     </div>
                     <div className="flex justify-end gap-2 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
@@ -476,7 +476,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                                 className="text-xs font-medium" style={{ color: 'var(--accent-text)' }}>↻ Regenerate</button>
                         </div>
                         <input type="text" value={rotateValue} onChange={e => setRotateValue(e.target.value)}
-                            className="w-full rounded-lg border px-3 py-2 text-sm font-mono outline-none"
+                            className="w-full rounded-lg border px-3 py-2 text-sm font-mono outline-hidden"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }} />
                     </div>
                     <div className="flex justify-end gap-2 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>

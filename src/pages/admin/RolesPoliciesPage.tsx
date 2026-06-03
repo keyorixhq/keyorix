@@ -55,7 +55,7 @@ const RoleCard: React.FC<RoleCardProps> = ({ role, onEdit, onDelete, onManage })
                     )}
                 </div>
                 {builtIn && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide flex-shrink-0"
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide shrink-0"
                         style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
                         Built-in
                     </span>
@@ -415,7 +415,7 @@ export const RolesPoliciesPage: React.FC = () => {
                                                     checked={assigned}
                                                     disabled={isMutatingPerm}
                                                     onChange={() => handleTogglePerm(perm)}
-                                                    className="h-4 w-4 rounded accent-blue-600"
+                                                    className="h-4 w-4 rounded-sm accent-blue-600"
                                                 />
                                                 <div className="min-w-0">
                                                     <span className="text-sm font-medium"

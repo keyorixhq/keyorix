@@ -84,7 +84,7 @@ const Dialog: React.FC<DialogProps> = ({
             closeOnOverlayClick={!loading}
         >
             <div className="flex">
-                <div className={clsx('mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full', config.bgColor)}>
+                <div className={clsx('mx-auto flex h-12 w-12 shrink-0 items-center justify-center rounded-full', config.bgColor)}>
                     <Icon className={clsx('h-6 w-6', config.iconColor)} aria-hidden="true" />
                 </div>
                 <div className="ml-4 text-left">

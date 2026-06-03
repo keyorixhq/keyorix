@@ -61,7 +61,7 @@ const EvalStatusBadge: React.FC<{ ev: RotationPolicyEvaluation }> = ({ ev }) => 
     if (ev.is_overdue) {
         return (
             <span
-                className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium"
                 style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444' }}
             >
                 Overdue
@@ -70,7 +70,7 @@ const EvalStatusBadge: React.FC<{ ev: RotationPolicyEvaluation }> = ({ ev }) => 
     }
     return (
         <span
-            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+            className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium"
             style={{ backgroundColor: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}
         >
             Due soon
@@ -296,7 +296,7 @@ export function RotationPoliciesPage() {
                             {/* Table or all-clear */}
                             {problemList.length === 0 ? (
                                 <div className="flex items-center gap-2 py-2" style={{ color: '#10b981' }}>
-                                    <CheckCircleIcon className="h-5 w-5 flex-shrink-0" />
+                                    <CheckCircleIcon className="h-5 w-5 shrink-0" />
                                     <span className="text-sm font-medium">
                                         All secrets are within rotation policy
                                     </span>
@@ -414,7 +414,7 @@ export function RotationPoliciesPage() {
                             value={fName}
                             onChange={e => setFName(e.target.value)}
                             placeholder="e.g. Production secrets rotation"
-                            className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full rounded-md border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
                         />
                     </div>
@@ -431,7 +431,7 @@ export function RotationPoliciesPage() {
                             value={fDesc}
                             onChange={e => setFDesc(e.target.value)}
                             placeholder="Optional description…"
-                            className="w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                            className="w-full rounded-md border px-3 py-2 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 resize-none"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
                         />
                     </div>
@@ -524,7 +524,7 @@ export function RotationPoliciesPage() {
                             id="notify-on-breach"
                             checked={fNotify}
                             onChange={e => setFNotify(e.target.checked)}
-                            className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                            className="h-4 w-4 rounded-sm text-blue-600 focus:ring-blue-500"
                             style={{ borderColor: 'var(--border)' }}
                         />
                         <label

@@ -144,7 +144,7 @@ export const APITokensPage: React.FC = () => {
                     <p className="text-sm">No tokens found across any service accounts.</p>
                 </div>
             ) : (
-                <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-sm">
+                <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-xs">
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-base">
                             <thead>
@@ -188,7 +188,7 @@ export const APITokensPage: React.FC = () => {
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 {token.scope ? (
                                                     <span
-                                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium font-mono"
+                                                        className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono"
                                                         style={{
                                                             backgroundColor: isDark
                                                                 ? 'rgba(59,130,246,0.15)'
@@ -235,7 +235,7 @@ export const APITokensPage: React.FC = () => {
                                                     <button
                                                         onClick={() => setPendingRevokeTokenId(token.id)}
                                                         disabled={inactive}
-                                                        className="text-xs font-medium px-2.5 py-1 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        className="text-xs font-medium px-2.5 py-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                                         style={{
                                                             color: inactive
                                                                 ? 'var(--text-muted)'

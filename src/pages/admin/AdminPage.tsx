@@ -312,7 +312,7 @@ export const AdminPage: React.FC = () => {
                                 placeholder="Search by username or email…"
                                 value={searchInput}
                                 onChange={(e) => setSearchInput(e.target.value)}
-                                className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
+                                className="w-full pl-9 pr-4 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:border-transparent" style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
                             />
                         </div>
                         <Button type="submit" variant="secondary">Search</Button>
@@ -325,7 +325,7 @@ export const AdminPage: React.FC = () => {
                             type="checkbox"
                             checked={showDeleted}
                             onChange={(e) => { setShowDeleted(e.target.checked); setPage(1); setSelected(new Set()); }}
-                            className="h-4 w-4 rounded border-base"
+                            className="h-4 w-4 rounded-sm border-base"
                             style={{ accentColor: 'var(--accent)' }}
                         />
                         <span className="text-sm text-base-muted">Show deleted users</span>
@@ -342,12 +342,12 @@ export const AdminPage: React.FC = () => {
                         <p className="text-sm">{search ? 'No users match your search.' : 'No users yet.'}</p>
                     </div>
                 ) : (
-                    <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-sm">
+                    <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-xs">
                         <table className="min-w-full divide-y divide-base">
                             <thead>
                                 <tr>
                                     <th className="px-4 py-3 w-10">
-                                        <input type="checkbox" className="rounded border-base text-blue-600 focus:ring-blue-500" style={{ accentColor: 'var(--accent)' }}
+                                        <input type="checkbox" className="rounded-sm border-base text-blue-600 focus:ring-blue-500" style={{ accentColor: 'var(--accent)' }}
                                             checked={users.length > 0 && selected.size === users.length}
                                             onChange={toggleAll} />
                                     </th>
@@ -362,13 +362,13 @@ export const AdminPage: React.FC = () => {
                                 {users.map((user) => (
                                     <tr key={user.id} className={`hover:bg-subtle transition-colors ${selected.has(user.id) ? 'bg-accent-subtle' : ''}`}>
                                         <td className="px-4 py-4 w-10">
-                                            <input type="checkbox" className="rounded border-base text-blue-600 focus:ring-blue-500" style={{ accentColor: 'var(--accent)' }}
+                                            <input type="checkbox" className="rounded-sm border-base text-blue-600 focus:ring-blue-500" style={{ accentColor: 'var(--accent)' }}
                                                 checked={selected.has(user.id)}
                                                 onChange={() => toggleSelect(user.id)} />
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-3">
-                                                <div className="flex-shrink-0 h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                                                <div className="shrink-0 h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
                                                     <span className="text-xs font-semibold text-blue-700">
                                                         {(user.display_name || user.username).charAt(0).toUpperCase()}
                                                     </span>
@@ -403,18 +403,18 @@ export const AdminPage: React.FC = () => {
                                         <td className="px-6 py-4 whitespace-nowrap text-right">
                                             <div className="flex items-center justify-end gap-2">
                                                 {user.deleted_at ? (
-                                                    <button onClick={() => setActiveModal({ type: 'restore', user })} className="p-1.5 text-base-muted hover:text-green-600 hover:bg-green-50 rounded transition-colors" title="Restore user">
+                                                    <button onClick={() => setActiveModal({ type: 'restore', user })} className="p-1.5 text-base-muted hover:text-green-600 hover:bg-green-50 rounded-sm transition-colors" title="Restore user">
                                                         <ArrowPathIcon className="h-4 w-4" />
                                                     </button>
                                                 ) : (
                                                     <>
-                                                        <button onClick={() => handleRolesOpen(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Manage roles">
+                                                        <button onClick={() => handleRolesOpen(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors" title="Manage roles">
                                                             <ShieldCheckIcon className="h-4 w-4" />
                                                         </button>
-                                                        <button onClick={() => openEdit(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors" title="Edit user">
+                                                        <button onClick={() => openEdit(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors" title="Edit user">
                                                             <PencilIcon className="h-4 w-4" />
                                                         </button>
-                                                        <button onClick={() => setActiveModal({ type: 'delete', user })} className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete user">
+                                                        <button onClick={() => setActiveModal({ type: 'delete', user })} className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors" title="Delete user">
                                                             <TrashIcon className="h-4 w-4" />
                                                         </button>
                                                     </>
@@ -430,10 +430,10 @@ export const AdminPage: React.FC = () => {
                             <div className="flex items-center justify-between px-6 py-3 border-t border-base bg-subtle">
                                 <p className="text-sm text-base-muted">Page {page} of {totalPages}</p>
                                 <div className="flex gap-2">
-                                    <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="p-1.5 rounded-sm border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                                         <ChevronLeftIcon className="h-4 w-4" />
                                     </button>
-                                    <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                                    <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="p-1.5 rounded-sm border border-base text-base-muted hover:bg-subtle disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
                                         <ChevronRightIcon className="h-4 w-4" />
                                     </button>
                                 </div>
@@ -448,15 +448,15 @@ export const AdminPage: React.FC = () => {
                     {formError && <Alert type="error" message={formError} />}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary mb-1">Username</label>
-                        <input type="text" value={createUsername} onChange={(e) => setCreateUsername(e.target.value)} placeholder="e.g. jsmith" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <input type="text" value={createUsername} onChange={(e) => setCreateUsername(e.target.value)} placeholder="e.g. jsmith" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
-                        <input type="text" value={createDisplayName} onChange={(e) => setCreateDisplayName(e.target.value)} placeholder="e.g. Jane Smith" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <input type="text" value={createDisplayName} onChange={(e) => setCreateDisplayName(e.target.value)} placeholder="e.g. Jane Smith" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
-                        <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="jane@example.com" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="jane@example.com" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-1">
@@ -473,7 +473,7 @@ export const AdminPage: React.FC = () => {
                                 value={createPassword}
                                 onChange={(e) => setCreatePassword(e.target.value)}
                                 placeholder="Min. 8 characters"
-                                className="w-full px-3 py-2 pr-14 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                                className="w-full px-3 py-2 pr-14 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-mono"
                             />
                             <button type="button"
                                 onClick={() => setShowPassword(p => !p)}
@@ -499,15 +499,15 @@ export const AdminPage: React.FC = () => {
                     )}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary mb-1">Display Name</label>
-                        <input type="text" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <input type="text" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
-                        <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
                         <label className="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 rounded border-base" style={{ accentColor: 'var(--accent)' }} />
+                            <input type="checkbox" checked={editActive} onChange={(e) => setEditActive(e.target.checked)} className="h-4 w-4 rounded-sm border-base" style={{ accentColor: 'var(--accent)' }} />
                             <span className="text-sm font-medium text-base-secondary">Active</span>
                         </label>
                     </div>
@@ -568,7 +568,7 @@ export const AdminPage: React.FC = () => {
                                         type="checkbox"
                                         checked={selectedRoleIds.has(role.id)}
                                         onChange={() => toggleRoleId(role.id)}
-                                        className="mt-0.5 h-4 w-4 rounded border-base"
+                                        className="mt-0.5 h-4 w-4 rounded-sm border-base"
                                         style={{ accentColor: 'var(--accent)' }}
                                     />
                                     <div>

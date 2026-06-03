@@ -345,7 +345,7 @@ export const GroupsPage: React.FC = () => {
                                         checked={assigned}
                                         disabled={isMutatingRole}
                                         onChange={() => handleToggleRole(role)}
-                                        className="h-4 w-4 rounded accent-blue-600"
+                                        className="h-4 w-4 rounded-sm accent-blue-600"
                                     />
                                     <div className="min-w-0">
                                         <span className="text-sm font-medium block"

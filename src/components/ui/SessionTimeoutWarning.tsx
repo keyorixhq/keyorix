@@ -88,7 +88,7 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
                 >
                     <button
                         type="button"
-                        className="absolute top-4 right-4 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="absolute top-4 right-4 rounded-md transition-colors focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                         style={{ color: 'var(--text-muted)' }}
                         onClick={() => setShowWarning(false)}
                         aria-label="Close"
@@ -119,7 +119,7 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
                                     type="button"
                                     onClick={handleExtendSession}
                                     disabled={isExtending}
-                                    className="flex-1 px-4 py-2 text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                                    className="flex-1 px-4 py-2 text-sm font-medium rounded-md focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
                                     style={isExtending
                                         ? { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)', cursor: 'not-allowed' }
                                         : { backgroundColor: 'var(--accent)', color: '#ffffff' }
@@ -140,7 +140,7 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
                                 <button
                                     type="button"
                                     onClick={handleLogout}
-                                    className="flex-1 px-4 py-2 text-sm font-medium rounded-md border focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                                    className="flex-1 px-4 py-2 text-sm font-medium rounded-md border focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
                                     style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-secondary)', borderColor: 'var(--border-strong)' }}
                                     onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
                                     onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)'}

@@ -257,7 +257,7 @@ export const ServiceAccountsPage: React.FC = () => {
                             type="checkbox"
                             checked={formScopes.has(value)}
                             onChange={() => toggleScope(value)}
-                            className="mt-0.5 h-4 w-4 rounded border-base"
+                            className="mt-0.5 h-4 w-4 rounded-sm border-base"
                             style={{ accentColor: 'var(--accent)' }}
                         />
                         <div>
@@ -311,7 +311,7 @@ export const ServiceAccountsPage: React.FC = () => {
                         </p>
                     </div>
                 ) : (
-                    <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-sm">
+                    <div className="bg-surface border border-base rounded-lg overflow-hidden shadow-xs">
                         <div className="overflow-x-auto">
                             <table className="min-w-full divide-y divide-base">
                                 <thead>
@@ -363,7 +363,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                                         .map((scope) => (
                                                             <span
                                                                 key={scope}
-                                                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium font-mono"
+                                                                className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium font-mono"
                                                                 style={{
                                                                     backgroundColor: isDark
                                                                         ? 'rgba(59,130,246,0.15)'
@@ -405,14 +405,14 @@ export const ServiceAccountsPage: React.FC = () => {
                                                 <div className="flex items-center justify-end gap-2">
                                                     <button
                                                         onClick={() => openTokens(sa)}
-                                                        className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors"
+                                                        className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
                                                         title="Manage tokens"
                                                     >
                                                         <KeyIcon className="h-4 w-4" />
                                                     </button>
                                                     <button
                                                         onClick={() => openEdit(sa)}
-                                                        className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded transition-colors"
+                                                        className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors"
                                                         title="Edit"
                                                     >
                                                         <PencilIcon className="h-4 w-4" />
@@ -420,7 +420,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                                     {sa.is_active && (
                                                         <button
                                                             onClick={() => setActiveModal({ type: 'deactivate', sa })}
-                                                            className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                                            className="p-1.5 text-base-muted hover:text-red-600 hover:bg-red-50 rounded-sm transition-colors"
                                                             title="Deactivate"
                                                         >
                                                             <TrashIcon className="h-4 w-4" />
@@ -450,7 +450,7 @@ export const ServiceAccountsPage: React.FC = () => {
                             value={formName}
                             onChange={(e) => setFormName(e.target.value)}
                             placeholder="e.g. ci-deploy"
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             style={{
                                 backgroundColor: 'var(--bg-app)',
                                 color: 'var(--text-primary)',
@@ -465,7 +465,7 @@ export const ServiceAccountsPage: React.FC = () => {
                             value={formDescription}
                             onChange={(e) => setFormDescription(e.target.value)}
                             placeholder="Optional description"
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             style={{
                                 backgroundColor: 'var(--bg-app)',
                                 color: 'var(--text-primary)',
@@ -497,7 +497,7 @@ export const ServiceAccountsPage: React.FC = () => {
                             type="text"
                             value={formName}
                             onChange={(e) => setFormName(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             style={{
                                 backgroundColor: 'var(--bg-app)',
                                 color: 'var(--text-primary)',
@@ -511,7 +511,7 @@ export const ServiceAccountsPage: React.FC = () => {
                             type="text"
                             value={formDescription}
                             onChange={(e) => setFormDescription(e.target.value)}
-                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             style={{
                                 backgroundColor: 'var(--bg-app)',
                                 color: 'var(--text-primary)',
@@ -589,7 +589,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                 </code>
                                 <button
                                     onClick={() => handleCopy(createdCreds.clientId, 'clientId')}
-                                    className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors flex-shrink-0"
+                                    className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors shrink-0"
                                     style={{ color: 'var(--text-muted)' }}
                                     title="Copy Client ID"
                                 >
@@ -614,7 +614,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                 </code>
                                 <button
                                     onClick={() => handleCopy(createdCreds.clientSecret, 'clientSecret')}
-                                    className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors flex-shrink-0"
+                                    className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors shrink-0"
                                     style={{ color: 'var(--text-muted)' }}
                                     title="Copy Client Secret"
                                 >
@@ -680,7 +680,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                     </code>
                                     <button
                                         onClick={() => handleCopy(createdAccessToken, 'accessToken')}
-                                        className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors flex-shrink-0"
+                                        className="p-2 rounded-lg border border-base hover:bg-subtle transition-colors shrink-0"
                                         style={{ color: 'var(--text-muted)' }}
                                         title="Copy token"
                                     >
@@ -733,7 +733,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                             value={tokenDescription}
                                             onChange={(e) => setTokenDescription(e.target.value)}
                                             placeholder="Optional description"
-                                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                                             style={{
                                                 backgroundColor: 'var(--bg-app)',
                                                 color: 'var(--text-primary)',
@@ -751,7 +751,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                             value={tokenExpiresAt}
                                             onChange={(e) => setTokenExpiresAt(e.target.value)}
                                             min={new Date().toISOString().split('T')[0]}
-                                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                                             style={{
                                                 backgroundColor: 'var(--bg-app)',
                                                 color: 'var(--text-primary)',
@@ -852,7 +852,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                                         <button
                                                             onClick={() => setPendingRevokeTokenId(token.id)}
                                                             disabled={inactive}
-                                                            className="text-xs font-medium px-2.5 py-1 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                                            className="text-xs font-medium px-2.5 py-1 rounded-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                                                             style={{
                                                                 color: inactive
                                                                     ? 'var(--text-muted)'

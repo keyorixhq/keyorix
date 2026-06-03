@@ -124,7 +124,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                             Project name <span style={{ color: 'var(--error)' }}>*</span>
                         </label>
                         <input type="text" value={name} onChange={e => setName(e.target.value)}
-                            className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+                            className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
                             style={{
                                 backgroundColor: 'var(--bg-app)',
                                 color: 'var(--text-primary)',
@@ -138,7 +138,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                         </label>
                         <input type="text" value={description} onChange={e => setDescription(e.target.value)}
                             placeholder="Optional"
-                            className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+                            className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }} />
                     </div>
                     <div className="flex justify-end">
@@ -163,7 +163,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                     {envsLoading ? (
                         <div className="p-4 animate-pulse space-y-2">
                             {[1, 2, 3].map(i => (
-                                <div key={i} className="h-8 rounded" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                                <div key={i} className="h-8 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
                             ))}
                         </div>
                     ) : environments.length === 0 ? (
@@ -183,7 +183,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                                 {env.name.charAt(0).toUpperCase() + env.name.slice(1)}
                                             </span>
                                             {isDefault && (
-                                                <span className="text-xs px-1.5 py-0.5 rounded"
+                                                <span className="text-xs px-1.5 py-0.5 rounded-sm"
                                                     style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
                                                     default
                                                 </span>
@@ -192,7 +192,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                         <button
                                             type="button"
                                             onClick={() => { setDeleteEnvError(''); setEnvToDelete(env); }}
-                                            className="p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
+                                            className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
                                             style={{ color: 'var(--error)' }}
                                             title="Delete environment"
                                         >
@@ -219,7 +219,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                         addEnvMutation.mutate(newEnvName.trim());
                                 }}
                                 placeholder="New environment name…"
-                                className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-hidden focus:ring-2 focus:ring-blue-500"
                                 style={{
                                     backgroundColor: 'var(--bg-app)',
                                     color: 'var(--text-primary)',
@@ -322,7 +322,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                         value={deleteConfirm}
                         onChange={e => setDeleteConfirm(e.target.value)}
                         placeholder={project?.name}
-                        className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+                        className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
                         style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
                     />
                     <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>

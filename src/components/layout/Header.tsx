@@ -45,7 +45,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
     ];
 
     const userMenuTrigger = (
-        <button className="flex items-center space-x-2 text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 p-1">
+        <button className="flex items-center space-x-2 text-sm rounded-full focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 p-1">
             <div className="h-8 w-8 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--bg-muted)' }}>
                 <UserCircleIcon className="h-6 w-6" style={{ color: 'var(--text-secondary)' }} />
             </div>
@@ -57,7 +57,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
 
     return (
         <header
-            className={clsx('shadow-sm border-b', className)}
+            className={clsx('shadow-xs border-b', className)}
             style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
         >
             <div className="px-4 sm:px-6 lg:px-8">
@@ -66,7 +66,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                     <div className="flex items-center">
                         <button
                             type="button"
-                            className="p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 lg:hidden"
+                            className="p-2 rounded-md focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-blue-500 lg:hidden"
                             style={{ color: 'var(--text-muted)' }}
                             onClick={onMenuClick}
                         >
@@ -91,7 +91,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
                         <button
                             type="button"
                             onClick={() => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark')}
-                            className="p-2 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                            className="p-2 rounded-md transition-colors focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-blue-500"
                             style={{ color: 'var(--text-muted)' }}
                             title={theme === 'dark' ? 'Dark mode (click for light)' : theme === 'light' ? 'Light mode (click for system)' : 'System mode (click for dark)'}
                             aria-label={theme === 'dark' ? 'Dark mode' : theme === 'light' ? 'Light mode' : 'System mode'}

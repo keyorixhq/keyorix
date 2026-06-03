@@ -52,7 +52,7 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue
     return (
     <div
         onClick={onClick}
-        className={`relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-sm
+        className={`relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-xs
             ${onClick ? 'cursor-pointer hover:shadow-md hover:border-base transition-all duration-150' : ''}`}
     >
         <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accent}`} />
@@ -116,7 +116,7 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
     const secretPart = item.secretName ? ` "${item.secretName}"` : '';
     return (
         <div className="flex items-start gap-3 py-3 border-b border-base last:border-0">
-            <div className="mt-1.5 flex-shrink-0">
+            <div className="mt-1.5 shrink-0">
                 <div className={`w-2 h-2 rounded-full ${style.dot}`} />
             </div>
             <div className="flex-1 min-w-0">
@@ -257,7 +257,7 @@ export const DashboardPage: React.FC = () => {
                 </div>
 
                 {/* ── Operational Signals ────────────────────────────────── */}
-                <div className="bg-surface border border-base rounded-xl shadow-sm">
+                <div className="bg-surface border border-base rounded-xl shadow-xs">
                     <div className="px-6 py-4 border-b border-base">
                         <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Operational Signals</h2>
                     </div>
@@ -297,7 +297,7 @@ export const DashboardPage: React.FC = () => {
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
                     {/* Recent Activity */}
-                    <div className="lg:col-span-2 bg-surface border border-base rounded-xl shadow-sm">
+                    <div className="lg:col-span-2 bg-surface border border-base rounded-xl shadow-xs">
                         <div className="flex items-center justify-between px-6 py-4 border-b border-base">
                             <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Recent Activity</h2>
                             <button
@@ -324,7 +324,7 @@ export const DashboardPage: React.FC = () => {
                     <div className="space-y-4">
 
                         {/* System Health */}
-                        <div className="bg-surface border border-base rounded-xl shadow-sm">
+                        <div className="bg-surface border border-base rounded-xl shadow-xs">
                             <div className="px-5 py-4 border-b border-base">
                                 <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">System Health</h2>
                             </div>
@@ -370,7 +370,7 @@ export const DashboardPage: React.FC = () => {
 
                         {/* Alerts panel — only if there are alerts */}
                         {alertCount > 0 && (
-                            <div className="bg-surface border border-red-200 rounded-xl shadow-sm">
+                            <div className="bg-surface border border-red-200 rounded-xl shadow-xs">
                                 <div className="px-5 py-4 border-b border-red-50">
                                     <h2 className="text-sm font-semibold text-red-700 uppercase tracking-widest flex items-center gap-2">
                                         <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -387,7 +387,7 @@ export const DashboardPage: React.FC = () => {
                                             </div>
                                             <button
                                                 onClick={() => acknowledgeAnomaly.mutate(a.ID)}
-                                                className="text-xs text-base-muted hover:text-base-secondary flex-shrink-0 mt-0.5"
+                                                className="text-xs text-base-muted hover:text-base-secondary shrink-0 mt-0.5"
                                                 title="Dismiss"
                                             >✓</button>
                                         </div>
@@ -398,7 +398,7 @@ export const DashboardPage: React.FC = () => {
                                                 <p className={`text-xs font-semibold ${s.expired ? 'text-red-400' : 'text-amber-700'}`}>{s.name}</p>
                                                 <p className={`text-xs ${s.expired ? 'text-red-500' : 'text-amber-600'}`}>{s.environment}</p>
                                             </div>
-                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${s.expired ? 'bg-red-500/20 text-red-400' : s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600'}`}>
+                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-sm ${s.expired ? 'bg-red-500/20 text-red-400' : s.daysLeft <= 7 ? 'text-red-600' : 'text-amber-600'}`}>
                                                 {s.expired ? `${Math.abs(s.daysLeft)}d overdue` : `${s.daysLeft}d`}
                                             </span>
                                         </div>
@@ -408,7 +408,7 @@ export const DashboardPage: React.FC = () => {
                         )}
 
                         {/* Audit Health */}
-                        <div className="bg-surface border border-base rounded-xl shadow-sm">
+                        <div className="bg-surface border border-base rounded-xl shadow-xs">
                             <div className="px-5 py-4 border-b border-base flex items-center justify-between">
                                 <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Audit (30d)</h2>
                                 <button

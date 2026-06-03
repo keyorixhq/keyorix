@@ -126,7 +126,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                                 onChange={e => { setQuery(e.target.value); setSelected(null); setOpen(true); }}
                                 onFocus={() => { if (query) setOpen(true); }}
                                 disabled={shareSecret.isPending || success}
-                                className="w-full pl-9 pr-4 py-2 text-sm rounded-md border focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full pl-9 pr-4 py-2 text-sm rounded-md border focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                                 style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: selected ? 'var(--accent)' : 'var(--border-strong)' }}
                             />
                             {selected && (
@@ -161,7 +161,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                                             onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
                                             onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
                                         >
-                                            <div className="flex-shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
+                                            <div className="shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
                                                 <span className="text-xs font-semibold" style={{ color: 'var(--accent-text)' }}>
                                                     {(user.display_name || user.username).charAt(0).toUpperCase()}
                                                 </span>

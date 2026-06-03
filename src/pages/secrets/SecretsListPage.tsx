@@ -198,7 +198,7 @@ export const SecretsListPage: React.FC = () => {
                             <thead className="bg-subtle dark:bg-gray-900">
                                 <tr>
                                     <th className="px-4 py-3 text-left w-10">
-                                        <input type="checkbox" className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        <input type="checkbox" className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
                                             checked={displayedSecrets.length > 0 && displayedSecrets.every(s => list.selectedItems.has(s.id))}
                                             onChange={(e) => { if (e.target.checked) displayedSecrets.forEach(s => list.toggleSelectedItem(s.id)); else list.clearSelectedItems(); }} />
                                     </th>
@@ -264,7 +264,7 @@ export const SecretsListPage: React.FC = () => {
                     {list.editMutation.isError && <Alert type="error" title="Failed to update secret" message={list.editMutation.error instanceof Error ? list.editMutation.error.message : 'An unexpected error occurred'} />}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name</label>
-                        <input type="text" required value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <input type="text" required value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Type</label>
@@ -281,7 +281,7 @@ export const SecretsListPage: React.FC = () => {
                         </div>
                         <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)}
                             placeholder="Leave blank to keep existing value"
-                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }} />
                         <p className="mt-1 text-xs text-base-muted">Leave blank to keep the existing value.</p>
                     </div>
@@ -312,7 +312,7 @@ export const SecretsListPage: React.FC = () => {
                     {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name <span className="text-red-500">*</span></label>
-                        <input type="text" required value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <input type="text" required value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-1">
@@ -324,7 +324,7 @@ export const SecretsListPage: React.FC = () => {
                             </button>
                         </div>
                         <textarea required rows={3} value={createValue} onChange={(e) => setCreateValue(e.target.value)}
-                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500 resize-none"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }} />
                     </div>
                     <div>
@@ -356,7 +356,7 @@ export const SecretsListPage: React.FC = () => {
                             </button>
                         </div>
                         <input type="text" value={rotateValue} onChange={(e) => setRotateValue(e.target.value)}
-                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full rounded-md border px-3 py-2 text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }} />
                     </div>
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">

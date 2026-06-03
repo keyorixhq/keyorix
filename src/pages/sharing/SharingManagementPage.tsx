@@ -317,7 +317,7 @@ export const SharingManagementPage: React.FC = () => {
                                         <th className="px-6 py-3 text-left">
                                             <input
                                                 type="checkbox"
-                                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                                className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
                                                 checked={filteredShares.length > 0 && filteredShares.every(s => selectedItems.has(s.id))}
                                                 onChange={(e) => {
                                                     if (e.target.checked) {
@@ -356,7 +356,7 @@ export const SharingManagementPage: React.FC = () => {
                                             <td className="px-6 py-4">
                                                 <input
                                                     type="checkbox"
-                                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                                    className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
                                                     checked={selectedItems.has(share.id)}
                                                     onChange={() => toggleSelectedItem(share.id)}
                                                 />
@@ -369,7 +369,7 @@ export const SharingManagementPage: React.FC = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center">
-                                                <div className="flex-shrink-0 mr-3">
+                                                <div className="shrink-0 mr-3">
                                                     {share.recipientType === 'user' ? (
                                                         <UserIcon className="h-5 w-5 text-base-muted" />
                                                     ) : (
@@ -473,7 +473,7 @@ export const SharingManagementPage: React.FC = () => {
                                             </p>
                                         </div>
                                         <div>
-                                            <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                                            <nav className="relative z-0 inline-flex rounded-md shadow-xs -space-x-px">
                                                 <Button
                                                     variant="outline"
                                                     onClick={() => handlePageChange(pagination.page - 1)}

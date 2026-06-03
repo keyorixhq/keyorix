@@ -99,7 +99,7 @@ const ToastComponent: React.FC<ToastProps> = ({
             <div className={clsx('max-w-sm w-full shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden', config.bgColor)}>
                 <div className="p-4">
                     <div className="flex items-start">
-                        <div className="flex-shrink-0">
+                        <div className="shrink-0">
                             <Icon className={clsx('h-6 w-6', config.iconColor)} aria-hidden="true" />
                         </div>
                         <div className="ml-3 w-0 flex-1 pt-0.5">
@@ -112,10 +112,10 @@ const ToastComponent: React.FC<ToastProps> = ({
                                 </p>
                             )}
                         </div>
-                        <div className="ml-4 flex-shrink-0 flex">
+                        <div className="ml-4 shrink-0 flex">
                             <button
                                 className={clsx(
-                                    'rounded-md inline-flex focus:outline-none focus:ring-2 focus:ring-offset-2',
+                                    'rounded-md inline-flex focus:outline-hidden focus:ring-2 focus:ring-offset-2',
                                     config.bgColor,
                                     config.titleColor,
                                     'hover:' + config.messageColor

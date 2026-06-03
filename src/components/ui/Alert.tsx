@@ -79,7 +79,7 @@ const Alert: React.FC<AlertProps> = ({
             className
         )}>
             <div className="flex">
-                <div className="flex-shrink-0">
+                <div className="shrink-0">
                     <Icon className={clsx('h-5 w-5', config.iconColor)} aria-hidden="true" />
                 </div>
                 <div className="ml-3 flex-1">
@@ -105,7 +105,7 @@ const Alert: React.FC<AlertProps> = ({
                             <button
                                 type="button"
                                 className={clsx(
-                                    'inline-flex rounded-md p-1.5 focus:outline-none focus:ring-2 focus:ring-offset-2',
+                                    'inline-flex rounded-md p-1.5 focus:outline-hidden focus:ring-2 focus:ring-offset-2',
                                     config.buttonColor
                                 )}
                                 onClick={onDismiss}

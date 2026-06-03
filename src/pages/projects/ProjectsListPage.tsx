@@ -51,7 +51,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
                             placeholder="e.g. backend-api"
                             autoFocus
-                            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                            className="w-full px-3 py-2 rounded-lg text-sm outline-hidden"
                             style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                         />
                     </div>
@@ -64,7 +64,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
                             value={description}
                             onChange={e => setDescription(e.target.value)}
                             placeholder="Optional"
-                            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                            className="w-full px-3 py-2 rounded-lg text-sm outline-hidden"
                             style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                         />
                     </div>
@@ -107,7 +107,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest }) => 
             onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)'}
         >
-            <div className="flex-shrink-0 h-9 w-9 rounded-lg flex items-center justify-center"
+            <div className="shrink-0 h-9 w-9 rounded-lg flex items-center justify-center"
                 style={{ backgroundColor: 'var(--accent-subtle)' }}>
                 <FolderIcon className="h-5 w-5" style={{ color: 'var(--accent)' }} />
             </div>
@@ -123,7 +123,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest }) => 
                 )}
             </div>
 
-            <div className="hidden sm:flex items-center gap-4 text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+            <div className="hidden sm:flex items-center gap-4 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
                 <span>{project.secretCount ?? 0} secrets</span>
                 <span>{project.environmentCount ?? 0} envs</span>
                 {project.lastActivity && (
@@ -133,7 +133,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest }) => 
                 )}
                 <button
                     onClick={e => { e.stopPropagation(); onDeleteRequest(project); }}
-                    className="p-1.5 rounded transition-colors hover:bg-red-50"
+                    className="p-1.5 rounded-sm transition-colors hover:bg-red-50"
                     style={{ color: 'var(--error)' }}
                     title="Delete project"
                 >
@@ -216,7 +216,7 @@ export const ProjectsListPage: React.FC = () => {
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     placeholder="Search projects…"
-                    className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-none"
+                    className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-hidden"
                     style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
                 />
             </div>
@@ -317,7 +317,7 @@ export const ProjectsListPage: React.FC = () => {
                                 onChange={e => setDeleteConfirm(e.target.value)}
                                 placeholder={projectToDelete?.name}
                                 autoFocus
-                                className="w-full rounded-lg border px-3 py-2 text-sm outline-none"
+                                className="w-full rounded-lg border px-3 py-2 text-sm outline-hidden"
                                 style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}
                             />
                         </>

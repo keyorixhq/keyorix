@@ -45,7 +45,7 @@ const ScoreRing: React.FC<{ score: number }> = ({ score }) => {
     const color = scoreColor(score);
     const offset = CIRC * (1 - score / 100);
     return (
-        <svg width="160" height="160" viewBox="0 0 160 160" className="flex-shrink-0">
+        <svg width="160" height="160" viewBox="0 0 160 160" className="shrink-0">
             {/* Track */}
             <circle
                 cx="80" cy="80" r={RADIUS}
@@ -136,7 +136,7 @@ interface SectionCardProps {
 }
 
 const SectionCard: React.FC<SectionCardProps> = ({ title, icon, linkLabel, linkTo, children }) => (
-    <div className="bg-surface border border-base rounded-xl shadow-sm">
+    <div className="bg-surface border border-base rounded-xl shadow-xs">
         <div className="flex items-center justify-between px-6 py-4 border-b border-base">
             <div className="flex items-center gap-2">
                 <span style={{ color: 'var(--text-muted)' }}>{icon}</span>
@@ -176,7 +176,7 @@ const StatRow: React.FC<StatRowProps> = ({ label, value, dot }) => (
         <div className="flex items-center gap-2.5">
             {dot && (
                 <div
-                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    className="w-2 h-2 rounded-full shrink-0"
                     style={{ backgroundColor: DOT_COLORS[dot] }}
                 />
             )}
@@ -230,7 +230,7 @@ export function SecretsHealthPage() {
                 ) : (
                     <>
                         {/* ── Health Score Card (full width) ────────────────── */}
-                        <div className="bg-surface border border-base rounded-xl shadow-sm">
+                        <div className="bg-surface border border-base rounded-xl shadow-xs">
                             <div className="px-6 py-4 border-b border-base">
                                 <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">
                                     Secrets Health Score
@@ -239,7 +239,7 @@ export function SecretsHealthPage() {
                             </div>
                             <div className="p-6 flex flex-col sm:flex-row gap-8 items-center sm:items-start">
                                 {/* Ring */}
-                                <div className="flex flex-col items-center gap-2 flex-shrink-0">
+                                <div className="flex flex-col items-center gap-2 shrink-0">
                                     <ScoreRing score={score} />
                                     <span
                                         className="text-sm font-semibold"
@@ -296,7 +296,7 @@ export function SecretsHealthPage() {
                                             color: isDark ? '#f87171' : '#991b1b',
                                         }}
                                     >
-                                        <ExclamationTriangleIcon className="h-4 w-4 flex-shrink-0" />
+                                        <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
                                         {expiry.expired} secret{expiry.expired !== 1 ? 's have' : ' has'} already expired and may be breaking dependent services.
                                     </div>
                                 )}
@@ -314,7 +314,7 @@ export function SecretsHealthPage() {
                                     </p>
                                     <p className="text-xs max-w-xs" style={{ color: 'var(--text-muted)' }}>
                                         Rotation data will appear here once secrets have been rotated via the CLI or dashboard.
-                                        The <code className="px-1 py-0.5 rounded text-[11px]" style={{ backgroundColor: 'var(--bg-subtle)' }}>last_rotated_at</code> field is not yet tracked.
+                                        The <code className="px-1 py-0.5 rounded-sm text-[11px]" style={{ backgroundColor: 'var(--bg-subtle)' }}>last_rotated_at</code> field is not yet tracked.
                                     </p>
                                 </div>
                             </SectionCard>
@@ -348,7 +348,7 @@ export function SecretsHealthPage() {
                                         }}
                                         onClick={() => navigate('/audit?tab=audit&filter=failed')}
                                     >
-                                        <ExclamationTriangleIcon className="h-4 w-4 flex-shrink-0" />
+                                        <ExclamationTriangleIcon className="h-4 w-4 shrink-0" />
                                         High number of failed auth attempts. Review audit log for potential brute-force activity.
                                     </div>
                                 )}
@@ -398,7 +398,7 @@ export function SecretsHealthPage() {
                                                     }}
                                                 >
                                                     <div
-                                                        className="w-2 h-2 rounded-full flex-shrink-0 mt-1.5"
+                                                        className="w-2 h-2 rounded-full shrink-0 mt-1.5"
                                                         style={{ backgroundColor: '#ef4444' }}
                                                     />
                                                     <div className="flex-1 min-w-0">

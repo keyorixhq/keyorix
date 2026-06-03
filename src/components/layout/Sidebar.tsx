@@ -162,13 +162,13 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
             >
                 <span className="flex items-center gap-2.5 truncate">
                     {item.icon && (
-                        <item.icon className="h-4 w-4 flex-shrink-0"
+                        <item.icon className="h-4 w-4 shrink-0"
                             style={{ color: active ? 'var(--accent)' : 'var(--text-muted)' }} />
                     )}
                     {item.name}
                 </span>
                 {item.soon && (
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide flex-shrink-0"
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-sm uppercase tracking-wide shrink-0"
                         style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
                         Soon
                     </span>
@@ -195,12 +195,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                     onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
                 >
                     <span className="flex items-center gap-2.5">
-                        <item.icon className="h-4 w-4 flex-shrink-0"
+                        <item.icon className="h-4 w-4 shrink-0"
                             style={{ color: active ? 'var(--accent)' : 'var(--text-muted)' }} />
                         {item.name}
                     </span>
                     <ChevronDownIcon
-                        className={clsx('h-3.5 w-3.5 flex-shrink-0 transition-transform duration-200',
+                        className={clsx('h-3.5 w-3.5 shrink-0 transition-transform duration-200',
                             expanded && 'rotate-180')}
                         style={{ color: 'var(--text-muted)' }}
                     />
@@ -220,10 +220,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
     const SidebarContent = () => (
         <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--bg-surface)' }}>
             {/* Logo */}
-            <div className="flex items-center px-5 py-5 border-b flex-shrink-0"
+            <div className="flex items-center px-5 py-5 border-b shrink-0"
                 style={{ borderColor: 'var(--border)' }}>
                 <Link to="/dashboard" className="flex items-center space-x-2" onClick={onClose}>
-                    <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
                         <span className="text-white font-bold text-sm">K</span>
                     </div>
                     <span className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -247,11 +247,11 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
             </nav>
 
             {/* Footer */}
-            <div className="px-4 py-3 border-t flex-shrink-0 flex items-center justify-between"
+            <div className="px-4 py-3 border-t shrink-0 flex items-center justify-between"
                 style={{ borderColor: 'var(--border)' }}>
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Keyorix v0.1.0</p>
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    <kbd className="px-1 py-0.5 rounded text-[10px]"
+                    <kbd className="px-1 py-0.5 rounded-sm text-[10px]"
                         style={{ backgroundColor: 'var(--bg-muted)' }}>⌘K</kbd>
                     {' '}search
                 </span>
@@ -277,21 +277,21 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
                                 style={{ backgroundColor: 'var(--bg-surface)' }}>
                                 <div className="absolute top-0 right-0 -mr-12 pt-2">
                                     <button type="button" onClick={onClose}
-                                        className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white">
+                                        className="ml-1 flex items-center justify-center h-10 w-10 rounded-full focus:outline-hidden focus:ring-2 focus:ring-inset focus:ring-white">
                                         <XMarkIcon className="h-6 w-6 text-white" />
                                     </button>
                                 </div>
                                 <SidebarContent />
                             </Dialog.Panel>
                         </Transition.Child>
-                        <div className="flex-shrink-0 w-14" aria-hidden="true" />
+                        <div className="shrink-0 w-14" aria-hidden="true" />
                     </div>
                 </Dialog>
             </Transition.Root>
 
             {/* Desktop */}
             <div className={clsx('hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0', className)}>
-                <div className="flex flex-col flex-grow border-r overflow-y-auto"
+                <div className="flex flex-col grow border-r overflow-y-auto"
                     style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
                     <SidebarContent />
                 </div>

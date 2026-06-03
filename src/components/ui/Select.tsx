@@ -36,8 +36,8 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
         const hasError = Boolean(error);
 
         const baseSelectClasses = [
-            'block px-3 py-2 pr-10 border rounded-md shadow-sm',
-            'focus:outline-none focus:ring-2 focus:ring-offset-0',
+            'block px-3 py-2 pr-10 border rounded-md shadow-xs',
+            'focus:outline-hidden focus:ring-2 focus:ring-offset-0',
             'transition-colors duration-200 appearance-none',
             'disabled:bg-gray-50 disabled:text-base-muted disabled:cursor-not-allowed',
         ];

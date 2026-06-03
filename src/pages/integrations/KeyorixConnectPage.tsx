@@ -42,7 +42,7 @@ export const KeyorixConnectPage: React.FC = () => (
 
         <SectionCard title="Available Now">
             <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                The <code className="px-1 rounded text-xs font-mono"
+                The <code className="px-1 rounded-sm text-xs font-mono"
                     style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}>
                     keyorix connect
                 </code> CLI command is available in v0.1.0. It establishes a named remote

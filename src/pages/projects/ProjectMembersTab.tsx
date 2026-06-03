@@ -41,8 +41,8 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId:
                             <div key={i} className="flex items-center gap-3 animate-pulse">
                                 <div className="h-8 w-8 rounded-full" style={{ backgroundColor: 'var(--bg-muted)' }} />
                                 <div className="flex-1">
-                                    <div className="h-3 w-32 rounded mb-1.5" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                                    <div className="h-2.5 w-48 rounded" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                                    <div className="h-3 w-32 rounded-sm mb-1.5" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                                    <div className="h-2.5 w-48 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
                                 </div>
                             </div>
                         ))}
@@ -56,7 +56,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId:
                     <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                         {users.map((user: any) => (
                             <li key={user.id} className="flex items-center gap-3 px-4 py-3">
-                                <div className="h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-semibold"
+                                <div className="h-8 w-8 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold"
                                     style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-text)' }}>
                                     {(user.displayName ?? user.username ?? '?').charAt(0).toUpperCase()}
                                 </div>
@@ -68,7 +68,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId:
                                         {user.email}
                                     </p>
                                 </div>
-                                <span className="text-xs px-2 py-0.5 rounded-full flex-shrink-0"
+                                <span className="text-xs px-2 py-0.5 rounded-full shrink-0"
                                     style={{
                                         backgroundColor: user.isActive !== false ? 'var(--success-subtle)' : 'var(--bg-muted)',
                                         color: user.isActive !== false ? 'var(--success)' : 'var(--text-muted)',

@@ -27,7 +27,7 @@ function eventBadge(eventType: string, isDark: boolean) {
     const bg = e ? (isDark ? e.darkBg : e.lightBg) : (isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9');
     const color = e ? (isDark ? e.darkColor : e.lightColor) : (isDark ? '#94a3b8' : '#475569');
     return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: bg, color }}>
+        <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium" style={{ backgroundColor: bg, color }}>
             {label}
         </span>
     );
@@ -104,11 +104,11 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
     };
 
     if (isLoading) return (
-        <div className="bg-surface border border-base rounded-xl shadow-sm p-12 flex justify-center"><Loading /></div>
+        <div className="bg-surface border border-base rounded-xl shadow-xs p-12 flex justify-center"><Loading /></div>
     );
 
     if (!anomalies.length) return (
-        <div className="bg-surface border border-base rounded-xl shadow-sm p-12 text-center">
+        <div className="bg-surface border border-base rounded-xl shadow-xs p-12 text-center">
             <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-3">
                 <span className="text-emerald-600 text-lg">✓</span>
             </div>
@@ -118,7 +118,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
     );
 
     return (
-        <div className="bg-surface border border-base rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-surface border border-base rounded-xl shadow-xs overflow-hidden">
 
             {/* ── Filters bar ─────────────────────────────────────────── */}
             <div className="px-5 py-3 border-b border-base flex items-center gap-3 flex-wrap">
@@ -133,7 +133,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                             <button key={s} onClick={() => setFilterSev(s)}
                                 className={`px-2.5 py-1 rounded text-xs font-medium border transition-all duration-100 capitalize
                                     ${active
-                                        ? style ? '' : 'bg-surface border-base text-base-primary shadow-sm'
+                                        ? style ? '' : 'bg-surface border-base text-base-primary shadow-xs'
                                         : 'border-transparent text-base-muted hover:text-base-secondary'}`}
                                 style={active && style
                                     ? { backgroundColor: style.bg, color: style.color, borderColor: style.color + '50' }
@@ -152,7 +152,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                         <button key={k} onClick={() => setFilterStatus(k)}
                             className={`px-2.5 py-1 rounded text-xs font-medium border transition-all duration-100
                                 ${filterStatus === k
-                                    ? 'bg-surface border-base text-base-primary shadow-sm'
+                                    ? 'bg-surface border-base text-base-primary shadow-xs'
                                     : 'border-transparent text-base-muted hover:text-base-secondary'}`}>
                             {l}
                         </button>
@@ -199,7 +199,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                             </td>
                                             {/* Alert type badge — same colour as severity */}
                                             <td className="px-5 py-3 whitespace-nowrap">
-                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium"
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium"
                                                     style={{ backgroundColor: sty.bg, color: sty.color }}>
                                                     {a.AlertType}
                                                 </span>
@@ -209,7 +209,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                             <td className="px-5 py-3 text-sm text-base-muted tabular-nums">{a.IPAddress}</td>
                                             {/* Severity badge */}
                                             <td className="px-5 py-3 whitespace-nowrap">
-                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase"
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-semibold uppercase"
                                                     style={{ backgroundColor: sty.bg, color: sty.color }}>
                                                     {a.Severity}
                                                 </span>
@@ -309,7 +309,7 @@ export const AuditLogPage: React.FC = () => {
                         onClick={() => setActiveTab('audit')}
                         className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-100 ${
                             activeTab === 'audit'
-                                ? 'bg-surface text-base-primary shadow-sm border border-base'
+                                ? 'bg-surface text-base-primary shadow-xs border border-base'
                                 : 'text-base-muted hover:text-base-secondary'
                         }`}
                     >
@@ -319,7 +319,7 @@ export const AuditLogPage: React.FC = () => {
                         onClick={() => setActiveTab('anomalies')}
                         className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-100 flex items-center gap-2 ${
                             activeTab === 'anomalies'
-                                ? 'bg-surface text-base-primary shadow-sm border border-base'
+                                ? 'bg-surface text-base-primary shadow-xs border border-base'
                                 : 'text-base-muted hover:text-base-secondary'
                         }`}
                     >
@@ -339,7 +339,7 @@ export const AuditLogPage: React.FC = () => {
                             <Alert type="error" title="Failed to load audit log"
                                 message="There was an error loading the audit log. Please try again." />
                         )}
-                        <div className="bg-surface border border-base rounded-xl shadow-sm overflow-hidden">
+                        <div className="bg-surface border border-base rounded-xl shadow-xs overflow-hidden">
                             {isLoading ? (
                                 <div className="p-12 flex justify-center"><Loading /></div>
                             ) : !data?.data?.length ? (

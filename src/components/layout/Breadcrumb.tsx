@@ -25,7 +25,7 @@ const Breadcrumb: React.FC<BreadcrumbProps> = ({ items, className }) => {
                             to="/dashboard"
                             className="text-gray-400 hover:text-gray-500 transition-colors duration-200"
                         >
-                            <HomeIcon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+                            <HomeIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
                             <span className="sr-only">Home</span>
                         </Link>
                     </div>
@@ -35,7 +35,7 @@ const Breadcrumb: React.FC<BreadcrumbProps> = ({ items, className }) => {
                     <li key={item.name}>
                         <div className="flex items-center">
                             <ChevronRightIcon
-                                className="h-5 w-5 flex-shrink-0 text-gray-400"
+                                className="h-5 w-5 shrink-0 text-gray-400"
                                 aria-hidden="true"
                             />
                             {item.href && !item.current ? (

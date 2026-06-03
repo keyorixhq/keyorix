@@ -39,7 +39,7 @@ const QuarterCard: React.FC<QuarterCardProps> = ({ quarter, badge, items }) => (
             <ul className="space-y-2">
                 {items.map((item, i) => (
                     <li key={i} className="flex items-start gap-2.5">
-                        <span className="h-1.5 w-1.5 rounded-full flex-shrink-0 mt-1.5 opacity-60"
+                        <span className="h-1.5 w-1.5 rounded-full shrink-0 mt-1.5 opacity-60"
                             style={{ backgroundColor: 'var(--text-muted)' }} />
                         <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{item}</span>
                     </li>

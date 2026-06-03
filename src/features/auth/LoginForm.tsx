@@ -68,8 +68,8 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                     value={formData.username}
                     onChange={(e) => handleInputChange('username', e.target.value)}
                     className={cn(
-                        'block w-full px-3 py-2 border rounded-md shadow-sm',
-                        'focus:outline-none focus:ring-2 focus:ring-offset-2',
+                        'block w-full px-3 py-2 border rounded-md shadow-xs',
+                        'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
                         validationErrors.username
                             ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
                             : 'border-base focus:border-blue-500 focus:ring-blue-500'
@@ -97,8 +97,8 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                         value={formData.password}
                         onChange={(e) => handleInputChange('password', e.target.value)}
                         className={cn(
-                            'block w-full px-3 py-2 pr-10 border rounded-md shadow-sm',
-                            'focus:outline-none focus:ring-2 focus:ring-offset-2',
+                            'block w-full px-3 py-2 pr-10 border rounded-md shadow-xs',
+                            'focus:outline-hidden focus:ring-2 focus:ring-offset-2',
                             validationErrors.password
                                 ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
                                 : 'border-base focus:border-blue-500 focus:ring-blue-500'
@@ -134,7 +134,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                         type="checkbox"
                         checked={formData.rememberMe}
                         onChange={(e) => handleInputChange('rememberMe', e.target.checked)}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-base rounded"
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-base rounded-sm"
                         disabled={isLoading}
                     />
                     <label htmlFor="rememberMe" className="ml-2 block text-sm text-base-secondary">
@@ -145,7 +145,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                     <button
                         type="button"
                         onClick={onForgotPassword}
-                        className="text-sm text-blue-600 hover:text-blue-500 focus:outline-none focus:underline"
+                        className="text-sm text-blue-600 hover:text-blue-500 focus:outline-hidden focus:underline"
                         disabled={isLoading}
                     >
                         Forgot password?
@@ -163,8 +163,8 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                 type="submit"
                 disabled={isLoading}
                 className={cn(
-                    'w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white',
-                    'focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500',
+                    'w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-xs text-sm font-medium text-white',
+                    'focus:outline-hidden focus:ring-2 focus:ring-offset-2 focus:ring-blue-500',
                     isLoading ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
                 )}
             >

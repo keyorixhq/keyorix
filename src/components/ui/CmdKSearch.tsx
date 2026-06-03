@@ -113,7 +113,7 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
             >
                 {/* Input */}
                 <div className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
-                    <MagnifyingGlassIcon className="h-5 w-5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                    <MagnifyingGlassIcon className="h-5 w-5 shrink-0" style={{ color: 'var(--text-muted)' }} />
                     <input
                         ref={inputRef}
                         type="text"
@@ -121,13 +121,13 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                         onChange={e => setQuery(e.target.value)}
                         onKeyDown={handleKeyDown}
                         placeholder="Search projects and secrets…"
-                        className="flex-1 bg-transparent outline-none text-sm"
+                        className="flex-1 bg-transparent outline-hidden text-sm"
                         style={{ color: 'var(--text-primary)' }}
                     />
                     {isSearching && (
-                        <div className="animate-spin rounded-full h-3.5 w-3.5 border-b border-blue-500 flex-shrink-0" />
+                        <div className="animate-spin rounded-full h-3.5 w-3.5 border-b border-blue-500 shrink-0" />
                     )}
-                    <kbd className="text-xs px-1.5 py-0.5 rounded"
+                    <kbd className="text-xs px-1.5 py-0.5 rounded-sm"
                         style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }}>
                         esc
                     </kbd>
@@ -150,7 +150,7 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                                     className="w-full flex items-center gap-3 px-4 py-2.5 text-left"
                                     style={{ backgroundColor: i === activeIndex ? 'var(--accent-subtle)' : 'transparent' }}
                                 >
-                                    <div className="flex-shrink-0 h-7 w-7 rounded flex items-center justify-center"
+                                    <div className="shrink-0 h-7 w-7 rounded-sm flex items-center justify-center"
                                         style={{ backgroundColor: result.type === 'project' ? 'var(--accent-subtle)' : 'var(--bg-muted)' }}>
                                         {result.type === 'project'
                                             ? <FolderIcon className="h-4 w-4" style={{ color: 'var(--accent)' }} />
@@ -167,7 +167,7 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                                             </p>
                                         )}
                                     </div>
-                                    <span className="text-xs flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                    <span className="text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
                                         {result.type}
                                     </span>
                                 </button>
@@ -179,9 +179,9 @@ export const CmdKSearch: React.FC<CmdKSearchProps> = ({ onClose }) => {
                 {/* Footer hints */}
                 {!query.trim() && (
                     <div className="px-4 py-3 flex items-center gap-4 text-xs" style={{ color: 'var(--text-muted)' }}>
-                        <span><kbd className="px-1 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-muted)' }}>↑↓</kbd> navigate</span>
-                        <span><kbd className="px-1 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-muted)' }}>↵</kbd> open</span>
-                        <span><kbd className="px-1 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-muted)' }}>esc</kbd> close</span>
+                        <span><kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>↑↓</kbd> navigate</span>
+                        <span><kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>↵</kbd> open</span>
+                        <span><kbd className="px-1 py-0.5 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }}>esc</kbd> close</span>
                     </div>
                 )}
             </div>

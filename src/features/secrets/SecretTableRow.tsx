@@ -40,7 +40,7 @@ const TypeBadge: React.FC<{ type: string }> = ({ type }) => {
     const s = TYPE_STYLES[type] ?? { darkBg: 'rgba(148,163,184,0.15)', darkColor: '#94a3b8', lightBg: '#f1f5f9', lightColor: '#475569', label: type };
     return (
         <span
-            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium tracking-wide"
+            className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium tracking-wide"
             style={{ backgroundColor: isDark ? s.darkBg : s.lightBg, color: isDark ? s.darkColor : s.lightColor }}
         >
             {s.label}
@@ -57,7 +57,7 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
         <td className="px-4 py-4 w-10">
             <input
                 type="checkbox"
-                className="rounded border-base text-blue-600 focus:ring-blue-500"
+                className="rounded-sm border-base text-blue-600 focus:ring-blue-500"
                 checked={isSelected}
                 onChange={() => onToggleSelect(secret.id)}
             />
@@ -67,7 +67,7 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
             {secret.tags.length > 0 && (
                 <div className="flex items-center space-x-1 mt-1">
                     {secret.tags.slice(0, 3).map(tag => (
-                        <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-subtle text-base-secondary">
+                        <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-subtle text-base-secondary">
                             {tag}
                         </span>
                     ))}
@@ -81,7 +81,7 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
             <TypeBadge type={secret.type} />
         </td>
         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-subtle text-base-secondary capitalize">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-subtle text-base-secondary capitalize">
                 {secret.environment || 'production'}
             </span>
         </td>

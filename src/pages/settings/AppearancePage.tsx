@@ -72,7 +72,7 @@ export const AppearancePage: React.FC = () => {
                                     className="sr-only"
                                 />
                                 {/* Custom radio indicator */}
-                                <div className="flex-shrink-0 h-4 w-4 rounded-full border-2 flex items-center justify-center transition-colors"
+                                <div className="shrink-0 h-4 w-4 rounded-full border-2 flex items-center justify-center transition-colors"
                                     style={{
                                         borderColor: selected ? 'var(--accent)' : 'var(--border-strong)',
                                     }}>
@@ -81,7 +81,7 @@ export const AppearancePage: React.FC = () => {
                                     )}
                                 </div>
 
-                                <Icon className="h-5 w-5 flex-shrink-0"
+                                <Icon className="h-5 w-5 shrink-0"
                                     style={{ color: selected ? 'var(--accent)' : 'var(--text-muted)' }} />
 
                                 <div className="flex-1 min-w-0">

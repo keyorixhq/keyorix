@@ -73,7 +73,7 @@ const StatusBadge: React.FC<{ days: number }> = ({ days }) => {
     const style = isDark ? s.dark : s.light;
     return (
         <span
-            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium tracking-wide"
+            className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium tracking-wide"
             style={{ backgroundColor: style.bg, color: style.color }}
         >
             {s.label}
@@ -87,7 +87,7 @@ const TypeBadge: React.FC<{ type: string }> = ({ type }) => {
     const s = (TYPE_STYLES[type] ?? TYPE_STYLES.text)!;
     return (
         <span
-            className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium tracking-wide"
+            className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium tracking-wide"
             style={{ backgroundColor: isDark ? s.darkBg : s.lightBg, color: isDark ? s.darkColor : s.lightColor }}
         >
             {s.label}
@@ -164,7 +164,7 @@ const ExpiryRow: React.FC<{ secret: Secret }> = ({ secret }) => {
             </td>
             <td className="px-6 py-4 whitespace-nowrap">
                 <span
-                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize"
+                    className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium capitalize"
                     style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}
                 >
                     {secret.environment || 'production'}

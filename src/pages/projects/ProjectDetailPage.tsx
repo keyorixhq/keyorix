@@ -26,7 +26,7 @@ const Breadcrumb: React.FC<{ projectName: string }> = ({ projectName }) => (
         <Link to={ROUTES.PROJECTS} className="hover:underline" style={{ color: 'var(--text-secondary)' }}>
             Projects
         </Link>
-        <ChevronRightIcon className="h-3.5 w-3.5 flex-shrink-0" />
+        <ChevronRightIcon className="h-3.5 w-3.5 shrink-0" />
         <span style={{ color: 'var(--text-primary)' }}>{projectName}</span>
     </nav>
 );
@@ -72,8 +72,8 @@ export const ProjectDetailPage: React.FC = () => {
     if (isLoading) {
         return (
             <div className="p-6 max-w-5xl mx-auto animate-pulse">
-                <div className="h-4 w-32 rounded mb-5" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                <div className="h-8 w-56 rounded mb-6" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                <div className="h-4 w-32 rounded-sm mb-5" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                <div className="h-8 w-56 rounded-sm mb-6" style={{ backgroundColor: 'var(--bg-muted)' }} />
             </div>
         );
     }
@@ -96,7 +96,7 @@ export const ProjectDetailPage: React.FC = () => {
 
             {/* Project header */}
             <div className="flex items-center gap-3 mb-6">
-                <div className="h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                <div className="h-10 w-10 rounded-lg flex items-center justify-center shrink-0"
                     style={{ backgroundColor: 'var(--accent-subtle)' }}>
                     <FolderIcon className="h-5 w-5" style={{ color: 'var(--accent)' }} />
                 </div>

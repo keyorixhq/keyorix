@@ -86,7 +86,7 @@ const Modal: React.FC<ModalProps> = ({
                                         {showCloseButton && (
                                             <button
                                                 type="button"
-                                                className="rounded-md text-base-muted hover:text-base-muted focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                className="rounded-md text-base-muted hover:text-base-muted focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                                                 onClick={onClose}
                                             >
                                                 <span className="sr-only">Close</span>

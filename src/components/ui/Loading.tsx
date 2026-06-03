@@ -101,7 +101,7 @@ const Skeleton: React.FC<SkeletonProps> = ({
                 <div
                     key={index}
                     className={clsx(
-                        'bg-gray-200 rounded',
+                        'bg-gray-200 rounded-sm',
                         height,
                         index === lines - 1 && lines > 1 ? 'w-3/4' : 'w-full'
                     )}

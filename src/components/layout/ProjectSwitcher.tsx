@@ -91,7 +91,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                 }}
             >
                 <div
-                    className="h-5 w-5 rounded flex items-center justify-center flex-shrink-0"
+                    className="h-5 w-5 rounded-sm flex items-center justify-center shrink-0"
                     style={{ backgroundColor: 'var(--accent-subtle)' }}
                 >
                     <FolderIcon className="h-3 w-3" style={{ color: 'var(--accent)' }} />
@@ -99,7 +99,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                 <span className="flex-1 text-left truncate text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
                     {isLoading ? 'Loading…' : currentProject ? currentProject.name : 'Select project'}
                 </span>
-                <ChevronUpDownIcon className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <ChevronUpDownIcon className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
             </button>
 
             {/* Dropdown */}
@@ -125,7 +125,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                                 value={search}
                                 onChange={e => setSearch(e.target.value)}
                                 placeholder="Search projects…"
-                                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-md outline-none"
+                                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-md outline-hidden"
                                 style={{
                                     backgroundColor: 'var(--bg-app)',
                                     border: '1px solid var(--border)',
@@ -155,7 +155,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                                         onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
                                     >
                                         <div
-                                            className="h-5 w-5 rounded flex items-center justify-center flex-shrink-0"
+                                            className="h-5 w-5 rounded-sm flex items-center justify-center shrink-0"
                                             style={{ backgroundColor: isCurrent ? 'var(--accent-subtle)' : 'var(--bg-muted)' }}
                                         >
                                             <FolderIcon
@@ -175,7 +175,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                                             )}
                                         </div>
                                         {isCurrent && (
-                                            <CheckIcon className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--accent)' }} />
+                                            <CheckIcon className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--accent)' }} />
                                         )}
                                     </button>
                                 );
@@ -193,7 +193,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                             onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
                             onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
                         >
-                            <FolderIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                            <FolderIcon className="h-3.5 w-3.5 shrink-0" />
                             All projects
                         </Link>
                         <button
@@ -204,7 +204,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                             onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
                             onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
                         >
-                            <PlusIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                            <PlusIcon className="h-3.5 w-3.5 shrink-0" />
                             New project
                         </button>
                     </div>

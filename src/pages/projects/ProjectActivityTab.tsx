@@ -63,8 +63,8 @@ export const ProjectActivityTab: React.FC<ProjectActivityTabProps> = ({ projectI
                         {[1, 2, 3, 4, 5].map(i => (
                             <div key={i} className="flex items-center gap-3 animate-pulse">
                                 <div className="h-5 w-24 rounded-full" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                                <div className="h-3 flex-1 rounded" style={{ backgroundColor: 'var(--bg-muted)' }} />
-                                <div className="h-3 w-16 rounded" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                                <div className="h-3 flex-1 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
+                                <div className="h-3 w-16 rounded-sm" style={{ backgroundColor: 'var(--bg-muted)' }} />
                             </div>
                         ))}
                     </div>
