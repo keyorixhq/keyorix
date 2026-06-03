@@ -25,6 +25,25 @@ the dependents below stay parked. When it lands, revisit each.
 - **Formatting policy.** Adopting enforced Prettier (see below) is best
   coordinated with the rewrite so the large reformat doesn't collide with it.
 
+## End-to-end tests (Playwright) — stale, needs rewrite
+
+The `e2e/` Playwright specs are **stale** (verified 2026-06-03, not just
+unrun):
+
+- `auth.spec.ts` and `secrets.spec.ts` target `data-testid`s
+  (`email-input`, `password-input`, `login-button`, `create-secret-button`, …)
+  that **exist nowhere in the current source** — they predate the UI refactor.
+- They drive a real login (`password123` → `/dashboard`) but there is **no API
+  mocking** (no MSW, no `page.route`) and `webServer` runs only the frontend
+  (`npm run dev`), so the auth/secrets flows can't pass.
+- `example.spec.ts` (title / viewport / `#root` smoke checks) is backend-free
+  and would likely still pass.
+
+Rewrite as part of / alongside the shadcn rewrite: add stable `data-testid`s to
+the new components and a mock backend (MSW or `page.route`) or a seeded test
+environment. Until then `test:e2e` is not wired into CI (CI runs the unit gate
+only). Vite dev server is on port 3000, matching the Playwright `baseURL`.
+
 ## Formatting / Prettier (not enforced — deliberate)
 
 The repo's house style is **4-space indentation + single quotes**, but there is
