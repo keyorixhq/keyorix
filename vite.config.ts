@@ -38,11 +38,13 @@ export default defineConfig({
         sourcemap: true,
         rollupOptions: {
             output: {
-                manualChunks: {
-                    vendor: ['react', 'react-dom'],
-                    router: ['react-router-dom'],
-                    query: ['@tanstack/react-query'],
-                    ui: ['@headlessui/react', '@heroicons/react'],
+                manualChunks(id) {
+                    if (!id.includes('node_modules')) return undefined;
+                    if (id.includes('react-router')) return 'router';
+                    if (id.includes('@tanstack/react-query')) return 'query';
+                    if (id.includes('@headlessui') || id.includes('@heroicons')) return 'ui';
+                    if (id.includes('/react-dom/') || id.includes('/react/')) return 'vendor';
+                    return undefined;
                 },
             },
         },

@@ -14,7 +14,7 @@ import { useProjects } from '../../features/projects/api';
 function useCurrentProjectId(): number | null {
     const { pathname } = useLocation();
     const match = pathname.match(/^\/projects\/(\d+)/);
-    return match ? parseInt(match[1], 10) : null;
+    return match?.[1] ? parseInt(match[1], 10) : null;
 }
 
 // ── component ─────────────────────────────────────────────────────────────────
