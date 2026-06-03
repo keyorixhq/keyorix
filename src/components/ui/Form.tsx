@@ -16,7 +16,9 @@ export const useFormContext = <T extends FieldValues = FieldValues>(): UseFormRe
 };
 
 export interface FormProps<T extends FieldValues = FieldValues> extends Omit<React.FormHTMLAttributes<HTMLFormElement>, 'onSubmit'> {
-    schema?: z.ZodSchema<T>;
+    // z.ZodType<T> across zod 3/4; the resolver input is cast at the call
+    // site below since this generic Form guarantees T extends FieldValues.
+    schema?: z.ZodType<T>;
     onSubmit: SubmitHandler<T>;
     defaultValues?: UseFormProps<T>['defaultValues'];
     mode?: UseFormProps<T>['mode'];
@@ -34,7 +36,7 @@ function Form<T extends FieldValues = FieldValues>({
     ...props
 }: FormProps<T>) {
     const formMethods = useForm<T>({
-        ...(schema && { resolver: zodResolver(schema) }),
+        ...(schema && { resolver: zodResolver(schema as z.ZodType<T, any, any>) }),
         ...(defaultValues && { defaultValues }),
         mode,
     });
