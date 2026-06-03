@@ -187,6 +187,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.IdentityProvider{},
 		&models.ExternalIdentity{},
 		&models.AnomalyAlert{},
-		&models.RotationPolicy{},
+		// NOTE: RotationPolicy is intentionally NOT listed here. It is migrated
+		// by the standalone block above (which runs before this guarded full
+		// AutoMigrate and also covers existing DBs that predate the rotation
+		// feature). Including it here too made the full AutoMigrate re-inspect
+		// the already-created rotation_policies table, tripping the pgx
+		// "insufficient arguments" bug on a fresh DB's first boot.
 	)
 }
