@@ -23,15 +23,11 @@ vi.mock('../index', () => ({ storage: memStore }));
 
 import {
     persistAuthData,
-    getPersistedAuthData,
     clearPersistedAuthData,
-    hasRememberMe,
     updateTokenExpiry,
     isTokenValid,
     getTimeUntilExpiry,
     shouldRefreshToken,
-    shouldRestoreSession,
-    getCurrentAuthState,
 } from '../auth';
 
 const future = (ms: number) => new Date(Date.now() + ms).toISOString();
@@ -80,40 +76,31 @@ describe('shouldRefreshToken', () => {
     });
 });
 
-describe('persist / retrieve / clear', () => {
-    it('round-trips valid auth data', () => {
+describe('persist / clear', () => {
+    it('writes user, token, expiry, and remember-me to storage', () => {
         persistAuthData({
             user: { id: 1, username: 'testuser' },
             token: 'tok-1',
             expiresAt: future(60_000),
             rememberMe: true,
         });
-
-        const data = getPersistedAuthData();
-        expect(data?.token).toBe('tok-1');
-        expect((data?.user as { username: string }).username).toBe('testuser');
-        expect(data?.rememberMe).toBe(true);
-        expect(hasRememberMe()).toBe(true);
+        expect(memStore.map.get('auth-storage')).toMatchObject({
+            token: 'tok-1',
+            isAuthenticated: true,
+        });
+        expect(memStore.map.get('rememberMe')).toBe(true);
+        // the expiry write is observable through the public token API
+        expect(isTokenValid()).toBe(true);
     });
 
-    it('drops "remember me" when not requested', () => {
+    it('omits the remember-me flag when not requested', () => {
         persistAuthData({
             user: { id: 1 },
             token: 'tok-2',
             expiresAt: future(60_000),
             rememberMe: false,
         });
-        expect(hasRememberMe()).toBe(false);
-    });
-
-    it('returns null and self-clears once the token has expired', () => {
-        persistAuthData({
-            user: { id: 1 },
-            token: 'tok-3',
-            expiresAt: past(1_000),
-            rememberMe: true,
-        });
-        expect(getPersistedAuthData()).toBeNull();
+        expect(memStore.map.has('rememberMe')).toBe(false);
     });
 
     it('clear removes all persisted auth data', () => {
@@ -124,46 +111,9 @@ describe('persist / retrieve / clear', () => {
             rememberMe: true,
         });
         clearPersistedAuthData();
-        expect(getPersistedAuthData()).toBeNull();
-        expect(hasRememberMe()).toBe(false);
-    });
-});
-
-describe('getCurrentAuthState', () => {
-    it('reflects the logged-out state by default', () => {
-        expect(getCurrentAuthState()).toEqual({
-            isAuthenticated: false,
-            user: null,
-            token: null,
-            rememberMe: false,
-        });
-    });
-
-    it('reflects a persisted, valid session', () => {
-        persistAuthData({
-            user: { id: 9, username: 'admin' },
-            token: 'tok-9',
-            expiresAt: future(60_000),
-            rememberMe: true,
-        });
-        const state = getCurrentAuthState();
-        expect(state.isAuthenticated).toBe(true);
-        expect(state.token).toBe('tok-9');
-        expect(state.rememberMe).toBe(true);
-    });
-});
-
-describe('shouldRestoreSession', () => {
-    it('is false with nothing persisted', () => {
-        expect(shouldRestoreSession()).toBe(false);
-    });
-    it('is true for a valid remember-me session', () => {
-        persistAuthData({
-            user: { id: 1 },
-            token: 'tok',
-            expiresAt: future(60_000),
-            rememberMe: true,
-        });
-        expect(shouldRestoreSession()).toBe(true);
+        expect(memStore.map.has('auth-storage')).toBe(false);
+        expect(memStore.map.has('tokenExpiresAt')).toBe(false);
+        expect(memStore.map.has('rememberMe')).toBe(false);
+        expect(isTokenValid()).toBe(false);
     });
 });

@@ -39,37 +39,6 @@ export const persistAuthData = (data: AuthPersistenceData): void => {
 };
 
 /**
- * Retrieves persisted authentication data
- */
-export const getPersistedAuthData = (): Partial<AuthPersistenceData> | null => {
-    try {
-        const authData = storage.get(AUTH_STORAGE_KEY);
-        const expiresAt = storage.get<string>(TOKEN_EXPIRY_KEY);
-        const rememberMe = storage.get<boolean>(REMEMBER_ME_KEY) || false;
-
-        if (!authData || !expiresAt) {
-            return null;
-        }
-
-        // Check if token is expired
-        if (new Date(expiresAt).getTime() <= Date.now()) {
-            clearPersistedAuthData();
-            return null;
-        }
-
-        return {
-            user: (authData as any).user,
-            token: (authData as any).token,
-            expiresAt,
-            rememberMe,
-        };
-    } catch (error) {
-        console.error('Failed to retrieve persisted auth data:', error);
-        return null;
-    }
-};
-
-/**
  * Clears all persisted authentication data
  */
 export const clearPersistedAuthData = (): void => {
@@ -83,54 +52,10 @@ export const clearPersistedAuthData = (): void => {
 };
 
 /**
- * Checks if the user has "remember me" enabled
- */
-export const hasRememberMe = (): boolean => {
-    return storage.get<boolean>(REMEMBER_ME_KEY) || false;
-};
-
-/**
  * Updates the token expiration time
  */
 export const updateTokenExpiry = (expiresAt: string): void => {
     storage.set(TOKEN_EXPIRY_KEY, expiresAt);
-};
-
-/**
- * Checks if the current session should be restored
- * This considers both token expiry and remember me preference
- */
-export const shouldRestoreSession = (): boolean => {
-    const persistedData = getPersistedAuthData();
-
-    if (!persistedData) {
-        return false;
-    }
-
-    // If user didn't check "remember me", only restore if session is recent
-    if (!persistedData.rememberMe) {
-        const sessionAge = Date.now() - new Date(persistedData.expiresAt!).getTime();
-        const maxSessionAge = 24 * 60 * 60 * 1000; // 24 hours
-
-        return sessionAge < maxSessionAge;
-    }
-
-    // If "remember me" is enabled, restore as long as token is valid
-    return true;
-};
-
-/**
- * Gets the current authentication state from storage
- */
-export const getCurrentAuthState = () => {
-    const persistedData = getPersistedAuthData();
-
-    return {
-        isAuthenticated: !!persistedData,
-        user: persistedData?.user || null,
-        token: persistedData?.token || null,
-        rememberMe: persistedData?.rememberMe || false,
-    };
 };
 
 /**
