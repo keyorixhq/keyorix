@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { secretsApi } from '../../services/secrets';
 import { queryKeys } from '../../lib/queryClient';
 import { SecretType, SecretFormData } from '../../types';
@@ -52,7 +52,7 @@ export const useProjectSecrets = ({ projectId, environmentId }: UseProjectSecret
             ...(environmentId ? { environment_id: environmentId } : {}),
         }),
         enabled: projectId > 0,
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
     });
 
     const secrets = useMemo(() => data?.data ?? [], [data]);

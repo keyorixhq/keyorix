@@ -213,7 +213,7 @@ export function RotationPoliciesPage() {
         }
     }
 
-    const isSubmitting = createMutation.isLoading || updateMutation.isLoading;
+    const isSubmitting = createMutation.isPending || updateMutation.isPending;
     const isModalOpen = showCreate || editing !== null;
 
     // ── error state ───────────────────────────────────────────────────────────
@@ -579,7 +579,7 @@ export function RotationPoliciesPage() {
                         <Button
                             variant="outline"
                             onClick={() => { setDeleting(null); deleteMutation.reset(); }}
-                            disabled={deleteMutation.isLoading}
+                            disabled={deleteMutation.isPending}
                         >
                             Cancel
                         </Button>
@@ -591,9 +591,9 @@ export function RotationPoliciesPage() {
                                     onSuccess: () => { setDeleting(null); },
                                 });
                             }}
-                            disabled={deleteMutation.isLoading}
+                            disabled={deleteMutation.isPending}
                         >
-                            {deleteMutation.isLoading ? 'Deleting…' : 'Delete'}
+                            {deleteMutation.isPending ? 'Deleting…' : 'Delete'}
                         </Button>
                     </div>
                 </div>

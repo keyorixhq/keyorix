@@ -1,5 +1,5 @@
 import React from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { secretsApi } from '../../services/secrets';
 import { queryKeys, invalidateQueries } from '../../lib/queryClient';
 import { Secret, SecretFormData } from '../../types';
@@ -15,7 +15,7 @@ export const useSecrets = (params?: {
     return useQuery({
         queryKey: queryKeys.secrets.list(params),
         queryFn: () => secretsApi.list(params),
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
     });
 };
 
@@ -123,7 +123,7 @@ export const useSearchSecrets = (query: string, delay = 300) => {
         queryKey: queryKeys.secrets.list({ search: debouncedQuery }),
         queryFn: () => secretsApi.list({ search: debouncedQuery }),
         enabled: debouncedQuery.length >= 2,
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
     });
 };
 

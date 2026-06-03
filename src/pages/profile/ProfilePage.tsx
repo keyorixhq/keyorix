@@ -98,8 +98,8 @@ const ProfileTab: React.FC = () => {
                 </div>
 
                 <div className="flex justify-end">
-                    <Button type="submit" disabled={updateProfileMutation.isLoading}>
-                        {updateProfileMutation.isLoading && <Spinner size="sm" className="mr-2" />}
+                    <Button type="submit" disabled={updateProfileMutation.isPending}>
+                        {updateProfileMutation.isPending && <Spinner size="sm" className="mr-2" />}
                         Save Changes
                     </Button>
                 </div>
@@ -147,8 +147,8 @@ const SecurityTab: React.FC = () => {
                         <Input label="Confirm New Password" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required />
                     </div>
                     <div className="flex justify-end">
-                        <Button type="submit" disabled={changePasswordMutation.isLoading}>
-                            {changePasswordMutation.isLoading && <Spinner size="sm" className="mr-2" />}
+                        <Button type="submit" disabled={changePasswordMutation.isPending}>
+                            {changePasswordMutation.isPending && <Spinner size="sm" className="mr-2" />}
                             <KeyIcon className="h-4 w-4 mr-2" />
                             Change Password
                         </Button>

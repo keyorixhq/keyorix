@@ -1,4 +1,4 @@
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, keepPreviousData } from '@tanstack/react-query';
 import { sharingApi } from '../../services/sharing';
 import { usersApi } from '../../services/users';
 import { queryKeys, invalidateQueries } from '../../lib/queryClient';
@@ -13,7 +13,7 @@ export const useShares = (params?: {
     return useQuery({
         queryKey: queryKeys.sharing.list(params),
         queryFn: () => sharingApi.list(params),
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
     });
 };
 

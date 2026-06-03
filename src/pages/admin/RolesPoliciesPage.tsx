@@ -122,7 +122,7 @@ export const RolesPoliciesPage: React.FC = () => {
 
     const manageRole = roles?.find(r => r.id === manageRoleId) ?? null;
     const permsByResource = groupByResource(permissions ?? []);
-    const isMutatingPerm = assignMutation.isLoading || removeMutation.isLoading;
+    const isMutatingPerm = assignMutation.isPending || removeMutation.isPending;
 
     const openCreate = () => {
         setFormData({ name: '', description: '' });
@@ -331,7 +331,7 @@ export const RolesPoliciesPage: React.FC = () => {
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
                         <Button
-                            loading={createMutation.isLoading}
+                            loading={createMutation.isPending}
                             disabled={!formData.name.trim()}
                             onClick={handleCreate}
                         >
@@ -372,7 +372,7 @@ export const RolesPoliciesPage: React.FC = () => {
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={() => setEditRole(null)}>Cancel</Button>
                         <Button
-                            loading={updateMutation.isLoading}
+                            loading={updateMutation.isPending}
                             disabled={!formData.name.trim()}
                             onClick={handleUpdate}
                         >
@@ -467,7 +467,7 @@ export const RolesPoliciesPage: React.FC = () => {
                         <Button variant="secondary" onClick={() => { setDeleteRole(null); deleteMutation.reset(); }}>
                             Cancel
                         </Button>
-                        <Button variant="danger" loading={deleteMutation.isLoading} onClick={handleDelete}>
+                        <Button variant="danger" loading={deleteMutation.isPending} onClick={handleDelete}>
                             Delete
                         </Button>
                     </div>

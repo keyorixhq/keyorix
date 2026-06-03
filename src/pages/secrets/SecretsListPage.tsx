@@ -286,8 +286,8 @@ export const SecretsListPage: React.FC = () => {
                         <p className="mt-1 text-xs text-base-muted">Leave blank to keep the existing value.</p>
                     </div>
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
-                        <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.editMutation.isLoading}>Cancel</Button>
-                        <Button type="submit" disabled={list.editMutation.isLoading}>{list.editMutation.isLoading ? 'Saving…' : 'Save Changes'}</Button>
+                        <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.editMutation.isPending}>Cancel</Button>
+                        <Button type="submit" disabled={list.editMutation.isPending}>{list.editMutation.isPending ? 'Saving…' : 'Save Changes'}</Button>
                     </div>
                 </form>
             </Modal>
@@ -299,9 +299,9 @@ export const SecretsListPage: React.FC = () => {
                         Are you sure you want to delete <span className="font-semibold">{list.modalData?.secret?.name}</span>? The secret will be soft-deleted and can be restored within 30 days.
                     </p>
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
-                        <Button variant="outline" onClick={list.closeModal} disabled={list.deleteMutation.isLoading}>Cancel</Button>
-                        <Button variant="danger" onClick={() => list.modalData?.secret && list.deleteMutation.mutate(list.modalData.secret.id)} disabled={list.deleteMutation.isLoading}>
-                            {list.deleteMutation.isLoading ? 'Deleting…' : 'Delete'}
+                        <Button variant="outline" onClick={list.closeModal} disabled={list.deleteMutation.isPending}>Cancel</Button>
+                        <Button variant="danger" onClick={() => list.modalData?.secret && list.deleteMutation.mutate(list.modalData.secret.id)} disabled={list.deleteMutation.isPending}>
+                            {list.deleteMutation.isPending ? 'Deleting…' : 'Delete'}
                         </Button>
                     </div>
                 </div>
@@ -332,8 +332,8 @@ export const SecretsListPage: React.FC = () => {
                         <Select value={createType} onChange={(e) => setCreateType(e.target.value as SecretType)} options={[{ value: 'text', label: 'Generic' }, { value: 'password', label: 'Password' }, { value: 'api_key', label: 'API Key' }, { value: 'certificate', label: 'Certificate' }, { value: 'json', label: 'JSON' }]} />
                     </div>
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
-                        <Button type="button" variant="outline" onClick={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} disabled={list.createMutation.isLoading}>Cancel</Button>
-                        <Button type="submit" disabled={list.createMutation.isLoading}>{list.createMutation.isLoading ? 'Creating…' : 'Create Secret'}</Button>
+                        <Button type="button" variant="outline" onClick={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} disabled={list.createMutation.isPending}>Cancel</Button>
+                        <Button type="submit" disabled={list.createMutation.isPending}>{list.createMutation.isPending ? 'Creating…' : 'Create Secret'}</Button>
                     </div>
                 </form>
             </Modal>
@@ -360,8 +360,8 @@ export const SecretsListPage: React.FC = () => {
                             style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }} />
                     </div>
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">
-                        <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.rotateMutation.isLoading}>Cancel</Button>
-                        <Button type="submit" disabled={list.rotateMutation.isLoading || !rotateValue.trim()}>{list.rotateMutation.isLoading ? 'Rotating…' : 'Rotate'}</Button>
+                        <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.rotateMutation.isPending}>Cancel</Button>
+                        <Button type="submit" disabled={list.rotateMutation.isPending || !rotateValue.trim()}>{list.rotateMutation.isPending ? 'Rotating…' : 'Rotate'}</Button>
                     </div>
                 </form>
             </Modal>
@@ -372,9 +372,9 @@ export const SecretsListPage: React.FC = () => {
                         Are you sure you want to delete <span className="font-semibold">{list.modalData?.secretIds?.length}</span> secret(s)? They will be soft-deleted and can be restored within 30 days.
                     </p>
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
-                        <Button variant="outline" onClick={list.closeModal} disabled={list.bulkDeleteMutation.isLoading}>Cancel</Button>
-                        <Button variant="danger" onClick={() => list.modalData?.secretIds && list.bulkDeleteMutation.mutate(list.modalData.secretIds)} disabled={list.bulkDeleteMutation.isLoading}>
-                            {list.bulkDeleteMutation.isLoading ? 'Deleting…' : `Delete ${list.modalData?.secretIds?.length ?? ''} Secret(s)`}
+                        <Button variant="outline" onClick={list.closeModal} disabled={list.bulkDeleteMutation.isPending}>Cancel</Button>
+                        <Button variant="danger" onClick={() => list.modalData?.secretIds && list.bulkDeleteMutation.mutate(list.modalData.secretIds)} disabled={list.bulkDeleteMutation.isPending}>
+                            {list.bulkDeleteMutation.isPending ? 'Deleting…' : `Delete ${list.modalData?.secretIds?.length ?? ''} Secret(s)`}
                         </Button>
                     </div>
                 </div>

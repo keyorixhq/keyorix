@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { secretsApi } from '../../services/secrets';
 import { environmentsApi } from '../../services/environments';
 import { queryKeys } from '../../lib/queryClient';
@@ -60,7 +60,7 @@ export const useSecretsList = () => {
                 ...(filters.tags.length > 0 ? { tags: filters.tags } : {}),
             });
         },
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
     });
 
     React.useEffect(() => {

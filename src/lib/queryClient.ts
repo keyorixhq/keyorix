@@ -9,7 +9,7 @@ const defaultOptions: DefaultOptions = {
         // Stale time: 5 minutes
         staleTime: 5 * 60 * 1000,
         // Cache time: 10 minutes
-        cacheTime: 10 * 60 * 1000,
+        gcTime: 10 * 60 * 1000,
         // Retry failed requests 3 times with exponential backoff
         retry: (failureCount, error: any) => {
             // Don't retry on 4xx errors (client errors)

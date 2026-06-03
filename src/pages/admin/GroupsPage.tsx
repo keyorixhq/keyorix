@@ -120,7 +120,7 @@ export const GroupsPage: React.FC = () => {
 
     const groups = (groupsData?.data ?? []) as Group[];
     const assignedRoleIds = new Set((groupRolesData?.roles ?? []).map(r => r.id));
-    const isMutatingRole = assignMutation.isLoading || removeMutation.isLoading;
+    const isMutatingRole = assignMutation.isPending || removeMutation.isPending;
 
     const openCreate = () => {
         setFormData({ name: '', description: '' });
@@ -268,7 +268,7 @@ export const GroupsPage: React.FC = () => {
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={() => setCreateOpen(false)}>Cancel</Button>
                         <Button
-                            loading={createMutation.isLoading}
+                            loading={createMutation.isPending}
                             disabled={!formData.name.trim()}
                             onClick={handleCreate}
                         >
@@ -309,7 +309,7 @@ export const GroupsPage: React.FC = () => {
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={() => setEditGroup(null)}>Cancel</Button>
                         <Button
-                            loading={updateMutation.isLoading}
+                            loading={updateMutation.isPending}
                             disabled={!formData.name.trim()}
                             onClick={handleUpdate}
                         >
@@ -394,7 +394,7 @@ export const GroupsPage: React.FC = () => {
                         <Button variant="secondary" onClick={() => { setDeleteGroup(null); deleteMutation.reset(); }}>
                             Cancel
                         </Button>
-                        <Button variant="danger" loading={deleteMutation.isLoading} onClick={handleDelete}>
+                        <Button variant="danger" loading={deleteMutation.isPending} onClick={handleDelete}>
                             Delete
                         </Button>
                     </div>
