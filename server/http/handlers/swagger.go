@@ -112,7 +112,6 @@ func serveSwaggerSpec(w http.ResponseWriter, r *http.Request) {
           "id": {"type": "integer"},
           "name": {"type": "string"},
           "project_id": {"type": "integer"},
-          "zone": {"type": "string"},
           "environment": {"type": "string"},
           "type": {"type": "string"},
           "max_reads": {"type": "integer", "nullable": true},
@@ -131,7 +130,6 @@ func serveSwaggerSpec(w http.ResponseWriter, r *http.Request) {
           "name": {"type": "string"},
           "value": {"type": "string"},
           "project_id": {"type": "integer"},
-          "zone": {"type": "string"},
           "environment": {"type": "string"},
           "type": {"type": "string"},
           "max_reads": {"type": "integer"},
@@ -197,7 +195,6 @@ func serveSwaggerSpec(w http.ResponseWriter, r *http.Request) {
         "summary": "List secrets",
         "parameters": [
           {"name": "project_id", "in": "query", "schema": {"type": "integer"}},
-          {"name": "zone", "in": "query", "schema": {"type": "string"}},
           {"name": "environment", "in": "query", "schema": {"type": "string"}},
           {"name": "page", "in": "query", "schema": {"type": "integer", "default": 1}},
           {"name": "page_size", "in": "query", "schema": {"type": "integer", "default": 20}}
@@ -336,8 +333,6 @@ components:
           type: string
         project_id:
           type: integer
-        zone:
-          type: string
         environment:
           type: string
         type:
@@ -379,10 +374,6 @@ paths:
           in: query
           schema:
             type: integer
-        - name: zone
-          in: query
-          schema:
-            type: string
         - name: environment
           in: query
           schema:

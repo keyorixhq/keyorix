@@ -195,7 +195,6 @@ func TestHTTPServerIntegration(t *testing.T) {
 				"name":           "integration-test-secret",
 				"value":          "super-secret-value",
 				"project_id":     1,
-				"zone_id":        1,
 				"environment_id": 1,
 				"type":           "password",
 				"metadata": map[string]string{

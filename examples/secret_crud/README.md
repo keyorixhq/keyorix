@@ -48,8 +48,7 @@ keyorix system validate
 - **Metadata**: Store additional information with secrets
 
 ### 3. Organization & Discovery
-- **Namespaces**: Logical grouping of secrets
-- **Zones**: Geographic or logical zones
+- **Projects**: Logical grouping of secrets
 - **Environments**: Development, staging, production separation
 - **Search**: Find secrets by name or type
 - **Pagination**: Handle large numbers of secrets
@@ -91,7 +90,7 @@ keyorix secret get --id 123
 keyorix secret get --id 123 --show-value
 
 # Get by name
-keyorix secret get --name "db-password" --namespace 1 --zone 1 --environment 1
+keyorix secret get --name "db-password" --project 1 --environment 1
 ```
 
 ### Update Secrets
@@ -109,7 +108,7 @@ keyorix secret update --id 123 --interactive
 ### List & Search
 ```bash
 # List all secrets
-keyorix secret list --namespace 1 --zone 1 --environment 1
+keyorix secret list --project 1 --environment 1
 
 # Search by name/type
 keyorix secret list --search "password" --limit 10
@@ -136,7 +135,7 @@ keyorix secret delete --id 123
 keyorix secret delete --id 123 --force
 
 # Delete by name
-keyorix secret delete --name "old-secret" --namespace 1 --zone 1 --environment 1
+keyorix secret delete --name "old-secret" --project 1 --environment 1
 ```
 
 ## Expected Output
@@ -161,7 +160,7 @@ The example will demonstrate:
 - **Chunked Storage**: Large secrets split into encrypted chunks
 
 ### Access Control
-- **Namespace Isolation**: Secrets isolated by namespace/zone/environment
+- **Project Isolation**: Secrets isolated by project/environment
 - **Audit Logging**: All operations logged for security
 - **Expiration**: Automatic secret expiration
 - **Read Limits**: Limit secret access attempts
@@ -195,7 +194,7 @@ The example will demonstrate:
 3. **Expiration Management**: Set expiration for temporary secrets
 4. **Access Limits**: Use max reads for one-time secrets
 5. **Regular Rotation**: Update long-lived secrets regularly
-6. **Environment Separation**: Use namespaces/zones/environments
+6. **Environment Separation**: Use projects/environments
 7. **Audit Monitoring**: Track secret access patterns
 8. **Secure Input**: Use interactive mode for sensitive data
 9. **File Storage**: Store large secrets from files

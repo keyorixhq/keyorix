@@ -203,7 +203,6 @@ type bootstrapResponseData struct {
 		Email    string `json:"email"`
 	} `json:"user"`
 	Project      string   `json:"project"`
-	Zone         string   `json:"zone"`
 	Environments []string `json:"environments"`
 }
 

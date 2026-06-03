@@ -60,7 +60,6 @@ type CreateSecretRequest struct {
 	Name        string            `json:"name"`
 	Value       string            `json:"value"`
 	Project     string            `json:"project"`
-	Zone        string            `json:"zone"`
 	Environment string            `json:"environment"`
 	Type        string            `json:"type,omitempty"`
 	MaxReads    *int32            `json:"max_reads,omitempty"`
@@ -73,7 +72,6 @@ type SecretResponse struct {
 	Id          uint32            `json:"id"`
 	Name        string            `json:"name"`
 	Project     string            `json:"project"`
-	Zone        string            `json:"zone"`
 	Environment string            `json:"environment"`
 	Type        string            `json:"type"`
 	MaxReads    *int32            `json:"max_reads"`
@@ -178,7 +176,6 @@ type GetSecretRequest struct {
 // ListSecretsRequest represents a gRPC list secrets request
 type ListSecretsRequest struct {
 	Project     string   `json:"project,omitempty"`
-	Zone        string   `json:"zone,omitempty"`
 	Environment string   `json:"environment,omitempty"`
 	Type        string   `json:"type,omitempty"`
 	Tags        []string `json:"tags,omitempty"`

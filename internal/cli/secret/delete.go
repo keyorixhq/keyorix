@@ -20,7 +20,6 @@ var (
 	deleteID    uint
 	deleteName  string
 	deleteNS    uint
-	deleteZone  uint
 	deleteEnv   uint
 	deleteForce bool
 )
@@ -32,7 +31,7 @@ var deleteCmd = &cobra.Command{
 
 Examples:
   keyorix secret delete --id 123
-  keyorix secret delete --name "db-password" --project 1 --zone 1 --environment 1
+  keyorix secret delete --name "db-password" --project 1 --environment 1
   keyorix secret delete --id 123 --force  # Skip confirmation`,
 	RunE: runDelete,
 }
@@ -41,7 +40,6 @@ func init() {
 	deleteCmd.Flags().UintVar(&deleteID, "id", 0, "Secret ID")
 	deleteCmd.Flags().StringVar(&deleteName, "name", "", "Secret name")
 	deleteCmd.Flags().UintVar(&deleteNS, "project", 1, "Project ID (required with --name)")
-	deleteCmd.Flags().UintVar(&deleteZone, "zone", 1, "Zone ID (required with --name)")
 	deleteCmd.Flags().UintVar(&deleteEnv, "environment", 1, "Environment ID (required with --name)")
 	deleteCmd.Flags().BoolVar(&deleteForce, "force", false, "Skip confirmation prompt")
 }

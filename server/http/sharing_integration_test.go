@@ -135,7 +135,6 @@ func TestSharingHTTPIntegration(t *testing.T) {
 				"name":           "http-sharing-test-secret",
 				"value":          "http-sharing-secret-value",
 				"project_id":     uint(1),
-				"zone_id":        uint(1),
 				"environment_id": uint(1),
 				"type":           "password",
 				"metadata": map[string]string{
@@ -390,7 +389,6 @@ func TestSharingHTTPIntegration(t *testing.T) {
 				"name":           "group-sharing-test-secret",
 				"value":          "group-sharing-secret-value",
 				"project_id":     uint(1),
-				"zone_id":        uint(1),
 				"environment_id": uint(1),
 				"type":           "password",
 				"metadata": map[string]string{
@@ -647,7 +645,6 @@ func TestSharingHTTPIntegration(t *testing.T) {
 				"name":           "permission-test-secret",
 				"value":          "permission-test-value",
 				"project_id":     uint(1),
-				"zone_id":        uint(1),
 				"environment_id": uint(1),
 				"type":           "password",
 			}
@@ -819,7 +816,6 @@ func TestSharingHTTPConcurrency(t *testing.T) {
 			"name":           "concurrent-test-secret",
 			"value":          "concurrent-test-value",
 			"project_id":     uint(1),
-			"zone_id":        uint(1),
 			"environment_id": uint(1),
 			"type":           "password",
 		}
