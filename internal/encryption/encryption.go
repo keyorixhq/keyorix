@@ -30,7 +30,7 @@ type EncryptionMetadata struct {
 	Iterations  int       `json:"iterations,omitempty"`
 	ChunkIndex  int       `json:"chunk_index,omitempty"`
 	TotalChunks int       `json:"total_chunks,omitempty"`
-	AADVersion  string    `json:"aad_version,omitempty"` // "v1" = secretID:namespaceID:versionNumber; absent = legacy (no AAD)
+	AADVersion  string    `json:"aad_version,omitempty"` // "v2" = secretID:projectID:versionNumber; absent = legacy (no AAD). ("v1" was the pre-migration secretID:namespaceID:versionNumber scheme; no longer produced.)
 }
 
 // EncryptedData represents encrypted content with metadata
@@ -120,8 +120,8 @@ func (es *EncryptionService) Decrypt(encryptedData *EncryptedData) ([]byte, erro
 }
 
 // SecretAAD returns the canonical Additional Authenticated Data for a secret version.
-// Format: "keyorix:v1:<secretID>:<namespaceID>:<versionNumber>"
-// This binds the ciphertext to a specific secret + namespace + version, preventing
+// Format: "keyorix:v2:<secretID>:<projectID>:<versionNumber>"
+// This binds the ciphertext to a specific secret + project + version, preventing
 // ciphertext transplant attacks (copying an encrypted value between rows).
 func SecretAAD(secretID, projectID uint, versionNumber int) []byte {
 	return []byte(fmt.Sprintf("keyorix:v2:%d:%d:%d", secretID, projectID, versionNumber))
