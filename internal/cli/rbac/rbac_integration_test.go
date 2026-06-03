@@ -351,11 +351,6 @@ func TestRBACCommandLineInterface(t *testing.T) {
 
 		roleFlag := assignRoleCmd.Flags().Lookup("role")
 		assert.NotNil(t, roleFlag, "role flag should exist")
-
-		// Optional namespace flag (may not exist in current implementation)
-		namespaceFlag := assignRoleCmd.Flags().Lookup("namespace")
-		// Don't assert this exists since it may not be implemented yet
-		_ = namespaceFlag
 	})
 
 	t.Run("check-permission command has required flags", func(t *testing.T) {
