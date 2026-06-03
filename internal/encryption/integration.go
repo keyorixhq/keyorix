@@ -70,7 +70,7 @@ func (se *SecretEncryption) StoreSecret(secretNode *models.SecretNode, plaintext
 		return version, nil
 	}
 
-	// Encrypt the secret with AAD bound to secretID + namespaceID + versionNumber
+	// Encrypt the secret with AAD bound to secretID + projectID + versionNumber
 	aad := SecretAAD(secretNode.ID, secretNode.ProjectID, nextVersion)
 	encryptedData, metadata, err := se.service.EncryptSecretWithAAD(plaintext, aad)
 	if err != nil {
@@ -107,7 +107,7 @@ func (se *SecretEncryption) RetrieveSecret(versionID uint) ([]byte, error) {
 		return version.EncryptedValue, nil
 	}
 
-	// Fetch the parent SecretNode to get NamespaceID for AAD reconstruction
+	// Fetch the parent SecretNode to get ProjectID for AAD reconstruction
 	var secretNode models.SecretNode
 	if err := se.db.First(&secretNode, version.SecretNodeID).Error; err != nil {
 		return nil, fmt.Errorf("failed to retrieve secret node for AAD: %w", err)

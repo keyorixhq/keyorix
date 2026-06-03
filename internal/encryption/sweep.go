@@ -4,7 +4,7 @@
 // DEK-encrypted row so no ciphertext remains under the old DEK.
 //
 // sweepSecretVersions is here because it requires AAD reconstruction logic
-// (namespace lookup, SecretAAD, legacy-vs-bound path). The simpler auth-table
+// (project lookup, SecretAAD, legacy-vs-bound path). The simpler auth-table
 // sweepers (sessions, API tokens, clients, password resets) live in sweep_auth.go.
 //
 // Invariant: on nil return, every row holds ciphertext under the new DEK.

@@ -87,7 +87,7 @@ RotateDEKWithSweep(passphrase, db):
 
 ### Secret version re-encryption — AAD handling
 
-Secret versions encrypted under the new AAD scheme (`aad_version: v1`) must be re-encrypted with the correct AAD reconstructed from their row data. The sweep reads `SecretNodeID` and `VersionNumber` from each row and fetches `NamespaceID` from the parent `SecretNode` to rebuild `SecretAAD(secretID, namespaceID, versionNumber)`.
+Secret versions encrypted under the new AAD scheme (`aad_version: v1`) must be re-encrypted with the correct AAD reconstructed from their row data. The sweep reads `SecretNodeID` and `VersionNumber` from each row and fetches `ProjectID` from the parent `SecretNode` to rebuild `SecretAAD(secretID, projectID, versionNumber)`.
 
 Legacy rows (no `aad_version` in metadata) are decrypted without AAD and re-encrypted **with** AAD — this sweep serves double duty as the M2 legacy re-encryption migration.
 

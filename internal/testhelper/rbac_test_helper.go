@@ -84,11 +84,11 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 
 // seedTestData creates basic test data for RBAC tests
 func (h *RBACTestHelper) seedTestData(t *testing.T) {
-	// Create default namespaces
+	// Create default projects
 	projects := []models.Project{
-		{ID: 1, Name: "default", Description: "Default namespace"},
-		{ID: 2, Name: "production", Description: "Production namespace"},
-		{ID: 3, Name: "staging", Description: "Staging namespace"},
+		{ID: 1, Name: "default", Description: "Default project"},
+		{ID: 2, Name: "production", Description: "Production project"},
+		{ID: 3, Name: "staging", Description: "Staging project"},
 	}
 	for _, p := range projects {
 		result := h.DB.Create(&p)
@@ -113,9 +113,9 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 		Description string
 	}{
 		{1, "super_admin", "Super Administrator with full system access"},
-		{2, "admin", "Administrator with full access to assigned namespaces"},
-		{3, "editor", "Can create, read, update secrets in assigned namespaces"},
-		{4, "viewer", "Read-only access to secrets in assigned namespaces"},
+		{2, "admin", "Administrator with full access to assigned projects"},
+		{3, "editor", "Can create, read, update secrets in assigned projects"},
+		{4, "viewer", "Read-only access to secrets in assigned projects"},
 		{5, "auditor", "Can view audit logs and system information"},
 	}
 
@@ -242,11 +242,11 @@ func (h *RBACTestHelper) CreateTestGroup(t *testing.T, name, description string,
 }
 
 // AssignUserRole assigns a role to a user
-func (h *RBACTestHelper) AssignUserRole(t *testing.T, userID, roleID uint, namespaceID *uint) {
+func (h *RBACTestHelper) AssignUserRole(t *testing.T, userID, roleID uint, projectID *uint) {
 	userRole := &models.UserRole{
 		UserID:    userID,
 		RoleID:    roleID,
-		ProjectID: namespaceID,
+		ProjectID: projectID,
 	}
 
 	result := h.DB.Create(userRole)
@@ -265,11 +265,11 @@ func (h *RBACTestHelper) AssignUserToGroup(t *testing.T, userID, groupID uint) {
 }
 
 // AssignGroupRole assigns a role to a group
-func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, namespaceID *uint) {
+func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, projectID *uint) {
 	groupRole := &models.GroupRole{
 		GroupID:   groupID,
 		RoleID:    roleID,
-		ProjectID: namespaceID,
+		ProjectID: projectID,
 	}
 
 	result := h.DB.Create(groupRole)

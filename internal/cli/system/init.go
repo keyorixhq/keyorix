@@ -40,7 +40,7 @@ var InitCmd = &cobra.Command{
 Local mode (default): creates configuration files, encryption keys, and the database.
 
 Remote mode (--server): bootstraps a running Keyorix server — creates the admin
-user, default RBAC roles, and default workspace (namespace + 3 environments) via
+user, default RBAC roles, and default workspace (project + 3 environments) via
 the HTTP API. Safe to run more than once: idempotent.
 
 Examples:
@@ -216,7 +216,7 @@ type bootstrapAPIResponse struct {
 
 // runRemoteInit bootstraps a running Keyorix server by calling POST /system/init.
 // The server creates the admin user, RBAC roles/permissions, and seeds the default
-// namespace, zone, and environments in a single idempotent call.
+// project and environments in a single idempotent call.
 func runRemoteInit() error {
 	server := strings.TrimRight(initServer, "/")
 	url := server + "/system/init"

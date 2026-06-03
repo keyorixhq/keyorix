@@ -71,9 +71,9 @@ func newTestService(t *testing.T, passphrase string) (*Service, string) {
 
 // seedSecretVersion encrypts a value and inserts a SecretVersion row.
 // Returns the version ID.
-func seedSecretVersion(t *testing.T, db *gorm.DB, svc *Service, nodeID, namespaceID uint, versionNumber int, value string) uint {
+func seedSecretVersion(t *testing.T, db *gorm.DB, svc *Service, nodeID, projectID uint, versionNumber int, value string) uint {
 	t.Helper()
-	aad := SecretAAD(nodeID, namespaceID, versionNumber)
+	aad := SecretAAD(nodeID, projectID, versionNumber)
 	enc, meta, err := svc.EncryptSecretWithAAD([]byte(value), aad)
 	if err != nil {
 		t.Fatalf("EncryptSecretWithAAD: %v", err)
@@ -110,11 +110,11 @@ func seedLegacySecretVersion(t *testing.T, db *gorm.DB, svc *Service, nodeID uin
 }
 
 // seedSecretNode inserts a SecretNode and returns its ID.
-func seedSecretNode(t *testing.T, db *gorm.DB, namespaceID uint) uint {
+func seedSecretNode(t *testing.T, db *gorm.DB, projectID uint) uint {
 	t.Helper()
 	n := &models.SecretNode{
-		ProjectID: namespaceID,
-		Name:      fmt.Sprintf("node-%d", namespaceID),
+		ProjectID: projectID,
+		Name:      fmt.Sprintf("node-%d", projectID),
 		IsSecret:  true,
 	}
 	if err := db.Create(n).Error; err != nil {
@@ -143,9 +143,9 @@ func TestRotateDEKWithSweep_ReEncryptsAllRows(t *testing.T) {
 	svc, _ := newTestService(t, "test-passphrase")
 
 	// Seed a SecretNode + SecretVersion
-	const namespaceID = uint(1)
-	nodeID := seedSecretNode(t, db, namespaceID)
-	versionID := seedSecretVersion(t, db, svc, nodeID, namespaceID, 1, "super-secret-value")
+	const projectID = uint(1)
+	nodeID := seedSecretNode(t, db, projectID)
+	versionID := seedSecretVersion(t, db, svc, nodeID, projectID, 1, "super-secret-value")
 
 	// Capture old DEK bytes
 	oldDEK := captureCurrentDEK(t, svc)
@@ -167,7 +167,7 @@ func TestRotateDEKWithSweep_ReEncryptsAllRows(t *testing.T) {
 	}
 
 	// Should decrypt with new service (new DEK in memory)
-	aad := SecretAAD(nodeID, namespaceID, 1)
+	aad := SecretAAD(nodeID, projectID, 1)
 	plaintext, err := svc.DecryptSecretWithAAD(v.EncryptedValue, aad)
 	if err != nil {
 		t.Fatalf("decrypt with new DEK failed: %v", err)
@@ -196,8 +196,8 @@ func TestRotateDEKWithSweep_UpgradesLegacyAAD(t *testing.T) {
 	db := newTestDB(t)
 	svc, _ := newTestService(t, "test-passphrase")
 
-	const namespaceID = uint(2)
-	nodeID := seedSecretNode(t, db, namespaceID)
+	const projectID = uint(2)
+	nodeID := seedSecretNode(t, db, projectID)
 	versionID := seedLegacySecretVersion(t, db, svc, nodeID, 1, "legacy-value")
 
 	// Verify it's a legacy row before sweep
@@ -232,7 +232,7 @@ func TestRotateDEKWithSweep_UpgradesLegacyAAD(t *testing.T) {
 	}
 
 	// And it should decrypt correctly with the new DEK + AAD
-	aad := SecretAAD(nodeID, namespaceID, 1)
+	aad := SecretAAD(nodeID, projectID, 1)
 	plaintext, err := svc.DecryptSecretWithAAD(after.EncryptedValue, aad)
 	if err != nil {
 		t.Fatalf("decrypt of upgraded legacy row failed: %v", err)
@@ -248,9 +248,9 @@ func TestRotateDEKWithSweep_RollbackOnError(t *testing.T) {
 	db := newTestDB(t)
 	svc, _ := newTestService(t, "test-passphrase")
 
-	const namespaceID = uint(3)
-	nodeID := seedSecretNode(t, db, namespaceID)
-	seedSecretVersion(t, db, svc, nodeID, namespaceID, 1, "sensitive-data")
+	const projectID = uint(3)
+	nodeID := seedSecretNode(t, db, projectID)
+	seedSecretVersion(t, db, svc, nodeID, projectID, 1, "sensitive-data")
 
 	// Capture the encrypted value before rotation attempt
 	var before models.SecretVersion

@@ -55,7 +55,7 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 func createTestToken(t *testing.T, c *core.KeyorixCore) string {
 	t.Helper()
 	ctx := context.Background()
-	// SeedSystem creates admin user, roles, permissions, namespace, zone, environments
+	// SeedSystem creates admin user, roles, permissions, project, environments
 	_, err := c.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "testadmin",
 		Email:    "testadmin@example.com",

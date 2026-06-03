@@ -20,7 +20,7 @@ import (
 //   - rbac.go          — Role and permission assignment
 //   - auth.go          — Session lifecycle + system initialisation
 //   - dashboard.go     — Dashboard stats and activity feed
-//   - catalog.go       — Namespace / zone / environment passthrough
+//   - catalog.go       — Project / environment passthrough
 type KeyorixCore struct {
 	storage    storage.Storage
 	encryption *encryption.SecretEncryption

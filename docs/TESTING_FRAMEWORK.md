@@ -55,9 +55,9 @@ func TestRBACFunctionality(t *testing.T) {
 - `CreateTestUser(t, username, userID)` - Creates a test user
 - `CreateTestRole(t, name, description, roleID)` - Creates a test role
 - `CreateTestGroup(t, name, description, groupID)` - Creates a test group
-- `AssignUserRole(t, userID, roleID, namespaceID)` - Assigns role to user
+- `AssignUserRole(t, userID, roleID, projectID)` - Assigns role to user
 - `AssignUserToGroup(t, userID, groupID)` - Assigns user to group
-- `AssignGroupRole(t, groupID, roleID, namespaceID)` - Assigns role to group
+- `AssignGroupRole(t, groupID, roleID, projectID)` - Assigns role to group
 - `CreateTestSecret(t, name, ownerID, secretID)` - Creates a test secret
 - `HasPermission(t, userID, permission)` - Checks user permissions
 - `CreateTestContext(userID, username)` - Creates context for testing

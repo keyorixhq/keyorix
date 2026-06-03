@@ -98,7 +98,7 @@ func (s *Service) EncryptSecret(plaintext []byte) ([]byte, []byte, error) {
 }
 
 // EncryptSecretWithAAD encrypts plaintext bound to the given AAD.
-// Use SecretAAD(secretID, namespaceID, versionNumber) to construct the AAD.
+// Use SecretAAD(secretID, projectID, versionNumber) to construct the AAD.
 func (s *Service) EncryptSecretWithAAD(plaintext []byte, aad []byte) ([]byte, []byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -142,23 +142,23 @@ func TestRBACGroupIntegration(t *testing.T) {
 	})
 }
 
-// TestRBACNamespaceIntegration tests namespace-scoped RBAC functionality
-func TestRBACNamespaceIntegration(t *testing.T) {
+// TestRBACProjectIntegration tests project-scoped RBAC functionality
+func TestRBACProjectIntegration(t *testing.T) {
 	helper := testhelper.NewRBACTestHelper(t)
 	defer helper.Cleanup()
 
 	// Create test user
 	user1 := helper.CreateTestUser(t, "user1", 1)
 
-	// Assign role with namespace scope
-	prodNamespaceID := uint(2)                              // production namespace
-	helper.AssignUserRole(t, user1.ID, 3, &prodNamespaceID) // editor role in production namespace
+	// Assign role with project scope
+	prodProjectID := uint(2)                              // production project
+	helper.AssignUserRole(t, user1.ID, 3, &prodProjectID) // editor role in production project
 
-	t.Run("user has role in specific namespace", func(t *testing.T) {
-		// Query user roles with namespace
+	t.Run("user has role in specific project", func(t *testing.T) {
+		// Query user roles with project
 		var userRoles []struct {
-			RoleName    string
-			NamespaceID *uint
+			RoleName  string
+			ProjectID *uint
 		}
 
 		rows := helper.QueryRawSQL(t, `
@@ -170,23 +170,23 @@ func TestRBACNamespaceIntegration(t *testing.T) {
 
 		for rows.Next() {
 			var ur struct {
-				RoleName    string
-				NamespaceID *uint
+				RoleName  string
+				ProjectID *uint
 			}
-			err := rows.Scan(&ur.RoleName, &ur.NamespaceID)
+			err := rows.Scan(&ur.RoleName, &ur.ProjectID)
 			require.NoError(t, err)
 			userRoles = append(userRoles, ur)
 		}
 
-		// Verify user has editor role in production namespace
+		// Verify user has editor role in production project
 		found := false
 		for _, ur := range userRoles {
-			if ur.RoleName == "editor" && ur.NamespaceID != nil && *ur.NamespaceID == prodNamespaceID {
+			if ur.RoleName == "editor" && ur.ProjectID != nil && *ur.ProjectID == prodProjectID {
 				found = true
 				break
 			}
 		}
-		assert.True(t, found, "User should have editor role in production namespace")
+		assert.True(t, found, "User should have editor role in production project")
 	})
 }
 

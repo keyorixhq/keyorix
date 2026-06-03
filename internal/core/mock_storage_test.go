@@ -24,7 +24,7 @@ func (m *MockStorage) AssignPermissionToRole(_ context.Context, _, _ uint) error
 	return nil
 }
 
-// Namespace / Zone / Environment
+// Project / Environment
 
 func (m *MockStorage) CreateProject(_ context.Context, project *models.Project) (*models.Project, error) {
 	return project, nil
