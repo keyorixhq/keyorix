@@ -2,7 +2,7 @@
 FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git make
 WORKDIR /app
-COPY go.mod go.sum go.work go.work.sum ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=dev" \
