@@ -59,8 +59,7 @@ Authorization: Bearer <token>
 **Query Parameters:**
 - `limit` (int): Number of secrets to return (default: 50)
 - `offset` (int): Number of secrets to skip (default: 0)
-- `namespace` (int): Namespace ID filter (default: 1)
-- `zone` (int): Zone ID filter (default: 1)
+- `project_id` (int): Project ID filter (default: 1)
 - `environment` (int): Environment ID filter (default: 1)
 
 **Response:**
@@ -72,8 +71,7 @@ Authorization: Bearer <token>
       "name": "example-api-key",
       "type": "api-key-v2",
       "status": "active",
-      "namespace_id": 1,
-      "zone_id": 1,
+      "project_id": 1,
       "environment_id": 1,
       "created_by": "example-user",
       "created_at": "2025-07-17T00:42:01+03:00",
@@ -100,8 +98,7 @@ Content-Type: application/json
   "name": "my-api-key",
   "value": "secret-value-here",
   "type": "api_key",
-  "namespace_id": 1,
-  "zone_id": 1,
+  "project_id": 1,
   "environment_id": 1,
   "expires_at": "2025-12-31T23:59:59Z",
   "max_reads": 0
@@ -115,8 +112,7 @@ Content-Type: application/json
   "name": "my-api-key",
   "type": "api_key",
   "status": "active",
-  "namespace_id": 1,
-  "zone_id": 1,
+  "project_id": 1,
   "environment_id": 1,
   "created_by": "current-user",
   "created_at": "2025-10-08T16:30:00Z",
@@ -140,8 +136,7 @@ Authorization: Bearer <token>
   "name": "example-api-key",
   "type": "api-key-v2",
   "status": "active",
-  "namespace_id": 1,
-  "zone_id": 1,
+  "project_id": 1,
   "environment_id": 1,
   "created_by": "example-user",
   "created_at": "2025-07-17T00:42:01+03:00",

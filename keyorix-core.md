@@ -61,9 +61,9 @@ npx vitest run
 | ADR-010 | KEK rotation with full re-encryption sweep | Decided |
 | ADR-014 | Frontend feature-folder architecture | Decided |
 | ADR-015 | Bundle splitting — vendor/router/query/ui chunks | Decided |
-| ADR-016 | CLI active project context via `keyorix project use` | Proposed |
-| ADR-017 | Environment CLI surface under `project env` | Proposed |
-| ADR-019 | Hierarchy depth: three levels by design | Proposed |
+| ADR-016 | CLI active project context via `keyorix project use` | Implemented |
+| ADR-017 | Environment CLI surface under `project env` | Implemented |
+| ADR-019 | Hierarchy depth: three levels by design | Implemented |
 | ADR-020 | Project detail page — mental-mode tabs | Proposed |
 
 ADR-010 lives in `docs/`. ADR-014 onward live in `keyorix-private/adrs/`.
@@ -76,10 +76,17 @@ ADR-010 lives in `docs/`. ADR-014 onward live in `keyorix-private/adrs/`.
 `Group`, `UserGroup`, `GroupRole`, `SecretNode`, `SecretVersion`, `SecretAccessLog`,
 `SecretMetadataHistory`, `Session`, `PasswordReset`, `Tag`, `SecretTag`, `Notification`,
 `AuditEvent`, `Setting`, `SystemMetadata`, `StatsSnapshot`, `APIClient`, `APIToken`,
-`RateLimit`, `APICallLog`, `ShareRecord`, `GRPCService`, `IdentityProvider`
+`RateLimit`, `APICallLog`, `ShareRecord`, `GRPCService`, `IdentityProvider`,
+`ExternalIdentity`, `AnomalyAlert`, `RotationPolicy`
+
+`RotationPolicy` is created by a standalone migration step in
+`internal/storage/factory.go` (not the guarded full `AutoMigrate` list) so a fresh
+Postgres DB's first boot doesn't re-inspect the just-created table and trip the
+pgx "insufficient arguments" bug.
 
 ---
 
 ## Known Pre-existing Test Failures (not regressions)
 
-None — `go test ./...` passes clean as of May 9, 2026.
+None — `go test ./...` passes clean as of June 3, 2026 (full gate: build, vet,
+gofmt, tests, gosec MEDIUM+, and a runtime Postgres migration check on a fresh DB).

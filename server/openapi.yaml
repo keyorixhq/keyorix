@@ -58,10 +58,6 @@ components:
           type: integer
           description: Project the secret belongs to
           example: 1
-        zone:
-          type: string
-          description: Zone where the secret is stored
-          example: "us-east-1"
         environment:
           type: string
           description: Environment the secret is used in
@@ -122,10 +118,6 @@ components:
           type: integer
           description: Project the secret belongs to
           example: 1
-        zone:
-          type: string
-          description: Zone where the secret should be stored
-          example: "us-east-1"
         environment:
           type: string
           description: Environment the secret is used in
@@ -413,14 +405,6 @@ components:
         type: integer
       example: 1
 
-    ZoneParam:
-      name: zone
-      in: query
-      description: Filter by zone
-      schema:
-        type: string
-      example: "us-east-1"
-
     EnvironmentParam:
       name: environment
       in: query
@@ -512,7 +496,6 @@ paths:
         - $ref: '#/components/parameters/PageParam'
         - $ref: '#/components/parameters/PageSizeParam'
         - $ref: '#/components/parameters/ProjectParam'
-        - $ref: '#/components/parameters/ZoneParam'
         - $ref: '#/components/parameters/EnvironmentParam'
       responses:
         '200':
@@ -1076,10 +1059,6 @@ tags:
           type: integer
           description: Secret project
           example: 1
-        zone:
-          type: string
-          description: Secret zone
-          example: "us-west-2"
         environment:
           type: string
           description: Secret environment

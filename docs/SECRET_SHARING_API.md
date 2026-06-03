@@ -251,8 +251,7 @@ Get all secrets shared with the current user.
         "permission": "read",
         "share_id": 456,
         "shared_at": "2025-07-22T10:30:00Z",
-        "namespace": "production",
-        "zone": "us-west-2",
+        "project_id": 1,
         "environment": "prod"
       }
     ],
@@ -444,7 +443,7 @@ GET /api/v1/shares?page=2&page_size=10
 **Shared secrets endpoint (`/shared-secrets`):**
 - `permission`: Filter by permission level
 - `owner_id`: Filter by owner ID
-- `namespace`: Filter by namespace
+- `project_id`: Filter by project
 - `type`: Filter by secret type
 
 ### Sorting

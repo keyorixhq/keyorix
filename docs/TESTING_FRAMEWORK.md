@@ -68,7 +68,7 @@ func TestRBACFunctionality(t *testing.T) {
 The RBACTestHelper automatically:
 - Creates an in-memory SQLite database
 - Runs all necessary migrations
-- Seeds default roles, permissions, namespaces, zones, and environments
+- Seeds default roles, permissions, projects, and environments
 - Sets up proper role-permission relationships
 
 ### Service TestHelper
@@ -141,8 +141,7 @@ secret := helper.CreateTestSecret(t, "test-secret", 1, 1)
 // Manual secret creation
 secret := &models.SecretNode{
     ID:            1,
-    NamespaceID:   1, // default namespace
-    ZoneID:        1, // global zone
+    ProjectID:     1, // default project
     EnvironmentID: 1, // production environment
     Name:          "test-secret",
     IsSecret:      true,
