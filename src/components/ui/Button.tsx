@@ -94,7 +94,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
                         className={clsx(
                             'animate-spin',
                             iconSizeClasses[size],
-                            children && (iconPosition === 'left' ? 'mr-2' : 'ml-2')
+                            !!children && (iconPosition === 'left' ? 'mr-2' : 'ml-2')
                         )}
                         fill="none"
                         viewBox="0 0 24 24"
@@ -119,7 +119,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
                     <Icon
                         className={clsx(
                             iconSizeClasses[size],
-                            children && 'mr-2'
+                            !!children && 'mr-2'
                         )}
                     />
                 )}
@@ -130,7 +130,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
                     <Icon
                         className={clsx(
                             iconSizeClasses[size],
-                            children && 'ml-2'
+                            !!children && 'ml-2'
                         )}
                     />
                 )}

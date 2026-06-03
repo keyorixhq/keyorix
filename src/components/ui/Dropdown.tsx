@@ -60,11 +60,11 @@ const Dropdown: React.FC<DropdownProps> = ({
 
                             return (
                                 <Menu.Item key={item.value} disabled={item.disabled || false}>
-                                    {({ active }) => (
+                                    {({ focus }) => (
                                         <button
                                             className={clsx(
                                                 'group flex w-full items-center px-4 py-2 text-sm',
-                                                active && !item.disabled && 'bg-subtle',
+                                                focus && !item.disabled && 'bg-subtle',
                                                 item.disabled && 'opacity-50 cursor-not-allowed',
                                                 item.danger
                                                     ? 'text-red-700 hover:bg-red-50'
