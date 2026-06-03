@@ -112,7 +112,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
     // ── Selected items (bulk delete) ─────────────────────────────────────
     const [selectedItems, setSelectedItems] = React.useState<Set<number>>(new Set());
     const toggleSelected = (id: number) => setSelectedItems(prev => {
-        const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+        const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next;
     });
     const clearSelected = () => setSelectedItems(new Set());
 

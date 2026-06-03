@@ -64,7 +64,7 @@ export async function copyToClipboard(text: string, clearTimeout = 30000): Promi
         }, clearTimeout);
     } catch (error) {
         console.error('Failed to copy to clipboard:', error);
-        throw new Error('Failed to copy to clipboard');
+        throw new Error('Failed to copy to clipboard', { cause: error });
     }
 }
 

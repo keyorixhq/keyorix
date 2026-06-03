@@ -82,7 +82,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
         .filter(a => filterSev    === 'all' || a.Severity    === filterSev)
         .filter(a => filterStatus === 'all' || (filterStatus === 'open' ? !a.Acknowledged : a.Acknowledged))
         .sort((a, b) => {
-            let cmp = 0;
+            let cmp: number;
             if      (sortField === 'severity')    cmp = (SEVERITY_ORDER[a.Severity] ?? 0) - (SEVERITY_ORDER[b.Severity] ?? 0);
             else if (sortField === 'alert_type')  cmp = a.AlertType.localeCompare(b.AlertType);
             else if (sortField === 'secret_name') cmp = a.SecretName.localeCompare(b.SecretName);

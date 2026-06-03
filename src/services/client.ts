@@ -6,7 +6,6 @@ const config = getEnvConfig();
 
 const logError = (error: AxiosError) => {
     if (getEnvConfig().ENABLE_DEBUG) {
-        // eslint-disable-next-line no-console
         console.error(`[API Error] ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
             status: error.response?.status,
             data: error.response?.data,

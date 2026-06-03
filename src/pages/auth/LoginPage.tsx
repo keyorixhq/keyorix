@@ -32,7 +32,7 @@ export const LoginPage: React.FC = () => {
     const handleLogin = async (data: LoginFormData) => {
         try {
             await login(data);
-        } catch (error) {
+        } catch {
             // Error handled by auth store
         }
     };

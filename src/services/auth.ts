@@ -61,7 +61,7 @@ export const authService = {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 const message = error.response?.data?.error || error.response?.data?.message || 'Login failed';
-                throw new Error(message);
+                throw new Error(message, { cause: error });
             }
             throw error;
         }
@@ -96,7 +96,7 @@ export const authService = {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 const message = error.response?.data?.error || error.response?.data?.message || 'Token refresh failed';
-                throw new Error(message);
+                throw new Error(message, { cause: error });
             }
             throw error;
         }
@@ -119,7 +119,7 @@ export const authService = {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 const message = error.response?.data?.error || error.response?.data?.message || 'Failed to get profile';
-                throw new Error(message);
+                throw new Error(message, { cause: error });
             }
             throw error;
         }
@@ -141,7 +141,7 @@ export const authService = {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 const message = error.response?.data?.error || error.response?.data?.message || 'Password reset request failed';
-                throw new Error(message);
+                throw new Error(message, { cause: error });
             }
             throw error;
         }
@@ -163,7 +163,7 @@ export const authService = {
         } catch (error) {
             if (axios.isAxiosError(error)) {
                 const message = error.response?.data?.error || error.response?.data?.message || 'Password reset failed';
-                throw new Error(message);
+                throw new Error(message, { cause: error });
             }
             throw error;
         }
@@ -175,7 +175,7 @@ export const authService = {
     async checkAuth(): Promise<User | null> {
         try {
             return await this.getProfile();
-        } catch (error) {
+        } catch {
             return null;
         }
     },

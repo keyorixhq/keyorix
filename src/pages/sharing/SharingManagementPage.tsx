@@ -36,7 +36,7 @@ export const SharingManagementPage: React.FC = () => {
     const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
     const [bulkActionMode, setBulkActionMode] = useState(false);
     const toggleSelectedItem = (id: number) => setSelectedItems(prev => {
-        const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+        const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next;
     });
     const clearSelectedItems = () => setSelectedItems(new Set());
     const formatDate = (d: string) => new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));

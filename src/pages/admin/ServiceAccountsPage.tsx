@@ -133,7 +133,7 @@ export const ServiceAccountsPage: React.FC = () => {
     function toggleScope(scope: string) {
         setFormScopes((prev) => {
             const next = new Set(prev);
-            next.has(scope) ? next.delete(scope) : next.add(scope);
+            if (next.has(scope)) next.delete(scope); else next.add(scope);
             return next;
         });
     }

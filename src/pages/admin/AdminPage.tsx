@@ -139,7 +139,7 @@ export const AdminPage: React.FC = () => {
     function toggleRoleId(id: number) {
         setSelectedRoleIds(prev => {
             const next = new Set(prev);
-            next.has(id) ? next.delete(id) : next.add(id);
+            if (next.has(id)) next.delete(id); else next.add(id);
             return next;
         });
     }
@@ -211,7 +211,7 @@ export const AdminPage: React.FC = () => {
     }
 
     function toggleSelect(id: number) {
-        setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+        setSelected(prev => { const s = new Set(prev); if (s.has(id)) s.delete(id); else s.add(id); return s; });
     }
 
     function toggleAll() {

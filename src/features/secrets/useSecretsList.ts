@@ -28,7 +28,7 @@ export const useSecretsList = () => {
     const [bulkActionMode, setBulkActionMode] = useState(false);
     const toggleSelectedItem = (id: number) => setSelectedItems(prev => {
         const next = new Set(prev);
-        next.has(id) ? next.delete(id) : next.add(id);
+        if (next.has(id)) next.delete(id); else next.add(id);
         return next;
     });
     const clearSelectedItems = () => setSelectedItems(new Set());
