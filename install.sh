@@ -54,7 +54,7 @@ fi
 info "Latest version: ${LATEST}"
 
 # Download URL
-BINARY_NAME="${BINARY}_${OS}_${ARCH}"
+BINARY_NAME="${BINARY}-${OS}-${ARCH}"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST}/${BINARY_NAME}"
 
 # Download binary

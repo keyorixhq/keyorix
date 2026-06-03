@@ -29,8 +29,22 @@ dev: install-cli
 	@echo "✓ keyorix CLI installed to /usr/local/bin"
 	@echo "✓ Start server with: make run"
 
+release:
+	@echo "→ Cross-compiling $(VERSION)"
+	@mkdir -p dist
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)-linux-amd64   .
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)-linux-arm64   .
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)-darwin-amd64  .
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)-darwin-arm64  .
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)-linux-amd64  ./server/main.go
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)-linux-arm64  ./server/main.go
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)-darwin-amd64 ./server/main.go
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)-darwin-arm64 ./server/main.go
+	@cd dist && sha256sum * > checksums.txt
+	@echo "✅ Release binaries in dist/"
+
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) dist/
 
 docker-build:
 	docker build -f server/Dockerfile -t keyorix-server .
