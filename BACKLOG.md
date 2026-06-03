@@ -67,6 +67,17 @@ The upgrade campaign is **complete** — `pnpm outdated` is empty.
 - TypeScript is on 6.x; `tsconfig` was modernized (`moduleResolution: bundler`,
   no `baseUrl`) so it is clean for the eventual TS 7.
 
+## Known latent issues (not failures — gate is green)
+
+- **`utils/auth.ts` dead code + dormant bug.** Four exports are never called by
+  the app: `getPersistedAuthData`, `hasRememberMe`, `getCurrentAuthState`,
+  `shouldRestoreSession`. `shouldRestoreSession` also has a latent logic bug —
+  it computes `sessionAge = now - expiresAt`, but `getPersistedAuthData` already
+  filters expired tokens, so `expiresAt` is always in the future and the 24h
+  `maxSessionAge` cap never restricts a non-remember-me session. Harmless while
+  unused; decide delete-vs-fix before wiring session restore. Tracked in the
+  global `keyorix-private/keyorix-backlog.md` (Codebase / Technical Debt).
+
 ## Working agreement (how changes land here)
 
 Conventions established over the recent maintenance arc:
