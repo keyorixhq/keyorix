@@ -30,7 +30,9 @@ export const useAuth = () => {
             }
         };
         init();
-    }, []); // Empty dependency array - run once only
+        // mount-only bootstrap; checkAuth is a stable zustand action and this effect is intentionally not reactive.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Session timeout handling
     useEffect(() => {

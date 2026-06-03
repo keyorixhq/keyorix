@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../features/auth';
 
@@ -18,6 +18,10 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
     const [timeLeft, setTimeLeft] = useState(0);
     const [isExtending, setIsExtending] = useState(false);
 
+    // Always points at the latest handleLogout so the inactivity timer can call it
+    // without re-subscribing the effect (which would re-register listeners/timers).
+    const handleLogoutRef = useRef<(() => void) | null>(null);
+
     useEffect(() => {
         if (!isAuthenticated) { setShowWarning(false); return; }
 
@@ -32,7 +36,7 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
                 setTimeLeft(warningTimeMs);
                 countdownInterval = setInterval(() => {
                     setTimeLeft((prev) => {
-                        if (prev <= 1000) { handleLogout(); return 0; }
+                        if (prev <= 1000) { handleLogoutRef.current?.(); return 0; }
                         return prev - 1000;
                     });
                 }, 1000);
@@ -50,6 +54,8 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
             events.forEach(event => document.removeEventListener(event, resetWarning, true));
         };
     }, [isAuthenticated, warningTimeMs]);
+
+    useEffect(() => { handleLogoutRef.current = handleLogout; });
 
     const handleExtendSession = async () => {
         setIsExtending(true);
