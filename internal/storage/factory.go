@@ -126,6 +126,12 @@ func columnExists(db *gorm.DB, table, column string) bool {
 	return count > 0
 }
 
+func tableExists(db *gorm.DB, table string) bool {
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", table).Scan(&count)
+	return count > 0
+}
+
 // migrateDatabase performs database migrations
 func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	// Always run additive migrations for new tables (safe on existing DBs)
@@ -139,7 +145,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 	)`
 	// Use raw SQL for cross-db compatibility check
-	if db.Migrator().HasTable("stats_snapshots") {
+	if tableExists(db, "stats_snapshots") {
 		// Table exists, nothing to do
 	} else {
 		if err := db.Exec(createStatsTable).Error; err != nil {
@@ -151,13 +157,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	}
 
 	// Add LastRotatedAt to secret_nodes if not present (only if table exists)
-	if db.Migrator().HasTable("secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
+	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
 	}
 
 	// Check if namespaces table exists — if so, skip full migration (already initialized)
 	// Always create new tables that may have been added after initial setup
-	anomalyExists := db.Migrator().HasTable("anomaly_alerts")
+	anomalyExists := tableExists(db, "anomaly_alerts")
 	if !anomalyExists {
 		if err := db.Exec(`CREATE TABLE IF NOT EXISTS anomaly_alerts (
             id BIGSERIAL PRIMARY KEY,
@@ -178,7 +184,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_detected_at ON anomaly_alerts(detected_at)")
 	}
 
-	if db.Migrator().HasTable("namespaces") {
+	if tableExists(db, "namespaces") {
 		return nil
 	}
 	return db.AutoMigrate(
