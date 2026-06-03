@@ -1,6 +1,7 @@
 {
     "name": "keyorix-web",
     "private": true,
+    "type": "module",
     "version": "0.0.0",
     "packageManager": "pnpm",
     "scripts": {
