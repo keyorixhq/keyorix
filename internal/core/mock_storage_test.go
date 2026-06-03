@@ -394,13 +394,13 @@ func (m *MockStorage) ListRoles(ctx context.Context) ([]*models.Role, error) {
 
 // RBAC Operations
 
-func (m *MockStorage) AssignRole(ctx context.Context, userID, roleID uint) error {
-	args := m.Called(ctx, userID, roleID)
+func (m *MockStorage) AssignRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
+	args := m.Called(ctx, userID, roleID, scope)
 	return args.Error(0)
 }
 
-func (m *MockStorage) RemoveRole(ctx context.Context, userID, roleID uint) error {
-	args := m.Called(ctx, userID, roleID)
+func (m *MockStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
+	args := m.Called(ctx, userID, roleID, scope)
 	return args.Error(0)
 }
 
@@ -410,6 +410,35 @@ func (m *MockStorage) GetUserRoles(ctx context.Context, userID uint) ([]*models.
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.Role), args.Error(1)
+}
+
+func (m *MockStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
+	args := m.Called(ctx, userID, scope)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uint), args.Error(1)
+}
+
+func (m *MockStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
+	args := m.Called(ctx, userID, scope)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uint), args.Error(1)
+}
+
+func (m *MockStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
+	args := m.Called(ctx, userID, scope)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uint), args.Error(1)
+}
+
+func (m *MockStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
+	args := m.Called(ctx, roleIDs, permission)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error) {
@@ -612,11 +641,11 @@ func (m *MockStorage) GetGroupRoles(_ context.Context, _ uint) ([]*models.Role, 
 	return nil, nil
 }
 
-func (m *MockStorage) AssignRoleToGroup(_ context.Context, _, _ uint) error {
+func (m *MockStorage) AssignRoleToGroup(_ context.Context, _, _ uint, _ storage.Scope) error {
 	return nil
 }
 
-func (m *MockStorage) RemoveRoleFromGroup(_ context.Context, _, _ uint) error {
+func (m *MockStorage) RemoveRoleFromGroup(_ context.Context, _, _ uint, _ storage.Scope) error {
 	return nil
 }
 

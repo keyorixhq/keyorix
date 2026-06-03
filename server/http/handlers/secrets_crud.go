@@ -47,6 +47,14 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authorize against the target project/environment from the body — the
+	// create route carries no path scope for the middleware to resolve.
+	scope := core.Scope{ProjectID: reqBody.ProjectID, EnvironmentID: reqBody.EnvironmentID}
+	if allowed, err := h.coreService.Authorize(r.Context(), userCtx.UserID, "secrets.write", scope); err != nil || !allowed {
+		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+		return
+	}
+
 	req := &core.CreateSecretRequest{
 		Name:          reqBody.Name,
 		Value:         []byte(reqBody.Value),

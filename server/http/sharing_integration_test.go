@@ -38,6 +38,8 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 		&models.Environment{},
 		&models.User{},
 		&models.Role{},
+		&models.Permission{},
+		&models.RolePermission{},
 		&models.UserRole{},
 		&models.Group{},
 		&models.UserGroup{},
@@ -83,10 +85,23 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "test-project"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "test-env"}).Error)
 
-	// Seed an admin role + user_role so user 1 gets adminPermissions in the auth middleware.
+	// Seed a stable secret (ID 1) so share-validation error tests resolve a real
+	// target (the body is rejected before any sharing happens).
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 1, ProjectID: 1, EnvironmentID: 1, Name: "seed-secret",
+		OwnerID: 1, CreatedBy: "admin", Status: "active", IsSecret: true,
+	}).Error)
+
+	// Seed an admin role + user_role so user 1 is a global admin (bypasses scope).
 	adminRole := &models.Role{ID: 1, Name: "admin", Description: "Administrator"}
 	require.NoError(t, db.Create(adminRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
+
+	// Seed a viewer role (secrets.read) for user 2 (recipient) so it can read.
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "viewer", Description: "Reader"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2}).Error)
 
 	// Seed sessions for "valid-token" and "owner-token" (user 1, admin), "recipient-token" (user 2, reader).
 	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "valid-token"}).Error)

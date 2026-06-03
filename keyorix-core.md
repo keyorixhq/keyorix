@@ -79,6 +79,17 @@ ADR-010 lives in `docs/`. ADR-014 onward live in `keyorix-private/adrs/`.
 `RateLimit`, `APICallLog`, `ShareRecord`, `GRPCService`, `IdentityProvider`,
 `ExternalIdentity`, `AnomalyAlert`, `RotationPolicy`
 
+**RBAC Phase 2 — scoped authorization.** `UserRole` and `GroupRole` carry
+`ProjectID`/`EnvironmentID` (uint, `0` = global sentinel) in their composite
+primary key. Enforcement is lazy and per-request: `core.Authorize(ctx, userID,
+permission, Scope)` (`internal/core/authz.go`) resolves the roles that apply at
+the target scope (direct + group-inherited), with a global `admin`/`super_admin`
+bypass. HTTP routes use `middleware.RequireScopedPermission(permission,
+resolver)` — resolvers derive the target project/env from the path (secret, env,
+project, share, rotation-policy) — while create routes authorize in-handler
+against the request body. Migration `008` adds the `environment_id` column for
+existing DBs; fresh installs get the full composite PK via AutoMigrate.
+
 `RotationPolicy` is created by a standalone migration step in
 `internal/storage/factory.go` (not the guarded full `AutoMigrate` list) so a fresh
 Postgres DB's first boot doesn't re-inspect the just-created table and trip the

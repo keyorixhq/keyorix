@@ -128,6 +128,20 @@ func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authorize against the policy's target scope from the body.
+	var pid, eid uint
+	if reqBody.ProjectID != nil {
+		pid = *reqBody.ProjectID
+	}
+	if reqBody.EnvironmentID != nil {
+		eid = *reqBody.EnvironmentID
+	}
+	scope := core.Scope{ProjectID: pid, EnvironmentID: eid}
+	if allowed, err := h.coreService.Authorize(r.Context(), userCtx.UserID, "secrets.write", scope); err != nil || !allowed {
+		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+		return
+	}
+
 	req := &core.CreateRotationPolicyRequest{
 		Name:            reqBody.Name,
 		Description:     reqBody.Description,

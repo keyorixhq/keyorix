@@ -246,7 +246,7 @@ func (h *RBACTestHelper) AssignUserRole(t *testing.T, userID, roleID uint, proje
 	userRole := &models.UserRole{
 		UserID:    userID,
 		RoleID:    roleID,
-		ProjectID: projectID,
+		ProjectID: derefScope(projectID),
 	}
 
 	result := h.DB.Create(userRole)
@@ -269,11 +269,19 @@ func (h *RBACTestHelper) AssignGroupRole(t *testing.T, groupID, roleID uint, pro
 	groupRole := &models.GroupRole{
 		GroupID:   groupID,
 		RoleID:    roleID,
-		ProjectID: projectID,
+		ProjectID: derefScope(projectID),
 	}
 
 	result := h.DB.Create(groupRole)
 	require.NoError(t, result.Error)
+}
+
+// derefScope converts a nullable scope pointer to the 0 = global sentinel.
+func derefScope(id *uint) uint {
+	if id == nil {
+		return 0
+	}
+	return *id
 }
 
 // CreateTestSecret creates a test secret in the database

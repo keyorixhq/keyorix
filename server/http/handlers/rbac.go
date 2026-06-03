@@ -87,12 +87,17 @@ type UpdateRoleRequest struct {
 type AssignRoleRequest struct {
 	UserID uint `json:"user_id" validate:"required"`
 	RoleID uint `json:"role_id" validate:"required"`
+	// ProjectID/EnvironmentID scope the assignment (0 = global). See core.Scope.
+	ProjectID     uint `json:"project_id"`
+	EnvironmentID uint `json:"environment_id"`
 }
 
 // RemoveRoleRequest is the request body for removing a role.
 type RemoveRoleRequest struct {
-	UserID uint `json:"user_id" validate:"required"`
-	RoleID uint `json:"role_id" validate:"required"`
+	UserID        uint `json:"user_id" validate:"required"`
+	RoleID        uint `json:"role_id" validate:"required"`
+	ProjectID     uint `json:"project_id"`
+	EnvironmentID uint `json:"environment_id"`
 }
 
 var validator = validation.NewValidator()
@@ -313,7 +318,8 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.coreService.Storage().AssignRole(r.Context(), req.UserID, req.RoleID); err != nil {
+	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
+	if err := h.coreService.Storage().AssignRole(r.Context(), req.UserID, req.RoleID, scope); err != nil {
 		log.Printf("Error assigning role: %v", err)
 		if strings.Contains(err.Error(), "already assigned") {
 			sendError(w, "ConflictError", "Role already assigned to user", http.StatusConflict, nil)
@@ -345,7 +351,8 @@ func (h *RBACHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.coreService.Storage().RemoveRole(r.Context(), req.UserID, req.RoleID); err != nil {
+	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
+	if err := h.coreService.Storage().RemoveRole(r.Context(), req.UserID, req.RoleID, scope); err != nil {
 		log.Printf("Error removing role: %v", err)
 		if strings.Contains(err.Error(), "not assigned") {
 			sendError(w, "NotFound", "Role not assigned to user", http.StatusNotFound, nil)
@@ -551,7 +558,9 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var body struct {
-		RoleID uint `json:"role_id" validate:"required"`
+		RoleID        uint `json:"role_id" validate:"required"`
+		ProjectID     uint `json:"project_id"`
+		EnvironmentID uint `json:"environment_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -562,7 +571,8 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.coreService.AssignRoleToGroup(r.Context(), groupID, body.RoleID); err != nil {
+	scope := core.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
+	if err := h.coreService.AssignRoleToGroup(r.Context(), groupID, body.RoleID, scope); err != nil {
 		log.Printf("Error assigning role to group: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
@@ -594,8 +604,12 @@ func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	scope := core.Scope{
+		ProjectID:     queryUint(r, "project_id"),
+		EnvironmentID: queryUint(r, "environment_id"),
+	}
 
-	if err := h.coreService.RemoveRoleFromGroup(r.Context(), groupID, roleID); err != nil {
+	if err := h.coreService.RemoveRoleFromGroup(r.Context(), groupID, roleID, scope); err != nil {
 		log.Printf("Error removing role from group: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
@@ -766,4 +780,13 @@ func parseUintParam(w http.ResponseWriter, r *http.Request, param string) (uint,
 		return 0, false
 	}
 	return uint(v), true
+}
+
+// queryUint reads an optional uint query parameter, defaulting to 0 (the global
+// scope sentinel) when absent or unparseable.
+func queryUint(r *http.Request, key string) uint {
+	if v, err := strconv.ParseUint(r.URL.Query().Get(key), 10, 32); err == nil {
+		return uint(v)
+	}
+	return 0
 }

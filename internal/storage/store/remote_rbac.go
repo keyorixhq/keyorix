@@ -118,9 +118,14 @@ func (rs *RemoteStorage) ListRoles(ctx context.Context) ([]*models.Role, error) 
 
 // --- RBAC assignment ---
 
-// AssignRole assigns a role to a user via remote API.
-func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint) error {
-	payload := map[string]uint{"user_id": userID, "role_id": roleID}
+// AssignRole assigns a role to a user at scope via remote API.
+func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
+	payload := map[string]uint{
+		"user_id":        userID,
+		"role_id":        roleID,
+		"project_id":     scope.ProjectID,
+		"environment_id": scope.EnvironmentID,
+	}
 	resp, err := rs.client.Post(ctx, "/api/v1/rbac/assign-role", payload)
 	if err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
@@ -131,9 +136,14 @@ func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint) er
 	return nil
 }
 
-// RemoveRole removes a role from a user via remote API.
-func (rs *RemoteStorage) RemoveRole(ctx context.Context, userID, roleID uint) error {
-	payload := map[string]uint{"user_id": userID, "role_id": roleID}
+// RemoveRole removes a role from a user at scope via remote API.
+func (rs *RemoteStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
+	payload := map[string]uint{
+		"user_id":        userID,
+		"role_id":        roleID,
+		"project_id":     scope.ProjectID,
+		"environment_id": scope.EnvironmentID,
+	}
 	resp, err := rs.client.Post(ctx, "/api/v1/rbac/remove-role", payload)
 	if err != nil {
 		return fmt.Errorf("failed to remove role: %w", err)
@@ -229,19 +239,73 @@ func (rs *RemoteStorage) RemovePermissionFromRole(_ context.Context, _, _ uint) 
 	return fmt.Errorf("not implemented: RemovePermissionFromRole")
 }
 
-// GetGroupRoles is not implemented in remote storage.
-func (rs *RemoteStorage) GetGroupRoles(_ context.Context, _ uint) ([]*models.Role, error) {
-	return nil, fmt.Errorf("not implemented: GetGroupRoles")
+// GetGroupRoles lists the roles assigned to a group via remote API.
+func (rs *RemoteStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error) {
+	path := fmt.Sprintf("/api/v1/groups/%d/roles", groupID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group roles: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get group roles failed: %s", resp.Error.Error())
+	}
+	var result []*models.Role
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
 }
 
-// AssignRoleToGroup is not implemented in remote storage.
-func (rs *RemoteStorage) AssignRoleToGroup(_ context.Context, _, _ uint) error {
-	return fmt.Errorf("not implemented: AssignRoleToGroup")
+// AssignRoleToGroup assigns a role to a group at scope via remote API.
+func (rs *RemoteStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
+	path := fmt.Sprintf("/api/v1/groups/%d/roles", groupID)
+	payload := map[string]uint{
+		"role_id":        roleID,
+		"project_id":     scope.ProjectID,
+		"environment_id": scope.EnvironmentID,
+	}
+	resp, err := rs.client.Post(ctx, path, payload)
+	if err != nil {
+		return fmt.Errorf("failed to assign role to group: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("assign role to group failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-// RemoveRoleFromGroup is not implemented in remote storage.
-func (rs *RemoteStorage) RemoveRoleFromGroup(_ context.Context, _, _ uint) error {
-	return fmt.Errorf("not implemented: RemoveRoleFromGroup")
+// RemoveRoleFromGroup removes a role from a group via remote API.
+func (rs *RemoteStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, _ storage.Scope) error {
+	path := fmt.Sprintf("/api/v1/groups/%d/roles/%d", groupID, roleID)
+	resp, err := rs.client.Delete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("failed to remove role from group: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("remove role from group failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// GetUserRoleIDsAt is a server-internal authorization primitive; remote clients
+// do not enforce, so it is unsupported here.
+func (rs *RemoteStorage) GetUserRoleIDsAt(_ context.Context, _ uint, _ storage.Scope) ([]uint, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
+// GetUserRoleIDsExact is a server-internal authorization primitive.
+func (rs *RemoteStorage) GetUserRoleIDsExact(_ context.Context, _ uint, _ storage.Scope) ([]uint, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
+// GetUserGroupRoleIDsAt is a server-internal authorization primitive.
+func (rs *RemoteStorage) GetUserGroupRoleIDsAt(_ context.Context, _ uint, _ storage.Scope) ([]uint, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
+// RoleSetHasPermission is a server-internal authorization primitive.
+func (rs *RemoteStorage) RoleSetHasPermission(_ context.Context, _ []uint, _ string) (bool, error) {
+	return false, fmt.Errorf("not supported in remote storage")
 }
 
 // --- Project / Environment (not supported in remote mode) ---

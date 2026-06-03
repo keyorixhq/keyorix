@@ -14,6 +14,10 @@ import (
 
 type updateUserRolesRequest struct {
 	RoleIDs []uint `json:"role_ids" validate:"omitempty"`
+	// ProjectID/EnvironmentID scope the replacement (0 = global). Only the
+	// user's roles at this exact scope are replaced; others are left intact.
+	ProjectID     uint `json:"project_id"`
+	EnvironmentID uint `json:"environment_id"`
 }
 
 type apiRole struct {
@@ -106,7 +110,8 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	if err := h.coreService.SetUserRoles(r.Context(), userID, req.RoleIDs); err != nil {
+	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
+	if err := h.coreService.SetUserRoles(r.Context(), userID, req.RoleIDs, scope); err != nil {
 		log.Printf("Error setting roles for user %d: %v", userID, err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)

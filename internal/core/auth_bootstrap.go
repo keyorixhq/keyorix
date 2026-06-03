@@ -61,6 +61,11 @@ var adminPermissions = []string{
 	"audit.read", "system.read", "system.write",
 }
 
+// editorPermissions lists the permission names granted to the editor role.
+// Editor is the canonical "can change secrets, but not manage users/roles" role
+// and is meant to be granted at a project/environment scope (RBAC Phase 2).
+var editorPermissions = []string{"secrets.read", "secrets.write", "secrets.delete", "users.read"}
+
 // viewerPermissions lists the permission names granted to the viewer role.
 var viewerPermissions = []string{"secrets.read", "users.read", "audit.read"}
 
@@ -119,6 +124,13 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 	if err != nil {
 		return nil, fmt.Errorf("failed to create admin role: %w", err)
 	}
+	editorRole, err := c.storage.CreateRole(ctx, &models.Role{
+		Name:        "editor",
+		Description: "Create, update and delete secrets within a scope",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create editor role: %w", err)
+	}
 	viewerRole, err := c.storage.CreateRole(ctx, &models.Role{
 		Name:        "viewer",
 		Description: "Read-only access",
@@ -132,13 +144,18 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 			return nil, fmt.Errorf("failed to assign permission %s to admin role: %w", name, err)
 		}
 	}
+	for _, name := range editorPermissions {
+		if err := c.storage.AssignPermissionToRole(ctx, editorRole.ID, permIDs[name]); err != nil {
+			return nil, fmt.Errorf("failed to assign permission %s to editor role: %w", name, err)
+		}
+	}
 	for _, name := range viewerPermissions {
 		if err := c.storage.AssignPermissionToRole(ctx, viewerRole.ID, permIDs[name]); err != nil {
 			return nil, fmt.Errorf("failed to assign permission %s to viewer role: %w", name, err)
 		}
 	}
 
-	if err := c.storage.AssignRole(ctx, user.ID, adminRole.ID); err != nil {
+	if err := c.storage.AssignRole(ctx, user.ID, adminRole.ID, Scope{}); err != nil {
 		return nil, fmt.Errorf("failed to assign admin role to user: %w", err)
 	}
 

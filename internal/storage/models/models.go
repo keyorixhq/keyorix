@@ -55,10 +55,18 @@ type RolePermission struct {
 	PermissionID uint `gorm:"primaryKey"`
 }
 
+// UserRole binds a user to a role at a scope. ProjectID/EnvironmentID use a
+// 0 = global sentinel (not NULL) so they can sit in the composite primary key
+// without nullable-PK headaches across SQLite and Postgres:
+//
+//	(0, 0)   role applies globally (every project/environment)
+//	(P, 0)   role applies to all environments in project P
+//	(P, E)   role applies only to environment E of project P
 type UserRole struct {
-	UserID    uint `gorm:"primaryKey"`
-	RoleID    uint `gorm:"primaryKey"`
-	ProjectID *uint
+	UserID        uint `gorm:"primaryKey"`
+	RoleID        uint `gorm:"primaryKey"`
+	ProjectID     uint `gorm:"primaryKey;not null;default:0"`
+	EnvironmentID uint `gorm:"primaryKey;not null;default:0"`
 }
 
 type Group struct {
@@ -72,10 +80,13 @@ type UserGroup struct {
 	GroupID uint `gorm:"primaryKey"`
 }
 
+// GroupRole binds a group to a role at a scope. See UserRole for the
+// 0 = global sentinel semantics of ProjectID/EnvironmentID.
 type GroupRole struct {
-	GroupID   uint `gorm:"primaryKey"`
-	RoleID    uint `gorm:"primaryKey"`
-	ProjectID *uint
+	GroupID       uint `gorm:"primaryKey"`
+	RoleID        uint `gorm:"primaryKey"`
+	ProjectID     uint `gorm:"primaryKey;not null;default:0"`
+	EnvironmentID uint `gorm:"primaryKey;not null;default:0"`
 }
 
 type SecretNode struct {

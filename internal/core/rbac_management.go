@@ -78,26 +78,26 @@ func (c *KeyorixCore) GetGroupRoles(ctx context.Context, groupID uint) ([]*model
 	return roles, nil
 }
 
-// AssignRoleToGroup verifies both exist then assigns the role.
-func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, groupID, roleID uint) error {
+// AssignRoleToGroup verifies both exist then assigns the role at scope.
+func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID); err != nil {
+	if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
 }
 
-// RemoveRoleFromGroup verifies the group exists then removes the role.
-func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint) error {
+// RemoveRoleFromGroup verifies the group exists then removes the role at scope.
+func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
-	if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID); err != nil {
+	if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
@@ -150,32 +150,33 @@ func (c *KeyorixCore) GetUserRolesByID(ctx context.Context, userID uint) ([]*mod
 	return roles, nil
 }
 
-// SetUserRoles does a full replacement of the roles assigned to a user.
-// Roles in the current set but not in roleIDs are removed; roles in roleIDs
-// but not already assigned are added.
-func (c *KeyorixCore) SetUserRoles(ctx context.Context, userID uint, roleIDs []uint) error {
-	current, err := c.storage.GetUserRoles(ctx, userID)
+// SetUserRoles does a full replacement of the roles assigned to a user at the
+// given scope. Only assignments at exactly that scope are considered: roles
+// present there but not in roleIDs are removed; roles in roleIDs not already
+// assigned there are added. Assignments at other scopes are left untouched.
+func (c *KeyorixCore) SetUserRoles(ctx context.Context, userID uint, roleIDs []uint, scope Scope) error {
+	current, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	currentSet := make(map[uint]bool, len(current))
-	for _, r := range current {
-		currentSet[r.ID] = true
+	for _, id := range current {
+		currentSet[id] = true
 	}
 	newSet := make(map[uint]bool, len(roleIDs))
 	for _, id := range roleIDs {
 		newSet[id] = true
 	}
-	for _, r := range current {
-		if !newSet[r.ID] {
-			if err := c.storage.RemoveRole(ctx, userID, r.ID); err != nil {
+	for _, id := range current {
+		if !newSet[id] {
+			if err := c.storage.RemoveRole(ctx, userID, id, scope); err != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 			}
 		}
 	}
 	for _, id := range roleIDs {
 		if !currentSet[id] {
-			if err := c.storage.AssignRole(ctx, userID, id); err != nil {
+			if err := c.storage.AssignRole(ctx, userID, id, scope); err != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 			}
 		}

@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -21,13 +24,14 @@ type sessionValidator interface {
 	ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error)
 }
 
-// UserContext represents the authenticated user context
+// UserContext represents the authenticated user context. It carries identity
+// only — authorization is resolved per-request against the target scope by
+// core.Authorize, not from a precomputed permission list.
 type UserContext struct {
-	UserID      uint     `json:"user_id"`
-	Username    string   `json:"username"`
-	Email       string   `json:"email"`
-	Roles       []string `json:"roles"`
-	Permissions []string `json:"permissions"`
+	UserID   uint     `json:"user_id"`
+	Username string   `json:"username"`
+	Email    string   `json:"email"`
+	Roles    []string `json:"roles"`
 }
 
 // contextKey is used for context keys to avoid collisions
@@ -160,8 +164,22 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 	}
 }
 
-// RequirePermission returns a middleware that checks if the user has a specific permission
-func RequirePermission(permission string) func(next http.Handler) http.Handler {
+// errInvalidTarget / errTargetNotFound let scope resolvers signal whether a bad
+// target should surface as 400 (unparseable) or 404 (no such resource).
+var (
+	errInvalidTarget  = errors.New("invalid target")
+	errTargetNotFound = errors.New("target not found")
+)
+
+// ScopeResolver derives the project/environment a request acts on. It may load
+// the target resource (e.g. a secret) via the core service to find its scope.
+type ScopeResolver func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error)
+
+// RequireScopedPermission returns middleware that authorizes the request: it
+// resolves the target scope, then asks core.Authorize whether the user holds
+// permission there. Denials are 403, an unparseable target is 400, and a
+// missing target resource is 404.
+func RequireScopedPermission(permission string, resolve ScopeResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userCtx := GetUserFromContext(r.Context())
@@ -169,15 +187,161 @@ func RequirePermission(permission string) func(next http.Handler) http.Handler {
 				unauthorizedResponse(w, "User context not found")
 				return
 			}
-			for _, perm := range userCtx.Permissions {
-				if perm == permission {
-					next.ServeHTTP(w, r)
+			cs := GetCoreServiceFromContext(r.Context())
+			if cs == nil {
+				forbiddenResponse(w, "Authorization unavailable")
+				return
+			}
+			scope, err := resolve(r, cs)
+			if err != nil {
+				if errors.Is(err, errTargetNotFound) {
+					// Reveal "not found" only to callers who hold the permission
+					// globally; otherwise deny without confirming the resource
+					// exists (avoids existence enumeration by unprivileged users).
+					if ok, aerr := cs.Authorize(r.Context(), userCtx.UserID, permission, core.Scope{}); aerr == nil && ok {
+						notFoundResponse(w, "Resource not found")
+					} else {
+						forbiddenResponse(w, "Insufficient permissions")
+					}
 					return
 				}
+				badRequestResponse(w, "Invalid target")
+				return
 			}
-			forbiddenResponse(w, "Insufficient permissions")
+			allowed, err := cs.Authorize(r.Context(), userCtx.UserID, permission, scope)
+			if err != nil || !allowed {
+				forbiddenResponse(w, "Insufficient permissions")
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequirePermission enforces a permission at global scope. Use it for
+// admin-area routes (users, roles, audit, system) that are not tied to a
+// particular project/environment.
+func RequirePermission(permission string) func(next http.Handler) http.Handler {
+	return RequireScopedPermission(permission, ScopeGlobal)
+}
+
+// ScopeGlobal always resolves to the global scope.
+func ScopeGlobal(_ *http.Request, _ *core.KeyorixCore) (core.Scope, error) {
+	return core.Scope{}, nil
+}
+
+// ScopeFromQuery reads optional project_id/environment_id query params (0 when
+// absent). Used by list endpoints where the client narrows by scope.
+func ScopeFromQuery(r *http.Request, _ *core.KeyorixCore) (core.Scope, error) {
+	return core.Scope{
+		ProjectID:     scopeQueryUint(r, "project_id"),
+		EnvironmentID: scopeQueryUint(r, "environment_id"),
+	}, nil
+}
+
+// ScopeFromProjectParam treats the named path param as a project ID.
+func ScopeFromProjectParam(param string) ScopeResolver {
+	return func(r *http.Request, _ *core.KeyorixCore) (core.Scope, error) {
+		id, err := scopePathUint(r, param)
+		if err != nil {
+			return core.Scope{}, errInvalidTarget
+		}
+		return core.Scope{ProjectID: id}, nil
+	}
+}
+
+// ScopeFromEnvParam treats the named path param as an environment ID and loads
+// its owning project.
+func ScopeFromEnvParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		id, err := scopePathUint(r, param)
+		if err != nil {
+			return core.Scope{}, errInvalidTarget
+		}
+		env, err := cs.Storage().GetEnvironment(r.Context(), id)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: env.ProjectID, EnvironmentID: id}, nil
+	}
+}
+
+// ScopeFromSecretParam treats the named path param as a secret ID and resolves
+// the secret's project/environment. Uses the raw storage fetch (no read-count
+// side effects).
+func ScopeFromSecretParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		id, err := scopePathUint(r, param)
+		if err != nil {
+			return core.Scope{}, errInvalidTarget
+		}
+		secret, err := cs.Storage().GetSecret(r.Context(), id)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
+	}
+}
+
+// ScopeFromShareParam treats the named path param as a share ID and resolves the
+// scope of the shared secret.
+func ScopeFromShareParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		id, err := scopePathUint(r, param)
+		if err != nil {
+			return core.Scope{}, errInvalidTarget
+		}
+		share, err := cs.Storage().GetShareRecord(r.Context(), id)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		secret, err := cs.Storage().GetSecret(r.Context(), share.SecretID)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
+	}
+}
+
+// ScopeFromRotationPolicyParam treats the named path param as a rotation policy
+// ID and resolves the policy's project/environment scope.
+func ScopeFromRotationPolicyParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		id, err := scopePathUint(r, param)
+		if err != nil {
+			return core.Scope{}, errInvalidTarget
+		}
+		policy, err := cs.Storage().GetRotationPolicy(r.Context(), id)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{
+			ProjectID:     derefUint(policy.ProjectID),
+			EnvironmentID: derefUint(policy.EnvironmentID),
+		}, nil
+	}
+}
+
+func scopePathUint(r *http.Request, param string) (uint, error) {
+	v, err := strconv.ParseUint(chi.URLParam(r, param), 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint(v), nil
+}
+
+func scopeQueryUint(r *http.Request, key string) uint {
+	if v, err := strconv.ParseUint(r.URL.Query().Get(key), 10, 32); err == nil {
+		return uint(v)
+	}
+	return 0
+}
+
+func derefUint(p *uint) uint {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // RequireRole returns a middleware that checks if the user has a specific role
@@ -208,20 +372,9 @@ func GetUserFromContext(ctx context.Context) *UserContext {
 	return nil
 }
 
-var adminPermissions = []string{
-	"secrets.read", "secrets.write", "secrets.delete",
-	"users.read", "users.write", "users.delete",
-	"roles.read", "roles.write", "roles.assign",
-	"audit.read", "system.read",
-}
-
-var readPermissions = []string{
-	"secrets.read",
-	"users.read",
-}
-
 // validateToken validates a session token via the supplied validator and returns
-// the resolved UserContext.
+// the resolved UserContext. Permissions are no longer precomputed here — they are
+// resolved per request, scoped to the target, by core.Authorize.
 func validateToken(ctx context.Context, validator sessionValidator, token string) (*UserContext, error) {
 	if validator == nil {
 		return nil, http.ErrNotSupported
@@ -230,19 +383,11 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	if err != nil {
 		return nil, err
 	}
-	perms := readPermissions
-	for _, r := range roleNames {
-		if r == "admin" {
-			perms = adminPermissions
-			break
-		}
-	}
 	return &UserContext{
-		UserID:      user.ID,
-		Username:    user.Username,
-		Email:       user.Email,
-		Roles:       roleNames,
-		Permissions: perms,
+		UserID:   user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Roles:    roleNames,
 	}, nil
 }
 
@@ -261,6 +406,24 @@ func forbiddenResponse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusForbidden)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "Forbidden", "message": message, "code": http.StatusForbidden,
+	})
+}
+
+// notFoundResponse sends a 404 Not Found response.
+func notFoundResponse(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "NotFound", "message": message, "code": http.StatusNotFound,
+	})
+}
+
+// badRequestResponse sends a 400 Bad Request response.
+func badRequestResponse(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "BadRequest", "message": message, "code": http.StatusBadRequest,
 	})
 }
 

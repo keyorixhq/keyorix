@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,7 +67,7 @@ func TestRBACCoreServiceIntegration(t *testing.T) {
 
 	t.Run("get user roles through storage", func(t *testing.T) {
 		// First assign a role
-		err := helper.Storage.AssignRole(ctx, user2.ID, 4) // viewer role
+		err := helper.Storage.AssignRole(ctx, user2.ID, 4, storage.Scope{}) // viewer role
 		require.NoError(t, err)
 
 		// Get user roles
@@ -81,7 +82,7 @@ func TestRBACCoreServiceIntegration(t *testing.T) {
 		testUser := helper.CreateTestUser(t, "testuser", 10)
 
 		// First assign a role
-		err := helper.Storage.AssignRole(ctx, testUser.ID, 3) // editor role
+		err := helper.Storage.AssignRole(ctx, testUser.ID, 3, storage.Scope{}) // editor role
 		require.NoError(t, err)
 
 		// Verify role was assigned
@@ -91,7 +92,7 @@ func TestRBACCoreServiceIntegration(t *testing.T) {
 		assert.Equal(t, "editor", roles[0].Name)
 
 		// Remove the role
-		err = helper.Storage.RemoveRole(ctx, testUser.ID, 3)
+		err = helper.Storage.RemoveRole(ctx, testUser.ID, 3, storage.Scope{})
 		require.NoError(t, err)
 
 		// Verify role was removed
@@ -401,8 +402,8 @@ func TestRBACErrorHandling(t *testing.T) {
 	})
 
 	t.Run("remove role that user doesn't have", func(t *testing.T) {
-		err := helper.Storage.RemoveRole(ctx, testUser.ID, 999) // non-existent role
-		assert.Error(t, err)                                    // This implementation returns error when role not assigned
+		err := helper.Storage.RemoveRole(ctx, testUser.ID, 999, storage.Scope{}) // non-existent role
+		assert.Error(t, err)                                                     // This implementation returns error when role not assigned
 		assert.Contains(t, err.Error(), "not assigned")
 	})
 }

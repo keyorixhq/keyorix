@@ -68,7 +68,7 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 	// Auto-assign the viewer role to every new user so they have basic read access.
 	// Failure is non-fatal — user is created successfully regardless.
 	if viewerRole, err := c.storage.GetRoleByName(ctx, "viewer"); err == nil {
-		_ = c.storage.AssignRole(ctx, createdUser.ID, viewerRole.ID)
+		_ = c.storage.AssignRole(ctx, createdUser.ID, viewerRole.ID, Scope{})
 	}
 
 	return createdUser, nil

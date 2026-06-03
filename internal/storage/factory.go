@@ -144,6 +144,21 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
 	}
 
+	// RBAC Phase 2: scope role assignments by environment as well as project.
+	// project_id already exists (nullable on pre-008 DBs); add environment_id and
+	// normalise NULL project_id rows to the 0 = global sentinel the queries expect.
+	for _, tbl := range []string{"user_roles", "group_roles"} {
+		if !tableExists(db, tbl) {
+			continue
+		}
+		if !columnExists(db, tbl, "environment_id") {
+			db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0", tbl))
+		}
+		if columnExists(db, tbl, "project_id") {
+			db.Exec(fmt.Sprintf("UPDATE %s SET project_id = 0 WHERE project_id IS NULL", tbl))
+		}
+	}
+
 	// Create rotation_policies table if it doesn't exist yet (additive, safe on existing DBs).
 	if !tableExists(db, "rotation_policies") {
 		if err := db.AutoMigrate(&models.RotationPolicy{}); err != nil {

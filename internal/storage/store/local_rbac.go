@@ -95,26 +95,35 @@ func (ls *LocalStorage) ListRoles(ctx context.Context) ([]*models.Role, error) {
 
 // --- RBAC assignment ---
 
-// AssignRole assigns a role to a user; returns an error if already assigned.
-func (ls *LocalStorage) AssignRole(ctx context.Context, userID, roleID uint) error {
+// AssignRole assigns a role to a user at scope; errors if already assigned there.
+func (ls *LocalStorage) AssignRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
 	var existing models.UserRole
-	err := ls.db.WithContext(ctx).Where("user_id = ? AND role_id = ?", userID, roleID).First(&existing).Error
+	err := ls.db.WithContext(ctx).
+		Where("user_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
+			userID, roleID, scope.ProjectID, scope.EnvironmentID).First(&existing).Error
 	if err == nil {
 		return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
 	}
 	if err != gorm.ErrRecordNotFound {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
-	userRole := models.UserRole{UserID: userID, RoleID: roleID}
+	userRole := models.UserRole{
+		UserID:        userID,
+		RoleID:        roleID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+	}
 	if err := ls.db.WithContext(ctx).Create(&userRole).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
 }
 
-// RemoveRole removes a role from a user.
-func (ls *LocalStorage) RemoveRole(ctx context.Context, userID, roleID uint) error {
-	result := ls.db.WithContext(ctx).Where("user_id = ? AND role_id = ?", userID, roleID).Delete(&models.UserRole{})
+// RemoveRole removes a role from a user at scope.
+func (ls *LocalStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
+	result := ls.db.WithContext(ctx).
+		Where("user_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
+			userID, roleID, scope.ProjectID, scope.EnvironmentID).Delete(&models.UserRole{})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
@@ -135,6 +144,72 @@ func (ls *LocalStorage) GetUserRoles(ctx context.Context, userID uint) ([]*model
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return roles, nil
+}
+
+// GetUserRoleIDsAt returns the IDs of roles directly assigned to userID that
+// apply at the target scope: a stored assignment applies when its project is
+// global (0) or equal, and its environment is global (0) or equal.
+func (ls *LocalStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
+	var ids []uint
+	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
+		Where("user_id = ?", userID).
+		Where("project_id = 0 OR project_id = ?", scope.ProjectID).
+		Where("environment_id = 0 OR environment_id = ?", scope.EnvironmentID).
+		Distinct().Pluck("role_id", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return ids, nil
+}
+
+// GetUserRoleIDsExact returns the IDs of roles directly assigned to userID at
+// exactly the given scope (no global/inherited matching). Used for full
+// replacement of a user's roles at one scope.
+func (ls *LocalStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
+	var ids []uint
+	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
+		Where("user_id = ? AND project_id = ? AND environment_id = ?",
+			userID, scope.ProjectID, scope.EnvironmentID).
+		Distinct().Pluck("role_id", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return ids, nil
+}
+
+// GetUserGroupRoleIDsAt returns the IDs of roles userID inherits via group
+// membership that apply at the target scope (same scope-matching rule as
+// GetUserRoleIDsAt).
+func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
+	var ids []uint
+	err := ls.db.WithContext(ctx).Table("group_roles").
+		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		Where("user_groups.user_id = ?", userID).
+		Where("group_roles.project_id = 0 OR group_roles.project_id = ?", scope.ProjectID).
+		Where("group_roles.environment_id = 0 OR group_roles.environment_id = ?", scope.EnvironmentID).
+		Distinct().Pluck("group_roles.role_id", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return ids, nil
+}
+
+// RoleSetHasPermission reports whether any role in roleIDs grants the named
+// permission (e.g. "secrets.read") via the role_permissions join.
+func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
+	if len(roleIDs) == 0 {
+		return false, nil
+	}
+	var count int64
+	err := ls.db.WithContext(ctx).Table("permissions").
+		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
+		Where("role_permissions.role_id IN ?", roleIDs).
+		Where("permissions.name = ?", permission).
+		Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+	}
+	return count > 0, nil
 }
 
 // CheckPermission returns true if userID has the given resource/action permission.
@@ -213,27 +288,35 @@ func (ls *LocalStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mod
 	return roles, nil
 }
 
-// AssignRoleToGroup assigns a role to a group; returns an error if already assigned.
-func (ls *LocalStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint) error {
+// AssignRoleToGroup assigns a role to a group at scope; errors if already assigned there.
+func (ls *LocalStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
 	var existing models.GroupRole
-	err := ls.db.WithContext(ctx).Where("group_id = ? AND role_id = ?", groupID, roleID).First(&existing).Error
+	err := ls.db.WithContext(ctx).
+		Where("group_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
+			groupID, roleID, scope.ProjectID, scope.EnvironmentID).First(&existing).Error
 	if err == nil {
 		return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
 	}
 	if err != gorm.ErrRecordNotFound {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
-	groupRole := models.GroupRole{GroupID: groupID, RoleID: roleID}
+	groupRole := models.GroupRole{
+		GroupID:       groupID,
+		RoleID:        roleID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+	}
 	if err := ls.db.WithContext(ctx).Create(&groupRole).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
 }
 
-// RemoveRoleFromGroup removes a role from a group.
-func (ls *LocalStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint) error {
+// RemoveRoleFromGroup removes a role from a group at scope.
+func (ls *LocalStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
 	result := ls.db.WithContext(ctx).
-		Where("group_id = ? AND role_id = ?", groupID, roleID).
+		Where("group_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
+			groupID, roleID, scope.ProjectID, scope.EnvironmentID).
 		Delete(&models.GroupRole{})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)

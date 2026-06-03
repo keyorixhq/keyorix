@@ -81,10 +81,19 @@ type Storage interface {
 	DeleteRole(ctx context.Context, id uint) error
 	ListRoles(ctx context.Context) ([]*models.Role, error)
 
-	// RBAC Operations
-	AssignRole(ctx context.Context, userID, roleID uint) error
-	RemoveRole(ctx context.Context, userID, roleID uint) error
+	// RBAC Operations.
+	// AssignRole/RemoveRole bind a role to a user at the given Scope
+	// (zero Scope = global). GetUserRoleIDsAt / GetUserGroupRoleIDsAt return the
+	// role IDs that apply at a target scope (directly, or via group membership),
+	// and RoleSetHasPermission reports whether any of those roles grants a
+	// permission. Together they back core.Authorize.
+	AssignRole(ctx context.Context, userID, roleID uint, scope Scope) error
+	RemoveRole(ctx context.Context, userID, roleID uint, scope Scope) error
 	GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error)
+	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
+	GetUserRoleIDsExact(ctx context.Context, userID uint, scope Scope) ([]uint, error)
+	GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
+	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 
@@ -94,10 +103,11 @@ type Storage interface {
 	GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error)
 	RemovePermissionFromRole(ctx context.Context, roleID, permissionID uint) error
 
-	// Group-Role assignments
+	// Group-Role assignments. Assign/Remove bind a role to a group at the given
+	// Scope (zero Scope = global).
 	GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error)
-	AssignRoleToGroup(ctx context.Context, groupID, roleID uint) error
-	RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint) error
+	AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
+	RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
 
 	// Stats Snapshots
 	SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error
@@ -193,6 +203,21 @@ type RBACAuditFilter struct {
 	EndTime    *time.Time
 	Page       int
 	PageSize   int
+}
+
+// Scope identifies the project/environment a role assignment or an
+// authorization check applies to. It uses a 0 = global/unspecified sentinel,
+// matching the stored user_roles/group_roles columns:
+//
+//	{0, 0}  global — every project and environment
+//	{P, 0}  all environments in project P
+//	{P, E}  only environment E of project P
+//
+// A stored assignment authorizes a target scope when its project is global or
+// equal AND its environment is global or equal (see GetUserRoleIDsAt).
+type Scope struct {
+	ProjectID     uint
+	EnvironmentID uint
 }
 
 // Permission represents a fine-grained permission

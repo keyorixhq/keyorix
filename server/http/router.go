@@ -123,62 +123,65 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Get("/dashboard/stats", dashboardHandler.GetStats)
 		r.Get("/dashboard/activity", dashboardHandler.GetActivity)
 
-		// Catalog endpoints (projects, environments)
+		// Catalog endpoints (projects, environments).
+		// List endpoints need global read (browse everything); accessing a
+		// specific project/environment is scoped to that project. Creating a
+		// project has no parent scope, so it requires global write.
+		projectScope := customMiddleware.ScopeFromProjectParam("id")
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects", catalogHandler.ListProjects)
-		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects/{id}", catalogHandler.GetProject)
+		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}", catalogHandler.GetProject)
 		r.With(customMiddleware.RequirePermission("secrets.write")).Post("/projects", catalogHandler.CreateProject)
-		r.With(customMiddleware.RequirePermission("secrets.write")).Put("/projects/{id}", catalogHandler.UpdateProject)
-		r.With(customMiddleware.RequirePermission("secrets.delete")).Delete("/projects/{id}", catalogHandler.DeleteProject)
-		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects/{id}/environments", catalogHandler.ListProjectEnvironments)
-		r.With(customMiddleware.RequirePermission("secrets.write")).Post("/projects/{id}/environments", catalogHandler.CreateProjectEnvironment)
-		r.With(customMiddleware.RequirePermission("secrets.delete")).Delete("/environments/{id}", catalogHandler.DeleteEnvironment)
+		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Put("/projects/{id}", catalogHandler.UpdateProject)
+		r.With(customMiddleware.RequireScopedPermission("secrets.delete", projectScope)).Delete("/projects/{id}", catalogHandler.DeleteProject)
+		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/environments", catalogHandler.ListProjectEnvironments)
+		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/environments", catalogHandler.CreateProjectEnvironment)
+		r.With(customMiddleware.RequireScopedPermission("secrets.delete", customMiddleware.ScopeFromEnvParam("id"))).Delete("/environments/{id}", catalogHandler.DeleteEnvironment)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/environments", catalogHandler.ListEnvironments)
 
-		// Secrets endpoints
+		// Secrets endpoints. Per-secret routes resolve scope from the secret's
+		// own project/environment. List authorizes against the project_id/
+		// environment_id query filter (a scoped reader must narrow to a project
+		// they can read; the same filter then bounds the returned rows). Create
+		// authorizes in-handler against the project/environment in the body.
+		secretScope := customMiddleware.ScopeFromSecretParam("id")
 		r.Route("/secrets", func(r chi.Router) {
-			// Require secrets.read permission for GET operations
-			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/", secretHandler.ListSecrets)
-			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/{id}", secretHandler.GetSecret)
-			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/{id}/versions", secretHandler.GetSecretVersions)
-			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/{id}/shares", shareHandler.ListSecretShares)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/", secretHandler.ListSecrets)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}", secretHandler.GetSecret)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/versions", secretHandler.GetSecretVersions)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/shares", shareHandler.ListSecretShares)
 
-			// Require secrets.write permission for write operations
-			r.With(customMiddleware.RequirePermission("secrets.write")).Post("/", secretHandler.CreateSecret)
-			r.With(customMiddleware.RequirePermission("secrets.write")).Put("/{id}", secretHandler.UpdateSecret)
-			r.With(customMiddleware.RequirePermission("secrets.write")).Post("/{id}/rotate", secretHandler.RotateSecret)
-			r.With(customMiddleware.RequirePermission("secrets.write")).Post("/{id}/share", shareHandler.ShareSecret)
+			// Create: authorized inside the handler (scope comes from the body).
+			r.Post("/", secretHandler.CreateSecret)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}", secretHandler.UpdateSecret)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/share", shareHandler.ShareSecret)
 
-			// Require secrets.delete permission for delete operations
-			r.With(customMiddleware.RequirePermission("secrets.delete")).Delete("/{id}", secretHandler.DeleteSecret)
+			r.With(customMiddleware.RequireScopedPermission("secrets.delete", secretScope)).Delete("/{id}", secretHandler.DeleteSecret)
 		})
 
-		// Shares endpoints
+		// Shares endpoints. The user's own share list stays a global-read op;
+		// mutating a specific share is scoped to the shared secret.
+		shareScope := customMiddleware.ScopeFromShareParam("id")
 		r.Route("/shares", func(r chi.Router) {
-			// Require secrets.read permission for GET operations
 			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/", shareHandler.ListShares)
-
-			// Require secrets.write permission for write operations
-			r.With(customMiddleware.RequirePermission("secrets.write")).Put("/{id}", shareHandler.UpdateSharePermission)
-
-			// Require secrets.delete permission for delete operations
-			r.With(customMiddleware.RequirePermission("secrets.write")).Delete("/{id}", shareHandler.RevokeShare)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", shareScope)).Put("/{id}", shareHandler.UpdateSharePermission)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", shareScope)).Delete("/{id}", shareHandler.RevokeShare)
 		})
 
-		// Shared secrets endpoint
+		// Shared secrets endpoint (the caller's own shares)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/shared-secrets", shareHandler.ListSharedSecrets)
 
-		// Rotation policies endpoints
+		// Rotation policies endpoints. List/evaluate take an optional scope
+		// filter; per-policy routes resolve scope from the policy; create
+		// authorizes in-handler against the body.
+		policyScope := customMiddleware.ScopeFromRotationPolicyParam("id")
 		r.Route("/rotation-policies", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("secrets.read"))
-			r.Get("/", rotationPolicyHandler.List)
-			r.Get("/evaluate", rotationPolicyHandler.Evaluate)
-			r.Get("/{id}", rotationPolicyHandler.Get)
-			r.With(customMiddleware.RequirePermission("secrets.write")).
-				Post("/", rotationPolicyHandler.Create)
-			r.With(customMiddleware.RequirePermission("secrets.write")).
-				Put("/{id}", rotationPolicyHandler.Update)
-			r.With(customMiddleware.RequirePermission("secrets.write")).
-				Delete("/{id}", rotationPolicyHandler.Delete)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/", rotationPolicyHandler.List)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/evaluate", rotationPolicyHandler.Evaluate)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", policyScope)).Get("/{id}", rotationPolicyHandler.Get)
+			r.Post("/", rotationPolicyHandler.Create)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", policyScope)).Put("/{id}", rotationPolicyHandler.Update)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", policyScope)).Delete("/{id}", rotationPolicyHandler.Delete)
 		})
 
 		// Users endpoints (RBAC)

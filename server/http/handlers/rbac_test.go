@@ -82,12 +82,6 @@ func addAuthContext(ctx context.Context, token string) context.Context {
 			Username: "admin",
 			Email:    "admin@example.com",
 			Roles:    []string{"admin", "user"},
-			Permissions: []string{
-				"secrets.read", "secrets.write", "secrets.delete",
-				"users.read", "users.write", "users.delete",
-				"roles.read", "roles.write", "roles.assign",
-				"audit.read", "system.read",
-			},
 		}
 	case "test-token":
 		userCtx = &middleware.UserContext{
@@ -95,10 +89,6 @@ func addAuthContext(ctx context.Context, token string) context.Context {
 			Username: "testuser",
 			Email:    "test@example.com",
 			Roles:    []string{"viewer"},
-			Permissions: []string{
-				"secrets.read",
-				"users.read",
-			},
 		}
 	}
 

@@ -14,7 +14,12 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// ListSecrets handles GET /api/v1/secrets
+// ListSecrets handles GET /api/v1/secrets.
+//
+// Scope enforcement happens in the RequireScopedPermission middleware against
+// the project_id/environment_id query params: a non-global reader must narrow
+// the request to a project/environment they can read, and that same filter then
+// bounds the rows returned here. Global readers (and admins) may list unscoped.
 func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {

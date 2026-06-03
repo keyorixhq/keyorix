@@ -40,8 +40,20 @@ func setupRotationPolicyTest(t *testing.T) (*RotationPolicyHandler, *core.Keyori
 		&models.Project{},
 		&models.Environment{},
 		&models.RotationPolicy{},
+		&models.Role{},
+		&models.Permission{},
+		&models.RolePermission{},
+		&models.UserRole{},
+		&models.UserGroup{},
+		&models.GroupRole{},
 	)
 	require.NoError(t, err)
+
+	// Make the test user (ID 1) a global admin so in-handler authorization on
+	// create passes via the admin bypass.
+	adminRole := &models.Role{Name: "admin", Description: "Administrator"}
+	require.NoError(t, db.Create(adminRole).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 
 	storage := store.NewLocalStorage(db)
 	coreService := core.NewKeyorixCore(storage)
