@@ -11,7 +11,7 @@
         "module": "ESNext",
         "skipLibCheck": true,
         /* Bundler mode */
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
         "resolveJsonModule": true,
         "isolatedModules": true,
         "noEmit": true,
@@ -27,7 +27,6 @@
         "noUncheckedIndexedAccess": true,
         "exactOptionalPropertyTypes": true,
         /* Path mapping */
-        "baseUrl": ".",
         "paths": {
             "@/*": [
                 "./src/*"
