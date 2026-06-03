@@ -37,9 +37,6 @@
             "@/pages/*": [
                 "./src/pages/*"
             ],
-            "@/hooks/*": [
-                "./src/hooks/*"
-            ],
             "@/services/*": [
                 "./src/services/*"
             ],
@@ -51,9 +48,6 @@
             ],
             "@/utils/*": [
                 "./src/utils/*"
-            ],
-            "@/i18n/*": [
-                "./src/i18n/*"
             ]
         }
     },
