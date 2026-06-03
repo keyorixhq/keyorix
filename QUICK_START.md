@@ -57,7 +57,8 @@ storage:
     path: "./data/keyorix.db"
   encryption:
     enabled: true
-    use_kek: false
+    dek_path: "keys/dek.key"
+    salt_path: "keys/kek.salt"
 
 security:
   enable_file_permission_check: false

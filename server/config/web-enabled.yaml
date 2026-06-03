@@ -55,9 +55,8 @@ storage:
     conn_max_lifetime_minutes: 30
   encryption:
     enabled: true
-    use_kek: false
-    kek_path: ""
     dek_path: ""
+    salt_path: ""
 
 secrets:
   chunking:

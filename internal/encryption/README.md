@@ -37,9 +37,8 @@ Add encryption settings to your `config.yaml`:
 ```yaml
 encryption:
   enabled: true
-  use_kek: true
-  kek_path: "keys/kek.key"
   dek_path: "keys/dek.key"
+  salt_path: "keys/kek.salt"
 ```
 
 ## Usage

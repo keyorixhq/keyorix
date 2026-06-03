@@ -82,8 +82,8 @@ After running `keyorix system init`, your directory should contain:
 ├── keyorix.yaml          # Main configuration file (0600)
 ├── keyorix_template.yaml # Template file (0644)
 ├── keys/
-│   ├── kek.key            # Key Encryption Key (0600)
-│   └── dek.key            # Data Encryption Key (0600)
+│   ├── kek.salt           # KEK derivation salt (0600)
+│   └── dek.key            # Wrapped Data Encryption Key (0600)
 ├── keyorix.db            # SQLite database (0600)
 ├── keyorix.log           # Application logs (0644)
 └── certs/                 # TLS certificates (if enabled)

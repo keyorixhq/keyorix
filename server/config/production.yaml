@@ -51,9 +51,8 @@ storage:
     conn_max_lifetime_minutes: 30
   encryption:
     enabled: true
-    use_kek: true
-    kek_path: "/app/keys/master.key"
     dek_path: "/app/keys/data.key"
+    salt_path: "/app/keys/kek.salt"
 
 secrets:
   chunking:

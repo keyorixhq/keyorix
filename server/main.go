@@ -143,7 +143,7 @@ func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 	}
 
 	baseDir := ""
-	if !filepath.IsAbs(cfg.Storage.Encryption.KEKPath) {
+	if !filepath.IsAbs(cfg.Storage.Encryption.DEKPath) {
 		baseDir = "."
 	}
 	svc := encryption.NewService(&cfg.Storage.Encryption, baseDir)

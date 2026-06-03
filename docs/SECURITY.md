@@ -248,8 +248,6 @@ rate_limiting:
 # keyorix-enterprise.yaml
 security:
   encryption_enabled: true
-  use_kek: true
-  kek_path: "/secure/kek.key"
   auth_required: true
   audit_logging: true
   compliance_mode: true

@@ -128,9 +128,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("🔐 Encryption Status")
 	fmt.Println("==================")
 	fmt.Printf("Enabled: %v\n", cfg.Storage.Encryption.Enabled)
-	fmt.Printf("Use KEK: %v\n", cfg.Storage.Encryption.UseKEK)
-	fmt.Printf("KEK Path: %s\n", cfg.Storage.Encryption.KEKPath)
 	fmt.Printf("DEK Path: %s\n", cfg.Storage.Encryption.DEKPath)
+	fmt.Printf("Salt Path: %s\n", cfg.Storage.Encryption.SaltPath)
 
 	if !cfg.Storage.Encryption.Enabled {
 		return nil

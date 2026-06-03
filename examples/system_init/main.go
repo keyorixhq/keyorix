@@ -41,8 +41,8 @@ func main() {
 
 	expectedFiles := []string{
 		"keyorix.yaml",     // Main config file
-		"keys/kek.key",     // Key Encryption Key
-		"keys/dek.key",     // Data Encryption Key
+		"keys/kek.salt",    // KEK derivation salt
+		"keys/dek.key",     // Wrapped Data Encryption Key
 		"keyorix.db",       // SQLite database
 		"keyorix.log",      // Application logs
 		"certs/server.crt", // TLS certificate (if TLS enabled)

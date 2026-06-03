@@ -21,7 +21,6 @@ func main() {
 
 	// Enable encryption for this example
 	cfg.Storage.Encryption.Enabled = true
-	cfg.Storage.Encryption.KEKPath = "example_kek.key"
 	cfg.Storage.Encryption.DEKPath = "example_dek.key"
 	cfg.Storage.Encryption.SaltPath = "example_kek.salt"
 
@@ -135,7 +134,6 @@ func main() {
 	// Cleanup example files
 	fmt.Println("\n🧹 Cleaning up example files...")
 	_ = os.Remove("example.db")
-	_ = os.Remove("example_kek.key")
 	_ = os.Remove("example_dek.key")
 	_ = os.Remove("example_kek.salt")
 

@@ -146,10 +146,11 @@ func (a *AuthConfig) GetAPIKey() string {
 	return resolveSecret("KEYORIX_API_KEY", a.APIKey)
 }
 
+// EncryptionConfig configures the ADR-004 envelope scheme. The KEK is derived
+// from the master passphrase at runtime (PBKDF2) and never touches disk, so the
+// only key material on disk is the salt and the wrapped DEK.
 type EncryptionConfig struct {
 	Enabled  bool   `yaml:"enabled"`
-	UseKEK   bool   `yaml:"use_kek"`
-	KEKPath  string `yaml:"kek_path"`
 	DEKPath  string `yaml:"dek_path"`
 	SaltPath string `yaml:"salt_path"`
 }

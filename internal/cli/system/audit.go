@@ -28,7 +28,7 @@ func runAudit() {
 
 	files := []securefiles.FilePermSpec{
 		{Path: "keyorix.yaml", Mode: 0600},
-		{Path: cfg.Storage.Encryption.KEKPath, Mode: 0600},
+		{Path: cfg.Storage.Encryption.SaltPath, Mode: 0600},
 		{Path: cfg.Storage.Encryption.DEKPath, Mode: 0600},
 	}
 

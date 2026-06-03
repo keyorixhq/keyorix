@@ -36,7 +36,7 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 	}
 	return &Service{
 		config:     cfg,
-		keyManager: NewKeyManager(baseDir, cfg.KEKPath, cfg.DEKPath, cfg.SaltPath),
+		keyManager: NewKeyManager(baseDir, cfg.DEKPath, cfg.SaltPath),
 	}
 }
 

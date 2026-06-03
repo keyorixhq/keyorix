@@ -11,7 +11,7 @@ import (
 
 var FixFilePermCmd = &cobra.Command{
 	Use:   "fixfileperm",
-	Short: "Fix file permissions on critical files (config, KEK, DEK)",
+	Short: "Fix file permissions on critical files (config, salt, DEK)",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.Load("keyorix.yaml")
 		if err != nil {
@@ -19,7 +19,7 @@ var FixFilePermCmd = &cobra.Command{
 		}
 
 		files := []securefiles.FilePermSpec{
-			{Path: cfg.Storage.Encryption.KEKPath, Mode: 0600},
+			{Path: cfg.Storage.Encryption.SaltPath, Mode: 0600},
 			{Path: cfg.Storage.Encryption.DEKPath, Mode: 0600},
 			{Path: "keyorix.yaml", Mode: 0600},
 		}

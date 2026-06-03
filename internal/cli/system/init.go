@@ -164,13 +164,15 @@ func initializeDatabase(cfg *config.Config) error {
 }
 
 func initializeEncryption(cfg *config.Config) error {
-	kekDir := filepath.Dir(cfg.Storage.Encryption.KEKPath)
+	// The KEK is passphrase-derived and never on disk (ADR-004); only the salt
+	// and the wrapped DEK need directories.
 	dekDir := filepath.Dir(cfg.Storage.Encryption.DEKPath)
-	if err := os.MkdirAll(kekDir, 0750); err != nil {
-		return fmt.Errorf("failed to create KEK directory: %w", err)
-	}
+	saltDir := filepath.Dir(cfg.Storage.Encryption.SaltPath)
 	if err := os.MkdirAll(dekDir, 0750); err != nil {
 		return fmt.Errorf("failed to create DEK directory: %w", err)
+	}
+	if err := os.MkdirAll(saltDir, 0750); err != nil {
+		return fmt.Errorf("failed to create salt directory: %w", err)
 	}
 	return nil
 }

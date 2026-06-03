@@ -39,8 +39,8 @@ The `keyorix system init` command creates all necessary files and directories:
 ├── keyorix.yaml          # Main configuration (0600)
 ├── keyorix_template.yaml # Template file (0644)
 ├── keys/
-│   ├── kek.key           # Key Encryption Key (0600)
-│   └── dek.key           # Data Encryption Key (0600)
+│   ├── kek.salt          # KEK derivation salt (0600)
+│   └── dek.key           # Wrapped Data Encryption Key (0600)
 ├── keyorix.db           # SQLite database (0600)
 ├── keyorix.log          # Application logs (0644)
 └── certs/                # TLS certificates (if enabled)
@@ -74,8 +74,8 @@ storage:
     # Or use KEYORIX_DB_PASSWORD env var for the password field.
   encryption:
     enabled: true
-    kek_path: "keys/kek.key"
     dek_path: "keys/dek.key"
+    salt_path: "keys/kek.salt"
 
 # Security policies
 security:
@@ -173,8 +173,8 @@ keyorix system validate --fix
 # Regular key rotation
 keyorix encryption rotate
 
-# Backup keys before rotation
-cp keys/kek.key keys/kek.key.backup.$(date +%s)
+# Backup key material before rotation (the KEK is passphrase-derived, never on disk)
+cp keys/kek.salt keys/kek.salt.backup.$(date +%s)
 cp keys/dek.key keys/dek.key.backup.$(date +%s)
 ```
 

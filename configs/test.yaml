@@ -10,9 +10,8 @@ storage:
     max_idle_conns: 5
   encryption:
     enabled: false
-    use_kek: false
-    kek_path: ""
     dek_path: ""
+    salt_path: ""
 
 security:
   enable_file_permission_check: false

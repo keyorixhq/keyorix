@@ -58,7 +58,6 @@ func newTestService(t *testing.T, passphrase string) (*Service, string) {
 	dir := t.TempDir()
 	cfg := &config.EncryptionConfig{
 		Enabled:  true,
-		KEKPath:  "kek.key",
 		DEKPath:  "dek.key",
 		SaltPath: "kek.salt",
 	}
@@ -288,7 +287,6 @@ func TestRotateDEKWithSweep_PendingFileCleanup(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.EncryptionConfig{
 		Enabled:  true,
-		KEKPath:  "kek.key",
 		DEKPath:  "dek.key",
 		SaltPath: "kek.salt",
 	}

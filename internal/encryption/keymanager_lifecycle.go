@@ -34,7 +34,6 @@ import (
 
 // KeyManager handles key lifecycle and storage.
 type KeyManager struct {
-	kekPath    string
 	dekPath    string
 	saltPath   string
 	baseDir    string
@@ -52,9 +51,8 @@ type KeyInfo struct {
 }
 
 // NewKeyManager creates a new KeyManager.
-func NewKeyManager(baseDir, kekPath, dekPath, saltPath string) *KeyManager {
+func NewKeyManager(baseDir, dekPath, saltPath string) *KeyManager {
 	return &KeyManager{
-		kekPath:    kekPath,
 		dekPath:    dekPath,
 		saltPath:   saltPath,
 		baseDir:    baseDir,

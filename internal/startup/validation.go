@@ -86,8 +86,10 @@ func validateFilePermissions(cfg *config.Config, result *ValidationResult) error
 	})
 
 	if cfg.Storage.Encryption.Enabled {
+		// The KEK is passphrase-derived and never on disk (ADR-004); the salt and
+		// the wrapped DEK are the only key files to lock down.
 		files = append(files,
-			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Storage.Encryption.KEKPath), Mode: 0600},
+			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Storage.Encryption.SaltPath), Mode: 0600},
 			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Storage.Encryption.DEKPath), Mode: 0600},
 		)
 	}
@@ -121,37 +123,49 @@ func validateFilePermissions(cfg *config.Config, result *ValidationResult) error
 	return nil
 }
 
+// validateEncryption verifies the on-disk key material required by the ADR-004
+// envelope scheme: the 32-byte KEK salt and the wrapped DEK. The KEK itself is
+// derived from the master passphrase at runtime and never touches disk, so there
+// is no KEK file to check. The DEK on disk is wrapped (AES-256-GCM: 12-byte nonce
+// + 32-byte key + 16-byte tag = 60 bytes), not a bare 32-byte key.
 func validateEncryption(cfg *config.Config, result *ValidationResult) error {
-	for _, key := range []struct {
-		Path string
-		Name string
-	}{
-		{cfg.Storage.Encryption.KEKPath, "KEK"},
-		{cfg.Storage.Encryption.DEKPath, "DEK"},
-	} {
-		path := filepath.Clean(key.Path)
-		if strings.Contains(path, "..") || !filepath.IsAbs(path) {
-			return fmt.Errorf("%s path is invalid or unsafe: %s", key.Name, path)
-		}
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return fmt.Errorf("%s file not found: %s", key.Name, path)
-		}
-		if err := validateKeyFile(path, key.Name); err != nil {
-			return err
-		}
+	enc := cfg.Storage.Encryption
+
+	saltPath := resolveKeyPath(enc.SaltPath)
+	if strings.Contains(saltPath, "..") {
+		return fmt.Errorf("KEK salt path is unsafe: %s", saltPath)
+	}
+	saltInfo, err := os.Stat(saltPath)
+	if err != nil {
+		return fmt.Errorf("KEK salt file not found: %s", saltPath)
+	}
+	if saltInfo.Size() != 32 {
+		return fmt.Errorf("KEK salt file %s has invalid size %d bytes (expected 32)", saltPath, saltInfo.Size())
+	}
+
+	dekPath := resolveKeyPath(enc.DEKPath)
+	if strings.Contains(dekPath, "..") {
+		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	}
+	dekInfo, err := os.Stat(dekPath)
+	if err != nil {
+		return fmt.Errorf("wrapped DEK file not found: %s", dekPath)
+	}
+	const minWrappedDEKSize = 60 // 12-byte GCM nonce + 32-byte key + 16-byte tag
+	if dekInfo.Size() < minWrappedDEKSize {
+		return fmt.Errorf("wrapped DEK file %s is too small (%d bytes) to be a valid wrapped key", dekPath, dekInfo.Size())
 	}
 	return nil
 }
 
-func validateKeyFile(path, keyType string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("cannot stat %s file %s: %w", keyType, path, err)
+// resolveKeyPath maps a configured key path to its on-disk location, mirroring
+// the baseDir resolution the server uses at startup: absolute paths are used
+// as-is, relative paths are resolved against the working directory.
+func resolveKeyPath(p string) string {
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
 	}
-	if info.Size() != 32 {
-		return fmt.Errorf("%s file %s has invalid size %d bytes (expected 32)", keyType, path, info.Size())
-	}
-	return nil
+	return filepath.Clean(filepath.Join(".", p))
 }
 
 func validateDatabase(cfg *config.Config, result *ValidationResult) error {
