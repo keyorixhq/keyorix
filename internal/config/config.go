@@ -197,13 +197,29 @@ func resolveSecret(envVar string, fallback string) string {
 const appRootDir = "."
 
 // Load loads the YAML configuration file.
-// If path is empty, it will load "keyorix.yaml" from the application root.
+//
+// Path resolution when path is empty (the default / LoadConfig case):
+//  1. KEYORIX_CONFIG_PATH env var, if set (used by container deployments);
+//  2. otherwise "keyorix.yaml" in the application root.
+//
+// An explicit non-empty path argument always wins over the env var.
+// Absolute paths (e.g. KEYORIX_CONFIG_PATH=/app/config/production.yaml) are read
+// with the safe-read rooted at the file's own directory, so the traversal guard
+// still applies; relative paths remain rooted at the application directory.
 func Load(path string) (*Config, error) {
+	if path == "" {
+		path = resolveSecret("KEYORIX_CONFIG_PATH", "")
+	}
 	if path == "" {
 		path = filepath.Join(appRootDir, "keyorix.yaml")
 	}
 
-	data, err := securefiles.SafeReadFile(appRootDir, path)
+	baseDir, readPath := appRootDir, path
+	if filepath.IsAbs(path) {
+		baseDir, readPath = filepath.Dir(path), filepath.Base(path)
+	}
+
+	data, err := securefiles.SafeReadFile(baseDir, readPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %q: %w", path, err)
 	}
