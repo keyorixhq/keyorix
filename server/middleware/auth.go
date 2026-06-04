@@ -20,9 +20,18 @@ import (
 // sessionValidator is the subset of *core.KeyorixCore that the auth middleware
 // needs. Defined here (not in core) so tests can supply a fake validator without
 // constructing a full core service. *core.KeyorixCore satisfies this implicitly.
+//
+// Two token kinds resolve to an identical UserContext: opaque session tokens and
+// personal access tokens (PATs, prefixed patTokenPrefix). validateToken routes by
+// prefix; either path produces the same identity, so the token cache and all
+// downstream per-scope authorization work unchanged.
 type sessionValidator interface {
 	ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error)
+	ValidatePATToken(ctx context.Context, token string) (*models.User, []string, error)
 }
+
+// patTokenPrefix marks a personal access token (kept in sync with core.patPrefix).
+const patTokenPrefix = "kx_pat_"
 
 // UserContext represents the authenticated user context. It carries identity
 // only — authorization is resolved per-request against the target scope by
@@ -379,7 +388,18 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	if validator == nil {
 		return nil, http.ErrNotSupported
 	}
-	user, roleNames, err := validator.ValidateSessionToken(ctx, token)
+	// Route by prefix: PATs authenticate AS their owning user, resolving to the same
+	// UserContext shape as a session — so authorization downstream is identical.
+	var (
+		user      *models.User
+		roleNames []string
+		err       error
+	)
+	if strings.HasPrefix(token, patTokenPrefix) {
+		user, roleNames, err = validator.ValidatePATToken(ctx, token)
+	} else {
+		user, roleNames, err = validator.ValidateSessionToken(ctx, token)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -45,6 +45,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	}
 
 	authHandler := handlers.NewAuthHandler(coreService)
+	patHandler := handlers.NewPATHandler(coreService)
 
 	secretHandler, err := handlers.NewSecretHandler(coreService)
 	if err != nil {
@@ -116,8 +117,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Authentication middleware for API routes
 		r.Use(customMiddleware.Authentication(coreService))
 
-		// Auth profile (requires valid token)
+		// Self-service account endpoints (My Account). Authenticated but not
+		// permission-gated — every user manages their own profile, password,
+		// sessions, and personal access tokens. ADR-021 / ADR-027.
 		r.Get("/auth/profile", authHandler.Profile)
+		r.Put("/auth/profile", authHandler.UpdateProfile)
+		r.Post("/auth/change-password", authHandler.ChangePassword)
+		r.Get("/auth/sessions", authHandler.ListSessions)
+		r.Delete("/auth/sessions/{id}", authHandler.RevokeSession)
+		r.Get("/auth/tokens", patHandler.ListPATs)
+		r.Post("/auth/tokens", patHandler.CreatePAT)
+		r.Delete("/auth/tokens/{id}", patHandler.RevokePAT)
 
 		// Dashboard endpoints
 		r.Get("/dashboard/stats", dashboardHandler.GetStats)

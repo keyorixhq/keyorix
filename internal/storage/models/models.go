@@ -146,8 +146,29 @@ type Session struct {
 	SessionToken          string `gorm:"unique"` // Deprecated: use EncryptedSessionToken
 	EncryptedSessionToken []byte
 	SessionTokenMetadata  JSON
+	UserAgent             string     // captured at login, for the My Account "active sessions" view
+	IPAddress             string     // captured at login
+	LastSeenAt            *time.Time // throttled — updated at most once per validTokenTTL on the auth slow path
 	CreatedAt             time.Time
 	ExpiresAt             *time.Time
+}
+
+// PersonalAccessToken is a long-lived, user-owned bearer credential (ADR-027).
+// Unlike APIToken (service-account / admin-scoped), a PAT is created and managed
+// by the owning user from the My Account page and authenticates API requests AS
+// that user — inheriting their full permission set. The raw token is shown once
+// on creation; only its SHA-256 hash is stored, enabling an indexed O(1) lookup
+// on the auth hot path. Raw tokens carry the `kx_pat_` prefix.
+type PersonalAccessToken struct {
+	ID          uint   `gorm:"primaryKey"`
+	UserID      uint   `gorm:"index;not null"`
+	Name        string `gorm:"not null"`             // user-facing label
+	TokenHash   string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenPrefix string `gorm:"index"`                // leading chars of the raw token, for display ("kx_pat_ab12…")
+	LastUsedAt  *time.Time
+	ExpiresAt   *time.Time // nil = never expires
+	Revoked     bool       `gorm:"default:false"`
+	CreatedAt   time.Time
 }
 
 type PasswordReset struct {

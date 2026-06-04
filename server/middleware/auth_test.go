@@ -43,6 +43,20 @@ func (fakeValidator) ValidateSessionToken(_ context.Context, token string) (*mod
 	}
 }
 
+// ValidatePATToken accepts a single fixed PAT and resolves it to a user, mirroring
+// the shape of ValidateSessionToken so the prefix-routing in validateToken can be
+// exercised. Anything else is rejected.
+func (fakeValidator) ValidatePATToken(_ context.Context, token string) (*models.User, []string, error) {
+	if token == "kx_pat_validtoken" {
+		return &models.User{
+			ID:       3,
+			Username: "patuser",
+			Email:    "pat@example.com",
+		}, []string{"system_viewer"}, nil
+	}
+	return nil, nil, fmt.Errorf("invalid token")
+}
+
 // newTestAuthMiddleware builds the Authentication middleware with the fake
 // validator. The coreService passed to authenticationWithValidator is nil here
 // because none of these tests exercise downstream handlers that pull the core
@@ -73,6 +87,20 @@ func TestAuthentication(t *testing.T) {
 		{
 			name:           "invalid token",
 			authHeader:     "Bearer invalid-token",
+			expectedStatus: http.StatusUnauthorized,
+			expectUserCtx:  false,
+		},
+		{
+			// kx_pat_ prefix routes to ValidatePATToken and resolves to a user,
+			// producing the same UserContext shape as a session.
+			name:           "valid personal access token",
+			authHeader:     "Bearer kx_pat_validtoken",
+			expectedStatus: http.StatusOK,
+			expectUserCtx:  true,
+		},
+		{
+			name:           "invalid personal access token",
+			authHeader:     "Bearer kx_pat_bogus",
 			expectedStatus: http.StatusUnauthorized,
 			expectUserCtx:  false,
 		},

@@ -557,6 +557,76 @@ func (m *MockStorage) CleanupExpiredSessions(ctx context.Context) error {
 	return args.Error(0)
 }
 
+func (m *MockStorage) GetSessionByID(ctx context.Context, id uint) (*models.Session, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Session), args.Error(1)
+}
+
+func (m *MockStorage) ListSessionsByUser(ctx context.Context, userID uint) ([]*models.Session, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Session), args.Error(1)
+}
+
+func (m *MockStorage) DeleteSessionsForUserExcept(ctx context.Context, userID, exceptID uint) error {
+	args := m.Called(ctx, userID, exceptID)
+	return args.Error(0)
+}
+
+func (m *MockStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {
+	args := m.Called(ctx, id, seenAt, staleness)
+	return args.Error(0)
+}
+
+// Personal Access Token Management
+
+func (m *MockStorage) CreatePersonalAccessToken(ctx context.Context, t *models.PersonalAccessToken) (*models.PersonalAccessToken, error) {
+	args := m.Called(ctx, t)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.PersonalAccessToken), args.Error(1)
+}
+
+func (m *MockStorage) ListPersonalAccessTokensByUser(ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.PersonalAccessToken), args.Error(1)
+}
+
+func (m *MockStorage) GetPersonalAccessTokenByID(ctx context.Context, id uint) (*models.PersonalAccessToken, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.PersonalAccessToken), args.Error(1)
+}
+
+func (m *MockStorage) GetPersonalAccessTokenByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, error) {
+	args := m.Called(ctx, hash)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.PersonalAccessToken), args.Error(1)
+}
+
+func (m *MockStorage) RevokePersonalAccessToken(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
+	args := m.Called(ctx, id, usedAt, staleness)
+	return args.Error(0)
+}
+
 // API Client Management
 
 func (m *MockStorage) CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {

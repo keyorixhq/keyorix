@@ -13,10 +13,16 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// LoginRequest holds credentials for login.
+// sessionTouchInterval throttles last_seen_at writes on the auth hot path.
+const sessionTouchInterval = 30 * time.Second
+
+// LoginRequest holds credentials for login. UserAgent/IPAddress are captured for
+// the My Account "active sessions" view and are optional.
 type LoginRequest struct {
-	Username string
-	Password string
+	Username  string
+	Password  string
+	UserAgent string
+	IPAddress string
 }
 
 // Login validates credentials, creates a session, and returns (session, user, error).
@@ -33,9 +39,13 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 		return nil, nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
 	expiresAt := c.now().Add(24 * time.Hour)
+	now := c.now()
 	session := &models.Session{
 		UserID:       user.ID,
 		SessionToken: token,
+		UserAgent:    req.UserAgent,
+		IPAddress:    req.IPAddress,
+		LastSeenAt:   &now,
 		ExpiresAt:    &expiresAt,
 	}
 	created, err := c.storage.CreateSession(ctx, session)
@@ -72,9 +82,13 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
 	expiresAt := c.now().Add(24 * time.Hour)
+	now := c.now()
 	session := &models.Session{
 		UserID:       old.UserID,
 		SessionToken: newToken,
+		UserAgent:    old.UserAgent,
+		IPAddress:    old.IPAddress,
+		LastSeenAt:   &now,
 		ExpiresAt:    &expiresAt,
 	}
 	created, err := c.storage.CreateSession(ctx, session)
@@ -95,6 +109,10 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if session.ExpiresAt != nil && c.now().After(*session.ExpiresAt) {
 		return nil, nil, fmt.Errorf("session expired")
 	}
+	// Best-effort, throttled last-seen stamp for the My Account sessions view.
+	// Only writes when the stored value is older than sessionTouchInterval, so the
+	// auth hot path is not turned into a write per request. Never fails the request.
+	_ = c.storage.TouchSession(ctx, session.ID, c.now(), sessionTouchInterval)
 	user, err := c.storage.GetUser(ctx, session.UserID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("user not found")

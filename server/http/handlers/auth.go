@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -108,8 +111,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session, user, err := h.coreService.Login(r.Context(), &core.LoginRequest{
-		Username: body.Username,
-		Password: body.Password,
+		Username:  body.Username,
+		Password:  body.Password,
+		UserAgent: r.Header.Get("User-Agent"),
+		IPAddress: ip,
 	})
 	if err != nil {
 		recordLoginAttempt(ip)
@@ -204,6 +209,11 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sendSuccess(w, userProfileMap(user), "")
+}
+
+// userProfileMap is the shared self-profile DTO returned by GET and PUT /auth/profile.
+func userProfileMap(user *models.User) map[string]interface{} {
 	profile := map[string]interface{}{
 		"id":            user.ID,
 		"username":      user.Username,
@@ -216,8 +226,141 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 	if user.LastLoginAt != nil {
 		profile["last_login_at"] = user.LastLoginAt.UTC().Format(time.RFC3339)
 	}
+	return profile
+}
 
-	sendSuccess(w, profile, "")
+// updateProfileRequestBody is the self-service profile update — only the fields a
+// user may change about themselves. Username/role/active are intentionally absent.
+type updateProfileRequestBody struct {
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+}
+
+// UpdateProfile handles PUT /auth/profile — self-scoped display name + email update.
+func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body updateProfileRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+
+	user, err := h.coreService.UpdateOwnProfile(r.Context(), userCtx.UserID, body.DisplayName, body.Email)
+	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			sendError(w, "Conflict", "That email is already in use", http.StatusConflict, nil)
+			return
+		}
+		sendError(w, "BadRequest", "Failed to update profile", http.StatusBadRequest, nil)
+		return
+	}
+
+	sendSuccess(w, userProfileMap(user), "Profile updated")
+}
+
+type changePasswordRequestBody struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// ChangePassword handles POST /auth/change-password. On success the caller's other
+// sessions are dropped, but the current session (this bearer token) stays valid.
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body changePasswordRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+
+	err := h.coreService.ChangePassword(r.Context(), userCtx.UserID, body.CurrentPassword, body.NewPassword, extractBearerToken(r))
+	if err != nil {
+		if strings.Contains(err.Error(), "incorrect") {
+			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
+			return
+		}
+		sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+		return
+	}
+	sendSuccess(w, nil, "Password changed")
+}
+
+// sessionResponse is the safe DTO for a session — never exposes the token.
+type sessionResponse struct {
+	ID         uint    `json:"id"`
+	UserAgent  string  `json:"user_agent"`
+	IPAddress  string  `json:"ip_address"`
+	CreatedAt  string  `json:"created_at"`
+	ExpiresAt  *string `json:"expires_at"`
+	LastSeenAt *string `json:"last_seen_at"`
+	Current    bool    `json:"current"`
+}
+
+// ListSessions handles GET /auth/sessions — the caller's active sessions, with the
+// session backing the current request flagged as current.
+func (h *AuthHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	sessions, err := h.coreService.ListOwnSessions(r.Context(), userCtx.UserID)
+	if err != nil {
+		sendError(w, "InternalError", "Failed to list sessions", http.StatusInternalServerError, nil)
+		return
+	}
+
+	// Identify the current session from the request's bearer token (0 if the request
+	// was authenticated by a PAT rather than a session).
+	currentID := h.coreService.CurrentSessionID(r.Context(), extractBearerToken(r))
+
+	out := make([]sessionResponse, 0, len(sessions))
+	for _, s := range sessions {
+		item := sessionResponse{
+			ID:        s.ID,
+			UserAgent: s.UserAgent,
+			IPAddress: s.IPAddress,
+			CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339),
+			Current:   s.ID == currentID,
+		}
+		if s.ExpiresAt != nil {
+			v := s.ExpiresAt.UTC().Format(time.RFC3339)
+			item.ExpiresAt = &v
+		}
+		if s.LastSeenAt != nil {
+			v := s.LastSeenAt.UTC().Format(time.RFC3339)
+			item.LastSeenAt = &v
+		}
+		out = append(out, item)
+	}
+	sendSuccess(w, out, "")
+}
+
+// RevokeSession handles DELETE /auth/sessions/{id} — end one of the caller's sessions.
+func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		sendError(w, "BadRequest", "Invalid session ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.RevokeOwnSession(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		sendError(w, "NotFound", "Session not found", http.StatusNotFound, nil)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // PasswordReset handles POST /auth/password-reset.

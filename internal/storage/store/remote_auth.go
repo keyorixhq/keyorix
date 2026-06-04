@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -223,4 +224,54 @@ func (rs *RemoteStorage) RevokeAPIToken(ctx context.Context, id uint) error {
 		return fmt.Errorf("revoke API token failed: %s", resp.Error.Error())
 	}
 	return nil
+}
+
+// --- Sessions (My Account) + Personal Access Tokens ---
+//
+// These methods exist to satisfy the Storage interface. Session validation and
+// PAT auth run server-side against LocalStorage; the remote (CLI) client manages
+// its own credentials over the public /api/v1/auth/* HTTP API directly, not
+// through these storage methods. The server-only hot-path lookups therefore
+// return errUnsupportedRemote, and the best-effort "touch" calls are no-ops.
+
+var errUnsupportedRemote = fmt.Errorf("operation not supported over remote storage")
+
+func (rs *RemoteStorage) GetSessionByID(_ context.Context, _ uint) (*models.Session, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) ListSessionsByUser(_ context.Context, _ uint) ([]*models.Session, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) DeleteSessionsForUserExcept(_ context.Context, _, _ uint) error {
+	return errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) TouchSession(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
+	return nil // best-effort; no-op on remote storage
+}
+
+func (rs *RemoteStorage) CreatePersonalAccessToken(_ context.Context, _ *models.PersonalAccessToken) (*models.PersonalAccessToken, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) ListPersonalAccessTokensByUser(_ context.Context, _ uint) ([]*models.PersonalAccessToken, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) GetPersonalAccessTokenByID(_ context.Context, _ uint) (*models.PersonalAccessToken, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) GetPersonalAccessTokenByHash(_ context.Context, _ string) (*models.PersonalAccessToken, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) RevokePersonalAccessToken(_ context.Context, _ uint) error {
+	return errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) TouchPersonalAccessToken(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
+	return nil // best-effort; no-op on remote storage
 }
