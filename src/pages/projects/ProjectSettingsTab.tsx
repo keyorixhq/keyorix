@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
-import { TrashIcon, PlusIcon } from '@heroicons/react/24/outline';
-import { useProject, useProjectEnvironments, PROJECT_KEYS } from '../../features/projects/api';
+import { TrashIcon, PlusIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { useProject, useProjectEnvironments, useRestoreEnvironment, PROJECT_KEYS } from '../../features/projects/api';
 import { apiClient } from '../../services/client';
 import { Button } from '../../components/ui/Button';
 import { Alert } from '../../components/ui/Alert';
@@ -13,13 +13,15 @@ interface ProjectSettingsTabProps {
     projectId: number;
 }
 
-interface Env { id: number; name: string; }
+interface Env { id: number; name: string; deleted?: boolean; }
 
 export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectId }) => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { data: project, isLoading: projectLoading } = useProject(projectId);
-    const { data: environments = [], isLoading: envsLoading } = useProjectEnvironments(projectId);
+    // Include soft-deleted environments here so they can be restored.
+    const { data: environments = [], isLoading: envsLoading } = useProjectEnvironments(projectId, true);
+    const restoreEnvMutation = useRestoreEnvironment(projectId);
 
     // ── General ───────────────────────────────────────────────────────────
     const [name, setName] = useState('');
@@ -34,8 +36,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         mutationFn: (body: { name: string; description?: string }) =>
             apiClient.put(`/api/v1/projects/${projectId}`, body),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.detail(projectId) });
-            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.list() });
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
         },
     });
 
@@ -56,7 +57,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             apiClient.post(`/api/v1/projects/${projectId}/environments`, { name: envName }),
         onSuccess: () => {
             setNewEnvName(''); setAddEnvError('');
-            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.environments(projectId) });
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
         },
         onError: (err: any) => {
             setAddEnvError(err?.response?.data?.error ?? err?.response?.data?.message ?? 'Failed to create environment.');
@@ -67,7 +68,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         mutationFn: (envId: number) => apiClient.delete(`/api/v1/environments/${envId}`),
         onSuccess: () => {
             setEnvToDelete(null); setDeleteEnvError('');
-            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.environments(projectId) });
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
             queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
         },
         onError: (err: any) => {
@@ -90,7 +91,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     const deleteProjectMutation = useMutation({
         mutationFn: () => apiClient.delete(`/api/v1/projects/${projectId}`),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.list() });
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
             navigate(ROUTES.PROJECTS);
         },
     });
@@ -177,27 +178,46 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                     env.name.toLowerCase()
                                 );
                                 return (
-                                    <li key={env.id} className="flex items-center justify-between px-4 py-3 group">
+                                    <li key={env.id} className="flex items-center justify-between px-4 py-3 group"
+                                        style={{ opacity: env.deleted ? 0.7 : 1 }}>
                                         <div className="flex items-center gap-2">
                                             <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
                                                 {env.name.charAt(0).toUpperCase() + env.name.slice(1)}
                                             </span>
-                                            {isDefault && (
+                                            {env.deleted ? (
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
+                                                    style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                                                    deleted
+                                                </span>
+                                            ) : isDefault && (
                                                 <span className="text-xs px-1.5 py-0.5 rounded-sm"
                                                     style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
                                                     default
                                                 </span>
                                             )}
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => { setDeleteEnvError(''); setEnvToDelete(env); }}
-                                            className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
-                                            style={{ color: 'var(--error)' }}
-                                            title="Delete environment"
-                                        >
-                                            <TrashIcon className="h-4 w-4" />
-                                        </button>
+                                        {env.deleted ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => restoreEnvMutation.mutate(env.id)}
+                                                disabled={restoreEnvMutation.isPending}
+                                                className="flex items-center gap-1 p-1.5 rounded-sm text-sm transition-opacity disabled:opacity-50"
+                                                style={{ color: 'var(--accent)' }}
+                                                title="Restore environment"
+                                            >
+                                                <ArrowPathIcon className="h-4 w-4" />Restore
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => { setDeleteEnvError(''); setEnvToDelete(env); }}
+                                                className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
+                                                style={{ color: 'var(--error)' }}
+                                                title="Delete environment"
+                                            >
+                                                <TrashIcon className="h-4 w-4" />
+                                            </button>
+                                        )}
                                     </li>
                                 );
                             })}

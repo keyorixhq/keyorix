@@ -123,7 +123,7 @@ export function RotationPoliciesPage() {
     });
     const { data: projects } = useQuery({
         queryKey: ['projects'],
-        queryFn: projectsApi.list,
+        queryFn: () => projectsApi.list(),
         staleTime: 5 * 60 * 1000,
     });
 

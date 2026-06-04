@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { PlusIcon, FolderIcon, MagnifyingGlassIcon, TrashIcon } from '@heroicons/react/24/outline';
-import { useProjects, useCreateProject, useDeleteProject } from '../../features/projects/api';
+import { PlusIcon, FolderIcon, MagnifyingGlassIcon, TrashIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { useProjects, useCreateProject, useDeleteProject, useRestoreProject } from '../../features/projects/api';
 import { ROUTES } from '../../constants';
 import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
@@ -95,16 +95,19 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
 interface ProjectRowProps {
     project: Project;
     onDeleteRequest: (project: Project) => void;
+    onRestore: (project: Project) => void;
+    restoring: boolean;
 }
 
-const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest }) => {
+const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRestore, restoring }) => {
     const navigate = useNavigate();
+    const deleted = project.deleted;
     return (
         <div
-            onClick={() => navigate(ROUTES.PROJECT_DETAIL(project.id))}
-            className="flex items-center gap-4 px-4 py-3 rounded-lg transition-colors duration-100 group cursor-pointer"
-            style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-surface)' }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'}
+            onClick={() => { if (!deleted) navigate(ROUTES.PROJECT_DETAIL(project.id)); }}
+            className={`flex items-center gap-4 px-4 py-3 rounded-lg transition-colors duration-100 group ${deleted ? '' : 'cursor-pointer'}`}
+            style={{ border: '1px solid var(--border)', backgroundColor: 'var(--bg-surface)', opacity: deleted ? 0.7 : 1 }}
+            onMouseEnter={e => { if (!deleted) (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)'; }}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)'}
         >
             <div className="shrink-0 h-9 w-9 rounded-lg flex items-center justify-center"
@@ -113,8 +116,14 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest }) => 
             </div>
 
             <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                <p className="text-sm font-medium truncate flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
                     {project.name}
+                    {deleted && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide"
+                            style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                            Deleted
+                        </span>
+                    )}
                 </p>
                 {project.description && (
                     <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
@@ -131,14 +140,27 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest }) => 
                         {new Date(project.lastActivity).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                     </span>
                 )}
-                <button
-                    onClick={e => { e.stopPropagation(); onDeleteRequest(project); }}
-                    className="p-1.5 rounded-sm transition-colors hover:bg-red-50"
-                    style={{ color: 'var(--error)' }}
-                    title="Delete project"
-                >
-                    <TrashIcon className="h-4 w-4" />
-                </button>
+                {deleted ? (
+                    <button
+                        onClick={e => { e.stopPropagation(); onRestore(project); }}
+                        disabled={restoring}
+                        className="flex items-center gap-1 p-1.5 rounded-sm transition-colors disabled:opacity-50"
+                        style={{ color: 'var(--accent)' }}
+                        title="Restore project"
+                    >
+                        <ArrowPathIcon className="h-4 w-4" />
+                        Restore
+                    </button>
+                ) : (
+                    <button
+                        onClick={e => { e.stopPropagation(); onDeleteRequest(project); }}
+                        className="p-1.5 rounded-sm transition-colors hover:bg-red-50"
+                        style={{ color: 'var(--error)' }}
+                        title="Delete project"
+                    >
+                        <TrashIcon className="h-4 w-4" />
+                    </button>
+                )}
             </div>
         </div>
     );
@@ -147,14 +169,20 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest }) => 
 // ── ProjectsListPage ─────────────────────────────────────────────────────────
 
 export const ProjectsListPage: React.FC = () => {
-    const { data: projects = [], isLoading, isError } = useProjects();
+    const [showDeleted, setShowDeleted] = useState(false);
+    const { data: projects = [], isLoading, isError } = useProjects(showDeleted);
     const deleteProject = useDeleteProject();
+    const restoreProject = useRestoreProject();
     const [search, setSearch] = useState('');
     const [searchParams] = useSearchParams();
     const [showCreate, setShowCreate] = useState(searchParams.get('new') === '1');
     const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState('');
     const [deleteError, setDeleteError] = useState('');
+
+    const handleRestore = (project: Project) => {
+        restoreProject.mutate(project.id);
+    };
 
     const closeDeleteModal = () => {
         setProjectToDelete(null);
@@ -182,6 +210,7 @@ export const ProjectsListPage: React.FC = () => {
         : projects;
 
     const recent = [...projects]
+        .filter(p => !p.deleted)
         .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
         .slice(0, 5);
 
@@ -208,17 +237,27 @@ export const ProjectsListPage: React.FC = () => {
                 </button>
             </div>
 
-            {/* Search */}
-            <div className="relative mb-6">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: 'var(--text-muted)' }} />
-                <input
-                    type="text"
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    placeholder="Search projects…"
-                    className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-hidden"
-                    style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
-                />
+            {/* Search + show-deleted toggle */}
+            <div className="flex items-center gap-3 mb-6">
+                <div className="relative flex-1">
+                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" style={{ color: 'var(--text-muted)' }} />
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder="Search projects…"
+                        className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-hidden"
+                        style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                    />
+                </div>
+                <label className="flex items-center gap-2 text-sm shrink-0 cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+                    <input
+                        type="checkbox"
+                        checked={showDeleted}
+                        onChange={e => setShowDeleted(e.target.checked)}
+                    />
+                    Show deleted
+                </label>
             </div>
 
             {isLoading && (
@@ -244,7 +283,7 @@ export const ProjectsListPage: React.FC = () => {
                             </h2>
                             <div className="space-y-2">
                                 {recent.map(p => (
-                                    <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} />
+                                    <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} onRestore={handleRestore} restoring={restoreProject.isPending} />
                                 ))}
                             </div>
                         </section>
@@ -260,7 +299,7 @@ export const ProjectsListPage: React.FC = () => {
                             )}
                             <div className="space-y-2">
                                 {(!search ? nonRecent : filtered).map(p => (
-                                    <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} />
+                                    <ProjectRow key={p.id} project={p} onDeleteRequest={setProjectToDelete} onRestore={handleRestore} restoring={restoreProject.isPending} />
                                 ))}
                             </div>
                         </section>

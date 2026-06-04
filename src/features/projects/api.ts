@@ -3,15 +3,16 @@ import { projectsApi, CreateProjectPayload } from '../../services/projects';
 
 export const PROJECT_KEYS = {
     all: ['projects'] as const,
-    list: () => [...PROJECT_KEYS.all, 'list'] as const,
+    list: (includeDeleted = false) => [...PROJECT_KEYS.all, 'list', { includeDeleted }] as const,
     detail: (id: number) => [...PROJECT_KEYS.all, 'detail', id] as const,
-    environments: (id: number) => [...PROJECT_KEYS.all, 'environments', id] as const,
+    environments: (id: number, includeDeleted = false) =>
+        [...PROJECT_KEYS.all, 'environments', id, { includeDeleted }] as const,
 };
 
-export function useProjects() {
+export function useProjects(includeDeleted = false) {
     return useQuery({
-        queryKey: PROJECT_KEYS.list(),
-        queryFn: () => projectsApi.list(),
+        queryKey: PROJECT_KEYS.list(includeDeleted),
+        queryFn: () => projectsApi.list(includeDeleted),
         staleTime: 30_000,
     });
 }
@@ -25,10 +26,10 @@ export function useProject(id: number) {
     });
 }
 
-export function useProjectEnvironments(projectId: number) {
+export function useProjectEnvironments(projectId: number, includeDeleted = false) {
     return useQuery({
-        queryKey: PROJECT_KEYS.environments(projectId),
-        queryFn: () => projectsApi.listEnvironments(projectId),
+        queryKey: PROJECT_KEYS.environments(projectId, includeDeleted),
+        queryFn: () => projectsApi.listEnvironments(projectId, includeDeleted),
         enabled: !!projectId,
         staleTime: 60_000,
     });
@@ -49,7 +50,27 @@ export function useDeleteProject() {
     return useMutation({
         mutationFn: (projectId: number) => projectsApi.delete(projectId),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.list() });
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
+        },
+    });
+}
+
+export function useRestoreProject() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (projectId: number) => projectsApi.restore(projectId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
+        },
+    });
+}
+
+export function useRestoreEnvironment(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (environmentId: number) => projectsApi.restoreEnvironment(projectId, environmentId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
         },
     });
 }
