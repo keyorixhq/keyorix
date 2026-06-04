@@ -4,7 +4,7 @@ BUILD_DIR=./bin
 VERSION?=dev
 LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION)"
 
-.PHONY: build build-cli build-server install install-cli install-server clean run dev docker-build docker-up docker-down docker-logs
+.PHONY: build build-cli build-server install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs
 
 build: build-cli build-server
 
@@ -22,8 +22,15 @@ install-server: build-server
 
 install: install-cli install-server
 
-run:
-	KEYORIX_DB_PASSWORD=keyorix123 KEYORIX_MASTER_PASSWORD=keyorix123 go run server/main.go
+# Run the server locally against the docker-compose Postgres, using the
+# committed dev config. `db-up` ensures Postgres is running first.
+run: db-up
+	KEYORIX_CONFIG_PATH=configs/dev.yaml KEYORIX_DB_PASSWORD=keyorix123 KEYORIX_MASTER_PASSWORD=keyorix123 go run server/main.go
+
+# Start only the Postgres service (not the full stack — `make run` runs the
+# server on :8080 itself, so we don't want the compose server container too).
+db-up:
+	docker compose up -d postgres
 
 dev: install-cli
 	@echo "✓ keyorix CLI installed to /usr/local/bin"
