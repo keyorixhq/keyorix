@@ -84,15 +84,43 @@ func (ls *LocalStorage) GetRBACAuditLogs(_ context.Context, _ *storage.RBACAudit
 
 // --- Anomaly alerts ---
 
+// anomalyDedupWindow bounds how long an equivalent alert suppresses duplicates.
+// It matches RunDetection's 1-hour analysis window: re-running detection over
+// the same window must not re-insert identical alerts, but a genuine later
+// recurrence (a new access in a new window) still produces a fresh alert.
+const anomalyDedupWindow = time.Hour
+
+// CreateAnomalyAlert inserts an alert, idempotently. If an equivalent alert
+// (same secret, type, actor, and IP) was already recorded within the dedup
+// window, the insert is skipped and nil is returned — so re-running detection
+// over the same window does not pile up duplicates.
 func (ls *LocalStorage) CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error {
+	cutoff := alert.DetectedAt
+	if cutoff.IsZero() {
+		cutoff = time.Now().UTC()
+	}
+	cutoff = cutoff.Add(-anomalyDedupWindow)
+
+	var existing int64
+	if err := ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).
+		Where("secret_node_id = ? AND alert_type = ? AND accessed_by = ? AND ip_address = ? AND detected_at > ?",
+			alert.SecretNodeID, alert.AlertType, alert.AccessedBy, alert.IPAddress, cutoff).
+		Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
 	return ls.db.WithContext(ctx).Create(alert).Error
 }
 
-func (ls *LocalStorage) ListAnomalyAlerts(ctx context.Context, unacknowledgedOnly bool) ([]models.AnomalyAlert, error) {
+// ListAnomalyAlerts returns alerts newest-first. acknowledged filters by state:
+// nil returns all, &true only acknowledged, &false only unacknowledged.
+func (ls *LocalStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error) {
 	var alerts []models.AnomalyAlert
 	query := ls.db.WithContext(ctx)
-	if unacknowledgedOnly {
-		query = query.Where("acknowledged = ?", false)
+	if acknowledged != nil {
+		query = query.Where("acknowledged = ?", *acknowledged)
 	}
 	result := query.Order("detected_at DESC").Find(&alerts)
 	return alerts, result.Error

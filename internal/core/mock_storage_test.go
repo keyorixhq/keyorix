@@ -500,8 +500,8 @@ func (m *MockStorage) CreateAnomalyAlert(ctx context.Context, alert *models.Anom
 	return args.Error(0)
 }
 
-func (m *MockStorage) ListAnomalyAlerts(ctx context.Context, unacknowledgedOnly bool) ([]models.AnomalyAlert, error) {
-	args := m.Called(ctx, unacknowledgedOnly)
+func (m *MockStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error) {
+	args := m.Called(ctx, acknowledged)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

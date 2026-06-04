@@ -18,7 +18,7 @@ type AnomalyDetector struct {
 type StorageInterface = interface {
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
-	ListAnomalyAlerts(ctx context.Context, unacknowledgedOnly bool) ([]models.AnomalyAlert, error)
+	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
 	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
 }
 
@@ -143,9 +143,10 @@ func detectAnomalies(secret models.SecretNode, log models.SecretAccessLog, basel
 	return alerts
 }
 
-// ListAlerts returns anomaly alerts, optionally filtering to unacknowledged only.
-func (d *AnomalyDetector) ListAlerts(ctx context.Context, unacknowledgedOnly bool) ([]models.AnomalyAlert, error) {
-	return d.storage.ListAnomalyAlerts(ctx, unacknowledgedOnly)
+// ListAlerts returns anomaly alerts. acknowledged filters by state: nil returns
+// all, &true only acknowledged, &false only unacknowledged.
+func (d *AnomalyDetector) ListAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error) {
+	return d.storage.ListAnomalyAlerts(ctx, acknowledged)
 }
 
 // AcknowledgeAlert marks an alert as acknowledged.
