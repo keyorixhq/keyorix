@@ -58,18 +58,21 @@ export const useAdminUserList = ({
     search,
     pageSize,
     includeDeleted,
+    inactive,
 }: {
     page: number;
     search: string;
     pageSize: number;
     includeDeleted?: boolean;
+    inactive?: boolean;
 }) => {
     return useQuery({
-        queryKey: ['admin-users', page, search, includeDeleted],
+        queryKey: ['admin-users', page, search, includeDeleted, inactive],
         queryFn: () => {
             const params: Record<string, any> = { page, page_size: pageSize };
             if (search) params.search = search;
             if (includeDeleted) params.include_deleted = true;
+            if (inactive) params.filter = 'inactive';
             return usersApi.list(params as any);
         },
         retry: 1,

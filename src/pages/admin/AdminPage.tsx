@@ -36,6 +36,7 @@ interface APIUser {
     active: boolean;
     created_at: string;
     updated_at: string;
+    last_login_at: string | null;
     deleted_at: string | null;
 }
 
@@ -93,7 +94,7 @@ export const AdminPage: React.FC = () => {
     const navigate = useNavigate();
     const { theme } = useUIStore();
     const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    const { data, isLoading, isError } = useAdminUserList({ page, search, pageSize: PAGE_SIZE, includeDeleted: showDeleted });
+    const { data, isLoading, isError } = useAdminUserList({ page, search, pageSize: PAGE_SIZE, includeDeleted: showDeleted, inactive: filterInactive });
 
     const rawData = data as any;
     const users: APIUser[] = rawData?.users ?? [];
@@ -292,7 +293,7 @@ export const AdminPage: React.FC = () => {
                 {filterInactive && (
                     <div className="flex items-center justify-between px-4 py-2.5 mb-4 rounded-lg border"
                         style={{ backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fffbeb', borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d', color: isDark ? '#fbbf24' : '#92400e' }}>
-                        <span className="text-sm font-medium">Inactive users = no login in 30 days. All users shown — check Audit Log for login history.</span>
+                        <span className="text-sm font-medium">Showing inactive users only — no login in the last 30 days (includes accounts that have never logged in).</span>
                         <button
                             type="button"
                             onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=logins')}
@@ -354,6 +355,7 @@ export const AdminPage: React.FC = () => {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">User</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Email</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Status</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Last Login</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Created</th>
                                     <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">Actions</th>
                                 </tr>
@@ -397,6 +399,13 @@ export const AdminPage: React.FC = () => {
                                                 >
                                                     {user.active ? 'Active' : 'Inactive'}
                                                 </span>
+                                            )}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                            {user.last_login_at ? (
+                                                <span className="text-base-secondary">{formatDate(user.last_login_at)}</span>
+                                            ) : (
+                                                <span className="text-base-muted italic">Never</span>
                                             )}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">{formatDate(user.created_at)}</td>
