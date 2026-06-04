@@ -45,6 +45,18 @@ type Storage interface {
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
 
+	// Project membership lifecycle (ADR-022). Separate from the role grant.
+	CreateProjectMembership(ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error)
+	GetProjectMembership(ctx context.Context, id uint) (*models.ProjectMembership, error)
+	UpdateProjectMembership(ctx context.Context, m *models.ProjectMembership) error
+	ListProjectMemberships(ctx context.Context, projectID uint) ([]*models.ProjectMembership, error)
+	// GetActiveProjectMembership returns the user's non-revoked membership in a
+	// project, or an error if none exists.
+	GetActiveProjectMembership(ctx context.Context, projectID, userID uint) (*models.ProjectMembership, error)
+	// ListStaleInvitedMemberships returns memberships still in `invited` state
+	// that were invited before the cutoff.
+	ListStaleInvitedMemberships(ctx context.Context, before time.Time) ([]*models.ProjectMembership, error)
+
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	GetSecret(ctx context.Context, id uint) (*models.SecretNode, error)

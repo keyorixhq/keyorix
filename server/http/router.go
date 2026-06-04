@@ -157,6 +157,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/members", catalogHandler.AddProjectMember)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/members/{userId}", catalogHandler.UpdateProjectMember)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/members/{userId}", catalogHandler.RemoveProjectMember)
+		// Membership lifecycle (ADR-022): onboarding state machine, separate from
+		// the role grant above. List is project-read; mutations need roles.assign.
+		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/memberships", catalogHandler.ListProjectMemberships)
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/memberships", catalogHandler.InviteMember)
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/memberships/{membershipId}", catalogHandler.TransitionMembership)
 		// Invitations (ADR-024): admin-driven (roles.assign at the project scope).
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/invitations", catalogHandler.ListInvitations)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/invitations", catalogHandler.CreateInvitation)

@@ -210,6 +210,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		coreService.SetAuditForwarder(forwarder)
 		log.Printf("SIEM audit forwarding enabled (provider=%s)", sc.Provider)
 	}
+
+	// Apply the project membership validation mode (ADR-022). Empty = allowlist.
+	if vm := cfg.Membership.ValidationMode; vm != "" {
+		coreService.SetMembershipValidationMode(vm)
+	}
 	return coreService, encSvc, nil
 }
 

@@ -872,3 +872,49 @@ func (m *MockStorage) ListMachineIdentities(ctx context.Context, projectID uint)
 	}
 	return args.Get(0).([]*models.MachineIdentity), args.Error(1)
 }
+
+// Project membership lifecycle (ADR-022).
+func (m *MockStorage) CreateProjectMembership(ctx context.Context, pm *models.ProjectMembership) (*models.ProjectMembership, error) {
+	args := m.Called(ctx, pm)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.ProjectMembership), args.Error(1)
+}
+
+func (m *MockStorage) GetProjectMembership(ctx context.Context, id uint) (*models.ProjectMembership, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.ProjectMembership), args.Error(1)
+}
+
+func (m *MockStorage) UpdateProjectMembership(ctx context.Context, pm *models.ProjectMembership) error {
+	args := m.Called(ctx, pm)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListProjectMemberships(ctx context.Context, projectID uint) ([]*models.ProjectMembership, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.ProjectMembership), args.Error(1)
+}
+
+func (m *MockStorage) GetActiveProjectMembership(ctx context.Context, projectID, userID uint) (*models.ProjectMembership, error) {
+	args := m.Called(ctx, projectID, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.ProjectMembership), args.Error(1)
+}
+
+func (m *MockStorage) ListStaleInvitedMemberships(ctx context.Context, before time.Time) ([]*models.ProjectMembership, error) {
+	args := m.Called(ctx, before)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.ProjectMembership), args.Error(1)
+}

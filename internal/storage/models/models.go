@@ -447,3 +447,24 @@ type MachineIdentity struct {
 	LastSeenAt   *time.Time
 	RevokedAt    *time.Time
 }
+
+// ProjectMembership tracks the onboarding lifecycle of a user into a project
+// (ADR-022), separate from the actual role grant (user_roles). It carries a
+// 5-state machine: invited → identity_verified → provisioned → active, with
+// revoked as a terminal state reachable from any non-terminal state. The role
+// grant is applied only when the membership reaches active.
+type ProjectMembership struct {
+	ID        uint `gorm:"primaryKey"`
+	ProjectID uint `gorm:"index"`
+	UserID    uint `gorm:"index"`
+	Role      string
+	State     string // invited | identity_verified | provisioned | active | revoked
+	// Uniqueness of a non-revoked membership per (project, user) is enforced in
+	// core (see InviteMember), not by a DB constraint — so a revoked membership
+	// can be followed by a fresh invite without a unique-index collision.
+	InvitedBy   uint
+	InvitedAt   time.Time
+	ActivatedAt *time.Time
+	RevokedAt   *time.Time
+	UpdatedAt   time.Time
+}
