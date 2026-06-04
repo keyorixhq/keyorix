@@ -177,6 +177,25 @@ func (ls *LocalStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, sc
 	return ids, nil
 }
 
+// ListProjectMembers returns the users holding a role at the project's scope
+// (project_id = projectID, environment_id = 0 — project-level membership per
+// ADR-021). Soft-deleted users are excluded.
+func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
+	var members []storage.ProjectMember
+	err := ls.db.WithContext(ctx).Table("user_roles ur").
+		Select("u.id AS user_id, u.username, u.display_name, u.email, r.id AS role_id, r.name AS role_name").
+		Joins("JOIN users u ON u.id = ur.user_id").
+		Joins("JOIN roles r ON r.id = ur.role_id").
+		Where("ur.project_id = ? AND ur.environment_id = 0", projectID).
+		Where("u.deleted_at IS NULL").
+		Order("u.username").
+		Scan(&members).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return members, nil
+}
+
 // GetUserGroupRoleIDsAt returns the IDs of roles userID inherits via group
 // membership that apply at the target scope (same scope-matching rule as
 // GetUserRoleIDsAt).

@@ -26,6 +26,7 @@ type Storage interface {
 	ListEnvironments(ctx context.Context) ([]*models.Environment, error)
 	ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error)
 	ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error)
+	ListProjectMembers(ctx context.Context, projectID uint) ([]ProjectMember, error)
 
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
@@ -268,4 +269,14 @@ type ProjectWithCounts struct {
 	EnvironmentCount int64  `json:"environment_count"`
 	Deleted          bool   `json:"deleted"`              // true when soft-deleted (only returned when includeDeleted)
 	DeletedAt        string `json:"deleted_at,omitempty"` // RFC3339 timestamp when soft-deleted
+}
+
+// ProjectMember is a user who holds a role at a project's scope (ADR-021).
+type ProjectMember struct {
+	UserID      uint   `json:"user_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+	RoleID      uint   `json:"role_id"`
+	RoleName    string `json:"role_name"`
 }

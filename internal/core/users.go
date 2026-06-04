@@ -65,10 +65,11 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
-	// Auto-assign the viewer role to every new user so they have basic read access.
-	// Failure is non-fatal — user is created successfully regardless.
-	if viewerRole, err := c.storage.GetRoleByName(ctx, "viewer"); err == nil {
-		_ = c.storage.AssignRole(ctx, createdUser.ID, viewerRole.ID, Scope{})
+	// Auto-assign the system_viewer role (ADR-021): a minimal install-wide
+	// baseline. Real access to a project comes from a project role granted via the
+	// Members tab. Failure is non-fatal — the user is created regardless.
+	if role, err := c.storage.GetRoleByName(ctx, "system_viewer"); err == nil {
+		_ = c.storage.AssignRole(ctx, createdUser.ID, role.ID, Scope{})
 	}
 
 	return createdUser, nil

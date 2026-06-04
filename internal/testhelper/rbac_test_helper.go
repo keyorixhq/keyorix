@@ -117,6 +117,7 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 		{3, "editor", "Can create, read, update secrets in assigned projects"},
 		{4, "viewer", "Read-only access to secrets in assigned projects"},
 		{5, "auditor", "Can view audit logs and system information"},
+		{6, "system_viewer", "Minimal install baseline (ADR-021)"},
 	}
 
 	for _, role := range roles {
@@ -185,9 +186,10 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 			"users.read", "users.write",
 			"roles.read", "roles.assign",
 			"system.read", "audit.read"},
-		"editor":  {"secrets.read", "secrets.write", "users.read"},
-		"viewer":  {"secrets.read", "users.read"},
-		"auditor": {"audit.read", "audit.admin", "system.read", "users.read", "roles.read"},
+		"editor":        {"secrets.read", "secrets.write", "users.read"},
+		"viewer":        {"secrets.read", "users.read"},
+		"auditor":       {"audit.read", "audit.admin", "system.read", "users.read", "roles.read"},
+		"system_viewer": {"system.read"},
 	}
 
 	for roleName, permNames := range rolePermissions {

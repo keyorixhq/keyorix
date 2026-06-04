@@ -354,6 +354,10 @@ func (rs *RemoteStorage) ListEnvironmentsByProjectIncludingDeleted(_ context.Con
 	return nil, fmt.Errorf("not implemented in remote storage")
 }
 
+func (rs *RemoteStorage) ListProjectMembers(_ context.Context, _ uint) ([]storage.ProjectMember, error) {
+	return nil, fmt.Errorf("not implemented in remote storage")
+}
+
 func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {
 	return nil, fmt.Errorf("not implemented in remote storage")
 }

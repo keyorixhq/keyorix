@@ -70,6 +70,10 @@ func (m *MockStorage) ListEnvironmentsByProjectIncludingDeleted(_ context.Contex
 	return nil, nil
 }
 
+func (m *MockStorage) ListProjectMembers(_ context.Context, _ uint) ([]storage.ProjectMember, error) {
+	return nil, nil
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }
