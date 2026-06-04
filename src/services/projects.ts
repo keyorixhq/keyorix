@@ -51,7 +51,7 @@ const normalize = (p: any): Project => ({
     description: p.Description ?? p.description ?? '',
     secretCount: p.SecretCount ?? p.secret_count ?? 0,
     environmentCount: p.EnvironmentCount ?? p.environment_count ?? 0,
-    lastActivity: p.UpdatedAt ?? p.updated_at ?? '',
+    lastActivity: p.last_activity ?? p.LastActivity ?? p.UpdatedAt ?? p.updated_at ?? '',
     createdAt: p.CreatedAt ?? p.created_at ?? '',
     updatedAt: p.UpdatedAt ?? p.updated_at ?? '',
     deleted: p.deleted ?? false,

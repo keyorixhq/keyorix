@@ -7,6 +7,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import type { Project } from '../../services/projects';
+import { formatRelativeTime, formatDate } from '../../utils';
 
 // ── Create Project Modal ─────────────────────────────────────────────────────
 
@@ -133,11 +134,11 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onDeleteRequest, onRes
             </div>
 
             <div className="hidden sm:flex items-center gap-4 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                <span>{project.secretCount ?? 0} secrets</span>
-                <span>{project.environmentCount ?? 0} envs</span>
+                <span><span style={{ color: 'var(--text-secondary)' }}>{project.secretCount ?? 0}</span> secret{project.secretCount === 1 ? '' : 's'}</span>
+                <span><span style={{ color: 'var(--text-secondary)' }}>{project.environmentCount ?? 0}</span> env{project.environmentCount === 1 ? '' : 's'}</span>
                 {project.lastActivity && (
-                    <span className="hidden md:block">
-                        {new Date(project.lastActivity).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    <span className="hidden md:block" title={`Last activity: ${formatDate(project.lastActivity)}`}>
+                        {formatRelativeTime(project.lastActivity)}
                     </span>
                 )}
                 {deleted ? (
