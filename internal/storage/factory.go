@@ -149,6 +149,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP WITH TIME ZONE")
 	}
 
+	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
+	if tableExists(db, "sessions") {
+		if !columnExists(db, "sessions", "user_agent") {
+			db.Exec("ALTER TABLE sessions ADD COLUMN user_agent TEXT")
+		}
+		if !columnExists(db, "sessions", "ip_address") {
+			db.Exec("ALTER TABLE sessions ADD COLUMN ip_address TEXT")
+		}
+		if !columnExists(db, "sessions", "last_seen_at") {
+			db.Exec("ALTER TABLE sessions ADD COLUMN last_seen_at TIMESTAMP WITH TIME ZONE")
+		}
+	}
+
 	// RBAC Phase 2: scope role assignments by environment as well as project.
 	// project_id already exists (nullable on pre-008 DBs); add environment_id and
 	// normalise NULL project_id rows to the 0 = global sentinel the queries expect.
@@ -168,6 +181,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !tableExists(db, "rotation_policies") {
 		if err := db.AutoMigrate(&models.RotationPolicy{}); err != nil {
 			return fmt.Errorf("failed to migrate rotation_policies table: %w", err)
+		}
+	}
+
+	// Create personal_access_tokens table if it doesn't exist yet (ADR-027, additive,
+	// safe on existing DBs). Kept out of the full AutoMigrate list below for the same
+	// pgx fresh-DB reason as rotation_policies.
+	if !tableExists(db, "personal_access_tokens") {
+		if err := db.AutoMigrate(&models.PersonalAccessToken{}); err != nil {
+			return fmt.Errorf("failed to migrate personal_access_tokens table: %w", err)
 		}
 	}
 

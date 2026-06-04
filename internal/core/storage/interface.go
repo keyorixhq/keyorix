@@ -134,8 +134,24 @@ type Storage interface {
 	// Session Management
 	CreateSession(ctx context.Context, session *models.Session) (*models.Session, error)
 	GetSession(ctx context.Context, token string) (*models.Session, error)
+	GetSessionByID(ctx context.Context, id uint) (*models.Session, error)
+	ListSessionsByUser(ctx context.Context, userID uint) ([]*models.Session, error)
 	DeleteSession(ctx context.Context, id uint) error
+	// DeleteSessionsForUserExcept removes every session owned by userID except the
+	// one with id exceptID. Used to drop other sessions on a password change.
+	DeleteSessionsForUserExcept(ctx context.Context, userID, exceptID uint) error
+	// TouchSession bumps last_seen_at only when it is older than the given staleness
+	// window (no-op otherwise) so the auth hot path is not turned into a write per request.
+	TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error
 	CleanupExpiredSessions(ctx context.Context) error
+
+	// Personal Access Token Management (ADR-027) — user-owned bearer credentials.
+	CreatePersonalAccessToken(ctx context.Context, t *models.PersonalAccessToken) (*models.PersonalAccessToken, error)
+	ListPersonalAccessTokensByUser(ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error)
+	GetPersonalAccessTokenByID(ctx context.Context, id uint) (*models.PersonalAccessToken, error)
+	GetPersonalAccessTokenByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, error)
+	RevokePersonalAccessToken(ctx context.Context, id uint) error
+	TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
 
 	// API Client Management
 	CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
