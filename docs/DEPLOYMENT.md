@@ -99,10 +99,13 @@ The application uses Vite's environment variable system. Variables prefixed with
 
 ### Content Security Policy
 
-The nginx configuration includes a CSP header. Adjust it based on your security requirements:
+The nginx configuration ships a strict CSP. The Vite production bundle has no
+inline scripts and uses no `eval()`/`Function()`, so `script-src` is locked to
+`'self'`; `style-src` keeps `'unsafe-inline'` for Tailwind/React inline styles.
+Adjust only if your deployment adds external script/asset origins:
 
 ```
-Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:;
 ```
 
 ### HTTPS Configuration
