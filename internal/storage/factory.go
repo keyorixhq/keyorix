@@ -154,6 +154,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP WITH TIME ZONE")
 	}
 
+	// Account lifecycle state (ADR-025). Existing rows default to active.
+	if tableExists(db, "users") && !columnExists(db, "users", "account_state") {
+		db.Exec("ALTER TABLE users ADD COLUMN account_state TEXT NOT NULL DEFAULT 'active'")
+	}
+
 	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
 	if tableExists(db, "sessions") {
 		if !columnExists(db, "sessions", "user_agent") {

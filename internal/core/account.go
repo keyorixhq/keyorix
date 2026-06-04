@@ -65,6 +65,9 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	now := c.now()
 	user.PasswordHash = string(hash)
 	user.PasswordChangedAt = &now
+	// A successful password change clears a restricted account back to active
+	// (ADR-025): pending_first_login / password_reset_required are satisfied.
+	user.AccountState = clearRestrictionOnPasswordChange(user.AccountState)
 	user.UpdatedAt = now
 	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

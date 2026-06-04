@@ -73,6 +73,7 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 		"email":         u.Email,
 		"display_name":  dn,
 		"active":        u.IsActive,
+		"account_state": core.NormalizeAccountState(u.AccountState),
 		"created_at":    u.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":    u.UpdatedAt.UTC().Format(time.RFC3339),
 		"last_login_at": nil,
@@ -264,4 +265,31 @@ func RestoreUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defaultUserHandler.RestoreUser(w, r)
+}
+
+// SuspendUser handles POST /api/v1/users/{id}/suspend (ADR-025).
+func SuspendUser(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.SuspendUser(w, r)
+}
+
+// ReactivateUser handles POST /api/v1/users/{id}/reactivate (ADR-025).
+func ReactivateUser(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.ReactivateUser(w, r)
+}
+
+// RequirePasswordReset handles POST /api/v1/users/{id}/require-password-reset (ADR-025).
+func RequirePasswordReset(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.RequirePasswordReset(w, r)
 }

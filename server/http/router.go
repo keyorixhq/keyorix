@@ -117,6 +117,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Route("/api/v1", func(r chi.Router) {
 		// Authentication middleware for API routes
 		r.Use(customMiddleware.Authentication(coreService))
+		// Confine restricted (must-change-password) sessions to the password-change
+		// allowlist (ADR-025).
+		r.Use(customMiddleware.EnforceAccountRestriction)
 
 		// Self-service account endpoints (My Account). Authenticated but not
 		// permission-gated — every user manages their own profile, password,
@@ -229,6 +232,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Put("/{id}", handlers.UpdateUser)
 			r.Delete("/{id}", handlers.DeleteUser)
 			r.Post("/{id}/restore", handlers.RestoreUser)
+			// Account state transitions (ADR-025).
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/suspend", handlers.SuspendUser)
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/reactivate", handlers.ReactivateUser)
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/require-password-reset", handlers.RequirePasswordReset)
 			r.Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
 			r.Put("/{id}/roles", usersRolesHandler.UpdateUserRoles)
 		})

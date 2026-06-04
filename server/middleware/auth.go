@@ -45,6 +45,10 @@ type UserContext struct {
 	// session (nil otherwise). Cached with the rest of the identity, so a single
 	// per-token lookup decides it. Used to tag downstream audit events.
 	ImpersonatedBy *uint `json:"impersonated_by,omitempty"`
+	// AccountState is the ADR-025 lifecycle state; Restricted is true when the
+	// account must change its password before using non-allowlisted endpoints.
+	AccountState string `json:"account_state,omitempty"`
+	Restricted   bool   `json:"-"`
 }
 
 // contextKey is used for context keys to avoid collisions
@@ -240,6 +244,41 @@ func RequirePermission(permission string) func(next http.Handler) http.Handler {
 	return RequireScopedPermission(permission, ScopeGlobal)
 }
 
+// restrictedAllowedSuffixes are the only endpoints a restricted (must-change-
+// password) session may reach, beyond logout (registered at the root router).
+var restrictedAllowedSuffixes = []string{
+	"/auth/change-password",
+	"/auth/profile",
+}
+
+// EnforceAccountRestriction blocks a restricted account (ADR-025
+// pending_first_login / password_reset_required) from every endpoint except the
+// password-change allowlist, returning 403 with a PasswordChangeRequired code so
+// the client redirects to change-password. Applied inside the authenticated API
+// group, after Authentication has populated the user context.
+func EnforceAccountRestriction(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userCtx := GetUserFromContext(r.Context())
+		if userCtx == nil || !userCtx.Restricted {
+			next.ServeHTTP(w, r)
+			return
+		}
+		for _, suffix := range restrictedAllowedSuffixes {
+			if strings.HasSuffix(r.URL.Path, suffix) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   "PasswordChangeRequired",
+			"message": "You must change your password before continuing.",
+			"code":    http.StatusForbidden,
+		})
+	})
+}
+
 // ScopeGlobal always resolves to the global scope.
 func ScopeGlobal(_ *http.Request, _ *core.KeyorixCore) (core.Scope, error) {
 	return core.Scope{}, nil
@@ -423,10 +462,12 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		return nil, err
 	}
 	return &UserContext{
-		UserID:   user.ID,
-		Username: user.Username,
-		Email:    user.Email,
-		Roles:    roleNames,
+		UserID:       user.ID,
+		Username:     user.Username,
+		Email:        user.Email,
+		Roles:        roleNames,
+		AccountState: core.NormalizeAccountState(user.AccountState),
+		Restricted:   core.AccountRestricted(user.AccountState),
 	}, nil
 }
 

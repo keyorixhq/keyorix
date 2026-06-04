@@ -5,6 +5,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -197,4 +198,48 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendSuccess(w, nil, "User restored successfully")
+}
+
+// accountStateAction is the shared handler body for the admin account-state
+// transitions (ADR-025). transition performs the state change.
+func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request, okMessage string, transition func(ctx context.Context, adminID, userID uint) error) {
+	admin := middleware.GetUserFromContext(r.Context())
+	if admin == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		return
+	}
+	// A global admin must not suspend / lock themselves out of admin access.
+	if uint(id) == admin.UserID {
+		sendError(w, "BadRequest", "Cannot change your own account state", http.StatusBadRequest, nil)
+		return
+	}
+	if err := transition(r.Context(), admin.UserID, uint(id)); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	sendSuccess(w, nil, okMessage)
+}
+
+// SuspendUser handles POST /api/v1/users/{id}/suspend.
+func (h *UserHandler) SuspendUser(w http.ResponseWriter, r *http.Request) {
+	h.accountStateAction(w, r, "User suspended", h.coreService.SuspendUser)
+}
+
+// ReactivateUser handles POST /api/v1/users/{id}/reactivate.
+func (h *UserHandler) ReactivateUser(w http.ResponseWriter, r *http.Request) {
+	h.accountStateAction(w, r, "User reactivated", h.coreService.ReactivateUser)
+}
+
+// RequirePasswordReset handles POST /api/v1/users/{id}/require-password-reset.
+func (h *UserHandler) RequirePasswordReset(w http.ResponseWriter, r *http.Request) {
+	h.accountStateAction(w, r, "Password reset required", h.coreService.RequirePasswordReset)
 }
