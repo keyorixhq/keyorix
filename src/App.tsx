@@ -13,6 +13,7 @@ import { AppearancePage } from './pages/settings/AppearancePage';
 import { CompliancePage } from './pages/compliance/CompliancePage';
 import { KeyorixConnectPage } from './pages/integrations/KeyorixConnectPage';
 import { RoadmapPage } from './pages/roadmap/RoadmapPage';
+import { ProfilePage } from './pages/profile';
 import { ROUTES } from './constants';
 
 function App() {
@@ -60,7 +61,7 @@ function App() {
                   {/* Other */}
                   <Route path={ROUTES.AUDIT} element={<AuditLogPage />} />
                   <Route path={ROUTES.SHARING} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Sharing — coming soon</div>} />
-                  <Route path={ROUTES.PROFILE} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Profile — coming soon</div>} />
+                  <Route path={ROUTES.PROFILE} element={<ProfilePage />} />
                   <Route path={ROUTES.ADMIN_USERS} element={<AdminPage />} />
                   <Route path={ROUTES.ADMIN} element={<AdminPage />} />
                   <Route path="/admin/roles" element={<RolesPoliciesPage />} />

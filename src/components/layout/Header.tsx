@@ -14,6 +14,7 @@ import { Dropdown, DropdownItem } from '../ui/Dropdown';
 
 import { useAuth } from '../../features/auth';
 import { useUIStore } from '../../store/uiStore';
+import { ROUTES } from '../../constants';
 
 export interface HeaderProps {
     onMenuClick: () => void;
@@ -35,6 +36,12 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
     };
 
     const userMenuItems: DropdownItem[] = [
+        {
+            label: 'My Account',
+            value: 'account',
+            icon: UserCircleIcon,
+            onClick: () => navigate(ROUTES.PROFILE),
+        },
         {
             label: 'Sign out',
             value: 'logout',
