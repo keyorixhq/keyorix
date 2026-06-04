@@ -24,6 +24,27 @@ export interface CreateProjectPayload {
     description?: string | undefined;
 }
 
+export interface ProjectMember {
+    userId: number;
+    username: string;
+    displayName: string;
+    email: string;
+    roleId: number;
+    roleName: string;
+}
+
+// ADR-021 project roles offered in the Members tab.
+export const PROJECT_ROLES = ['project_admin', 'project_developer', 'project_viewer', 'project_auditor'] as const;
+
+const normalizeMember = (m: any): ProjectMember => ({
+    userId: m.user_id ?? m.userId,
+    username: m.username ?? '',
+    displayName: m.display_name ?? m.displayName ?? '',
+    email: m.email ?? '',
+    roleId: m.role_id ?? m.roleId ?? 0,
+    roleName: m.role_name ?? m.roleName ?? '',
+});
+
 const normalize = (p: any): Project => ({
     id: p.ID ?? p.id,
     name: p.Name ?? p.name,
@@ -82,5 +103,23 @@ export const projectsApi = {
         );
         const envs = response.data.data?.environments ?? response.data.environments ?? [];
         return envs.map(normalizeEnv);
+    },
+
+    async listMembers(projectId: number): Promise<ProjectMember[]> {
+        const response = await apiClient.get(`/api/v1/projects/${projectId}/members`);
+        const members = response.data.data?.members ?? response.data.members ?? [];
+        return members.map(normalizeMember);
+    },
+
+    async addMember(projectId: number, userId: number, role: string): Promise<void> {
+        await apiClient.post(`/api/v1/projects/${projectId}/members`, { user_id: userId, role });
+    },
+
+    async updateMemberRole(projectId: number, userId: number, role: string): Promise<void> {
+        await apiClient.put(`/api/v1/projects/${projectId}/members/${userId}`, { role });
+    },
+
+    async removeMember(projectId: number, userId: number): Promise<void> {
+        await apiClient.delete(`/api/v1/projects/${projectId}/members/${userId}`);
     },
 };

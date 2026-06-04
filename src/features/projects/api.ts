@@ -7,6 +7,7 @@ export const PROJECT_KEYS = {
     detail: (id: number) => [...PROJECT_KEYS.all, 'detail', id] as const,
     environments: (id: number, includeDeleted = false) =>
         [...PROJECT_KEYS.all, 'environments', id, { includeDeleted }] as const,
+    members: (id: number) => [...PROJECT_KEYS.all, 'members', id] as const,
 };
 
 export function useProjects(includeDeleted = false) {
@@ -72,5 +73,40 @@ export function useRestoreEnvironment(projectId: number) {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.all });
         },
+    });
+}
+
+export function useProjectMembers(projectId: number) {
+    return useQuery({
+        queryKey: PROJECT_KEYS.members(projectId),
+        queryFn: () => projectsApi.listMembers(projectId),
+        enabled: !!projectId,
+        staleTime: 30_000,
+    });
+}
+
+export function useAddProjectMember(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ userId, role }: { userId: number; role: string }) =>
+            projectsApi.addMember(projectId, userId, role),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.members(projectId) }),
+    });
+}
+
+export function useUpdateProjectMemberRole(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ userId, role }: { userId: number; role: string }) =>
+            projectsApi.updateMemberRole(projectId, userId, role),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.members(projectId) }),
+    });
+}
+
+export function useRemoveProjectMember(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (userId: number) => projectsApi.removeMember(projectId, userId),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.members(projectId) }),
     });
 }
