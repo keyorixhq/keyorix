@@ -16,13 +16,16 @@ type Storage interface {
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
 	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	DeleteProject(ctx context.Context, id uint) error
+	RestoreProject(ctx context.Context, id uint) error
 	ListProjects(ctx context.Context) ([]*models.Project, error)
-	ListProjectsWithCounts(ctx context.Context) ([]ProjectWithCounts, error)
+	ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]ProjectWithCounts, error)
 	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
 	GetEnvironment(ctx context.Context, id uint) (*models.Environment, error)
 	DeleteEnvironment(ctx context.Context, id uint) error
+	RestoreEnvironment(ctx context.Context, id uint) error
 	ListEnvironments(ctx context.Context) ([]*models.Environment, error)
 	ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error)
+	ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error)
 
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
@@ -263,4 +266,6 @@ type ProjectWithCounts struct {
 	Description      string `json:"Description"`
 	SecretCount      int64  `json:"secret_count"`
 	EnvironmentCount int64  `json:"environment_count"`
+	Deleted          bool   `json:"deleted"`              // true when soft-deleted (only returned when includeDeleted)
+	DeletedAt        string `json:"deleted_at,omitempty"` // RFC3339 timestamp when soft-deleted
 }

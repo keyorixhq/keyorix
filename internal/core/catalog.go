@@ -14,8 +14,10 @@ func (c *KeyorixCore) ListProjects(ctx context.Context) ([]*models.Project, erro
 }
 
 // ListProjectsWithCounts returns projects with secret and environment counts.
-func (c *KeyorixCore) ListProjectsWithCounts(ctx context.Context) ([]storage.ProjectWithCounts, error) {
-	return c.storage.ListProjectsWithCounts(ctx)
+// When includeDeleted is true, soft-deleted projects are included (flagged via
+// the Deleted/DeletedAt fields) for the restore UI.
+func (c *KeyorixCore) ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]storage.ProjectWithCounts, error) {
+	return c.storage.ListProjectsWithCounts(ctx, includeDeleted)
 }
 
 // GetProject returns a single project by ID.
@@ -58,9 +60,20 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 	return c.storage.DeleteProject(ctx, id)
 }
 
+// RestoreProject reverses a soft-delete, bringing back the project and the
+// environments and secrets that were removed with it.
+func (c *KeyorixCore) RestoreProject(ctx context.Context, id uint) error {
+	return c.storage.RestoreProject(ctx, id)
+}
+
 // DeleteEnvironment deletes an environment by ID.
 func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	return c.storage.DeleteEnvironment(ctx, id)
+}
+
+// RestoreEnvironment clears the soft-delete on an environment.
+func (c *KeyorixCore) RestoreEnvironment(ctx context.Context, id uint) error {
+	return c.storage.RestoreEnvironment(ctx, id)
 }
 
 // CreateProject creates a new project and seeds it with default environments.
@@ -91,6 +104,12 @@ func (c *KeyorixCore) ListEnvironments(ctx context.Context) ([]*models.Environme
 // ListEnvironmentsByProject returns environments scoped to a specific project.
 func (c *KeyorixCore) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	return c.storage.ListEnvironmentsByProject(ctx, projectID)
+}
+
+// ListEnvironmentsByProjectIncludingDeleted returns a project's environments,
+// including soft-deleted ones, for the restore UI.
+func (c *KeyorixCore) ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error) {
+	return c.storage.ListEnvironmentsByProjectIncludingDeleted(ctx, projectID)
 }
 
 // GetEnvironment returns a single environment by ID.

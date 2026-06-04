@@ -38,7 +38,7 @@ func (m *MockStorage) ListProjects(_ context.Context) ([]*models.Project, error)
 	return nil, nil
 }
 
-func (m *MockStorage) ListProjectsWithCounts(_ context.Context) ([]storage.ProjectWithCounts, error) {
+func (m *MockStorage) ListProjectsWithCounts(_ context.Context, _ bool) ([]storage.ProjectWithCounts, error) {
 	return nil, nil
 }
 
@@ -54,6 +54,10 @@ func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
 	return nil
 }
 
+func (m *MockStorage) RestoreProject(_ context.Context, _ uint) error {
+	return nil
+}
+
 func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
 	return nil, nil
 }
@@ -62,11 +66,19 @@ func (m *MockStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([]*m
 	return nil, nil
 }
 
+func (m *MockStorage) ListEnvironmentsByProjectIncludingDeleted(_ context.Context, _ uint) ([]*models.Environment, error) {
+	return nil, nil
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }
 
 func (m *MockStorage) DeleteEnvironment(_ context.Context, _ uint) error {
+	return nil
+}
+
+func (m *MockStorage) RestoreEnvironment(_ context.Context, _ uint) error {
 	return nil
 }
 

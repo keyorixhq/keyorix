@@ -35,25 +35,34 @@ func (ls *LocalStorage) ListProjects(ctx context.Context) ([]*models.Project, er
 	return projects, ls.db.WithContext(ctx).Find(&projects).Error
 }
 
-// ListProjectsWithCounts returns projects with aggregated secret and environment counts.
-func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context) ([]storage.ProjectWithCounts, error) {
+// ListProjectsWithCounts returns projects with aggregated secret and environment
+// counts. Soft-deleted projects (and their secrets/environments in the counts)
+// are excluded unless includeDeleted is true — this query uses raw SQL, which
+// bypasses GORM's soft-delete scope, so the deleted_at filters are explicit.
+func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]storage.ProjectWithCounts, error) {
 	type row struct {
 		ID               uint
 		Name             string
 		Description      string
 		SecretCount      int64
 		EnvironmentCount int64
+		DeletedAt        *string
 		CreatedAt        string
 		UpdatedAt        string
 	}
+	where := "WHERE p.deleted_at IS NULL"
+	if includeDeleted {
+		where = ""
+	}
 	var rows []row
 	err := ls.db.WithContext(ctx).Raw(`
-		SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+		SELECT p.id, p.name, p.description, p.created_at, p.updated_at, p.deleted_at,
 		       COUNT(DISTINCT s.id) AS secret_count,
 		       COUNT(DISTINCT e.id) AS environment_count
 		FROM projects p
 		LEFT JOIN secret_nodes s ON s.project_id = p.id
-		LEFT JOIN environments e ON e.project_id = p.id
+		LEFT JOIN environments e ON e.project_id = p.id AND e.deleted_at IS NULL
+		` + where + `
 		GROUP BY p.id
 		ORDER BY p.id
 	`).Scan(&rows).Error
@@ -62,13 +71,18 @@ func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context) ([]storage.P
 	}
 	result := make([]storage.ProjectWithCounts, 0, len(rows))
 	for _, r := range rows {
-		result = append(result, storage.ProjectWithCounts{
+		pc := storage.ProjectWithCounts{
 			ID:               r.ID,
 			Name:             r.Name,
 			Description:      r.Description,
 			SecretCount:      r.SecretCount,
 			EnvironmentCount: r.EnvironmentCount,
-		})
+		}
+		if r.DeletedAt != nil {
+			pc.Deleted = true
+			pc.DeletedAt = *r.DeletedAt
+		}
+		result = append(result, pc)
 	}
 	return result, nil
 }
@@ -113,6 +127,29 @@ func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 	})
 }
 
+// RestoreProject reverses a project soft-delete: it clears deleted_at on the
+// project and on the environments that were soft-deleted with it. Secrets are
+// NOT restored — DeleteProject hard-deletes secret rows (SecretNode has no
+// soft-delete column; per-secret soft delete is a separate, ADR-gated M2 item),
+// so a restored project comes back with its environment structure but no secrets.
+func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) error {
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Unscoped().Model(&models.Project{}).
+			Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+		if result.Error != nil {
+			return fmt.Errorf("failed to restore project: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("project not found or not deleted")
+		}
+		if err := tx.Unscoped().Model(&models.Environment{}).
+			Where("project_id = ?", id).Update("deleted_at", nil).Error; err != nil {
+			return fmt.Errorf("failed to restore project environments: %w", err)
+		}
+		return nil
+	})
+}
+
 func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
 	var environments []*models.Environment
 	return environments, ls.db.WithContext(ctx).Find(&environments).Error
@@ -121,6 +158,13 @@ func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environ
 func (ls *LocalStorage) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	var environments []*models.Environment
 	return environments, ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&environments).Error
+}
+
+// ListEnvironmentsByProjectIncludingDeleted is like ListEnvironmentsByProject but
+// also returns soft-deleted environments (DeletedAt populated), for the restore UI.
+func (ls *LocalStorage) ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error) {
+	var environments []*models.Environment
+	return environments, ls.db.WithContext(ctx).Unscoped().Where("project_id = ?", projectID).Find(&environments).Error
 }
 
 func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
@@ -152,6 +196,19 @@ func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("environment not found")
+	}
+	return nil
+}
+
+// RestoreEnvironment clears deleted_at on a soft-deleted environment.
+func (ls *LocalStorage) RestoreEnvironment(ctx context.Context, id uint) error {
+	result := ls.db.WithContext(ctx).Unscoped().Model(&models.Environment{}).
+		Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+	if result.Error != nil {
+		return fmt.Errorf("failed to restore environment: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("environment not found or not deleted")
 	}
 	return nil
 }

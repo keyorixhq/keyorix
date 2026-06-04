@@ -21,14 +21,36 @@ func NewCatalogHandler(svc *core.KeyorixCore) *CatalogHandler {
 	return &CatalogHandler{coreService: svc}
 }
 
-// ListProjects handles GET /api/v1/projects — returns projects with secret and environment counts.
+// ListProjects handles GET /api/v1/projects — returns projects with secret and
+// environment counts. Pass ?include_deleted=true to also return soft-deleted
+// projects (flagged via the deleted/deleted_at fields) for the restore UI.
 func (h *CatalogHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := h.coreService.ListProjectsWithCounts(r.Context())
+	includeDeleted := r.URL.Query().Get("include_deleted") == "true"
+	projects, err := h.coreService.ListProjectsWithCounts(r.Context(), includeDeleted)
 	if err != nil {
 		sendError(w, "Failed to list projects", err.Error(), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"projects": projects}, "")
+}
+
+// RestoreProject handles POST /api/v1/projects/{id}/restore
+func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.RestoreProject(r.Context(), uint(id)); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	sendSuccess(w, nil, "Project restored")
 }
 
 // GetProject handles GET /api/v1/projects/:id
@@ -174,7 +196,8 @@ func (h *CatalogHandler) DeleteEnvironment(w http.ResponseWriter, r *http.Reques
 	sendSuccess(w, nil, "Environment deleted")
 }
 
-// ListProjectEnvironments handles GET /api/v1/projects/:id/environments
+// ListProjectEnvironments handles GET /api/v1/projects/:id/environments.
+// Pass ?include_deleted=true to also return soft-deleted environments.
 func (h *CatalogHandler) ListProjectEnvironments(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -182,10 +205,36 @@ func (h *CatalogHandler) ListProjectEnvironments(w http.ResponseWriter, r *http.
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
 		return
 	}
-	environments, err := h.coreService.ListEnvironmentsByProject(r.Context(), uint(id))
+	var environments []*models.Environment
+	if r.URL.Query().Get("include_deleted") == "true" {
+		environments, err = h.coreService.ListEnvironmentsByProjectIncludingDeleted(r.Context(), uint(id))
+	} else {
+		environments, err = h.coreService.ListEnvironmentsByProject(r.Context(), uint(id))
+	}
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"environments": environments}, "")
+}
+
+// RestoreEnvironment handles POST /api/v1/projects/{projectId}/environments/{id}/restore.
+// Nested under the project so the permission scope resolves from the project ID
+// (the environment row itself is soft-deleted and not loadable by the scope check).
+func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid environment ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.RestoreEnvironment(r.Context(), uint(id)); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	sendSuccess(w, nil, "Environment restored")
 }
