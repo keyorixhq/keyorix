@@ -250,7 +250,7 @@ services:
       - ./data:/app/data
       - ./certs:/app/certs
     environment:
-      - SECRETLY_CONFIG_PATH=/app/keyorix.yaml
+      - KEYORIX_CONFIG_PATH=/app/keyorix.yaml
 ```
 
 ## 🧪 Testing
@@ -392,7 +392,7 @@ Server logs include:
 
 Set environment variable for verbose logging:
 ```bash
-export SECRETLY_DEBUG=true
+export KEYORIX_DEBUG=true
 ./keyorix-server
 ```
 

@@ -192,7 +192,7 @@ The system provides comprehensive error handling and user guidance:
 
 Set environment variable for detailed logging:
 ```bash
-export SECRETLY_DEBUG=true
+export KEYORIX_DEBUG=true
 keyorix system init
 ```
 

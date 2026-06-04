@@ -63,15 +63,15 @@ storage:
   type: "remote"
   remote:
     base_url: "https://api.keyorix.company.com"
-    api_key: "${SECRETLY_API_KEY}"
+    api_key: "${KEYORIX_API_KEY}"
     timeout_seconds: 30
     retry_attempts: 3
     tls_verify: true
 ```
 
 Supported environment variables:
-- `SECRETLY_API_KEY`
-- `SECRETLY_TOKEN`
+- `KEYORIX_API_KEY`
+- `KEYORIX_TOKEN`
 - `API_KEY`
 
 ### Configuration File
@@ -89,7 +89,7 @@ storage:
   # Remote storage configuration
   remote:
     base_url: "https://api.keyorix.company.com"
-    api_key: "${SECRETLY_API_KEY}"
+    api_key: "${KEYORIX_API_KEY}"
     timeout_seconds: 30
     retry_attempts: 3
     tls_verify: true
@@ -252,10 +252,10 @@ keyorix secret list
 
 ```bash
 # Set environment variable
-export SECRETLY_API_KEY="your-api-key-here"
+export KEYORIX_API_KEY="your-api-key-here"
 
 # Configure with environment variable
-keyorix config set-remote --url https://api.example.com --api-key '${SECRETLY_API_KEY}'
+keyorix config set-remote --url https://api.example.com --api-key '${KEYORIX_API_KEY}'
 
 # The API key will be read from the environment variable
 keyorix status

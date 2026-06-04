@@ -435,7 +435,7 @@ class SecretRotator:
 if __name__ == "__main__":
     rotator = SecretRotator(
         api_base="https://api.keyorix.com/api/v1",
-        token=os.environ['SECRETLY_TOKEN']
+        token=os.environ['KEYORIX_TOKEN']
     )
     
     # Rotate database password

@@ -188,7 +188,7 @@ This will demonstrate:
 
 Enable debug logging by setting environment variable:
 ```bash
-export SECRETLY_DEBUG=true
+export KEYORIX_DEBUG=true
 ```
 
 ## Migration from Unencrypted

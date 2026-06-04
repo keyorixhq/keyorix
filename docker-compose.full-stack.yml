@@ -10,7 +10,7 @@ services:
       - "8080:8080"
       - "9090:9090"
     environment:
-      - SECRETLY_CONFIG_PATH=/app/config/production.yaml
+      - KEYORIX_CONFIG_PATH=/app/config/production.yaml
       - GIN_MODE=release
       - ENVIRONMENT=production
     volumes:

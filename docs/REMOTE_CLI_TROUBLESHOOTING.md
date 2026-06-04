@@ -218,12 +218,12 @@ keyorix auth status
 
 1. **Check environment variable:**
    ```bash
-   echo $SECRETLY_API_KEY
+   echo $KEYORIX_API_KEY
    ```
 
 2. **Set environment variable:**
    ```bash
-   export SECRETLY_API_KEY="your-api-key"
+   export KEYORIX_API_KEY="your-api-key"
    ```
 
 3. **Verify variable expansion:**
@@ -319,7 +319,7 @@ curl -X POST \
 
 ```bash
 # Set debug environment variable
-export SECRETLY_DEBUG=true
+export KEYORIX_DEBUG=true
 
 # Run commands with verbose output
 keyorix status
@@ -407,7 +407,7 @@ keyorix config status
 keyorix ping
 
 # Error messages (run failing command with debug)
-SECRETLY_DEBUG=true keyorix your-failing-command
+KEYORIX_DEBUG=true keyorix your-failing-command
 ```
 
 ### Contact Support

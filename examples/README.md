@@ -169,7 +169,7 @@ examples/
 
 Enable detailed logging:
 ```bash
-export SECRETLY_DEBUG=true
+export KEYORIX_DEBUG=true
 go run examples/system_init/main.go
 ```
 

@@ -15,10 +15,10 @@ server:
     swagger_enabled: false  # Disable in production for security
     # Web dashboard settings
     web_assets_path: "/app/web/dist"
-    domain: "${SECRETLY_DOMAIN:-localhost}"
+    domain: "${KEYORIX_DOMAIN:-localhost}"
     allowed_origins:
-      - "https://${SECRETLY_DOMAIN:-localhost}"
-      - "https://www.${SECRETLY_DOMAIN:-localhost}"
+      - "https://${KEYORIX_DOMAIN:-localhost}"
+      - "https://www.${KEYORIX_DOMAIN:-localhost}"
     tls:
       enabled: false  # TLS handled by reverse proxy
       auto_cert: false
