@@ -177,24 +177,34 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
-	// Create rotation_policies table if it doesn't exist yet (additive, safe on existing DBs).
-	if !tableExists(db, "rotation_policies") {
+	// Snapshot all table-existence checks UP FRONT, before any AutoMigrate runs.
+	// AutoMigrate creating a new table poisons the pgx connection's prepared-statement
+	// cache, so a subsequent parameterized information_schema query (tableExists) can
+	// spuriously return false ("insufficient arguments") — which would then re-run the
+	// full AutoMigrate against an existing DB and fail. Capturing the flags first means
+	// no existence query runs after a creation. (Both rotation_policies and
+	// personal_access_tokens are kept out of the full AutoMigrate list below for the
+	// same pgx reason — see the NOTE there.)
+	projectsExists := tableExists(db, "projects")
+	rotationExists := tableExists(db, "rotation_policies")
+	patExists := tableExists(db, "personal_access_tokens")
+
+	// Create rotation_policies if missing (additive, safe on existing DBs).
+	if !rotationExists {
 		if err := db.AutoMigrate(&models.RotationPolicy{}); err != nil {
 			return fmt.Errorf("failed to migrate rotation_policies table: %w", err)
 		}
 	}
 
-	// Create personal_access_tokens table if it doesn't exist yet (ADR-027, additive,
-	// safe on existing DBs). Kept out of the full AutoMigrate list below for the same
-	// pgx fresh-DB reason as rotation_policies.
-	if !tableExists(db, "personal_access_tokens") {
+	// Create personal_access_tokens if missing (ADR-027, additive, safe on existing DBs).
+	if !patExists {
 		if err := db.AutoMigrate(&models.PersonalAccessToken{}); err != nil {
 			return fmt.Errorf("failed to migrate personal_access_tokens table: %w", err)
 		}
 	}
 
 	// Skip full AutoMigrate if already initialised (projects table present).
-	if tableExists(db, "projects") {
+	if projectsExists {
 		return nil
 	}
 	return db.AutoMigrate(
