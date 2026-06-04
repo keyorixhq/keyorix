@@ -5,7 +5,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -48,7 +48,7 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 	secret, sErr := h.coreService.GetSecret(r.Context(), uint(id))
 	if sErr == nil && secret != nil {
 		ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-		go h.coreService.LogSecretReadWithProject(context.Background(), userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua) // #nosec G118
+		go h.coreService.LogSecretReadWithProject(core.DetachedAuditContext(r.Context()), userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua) // #nosec G118
 	}
 
 	h.sendSuccess(w, map[string]interface{}{"versions": versions}, "")

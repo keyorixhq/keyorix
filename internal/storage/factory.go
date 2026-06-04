@@ -162,6 +162,32 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
+	// Audit-design block: diff payload + impersonation attribution on audit rows.
+	if tableExists(db, "audit_events") {
+		if !columnExists(db, "audit_events", "diff") {
+			db.Exec("ALTER TABLE audit_events ADD COLUMN diff TEXT")
+		}
+		if !columnExists(db, "audit_events", "impersonated_by") {
+			db.Exec("ALTER TABLE audit_events ADD COLUMN impersonated_by INTEGER")
+		}
+		if !columnExists(db, "audit_events", "acting_as") {
+			db.Exec("ALTER TABLE audit_events ADD COLUMN acting_as INTEGER")
+		}
+		if !columnExists(db, "audit_events", "impersonation") {
+			db.Exec("ALTER TABLE audit_events ADD COLUMN impersonation BOOLEAN NOT NULL DEFAULT false")
+		}
+	}
+
+	// Impersonation sessions carry the initiating admin + start time.
+	if tableExists(db, "sessions") {
+		if !columnExists(db, "sessions", "impersonated_by") {
+			db.Exec("ALTER TABLE sessions ADD COLUMN impersonated_by INTEGER")
+		}
+		if !columnExists(db, "sessions", "impersonation_started_at") {
+			db.Exec("ALTER TABLE sessions ADD COLUMN impersonation_started_at TIMESTAMP WITH TIME ZONE")
+		}
+	}
+
 	// RBAC Phase 2: scope role assignments by environment as well as project.
 	// project_id already exists (nullable on pre-008 DBs); add environment_id and
 	// normalise NULL project_id rows to the 0 = global sentinel the queries expect.

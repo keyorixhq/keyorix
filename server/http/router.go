@@ -46,6 +46,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	authHandler := handlers.NewAuthHandler(coreService)
 	patHandler := handlers.NewPATHandler(coreService)
+	impersonationHandler := handlers.NewImpersonationHandler(coreService)
 
 	secretHandler, err := handlers.NewSecretHandler(coreService)
 	if err != nil {
@@ -128,6 +129,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Get("/auth/tokens", patHandler.ListPATs)
 		r.Post("/auth/tokens", patHandler.CreatePAT)
 		r.Delete("/auth/tokens/{id}", patHandler.RevokePAT)
+		// Self-scoped: end the current impersonation session (no permission gate).
+		r.Post("/auth/end-impersonation", impersonationHandler.End)
 
 		// Dashboard endpoints
 		r.Get("/dashboard/stats", dashboardHandler.GetStats)
@@ -218,6 +221,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
 			r.Put("/{id}/roles", usersRolesHandler.UpdateUserRoles)
 		})
+
+		// Admin impersonation — gated by users.impersonate, which only global
+		// admins hold (admin-bypass). Issues a session for the target user.
+		r.With(customMiddleware.RequirePermission("users.impersonate")).
+			Post("/admin/impersonate", impersonationHandler.Start)
 
 		// Groups endpoints
 		r.Route("/groups", func(r chi.Router) {

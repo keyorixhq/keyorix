@@ -82,6 +82,17 @@ func (ls *LocalStorage) GetRBACAuditLogs(_ context.Context, _ *storage.RBACAudit
 	return nil, 0, nil
 }
 
+// CountImpersonatedActions counts impersonated audit events for actingAs by
+// impersonator since `since`, excluding the impersonation.start/.end markers.
+func (ls *LocalStorage) CountImpersonatedActions(ctx context.Context, actingAs, impersonator uint, since time.Time) (int64, error) {
+	var n int64
+	err := ls.db.WithContext(ctx).Model(&models.AuditEvent{}).
+		Where("impersonation = ? AND acting_as = ? AND impersonated_by = ? AND event_time >= ?", true, actingAs, impersonator, since).
+		Where("event_type NOT IN ?", []string{"impersonation.start", "impersonation.end"}).
+		Count(&n).Error
+	return n, err
+}
+
 // --- Anomaly alerts ---
 
 // anomalyDedupWindow bounds how long an equivalent alert suppresses duplicates.

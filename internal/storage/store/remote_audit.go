@@ -37,6 +37,13 @@ func (rs *RemoteStorage) CreateSecretAccessLog(_ context.Context, _ *models.Secr
 	return nil
 }
 
+// CountImpersonatedActions is server-side in remote mode; returns 0.
+// Impersonation sessions are created and ended against the server directly, so a
+// remote client never needs to compute the action count locally.
+func (rs *RemoteStorage) CountImpersonatedActions(_ context.Context, _, _ uint, _ time.Time) (int64, error) {
+	return 0, nil
+}
+
 // GetAuditLogs retrieves audit events with optional filtering via remote API.
 func (rs *RemoteStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
 	path := buildAuditFilterPath(filter)

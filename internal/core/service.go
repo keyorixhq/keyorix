@@ -91,6 +91,14 @@ func (c *KeyorixCore) ResolveUsernames(ctx context.Context, events []*models.Aud
 		if e.UserID != nil {
 			seen[*e.UserID] = true
 		}
+		// Resolve impersonation actors too, so audit rows can show a human-readable
+		// name on every impersonated event rather than an opaque ID.
+		if e.ImpersonatedBy != nil {
+			seen[*e.ImpersonatedBy] = true
+		}
+		if e.ActingAs != nil {
+			seen[*e.ActingAs] = true
+		}
 	}
 	byID := map[uint]string{0: "system"}
 	for uid := range seen {

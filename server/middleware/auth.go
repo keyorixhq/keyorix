@@ -41,6 +41,10 @@ type UserContext struct {
 	Username string   `json:"username"`
 	Email    string   `json:"email"`
 	Roles    []string `json:"roles"`
+	// ImpersonatedBy is the initiating admin's ID when this is an impersonation
+	// session (nil otherwise). Cached with the rest of the identity, so a single
+	// per-token lookup decides it. Used to tag downstream audit events.
+	ImpersonatedBy *uint `json:"impersonated_by,omitempty"`
 }
 
 // contextKey is used for context keys to avoid collisions
@@ -148,9 +152,7 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 					unauthorizedResponse(w, "Invalid or expired token")
 					return
 				}
-				ctx := context.WithValue(r.Context(), userContextKey, entry.userCtx)
-				ctx = context.WithValue(ctx, coreServiceContextKey, coreService)
-				next.ServeHTTP(w, r.WithContext(ctx))
+				next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), entry.userCtx, coreService)))
 				return
 			}
 
@@ -163,12 +165,16 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 				return
 			}
 
+			// Resolve impersonation once, on the slow path, so it is cached with
+			// the identity. PATs are never impersonation sessions (prefix check).
+			if coreService != nil && !strings.HasPrefix(token, patTokenPrefix) {
+				userCtx.ImpersonatedBy = coreService.SessionImpersonator(r.Context(), token)
+			}
+
 			// Cache the positive result.
 			cacheSet(key, tokenCacheEntry{userCtx: userCtx, expiresAt: time.Now().Add(validTokenTTL)})
 
-			ctx := context.WithValue(r.Context(), userContextKey, userCtx)
-			ctx = context.WithValue(ctx, coreServiceContextKey, coreService)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
 		})
 	}
 }
@@ -371,6 +377,19 @@ func RequireRole(role string) func(next http.Handler) http.Handler {
 			forbiddenResponse(w, "Insufficient role")
 		})
 	}
+}
+
+// buildRequestContext stores the resolved identity and core service on the
+// request context. When the session is an impersonation session it also tags the
+// context (via core.WithImpersonation) so audit events written downstream are
+// consistently marked impersonation=true with the initiating admin recorded.
+func buildRequestContext(parent context.Context, userCtx *UserContext, coreService *core.KeyorixCore) context.Context {
+	ctx := context.WithValue(parent, userContextKey, userCtx)
+	ctx = context.WithValue(ctx, coreServiceContextKey, coreService)
+	if userCtx != nil && userCtx.ImpersonatedBy != nil {
+		ctx = core.WithImpersonation(ctx, *userCtx.ImpersonatedBy)
+	}
+	return ctx
 }
 
 // GetUserFromContext extracts the user context from the request context
