@@ -13,6 +13,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -69,6 +70,17 @@ func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*mod
 	return user, nil
 }
 
+// UpdateLastLogin stamps last_login_at for a single user. Uses UpdateColumn so
+// only that column is written — no updated_at bump, no clobbering of other fields.
+func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
+	if err := ls.db.WithContext(ctx).Model(&models.User{}).
+		Where("id = ?", userID).
+		UpdateColumn("last_login_at", loginAt).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 func (ls *LocalStorage) DeleteUser(ctx context.Context, id uint) error {
 	result := ls.db.WithContext(ctx).Delete(&models.User{}, id)
 	if result.Error != nil {
@@ -113,6 +125,9 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	}
 	if filter.CreatedAfter != nil {
 		query = query.Where("created_at > ?", *filter.CreatedAfter)
+	}
+	if filter.InactiveSince != nil {
+		query = query.Where("last_login_at IS NULL OR last_login_at < ?", *filter.InactiveSince)
 	}
 
 	var total int64

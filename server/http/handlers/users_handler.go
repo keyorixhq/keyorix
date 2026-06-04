@@ -68,14 +68,18 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 		dn = u.Username
 	}
 	out := map[string]interface{}{
-		"id":           u.ID,
-		"username":     u.Username,
-		"email":        u.Email,
-		"display_name": dn,
-		"active":       u.IsActive,
-		"created_at":   u.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at":   u.UpdatedAt.UTC().Format(time.RFC3339),
-		"deleted_at":   nil,
+		"id":            u.ID,
+		"username":      u.Username,
+		"email":         u.Email,
+		"display_name":  dn,
+		"active":        u.IsActive,
+		"created_at":    u.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":    u.UpdatedAt.UTC().Format(time.RFC3339),
+		"last_login_at": nil,
+		"deleted_at":    nil,
+	}
+	if u.LastLoginAt != nil {
+		out["last_login_at"] = u.LastLoginAt.UTC().Format(time.RFC3339)
 	}
 	if u.DeletedAt.Valid {
 		out["deleted_at"] = u.DeletedAt.Time.UTC().Format(time.RFC3339)

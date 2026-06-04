@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -91,6 +92,12 @@ func (rs *RemoteStorage) UpdateUser(ctx context.Context, user *models.User) (*mo
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	return &result, nil
+}
+
+// UpdateLastLogin is not available in remote mode — last_login_at is stamped
+// server-side inside the login handler, which always runs against LocalStorage.
+func (rs *RemoteStorage) UpdateLastLogin(_ context.Context, _ uint, _ time.Time) error {
+	return fmt.Errorf("UpdateLastLogin not available in remote mode")
 }
 
 // DeleteUser deletes a user via remote API.

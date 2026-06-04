@@ -144,6 +144,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
 	}
 
+	// Track last successful login per user (nil = never logged in).
+	if tableExists(db, "users") && !columnExists(db, "users", "last_login_at") {
+		db.Exec("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP WITH TIME ZONE")
+	}
+
 	// RBAC Phase 2: scope role assignments by environment as well as project.
 	// project_id already exists (nullable on pre-008 DBs); add environment_id and
 	// normalise NULL project_id rows to the 0 = global sentinel the queries expect.

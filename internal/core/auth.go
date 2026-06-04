@@ -45,6 +45,13 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	return created, user, nil
 }
 
+// RecordLogin stamps the user's last_login_at to the current time. Best-effort:
+// the login handler calls this in a goroutine after a successful authentication,
+// so a storage error here must never fail the login itself.
+func (c *KeyorixCore) RecordLogin(ctx context.Context, userID uint) error {
+	return c.storage.UpdateLastLogin(ctx, userID, c.now())
+}
+
 // Logout invalidates the session identified by token.
 func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 	session, err := c.storage.GetSession(ctx, token)

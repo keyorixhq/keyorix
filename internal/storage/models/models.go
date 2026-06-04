@@ -30,7 +30,8 @@ type User struct {
 	Email        string
 	DisplayName  string
 	PasswordHash string
-	IsActive     bool `gorm:"default:true"`
+	IsActive     bool       `gorm:"default:true"`
+	LastLoginAt  *time.Time // stamped on each successful auth.login; nil = never logged in
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	DeletedAt    gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore

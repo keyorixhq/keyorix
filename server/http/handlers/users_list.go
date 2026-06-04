@@ -9,10 +9,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// inactiveUserWindow defines how long without a login marks a user "inactive".
+// Matches the dashboard's 30-day inactive-users signal.
+const inactiveUserWindow = 30 * 24 * time.Hour
 
 // ListUsers serves user list from core.
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +56,11 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	if d := r.URL.Query().Get("include_deleted"); d == "true" || d == "1" {
 		filter.IncludeDeleted = true
+	}
+	// ?filter=inactive — users with no login in the last 30 days (incl. never).
+	if r.URL.Query().Get("filter") == "inactive" {
+		cutoff := time.Now().UTC().Add(-inactiveUserWindow)
+		filter.InactiveSince = &cutoff
 	}
 
 	users, total, err := h.coreService.ListUsers(r.Context(), filter)

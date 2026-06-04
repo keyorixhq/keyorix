@@ -137,15 +137,14 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		PageSize:  1,
 	})
 
-	// Inactive users: registered users with no auth.login in the last 30 days.
-	var inactiveUsers int64
-	if storageStats, err := c.storage.GetStats(ctx); err == nil {
-		activeUserIDs, _ := c.storage.GetDistinctActiveUserIDs(ctx, thirtyDaysAgo)
-		inactiveUsers = storageStats.TotalUsers - int64(len(activeUserIDs))
-		if inactiveUsers < 0 {
-			inactiveUsers = 0
-		}
-	}
+	// Inactive users: registered users whose last_login_at is null or older than
+	// 30 days. Counted directly off the users table (no audit-log scan).
+	inactiveCutoff := thirtyDaysAgo
+	_, inactiveUsers, _ := c.storage.ListUsers(ctx, &storage.UserFilter{
+		InactiveSince: &inactiveCutoff,
+		Page:          1,
+		PageSize:      1,
+	})
 
 	stats := &DashboardStats{
 		TotalSecrets:          total,

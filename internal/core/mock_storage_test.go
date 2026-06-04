@@ -272,6 +272,11 @@ func (m *MockStorage) UpdateUser(ctx context.Context, user *models.User) (*model
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
+func (m *MockStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
+	args := m.Called(ctx, userID, loginAt)
+	return args.Error(0)
+}
+
 func (m *MockStorage) DeleteUser(ctx context.Context, id uint) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)

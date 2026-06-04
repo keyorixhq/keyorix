@@ -57,6 +57,9 @@ type Storage interface {
 	GetUser(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
 	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
+	// UpdateLastLogin stamps the user's last_login_at column without touching any
+	// other field (no updated_at bump). Called on every successful login.
+	UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error
 	DeleteUser(ctx context.Context, id uint) error
 	RestoreUser(ctx context.Context, id uint) error
 	ListUsers(ctx context.Context, filter *UserFilter) ([]*models.User, int64, error)
@@ -174,11 +177,14 @@ type SecretFilter struct {
 
 // UserFilter defines filtering options for user queries
 type UserFilter struct {
-	Search         *string // OR match across username and email (LIKE %search%)
-	Username       *string
-	Email          *string
-	IsActive       *bool
-	CreatedAfter   *time.Time
+	Search       *string // OR match across username and email (LIKE %search%)
+	Username     *string
+	Email        *string
+	IsActive     *bool
+	CreatedAfter *time.Time
+	// InactiveSince, when set, returns only users who have not logged in since the
+	// given time — i.e. last_login_at IS NULL OR last_login_at < InactiveSince.
+	InactiveSince  *time.Time
 	IncludeDeleted bool // when true, also return soft-deleted users
 	Page           int
 	PageSize       int

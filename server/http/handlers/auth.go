@@ -129,9 +129,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		resp.ExpiresAt = session.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 
-	// Audit log (non-blocking)
+	// Audit log + last-login stamp (both non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
 	go h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua) // #nosec G118
+	go func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }()        // #nosec G118
 
 	sendSuccess(w, resp, "Login successful")
 }
@@ -204,12 +205,16 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profile := map[string]interface{}{
-		"id":           user.ID,
-		"username":     user.Username,
-		"email":        user.Email,
-		"display_name": user.DisplayName,
-		"is_active":    user.IsActive,
-		"created_at":   user.CreatedAt,
+		"id":            user.ID,
+		"username":      user.Username,
+		"email":         user.Email,
+		"display_name":  user.DisplayName,
+		"is_active":     user.IsActive,
+		"created_at":    user.CreatedAt,
+		"last_login_at": nil,
+	}
+	if user.LastLoginAt != nil {
+		profile["last_login_at"] = user.LastLoginAt.UTC().Format(time.RFC3339)
 	}
 
 	sendSuccess(w, profile, "")
