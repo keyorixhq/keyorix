@@ -259,3 +259,57 @@ func (ls *LocalStorage) ListGroupMembers(ctx context.Context, groupID uint) ([]*
 	}
 	return users, nil
 }
+
+// --- Password history (ADR-025) ---
+
+// AddPasswordHistory records a bcrypt hash for the user.
+func (ls *LocalStorage) AddPasswordHistory(ctx context.Context, userID uint, hash string, at time.Time) error {
+	row := &models.PasswordHistory{UserID: userID, PasswordHash: hash, CreatedAt: at}
+	if err := ls.db.WithContext(ctx).Create(row).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+// RecentPasswordHashes returns the most recent `limit` hashes (newest first).
+func (ls *LocalStorage) RecentPasswordHashes(ctx context.Context, userID uint, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var rows []models.PasswordHistory
+	err := ls.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("created_at DESC").Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	hashes := make([]string, len(rows))
+	for i, r := range rows {
+		hashes[i] = r.PasswordHash
+	}
+	return hashes, nil
+}
+
+// PrunePasswordHistory deletes all but the newest `keep` history rows for a user.
+func (ls *LocalStorage) PrunePasswordHistory(ctx context.Context, userID uint, keep int) error {
+	if keep < 0 {
+		keep = 0
+	}
+	// Find the cutoff: the id of the keep-th newest row. Anything older is pruned.
+	var ids []uint
+	if err := ls.db.WithContext(ctx).Model(&models.PasswordHistory{}).
+		Where("user_id = ?", userID).
+		Order("created_at DESC").Limit(keep).
+		Pluck("id", &ids).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	q := ls.db.WithContext(ctx).Where("user_id = ?", userID)
+	if len(ids) > 0 {
+		q = q.Where("id NOT IN ?", ids)
+	}
+	if err := q.Delete(&models.PasswordHistory{}).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}

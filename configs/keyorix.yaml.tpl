@@ -101,14 +101,16 @@ password_policy:
   # Rules enforced when a user sets a new password (e.g. self-service change).
   # Omit this whole block to use the conservative built-in defaults (shown
   # below). Lab installs may relax these, e.g. min_length: 8 and the require_*
-  # flags false. Note: reject_common_passwords / history / max-age expiry are
-  # not yet enforced (ADR-025 follow-ups).
+  # flags false.
   min_length: 16
   require_uppercase: true
   require_lowercase: true
   require_digit: true
   require_special: true
-  reject_personal_info: true   # reject if it contains the user's username/email/display name
+  reject_personal_info: true     # reject if it contains the user's username/email/display name
+  reject_common_passwords: true  # reject passwords on the curated common-password denylist
+  history_count: 5               # forbid reusing the last N passwords (0 = off)
+  max_age_days: 0                # expire a password after N days (0 = never; login flags it)
 
 soft_delete:
   # Enable soft-deletion for all database entities

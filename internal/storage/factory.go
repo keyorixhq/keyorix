@@ -149,6 +149,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP WITH TIME ZONE")
 	}
 
+	// Track when the current password was set, for max-age expiry (ADR-025).
+	if tableExists(db, "users") && !columnExists(db, "users", "password_changed_at") {
+		db.Exec("ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP WITH TIME ZONE")
+	}
+
 	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
 	if tableExists(db, "sessions") {
 		if !columnExists(db, "sessions", "user_agent") {
@@ -216,6 +221,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	patExists := tableExists(db, "personal_access_tokens")
 	invitationsExists := tableExists(db, "project_invitations")
 	accessReqExists := tableExists(db, "access_requests")
+	pwHistExists := tableExists(db, "password_histories")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -240,6 +246,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !accessReqExists {
 		if err := db.AutoMigrate(&models.AccessRequest{}); err != nil {
 			return fmt.Errorf("failed to migrate access_requests table: %w", err)
+		}
+	}
+
+	// Create password_histories if missing (ADR-025 history_count, additive).
+	if !pwHistExists {
+		if err := db.AutoMigrate(&models.PasswordHistory{}); err != nil {
+			return fmt.Errorf("failed to migrate password_histories table: %w", err)
 		}
 	}
 
