@@ -70,12 +70,15 @@ type loginRequestBody struct {
 }
 
 type loginResponseBody struct {
-	Token       string `json:"token"`
-	ExpiresAt   string `json:"expires_at,omitempty"`
-	UserID      uint   `json:"user_id"`
-	Username    string `json:"username"`
-	Email       string `json:"email"`
-	DisplayName string `json:"display_name"`
+	Token       string   `json:"token"`
+	ExpiresAt   string   `json:"expires_at,omitempty"`
+	UserID      uint     `json:"user_id"`
+	Username    string   `json:"username"`
+	Email       string   `json:"email"`
+	DisplayName string   `json:"display_name"`
+	Role        string   `json:"role"`        // primary (highest-privilege) role
+	Roles       []string `json:"roles"`       // all assigned role names
+	Permissions []string `json:"permissions"` // distinct permissions across roles
 }
 
 type passwordResetRequestBody struct {
@@ -129,9 +132,16 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Username:    user.Username,
 		Email:       user.Email,
 		DisplayName: user.DisplayName,
+		Roles:       []string{},
+		Permissions: []string{},
 	}
 	if session.ExpiresAt != nil {
 		resp.ExpiresAt = session.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	// Surface roles + permissions so the UI can gate nav/routes. Best-effort:
+	// a failure here must not block an otherwise-successful login.
+	if id, ierr := h.coreService.GetUserIdentity(r.Context(), user.ID); ierr == nil {
+		resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
 	}
 
 	// Audit log + last-login stamp (both non-blocking)
@@ -209,11 +219,28 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, userProfileMap(user), "")
+	sendSuccess(w, userProfileMap(user, h.userIdentity(r, userCtx.UserID)), "")
+}
+
+// userIdentity returns the user's role/permission summary for the profile DTO.
+// Best-effort: on error it returns an empty identity so the profile still renders.
+func (h *AuthHandler) userIdentity(r *http.Request, userID uint) core.UserIdentity {
+	id, err := h.coreService.GetUserIdentity(r.Context(), userID)
+	if err != nil {
+		return core.UserIdentity{Roles: []string{}, Permissions: []string{}}
+	}
+	return id
 }
 
 // userProfileMap is the shared self-profile DTO returned by GET and PUT /auth/profile.
-func userProfileMap(user *models.User) map[string]interface{} {
+func userProfileMap(user *models.User, id core.UserIdentity) map[string]interface{} {
+	roles, permissions := id.Roles, id.Permissions
+	if roles == nil {
+		roles = []string{}
+	}
+	if permissions == nil {
+		permissions = []string{}
+	}
 	profile := map[string]interface{}{
 		"id":            user.ID,
 		"username":      user.Username,
@@ -222,6 +249,9 @@ func userProfileMap(user *models.User) map[string]interface{} {
 		"is_active":     user.IsActive,
 		"created_at":    user.CreatedAt,
 		"last_login_at": nil,
+		"role":          id.Role,
+		"roles":         roles,
+		"permissions":   permissions,
 	}
 	if user.LastLoginAt != nil {
 		profile["last_login_at"] = user.LastLoginAt.UTC().Format(time.RFC3339)
@@ -259,7 +289,7 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, userProfileMap(user), "Profile updated")
+	sendSuccess(w, userProfileMap(user, h.userIdentity(r, userCtx.UserID)), "Profile updated")
 }
 
 type changePasswordRequestBody struct {
