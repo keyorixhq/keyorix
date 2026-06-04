@@ -19,9 +19,18 @@ func ListAnomalyAlerts(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InternalError", "Core service not available", http.StatusInternalServerError, nil)
 		return
 	}
-	unacknowledgedOnly := r.URL.Query().Get("unacknowledged") == "true"
+	// ?acknowledged=true|false filters server-side; nil (param absent) returns
+	// all. ?unacknowledged=true is the legacy alias (still used by the CLI).
+	var acknowledged *bool
+	if v := r.URL.Query().Get("acknowledged"); v != "" {
+		b := v == "true" || v == "1"
+		acknowledged = &b
+	} else if r.URL.Query().Get("unacknowledged") == "true" {
+		b := false
+		acknowledged = &b
+	}
 	detector := core.NewAnomalyDetector(coreService.Storage())
-	alerts, err := detector.ListAlerts(r.Context(), unacknowledgedOnly)
+	alerts, err := detector.ListAlerts(r.Context(), acknowledged)
 	if err != nil {
 		sendError(w, "InternalError", "Failed to list anomaly alerts", http.StatusInternalServerError, nil)
 		return
