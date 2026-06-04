@@ -28,6 +28,18 @@ type Storage interface {
 	ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error)
 	ListProjectMembers(ctx context.Context, projectID uint) ([]ProjectMember, error)
 
+	// Project invitations (ADR-024).
+	CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error)
+	GetProjectInvitation(ctx context.Context, id uint) (*models.ProjectInvitation, error)
+	UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) error
+	ListProjectInvitations(ctx context.Context, projectID uint) ([]*models.ProjectInvitation, error)
+
+	// Access requests (ADR-024).
+	CreateAccessRequest(ctx context.Context, req *models.AccessRequest) (*models.AccessRequest, error)
+	GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error)
+	UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) error
+	ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error)
+
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	GetSecret(ctx context.Context, id uint) (*models.SecretNode, error)

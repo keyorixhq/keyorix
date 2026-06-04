@@ -188,6 +188,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	projectsExists := tableExists(db, "projects")
 	rotationExists := tableExists(db, "rotation_policies")
 	patExists := tableExists(db, "personal_access_tokens")
+	invitationsExists := tableExists(db, "project_invitations")
+	accessReqExists := tableExists(db, "access_requests")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -200,6 +202,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !patExists {
 		if err := db.AutoMigrate(&models.PersonalAccessToken{}); err != nil {
 			return fmt.Errorf("failed to migrate personal_access_tokens table: %w", err)
+		}
+	}
+
+	// Create project_invitations / access_requests if missing (ADR-024, additive).
+	if !invitationsExists {
+		if err := db.AutoMigrate(&models.ProjectInvitation{}); err != nil {
+			return fmt.Errorf("failed to migrate project_invitations table: %w", err)
+		}
+	}
+	if !accessReqExists {
+		if err := db.AutoMigrate(&models.AccessRequest{}); err != nil {
+			return fmt.Errorf("failed to migrate access_requests table: %w", err)
 		}
 	}
 

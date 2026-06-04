@@ -24,6 +24,42 @@ type Environment struct {
 	DeletedAt gorm.DeletedAt `gorm:"index"` // soft delete
 }
 
+// ProjectInvitation tracks an admin's intent to grant an email address a role in
+// a project (ADR-024). State machine: pending → accepted / revoked / expired.
+// The email/setup-link consumption (accept) is a follow-up; this record tracks
+// the pending invite so it can be listed, revoked, and aged out.
+type ProjectInvitation struct {
+	ID                     uint   `gorm:"primaryKey"`
+	ProjectID              uint   `gorm:"index"`
+	Email                  string `gorm:"index"`
+	Role                   string // intended project role
+	State                  string // pending | accepted | revoked | expired
+	InvitedBy              uint
+	ValidationModeAtInvite string // snapshot of the install validation mode at invite time
+	ExpiresAt              *time.Time
+	CreatedAt              time.Time
+	AcceptedAt             *time.Time
+	RevokedAt              *time.Time
+}
+
+// AccessRequest is a user's request for a role in a project (ADR-024). State
+// machine: pending → approved / rejected / withdrawn / expired. On approval the
+// granted role (which may differ from the suggested one) is assigned at the
+// project scope. No auto-approval.
+type AccessRequest struct {
+	ID            uint   `gorm:"primaryKey"`
+	ProjectID     uint   `gorm:"index"`
+	UserID        uint   `gorm:"index"`
+	SuggestedRole string // role the requester asks for
+	GrantedRole   string // role actually granted on approval
+	State         string // pending | approved | rejected | withdrawn | expired
+	Reason        string // requester's note, or the rejecter's reason
+	ResolvedBy    uint
+	ExpiresAt     *time.Time
+	CreatedAt     time.Time
+	ResolvedAt    *time.Time
+}
+
 type User struct {
 	ID           uint   `gorm:"primaryKey"`
 	Username     string `gorm:"uniqueIndex;not null"`
