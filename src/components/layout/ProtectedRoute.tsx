@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../features/auth';
+import { userIsAdmin } from '../../features/auth/roles';
 import { ROUTES } from '../../constants';
 import { storeIntendedRoute } from '../../utils/routing';
 
@@ -8,6 +9,7 @@ interface ProtectedRouteProps {
     children: React.ReactNode;
     requiredPermissions?: string[];
     requiredRole?: string;
+    adminOnly?: boolean;
     fallbackPath?: string;
     redirectOnFailure?: boolean;
 }
@@ -16,6 +18,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     children,
     requiredPermissions = [],
     requiredRole,
+    adminOnly = false,
     fallbackPath = ROUTES.LOGIN,
     redirectOnFailure = true,
 }) => {
@@ -45,6 +48,22 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
                 state={{ from: location }}
                 replace
             />
+        );
+    }
+
+    // Admin-only gate: any install-admin role (admin / system_admin / super_admin).
+    if (adminOnly && !userIsAdmin(user)) {
+        if (redirectOnFailure) {
+            return <Navigate to={ROUTES.DASHBOARD} replace />;
+        }
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                <div className="text-center">
+                    <h1 className="text-2xl font-bold text-gray-900 mb-4">Access Denied</h1>
+                    <p className="text-gray-600 mb-4">You don't have permission to access this page.</p>
+                    <p className="text-sm text-gray-500">Administrator access required.</p>
+                </div>
+            </div>
         );
     }
 

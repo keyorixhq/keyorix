@@ -12,7 +12,7 @@ export const AdminRoute: React.FC<AdminRouteProps> = ({
 }) => {
     return (
         <ProtectedRoute
-            requiredRole="admin"
+            adminOnly
             requiredPermissions={requiredPermissions}
         >
             {children}

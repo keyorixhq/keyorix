@@ -44,8 +44,9 @@ export const useAuthStore = create<AuthStore>()(
                         username: response.username,
                         displayName: response.display_name || response.username,
                         email: response.email,
-                        role: 'user',
-                        permissions: [],
+                        role: response.role || 'user',
+                        roles: response.roles || [],
+                        permissions: response.permissions || [],
                         preferences: {
                             language: 'en',
                             timezone: 'UTC',
@@ -139,6 +140,7 @@ export const useAuthStore = create<AuthStore>()(
                         username: profile.username,
                         email: profile.email,
                         role: profile.role || 'user',
+                        roles: profile.roles || [],
                         permissions: profile.permissions || [],
                         preferences: profile.preferences || {
                             language: 'en',

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { getEnvConfig } from '../../utils';
+import { userIsAdmin } from './roles';
 
 const config = getEnvConfig();
 
@@ -87,7 +88,8 @@ export const useAuth = () => {
         clearError,
 
         // Computed values
-        isAdmin: user?.role === 'admin',
+        isAdmin: userIsAdmin(user),
+        roles: user?.roles || [],
         permissions: user?.permissions || [],
         hasPermission: (permission: string) => user?.permissions?.includes(permission) || false,
     };

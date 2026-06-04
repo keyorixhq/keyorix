@@ -3,7 +3,7 @@ import { useAuth } from './features/auth';
 import { SecretsListPage } from "./pages/secrets/SecretsListPage";
 import { SecretExpiryPage, SecretsHealthPage, RotationPoliciesPage } from "./pages/secrets";
 import { ProjectsListPage, ProjectDetailPage } from './pages/projects';
-import { ProtectedRoute, PublicRoute, Layout } from './components/layout';
+import { ProtectedRoute, PublicRoute, AdminRoute, Layout } from './components/layout';
 import { SessionTimeoutWarning } from './components/ui';
 import { LoginPage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';
@@ -62,12 +62,13 @@ function App() {
                   <Route path={ROUTES.AUDIT} element={<AuditLogPage />} />
                   <Route path={ROUTES.SHARING} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Sharing — coming soon</div>} />
                   <Route path={ROUTES.PROFILE} element={<ProfilePage />} />
-                  <Route path={ROUTES.ADMIN_USERS} element={<AdminPage />} />
-                  <Route path={ROUTES.ADMIN} element={<AdminPage />} />
-                  <Route path="/admin/roles" element={<RolesPoliciesPage />} />
-                  <Route path="/admin/groups" element={<GroupsPage />} />
-                  <Route path="/admin/service-accounts" element={<ServiceAccountsPage />} />
-                  <Route path="/admin/api-tokens" element={<APITokensPage />} />
+                  {/* Access Control (admin-only) */}
+                  <Route path={ROUTES.ADMIN_USERS} element={<AdminRoute><AdminPage /></AdminRoute>} />
+                  <Route path={ROUTES.ADMIN} element={<AdminRoute><AdminPage /></AdminRoute>} />
+                  <Route path="/admin/roles" element={<AdminRoute><RolesPoliciesPage /></AdminRoute>} />
+                  <Route path="/admin/groups" element={<AdminRoute><GroupsPage /></AdminRoute>} />
+                  <Route path="/admin/service-accounts" element={<AdminRoute><ServiceAccountsPage /></AdminRoute>} />
+                  <Route path="/admin/api-tokens" element={<AdminRoute><APITokensPage /></AdminRoute>} />
                   <Route path="/settings/appearance" element={<AppearancePage />} />
                   <Route path={ROUTES.COMPLIANCE} element={<CompliancePage />} />
                   <Route path={ROUTES.CONNECT} element={<KeyorixConnectPage />} />

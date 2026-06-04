@@ -5,6 +5,7 @@ export interface User {
     displayName?: string;
     email: string;
     role: string;
+    roles: string[];
     permissions: string[];
     preferences: UserPreferences;
     lastLogin: string;
@@ -214,6 +215,9 @@ export interface LoginResponse {
     username: string;
     email: string;
     display_name?: string;
+    role?: string;
+    roles?: string[];
+    permissions?: string[];
 }
 
 export interface RefreshTokenResponse {

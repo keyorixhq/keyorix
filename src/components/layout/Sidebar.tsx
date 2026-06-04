@@ -16,6 +16,7 @@ import {
     RocketLaunchIcon,
 } from '@heroicons/react/24/outline';
 import { useUIStore } from '../../store/uiStore';
+import { useAuth } from '../../features/auth';
 import { ProjectSwitcher } from './ProjectSwitcher';
 
 export interface SidebarProps {
@@ -38,6 +39,7 @@ interface NavGroup {
     name: string;
     icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
     children: NavLeaf[];
+    adminOnly?: boolean; // hidden from non-admins (install-admin roles only)
 }
 
 type NavItem = NavLeaf | NavGroup;
@@ -79,6 +81,7 @@ const NAV: NavItem[] = [
         id: 'access',
         name: 'Access Control',
         icon: ShieldCheckIcon,
+        adminOnly: true,
         children: [
             { kind: 'leaf', name: 'Users', href: '/admin/users' },
             { kind: 'leaf', name: 'Groups', href: '/admin/groups' },
@@ -127,6 +130,11 @@ const NAV: NavItem[] = [
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
     const location = useLocation();
     const { sidebarExpanded, toggleSidebarGroup } = useUIStore();
+    const { isAdmin } = useAuth();
+
+    // Hide admin-only groups (e.g. Access Control) from non-admins. The backend
+    // still enforces every API; this just keeps the nav honest per role.
+    const navItems = NAV.filter(item => !(item.kind === 'group' && item.adminOnly && !isAdmin));
 
     const isActive = (href: string) =>
         location.pathname === href || location.pathname.startsWith(href + '/');
@@ -239,7 +247,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
 
             {/* Nav */}
             <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
-                {NAV.map(item =>
+                {navItems.map(item =>
                     item.kind === 'leaf'
                         ? <Leaf key={item.href} item={item} />
                         : <Group key={item.id} item={item} />
