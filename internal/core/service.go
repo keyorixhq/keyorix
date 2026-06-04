@@ -22,27 +22,37 @@ import (
 //   - dashboard.go     — Dashboard stats and activity feed
 //   - catalog.go       — Project / environment passthrough
 type KeyorixCore struct {
-	storage    storage.Storage
-	encryption *encryption.SecretEncryption
-	now        func() time.Time // For testability
+	storage        storage.Storage
+	encryption     *encryption.SecretEncryption
+	now            func() time.Time // For testability
+	passwordPolicy PasswordPolicy
 }
 
 // NewKeyorixCore creates a new instance of the core business logic.
 func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 	return &KeyorixCore{
-		storage:    storage,
-		encryption: nil,
-		now:        time.Now,
+		storage:        storage,
+		encryption:     nil,
+		now:            time.Now,
+		passwordPolicy: DefaultPasswordPolicy(),
 	}
 }
 
 // NewKeyorixCoreWithEncryption creates a new instance with encryption support.
 func NewKeyorixCoreWithEncryption(storage storage.Storage, enc *encryption.SecretEncryption) *KeyorixCore {
 	return &KeyorixCore{
-		storage:    storage,
-		encryption: enc,
-		now:        time.Now,
+		storage:        storage,
+		encryption:     enc,
+		now:            time.Now,
+		passwordPolicy: DefaultPasswordPolicy(),
 	}
+}
+
+// SetPasswordPolicy overrides the password policy (which defaults to
+// DefaultPasswordPolicy). The server calls this at startup when the install
+// configures a password_policy block.
+func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
+	c.passwordPolicy = p
 }
 
 // Storage returns the underlying storage interface (used by ancillary services such as AnomalyDetector).

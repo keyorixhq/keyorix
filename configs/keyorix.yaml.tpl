@@ -97,6 +97,19 @@ security:
   auto_fix_file_permissions: true
   allow_unsafe_file_permissions: false
 
+password_policy:
+  # Rules enforced when a user sets a new password (e.g. self-service change).
+  # Omit this whole block to use the conservative built-in defaults (shown
+  # below). Lab installs may relax these, e.g. min_length: 8 and the require_*
+  # flags false. Note: reject_common_passwords / history / max-age expiry are
+  # not yet enforced (ADR-025 follow-ups).
+  min_length: 16
+  require_uppercase: true
+  require_lowercase: true
+  require_digit: true
+  require_special: true
+  reject_personal_info: true   # reject if it contains the user's username/email/display name
+
 soft_delete:
   # Enable soft-deletion for all database entities
   enabled: true

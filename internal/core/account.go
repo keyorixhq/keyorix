@@ -14,10 +14,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// minPasswordLength is the conservative floor enforced on self-service password
-// changes. Full configurable password policy is a later item (ADR-025).
-const minPasswordLength = 8
-
 // UpdateOwnProfile updates the caller's display name and email only. It delegates
 // to UpdateUser (which enforces email uniqueness) but constructs the request from
 // the authenticated userID, so a caller can never change username/is_active or
@@ -42,9 +38,6 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	if userID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	if len(newPassword) < minPasswordLength {
-		return fmt.Errorf("%s: new password must be at least %d characters", i18n.T("ErrorValidation", nil), minPasswordLength)
-	}
 
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
@@ -52,6 +45,12 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(current)); err != nil {
 		return fmt.Errorf("%s: current password is incorrect", i18n.T("ErrorValidation", nil))
+	}
+	// Enforce the configured password policy (ADR-025). Done after the
+	// current-password check so an attacker can't probe the policy without
+	// already holding valid credentials.
+	if err := c.passwordPolicy.Validate(newPassword, user); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)

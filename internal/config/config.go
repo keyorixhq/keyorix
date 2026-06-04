@@ -19,6 +19,29 @@ type Config struct {
 	Security    SecurityConfig   `yaml:"security"`
 	SoftDelete  SoftDeleteConfig `yaml:"soft_delete"`
 	Purge       PurgeConfig      `yaml:"purge"`
+
+	// PasswordPolicy is optional. When the block is absent (zero value), the
+	// server keeps its conservative built-in defaults (see core.DefaultPasswordPolicy);
+	// when present, the install's values fully replace them.
+	PasswordPolicy PasswordPolicyConfig `yaml:"password_policy"`
+}
+
+// PasswordPolicyConfig mirrors the synchronous password rules from ADR-025.
+// Stateful rules (reject_common_passwords, history_count, max_age_days) are not
+// part of this first slice and are intentionally omitted here.
+type PasswordPolicyConfig struct {
+	MinLength          int  `yaml:"min_length"`
+	RequireUppercase   bool `yaml:"require_uppercase"`
+	RequireLowercase   bool `yaml:"require_lowercase"`
+	RequireDigit       bool `yaml:"require_digit"`
+	RequireSpecial     bool `yaml:"require_special"`
+	RejectPersonalInfo bool `yaml:"reject_personal_info"`
+}
+
+// IsZero reports whether the password_policy block was effectively absent, so
+// the caller can fall back to the built-in defaults instead of an all-off policy.
+func (p PasswordPolicyConfig) IsZero() bool {
+	return p == PasswordPolicyConfig{}
 }
 
 type LocaleConfig struct {

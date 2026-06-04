@@ -62,10 +62,11 @@ func TestChangePassword(t *testing.T) {
 		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
 		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
 
-		err := c.ChangePassword(ctx, 1, "oldpassword", "brandnewpassword", "current-token")
+		const newPw = "Brandnew#Passw0rd!" // policy-compliant: 16+, upper/lower/digit/special
+		err := c.ChangePassword(ctx, 1, "oldpassword", newPw, "current-token")
 		require.NoError(t, err)
 		// The new password verifies against the freshly stored hash.
-		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte("brandnewpassword")))
+		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPw)))
 		ms.AssertCalled(t, "DeleteSessionsForUserExcept", ctx, uint(1), uint(7))
 	})
 
@@ -75,18 +76,25 @@ func TestChangePassword(t *testing.T) {
 		user := &models.User{ID: 1, PasswordHash: string(oldHash)}
 		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
 
-		err := c.ChangePassword(ctx, 1, "wrongpassword", "brandnewpassword", "current-token")
+		err := c.ChangePassword(ctx, 1, "wrongpassword", "Brandnew#Passw0rd!", "current-token")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "incorrect")
 		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	})
 
-	t.Run("rejects a too-short new password", func(t *testing.T) {
+	t.Run("rejects a new password that violates the policy", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
+		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(oldHash)}
+		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
+
+		// Current password is correct, but the new one is too short / not complex.
+		// Policy is checked after the current-password check, so the new password
+		// is rejected and nothing is written.
 		err := c.ChangePassword(ctx, 1, "oldpassword", "short", "current-token")
 		require.Error(t, err)
-		ms.AssertNotCalled(t, "GetUser", mock.Anything, mock.Anything)
+		assert.Contains(t, err.Error(), "password must")
+		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	})
 }
 
