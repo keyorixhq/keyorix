@@ -1,14 +1,18 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { UserCircleIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline';
+import { UserCircleIcon, TrashIcon, PlusIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 import { usersApi } from '../../services/users';
 import { PROJECT_ROLES } from '../../services/projects';
 import {
+    useProject,
     useProjectMembers,
     useAddProjectMember,
     useUpdateProjectMemberRole,
     useRemoveProjectMember,
 } from '../../features/projects/api';
+import { InviteToProjectModal } from '../../features/invitations/InviteToProjectModal';
+import { PendingAccessRequestsSection } from '../../features/invitations/PendingAccessRequestsSection';
+import { ProjectInvitationsSection } from '../../features/invitations/ProjectInvitationsSection';
 
 interface ProjectMembersTabProps {
     projectId: number;
@@ -26,6 +30,7 @@ const roleLabel = (role: string) =>
  */
 export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId }) => {
     const { data: members = [], isLoading } = useProjectMembers(projectId);
+    const { data: project } = useProject(projectId);
     const { data: usersResp } = useQuery({
         queryKey: ['users-list-members'],
         queryFn: () => usersApi.list({ pageSize: 200 }),
@@ -39,11 +44,14 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
     const [newUserId, setNewUserId] = useState('');
     const [newRole, setNewRole] = useState<string>(PROJECT_ROLES[2]); // project_viewer
     const [error, setError] = useState('');
+    const [inviteOpen, setInviteOpen] = useState(false);
+
+    const allUsers = useMemo(() => usersResp?.data ?? [], [usersResp]);
 
     const memberIds = useMemo(() => new Set(members.map(m => m.userId)), [members]);
     const candidates = useMemo(
-        () => (usersResp?.data ?? []).filter((u: any) => !memberIds.has(u.id)),
-        [usersResp, memberIds]
+        () => allUsers.filter((u: any) => !memberIds.has(u.id)),
+        [allUsers, memberIds]
     );
 
     const handleAdd = () => {
@@ -67,12 +75,21 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
 
     return (
         <div>
-            <div className="mb-4">
-                <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Members</h2>
-                <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    Users with a role in this project. Add existing users and assign a project role;
-                    create new user accounts from Access Control → Users.
-                </p>
+            <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                    <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Members</h2>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        Users with a role in this project. Add existing users and assign a project role;
+                        create new user accounts from Access Control → Users.
+                    </p>
+                </div>
+                <button
+                    onClick={() => setInviteOpen(true)}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium shrink-0"
+                    style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                >
+                    <EnvelopeIcon className="h-4 w-4" />Invite by email
+                </button>
             </div>
 
             {error && (
@@ -181,6 +198,18 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                     </ul>
                 )}
             </div>
+
+            {/* ADR-024: pending access requests + invitations (admin-only; the
+                queries 403 for non-admins and the sections render nothing). */}
+            <PendingAccessRequestsSection projectId={projectId} users={allUsers} />
+            <ProjectInvitationsSection projectId={projectId} />
+
+            <InviteToProjectModal
+                isOpen={inviteOpen}
+                onClose={() => setInviteOpen(false)}
+                projectId={projectId}
+                projectName={project?.name ?? 'project'}
+            />
         </div>
     );
 };
