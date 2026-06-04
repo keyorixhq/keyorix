@@ -842,3 +842,33 @@ func (m *MockStorage) UpdateRotationPolicy(_ context.Context, _ *models.Rotation
 func (m *MockStorage) DeleteRotationPolicy(_ context.Context, _ uint) error {
 	return nil
 }
+
+// Machine identities (ADR-023).
+func (m *MockStorage) CreateMachineIdentity(ctx context.Context, mi *models.MachineIdentity) (*models.MachineIdentity, error) {
+	args := m.Called(ctx, mi)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentity), args.Error(1)
+}
+
+func (m *MockStorage) GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentity), args.Error(1)
+}
+
+func (m *MockStorage) UpdateMachineIdentity(ctx context.Context, mi *models.MachineIdentity) error {
+	args := m.Called(ctx, mi)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.MachineIdentity), args.Error(1)
+}

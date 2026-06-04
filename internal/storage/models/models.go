@@ -428,3 +428,22 @@ type AnomalyAlert struct {
 	Acknowledged bool      `gorm:"default:false"`
 	CreatedAt    time.Time
 }
+
+// MachineIdentity is a non-human project member (ADR-023): a CI runner, a
+// Kubernetes workload, a service, or other automation. It carries its own
+// lifecycle, separate from human users, so the Members view can segment the two.
+// Authentication for a machine identity (its own token) is a follow-up; this is
+// the identity record + lifecycle.
+type MachineIdentity struct {
+	ID           uint   `gorm:"primaryKey"`
+	ProjectID    uint   `gorm:"index"`
+	Name         string `gorm:"not null"`
+	IdentityType string // ci | k8s | service | automation | other
+	State        string // pending | active | suspended | revoked
+	Description  string
+	CreatedBy    uint
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	LastSeenAt   *time.Time
+	RevokedAt    *time.Time
+}

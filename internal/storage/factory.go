@@ -227,6 +227,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	invitationsExists := tableExists(db, "project_invitations")
 	accessReqExists := tableExists(db, "access_requests")
 	pwHistExists := tableExists(db, "password_histories")
+	machineExists := tableExists(db, "machine_identities")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -258,6 +259,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !pwHistExists {
 		if err := db.AutoMigrate(&models.PasswordHistory{}); err != nil {
 			return fmt.Errorf("failed to migrate password_histories table: %w", err)
+		}
+	}
+
+	// Create machine_identities if missing (ADR-023, additive, safe on existing DBs).
+	if !machineExists {
+		if err := db.AutoMigrate(&models.MachineIdentity{}); err != nil {
+			return fmt.Errorf("failed to migrate machine_identities table: %w", err)
 		}
 	}
 

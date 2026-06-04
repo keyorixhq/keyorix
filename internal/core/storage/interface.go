@@ -39,6 +39,11 @@ type Storage interface {
 	GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error)
 	UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) error
 	ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error)
+	// Machine identities (ADR-023) — non-human project members.
+	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
+	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
+	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
+	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
 
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
