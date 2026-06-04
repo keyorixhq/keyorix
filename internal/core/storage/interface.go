@@ -289,8 +289,9 @@ type ProjectWithCounts struct {
 	Description      string `json:"Description"`
 	SecretCount      int64  `json:"secret_count"`
 	EnvironmentCount int64  `json:"environment_count"`
-	Deleted          bool   `json:"deleted"`              // true when soft-deleted (only returned when includeDeleted)
-	DeletedAt        string `json:"deleted_at,omitempty"` // RFC3339 timestamp when soft-deleted
+	LastActivity     string `json:"last_activity,omitempty"` // most recent of project update or any secret change
+	Deleted          bool   `json:"deleted"`                 // true when soft-deleted (only returned when includeDeleted)
+	DeletedAt        string `json:"deleted_at,omitempty"`    // RFC3339 timestamp when soft-deleted
 }
 
 // ProjectMember is a user who holds a role at a project's scope (ADR-021).

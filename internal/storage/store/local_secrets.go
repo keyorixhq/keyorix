@@ -41,14 +41,15 @@ func (ls *LocalStorage) ListProjects(ctx context.Context) ([]*models.Project, er
 // bypasses GORM's soft-delete scope, so the deleted_at filters are explicit.
 func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]storage.ProjectWithCounts, error) {
 	type row struct {
-		ID               uint
-		Name             string
-		Description      string
-		SecretCount      int64
-		EnvironmentCount int64
-		DeletedAt        *string
-		CreatedAt        string
-		UpdatedAt        string
+		ID                 uint
+		Name               string
+		Description        string
+		SecretCount        int64
+		EnvironmentCount   int64
+		DeletedAt          *string
+		CreatedAt          string
+		UpdatedAt          string
+		LastSecretActivity *string
 	}
 	where := "WHERE p.deleted_at IS NULL"
 	if includeDeleted {
@@ -58,7 +59,8 @@ func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDelet
 	err := ls.db.WithContext(ctx).Raw(`
 		SELECT p.id, p.name, p.description, p.created_at, p.updated_at, p.deleted_at,
 		       COUNT(DISTINCT s.id) AS secret_count,
-		       COUNT(DISTINCT e.id) AS environment_count
+		       COUNT(DISTINCT e.id) AS environment_count,
+		       MAX(s.updated_at) AS last_secret_activity
 		FROM projects p
 		LEFT JOIN secret_nodes s ON s.project_id = p.id
 		LEFT JOIN environments e ON e.project_id = p.id AND e.deleted_at IS NULL
@@ -77,6 +79,14 @@ func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDelet
 			Description:      r.Description,
 			SecretCount:      r.SecretCount,
 			EnvironmentCount: r.EnvironmentCount,
+		}
+		// Last activity = most recent of the project's own update or any of its
+		// secrets' updates. Computed in Go (not SQL GREATEST) so the query works
+		// on both Postgres and the SQLite-backed tests; the two columns share a
+		// format within a given DB, so a lexical compare is a valid time compare.
+		pc.LastActivity = r.UpdatedAt
+		if r.LastSecretActivity != nil && *r.LastSecretActivity > pc.LastActivity {
+			pc.LastActivity = *r.LastSecretActivity
 		}
 		if r.DeletedAt != nil {
 			pc.Deleted = true
