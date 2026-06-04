@@ -11,6 +11,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/encryption"
 	"github.com/keyorixhq/keyorix/internal/cli/group"
 	"github.com/keyorixhq/keyorix/internal/cli/invite"
+	"github.com/keyorixhq/keyorix/internal/cli/machine"
 	"github.com/keyorixhq/keyorix/internal/cli/project"
 	"github.com/keyorixhq/keyorix/internal/cli/rbac"
 	"github.com/keyorixhq/keyorix/internal/cli/request"
@@ -38,6 +39,7 @@ func init() {
 	rootCmd.AddCommand(run.RunCmd)
 	rootCmd.AddCommand(secret.SecretCmd)
 	rootCmd.AddCommand(project.ProjectCmd)
+	rootCmd.AddCommand(machine.MachineCmd)
 	rootCmd.AddCommand(user.UserCmd)
 	rootCmd.AddCommand(group.GroupCmd)
 	rootCmd.AddCommand(invite.InviteCmd)
