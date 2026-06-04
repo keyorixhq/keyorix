@@ -1,6 +1,6 @@
 // auth_bootstrap.go — First-boot system initialisation (BootstrapSystem).
 //
-// Seeds admin user, RBAC roles/permissions, default project/environments.
+// Seeds admin user, RBAC roles/permissions (see defaultRoles), default project/environments.
 // Idempotent: if users already exist, returns current state with AlreadyInitialized=true.
 // For session auth see auth.go.
 package core
@@ -69,12 +69,55 @@ var editorPermissions = []string{"secrets.read", "secrets.write", "secrets.delet
 // viewerPermissions lists the permission names granted to the viewer role.
 var viewerPermissions = []string{"secrets.read", "users.read", "audit.read"}
 
+// bootstrapRoleDef describes a role to seed on first boot and the permissions
+// it grants (by permission name, resolved against defaultPermissions).
+type bootstrapRoleDef struct {
+	Name        string
+	Description string
+	Permissions []string
+}
+
+// defaultRoles is the canonical set of roles seeded on first boot.
+//
+// admin/editor/viewer are the legacy single-tier roles, retained for backward
+// compatibility. The system_* and project_* roles implement the ADR-021 two-tier
+// model on the RBAC Phase 2 sentinel schema: a system role is meant to be
+// assigned at the global scope (project 0 = install-wide), a project role at a
+// project scope (project P). The split is purely by where each is assigned —
+// there is no separate scope column; project_id = 0 is the system sentinel.
+// system_admin and project_admin bypass the per-permission check at the scope
+// they hold (see adminRoleNames in authz.go), so their explicit permission lists
+// matter only where the bypass does not apply.
+var defaultRoles = []bootstrapRoleDef{
+	{"admin", "Administrator with full access (legacy alias of system_admin)", adminPermissions},
+	{"editor", "Create, update and delete secrets within a scope", editorPermissions},
+	{"viewer", "Read-only access", viewerPermissions},
+
+	// ADR-021 system roles — assign at the global scope (project 0).
+	{"system_admin", "Install-wide administrator: manage projects, users, roles and settings", adminPermissions},
+	{"system_auditor", "Install-wide read-only access plus audit, for compliance personas",
+		[]string{"secrets.read", "users.read", "roles.read", "audit.read", "system.read"}},
+	{"system_viewer", "Minimal install baseline; project access comes from project roles",
+		[]string{"system.read"}},
+
+	// ADR-021 project roles — assign at a project scope (project P).
+	{"project_admin", "Full control within a project, including members and settings",
+		[]string{"secrets.read", "secrets.write", "secrets.delete", "users.read", "roles.read", "roles.assign", "audit.read"}},
+	{"project_developer", "Read, write and rotate secrets in all environments of a project",
+		[]string{"secrets.read", "secrets.write", "secrets.delete", "users.read"}},
+	{"project_viewer", "Read-only access to a project's secrets",
+		[]string{"secrets.read", "users.read"}},
+	{"project_auditor", "Read-only access to a project's secrets plus its audit log",
+		[]string{"secrets.read", "users.read", "audit.read"}},
+}
+
 // defaultEnvironmentNames is the ordered list of environment names created on first boot.
 var defaultEnvironmentNames = []string{"development", "staging", "production"}
 
 // BootstrapSystem ensures the server has a fully-configured initial state:
 //   - admin user (with the supplied credentials)
-//   - canonical RBAC roles and permissions (admin, viewer)
+//   - canonical RBAC permissions and roles (legacy admin/editor/viewer plus the
+//     ADR-021 two-tier system_* and project_* roles)
 //   - default project ("default")
 //   - three default environments (development, staging, production)
 //
@@ -117,45 +160,25 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 		permIDs[def.Name] = p.ID
 	}
 
-	adminRole, err := c.storage.CreateRole(ctx, &models.Role{
-		Name:        "admin",
-		Description: "Administrator with full access",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create admin role: %w", err)
-	}
-	editorRole, err := c.storage.CreateRole(ctx, &models.Role{
-		Name:        "editor",
-		Description: "Create, update and delete secrets within a scope",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create editor role: %w", err)
-	}
-	viewerRole, err := c.storage.CreateRole(ctx, &models.Role{
-		Name:        "viewer",
-		Description: "Read-only access",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create viewer role: %w", err)
-	}
-
-	for _, name := range adminPermissions {
-		if err := c.storage.AssignPermissionToRole(ctx, adminRole.ID, permIDs[name]); err != nil {
-			return nil, fmt.Errorf("failed to assign permission %s to admin role: %w", name, err)
+	roleIDs := make(map[string]uint, len(defaultRoles))
+	for _, rdef := range defaultRoles {
+		role, err := c.storage.CreateRole(ctx, &models.Role{
+			Name:        rdef.Name,
+			Description: rdef.Description,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create role %s: %w", rdef.Name, err)
 		}
-	}
-	for _, name := range editorPermissions {
-		if err := c.storage.AssignPermissionToRole(ctx, editorRole.ID, permIDs[name]); err != nil {
-			return nil, fmt.Errorf("failed to assign permission %s to editor role: %w", name, err)
-		}
-	}
-	for _, name := range viewerPermissions {
-		if err := c.storage.AssignPermissionToRole(ctx, viewerRole.ID, permIDs[name]); err != nil {
-			return nil, fmt.Errorf("failed to assign permission %s to viewer role: %w", name, err)
+		roleIDs[rdef.Name] = role.ID
+		for _, name := range rdef.Permissions {
+			if err := c.storage.AssignPermissionToRole(ctx, role.ID, permIDs[name]); err != nil {
+				return nil, fmt.Errorf("failed to assign permission %s to role %s: %w", name, rdef.Name, err)
+			}
 		}
 	}
 
-	if err := c.storage.AssignRole(ctx, user.ID, adminRole.ID, Scope{}); err != nil {
+	// The first user is the install super-user: assign the admin role globally.
+	if err := c.storage.AssignRole(ctx, user.ID, roleIDs["admin"], Scope{}); err != nil {
 		return nil, fmt.Errorf("failed to assign admin role to user: %w", err)
 	}
 

@@ -23,7 +23,12 @@ type Scope = storage.Scope
 // adminRoleNames are roles that bypass the per-permission check at the scope
 // they are assigned. A global (project 0) admin therefore bypasses everywhere;
 // a project-scoped admin bypasses only within that project.
-var adminRoleNames = []string{"super_admin", "admin"}
+//
+// "admin"/"super_admin" are the legacy single-tier super-users; "system_admin"
+// and "project_admin" are the ADR-021 two-tier equivalents. A system_admin is
+// expected to be assigned globally (bypasses install-wide); a project_admin is
+// expected to be assigned at a project scope (bypasses within that project).
+var adminRoleNames = []string{"super_admin", "admin", "system_admin", "project_admin"}
 
 // Authorize reports whether userID may exercise permission (e.g. "secrets.read")
 // against the target scope. Fails closed: any resolution error returns

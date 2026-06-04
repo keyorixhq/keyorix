@@ -31,6 +31,14 @@ var builtinRoles = map[string]bool{
 	"editor":      true,
 	"viewer":      true,
 	"auditor":     true,
+	// ADR-021 two-tier named roles.
+	"system_admin":      true,
+	"system_auditor":    true,
+	"system_viewer":     true,
+	"project_admin":     true,
+	"project_developer": true,
+	"project_viewer":    true,
+	"project_auditor":   true,
 }
 
 // RBACHandler handles RBAC-related HTTP requests using real storage.
