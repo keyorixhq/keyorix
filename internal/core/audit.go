@@ -41,7 +41,7 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 		event.ActingAs = userID
 		event.Impersonation = true
 	}
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // writeAuditEventFailed persists a failed audit event (Success=false).
@@ -55,7 +55,7 @@ func (c *KeyorixCore) writeAuditEventFailed(ctx context.Context, eventType strin
 		Success:     &f,
 		EventTime:   time.Now(),
 	}
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // writeAccessLog persists a secret_access_logs row.

@@ -137,6 +137,107 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}, "")
 }
 
+// AuditExportEntry is the full-fidelity wire shape for SIEM ingestion. Unlike
+// AuditLogEntry (UI-oriented) it preserves the raw IDs, success flag, diff, and
+// impersonation attribution so an external system can index every field.
+type AuditExportEntry struct {
+	ID             uint            `json:"id"`
+	EventType      string          `json:"event_type"`
+	Timestamp      time.Time       `json:"timestamp"`
+	Actor          string          `json:"actor"`
+	UserID         *uint           `json:"user_id,omitempty"`
+	ProjectID      *uint           `json:"project_id,omitempty"`
+	SecretID       *uint           `json:"secret_id,omitempty"`
+	Description    string          `json:"description"`
+	IPAddress      string          `json:"ip_address,omitempty"`
+	Success        bool            `json:"success"`
+	Diff           json.RawMessage `json:"diff,omitempty"`
+	Impersonation  bool            `json:"impersonation,omitempty"`
+	ImpersonatedBy string          `json:"impersonated_by,omitempty"`
+	ActingAs       string          `json:"acting_as,omitempty"`
+}
+
+// ExportAuditLogs handles GET /api/v1/audit/export — a cursor-paginated,
+// full-fidelity audit feed for SIEM pull. Authenticated as a normal API caller
+// (a SIEM uses a personal access token) and gated by audit.read. Advance the
+// cursor by passing the last returned id as ?after_id= on the next request;
+// next_cursor in the response is the id to use, or null when caught up.
+func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	limit := 100
+	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 1000 {
+		limit = l
+	}
+	filter := &storage.AuditFilter{Ascending: true, PageSize: limit}
+	if aidStr := r.URL.Query().Get("after_id"); aidStr != "" {
+		if aid, err := strconv.ParseUint(aidStr, 10, 32); err == nil {
+			a := uint(aid)
+			filter.AfterID = &a
+		}
+	}
+	if st := r.URL.Query().Get("since"); st != "" {
+		if t, err := time.Parse(time.RFC3339, st); err == nil {
+			filter.StartTime = &t
+		}
+	}
+
+	events, _, err := h.coreService.Storage().GetAuditLogs(r.Context(), filter)
+	if err != nil {
+		sendError(w, "InternalServerError", "Failed to export audit logs", http.StatusInternalServerError, nil)
+		return
+	}
+
+	actorNames := h.coreService.ResolveUsernames(r.Context(), events)
+	name := func(id *uint) string {
+		if id == nil {
+			return ""
+		}
+		return actorNames[*id]
+	}
+
+	entries := make([]AuditExportEntry, 0, len(events))
+	var nextCursor *uint
+	for _, e := range events {
+		success := true
+		if e.Success != nil {
+			success = *e.Success
+		}
+		entry := AuditExportEntry{
+			ID:          e.ID,
+			EventType:   e.EventType,
+			Timestamp:   e.EventTime,
+			Actor:       name(e.UserID),
+			UserID:      e.UserID,
+			ProjectID:   e.ProjectID,
+			SecretID:    e.SecretNodeID,
+			Description: e.Description,
+			IPAddress:   e.IPAddress,
+			Success:     success,
+		}
+		if e.Diff != "" {
+			entry.Diff = json.RawMessage(e.Diff)
+		}
+		if e.Impersonation {
+			entry.Impersonation = true
+			entry.ImpersonatedBy = name(e.ImpersonatedBy)
+			entry.ActingAs = name(e.ActingAs)
+		}
+		entries = append(entries, entry)
+		id := e.ID
+		nextCursor = &id
+	}
+
+	sendSuccess(w, map[string]interface{}{
+		"events":      entries,
+		"count":       len(entries),
+		"next_cursor": nextCursor,
+	}, "")
+}
+
 // GetRBACAuditLogs handles GET /api/v1/audit/rbac-logs (stub — returns empty).
 func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
