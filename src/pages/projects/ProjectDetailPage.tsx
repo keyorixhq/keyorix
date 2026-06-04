@@ -7,6 +7,7 @@ import { ProjectMembersTab } from './ProjectMembersTab';
 import { ProjectActivityTab } from './ProjectActivityTab';
 import { ProjectSettingsTab } from './ProjectSettingsTab';
 import { ROUTES } from '../../constants';
+import { useProjectMruStore } from '../../store';
 
 // ── Tab definition ───────────────────────────────────────────────────────────
 
@@ -68,6 +69,14 @@ export const ProjectDetailPage: React.FC = () => {
     const projectId = Number(id);
     const navigate = useNavigate();
     const { data: project, isLoading, isError } = useProject(projectId);
+    const recordAccess = useProjectMruStore((s) => s.recordAccess);
+
+    // Record this project as recently accessed once it loads (drives the
+    // sidebar switcher's Recent ordering — ADR-018). Captures both
+    // switcher-driven and direct-URL navigation.
+    React.useEffect(() => {
+        if (project) recordAccess(project.id);
+    }, [project, recordAccess]);
 
     if (isLoading) {
         return (

@@ -8,6 +8,7 @@ import {
     CheckIcon,
 } from '@heroicons/react/24/outline';
 import { useProjects } from '../../features/projects/api';
+import { useProjectMruStore } from '../../store';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
     const navigate = useNavigate();
     const { data: projects = [], isLoading } = useProjects();
     const currentProjectId = useCurrentProjectId();
+    const recentIds = useProjectMruStore(s => s.recentIds);
 
     const [open, setOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -53,9 +55,20 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
         if (open) setTimeout(() => searchRef.current?.focus(), 50);
     }, [open]);
 
-    const filtered = search.trim()
-        ? projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
-        : projects.slice(0, 5);
+    const searching = search.trim().length > 0;
+
+    // Default view: most-recently-used first (localStorage MRU, ADR-018), then
+    // fill with the rest in list order, capped at 5. Search view: match by name.
+    const filtered = (() => {
+        if (searching) {
+            const q = search.toLowerCase();
+            return projects.filter(p => p.name.toLowerCase().includes(q));
+        }
+        const rank = new Map(recentIds.map((id, i) => [id, i]));
+        return [...projects]
+            .sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity))
+            .slice(0, 5);
+    })();
 
     const handleSelect = useCallback((id: number) => {
         setOpen(false);
@@ -137,6 +150,14 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
 
                     {/* Project list */}
                     <div className="max-h-48 overflow-y-auto py-1">
+                        {!searching && filtered.some(p => recentIds.includes(p.id)) && (
+                            <p
+                                className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wide"
+                                style={{ color: 'var(--text-muted)' }}
+                            >
+                                Recent
+                            </p>
+                        )}
                         {filtered.length === 0 ? (
                             <p className="px-3 py-4 text-xs text-center" style={{ color: 'var(--text-muted)' }}>
                                 {search ? `No projects matching "${search}"` : 'No projects yet'}

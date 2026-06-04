@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useAuthStore } from '../authStore';
 import { useUIStore } from '../uiStore';
+import { useProjectMruStore } from '../projectMruStore';
 import { authService } from '../../services/auth';
 import { mockUser } from '../../test/mocks';
 import type { User, LoginResponse } from '../../types';
@@ -158,5 +159,48 @@ describe('uiStore', () => {
         expect(useUIStore.getState().sidebarExpanded.secrets).toBe(false);
         // other groups untouched
         expect(useUIStore.getState().sidebarExpanded.access).toBe(true);
+    });
+});
+
+describe('projectMruStore', () => {
+    beforeEach(() => {
+        useProjectMruStore.setState({ recentIds: [] });
+    });
+
+    it('starts empty', () => {
+        expect(useProjectMruStore.getState().recentIds).toEqual([]);
+    });
+
+    it('recordAccess prepends the most-recent project', () => {
+        const { recordAccess } = useProjectMruStore.getState();
+        recordAccess(1);
+        recordAccess(2);
+        expect(useProjectMruStore.getState().recentIds).toEqual([2, 1]);
+    });
+
+    it('re-accessing an existing project moves it to the front without duplicating', () => {
+        const { recordAccess } = useProjectMruStore.getState();
+        recordAccess(1);
+        recordAccess(2);
+        recordAccess(3);
+        recordAccess(1);
+        expect(useProjectMruStore.getState().recentIds).toEqual([1, 3, 2]);
+    });
+
+    it('caps the list at 10 entries, dropping the oldest', () => {
+        const { recordAccess } = useProjectMruStore.getState();
+        for (let i = 1; i <= 12; i++) recordAccess(i);
+        const ids = useProjectMruStore.getState().recentIds;
+        expect(ids).toHaveLength(10);
+        expect(ids[0]).toBe(12);
+        // the two oldest (1, 2) fell off
+        expect(ids).not.toContain(1);
+        expect(ids).not.toContain(2);
+    });
+
+    it('ignores non-finite ids', () => {
+        const { recordAccess } = useProjectMruStore.getState();
+        recordAccess(NaN);
+        expect(useProjectMruStore.getState().recentIds).toEqual([]);
     });
 });
