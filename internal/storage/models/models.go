@@ -286,6 +286,14 @@ type AuditEvent struct {
 	ImpersonatedBy *uint
 	ActingAs       *uint
 	Impersonation  bool `gorm:"default:false"`
+
+	// ActorType records whether the acting principal is a human user or a
+	// non-human machine identity (ADR-023). It is "user" on every ordinary
+	// event; the (future) machine-token auth path tags the request context so
+	// every event under a machine session is stamped "machine_identity".
+	// "system" marks events with no authenticated principal. Defaults to "user"
+	// so legacy rows and back-compat writers read as human-actored.
+	ActorType string `gorm:"default:user"`
 }
 
 type Setting struct {

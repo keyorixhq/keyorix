@@ -10,7 +10,38 @@ package core
 
 import "context"
 
+// Actor types stamped on every audit event (ADR-023). They distinguish a human
+// user from a non-human machine identity so the audit view can segment and
+// filter the two.
+const (
+	ActorTypeUser    = "user"
+	ActorTypeMachine = "machine_identity"
+	ActorTypeSystem  = "system"
+)
+
 type impersonationKey struct{}
+
+type actorTypeKey struct{}
+
+// WithActorType tags ctx with the principal kind for the current request
+// (ActorTypeUser/ActorTypeMachine/ActorTypeSystem). The auth middleware sets it
+// per request; writeAuditEvent* reads it and stamps ActorType on the row. An
+// empty actorType is treated as "no tag" (the writer defaults to user).
+func WithActorType(ctx context.Context, actorType string) context.Context {
+	if actorType == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, actorTypeKey{}, actorType)
+}
+
+// actorTypeFromContext returns the tagged actor type, defaulting to
+// ActorTypeUser when the context carries no tag.
+func actorTypeFromContext(ctx context.Context) string {
+	if t, ok := ctx.Value(actorTypeKey{}).(string); ok && t != "" {
+		return t
+	}
+	return ActorTypeUser
+}
 
 // WithImpersonation tags ctx with the admin user ID that initiated the current
 // impersonation session. A zero adminID is treated as "no impersonation".
@@ -32,8 +63,12 @@ func impersonatorFromContext(ctx context.Context) (uint, bool) {
 // impersonation tag from parent. Audit writes run in goroutines that must
 // outlive the request, but still need to record the impersonating admin.
 func DetachedAuditContext(parent context.Context) context.Context {
+	ctx := context.Background()
 	if adminID, ok := impersonatorFromContext(parent); ok {
-		return WithImpersonation(context.Background(), adminID)
+		ctx = WithImpersonation(ctx, adminID)
 	}
-	return context.Background()
+	if t, ok := parent.Value(actorTypeKey{}).(string); ok && t != "" {
+		ctx = WithActorType(ctx, t)
+	}
+	return ctx
 }

@@ -34,6 +34,7 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 		Success:      &t,
 		EventTime:    time.Now(),
 		Diff:         diff,
+		ActorType:    actorTypeFromContext(ctx),
 	}
 	if adminID, ok := impersonatorFromContext(ctx); ok {
 		a := adminID
@@ -54,6 +55,7 @@ func (c *KeyorixCore) writeAuditEventFailed(ctx context.Context, eventType strin
 		Description: description,
 		Success:     &f,
 		EventTime:   time.Now(),
+		ActorType:   actorTypeFromContext(ctx),
 	}
 	c.emitAudit(ctx, event)
 }

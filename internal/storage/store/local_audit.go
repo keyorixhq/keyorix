@@ -58,6 +58,9 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 		if filter.Success != nil {
 			query = query.Where("success = ?", *filter.Success)
 		}
+		if filter.ActorType != nil {
+			query = query.Where("actor_type = ?", *filter.ActorType)
+		}
 		if filter.AfterID != nil {
 			query = query.Where("id > ?", *filter.AfterID)
 		}
