@@ -43,7 +43,11 @@ func (ls *LocalStorage) GetUser(ctx context.Context, id uint) (*models.User, err
 
 func (ls *LocalStorage) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
 	var user models.User
-	if err := ls.db.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
+	// Case-insensitive: email addresses are not case-sensitive in practice, and an
+	// exact match let the ADR-028 invite-accept "account already exists" guard be
+	// evaded by case (Bob@x vs bob@x), minting a duplicate identity. LOWER() on both
+	// sides matches regardless of stored casing (covers legacy mixed-case rows).
+	if err := ls.db.WithContext(ctx).Where("LOWER(email) = LOWER(?)", email).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
 		}

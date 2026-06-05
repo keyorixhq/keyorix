@@ -146,15 +146,24 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, raw string, 
 
 	// SECURITY: if an account already exists for this email, the invite link must NOT
 	// log them in — that would bypass their real password. Reject and route them to
-	// the normal add-member flow instead of auto-authenticating.
-	if existing, eerr := c.storage.GetUserByEmail(ctx, inv.Email); eerr == nil && existing != nil {
-		return nil, fmt.Errorf("%s: an account already exists for %s; ask an admin to add you to the project directly", i18n.T("ErrorValidation", nil), inv.Email)
+	// the normal add-member flow. Fail CLOSED: a lookup error that is NOT a clean
+	// "not found" must abort rather than be read as "no account" (which would let a
+	// transient store error slip the guard and mint a duplicate identity). Email
+	// matching is case-insensitive (see GetUserByEmail) so "Bob@x" cannot evade a
+	// "bob@x" invite. The message is deliberately generic (the HTTP layer keeps this
+	// endpoint from being an account-existence oracle).
+	existing, eerr := c.storage.GetUserByEmail(ctx, inv.Email)
+	if eerr == nil && existing != nil {
+		return nil, fmt.Errorf("%s: an account already exists for this email; ask an admin to add you to the project directly", i18n.T("ErrorValidation", nil))
+	}
+	if eerr != nil && !isUserNotFound(eerr) {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), eerr)
 	}
 
 	// Validate the password before consuming (a weak password must not burn the link).
 	// No account exists yet, so this is policy-only (no history to check).
 	if err := c.passwordPolicy.Validate(newPassword, nil); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
 	}
 
 	// Consume the token (single-use, atomic) before materializing.
@@ -177,18 +186,21 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, raw string, 
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
-	// Mark the invitation accepted.
+	// Create the membership under the invite-time validation mode. This grants the
+	// project role immediately when the mode (e.g. open) lands it active; under
+	// allowlist it starts in `invited` for an admin to advance. Done BEFORE flipping
+	// the invitation to accepted: if membership creation fails, the invitation stays
+	// pending (resendable / revocable) rather than being falsely marked accepted with
+	// no membership behind it.
+	if _, err := c.inviteMemberWithMode(ctx, inv.ProjectID, user.ID, inv.Role, inv.InvitedBy, inv.ValidationModeAtInvite, false); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Mark the invitation accepted (only now that account + membership both exist).
 	now := c.now()
 	inv.State = InvitationAccepted
 	inv.AcceptedAt = &now
 	_ = c.storage.UpdateProjectInvitation(ctx, inv)
-
-	// Create the membership under the invite-time validation mode. This grants the
-	// project role immediately when the mode (e.g. open) lands it active; under
-	// allowlist it starts in `invited` for an admin to advance.
-	if _, err := c.inviteMemberWithMode(ctx, inv.ProjectID, user.ID, inv.Role, inv.InvitedBy, inv.ValidationModeAtInvite, false); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
 
 	c.auditProjectScoped(ctx, "invitation.accepted", user.ID, inv.ProjectID,
 		fmt.Sprintf("invitation %d accepted by %s (user %d)", inv.ID, inv.Email, user.ID))
@@ -243,4 +255,11 @@ func displayNameFromEmail(email string) string {
 		return lp
 	}
 	return email
+}
+
+// isUserNotFound reports whether err is the storage layer's "user not found"
+// sentinel (mirrors the check in CreateUser). Used to fail closed on a real lookup
+// error while treating a clean miss as "no existing account".
+func isUserNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil))
 }

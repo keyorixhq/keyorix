@@ -116,6 +116,20 @@ func TestCompleteInvitationAccept(t *testing.T) {
 		ms.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
 	})
 
+	t.Run("fails closed when the existing-account lookup errors (no silent bypass)", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		ms.On("GetSetupTokenByHash", ctx, hash).Return(pendingInvite(c, ValidationModeOpen), nil)
+		ms.On("GetProjectInvitation", ctx, iid).Return(invite(InvitationPending, ValidationModeOpen), nil)
+		// A non-"not found" storage error must abort, not be read as "no account".
+		ms.On("GetUserByEmail", ctx, "bob@acme.io").Return(nil, assert.AnError)
+
+		_, err := c.CompleteSetup(ctx, raw, strongPw, "ua", "1.2.3.4")
+		require.Error(t, err)
+		ms.AssertNotCalled(t, "MarkSetupTokenConsumed", mock.Anything, mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
+	})
+
 	t.Run("rejects a non-pending invitation", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
