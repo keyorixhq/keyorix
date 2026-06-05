@@ -27,14 +27,22 @@ func TestNew(t *testing.T) {
 		assert.IsType(t, &LogDelivery{}, d)
 	})
 
-	t.Run("smtp is rejected until SMTP transport lands", func(t *testing.T) {
+	t.Run("smtp with a configured relay selects SMTPDelivery", func(t *testing.T) {
+		d, err := New(Config{Mode: ModeSMTP, SMTP: SMTPSettings{Host: "smtp.acme.io", From: "k@acme.io"}})
+		require.NoError(t, err)
+		assert.IsType(t, &SMTPDelivery{}, d)
+		assert.Equal(t, ChannelSMTP, d.Name())
+	})
+
+	t.Run("smtp without a host errors at construction", func(t *testing.T) {
 		_, err := New(Config{Mode: ModeSMTP})
 		require.Error(t, err)
 	})
 
-	t.Run("auto with SMTP configured is rejected until SMTP transport lands", func(t *testing.T) {
-		_, err := New(Config{Mode: ModeAuto, SMTP: SMTPSettings{Host: "smtp.acme.io"}})
-		require.Error(t, err)
+	t.Run("auto with SMTP configured selects SMTPDelivery", func(t *testing.T) {
+		d, err := New(Config{Mode: ModeAuto, SMTP: SMTPSettings{Host: "smtp.acme.io", From: "k@acme.io"}})
+		require.NoError(t, err)
+		assert.IsType(t, &SMTPDelivery{}, d)
 	})
 
 	t.Run("unknown mode errors", func(t *testing.T) {
