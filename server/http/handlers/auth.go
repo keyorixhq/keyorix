@@ -80,8 +80,10 @@ type loginResponseBody struct {
 	Roles       []string `json:"roles"`       // all assigned role names
 	Permissions []string `json:"permissions"` // distinct permissions across roles
 	// PasswordChangeRequired is true when the password has exceeded the policy's
-	// max age (ADR-025 max_age_days) — the UI should route to change-password.
-	PasswordChangeRequired bool `json:"password_change_required,omitempty"`
+	// max age (ADR-025 max_age_days) or the account is in a restricted state — the
+	// UI should route to change-password.
+	PasswordChangeRequired bool   `json:"password_change_required,omitempty"`
+	AccountState           string `json:"account_state,omitempty"`
 }
 
 type passwordResetRequestBody struct {
@@ -147,7 +149,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
 	}
 	// Flag an expired password so the UI can require a change (ADR-025).
-	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user)
+	resp.AccountState = core.NormalizeAccountState(user.AccountState)
+	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user) || core.AccountRestricted(user.AccountState)
 
 	// Audit log + last-login stamp (both non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
@@ -316,7 +319,8 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.coreService.ChangePassword(r.Context(), userCtx.UserID, body.CurrentPassword, body.NewPassword, extractBearerToken(r))
+	token := extractBearerToken(r)
+	err := h.coreService.ChangePassword(r.Context(), userCtx.UserID, body.CurrentPassword, body.NewPassword, token)
 	if err != nil {
 		if strings.Contains(err.Error(), "incorrect") {
 			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
@@ -325,6 +329,9 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 		return
 	}
+	// Evict the cached identity so a restriction cleared by this change (ADR-025)
+	// takes effect on the next request instead of lingering for the cache TTL.
+	middleware.InvalidateTokenCache(token)
 	sendSuccess(w, nil, "Password changed")
 }
 

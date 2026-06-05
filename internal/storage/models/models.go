@@ -71,9 +71,12 @@ type User struct {
 	// PasswordChangedAt is when the current password was set. Drives max-age
 	// expiry (ADR-025). nil on legacy rows = treat as set at account creation.
 	PasswordChangedAt *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	DeletedAt         gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
+	// AccountState is the ADR-025 lifecycle state: active | pending_first_login |
+	// password_reset_required | suspended. Empty (legacy rows) is treated as active.
+	AccountState string `gorm:"default:'active'"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	DeletedAt    gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
 }
 
 // PasswordHistory records prior password hashes per user so the policy can

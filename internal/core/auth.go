@@ -34,6 +34,12 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
+	// A suspended account is refused login outright (ADR-025). Restricted states
+	// (pending_first_login / password_reset_required) still log in, but the auth
+	// middleware confines the session to the password-change allowlist.
+	if AccountLoginBlocked(user.AccountState) {
+		return nil, nil, fmt.Errorf("account suspended")
+	}
 	token, err := generateSecureToken()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate session token: %w", err)
