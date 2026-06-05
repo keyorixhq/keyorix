@@ -147,6 +147,22 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 // It rejects unknown, non-active, wrong-purpose, and expired tokens, lazily flipping
 // an overdue active token to expired as a side effect.
 func (c *KeyorixCore) ValidateSetupToken(ctx context.Context, raw, expectedPurpose string) (*models.SetupToken, error) {
+	tok, err := c.inspectActiveSetupToken(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	// Purpose-scoping: the token may only drive the flow it was minted for.
+	if tok.Purpose != expectedPurpose {
+		return nil, fmt.Errorf("%s: setup token purpose mismatch", i18n.T("ErrorValidation", nil))
+	}
+	return tok, nil
+}
+
+// inspectActiveSetupToken resolves a raw token, lazily expires it if overdue, and
+// returns it only if active. It does NOT check purpose — callers that know the
+// expected purpose use ValidateSetupToken; the GET-describe path (which must report
+// the purpose to the landing page) uses this directly.
+func (c *KeyorixCore) inspectActiveSetupToken(ctx context.Context, raw string) (*models.SetupToken, error) {
 	tok, err := c.storage.GetSetupTokenByHash(ctx, hashSetupToken(raw))
 	if err != nil {
 		return nil, fmt.Errorf("%s: invalid setup token", i18n.T("ErrorNotFound", nil))
@@ -161,10 +177,6 @@ func (c *KeyorixCore) ValidateSetupToken(ctx context.Context, raw, expectedPurpo
 	}
 	if tok.State != SetupTokenActive {
 		return nil, fmt.Errorf("%s: setup token is %s", i18n.T("ErrorNotFound", nil), tok.State)
-	}
-	// Purpose-scoping: the token may only drive the flow it was minted for.
-	if tok.Purpose != expectedPurpose {
-		return nil, fmt.Errorf("%s: setup token purpose mismatch", i18n.T("ErrorValidation", nil))
 	}
 	return tok, nil
 }

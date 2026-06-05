@@ -40,25 +40,36 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	if AccountLoginBlocked(user.AccountState) {
 		return nil, nil, fmt.Errorf("account suspended")
 	}
+	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)
+	if err != nil {
+		return nil, nil, err
+	}
+	return created, user, nil
+}
+
+// mintSession creates and persists a new 24h session token for a user. Shared by
+// Login and the setup-token consume flow (auto-login) so session issuance — token
+// generation, expiry, and the captured device fields — stays uniform.
+func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, ip string) (*models.Session, error) {
 	token, err := generateSecureToken()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate session token: %w", err)
+		return nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
-	expiresAt := c.now().Add(24 * time.Hour)
 	now := c.now()
+	expiresAt := now.Add(24 * time.Hour)
 	session := &models.Session{
-		UserID:       user.ID,
+		UserID:       userID,
 		SessionToken: token,
-		UserAgent:    req.UserAgent,
-		IPAddress:    req.IPAddress,
+		UserAgent:    userAgent,
+		IPAddress:    ip,
 		LastSeenAt:   &now,
 		ExpiresAt:    &expiresAt,
 	}
 	created, err := c.storage.CreateSession(ctx, session)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create session: %w", err)
+		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
-	return created, user, nil
+	return created, nil
 }
 
 // RecordLogin stamps the user's last_login_at to the current time. Best-effort:

@@ -47,37 +47,13 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(current)); err != nil {
 		return fmt.Errorf("%s: current password is incorrect", i18n.T("ErrorValidation", nil))
 	}
-	// Enforce the configured password policy (ADR-025). Done after the
-	// current-password check so an attacker can't probe the policy without
-	// already holding valid credentials.
-	if err := c.passwordPolicy.Validate(newPassword, user); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	// Enforce policy + history after the current-password check so an attacker can't
+	// probe the policy without already holding valid credentials (ADR-025).
+	if err := c.validateNewPassword(ctx, user, newPassword); err != nil {
+		return err
 	}
-	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
-	if c.passwordReused(ctx, user, newPassword) {
-		return fmt.Errorf("%s: password must not reuse a recent password", i18n.T("ErrorValidation", nil))
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	now := c.now()
-	user.PasswordHash = string(hash)
-	user.PasswordChangedAt = &now
-	// A successful password change clears a restricted account back to active
-	// (ADR-025): pending_first_login / password_reset_required are satisfied.
-	user.AccountState = clearRestrictionOnPasswordChange(user.AccountState)
-	user.UpdatedAt = now
-	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-
-	// Record the new hash in history and prune to the configured depth.
-	// Best-effort: the password change itself has already succeeded.
-	if c.passwordPolicy.HistoryCount > 0 {
-		_ = c.storage.AddPasswordHistory(ctx, userID, string(hash), now)
-		_ = c.storage.PrunePasswordHistory(ctx, userID, c.passwordPolicy.HistoryCount)
+	if err := c.applyNewPassword(ctx, user, newPassword); err != nil {
+		return err
 	}
 
 	// Drop other sessions. Best-effort: the password change itself has succeeded.
@@ -88,6 +64,48 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 		}
 	}
 	_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
+	return nil
+}
+
+// validateNewPassword checks a candidate password against the configured policy and
+// the password-history rule, without mutating anything. Split from applyNewPassword
+// so callers (e.g. the setup-token consume flow) can reject a weak password BEFORE
+// spending a single-use token, rather than burning the link on a policy failure.
+func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User, newPassword string) error {
+	if err := c.passwordPolicy.Validate(newPassword, user); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
+	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
+	if c.passwordReused(ctx, user, newPassword) {
+		return fmt.Errorf("%s: password must not reuse a recent password", i18n.T("ErrorValidation", nil))
+	}
+	return nil
+}
+
+// applyNewPassword hashes newPassword, stamps it on the user (clearing a restricted
+// account state back to active per ADR-025), persists the user, and records the hash
+// in history. It assumes the password has already passed validateNewPassword. Shared
+// by ChangePassword and the setup-token consume flow so password handling is uniform.
+func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, newPassword string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	now := c.now()
+	user.PasswordHash = string(hash)
+	user.PasswordChangedAt = &now
+	user.AccountState = clearRestrictionOnPasswordChange(user.AccountState)
+	user.UpdatedAt = now
+	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Record the new hash in history and prune to the configured depth.
+	// Best-effort: the password change itself has already succeeded.
+	if c.passwordPolicy.HistoryCount > 0 {
+		_ = c.storage.AddPasswordHistory(ctx, user.ID, string(hash), now)
+		_ = c.storage.PrunePasswordHistory(ctx, user.ID, c.passwordPolicy.HistoryCount)
+	}
 	return nil
 }
 
