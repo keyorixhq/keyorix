@@ -72,6 +72,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Post("/auth/password-reset", authHandler.PasswordReset)
 	r.Post("/system/init", authHandler.InitSystem)
 
+	// Credential-delivery setup links (ADR-028) — unauthenticated: the bearer is the
+	// single-use setup token in the URL / request body, not a session.
+	r.Get("/auth/setup/{token}", authHandler.GetSetupToken)
+	r.Post("/auth/setup/consume", authHandler.ConsumeSetup)
+
 	// Health check endpoint
 	r.Get("/health", handlers.HealthCheck)
 

@@ -131,6 +131,20 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := h.buildLoginResponse(r.Context(), session, user)
+
+	// Audit log + last-login stamp (both non-blocking)
+	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	go h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua) // #nosec G118
+	go func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }()        // #nosec G118
+
+	sendSuccess(w, resp, "Login successful")
+}
+
+// buildLoginResponse assembles the session-token + identity payload returned on a
+// successful login. Shared with the setup-token consume flow so that "landing the
+// user logged in" yields exactly the same shape a normal login does.
+func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Session, user *models.User) loginResponseBody {
 	resp := loginResponseBody{
 		Token:       session.SessionToken,
 		UserID:      user.ID,
@@ -145,19 +159,81 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	// Surface roles + permissions so the UI can gate nav/routes. Best-effort:
 	// a failure here must not block an otherwise-successful login.
-	if id, ierr := h.coreService.GetUserIdentity(r.Context(), user.ID); ierr == nil {
+	if id, ierr := h.coreService.GetUserIdentity(ctx, user.ID); ierr == nil {
 		resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
 	}
-	// Flag an expired password so the UI can require a change (ADR-025).
+	// Flag an expired/required password change so the UI can route (ADR-025).
 	resp.AccountState = core.NormalizeAccountState(user.AccountState)
 	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user) || core.AccountRestricted(user.AccountState)
+	return resp
+}
 
-	// Audit log + last-login stamp (both non-blocking)
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua) // #nosec G118
-	go func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }()        // #nosec G118
+// ── Setup-token endpoints (ADR-028) ─────────────────────────────────────────────
 
-	sendSuccess(w, resp, "Login successful")
+type setupTokenInfoResponse struct {
+	Purpose     string `json:"purpose"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
+type consumeSetupRequestBody struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
+// GetSetupToken handles GET /auth/setup/{token}: it validates the single-use setup
+// token (without consuming it) and returns a non-sensitive description so the
+// landing page can render the right form. A dead token (unknown/expired/used)
+// returns 410 Gone.
+func (h *AuthHandler) GetSetupToken(w http.ResponseWriter, r *http.Request) {
+	token := chi.URLParam(r, "token")
+	if token == "" {
+		sendError(w, "BadRequest", "Missing setup token", http.StatusBadRequest, nil)
+		return
+	}
+	info, err := h.coreService.DescribeSetupToken(r.Context(), token)
+	if err != nil {
+		sendError(w, "Gone", "This setup link is no longer valid", http.StatusGone, nil)
+		return
+	}
+	sendSuccess(w, setupTokenInfoResponse{
+		Purpose:     info.Purpose,
+		Email:       info.Email,
+		DisplayName: info.DisplayName,
+	}, "")
+}
+
+// ConsumeSetup handles POST /auth/setup/consume: it consumes the single-use setup
+// token, sets the user's password, and lands them logged in with a fresh session —
+// the same response shape as a normal login.
+func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
+	var body consumeSetupRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	if body.Token == "" || body.Password == "" {
+		sendError(w, "BadRequest", "Token and password are required", http.StatusBadRequest, nil)
+		return
+	}
+
+	ip := r.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get("User-Agent"), ip)
+	if err != nil {
+		// A password-policy failure must surface its reason (the link is still live);
+		// a dead/wrong token is reported generically.
+		sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+		return
+	}
+
+	resp := h.buildLoginResponse(r.Context(), result.Session, result.User)
+	go h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get("User-Agent")) // #nosec G118
+	go func() { _ = h.coreService.RecordLogin(context.Background(), result.User.ID) }()                                       // #nosec G118
+
+	sendSuccess(w, resp, "Account setup complete")
 }
 
 // Logout handles POST /auth/logout.
