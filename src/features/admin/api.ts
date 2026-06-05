@@ -84,8 +84,13 @@ export const useAdminUserList = ({
 export const useAdminCreateUser = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (body: { username: string; email: string; display_name: string; password: string }) =>
-            usersApi.create(body),
+        mutationFn: (body: {
+            username: string;
+            email: string;
+            display_name: string;
+            password?: string;
+            deliver_setup_link?: boolean;
+        }) => usersApi.create(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
     });
 };

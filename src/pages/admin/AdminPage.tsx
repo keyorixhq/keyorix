@@ -28,6 +28,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
+import type { SetupLinkResult } from '../../services/users';
 
 interface APIUser {
     id: number;
@@ -87,6 +88,11 @@ export const AdminPage: React.FC = () => {
     const [createDisplayName, setCreateDisplayName] = useState('');
     const [createPassword, setCreatePassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    // ADR-028: when on, the admin sets no password — a single-use setup link is
+    // delivered (or returned for out-of-band relay) and the user sets their own.
+    const [createDeliverSetupLink, setCreateDeliverSetupLink] = useState(false);
+    const [setupResult, setSetupResult] = useState<SetupLinkResult | null>(null);
+    const [linkCopied, setLinkCopied] = useState(false);
 
     const [editEmail, setEditEmail] = useState('');
     const [editDisplayName, setEditDisplayName] = useState('');
@@ -126,6 +132,9 @@ export const AdminPage: React.FC = () => {
         setFormError('');
         setCreateUsername(''); setCreateEmail(''); setCreateDisplayName(''); setCreatePassword('');
         setShowPassword(false);
+        setCreateDeliverSetupLink(false);
+        setSetupResult(null);
+        setLinkCopied(false);
         setRolesUserId(null);
         setSelectedRoleIds(new Set());
     }
@@ -181,14 +190,37 @@ export const AdminPage: React.FC = () => {
         if (!createEmail.trim()) { setFormError('Email is required'); return; }
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(createEmail.trim())) { setFormError('Please enter a valid email address'); return; }
         if (!createDisplayName.trim()) { setFormError('Display name is required'); return; }
-        if (createPassword.length < 8) { setFormError('Password must be at least 8 characters'); return; }
-        createMutation.mutate(
-            { username: createUsername.trim(), email: createEmail.trim(), display_name: createDisplayName.trim(), password: createPassword },
-            {
-                onSuccess: closeModal,
-                onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to create user'),
-            }
-        );
+        // Password is only required on the classic path; the setup-link path sets none.
+        if (!createDeliverSetupLink && createPassword.length < 8) { setFormError('Password must be at least 8 characters'); return; }
+        const base = { username: createUsername.trim(), email: createEmail.trim(), display_name: createDisplayName.trim() };
+        const body = createDeliverSetupLink
+            ? { ...base, deliver_setup_link: true }
+            : { ...base, password: createPassword };
+        createMutation.mutate(body, {
+            onSuccess: (res) => {
+                // On the setup-link path, keep the modal open to show the delivery
+                // outcome — an out-of-band link the admin must relay, or an emailed
+                // confirmation. The classic path just closes.
+                if (createDeliverSetupLink && res?.setup_link) {
+                    setSetupResult(res.setup_link);
+                } else {
+                    closeModal();
+                }
+            },
+            onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to create user'),
+        });
+    }
+
+    async function handleCopyLink() {
+        if (!setupResult?.link_for_admin) return;
+        try {
+            await navigator.clipboard.writeText(setupResult.link_for_admin);
+            setLinkCopied(true);
+            window.setTimeout(() => setLinkCopied(false), 2000);
+        } catch {
+            // Clipboard can be blocked (insecure context / permissions); the link is
+            // still visible for manual selection, so fail quietly.
+        }
     }
 
     function handleUpdate() {
@@ -465,6 +497,34 @@ export const AdminPage: React.FC = () => {
             </div>
 
             <Modal isOpen={activeModal?.type === 'create'} onClose={closeModal} title="Create User" size="md">
+                {setupResult ? (
+                    <div className="space-y-4">
+                        <Alert type="success" message={`Account created for ${createEmail.trim() || setupResult.email}.`} />
+                        {setupResult.link_for_admin ? (
+                            <div className="space-y-2">
+                                <p className="text-sm text-base-secondary">
+                                    Relay this single-use setup link to the user securely — it expires and can only be used once.
+                                </p>
+                                <div className="flex items-stretch gap-2">
+                                    <code className="flex-1 min-w-0 px-3 py-2 text-xs font-mono break-all rounded-lg border border-base bg-subtle text-base-secondary">
+                                        {setupResult.link_for_admin}
+                                    </code>
+                                    <Button variant="outline" onClick={handleCopyLink} className="shrink-0">
+                                        {linkCopied ? 'Copied' : 'Copy'}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-sm text-base-secondary">
+                                A setup link was sent to <span className="font-medium">{setupResult.email}</span>
+                                {setupResult.channel ? <> via {setupResult.channel}</> : null}. They’ll set their own password on first use.
+                            </p>
+                        )}
+                        <div className="flex justify-end pt-2">
+                            <Button variant="primary" onClick={closeModal}>Done</Button>
+                        </div>
+                    </div>
+                ) : (
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
                     <div>
@@ -479,6 +539,16 @@ export const AdminPage: React.FC = () => {
                         <label className="block text-sm font-medium text-base-secondary mb-1">Email</label>
                         <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="jane@example.com" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
+                    <div className="rounded-lg border border-base p-3 space-y-2">
+                        <label className="flex items-start gap-2 cursor-pointer">
+                            <input type="checkbox" checked={createDeliverSetupLink} onChange={(e) => setCreateDeliverSetupLink(e.target.checked)} className="h-4 w-4 mt-0.5 rounded-sm border-base" style={{ accentColor: 'var(--accent)' }} />
+                            <span>
+                                <span className="block text-sm font-medium text-base-secondary">Send a setup link instead of a password</span>
+                                <span className="block text-xs text-base-muted">The user sets their own password via a single-use link. The account starts in pending state until they do.</span>
+                            </span>
+                        </label>
+                    </div>
+                    {!createDeliverSetupLink && (
                     <div>
                         <div className="flex items-center justify-between mb-1">
                             <label className="text-sm font-medium text-base-secondary">Password</label>
@@ -503,13 +573,15 @@ export const AdminPage: React.FC = () => {
                             </button>
                         </div>
                     </div>
+                    )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>Cancel</Button>
                         <Button variant="primary" onClick={handleCreate} disabled={createMutation.isPending}>
-                            {createMutation.isPending ? 'Creating…' : 'Create User'}
+                            {createMutation.isPending ? 'Creating…' : createDeliverSetupLink ? 'Create & Send Link' : 'Create User'}
                         </Button>
                     </div>
                 </div>
+                )}
             </Modal>
 
             <Modal isOpen={activeModal?.type === 'edit'} onClose={closeModal} title="Edit User" size="md">
