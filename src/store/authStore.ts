@@ -11,6 +11,13 @@ import {
 } from '../utils/auth';
 
 interface AuthStore extends AuthState {
+    // Impersonation (ADR audit-design): while impersonating, `token`/`user` are
+    // the target's and the admin's own session is stashed here so the client can
+    // swap back without re-authenticating.
+    adminToken: string | null;
+    adminUser: User | null;
+    isImpersonating: boolean;
+
     // Actions
     login: (credentials: LoginFormData) => Promise<void>;
     logout: () => Promise<void>;
@@ -22,6 +29,10 @@ interface AuthStore extends AuthState {
     setError: (error: string | null) => void;
     // ADR-025: lift the password-change gate once the user has changed it.
     clearPasswordChangeRequired: () => void;
+    // Swap the active session to an impersonation token, stashing the admin's.
+    startImpersonation: (token: string, impersonatedUser: User) => void;
+    // End impersonation: tell the server, then restore the admin's session.
+    endImpersonation: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -31,6 +42,9 @@ export const useAuthStore = create<AuthStore>()(
             user: null,
             token: null,
             isAuthenticated: false,
+            adminToken: null,
+            adminUser: null,
+            isImpersonating: false,
             isLoading: false,
             error: null,
 
@@ -184,6 +198,45 @@ export const useAuthStore = create<AuthStore>()(
                     set({ user: { ...user, passwordChangeRequired: false } });
                 }
             },
+
+            startImpersonation: (token: string, impersonatedUser: User) => {
+                const { token: currentToken, user: currentUser, isImpersonating } = get();
+                // Refuse to nest impersonation — stash only the real admin session.
+                if (isImpersonating) {
+                    return;
+                }
+                set({
+                    adminToken: currentToken,
+                    adminUser: currentUser,
+                    isImpersonating: true,
+                    token,
+                    user: impersonatedUser,
+                    isAuthenticated: true,
+                    error: null,
+                });
+            },
+
+            endImpersonation: async () => {
+                const { adminToken, adminUser, isImpersonating } = get();
+                if (!isImpersonating) {
+                    return;
+                }
+                // Best-effort server notify (logs the end event + drops the session).
+                try {
+                    await authService.endImpersonation();
+                } catch (error) {
+                    console.warn('End-impersonation request failed:', error);
+                }
+                set({
+                    token: adminToken,
+                    user: adminUser,
+                    isAuthenticated: !!adminToken,
+                    adminToken: null,
+                    adminUser: null,
+                    isImpersonating: false,
+                    error: null,
+                });
+            },
         }),
         {
             name: 'auth-storage',
@@ -191,6 +244,9 @@ export const useAuthStore = create<AuthStore>()(
                 user: state.user,
                 token: state.token,
                 isAuthenticated: state.isAuthenticated,
+                adminToken: state.adminToken,
+                adminUser: state.adminUser,
+                isImpersonating: state.isImpersonating,
             }),
         }
     )

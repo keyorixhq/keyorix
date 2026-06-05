@@ -21,6 +21,7 @@ import {
     useAdminRoles,
     useUserRoles,
     useUpdateUserRoles,
+    useImpersonateUser,
 } from '../../features/admin';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
@@ -111,6 +112,14 @@ export const AdminPage: React.FC = () => {
     const { data: allRoles } = useAdminRoles();
     const { data: userRolesData, isLoading: rolesLoading } = useUserRoles(rolesUserId);
     const updateRolesMutation = useUpdateUserRoles();
+    const impersonateMutation = useImpersonateUser();
+
+    const handleImpersonate = (user: APIUser) => {
+        impersonateMutation.mutate(
+            { id: user.id, username: user.username, display_name: user.display_name },
+            { onSuccess: () => navigate(ROUTES.DASHBOARD) }
+        );
+    };
 
     function closeModal() {
         setActiveModal(null);
@@ -419,6 +428,9 @@ export const AdminPage: React.FC = () => {
                                                     <>
                                                         <button onClick={() => handleRolesOpen(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors" title="Manage roles">
                                                             <ShieldCheckIcon className="h-4 w-4" />
+                                                        </button>
+                                                        <button onClick={() => handleImpersonate(user)} disabled={impersonateMutation.isPending} className="p-1.5 text-base-muted hover:text-amber-600 hover:bg-amber-50 rounded-sm transition-colors disabled:opacity-50" title="Impersonate user">
+                                                            <UserCircleIcon className="h-4 w-4" />
                                                         </button>
                                                         <button onClick={() => openEdit(user)} className="p-1.5 text-base-muted hover:text-blue-600 hover:bg-accent-subtle rounded-sm transition-colors" title="Edit user">
                                                             <PencilIcon className="h-4 w-4" />

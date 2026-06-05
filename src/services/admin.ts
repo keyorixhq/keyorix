@@ -62,4 +62,23 @@ export const adminApi = {
     async updateUserRoles(userId: number, roleIds: number[]): Promise<void> {
         await apiClient.put(`/api/v1/users/${userId}/roles`, { role_ids: roleIds });
     },
+
+    // Start impersonating a user. Returns a session token for the target user;
+    // the caller swaps the active session to it (authStore.startImpersonation).
+    async impersonate(userId: number): Promise<ImpersonationResponse> {
+        const response = await apiClient.post<ApiResponse<ImpersonationResponse>>(
+            '/api/v1/admin/impersonate',
+            { user_id: userId }
+        );
+        return response.data.data;
+    },
 };
+
+export interface ImpersonationResponse {
+    token: string;
+    expires_at?: string;
+    user_id: number;
+    username: string;
+    display_name?: string;
+    impersonated_by: number;
+}

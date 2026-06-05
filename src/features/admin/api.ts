@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi } from '../../services/admin';
 import { usersApi } from '../../services/users';
 import { queryKeys } from '../../lib/queryClient';
+import { useAuthStore } from '../../store/authStore';
+import type { User } from '../../types';
 
 // ── Admin stats / roles / audit (admin-specific endpoints) ─────────────────
 
@@ -132,3 +134,35 @@ export const useUpdateUserRoles = () => {
         },
     });
 };
+
+// ── Impersonation ─────────────────────────────────────────────────────────────
+
+// useImpersonateUser starts impersonating a user: it requests an impersonation
+// token, swaps the active session to it (stashing the admin's), and refreshes
+// the impersonated user's full profile. The caller navigates on success.
+export const useImpersonateUser = () =>
+    useMutation({
+        mutationFn: async (target: { id: number; username: string; display_name?: string }) => {
+            const resp = await adminApi.impersonate(target.id);
+            const store = useAuthStore.getState();
+            const impersonatedUser: User = {
+                id: resp.user_id,
+                username: resp.username,
+                displayName: resp.display_name || resp.username,
+                email: '',
+                role: 'user',
+                roles: [],
+                permissions: [],
+                preferences: {
+                    language: 'en',
+                    timezone: 'UTC',
+                    theme: 'system',
+                    notifications: { email: true, browser: true, sharing: true, security: true },
+                },
+                lastLogin: new Date().toISOString(),
+            };
+            store.startImpersonation(resp.token, impersonatedUser);
+            // Refresh roles/permissions/email for the impersonated identity.
+            await store.checkAuth();
+        },
+    });

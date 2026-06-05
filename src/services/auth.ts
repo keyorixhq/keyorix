@@ -80,6 +80,15 @@ export const authService = {
     },
 
     /**
+     * End the current impersonation session. The Bearer token in the request is
+     * the impersonation token (authApi reads it from persisted state); the server
+     * logs the impersonation.end event and drops that session.
+     */
+    async endImpersonation(): Promise<void> {
+        await authApi.post('/api/v1/auth/end-impersonation');
+    },
+
+    /**
      * Refresh authentication token
      */
     async refreshToken(): Promise<RefreshTokenResponse> {

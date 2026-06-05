@@ -4,6 +4,7 @@ import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { Footer } from './Footer';
 import { Breadcrumb, BreadcrumbItem } from './Breadcrumb';
+import { ImpersonationBanner } from './ImpersonationBanner';
 import { CmdKSearch } from '../ui/CmdKSearch';
 
 export interface LayoutProps {
@@ -41,6 +42,9 @@ const Layout: React.FC<LayoutProps> = ({
 
             {/* Main content area */}
             <div className="lg:pl-64 flex flex-col min-h-screen">
+                {/* Impersonation warning bar (visible only while impersonating) */}
+                <ImpersonationBanner />
+
                 {/* Header */}
                 <Header onMenuClick={() => setSidebarOpen(true)} />
 
