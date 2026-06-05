@@ -233,6 +233,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	pwHistExists := tableExists(db, "password_histories")
 	machineExists := tableExists(db, "machine_identities")
 	membershipExists := tableExists(db, "project_memberships")
+	setupTokenExists := tableExists(db, "setup_tokens")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -278,6 +279,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !membershipExists {
 		if err := db.AutoMigrate(&models.ProjectMembership{}); err != nil {
 			return fmt.Errorf("failed to migrate project_memberships table: %w", err)
+		}
+	}
+
+	// Create setup_tokens if missing (ADR-028 credential delivery, additive).
+	if !setupTokenExists {
+		if err := db.AutoMigrate(&models.SetupToken{}); err != nil {
+			return fmt.Errorf("failed to migrate setup_tokens table: %w", err)
 		}
 	}
 

@@ -230,6 +230,42 @@ type PersonalAccessToken struct {
 	CreatedAt   time.Time
 }
 
+// SetupToken is the single-use, hashed-at-rest bearer string that lets a brand-new
+// principal establish their first credential (ADR-028). It backs three producers —
+// invitation acceptance (ADR-024), admin-direct account setup (ADR-025), and the
+// reset-link path — selected by Purpose. The plaintext is shown exactly once (in a
+// link or out-of-band display) and never persisted; only TokenHash (SHA-256 hex) is
+// stored, and lookup is by hash, mirroring PersonalAccessToken.
+type SetupToken struct {
+	ID        uint   `gorm:"primaryKey"`
+	TokenHash string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
+
+	// Purpose scopes the token: invitation_accept | account_setup | password_reset_link.
+	// A token minted for one purpose can never drive another, even if the raw string
+	// leaked into the wrong endpoint.
+	Purpose string `gorm:"index;not null"`
+
+	// SubjectUserID is the account the token establishes a credential for. Nullable:
+	// an invitation issued to an email has no user row until acceptance materializes one.
+	SubjectUserID *uint `gorm:"index"`
+	// SubjectEmail binds the token to the address it was minted for (acceptance checks it).
+	SubjectEmail string `gorm:"index"`
+	// InvitationID links back to the project_invitations row for purpose=invitation_accept.
+	InvitationID *uint `gorm:"index"`
+
+	// State: active | consumed | expired | superseded. Consuming is single-use
+	// (active → consumed in the same txn that materializes the effect); reissuing for
+	// the same (purpose, subject) supersedes the prior active token (active → superseded);
+	// a lazy-expire check flips overdue active tokens to expired on read.
+	State string `gorm:"index;not null;default:active"`
+
+	ExpiresAt time.Time
+	// CreatedBy is the admin/inviter who minted the token; 0 for self-service reset.
+	CreatedBy  uint
+	CreatedAt  time.Time
+	ConsumedAt *time.Time // nil until consumed
+}
+
 type PasswordReset struct {
 	ID             uint `gorm:"primaryKey"`
 	UserID         uint

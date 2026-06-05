@@ -240,3 +240,61 @@ func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, u
 		Where("id = ? AND (last_used_at IS NULL OR last_used_at < ?)", id, cutoff).
 		UpdateColumn("last_used_at", usedAt).Error
 }
+
+// --- Setup Tokens (ADR-028) ---
+
+func (ls *LocalStorage) CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error) {
+	if err := ls.db.WithContext(ctx).Create(t).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return t, nil
+}
+
+// GetSetupTokenByHash is the consumption lookup (indexed equality on token_hash).
+func (ls *LocalStorage) GetSetupTokenByHash(ctx context.Context, hash string) (*models.SetupToken, error) {
+	var t models.SetupToken
+	if err := ls.db.WithContext(ctx).Where("token_hash = ?", hash).First(&t).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	return &t, nil
+}
+
+// SupersedeActiveSetupTokens flips every active token for (purpose, email) to
+// superseded so a reissue kills the prior link atomically.
+func (ls *LocalStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error {
+	return ls.db.WithContext(ctx).Model(&models.SetupToken{}).
+		Where("purpose = ? AND subject_email = ? AND state = ?", purpose, email, "active").
+		Update("state", "superseded").Error
+}
+
+// MarkSetupTokenConsumed transitions active → consumed only if still active. The
+// state guard in the WHERE clause makes consumption single-use even under a
+// concurrent replay: the second caller matches zero rows and gets false.
+func (ls *LocalStorage) MarkSetupTokenConsumed(ctx context.Context, id uint, consumedAt time.Time) (bool, error) {
+	result := ls.db.WithContext(ctx).Model(&models.SetupToken{}).
+		Where("id = ? AND state = ?", id, "active").
+		Updates(map[string]interface{}{"state": "consumed", "consumed_at": consumedAt})
+	if result.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	return result.RowsAffected == 1, nil
+}
+
+// MarkSetupTokenExpired transitions active → expired (lazy expiry on read).
+func (ls *LocalStorage) MarkSetupTokenExpired(ctx context.Context, id uint) error {
+	return ls.db.WithContext(ctx).Model(&models.SetupToken{}).
+		Where("id = ? AND state = ?", id, "active").
+		Update("state", "expired").Error
+}
+
+// CountSetupTokensSince counts tokens minted for (purpose, email) since a cutoff,
+// backing resend throttling and the daily cap.
+func (ls *LocalStorage) CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error) {
+	var n int64
+	if err := ls.db.WithContext(ctx).Model(&models.SetupToken{}).
+		Where("purpose = ? AND subject_email = ? AND created_at >= ?", purpose, email, since).
+		Count(&n).Error; err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return n, nil
+}

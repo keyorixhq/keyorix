@@ -30,6 +30,9 @@ type KeyorixCore struct {
 	// membershipValidationMode is the ADR-022 install-level onboarding mode;
 	// "" = allowlist default. Set via SetMembershipValidationMode.
 	membershipValidationMode string
+	// setupTokenTTL is the lifetime of a credential-delivery setup token (ADR-028);
+	// 0 = DefaultSetupTokenTTL. Set from config via SetSetupTokenTTL.
+	setupTokenTTL time.Duration
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).
@@ -80,6 +83,13 @@ func NewKeyorixCoreWithEncryption(storage storage.Storage, enc *encryption.Secre
 // configures a password_policy block.
 func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
 	c.passwordPolicy = p
+}
+
+// SetSetupTokenTTL overrides the setup-token lifetime (ADR-028). The server calls
+// this at startup from credential_delivery.setup_token_ttl. A non-positive value
+// falls back to DefaultSetupTokenTTL.
+func (c *KeyorixCore) SetSetupTokenTTL(ttl time.Duration) {
+	c.setupTokenTTL = ttl
 }
 
 // Storage returns the underlying storage interface (used by ancillary services such as AnomalyDetector).

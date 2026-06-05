@@ -194,6 +194,23 @@ type Storage interface {
 	RevokePersonalAccessToken(ctx context.Context, id uint) error
 	TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
 
+	// Setup Token Management (ADR-028) — single-use, hashed-at-rest credential-delivery tokens.
+	CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error)
+	// GetSetupTokenByHash is the consumption lookup (indexed equality on token_hash).
+	GetSetupTokenByHash(ctx context.Context, hash string) (*models.SetupToken, error)
+	// SupersedeActiveSetupTokens flips every active token for (purpose, email) to
+	// superseded, so reissuing ("resend") atomically kills the prior link.
+	SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error
+	// MarkSetupTokenConsumed transitions active → consumed only if the token is still
+	// active, stamping consumedAt. It reports whether the transition happened, so a
+	// concurrent replay (state already consumed/expired/superseded) is rejected.
+	MarkSetupTokenConsumed(ctx context.Context, id uint, consumedAt time.Time) (bool, error)
+	// MarkSetupTokenExpired transitions active → expired (lazy expiry on read).
+	MarkSetupTokenExpired(ctx context.Context, id uint) error
+	// CountSetupTokensSince counts tokens minted for (purpose, email) since a cutoff,
+	// backing resend throttling / daily caps.
+	CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error)
+
 	// API Client Management
 	CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
 	GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error)
