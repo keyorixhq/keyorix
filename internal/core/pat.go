@@ -10,9 +10,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -35,12 +33,6 @@ type CreatePATResult struct {
 	PlainToken string
 }
 
-// hashPAT returns the SHA-256 hex of a raw token — the stored, indexed form.
-func hashPAT(raw string) string {
-	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:])
-}
-
 // CreateOwnPAT generates a new personal access token for the caller. expiresAt may
 // be nil for a non-expiring token.
 func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time) (*CreatePATResult, error) {
@@ -60,7 +52,7 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 	pat := &models.PersonalAccessToken{
 		UserID:      userID,
 		Name:        strings.TrimSpace(name),
-		TokenHash:   hashPAT(raw),
+		TokenHash:   sha256Hex(raw),
 		TokenPrefix: raw[:len(patPrefix)+6], // e.g. "kx_pat_ab12cd" for display
 		ExpiresAt:   expiresAt,
 		CreatedAt:   c.now(),
@@ -101,7 +93,7 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 	if !strings.HasPrefix(raw, patPrefix) {
 		return nil, nil, fmt.Errorf("not a personal access token")
 	}
-	pat, err := c.storage.GetPersonalAccessTokenByHash(ctx, hashPAT(raw))
+	pat, err := c.storage.GetPersonalAccessTokenByHash(ctx, sha256Hex(raw))
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid token")
 	}

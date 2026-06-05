@@ -20,9 +20,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -62,12 +60,6 @@ func validSetupPurpose(p string) bool {
 	default:
 		return false
 	}
-}
-
-// hashSetupToken returns the SHA-256 hex of a raw token — the stored, indexed form.
-func hashSetupToken(raw string) string {
-	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:])
 }
 
 // IssueSetupTokenRequest describes a token to mint.
@@ -117,7 +109,7 @@ func (c *KeyorixCore) IssueSetupToken(ctx context.Context, req IssueSetupTokenRe
 	now := c.now()
 
 	tok := &models.SetupToken{
-		TokenHash:     hashSetupToken(raw),
+		TokenHash:     sha256Hex(raw),
 		Purpose:       req.Purpose,
 		SubjectUserID: req.SubjectUserID,
 		SubjectEmail:  email,
@@ -163,7 +155,7 @@ func (c *KeyorixCore) ValidateSetupToken(ctx context.Context, raw, expectedPurpo
 // expected purpose use ValidateSetupToken; the GET-describe path (which must report
 // the purpose to the landing page) uses this directly.
 func (c *KeyorixCore) inspectActiveSetupToken(ctx context.Context, raw string) (*models.SetupToken, error) {
-	tok, err := c.storage.GetSetupTokenByHash(ctx, hashSetupToken(raw))
+	tok, err := c.storage.GetSetupTokenByHash(ctx, sha256Hex(raw))
 	if err != nil {
 		return nil, fmt.Errorf("%s: invalid setup token", i18n.T("ErrorNotFound", nil))
 	}
@@ -187,22 +179,37 @@ func (c *KeyorixCore) inspectActiveSetupToken(ctx context.Context, raw string) (
 // up front: if the caller's subsequent materialization fails, the token is already
 // spent — a deliberate fail-closed choice, since a setup token is a credential.
 func (c *KeyorixCore) ConsumeSetupToken(ctx context.Context, raw, expectedPurpose string) (*models.SetupToken, error) {
-	tok, err := c.ValidateSetupToken(ctx, raw, expectedPurpose)
+	tok, err := c.inspectActiveSetupToken(ctx, raw)
 	if err != nil {
 		return nil, err
 	}
+	if err := c.consumeInspectedToken(ctx, tok, expectedPurpose); err != nil {
+		return nil, err
+	}
+	return tok, nil
+}
+
+// consumeInspectedToken marks an already-inspected active token consumed (single-use),
+// after checking its purpose. CompleteSetup calls this with the token it already
+// resolved, so the consume flow performs ONE hash+lookup instead of two — closing the
+// lazy-expire race between a re-validate and the mark. Consumption is burned up front
+// (fail-closed): a setup token is a credential.
+func (c *KeyorixCore) consumeInspectedToken(ctx context.Context, tok *models.SetupToken, expectedPurpose string) error {
+	if tok.Purpose != expectedPurpose {
+		return fmt.Errorf("%s: setup token purpose mismatch", i18n.T("ErrorValidation", nil))
+	}
 	ok, err := c.storage.MarkSetupTokenConsumed(ctx, tok.ID, c.now())
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if !ok {
-		// Lost a race to a concurrent consumer (or already spent between validate
-		// and mark). Single-use holds: reject.
-		return nil, fmt.Errorf("%s: setup token already used", i18n.T("ErrorNotFound", nil))
+		// Lost a race to a concurrent consumer (or already spent between inspect and
+		// mark). Single-use holds: reject.
+		return fmt.Errorf("%s: setup token already used", i18n.T("ErrorNotFound", nil))
 	}
 	c.writeAuditEventFull(ctx, "setup_token.consumed", tok.SubjectUserID, nil, nil, "",
 		fmt.Sprintf("setup token consumed (purpose=%s, subject=%s)", tok.Purpose, tok.SubjectEmail))
-	return tok, nil
+	return nil
 }
 
 // actorOrSubject returns the issuing admin as the audit actor, falling back to the

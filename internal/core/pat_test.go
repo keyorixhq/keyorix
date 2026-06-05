@@ -27,7 +27,7 @@ func TestCreateOwnPAT(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, strings.HasPrefix(res.PlainToken, patPrefix), "raw token carries the kx_pat_ prefix")
 		require.NotNil(t, captured)
-		assert.Equal(t, hashPAT(res.PlainToken), captured.TokenHash, "stored value is the hash of the plaintext")
+		assert.Equal(t, sha256Hex(res.PlainToken), captured.TokenHash, "stored value is the hash of the plaintext")
 		assert.NotEqual(t, res.PlainToken, captured.TokenHash, "plaintext is never stored")
 		assert.True(t, strings.HasPrefix(captured.TokenPrefix, patPrefix))
 	})
@@ -44,7 +44,7 @@ func TestCreateOwnPAT(t *testing.T) {
 func TestValidatePATToken(t *testing.T) {
 	ctx := context.Background()
 	raw := patPrefix + "abc123def456"
-	hash := hashPAT(raw)
+	hash := sha256Hex(raw)
 
 	t.Run("resolves a valid token to its user and roles", func(t *testing.T) {
 		ms := new(MockStorage)

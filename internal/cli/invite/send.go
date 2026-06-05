@@ -69,6 +69,6 @@ func runSend(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Invitation sent: id=%d email=%s role=%s project=%s expires=%s\n",
 		inv.ID, inv.Email, inv.Role, projectName, fmtTime(inv.ExpiresAt))
-	printProvisionResult(prov)
+	common.PrintProvisionResult(prov)
 	return nil
 }

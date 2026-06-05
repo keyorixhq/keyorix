@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"gopkg.in/yaml.v3"
 )
@@ -292,6 +293,24 @@ func (c *CredentialDeliveryConfig) GetSetupTokenTTL() time.Duration {
 // GetPassword returns the resolved SMTP password, preferring the environment variable.
 func (s *CredentialSMTPConfig) GetPassword() string {
 	return resolveSecret("KEYORIX_SMTP_PASSWORD", s.Password)
+}
+
+// DeliveryConfig maps the credential-delivery config block onto the delivery package's
+// channel selector, resolving the SMTP password from the environment. Shared by the
+// server and CLI wiring (ADR-028) so the mapping lives in exactly one place.
+func (c *CredentialDeliveryConfig) DeliveryConfig() delivery.Config {
+	return delivery.Config{
+		Mode:    c.Mode,
+		BaseURL: c.BaseURL,
+		SMTP: delivery.SMTPSettings{
+			Host:     c.SMTP.Host,
+			Port:     c.SMTP.Port,
+			Username: c.SMTP.Username,
+			Password: c.SMTP.GetPassword(),
+			From:     c.SMTP.From,
+			TLS:      c.SMTP.TLS,
+		},
+	}
 }
 
 type PurgeConfig struct {

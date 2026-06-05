@@ -12,7 +12,6 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
-	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +47,7 @@ var resendSetupLinkCmd = &cobra.Command{
 			return fmt.Errorf("failed to resend setup link: %w", err)
 		}
 		fmt.Printf("Setup link reissued for user %d.\n", resendSetupLinkUserID)
-		printProvisionResult(prov)
+		common.PrintProvisionResult(prov)
 		return nil
 	},
 }
@@ -58,17 +57,4 @@ func init() {
 	resendSetupLinkCmd.Flags().StringVar(&resendSetupLinkBy, "by", "", "Acting admin email (required, for audit)")
 	_ = resendSetupLinkCmd.MarkFlagRequired("id")
 	_ = resendSetupLinkCmd.MarkFlagRequired("by")
-}
-
-// printProvisionResult prints how a setup link was delivered. In out-of-band mode it
-// prints the link itself for the admin to relay; in SMTP mode it confirms the send.
-func printProvisionResult(prov *core.ProvisionSetupResult) {
-	if prov == nil {
-		return
-	}
-	if prov.Delivered {
-		fmt.Printf("Setup link delivered to %s via %s.\n", prov.Email, prov.Channel)
-		return
-	}
-	fmt.Printf("Setup link (relay this to %s securely — it is single-use and expires):\n  %s\n", prov.Email, prov.LinkForAdmin)
 }

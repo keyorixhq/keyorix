@@ -7,6 +7,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -65,7 +66,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 				sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
 				return
 			}
-			if strings.Contains(err.Error(), "base_url") {
+			if errors.Is(err, core.ErrSetupBaseURLRequired) {
 				sendError(w, "ConfigError", err.Error(), http.StatusBadRequest, nil)
 				return
 			}

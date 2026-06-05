@@ -135,7 +135,9 @@ func TestProvisionRequiresBaseURL(t *testing.T) {
 	req := CreateUserRequest{Username: "dana", Email: "dana@acme.io", DisplayName: "Dana"}
 	_, _, err := c.CreateUserWithSetupLink(ctx, &req, 0)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "base_url")
+	// The HTTP layer maps this to a 400 ConfigError via errors.Is, so the sentinel
+	// must survive the i18n-prefixed wrap.
+	assert.ErrorIs(t, err, ErrSetupBaseURLRequired)
 	ms.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
 }
 
