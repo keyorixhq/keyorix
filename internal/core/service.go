@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -33,6 +34,12 @@ type KeyorixCore struct {
 	// setupTokenTTL is the lifetime of a credential-delivery setup token (ADR-028);
 	// 0 = DefaultSetupTokenTTL. Set from config via SetSetupTokenTTL.
 	setupTokenTTL time.Duration
+	// credentialDelivery transports setup links (ADR-028). nil = out-of-band: the
+	// link is returned to the caller. Set from config via SetCredentialDelivery.
+	credentialDelivery delivery.CredentialDelivery
+	// setupBaseURL is the absolute base (e.g. https://keyorix.acme.internal) used to
+	// build setup links. Required to mint a link; a relative link is a misconfig.
+	setupBaseURL string
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).

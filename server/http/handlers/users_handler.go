@@ -293,3 +293,12 @@ func RequirePasswordReset(w http.ResponseWriter, r *http.Request) {
 	}
 	defaultUserHandler.RequirePasswordReset(w, r)
 }
+
+// ResendSetupLink handles POST /api/v1/users/{id}/resend-setup-link (ADR-028).
+func ResendSetupLink(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.ResendSetupLink(w, r)
+}

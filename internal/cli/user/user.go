@@ -24,6 +24,7 @@ func init() {
 	UserCmd.AddCommand(suspendCmd)
 	UserCmd.AddCommand(reactivateCmd)
 	UserCmd.AddCommand(forcePasswordResetCmd)
+	UserCmd.AddCommand(resendSetupLinkCmd)
 }
 
 // resolveAdminID resolves an admin email to a user ID for audit attribution.

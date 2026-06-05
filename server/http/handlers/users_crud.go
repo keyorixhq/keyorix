@@ -30,8 +30,14 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Username    string `json:"username" validate:"required,min=3,max=50"`
 		Email       string `json:"email" validate:"required,email"`
 		DisplayName string `json:"display_name" validate:"required,min=1,max=100"`
-		Password    string `json:"password" validate:"required,min=8"`
-		IsActive    *bool  `json:"is_active,omitempty"`
+		// Password is optional when DeliverSetupLink is set — the user sets their own
+		// password via the setup link (ADR-028) instead of the admin choosing one.
+		Password string `json:"password" validate:"omitempty,min=8"`
+		IsActive *bool  `json:"is_active,omitempty"`
+		// DeliverSetupLink provisions an account_setup link instead of an admin-set
+		// password: the account is created in pending_first_login state and a setup
+		// link is delivered (or returned for out-of-band relay).
+		DeliverSetupLink bool `json:"deliver_setup_link,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -48,6 +54,36 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName: body.DisplayName,
 		Password:    body.Password,
 		IsActive:    body.IsActive,
+	}
+
+	// Setup-link provisioning path (ADR-028): no admin password; deliver a link.
+	if body.DeliverSetupLink {
+		created, prov, err := h.coreService.CreateUserWithSetupLink(r.Context(), req, userCtx.UserID)
+		if err != nil {
+			log.Printf("Error creating user with setup link: %v", err)
+			if strings.Contains(err.Error(), "already exists") {
+				sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
+				return
+			}
+			if strings.Contains(err.Error(), "base_url") {
+				sendError(w, "ConfigError", err.Error(), http.StatusBadRequest, nil)
+				return
+			}
+			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		sendSuccess(w, map[string]interface{}{
+			"user":       userToAPIResponse(created),
+			"setup_link": prov,
+		}, i18n.T("SuccessUserCreated", nil))
+		return
+	}
+
+	// Classic path: the admin supplies the initial password.
+	if body.Password == "" {
+		sendError(w, "ValidationError", "Password is required unless deliver_setup_link is set", http.StatusBadRequest, nil)
+		return
 	}
 	created, err := h.coreService.CreateUser(r.Context(), req)
 	if err != nil {
@@ -242,4 +278,36 @@ func (h *UserHandler) ReactivateUser(w http.ResponseWriter, r *http.Request) {
 // RequirePasswordReset handles POST /api/v1/users/{id}/require-password-reset.
 func (h *UserHandler) RequirePasswordReset(w http.ResponseWriter, r *http.Request) {
 	h.accountStateAction(w, r, "Password reset required", h.coreService.RequirePasswordReset)
+}
+
+// ResendSetupLink handles POST /api/v1/users/{id}/resend-setup-link (ADR-028). It
+// reissues the user's account_setup link (superseding any prior one) and re-delivers
+// it, returning the delivery outcome — including the link itself in out-of-band mode.
+func (h *UserHandler) ResendSetupLink(w http.ResponseWriter, r *http.Request) {
+	admin := middleware.GetUserFromContext(r.Context())
+	if admin == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		return
+	}
+	res, err := h.coreService.ResendAccountSetupLink(r.Context(), uint(id), admin.UserID)
+	if err != nil {
+		msg := err.Error()
+		status := http.StatusInternalServerError
+		switch {
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		case strings.Contains(msg, "limit") || strings.Contains(msg, "wait"):
+			status = http.StatusTooManyRequests
+		case strings.Contains(msg, "base_url") || strings.Contains(msg, "suspended"):
+			status = http.StatusBadRequest
+		}
+		sendError(w, "Error", msg, status, nil)
+		return
+	}
+	sendSuccess(w, res, "Setup link resent")
 }
