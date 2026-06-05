@@ -18,7 +18,7 @@ const strongPw = "Str0ng!Passw0rd-2026"
 func TestDescribeSetupToken(t *testing.T) {
 	ctx := context.Background()
 	raw := setupPrefix + "describe1"
-	hash := hashSetupToken(raw)
+	hash := sha256Hex(raw)
 
 	t.Run("returns purpose, email, and display name for an active token", func(t *testing.T) {
 		ms := new(MockStorage)
@@ -63,7 +63,7 @@ func TestDescribeSetupToken(t *testing.T) {
 func TestCompleteSetup(t *testing.T) {
 	ctx := context.Background()
 	raw := setupPrefix + "consume1"
-	hash := hashSetupToken(raw)
+	hash := sha256Hex(raw)
 	uid := uint(4)
 
 	activeAccountSetup := func(c *KeyorixCore) *models.SetupToken {

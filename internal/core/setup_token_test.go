@@ -39,7 +39,7 @@ func TestIssueSetupToken(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, strings.HasPrefix(res.PlainToken, setupPrefix), "raw token carries the kx_setup_ prefix")
 		require.NotNil(t, captured)
-		assert.Equal(t, hashSetupToken(res.PlainToken), captured.TokenHash, "stored value is the hash of the plaintext")
+		assert.Equal(t, sha256Hex(res.PlainToken), captured.TokenHash, "stored value is the hash of the plaintext")
 		assert.NotEqual(t, res.PlainToken, captured.TokenHash, "plaintext is never stored")
 		assert.Equal(t, "new@acme.io", captured.SubjectEmail)
 		assert.Equal(t, SetupTokenActive, captured.State)
@@ -101,7 +101,7 @@ func TestIssueSetupToken(t *testing.T) {
 func TestValidateSetupToken(t *testing.T) {
 	ctx := context.Background()
 	raw := setupPrefix + "abc123"
-	hash := hashSetupToken(raw)
+	hash := sha256Hex(raw)
 
 	t.Run("resolves an active token for the matching purpose", func(t *testing.T) {
 		ms := new(MockStorage)
@@ -166,7 +166,7 @@ func TestValidateSetupToken(t *testing.T) {
 func TestConsumeSetupToken(t *testing.T) {
 	ctx := context.Background()
 	raw := setupPrefix + "xyz789"
-	hash := hashSetupToken(raw)
+	hash := sha256Hex(raw)
 
 	activeTok := func(c *KeyorixCore) *models.SetupToken {
 		return &models.SetupToken{ID: 9, State: SetupTokenActive, Purpose: SetupPurposeAccountSetup, ExpiresAt: c.now().Add(time.Hour)}

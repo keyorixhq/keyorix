@@ -16,7 +16,7 @@ func TestCompleteInvitationAccept(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 	raw := setupPrefix + "invite1"
-	hash := hashSetupToken(raw)
+	hash := sha256Hex(raw)
 	iid := uint(11)
 
 	pendingInvite := func(c *KeyorixCore, mode string) *models.SetupToken {

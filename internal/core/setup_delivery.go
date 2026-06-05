@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,6 +21,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// ErrSetupBaseURLRequired is returned when a setup link is requested but
+// credential_delivery.base_url is unconfigured. It is a misconfiguration (a relative
+// link is never a fallback), so the HTTP layer maps it to a 400 with this reason
+// rather than a generic 500 — letting an admin fix the config.
+var ErrSetupBaseURLRequired = errors.New("credential_delivery.base_url is required to issue a setup link")
 
 // Resend throttling (ADR-028 abuse section): a minimum interval between issues for
 // the same subject, and a daily cap, both per (purpose, email).
@@ -50,7 +57,7 @@ type ProvisionSetupResult struct {
 // (a relative link is a misconfiguration, not a fallback).
 func (c *KeyorixCore) provisionSetupLink(ctx context.Context, req IssueSetupTokenRequest, displayName, assignmentSummary string) (*ProvisionSetupResult, error) {
 	if c.setupBaseURL == "" {
-		return nil, fmt.Errorf("%s: credential_delivery.base_url is required to issue a setup link", i18n.T("ErrorValidation", nil))
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrSetupBaseURLRequired)
 	}
 	issued, err := c.IssueSetupToken(ctx, req)
 	if err != nil {
@@ -101,7 +108,7 @@ func (c *KeyorixCore) provisionSetupLink(ctx context.Context, req IssueSetupToke
 // created user and the delivery outcome (the link to relay in out-of-band mode).
 func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUserRequest, createdBy uint) (*models.User, *ProvisionSetupResult, error) {
 	if c.setupBaseURL == "" {
-		return nil, nil, fmt.Errorf("%s: credential_delivery.base_url is required to issue a setup link", i18n.T("ErrorValidation", nil))
+		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrSetupBaseURLRequired)
 	}
 
 	// Create the account with a random, unusable password and confined directly to

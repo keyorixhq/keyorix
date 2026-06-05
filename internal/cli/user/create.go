@@ -79,7 +79,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to create user with setup link: %w", err)
 		}
 		fmt.Printf("User created: id=%d username=%s email=%s\n", u.ID, u.Username, u.Email)
-		printProvisionResult(prov)
+		common.PrintProvisionResult(prov)
 		return nil
 	}
 

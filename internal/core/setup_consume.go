@@ -75,9 +75,9 @@ func (c *KeyorixCore) CompleteSetup(ctx context.Context, raw, newPassword, userA
 	}
 	switch tok.Purpose {
 	case SetupPurposeAccountSetup, SetupPurposePasswordResetLink:
-		return c.completePasswordSetup(ctx, raw, tok, newPassword, userAgent, ip)
+		return c.completePasswordSetup(ctx, tok, newPassword, userAgent, ip)
 	case SetupPurposeInvitationAccept:
-		return c.completeInvitationAccept(ctx, raw, tok, newPassword, userAgent, ip)
+		return c.completeInvitationAccept(ctx, tok, newPassword, userAgent, ip)
 	default:
 		return nil, fmt.Errorf("%s: setup token purpose %q is not completed at this endpoint", i18n.T("ErrorValidation", nil), tok.Purpose)
 	}
@@ -85,7 +85,7 @@ func (c *KeyorixCore) CompleteSetup(ctx context.Context, raw, newPassword, userA
 
 // completePasswordSetup handles account_setup / password_reset_link: set the existing
 // subject's password and auto-log them in.
-func (c *KeyorixCore) completePasswordSetup(ctx context.Context, raw string, tok *models.SetupToken, newPassword, userAgent, ip string) (*SetupConsumeResult, error) {
+func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.SetupToken, newPassword, userAgent, ip string) (*SetupConsumeResult, error) {
 	if tok.SubjectUserID == nil {
 		return nil, fmt.Errorf("%s: setup token has no subject account", i18n.T("ErrorValidation", nil))
 	}
@@ -105,7 +105,8 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, raw string, tok
 	}
 
 	// Consume is single-use and atomic; from here the token is spent (fail-closed).
-	if _, err := c.ConsumeSetupToken(ctx, raw, tok.Purpose); err != nil {
+	// tok was already inspected by CompleteSetup, so consume it directly (no re-lookup).
+	if err := c.consumeInspectedToken(ctx, tok, tok.Purpose); err != nil {
 		return nil, err
 	}
 	if err := c.applyNewPassword(ctx, user, newPassword); err != nil {
@@ -127,7 +128,7 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, raw string, tok
 // account (ADR-024/ADR-028), accept the invitation, create a project membership
 // honouring the validation mode snapshotted at invite time (which grants the role
 // when the mode lands it active), and auto-log the user in.
-func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, raw string, tok *models.SetupToken, newPassword, userAgent, ip string) (*SetupConsumeResult, error) {
+func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.SetupToken, newPassword, userAgent, ip string) (*SetupConsumeResult, error) {
 	if tok.InvitationID == nil {
 		return nil, fmt.Errorf("%s: invitation token has no invitation", i18n.T("ErrorValidation", nil))
 	}
@@ -166,8 +167,9 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, raw string, 
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
 	}
 
-	// Consume the token (single-use, atomic) before materializing.
-	if _, err := c.ConsumeSetupToken(ctx, raw, SetupPurposeInvitationAccept); err != nil {
+	// Consume the token (single-use, atomic) before materializing. tok was already
+	// inspected by CompleteSetup, so consume it directly (no re-lookup).
+	if err := c.consumeInspectedToken(ctx, tok, SetupPurposeInvitationAccept); err != nil {
 		return nil, err
 	}
 

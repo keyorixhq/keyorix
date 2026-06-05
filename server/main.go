@@ -225,18 +225,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// log from the configured mode and fails loud on a bad mode (e.g. smtp with no
 	// host), so a misconfigured install does not silently drop setup links.
 	cd := cfg.CredentialDelivery
-	deliverer, derr := delivery.New(delivery.Config{
-		Mode:    cd.Mode,
-		BaseURL: cd.BaseURL,
-		SMTP: delivery.SMTPSettings{
-			Host:     cd.SMTP.Host,
-			Port:     cd.SMTP.Port,
-			Username: cd.SMTP.Username,
-			Password: cd.SMTP.GetPassword(),
-			From:     cd.SMTP.From,
-			TLS:      cd.SMTP.TLS,
-		},
-	})
+	deliverer, derr := delivery.New(cd.DeliveryConfig())
 	if derr != nil {
 		return nil, nil, fmt.Errorf("failed to init credential delivery: %w", derr)
 	}

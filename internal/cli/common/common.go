@@ -51,21 +51,25 @@ func InitializeCoreService() (*core.KeyorixCore, error) {
 	svc := core.NewKeyorixCore(storageImpl)
 	svc.SetSetupTokenTTL(cfg.CredentialDelivery.GetSetupTokenTTL())
 	cd := cfg.CredentialDelivery
-	if deliverer, derr := delivery.New(delivery.Config{
-		Mode:    cd.Mode,
-		BaseURL: cd.BaseURL,
-		SMTP: delivery.SMTPSettings{
-			Host:     cd.SMTP.Host,
-			Port:     cd.SMTP.Port,
-			Username: cd.SMTP.Username,
-			Password: cd.SMTP.GetPassword(),
-			From:     cd.SMTP.From,
-			TLS:      cd.SMTP.TLS,
-		},
-	}); derr == nil {
+	if deliverer, derr := delivery.New(cd.DeliveryConfig()); derr == nil {
 		svc.SetCredentialDelivery(deliverer, cd.BaseURL)
 	} else {
 		svc.SetCredentialDelivery(nil, cd.BaseURL)
 	}
 	return svc, nil
+}
+
+// PrintProvisionResult prints how a setup link was delivered (ADR-028). In out-of-band
+// mode it prints the link for the admin to relay; in SMTP mode it confirms the send.
+// Shared by `user create --setup-link`, `user resend-setup-link`, `invite send`, and
+// `invite resend`.
+func PrintProvisionResult(prov *core.ProvisionSetupResult) {
+	if prov == nil {
+		return
+	}
+	if prov.Delivered {
+		fmt.Printf("Setup link delivered to %s via %s.\n", prov.Email, prov.Channel)
+		return
+	}
+	fmt.Printf("Setup link (relay this to %s securely — it is single-use and expires):\n  %s\n", prov.Email, prov.LinkForAdmin)
 }
