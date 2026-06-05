@@ -8,30 +8,39 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// PasswordPolicy is the set of synchronous, stateless rules a new password must
-// satisfy (ADR-025). Stateful rules from the ADR — reject-common-passwords,
-// history (no reuse of last N), and max-age expiry — need extra storage and are
-// deliberately out of this first slice; see the package follow-ups.
+// PasswordPolicy is the full set of password rules from ADR-025. The complexity
+// rules (length, character classes, personal-info, common-password) are
+// stateless and enforced by Validate. The stateful rules — HistoryCount (no
+// reuse of the last N passwords) and MaxAgeDays (expiry) — are enforced by core
+// against the password-history table and PasswordChangedAt (see account.go).
 type PasswordPolicy struct {
-	MinLength          int
-	RequireUppercase   bool
-	RequireLowercase   bool
-	RequireDigit       bool
-	RequireSpecial     bool
-	RejectPersonalInfo bool // reject if the password contains the user's email/display name/username
+	MinLength             int
+	RequireUppercase      bool
+	RequireLowercase      bool
+	RequireDigit          bool
+	RequireSpecial        bool
+	RejectPersonalInfo    bool // reject if the password contains the user's email/display name/username
+	RejectCommonPasswords bool // reject passwords on the curated common-password list
+	HistoryCount          int  // forbid reuse of the last N passwords (0 = off)
+	MaxAgeDays            int  // expire a password after N days (0 = never)
 }
 
 // DefaultPasswordPolicy returns the conservative, NIS2/DORA-aligned defaults
 // from ADR-025. Installs may relax these per-config (e.g. lab installs), but the
-// built-in default is intentionally not lab-grade.
+// built-in default is intentionally not lab-grade. MaxAgeDays defaults to 0
+// (no forced rotation) — expiry is opt-in until the account-state-machine ships
+// the restricted-session gate, so a default can't silently lock anyone out.
 func DefaultPasswordPolicy() PasswordPolicy {
 	return PasswordPolicy{
-		MinLength:          16,
-		RequireUppercase:   true,
-		RequireLowercase:   true,
-		RequireDigit:       true,
-		RequireSpecial:     true,
-		RejectPersonalInfo: true,
+		MinLength:             16,
+		RequireUppercase:      true,
+		RequireLowercase:      true,
+		RequireDigit:          true,
+		RequireSpecial:        true,
+		RejectPersonalInfo:    true,
+		RejectCommonPasswords: true,
+		HistoryCount:          5,
+		MaxAgeDays:            0,
 	}
 }
 
@@ -73,6 +82,10 @@ func (p PasswordPolicy) Validate(pw string, user *models.User) error {
 
 	if p.RejectPersonalInfo && user != nil && containsPersonalInfo(pw, user) {
 		failures = append(failures, "not contain your username, email, or display name")
+	}
+
+	if p.RejectCommonPasswords && isCommonPassword(pw) {
+		failures = append(failures, "not be a commonly-used password")
 	}
 
 	if len(failures) > 0 {

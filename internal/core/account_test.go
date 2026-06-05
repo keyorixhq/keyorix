@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -61,6 +62,10 @@ func TestChangePassword(t *testing.T) {
 		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
 		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
 		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
+		// History rule (default HistoryCount=5): no prior hashes, then record + prune.
+		ms.On("RecentPasswordHashes", ctx, uint(1), 5).Return([]string{}, nil)
+		ms.On("AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("PrunePasswordHistory", ctx, uint(1), 5).Return(nil)
 
 		const newPw = "Brandnew#Passw0rd!" // policy-compliant: 16+, upper/lower/digit/special
 		err := c.ChangePassword(ctx, 1, "oldpassword", newPw, "current-token")
@@ -68,6 +73,38 @@ func TestChangePassword(t *testing.T) {
 		// The new password verifies against the freshly stored hash.
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPw)))
 		ms.AssertCalled(t, "DeleteSessionsForUserExcept", ctx, uint(1), uint(7))
+		ms.AssertCalled(t, "AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything)
+	})
+
+	t.Run("rejects reuse of a recent password", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		// The new password is a former one whose hash is in history.
+		const reused = "Recycled#Passw0rd!"
+		reusedHash, _ := bcrypt.GenerateFromPassword([]byte(reused), bcrypt.DefaultCost)
+		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(oldHash)}
+		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
+		ms.On("RecentPasswordHashes", ctx, uint(1), 5).Return([]string{string(reusedHash)}, nil)
+
+		err := c.ChangePassword(ctx, 1, "oldpassword", reused, "current-token")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reuse a recent password")
+		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	})
+
+	t.Run("rejects reuse of the current password", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		// A policy-compliant current password that the user tries to "change" to itself.
+		const cur = "Current#Passw0rd!"
+		curHash, _ := bcrypt.GenerateFromPassword([]byte(cur), bcrypt.DefaultCost)
+		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(curHash)}
+		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
+
+		err := c.ChangePassword(ctx, 1, cur, cur, "current-token")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reuse a recent password")
+		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	})
 
 	t.Run("rejects an incorrect current password without writing", func(t *testing.T) {
@@ -95,6 +132,37 @@ func TestChangePassword(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "password must")
 		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	})
+}
+
+func TestPasswordExpired(t *testing.T) {
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	fixed := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return fixed }
+
+	t.Run("disabled when MaxAgeDays is zero", func(t *testing.T) {
+		c.passwordPolicy = PasswordPolicy{MaxAgeDays: 0}
+		old := fixed.Add(-365 * 24 * time.Hour)
+		assert.False(t, c.PasswordExpired(&models.User{PasswordChangedAt: &old}))
+	})
+
+	t.Run("expired past max age", func(t *testing.T) {
+		c.passwordPolicy = PasswordPolicy{MaxAgeDays: 90}
+		set := fixed.Add(-100 * 24 * time.Hour)
+		assert.True(t, c.PasswordExpired(&models.User{PasswordChangedAt: &set}))
+	})
+
+	t.Run("not expired within max age", func(t *testing.T) {
+		c.passwordPolicy = PasswordPolicy{MaxAgeDays: 90}
+		set := fixed.Add(-30 * 24 * time.Hour)
+		assert.False(t, c.PasswordExpired(&models.User{PasswordChangedAt: &set}))
+	})
+
+	t.Run("legacy nil falls back to created_at", func(t *testing.T) {
+		c.passwordPolicy = PasswordPolicy{MaxAgeDays: 90}
+		created := fixed.Add(-200 * 24 * time.Hour)
+		assert.True(t, c.PasswordExpired(&models.User{CreatedAt: created}))
 	})
 }
 

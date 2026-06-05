@@ -27,9 +27,9 @@ type Config struct {
 	PasswordPolicy PasswordPolicyConfig `yaml:"password_policy"`
 }
 
-// PasswordPolicyConfig mirrors the synchronous password rules from ADR-025.
-// Stateful rules (reject_common_passwords, history_count, max_age_days) are not
-// part of this first slice and are intentionally omitted here.
+// PasswordPolicyConfig mirrors the password rules from ADR-025: synchronous
+// complexity rules plus the stateful rules (reject_common_passwords,
+// history_count, max_age_days) backed by the password-history table.
 type PasswordPolicyConfig struct {
 	MinLength          int  `yaml:"min_length"`
 	RequireUppercase   bool `yaml:"require_uppercase"`
@@ -37,6 +37,12 @@ type PasswordPolicyConfig struct {
 	RequireDigit       bool `yaml:"require_digit"`
 	RequireSpecial     bool `yaml:"require_special"`
 	RejectPersonalInfo bool `yaml:"reject_personal_info"`
+	// RejectCommonPasswords rejects passwords on the curated common-password list.
+	RejectCommonPasswords bool `yaml:"reject_common_passwords"`
+	// HistoryCount forbids reusing the last N passwords (0 = no history check).
+	HistoryCount int `yaml:"history_count"`
+	// MaxAgeDays expires a password after N days (0 = never expires).
+	MaxAgeDays int `yaml:"max_age_days"`
 }
 
 // IsZero reports whether the password_policy block was effectively absent, so

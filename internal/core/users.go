@@ -51,18 +51,25 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 		active = *req.IsActive
 	}
 	user := &models.User{
-		Username:     req.Username,
-		Email:        req.Email,
-		DisplayName:  displayName,
-		PasswordHash: string(hash),
-		IsActive:     active,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		Username:          req.Username,
+		Email:             req.Email,
+		DisplayName:       displayName,
+		PasswordHash:      string(hash),
+		IsActive:          active,
+		PasswordChangedAt: &now, // baseline for max-age expiry (ADR-025)
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 
 	createdUser, err := c.storage.CreateUser(ctx, user)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Seed password history with the initial password so the no-reuse rule
+	// (ADR-025) counts it. Best-effort — user creation has already succeeded.
+	if c.passwordPolicy.HistoryCount > 0 {
+		_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, string(hash), now)
 	}
 
 	// Auto-assign the system_viewer role (ADR-021): a minimal install-wide

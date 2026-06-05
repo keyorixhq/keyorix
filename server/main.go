@@ -182,12 +182,15 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// core's conservative built-in defaults in place (ADR-025).
 	if pp := cfg.PasswordPolicy; !pp.IsZero() {
 		coreService.SetPasswordPolicy(core.PasswordPolicy{
-			MinLength:          pp.MinLength,
-			RequireUppercase:   pp.RequireUppercase,
-			RequireLowercase:   pp.RequireLowercase,
-			RequireDigit:       pp.RequireDigit,
-			RequireSpecial:     pp.RequireSpecial,
-			RejectPersonalInfo: pp.RejectPersonalInfo,
+			MinLength:             pp.MinLength,
+			RequireUppercase:      pp.RequireUppercase,
+			RequireLowercase:      pp.RequireLowercase,
+			RequireDigit:          pp.RequireDigit,
+			RequireSpecial:        pp.RequireSpecial,
+			RejectPersonalInfo:    pp.RejectPersonalInfo,
+			RejectCommonPasswords: pp.RejectCommonPasswords,
+			HistoryCount:          pp.HistoryCount,
+			MaxAgeDays:            pp.MaxAgeDays,
 		})
 	}
 

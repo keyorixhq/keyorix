@@ -68,9 +68,22 @@ type User struct {
 	PasswordHash string
 	IsActive     bool       `gorm:"default:true"`
 	LastLoginAt  *time.Time // stamped on each successful auth.login; nil = never logged in
+	// PasswordChangedAt is when the current password was set. Drives max-age
+	// expiry (ADR-025). nil on legacy rows = treat as set at account creation.
+	PasswordChangedAt *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DeletedAt         gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
+}
+
+// PasswordHistory records prior password hashes per user so the policy can
+// forbid reuse of the last N passwords (ADR-025 history_count). Only bcrypt
+// hashes are stored — never plaintext.
+type PasswordHistory struct {
+	ID           uint `gorm:"primaryKey"`
+	UserID       uint `gorm:"index"`
+	PasswordHash string
 	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
 }
 
 type Role struct {

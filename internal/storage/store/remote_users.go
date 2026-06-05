@@ -200,3 +200,19 @@ func (rs *RemoteStorage) RemoveUserFromGroup(_ context.Context, _, _ uint) error
 func (rs *RemoteStorage) ListGroupMembers(_ context.Context, _ uint) ([]*models.User, error) {
 	return nil, fmt.Errorf("ListGroupMembers not implemented for remote storage")
 }
+
+// --- Password history (ADR-025) ---
+// Password changes are processed server-side in remote mode, so history is
+// recorded and checked there; these are stubs.
+
+func (rs *RemoteStorage) AddPasswordHistory(_ context.Context, _ uint, _ string, _ time.Time) error {
+	return nil
+}
+
+func (rs *RemoteStorage) RecentPasswordHashes(_ context.Context, _ uint, _ int) ([]string, error) {
+	return nil, nil
+}
+
+func (rs *RemoteStorage) PrunePasswordHistory(_ context.Context, _ uint, _ int) error {
+	return nil
+}

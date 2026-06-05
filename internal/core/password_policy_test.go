@@ -65,3 +65,22 @@ func TestPasswordPolicy_Relaxed(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least 8 characters")
 	assert.False(t, strings.Contains(err.Error(), "uppercase"), "disabled checks not reported")
 }
+
+// The common-password rule rejects denylisted passwords (case-insensitive) and
+// is independent of the complexity checks.
+func TestPasswordPolicy_RejectsCommonPasswords(t *testing.T) {
+	p := PasswordPolicy{RejectCommonPasswords: true}
+	for _, pw := range []string{"password", "PASSWORD", "Keyorix123", "letmein"} {
+		err := p.Validate(pw, nil)
+		require.Error(t, err, "expected %q to be rejected", pw)
+		assert.Contains(t, err.Error(), "commonly-used password")
+	}
+	// A strong, non-listed password passes the common-password rule.
+	assert.NoError(t, p.Validate("Z6!txQ9mAe2vПЛh", nil))
+}
+
+func TestIsCommonPassword(t *testing.T) {
+	assert.True(t, isCommonPassword("qwerty"))
+	assert.True(t, isCommonPassword("  Admin  "), "trimmed + lowercased")
+	assert.False(t, isCommonPassword("a-genuinely-unusual-passphrase-42"))
+}

@@ -79,6 +79,9 @@ type loginResponseBody struct {
 	Role        string   `json:"role"`        // primary (highest-privilege) role
 	Roles       []string `json:"roles"`       // all assigned role names
 	Permissions []string `json:"permissions"` // distinct permissions across roles
+	// PasswordChangeRequired is true when the password has exceeded the policy's
+	// max age (ADR-025 max_age_days) — the UI should route to change-password.
+	PasswordChangeRequired bool `json:"password_change_required,omitempty"`
 }
 
 type passwordResetRequestBody struct {
@@ -143,6 +146,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if id, ierr := h.coreService.GetUserIdentity(r.Context(), user.ID); ierr == nil {
 		resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
 	}
+	// Flag an expired password so the UI can require a change (ADR-025).
+	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user)
 
 	// Audit log + last-login stamp (both non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")

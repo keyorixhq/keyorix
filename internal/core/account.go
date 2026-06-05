@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -52,15 +53,28 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	if err := c.passwordPolicy.Validate(newPassword, user); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
+	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
+	if c.passwordReused(ctx, user, newPassword) {
+		return fmt.Errorf("%s: password must not reuse a recent password", i18n.T("ErrorValidation", nil))
+	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	now := c.now()
 	user.PasswordHash = string(hash)
-	user.UpdatedAt = c.now()
+	user.PasswordChangedAt = &now
+	user.UpdatedAt = now
 	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Record the new hash in history and prune to the configured depth.
+	// Best-effort: the password change itself has already succeeded.
+	if c.passwordPolicy.HistoryCount > 0 {
+		_ = c.storage.AddPasswordHistory(ctx, userID, string(hash), now)
+		_ = c.storage.PrunePasswordHistory(ctx, userID, c.passwordPolicy.HistoryCount)
 	}
 
 	// Drop other sessions. Best-effort: the password change itself has succeeded.
@@ -72,6 +86,46 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	}
 	_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
 	return nil
+}
+
+// passwordReused reports whether newPassword matches the user's current password
+// or any of the most recent HistoryCount stored hashes (ADR-025 history_count).
+// Returns false when the history rule is disabled.
+func (c *KeyorixCore) passwordReused(ctx context.Context, user *models.User, newPassword string) bool {
+	if c.passwordPolicy.HistoryCount <= 0 {
+		return false
+	}
+	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
+		return true
+	}
+	hashes, err := c.storage.RecentPasswordHashes(ctx, user.ID, c.passwordPolicy.HistoryCount)
+	if err != nil {
+		return false // best-effort: a history lookup failure must not block a change
+	}
+	for _, h := range hashes {
+		if bcrypt.CompareHashAndPassword([]byte(h), []byte(newPassword)) == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// PasswordExpired reports whether the user's password has exceeded the policy's
+// max age (ADR-025 max_age_days). Returns false when expiry is disabled. For
+// legacy rows with no PasswordChangedAt, the account creation time is used.
+func (c *KeyorixCore) PasswordExpired(user *models.User) bool {
+	if user == nil || c.passwordPolicy.MaxAgeDays <= 0 {
+		return false
+	}
+	set := user.PasswordChangedAt
+	if set == nil {
+		if user.CreatedAt.IsZero() {
+			return false
+		}
+		set = &user.CreatedAt
+	}
+	maxAge := time.Duration(c.passwordPolicy.MaxAgeDays) * 24 * time.Hour
+	return c.now().Sub(*set) > maxAge
 }
 
 // CurrentSessionID returns the session ID backing a session token, or 0 if the

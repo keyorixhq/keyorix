@@ -78,6 +78,13 @@ type Storage interface {
 	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
 	GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error)
 
+	// Password history (ADR-025 history_count). AddPasswordHistory records a
+	// bcrypt hash; RecentPasswordHashes returns the most recent `limit` hashes
+	// (newest first); PrunePasswordHistory keeps only the newest `keep` rows.
+	AddPasswordHistory(ctx context.Context, userID uint, hash string, at time.Time) error
+	RecentPasswordHashes(ctx context.Context, userID uint, limit int) ([]string, error)
+	PrunePasswordHistory(ctx context.Context, userID uint, keep int) error
+
 	// Group Management
 	CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
 	GetGroup(ctx context.Context, id uint) (*models.Group, error)
