@@ -766,6 +766,11 @@ func (m *MockStorage) GetDistinctActiveUserIDs(_ context.Context, _ time.Time) (
 	return nil, nil
 }
 
+func (m *MockStorage) CountImpersonatedActions(_ context.Context, actingAs, impersonator uint, since time.Time) (int64, error) {
+	args := m.Called(actingAs, impersonator, since)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 // Permission queries
 
 func (m *MockStorage) ListPermissions(_ context.Context) ([]*models.Permission, error) {

@@ -5,7 +5,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -83,7 +82,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname, sname := userCtx.UserID, response.ID, userCtx.Username, response.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretCreatedWithProject(context.Background(), uid, sID, response.ProjectID, uname, sname, ip, ua) // #nosec G118
+	go h.coreService.LogSecretCreatedWithProject(core.DetachedAuditContext(r.Context()), uid, sID, response.ProjectID, uname, sname, ip, ua) // #nosec G118
 
 	w.WriteHeader(http.StatusCreated)
 	h.sendSuccess(w, response, i18n.T("SuccessSecretCreated", nil))
@@ -134,7 +133,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, secret.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretReadWithProject(context.Background(), uid, sID, secret.ProjectID, uname, sname, ip, ua) // #nosec G118
+	go h.coreService.LogSecretReadWithProject(core.DetachedAuditContext(r.Context()), uid, sID, secret.ProjectID, uname, sname, ip, ua) // #nosec G118
 
 	h.sendSuccess(w, response, "")
 }
@@ -177,6 +176,10 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		req.Value = []byte(reqBody.Value)
 	}
 
+	// Capture pre-update metadata for the audit diff (raw fetch, no read-count
+	// side effect). Best-effort: a miss just yields an empty diff.
+	oldSecret, _ := h.coreService.Storage().GetSecret(r.Context(), uint(id))
+
 	response, err := h.coreService.UpdateSecretWithPermissionCheck(r.Context(), req)
 	if err != nil {
 		log.Printf("Error updating secret: %v", err)
@@ -192,7 +195,8 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, response.Name
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretUpdatedWithProject(context.Background(), uid, sID, response.ProjectID, uname, sname, ip, ua) // #nosec G118
+	diff := core.BuildSecretUpdateDiff(oldSecret, req, reqBody.Value != "")
+	go h.coreService.LogSecretUpdatedWithDiff(core.DetachedAuditContext(r.Context()), uid, sID, response.ProjectID, uname, sname, ip, ua, diff) // #nosec G118
 
 	h.sendSuccess(w, response, i18n.T("SuccessSecretUpdated", nil))
 }
@@ -234,7 +238,7 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 
 	uid, sID, uname := userCtx.UserID, uint(id), userCtx.Username
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretDeletedWithProject(context.Background(), uid, sID, secretProjectID, uname, secretName, ip, ua) // #nosec G118
+	go h.coreService.LogSecretDeletedWithProject(core.DetachedAuditContext(r.Context()), uid, sID, secretProjectID, uname, secretName, ip, ua) // #nosec G118
 
 	w.WriteHeader(http.StatusNoContent)
 }

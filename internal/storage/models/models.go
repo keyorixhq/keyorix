@@ -187,6 +187,13 @@ type Session struct {
 	LastSeenAt            *time.Time // throttled — updated at most once per validTokenTTL on the auth slow path
 	CreatedAt             time.Time
 	ExpiresAt             *time.Time
+
+	// Impersonation: when an admin impersonates another user, a separate session
+	// is issued for the target user with ImpersonatedBy set to the admin's ID and
+	// ImpersonationStartedAt stamped. The admin's own session is left intact so the
+	// frontend can swap back without re-authentication. nil = ordinary session.
+	ImpersonatedBy         *uint
+	ImpersonationStartedAt *time.Time
 }
 
 // PersonalAccessToken is a long-lived, user-owned bearer credential (ADR-027).
@@ -247,6 +254,22 @@ type AuditEvent struct {
 	Description  string
 	Success      *bool `gorm:"default:true"`
 	EventTime    time.Time
+
+	// Diff is a JSON object describing what changed on a mutation event (e.g.
+	// secret.updated). It records before/after for non-sensitive metadata
+	// (name, type, max_reads, expiration) and a {"changed":true} marker for the
+	// secret value — never the plaintext value itself. Empty for non-diff events.
+	Diff string `gorm:"type:text"`
+
+	// Impersonation context (audit-design block). When an action is performed
+	// inside an impersonation session, Impersonation is true, ImpersonatedBy is
+	// the real admin who initiated impersonation, and ActingAs is the user whose
+	// identity is being borrowed (== UserID for the action). All three are unset
+	// on ordinary events, so a single `impersonation` boolean is the consistent
+	// "is this impersonated?" signal across every row.
+	ImpersonatedBy *uint
+	ActingAs       *uint
+	Impersonation  bool `gorm:"default:false"`
 }
 
 type Setting struct {

@@ -142,6 +142,11 @@ type Storage interface {
 	GetAuditLogs(ctx context.Context, filter *AuditFilter) ([]*models.AuditEvent, int64, error)
 	GetRBACAuditLogs(ctx context.Context, filter *RBACAuditFilter) ([]*RBACAuditLog, int64, error)
 	GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error)
+	// CountImpersonatedActions returns the number of impersonated audit events
+	// recorded for actingAs by impersonator since `since`, excluding the
+	// impersonation.start/impersonation.end markers themselves. Used to report
+	// the action count on an impersonation.end event.
+	CountImpersonatedActions(ctx context.Context, actingAs, impersonator uint, since time.Time) (int64, error)
 
 	// Session Management
 	CreateSession(ctx context.Context, session *models.Session) (*models.Session, error)

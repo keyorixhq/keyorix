@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -30,6 +31,14 @@ type AuditLogEntry struct {
 	Actor       string    `json:"actor"`
 	Description string    `json:"description"`
 	Timestamp   time.Time `json:"timestamp"`
+	// Diff is the structured before/after payload for mutation events (parsed
+	// from the stored JSON), omitted when absent. Never contains plaintext values.
+	Diff json.RawMessage `json:"diff,omitempty"`
+	// Impersonation attribution — present on impersonated events. Actors are
+	// resolved to human-readable usernames, not opaque IDs.
+	Impersonation  bool   `json:"impersonation,omitempty"`
+	ImpersonatedBy string `json:"impersonated_by,omitempty"`
+	ActingAs       string `json:"acting_as,omitempty"`
 }
 
 // GetAuditLogs handles GET /api/v1/audit/logs
@@ -92,13 +101,26 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 			uid = *e.UserID
 		}
 		actor := actorNames[uid]
-		entries = append(entries, AuditLogEntry{
+		entry := AuditLogEntry{
 			ID:          e.ID,
 			EventType:   e.EventType,
 			Actor:       actor,
 			Description: e.Description,
 			Timestamp:   e.EventTime,
-		})
+		}
+		if e.Diff != "" {
+			entry.Diff = json.RawMessage(e.Diff)
+		}
+		if e.Impersonation {
+			entry.Impersonation = true
+			if e.ImpersonatedBy != nil {
+				entry.ImpersonatedBy = actorNames[*e.ImpersonatedBy]
+			}
+			if e.ActingAs != nil {
+				entry.ActingAs = actorNames[*e.ActingAs]
+			}
+		}
+		entries = append(entries, entry)
 	}
 
 	totalPages := int(total)/pageSize + 1

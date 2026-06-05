@@ -15,6 +15,14 @@ func (c *KeyorixCore) writeAuditEvent(ctx context.Context, eventType string, use
 
 // writeAuditEventFull persists an audit_events row with full NIS2/DORA context.
 func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) {
+	c.writeAuditEventDiff(ctx, eventType, userID, secretID, projectID, ip, description, "")
+}
+
+// writeAuditEventDiff is writeAuditEventFull plus a structured before/after diff.
+// It also stamps impersonation attribution when the context carries an
+// impersonation tag (set by the auth middleware), so every action taken inside
+// an impersonation session is consistently marked with impersonation=true.
+func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) {
 	t := true
 	event := &models.AuditEvent{
 		EventType:    eventType,
@@ -25,6 +33,13 @@ func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string,
 		Description:  description,
 		Success:      &t,
 		EventTime:    time.Now(),
+		Diff:         diff,
+	}
+	if adminID, ok := impersonatorFromContext(ctx); ok {
+		a := adminID
+		event.ImpersonatedBy = &a
+		event.ActingAs = userID
+		event.Impersonation = true
 	}
 	_ = c.storage.LogAuditEvent(ctx, event)
 }
@@ -101,6 +116,16 @@ func (c *KeyorixCore) LogSecretUpdatedWithProject(ctx context.Context, userID ui
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.updated", &uid, &sid, &pid, ip,
 		fmt.Sprintf("User %s updated secret %s", username, secretName))
+	c.writeAccessLog(ctx, secretID, username, "update", ip, ua)
+}
+
+// LogSecretUpdatedWithDiff writes a secret.updated audit event carrying a
+// structured before/after diff (see audit_diff.go — never includes plaintext
+// values) plus the secret_access_logs row.
+func (c *KeyorixCore) LogSecretUpdatedWithDiff(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua, diff string) {
+	uid, sid, pid := userID, secretID, projectID
+	c.writeAuditEventDiff(ctx, "secret.updated", &uid, &sid, &pid, ip,
+		fmt.Sprintf("User %s updated secret %s", username, secretName), diff)
 	c.writeAccessLog(ctx, secretID, username, "update", ip, ua)
 }
 
