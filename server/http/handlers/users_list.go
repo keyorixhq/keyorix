@@ -5,12 +5,14 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -71,9 +73,12 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := make([]map[string]interface{}, 0, len(users))
+	ids := make([]uint, 0, len(users))
 	for _, u := range users {
 		out = append(out, userToAPIResponse(u))
+		ids = append(ids, u.ID)
 	}
+	h.attachProjectCounts(r.Context(), out, ids)
 	totalPages := int64(0)
 	if pageSize > 0 {
 		totalPages = (total + int64(pageSize) - 1) / int64(pageSize)
@@ -118,4 +123,70 @@ func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 		results = append(results, userResult{ID: u.ID, Username: u.Username, Email: u.Email})
 	}
 	sendSuccess(w, map[string]interface{}{"users": results}, "")
+}
+
+// attachProjectCounts merges each user's project-membership tallies
+// (project_count = non-revoked total, active_project_count = active) into the
+// already-built response maps via one grouped query. Best-effort: on error the
+// counts default to zero so the fields are always present (ADR-025).
+func (h *UserHandler) attachProjectCounts(ctx context.Context, resp []map[string]interface{}, ids []uint) {
+	var counts map[uint]storage.MembershipCounts
+	if len(ids) > 0 {
+		var err error
+		counts, err = h.coreService.ProjectMembershipCounts(ctx, ids)
+		if err != nil {
+			log.Printf("Error counting project memberships: %v", err)
+		}
+	}
+	for _, m := range resp {
+		id, _ := m["id"].(uint)
+		c := counts[id]
+		m["project_count"] = c.Total
+		m["active_project_count"] = c.Active
+	}
+}
+
+// staleAccountStates are the account states it makes sense to surface as "stuck":
+// an admin provisioned the account but the user never finished (ADR-025).
+var staleAccountStates = map[string]bool{
+	core.AccountPendingFirstLogin:     true,
+	core.AccountPasswordResetRequired: true,
+}
+
+// StaleAccounts serves GET /api/v1/users/stale?state=pending_first_login&days=7 —
+// users that have sat in a restricted state longer than the window (ADR-025).
+func (h *UserHandler) StaleAccounts(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	if state == "" {
+		state = core.AccountPendingFirstLogin
+	}
+	if !staleAccountStates[state] {
+		sendError(w, "InvalidParameter", "Unsupported state (want pending_first_login or password_reset_required)", http.StatusBadRequest, nil)
+		return
+	}
+
+	days := 7
+	if d := r.URL.Query().Get("days"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil && n >= 0 {
+			days = n
+		}
+	}
+
+	users, err := h.coreService.StaleAccounts(r.Context(), state, time.Duration(days)*24*time.Hour)
+	if err != nil {
+		log.Printf("Error listing stale accounts: %v", err)
+		sendError(w, "InternalError", "Failed to list stale accounts", http.StatusInternalServerError, nil)
+		return
+	}
+
+	out := make([]map[string]interface{}, 0, len(users))
+	for _, u := range users {
+		out = append(out, userToAPIResponse(u))
+	}
+	sendSuccess(w, map[string]interface{}{"users": out, "state": state, "days": days}, "")
 }

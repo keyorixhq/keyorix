@@ -353,6 +353,14 @@ func (m *MockStorage) ListUsers(ctx context.Context, filter *storage.UserFilter)
 	return args.Get(0).([]*models.User), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *MockStorage) ListUsersInStateBefore(ctx context.Context, state string, before time.Time) ([]*models.User, error) {
+	args := m.Called(ctx, state, before)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.User), args.Error(1)
+}
+
 func (m *MockStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
 	args := m.Called(ctx, username)
 	if args.Get(0) == nil {
@@ -955,4 +963,20 @@ func (m *MockStorage) ListStaleInvitedMemberships(ctx context.Context, before ti
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.ProjectMembership), args.Error(1)
+}
+
+func (m *MockStorage) ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.ProjectMembership), args.Error(1)
+}
+
+func (m *MockStorage) CountProjectMembershipsByUsers(ctx context.Context, userIDs []uint) (map[uint]storage.MembershipCounts, error) {
+	args := m.Called(ctx, userIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]storage.MembershipCounts), args.Error(1)
 }

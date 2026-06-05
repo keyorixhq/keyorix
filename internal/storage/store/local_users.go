@@ -85,6 +85,22 @@ func (ls *LocalStorage) UpdateLastLogin(ctx context.Context, userID uint, loginA
 	return nil
 }
 
+// ListUsersInStateBefore returns users whose account_state equals state and who
+// were created before the cutoff, oldest first (ADR-025 stale-account warnings).
+// Legacy rows with an empty account_state normalise to "active" at the read
+// boundary, so they never match a restricted state like pending_first_login.
+func (ls *LocalStorage) ListUsersInStateBefore(ctx context.Context, state string, before time.Time) ([]*models.User, error) {
+	var users []*models.User
+	err := ls.db.WithContext(ctx).
+		Where("account_state = ? AND created_at < ?", state, before).
+		Order("created_at ASC").
+		Find(&users).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return users, nil
+}
+
 func (ls *LocalStorage) DeleteUser(ctx context.Context, id uint) error {
 	result := ls.db.WithContext(ctx).Delete(&models.User{}, id)
 	if result.Error != nil {

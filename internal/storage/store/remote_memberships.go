@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -34,4 +35,12 @@ func (rs *RemoteStorage) GetActiveProjectMembership(_ context.Context, _, _ uint
 
 func (rs *RemoteStorage) ListStaleInvitedMemberships(_ context.Context, _ time.Time) ([]*models.ProjectMembership, error) {
 	return nil, fmt.Errorf("ListStaleInvitedMemberships not implemented for remote storage")
+}
+
+func (rs *RemoteStorage) ListUserProjectMemberships(_ context.Context, _ uint) ([]*models.ProjectMembership, error) {
+	return nil, fmt.Errorf("ListUserProjectMemberships not implemented for remote storage")
+}
+
+func (rs *RemoteStorage) CountProjectMembershipsByUsers(_ context.Context, _ []uint) (map[uint]storage.MembershipCounts, error) {
+	return nil, fmt.Errorf("CountProjectMembershipsByUsers not implemented for remote storage")
 }

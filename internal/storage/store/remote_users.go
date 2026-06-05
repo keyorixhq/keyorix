@@ -146,6 +146,10 @@ func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilt
 	return result.Users, result.Total, nil
 }
 
+func (rs *RemoteStorage) ListUsersInStateBefore(_ context.Context, _ string, _ time.Time) ([]*models.User, error) {
+	return nil, fmt.Errorf("ListUsersInStateBefore not implemented for remote storage")
+}
+
 // buildUserFilterPath constructs the /api/v1/users query string.
 func buildUserFilterPath(filter *storage.UserFilter) string {
 	if filter == nil {

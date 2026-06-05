@@ -18,6 +18,9 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // Account states.
@@ -50,6 +53,18 @@ func AccountRestricted(state string) bool {
 // AccountLoginBlocked reports whether a state refuses login outright.
 func AccountLoginBlocked(state string) bool {
 	return NormalizeAccountState(state) == AccountSuspended
+}
+
+// StaleAccounts returns users that have sat in the given account_state longer
+// than olderThan — by default pending_first_login accounts an admin provisioned
+// but the user never completed (ADR-025 stale-account warnings; surfaced at >7
+// days). Oldest first.
+func (c *KeyorixCore) StaleAccounts(ctx context.Context, state string, olderThan time.Duration) ([]*models.User, error) {
+	if state == "" {
+		state = AccountPendingFirstLogin
+	}
+	before := c.now().Add(-olderThan)
+	return c.storage.ListUsersInStateBefore(ctx, state, before)
 }
 
 // SuspendUser blocks a user's login. Admin action; audited. The bootstrap/admin

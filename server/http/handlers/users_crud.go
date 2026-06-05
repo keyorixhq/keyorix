@@ -157,7 +157,9 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InternalError", "Failed to get user", http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, userToAPIResponse(u), "")
+	resp := userToAPIResponse(u)
+	h.attachProjectCounts(r.Context(), []map[string]interface{}{resp}, []uint{u.ID})
+	sendSuccess(w, resp, "")
 }
 
 // UpdateUser handles PUT /api/v1/users/{id}

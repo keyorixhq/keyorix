@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -68,4 +69,45 @@ func (ls *LocalStorage) ListStaleInvitedMemberships(ctx context.Context, before 
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil
+}
+
+func (ls *LocalStorage) ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error) {
+	var rows []*models.ProjectMembership
+	err := ls.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("invited_at DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
+}
+
+func (ls *LocalStorage) CountProjectMembershipsByUsers(ctx context.Context, userIDs []uint) (map[uint]storage.MembershipCounts, error) {
+	counts := make(map[uint]storage.MembershipCounts, len(userIDs))
+	if len(userIDs) == 0 {
+		return counts, nil
+	}
+	// One grouped query: per user, active = state 'active', total = non-revoked.
+	// CASE/SUM keeps this valid on both SQLite (store tests) and Postgres.
+	var rows []struct {
+		UserID uint
+		Active int
+		Total  int
+	}
+	err := ls.db.WithContext(ctx).
+		Model(&models.ProjectMembership{}).
+		Select("user_id, "+
+			"SUM(CASE WHEN state = 'active' THEN 1 ELSE 0 END) AS active, "+
+			"SUM(CASE WHEN state <> 'revoked' THEN 1 ELSE 0 END) AS total").
+		Where("user_id IN ?", userIDs).
+		Group("user_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range rows {
+		counts[r.UserID] = storage.MembershipCounts{Active: r.Active, Total: r.Total}
+	}
+	return counts, nil
 }
