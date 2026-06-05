@@ -69,6 +69,57 @@ func (h *UsersRolesHandler) GetUserRolesForUser(w http.ResponseWriter, r *http.R
 	sendSuccess(w, map[string]interface{}{"roles": apiRoles}, "")
 }
 
+// apiUserMembership is one row of a user's project-assignments view (ADR-025).
+type apiUserMembership struct {
+	ProjectID   uint   `json:"project_id"`
+	ProjectName string `json:"project_name"`
+	Role        string `json:"role"`
+	State       string `json:"state"`
+}
+
+// GetUserMembershipsForUser handles GET /api/v1/users/{id}/memberships (ADR-025) —
+// the user's project memberships with project name, role, and lifecycle state,
+// powering the per-user assignments table on the detail page.
+func (h *UsersRolesHandler) GetUserMembershipsForUser(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	userID, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	memberships, err := h.coreService.ListUserProjectMemberships(r.Context(), userID)
+	if err != nil {
+		log.Printf("Error getting memberships for user %d: %v", userID, err)
+		sendError(w, "InternalError", "Failed to get user memberships", http.StatusInternalServerError, nil)
+		return
+	}
+
+	// Resolve project names once for the rows.
+	nameByID := map[uint]string{}
+	if projects, perr := h.coreService.ListProjects(r.Context()); perr == nil {
+		for _, p := range projects {
+			nameByID[p.ID] = p.Name
+		}
+	} else {
+		log.Printf("Error listing projects for membership names: %v", perr)
+	}
+
+	out := make([]apiUserMembership, 0, len(memberships))
+	for _, m := range memberships {
+		out = append(out, apiUserMembership{
+			ProjectID:   m.ProjectID,
+			ProjectName: nameByID[m.ProjectID],
+			Role:        m.Role,
+			State:       m.State,
+		})
+	}
+	sendSuccess(w, map[string]interface{}{"memberships": out}, "")
+}
+
 // UpdateUserRoles handles PUT /api/v1/users/{id}/roles — full role replacement.
 func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {

@@ -56,6 +56,12 @@ type Storage interface {
 	// ListStaleInvitedMemberships returns memberships still in `invited` state
 	// that were invited before the cutoff.
 	ListStaleInvitedMemberships(ctx context.Context, before time.Time) ([]*models.ProjectMembership, error)
+	// ListUserProjectMemberships returns all membership rows for a single user,
+	// newest first (powers the per-user assignments view).
+	ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error)
+	// CountProjectMembershipsByUsers returns per-user membership tallies (active
+	// and non-revoked total) for the given user IDs in one grouped query.
+	CountProjectMembershipsByUsers(ctx context.Context, userIDs []uint) (map[uint]MembershipCounts, error)
 
 	// Secret Management
 	CreateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
@@ -92,6 +98,9 @@ type Storage interface {
 	DeleteUser(ctx context.Context, id uint) error
 	RestoreUser(ctx context.Context, id uint) error
 	ListUsers(ctx context.Context, filter *UserFilter) ([]*models.User, int64, error)
+	// ListUsersInStateBefore returns users whose account_state equals state and
+	// who were created before the cutoff (ADR-025 stale-account warnings).
+	ListUsersInStateBefore(ctx context.Context, state string, before time.Time) ([]*models.User, error)
 	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
 	GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error)
 
@@ -262,6 +271,13 @@ type UserFilter struct {
 	IncludeDeleted bool // when true, also return soft-deleted users
 	Page           int
 	PageSize       int
+}
+
+// MembershipCounts holds a user's project-membership tallies: Active counts
+// memberships in the `active` state; Total counts all non-revoked memberships.
+type MembershipCounts struct {
+	Active int
+	Total  int
 }
 
 // AuditFilter defines filtering options for audit log queries

@@ -222,6 +222,15 @@ func ListUsers(w http.ResponseWriter, r *http.Request) {
 	defaultUserHandler.ListUsers(w, r)
 }
 
+// StaleAccounts handles GET /api/v1/users/stale (ADR-025).
+func StaleAccounts(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.StaleAccounts(w, r)
+}
+
 // CreateUser handles POST /api/v1/users
 func CreateUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {

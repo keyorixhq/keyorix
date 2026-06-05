@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -224,6 +225,18 @@ func (c *KeyorixCore) ListProjectMemberships(ctx context.Context, projectID uint
 func (c *KeyorixCore) StaleInvites(ctx context.Context, olderThan time.Duration) ([]*models.ProjectMembership, error) {
 	before := c.now().Add(-olderThan)
 	return c.storage.ListStaleInvitedMemberships(ctx, before)
+}
+
+// ListUserProjectMemberships returns all membership rows for a single user
+// (ADR-025 per-user assignments view).
+func (c *KeyorixCore) ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error) {
+	return c.storage.ListUserProjectMemberships(ctx, userID)
+}
+
+// ProjectMembershipCounts returns per-user project-membership tallies (active and
+// non-revoked total) for the given user IDs in one query (ADR-025 user list).
+func (c *KeyorixCore) ProjectMembershipCounts(ctx context.Context, userIDs []uint) (map[uint]storage.MembershipCounts, error) {
+	return c.storage.CountProjectMembershipsByUsers(ctx, userIDs)
 }
 
 // logMembershipEvent writes an audit event for a membership transition.

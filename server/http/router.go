@@ -244,6 +244,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/", handlers.ListUsers)
 			r.Post("/", handlers.CreateUser)
 			r.Get("/search", handlers.SearchUsers)
+			// Stale-account warnings (ADR-025): static path before /{id}.
+			r.Get("/stale", handlers.StaleAccounts)
 			r.Get("/{id}", handlers.GetUser)
 			r.Put("/{id}", handlers.UpdateUser)
 			r.Delete("/{id}", handlers.DeleteUser)
@@ -256,6 +258,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/resend-setup-link", handlers.ResendSetupLink)
 			r.Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
 			r.Put("/{id}/roles", usersRolesHandler.UpdateUserRoles)
+			// Per-user project assignments for the detail page (ADR-025).
+			r.Get("/{id}/memberships", usersRolesHandler.GetUserMembershipsForUser)
 		})
 
 		// Admin impersonation — gated by users.impersonate, which only global
