@@ -1,0 +1,253 @@
+import React, { useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { ROUTES } from '../../constants';
+import {
+    useUserDetail,
+    useUserMemberships,
+    useUserRoles,
+    useSuspendUser,
+    useReactivateUser,
+    useRequirePasswordReset,
+    useResendSetupLink,
+    AccountStateBadge,
+} from '../../features/admin';
+import { useAuth } from '../../features/auth';
+import { Button } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
+import { Alert } from '../../components/ui/Alert';
+import { Loading } from '../../components/ui/Loading';
+import type { AdminUser, SetupLinkResult } from '../../services/users';
+
+function formatDate(iso?: string | null): string {
+    if (!iso) return '—';
+    try {
+        return new Date(iso).toLocaleString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        });
+    } catch {
+        return iso;
+    }
+}
+
+type PendingAction = null | 'suspend' | 'reactivate' | 'reset';
+
+const ACTION_COPY: Record<Exclude<PendingAction, null>, { title: string; body: string; confirm: string; danger?: boolean }> = {
+    suspend: { title: 'Suspend user', body: 'Block this user from logging in. This is reversible — you can reactivate them later.', confirm: 'Suspend', danger: true },
+    reactivate: { title: 'Reactivate user', body: 'Return this user to the active state and restore their login.', confirm: 'Reactivate' },
+    reset: { title: 'Force password reset', body: 'Confine this user to a restricted session until they set a new password at next login.', confirm: 'Force reset', danger: true },
+};
+
+export const UserDetailPage: React.FC = () => {
+    const { id } = useParams<{ id: string }>();
+    const userId = id ? Number(id) : null;
+    const navigate = useNavigate();
+    const { user: currentUser } = useAuth();
+
+    const { data: detail, isLoading, isError } = useUserDetail(userId);
+    const { data: roles = [] } = useUserRoles(userId);
+    const { data: memberships = [] } = useUserMemberships(userId);
+
+    const suspend = useSuspendUser();
+    const reactivate = useReactivateUser();
+    const requireReset = useRequirePasswordReset();
+    const resend = useResendSetupLink();
+
+    const [pending, setPending] = useState<PendingAction>(null);
+    const [note, setNote] = useState('');
+    const [error, setError] = useState('');
+    const [resentLink, setResentLink] = useState<SetupLinkResult | null>(null);
+    const [linkCopied, setLinkCopied] = useState(false);
+
+    if (isLoading) return <Loading className="py-20" />;
+    if (isError || !detail) {
+        return (
+            <div className="max-w-3xl mx-auto px-4 py-8">
+                <Alert type="error" title="Failed to load user" message="The user could not be found or you lack access." />
+            </div>
+        );
+    }
+
+    const user = detail as unknown as AdminUser;
+    const isSelf = currentUser?.id === user.id;
+    const state = user.account_state || 'active';
+    const surface = (err: any, fallback: string) => setError(err?.response?.data?.error ?? err?.message ?? fallback);
+
+    const runAction = () => {
+        if (!pending || userId === null) return;
+        setError('');
+        const opts = {
+            onSuccess: () => { setPending(null); setNote(`${ACTION_COPY[pending].confirm} applied.`); },
+            onError: (err: any) => { setPending(null); surface(err, 'Action failed.'); },
+        };
+        if (pending === 'suspend') suspend.mutate(userId, opts);
+        else if (pending === 'reactivate') reactivate.mutate(userId, opts);
+        else requireReset.mutate(userId, opts);
+    };
+
+    const handleResend = () => {
+        if (userId === null) return;
+        setError(''); setNote(''); setResentLink(null); setLinkCopied(false);
+        resend.mutate(userId, {
+            onSuccess: (outcome) => {
+                if (outcome?.link_for_admin) setResentLink(outcome);
+                else setNote(`Setup link re-sent to ${user.email}.`);
+            },
+            onError: (err: any) => surface(err, 'Failed to resend setup link.'),
+        });
+    };
+
+    const copyLink = async () => {
+        if (!resentLink?.link_for_admin) return;
+        try {
+            await navigator.clipboard.writeText(resentLink.link_for_admin);
+            setLinkCopied(true);
+            window.setTimeout(() => setLinkCopied(false), 2000);
+        } catch {
+            /* link is visible for manual selection */
+        }
+    };
+
+    const Stat: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+        <div>
+            <p className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{label}</p>
+            <div className="text-sm mt-0.5" style={{ color: 'var(--text-primary)' }}>{value}</div>
+        </div>
+    );
+
+    return (
+        <div className="max-w-4xl mx-auto px-4 py-8">
+            <button
+                type="button"
+                onClick={() => navigate(ROUTES.ADMIN_USERS)}
+                className="inline-flex items-center gap-1.5 text-sm mb-4 hover:opacity-75"
+                style={{ color: 'var(--text-muted)' }}
+            >
+                <ArrowLeftIcon className="h-4 w-4" /> Back to users
+            </button>
+
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 mb-6">
+                <div className="flex items-center gap-3 min-w-0">
+                    <div className="shrink-0 h-12 w-12 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--accent-subtle)' }}>
+                        <span className="text-lg font-semibold" style={{ color: 'var(--accent-text)' }}>
+                            {(user.display_name || user.username).charAt(0).toUpperCase()}
+                        </span>
+                    </div>
+                    <div className="min-w-0">
+                        <h1 className="text-xl font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {user.display_name || user.username}
+                        </h1>
+                        <p className="text-sm truncate" style={{ color: 'var(--text-muted)' }}>@{user.username} · {user.email}</p>
+                    </div>
+                </div>
+                <AccountStateBadge state={state} deleted={!!user.deleted_at} />
+            </div>
+
+            {error && <Alert type="error" message={error} dismissible onDismiss={() => setError('')} className="mb-4" />}
+            {note && <Alert type="success" message={note} dismissible onDismiss={() => setNote('')} className="mb-4" />}
+
+            {/* Stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 p-4 rounded-lg border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                <Stat label="Last login" value={user.last_login_at ? formatDate(user.last_login_at) : <span style={{ color: 'var(--text-muted)' }} className="italic">Never</span>} />
+                <Stat label="Created" value={formatDate(user.created_at)} />
+                <Stat label="Active projects" value={user.active_project_count ?? 0} />
+                <Stat label="Total projects" value={user.project_count ?? 0} />
+            </div>
+
+            {/* Action hub */}
+            {!user.deleted_at && !isSelf && (
+                <div className="mb-6">
+                    <h2 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Account actions</h2>
+                    <div className="flex flex-wrap gap-2">
+                        {state === 'suspended' ? (
+                            <Button variant="outline" size="sm" onClick={() => setPending('reactivate')}>Reactivate</Button>
+                        ) : (
+                            <Button variant="outline" size="sm" onClick={() => setPending('suspend')}>Suspend</Button>
+                        )}
+                        {state === 'active' && (
+                            <Button variant="outline" size="sm" onClick={() => setPending('reset')}>Force password reset</Button>
+                        )}
+                        {state === 'pending_first_login' && (
+                            <Button variant="outline" size="sm" onClick={handleResend} disabled={resend.isPending}>
+                                {resend.isPending ? 'Resending…' : 'Resend setup link'}
+                            </Button>
+                        )}
+                    </div>
+                    {isSelf && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>You cannot run lifecycle actions on your own account.</p>}
+                </div>
+            )}
+            {isSelf && (
+                <p className="text-xs mb-6" style={{ color: 'var(--text-muted)' }}>Lifecycle actions are unavailable on your own account.</p>
+            )}
+
+            {/* Resent out-of-band link */}
+            {resentLink?.link_for_admin && (
+                <div className="mb-6 p-3 rounded-lg border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <p className="text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>Relay this single-use setup link to the user securely:</p>
+                    <div className="flex items-stretch gap-2">
+                        <code className="flex-1 min-w-0 px-3 py-2 text-xs font-mono break-all rounded-lg border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-app)', color: 'var(--text-secondary)' }}>
+                            {resentLink.link_for_admin}
+                        </code>
+                        <Button variant="outline" onClick={copyLink} className="shrink-0">{linkCopied ? 'Copied' : 'Copy'}</Button>
+                    </div>
+                </div>
+            )}
+
+            {/* Assignments */}
+            <h2 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Roles</h2>
+            <div className="flex flex-wrap gap-1.5 mb-6">
+                {roles.length === 0 ? (
+                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>No roles assigned.</span>
+                ) : (
+                    roles.map((r) => (
+                        <span key={r.id} className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}>
+                            {r.name}
+                        </span>
+                    ))
+                )}
+            </div>
+
+            <h2 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Project assignments</h2>
+            <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
+                {memberships.length === 0 ? (
+                    <p className="p-4 text-sm" style={{ color: 'var(--text-muted)' }}>Not a member of any project.</p>
+                ) : (
+                    <table className="min-w-full text-sm">
+                        <thead>
+                            <tr style={{ backgroundColor: 'var(--bg-surface)' }}>
+                                <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Project</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Role</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Membership</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {memberships.map((m) => (
+                                <tr key={`${m.project_id}-${m.role}`} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                                    <td className="px-4 py-2" style={{ color: 'var(--text-primary)' }}>{m.project_name || `#${m.project_id}`}</td>
+                                    <td className="px-4 py-2" style={{ color: 'var(--text-secondary)' }}>{m.role || '—'}</td>
+                                    <td className="px-4 py-2 capitalize" style={{ color: 'var(--text-secondary)' }}>{m.state}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
+            </div>
+
+            {/* Confirm modal for consequential transitions */}
+            <Modal isOpen={pending !== null} onClose={() => setPending(null)} title={pending ? ACTION_COPY[pending].title : ''} size="sm">
+                {pending && (
+                    <div className="space-y-4">
+                        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{ACTION_COPY[pending].body}</p>
+                        <div className="flex justify-end gap-3 pt-2">
+                            <Button variant="ghost" onClick={() => setPending(null)}>Cancel</Button>
+                            <Button variant={ACTION_COPY[pending].danger ? 'danger' : 'primary'} onClick={runAction}>
+                                {ACTION_COPY[pending].confirm}
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+        </div>
+    );
+};

@@ -8,7 +8,7 @@ import { SessionTimeoutWarning } from './components/ui';
 import { LoginPage, SetupPage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';
 import { AuditLogPage } from './pages/audit/AuditLogPage';
-import { AdminPage, RolesPoliciesPage, GroupsPage, ServiceAccountsPage, APITokensPage } from './pages/admin';
+import { AdminPage, UserDetailPage, RolesPoliciesPage, GroupsPage, ServiceAccountsPage, APITokensPage } from './pages/admin';
 import { AppearancePage } from './pages/settings/AppearancePage';
 import { CompliancePage } from './pages/compliance/CompliancePage';
 import { KeyorixConnectPage } from './pages/integrations/KeyorixConnectPage';
@@ -69,6 +69,7 @@ function App() {
                   <Route path={ROUTES.PROFILE} element={<ProfilePage />} />
                   {/* Access Control (admin-only) */}
                   <Route path={ROUTES.ADMIN_USERS} element={<AdminRoute><AdminPage /></AdminRoute>} />
+                  <Route path="/admin/users/:id" element={<AdminRoute><UserDetailPage /></AdminRoute>} />
                   <Route path={ROUTES.ADMIN} element={<AdminRoute><AdminPage /></AdminRoute>} />
                   <Route path="/admin/roles" element={<AdminRoute><RolesPoliciesPage /></AdminRoute>} />
                   <Route path="/admin/groups" element={<AdminRoute><GroupsPage /></AdminRoute>} />

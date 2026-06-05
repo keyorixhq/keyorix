@@ -107,3 +107,43 @@ describe('usersApi.create', () => {
         expect(res.setup_link?.link_for_admin).toBeUndefined();
     });
 });
+
+describe('usersApi ADR-025 lifecycle + views', () => {
+    it('posts the lifecycle transitions', async () => {
+        mocked.post.mockResolvedValue({ data: {} });
+        await usersApi.suspend(7);
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/suspend');
+        await usersApi.reactivate(7);
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/reactivate');
+        await usersApi.requirePasswordReset(7);
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/require-password-reset');
+    });
+
+    it('resendSetupLink unwraps the delivery outcome', async () => {
+        mocked.post.mockResolvedValue({
+            data: { data: { email: 'e@x.io', channel: 'out_of_band', delivered: false, link_for_admin: 'https://app/setup/abc' } },
+        });
+        const res = await usersApi.resendSetupLink(7);
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users/7/resend-setup-link');
+        expect(res.link_for_admin).toBe('https://app/setup/abc');
+    });
+
+    it('getMemberships normalizes snake/Pascal keys', async () => {
+        mocked.get.mockResolvedValue({
+            data: { data: { memberships: [{ project_id: 3, project_name: 'payments', role: 'project_developer', state: 'active' }] } },
+        });
+        const rows = await usersApi.getMemberships(42);
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/users/42/memberships');
+        expect(rows).toEqual([{ project_id: 3, project_name: 'payments', role: 'project_developer', state: 'active' }]);
+    });
+
+    it('getStale passes params and unwraps users', async () => {
+        mocked.get.mockResolvedValue({
+            data: { data: { users: [{ id: 9, username: 'stale', email: 's@x.io', account_state: 'pending_first_login' }] } },
+        });
+        const rows = await usersApi.getStale({ state: 'pending_first_login', days: 7 });
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/users/stale', { params: { state: 'pending_first_login', days: 7 } });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].username).toBe('stale');
+    });
+});

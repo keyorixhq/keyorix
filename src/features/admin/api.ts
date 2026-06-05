@@ -120,6 +120,60 @@ export const useAdminRestoreUser = () => {
     });
 };
 
+// ── ADR-025 account lifecycle + assignments + stale accounts ───────────────
+
+// invalidateUserViews refreshes the list, any open detail view, and the stale
+// list after a lifecycle transition.
+const useUserLifecycleMutation = (fn: (id: number) => Promise<unknown>) => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (id: number) => fn(id),
+        onSuccess: (_data, id) => {
+            queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+            queryClient.invalidateQueries({ queryKey: ['user-detail', id] });
+            queryClient.invalidateQueries({ queryKey: ['stale-accounts'] });
+        },
+    });
+};
+
+export const useSuspendUser = () => useUserLifecycleMutation(usersApi.suspend);
+export const useReactivateUser = () => useUserLifecycleMutation(usersApi.reactivate);
+export const useRequirePasswordReset = () => useUserLifecycleMutation(usersApi.requirePasswordReset);
+
+// Resend returns the delivery outcome (link for out-of-band relay), so it is a
+// plain mutation the caller reads from rather than a void lifecycle one.
+export const useResendSetupLink = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (id: number) => usersApi.resendSetupLink(id),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['stale-accounts'] }),
+    });
+};
+
+export const useUserDetail = (userId: number | null) =>
+    useQuery({
+        queryKey: ['user-detail', userId],
+        queryFn: () => usersApi.get(userId!),
+        enabled: userId !== null,
+    });
+
+export const useUserMemberships = (userId: number | null) =>
+    useQuery({
+        queryKey: ['user-memberships', userId],
+        queryFn: () => usersApi.getMemberships(userId!),
+        enabled: userId !== null,
+    });
+
+// Stale-account warnings (ADR-025). admin-only; a 403 renders nothing, so retry
+// is disabled to avoid hammering for non-admins.
+export const useStaleAccounts = (days = 7) =>
+    useQuery({
+        queryKey: ['stale-accounts', days],
+        queryFn: () => usersApi.getStale({ state: 'pending_first_login', days }),
+        retry: false,
+        staleTime: 60 * 1000,
+    });
+
 export const useUserRoles = (userId: number | null) => {
     return useQuery({
         queryKey: ['user-roles', userId],

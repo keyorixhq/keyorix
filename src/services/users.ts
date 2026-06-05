@@ -21,6 +21,38 @@ export interface CreateUserResult {
     [key: string]: any;
 }
 
+// AccountState mirrors the ADR-025 lifecycle states on the user DTO.
+export type AccountState =
+    | 'active'
+    | 'pending_first_login'
+    | 'password_reset_required'
+    | 'suspended';
+
+// AdminUser is the admin-facing user row (snake_case from the Go DTO), including
+// the ADR-025 account state and the per-user project tallies the backend now merges.
+export interface AdminUser {
+    id: number;
+    username: string;
+    email: string;
+    display_name: string;
+    active: boolean;
+    account_state: AccountState;
+    created_at: string;
+    updated_at: string;
+    last_login_at: string | null;
+    deleted_at: string | null;
+    project_count?: number;
+    active_project_count?: number;
+}
+
+// UserMembership is one row of a user's project-assignments view (ADR-025).
+export interface UserMembership {
+    project_id: number;
+    project_name: string;
+    role: string;
+    state: string;
+}
+
 export const usersApi = {
     async list(params?: {
         page?: number;
@@ -74,5 +106,44 @@ export const usersApi = {
 
     async restore(id: number): Promise<void> {
         await apiClient.post(`/api/v1/users/${id}/restore`);
+    },
+
+    // ── ADR-025 account lifecycle (admin actions, gated by users.write) ──────
+
+    async suspend(id: number): Promise<void> {
+        await apiClient.post(`/api/v1/users/${id}/suspend`);
+    },
+
+    async reactivate(id: number): Promise<void> {
+        await apiClient.post(`/api/v1/users/${id}/reactivate`);
+    },
+
+    async requirePasswordReset(id: number): Promise<void> {
+        await apiClient.post(`/api/v1/users/${id}/require-password-reset`);
+    },
+
+    // Reissue + re-deliver a setup link (ADR-028). Returns the delivery outcome,
+    // including the link itself for out-of-band relay.
+    async resendSetupLink(id: number): Promise<SetupLinkResult> {
+        const response = await apiClient.post(`/api/v1/users/${id}/resend-setup-link`);
+        return response.data?.data ?? response.data;
+    },
+
+    // Per-user project assignments for the detail page (ADR-025).
+    async getMemberships(id: number): Promise<UserMembership[]> {
+        const response = await apiClient.get(`/api/v1/users/${id}/memberships`);
+        const rows = response.data.data?.memberships ?? response.data.memberships ?? [];
+        return rows.map((m: any) => ({
+            project_id: m.project_id ?? m.ProjectID ?? 0,
+            project_name: m.project_name ?? m.ProjectName ?? '',
+            role: m.role ?? m.Role ?? '',
+            state: m.state ?? m.State ?? '',
+        }));
+    },
+
+    // Accounts stuck in a restricted state past the window (ADR-025).
+    async getStale(params?: { state?: string; days?: number }): Promise<AdminUser[]> {
+        const response = await apiClient.get('/api/v1/users/stale', { params });
+        return response.data.data?.users ?? response.data.users ?? [];
     },
 };

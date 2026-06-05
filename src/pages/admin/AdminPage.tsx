@@ -29,6 +29,7 @@ import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
 import type { SetupLinkResult } from '../../services/users';
+import { AccountStateBadge, StaleAccountsSection } from '../../features/admin';
 
 interface APIUser {
     id: number;
@@ -36,10 +37,13 @@ interface APIUser {
     email: string;
     display_name: string;
     active: boolean;
+    account_state?: string;
     created_at: string;
     updated_at: string;
     last_login_at: string | null;
     deleted_at: string | null;
+    project_count?: number;
+    active_project_count?: number;
 }
 
 type ActiveModal =
@@ -331,6 +335,8 @@ export const AdminPage: React.FC = () => {
                     <Alert type="error" title={pageError} dismissible onDismiss={() => setPageError('')} className="mb-4" />
                 )}
 
+                <StaleAccountsSection />
+
                 {filterInactive && (
                     <div className="flex items-center justify-between px-4 py-2.5 mb-4 rounded-lg border"
                         style={{ backgroundColor: isDark ? 'rgba(217,119,6,0.12)' : '#fffbeb', borderColor: isDark ? 'rgba(217,119,6,0.35)' : '#fcd34d', color: isDark ? '#fbbf24' : '#92400e' }}>
@@ -396,6 +402,7 @@ export const AdminPage: React.FC = () => {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">User</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Email</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Status</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Projects</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Last Login</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted uppercase tracking-wider">Created</th>
                                     <th className="px-6 py-3 text-right text-xs font-medium text-base-muted uppercase tracking-wider">Actions</th>
@@ -417,28 +424,27 @@ export const AdminPage: React.FC = () => {
                                                     </span>
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium text-base-primary">{user.display_name || user.username}</p>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => navigate(ROUTES.ADMIN_USER_DETAIL(user.id))}
+                                                        className="text-sm font-medium text-base-primary hover:text-accent-text hover:underline text-left"
+                                                    >
+                                                        {user.display_name || user.username}
+                                                    </button>
                                                     <p className="text-xs text-base-muted">@{user.username}</p>
                                                 </div>
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">{user.email}</td>
                                         <td className="px-6 py-4 whitespace-nowrap">
-                                            {user.deleted_at ? (
-                                                <span
-                                                    className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-                                                    style={{ backgroundColor: isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2', color: isDark ? '#f87171' : '#991b1b' }}
-                                                >
-                                                    Deleted
-                                                </span>
+                                            <AccountStateBadge state={user.account_state} deleted={!!user.deleted_at} />
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-base-secondary">
+                                            {user.project_count === undefined ? (
+                                                <span className="text-base-muted">—</span>
                                             ) : (
-                                                <span
-                                                    className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-                                                    style={user.active
-                                                        ? { backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7', color: isDark ? '#34d399' : '#166534' }
-                                                        : { backgroundColor: isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9', color: isDark ? '#94a3b8' : '#475569' }}
-                                                >
-                                                    {user.active ? 'Active' : 'Inactive'}
+                                                <span title={`${user.active_project_count ?? 0} active of ${user.project_count} total`}>
+                                                    {user.active_project_count ?? 0} active · {user.project_count} total
                                                 </span>
                                             )}
                                         </td>

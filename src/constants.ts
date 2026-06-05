@@ -82,6 +82,7 @@ export const ROUTES = {
     AUDIT: '/audit',
     ADMIN: '/admin',
     ADMIN_USERS: '/admin/users',
+    ADMIN_USER_DETAIL: (id: number | string) => `/admin/users/${id}`,
     ADMIN_ROLES: '/admin/roles',
     ADMIN_SETTINGS: '/admin/settings',
     COMPLIANCE: '/compliance',
