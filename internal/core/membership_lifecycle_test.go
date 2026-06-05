@@ -42,20 +42,12 @@ func TestCanTransition(t *testing.T) {
 	}
 }
 
-func TestInitialMembershipState(t *testing.T) {
-	c := &KeyorixCore{}
-	c.membershipValidationMode = ValidationModeOpen
-	assert.Equal(t, MembershipActive, c.initialMembershipState(false))
-
-	c.membershipValidationMode = ValidationModeAllowlist
-	assert.Equal(t, MembershipInvited, c.initialMembershipState(true))
-
-	c.membershipValidationMode = ValidationModeIDP
-	assert.Equal(t, MembershipProvisioned, c.initialMembershipState(true), "idp-resolved skips early states")
-	assert.Equal(t, MembershipInvited, c.initialMembershipState(false), "non-idp starts invited")
-
-	c.membershipValidationMode = "" // default
-	assert.Equal(t, MembershipInvited, c.initialMembershipState(false))
+func TestInitialMembershipStateForMode(t *testing.T) {
+	assert.Equal(t, MembershipActive, initialMembershipStateForMode(ValidationModeOpen, false))
+	assert.Equal(t, MembershipInvited, initialMembershipStateForMode(ValidationModeAllowlist, true))
+	assert.Equal(t, MembershipProvisioned, initialMembershipStateForMode(ValidationModeIDP, true), "idp-resolved skips early states")
+	assert.Equal(t, MembershipInvited, initialMembershipStateForMode(ValidationModeIDP, false), "non-idp starts invited")
+	assert.Equal(t, MembershipInvited, initialMembershipStateForMode("", false), "empty/unknown falls back to allowlist")
 }
 
 func TestInviteMember_AllowlistStartsInvited(t *testing.T) {

@@ -56,11 +56,19 @@ func runSend(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	inv, err := service.InviteToProject(ctx, projectID, sendEmail, sendRole, invitedBy)
+	inv, prov, err := service.InviteToProjectWithLink(ctx, projectID, sendEmail, sendRole, invitedBy)
 	if err != nil {
-		return fmt.Errorf("failed to send invitation: %w", err)
+		if inv == nil {
+			return fmt.Errorf("failed to send invitation: %w", err)
+		}
+		// The invitation exists but the link could not be delivered (e.g. base_url
+		// unset). Report it so the operator can fix config and `invite resend`.
+		fmt.Printf("Invitation created: id=%d email=%s role=%s project=%s expires=%s\n",
+			inv.ID, inv.Email, inv.Role, projectName, fmtTime(inv.ExpiresAt))
+		return fmt.Errorf("but the setup link could not be delivered: %w", err)
 	}
 	fmt.Printf("Invitation sent: id=%d email=%s role=%s project=%s expires=%s\n",
 		inv.ID, inv.Email, inv.Role, projectName, fmtTime(inv.ExpiresAt))
+	printProvisionResult(prov)
 	return nil
 }

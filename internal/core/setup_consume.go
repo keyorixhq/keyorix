@@ -4,16 +4,16 @@
 // setup link: a GET that describes the token (no secrets) so the page can render the
 // right form, and the consume that sets the password and lands the user logged in.
 //
-// Only the password-setting purposes (account_setup, password_reset_link) are
-// completed here — both act on an existing account. The invitation_accept purpose,
-// which must also materialize project membership, is completed by the invitation
-// producer (ADR-024) and is rejected here.
+// The password-setting purposes (account_setup, password_reset_link) act on an
+// existing account; invitation_accept lazily creates the invited account and
+// materializes its project membership (ADR-024). Each is dispatched by purpose.
 package core
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -75,14 +75,20 @@ func (c *KeyorixCore) CompleteSetup(ctx context.Context, raw, newPassword, userA
 	}
 	switch tok.Purpose {
 	case SetupPurposeAccountSetup, SetupPurposePasswordResetLink:
-		// handled below
+		return c.completePasswordSetup(ctx, raw, tok, newPassword, userAgent, ip)
+	case SetupPurposeInvitationAccept:
+		return c.completeInvitationAccept(ctx, raw, tok, newPassword, userAgent, ip)
 	default:
 		return nil, fmt.Errorf("%s: setup token purpose %q is not completed at this endpoint", i18n.T("ErrorValidation", nil), tok.Purpose)
 	}
+}
+
+// completePasswordSetup handles account_setup / password_reset_link: set the existing
+// subject's password and auto-log them in.
+func (c *KeyorixCore) completePasswordSetup(ctx context.Context, raw string, tok *models.SetupToken, newPassword, userAgent, ip string) (*SetupConsumeResult, error) {
 	if tok.SubjectUserID == nil {
 		return nil, fmt.Errorf("%s: setup token has no subject account", i18n.T("ErrorValidation", nil))
 	}
-
 	user, err := c.storage.GetUser(ctx, *tok.SubjectUserID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
@@ -115,4 +121,145 @@ func (c *KeyorixCore) CompleteSetup(ctx context.Context, raw, newPassword, userA
 		fmt.Sprintf("account setup completed via %s", tok.Purpose))
 
 	return &SetupConsumeResult{Session: session, User: user}, nil
+}
+
+// completeInvitationAccept handles invitation_accept: lazily create the invited
+// account (ADR-024/ADR-028), accept the invitation, create a project membership
+// honouring the validation mode snapshotted at invite time (which grants the role
+// when the mode lands it active), and auto-log the user in.
+func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, raw string, tok *models.SetupToken, newPassword, userAgent, ip string) (*SetupConsumeResult, error) {
+	if tok.InvitationID == nil {
+		return nil, fmt.Errorf("%s: invitation token has no invitation", i18n.T("ErrorValidation", nil))
+	}
+	inv, err := c.storage.GetProjectInvitation(ctx, *tok.InvitationID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: invitation not found", i18n.T("ErrorNotFound", nil))
+	}
+	// Lazy-expire an overdue invite, then require it still be pending.
+	if inv.State == InvitationPending && inv.ExpiresAt != nil && c.now().After(*inv.ExpiresAt) {
+		inv.State = InvitationExpired
+		_ = c.storage.UpdateProjectInvitation(ctx, inv)
+	}
+	if inv.State != InvitationPending {
+		return nil, fmt.Errorf("%s: invitation is %s", i18n.T("ErrorValidation", nil), inv.State)
+	}
+
+	// SECURITY: if an account already exists for this email, the invite link must NOT
+	// log them in — that would bypass their real password. Reject and route them to
+	// the normal add-member flow. Fail CLOSED: a lookup error that is NOT a clean
+	// "not found" must abort rather than be read as "no account" (which would let a
+	// transient store error slip the guard and mint a duplicate identity). Email
+	// matching is case-insensitive (see GetUserByEmail) so "Bob@x" cannot evade a
+	// "bob@x" invite. The message is deliberately generic (the HTTP layer keeps this
+	// endpoint from being an account-existence oracle).
+	existing, eerr := c.storage.GetUserByEmail(ctx, inv.Email)
+	if eerr == nil && existing != nil {
+		return nil, fmt.Errorf("%s: an account already exists for this email; ask an admin to add you to the project directly", i18n.T("ErrorValidation", nil))
+	}
+	if eerr != nil && !isUserNotFound(eerr) {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), eerr)
+	}
+
+	// Validate the password before consuming (a weak password must not burn the link).
+	// No account exists yet, so this is policy-only (no history to check).
+	if err := c.passwordPolicy.Validate(newPassword, nil); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
+	}
+
+	// Consume the token (single-use, atomic) before materializing.
+	if _, err := c.ConsumeSetupToken(ctx, raw, SetupPurposeInvitationAccept); err != nil {
+		return nil, err
+	}
+
+	// Lazily create the account with the chosen password (active — they just set it).
+	username, err := c.deriveUsername(ctx, inv.Email)
+	if err != nil {
+		return nil, err
+	}
+	user, err := c.CreateUser(ctx, &CreateUserRequest{
+		Username:    username,
+		Email:       inv.Email,
+		DisplayName: displayNameFromEmail(inv.Email),
+		Password:    newPassword,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Create the membership under the invite-time validation mode. This grants the
+	// project role immediately when the mode (e.g. open) lands it active; under
+	// allowlist it starts in `invited` for an admin to advance. Done BEFORE flipping
+	// the invitation to accepted: if membership creation fails, the invitation stays
+	// pending (resendable / revocable) rather than being falsely marked accepted with
+	// no membership behind it.
+	if _, err := c.inviteMemberWithMode(ctx, inv.ProjectID, user.ID, inv.Role, inv.InvitedBy, inv.ValidationModeAtInvite, false); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Mark the invitation accepted (only now that account + membership both exist).
+	now := c.now()
+	inv.State = InvitationAccepted
+	inv.AcceptedAt = &now
+	_ = c.storage.UpdateProjectInvitation(ctx, inv)
+
+	c.auditProjectScoped(ctx, "invitation.accepted", user.ID, inv.ProjectID,
+		fmt.Sprintf("invitation %d accepted by %s (user %d)", inv.ID, inv.Email, user.ID))
+
+	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return &SetupConsumeResult{Session: session, User: user}, nil
+}
+
+// deriveUsername builds a unique, alphanumeric username from an email's local part,
+// appending a numeric suffix on collision. Best-effort: CreateUser re-checks
+// uniqueness, so a racy lookup at worst surfaces there.
+func (c *KeyorixCore) deriveUsername(ctx context.Context, email string) (string, error) {
+	base := sanitizeUsername(localPart(email))
+	if len(base) < 3 {
+		base += "user"
+	}
+	candidate := base
+	for i := 1; i <= 1000; i++ {
+		if _, err := c.storage.GetUserByUsername(ctx, candidate); err != nil {
+			return candidate, nil // not found → available
+		}
+		candidate = fmt.Sprintf("%s%d", base, i)
+	}
+	return "", fmt.Errorf("%s: could not derive a unique username for %s", i18n.T("ErrorValidation", nil), email)
+}
+
+// localPart returns the part of an email before '@' (or the whole string if none).
+func localPart(email string) string {
+	if i := strings.IndexByte(email, '@'); i > 0 {
+		return email[:i]
+	}
+	return email
+}
+
+// sanitizeUsername lowercases and keeps only [a-z0-9].
+func sanitizeUsername(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// displayNameFromEmail derives a human-facing default name from an email.
+func displayNameFromEmail(email string) string {
+	if lp := localPart(email); lp != "" {
+		return lp
+	}
+	return email
+}
+
+// isUserNotFound reports whether err is the storage layer's "user not found"
+// sentinel (mirrors the check in CreateUser). Used to fail closed on a real lookup
+// error while treating a clean miss as "no existing account".
+func isUserNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil))
 }

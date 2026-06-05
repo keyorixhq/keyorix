@@ -86,6 +86,13 @@ func (c *KeyorixCore) validationMode() string {
 // membership. When the mode lands the membership directly in `active`, the role
 // grant is applied immediately.
 func (c *KeyorixCore) InviteMember(ctx context.Context, projectID, userID uint, role string, invitedBy uint, idpResolved bool) (*models.ProjectMembership, error) {
+	return c.inviteMemberWithMode(ctx, projectID, userID, role, invitedBy, c.validationMode(), idpResolved)
+}
+
+// inviteMemberWithMode is InviteMember with an explicit validation mode, so the
+// invitation-accept flow (ADR-024/ADR-028) can honour the mode snapshotted at invite
+// time rather than the install's current mode. InviteMember passes the current mode.
+func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userID uint, role string, invitedBy uint, mode string, idpResolved bool) (*models.ProjectMembership, error) {
 	if projectID == 0 || userID == 0 {
 		return nil, fmt.Errorf("project and user IDs are required")
 	}
@@ -101,7 +108,7 @@ func (c *KeyorixCore) InviteMember(ctx context.Context, projectID, userID uint, 
 	}
 
 	now := c.now()
-	initial := c.initialMembershipState(idpResolved)
+	initial := initialMembershipStateForMode(mode, idpResolved)
 	m := &models.ProjectMembership{
 		ProjectID: projectID,
 		UserID:    userID,
@@ -133,9 +140,10 @@ func (c *KeyorixCore) InviteMember(ctx context.Context, projectID, userID uint, 
 	return created, nil
 }
 
-// initialMembershipState resolves the starting state for a new invite.
-func (c *KeyorixCore) initialMembershipState(idpResolved bool) string {
-	switch c.validationMode() {
+// initialMembershipStateForMode resolves the starting state for a new invite under
+// an explicit validation mode. An empty/unknown mode falls back to allowlist.
+func initialMembershipStateForMode(mode string, idpResolved bool) string {
+	switch mode {
 	case ValidationModeOpen:
 		return MembershipActive
 	case ValidationModeIDP:
@@ -143,7 +151,7 @@ func (c *KeyorixCore) initialMembershipState(idpResolved bool) string {
 			return MembershipProvisioned // skip invited/identity_verified
 		}
 		return MembershipInvited
-	default: // allowlist
+	default: // allowlist (and empty/unknown)
 		return MembershipInvited
 	}
 }
