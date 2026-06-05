@@ -18,13 +18,14 @@ const REMEMBER_ME_KEY = 'rememberMe';
  */
 export const persistAuthData = (data: AuthPersistenceData): void => {
     try {
-        // Always store basic auth data
-        storage.set(AUTH_STORAGE_KEY, {
-            user: data.user,
-            token: data.token,
-            isAuthenticated: true,
-        });
-
+        // IMPORTANT: the `auth-storage` key is owned exclusively by the Zustand
+        // `persist` middleware, which serialises a `{state, version}` wrapper
+        // (and is read back as `parsed.state.token` in services/auth.ts). Writing
+        // a flat `{user, token, isAuthenticated}` object here clobbers that
+        // wrapper, so on the next reload Zustand can't rehydrate — the session is
+        // lost and a deep route (e.g. /admin/users) bounces to /login. Zustand
+        // already persists user/token/isAuthenticated via its `partialize`, so we
+        // only own the token-expiry and remember-me keys here.
         storage.set(TOKEN_EXPIRY_KEY, data.expiresAt);
 
         // Store remember me preference

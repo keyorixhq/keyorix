@@ -77,17 +77,17 @@ describe('shouldRefreshToken', () => {
 });
 
 describe('persist / clear', () => {
-    it('writes user, token, expiry, and remember-me to storage', () => {
+    it('writes expiry and remember-me, and does NOT clobber the Zustand auth-storage key', () => {
         persistAuthData({
             user: { id: 1, username: 'testuser' },
             token: 'tok-1',
             expiresAt: future(60_000),
             rememberMe: true,
         });
-        expect(memStore.map.get('auth-storage')).toMatchObject({
-            token: 'tok-1',
-            isAuthenticated: true,
-        });
+        // Regression guard: the `auth-storage` key is owned by Zustand's persist
+        // middleware ({state,version}). persistAuthData must never write it — a
+        // flat write broke rehydration on reload (deep routes bounced to /login).
+        expect(memStore.map.has('auth-storage')).toBe(false);
         expect(memStore.map.get('rememberMe')).toBe(true);
         // the expiry write is observable through the public token API
         expect(isTokenValid()).toBe(true);
