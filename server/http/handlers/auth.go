@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -223,9 +224,16 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get("User-Agent"), ip)
 	if err != nil {
-		// A password-policy failure must surface its reason (the link is still live);
-		// a dead/wrong token is reported generically.
-		sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+		// Only a password-policy failure surfaces its reason (the link is still live,
+		// so the user can fix the password and retry). Every other failure — dead/used
+		// token, missing or already-existing account, internal error — is reported
+		// generically so this unauthenticated endpoint is not an account-existence or
+		// internal-error oracle.
+		if errors.Is(err, core.ErrInvalidSetupPassword) {
+			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
+		sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
 		return
 	}
 

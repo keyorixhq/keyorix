@@ -12,11 +12,20 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// ErrInvalidSetupPassword wraps a password-policy rejection during setup-token
+// consume. It is the ONLY consume failure whose reason is safe (and useful) to
+// surface to the unauthenticated caller — the link stays live so they can retry.
+// Every other failure (dead token, missing/duplicate account, internal error) is
+// reported generically by the HTTP layer so the public endpoint is not an
+// account-existence / error-string oracle.
+var ErrInvalidSetupPassword = errors.New("invalid password")
 
 // SetupTokenInfo is the non-sensitive description of a setup token returned to the
 // landing page. It deliberately carries no token, no hash, and no secret material.
@@ -86,7 +95,7 @@ func (c *KeyorixCore) CompleteSetup(ctx context.Context, raw, newPassword, userA
 	// Validate the password BEFORE consuming the token, so a policy rejection lets
 	// the user retry with the same link instead of dead-ending on a spent token.
 	if err := c.validateNewPassword(ctx, user, newPassword); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
 	}
 
 	// Consume is single-use and atomic; from here the token is spent (fail-closed).
