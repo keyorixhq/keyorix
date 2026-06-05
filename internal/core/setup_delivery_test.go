@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // fakeDeliverer is a controllable CredentialDelivery for tests. When echoLink is set
@@ -172,6 +173,60 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	require.NotNil(t, prov)
 	assert.True(t, strings.HasPrefix(prov.LinkForAdmin, testBaseURL+"/auth/setup/"+setupPrefix))
+}
+
+func TestCreateUserWithOneTimePassword(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	anyAudit(ms)
+
+	notFound := func() error { return assertNotFoundErr() }
+	created := &models.User{ID: 11, Username: "dana", Email: "dana@acme.io", DisplayName: "Dana", AccountState: AccountPasswordResetRequired}
+
+	ms.On("GetUserByUsername", ctx, "dana").Return(nil, notFound())
+	ms.On("GetUserByEmail", ctx, "dana@acme.io").Return(nil, notFound())
+	// The account is created directly in password_reset_required — the admin holds the
+	// first credential, so the user must change it on first login.
+	var captured *models.User
+	ms.On("CreateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
+		return u.AccountState == AccountPasswordResetRequired
+	})).Run(func(args mock.Arguments) { captured = args.Get(1).(*models.User) }).Return(created, nil)
+	ms.On("AddPasswordHistory", ctx, uint(11), mock.AnythingOfType("string"), mock.Anything).Return(nil)
+	ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, notFound())
+
+	user, otp, err := c.CreateUserWithOneTimePassword(ctx, &CreateUserRequest{
+		Username: "dana", Email: "dana@acme.io", DisplayName: "Dana",
+	}, 7)
+	require.NoError(t, err)
+	assert.Equal(t, AccountPasswordResetRequired, user.AccountState, "account must change the credential on first login")
+	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	require.NotNil(t, otp)
+	assert.Equal(t, "dana@acme.io", otp.Email)
+	// The returned OTP satisfies the default policy and is exactly what was hashed and
+	// stored — so it actually authenticates (then hits the password-change gate).
+	require.NoError(t, DefaultPasswordPolicy().Validate(otp.OneTimePassword, nil))
+	require.NotNil(t, captured)
+	assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(captured.PasswordHash), []byte(otp.OneTimePassword)),
+		"the displayed OTP must be the one persisted")
+	// The out-of-band display is recorded as a human seeing a credential.
+	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == "credential.displayed_out_of_band" && strings.Contains(e.Description, "one_time_password")
+	}))
+}
+
+func TestGenerateOneTimePassword(t *testing.T) {
+	policy := DefaultPasswordPolicy()
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		pw, err := generateOneTimePassword()
+		require.NoError(t, err)
+		assert.Len(t, pw, otpLength)
+		require.NoError(t, policy.Validate(pw, nil), "every generated OTP must satisfy the default password policy")
+		assert.False(t, seen[pw], "OTPs must be unique")
+		seen[pw] = true
+	}
 }
 
 // helpers ---------------------------------------------------------------------

@@ -73,3 +73,13 @@ func PrintProvisionResult(prov *core.ProvisionSetupResult) {
 	}
 	fmt.Printf("Setup link (relay this to %s securely — it is single-use and expires):\n  %s\n", prov.Email, prov.LinkForAdmin)
 }
+
+// PrintOneTimePasswordResult prints the out-of-band one-time password for the admin to
+// relay (ADR-028 Part E). It is shown once and the account must change it on first login.
+// Shared by `user create --one-time-password`.
+func PrintOneTimePasswordResult(otp *core.OneTimePasswordResult) {
+	if otp == nil {
+		return
+	}
+	fmt.Printf("One-time password for %s (relay securely — it must be changed on first login):\n  %s\n", otp.Email, otp.OneTimePassword)
+}

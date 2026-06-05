@@ -11,12 +11,13 @@ import (
 )
 
 var (
-	createUsername    string
-	createEmail       string
-	createPassword    string
-	createDisplayName string
-	createSetupLink   bool
-	createBy          string
+	createUsername        string
+	createEmail           string
+	createPassword        string
+	createDisplayName     string
+	createSetupLink       bool
+	createOneTimePassword bool
+	createBy              string
 )
 
 var createCmd = &cobra.Command{
@@ -25,17 +26,22 @@ var createCmd = &cobra.Command{
 	Long: "Create a new user. Supply --password to set an initial password, or use\n" +
 		"--setup-link to provision an ADR-028 setup link instead: the account is created\n" +
 		"in pending_first_login state and the user sets their own password via the link.\n" +
-		"In out-of-band mode the link is printed for you to relay.",
+		"In out-of-band mode the link is printed for you to relay.\n\n" +
+		"Or use --one-time-password to have the server generate an initial password\n" +
+		"(ADR-028 Part E): the account is created in password_reset_required state, the\n" +
+		"password is printed once for you to relay, and the user must change it on first\n" +
+		"login.",
 	RunE: runCreate,
 }
 
 func init() {
 	createCmd.Flags().StringVar(&createUsername, "username", "", "Username (required)")
 	createCmd.Flags().StringVar(&createEmail, "email", "", "Email (required)")
-	createCmd.Flags().StringVar(&createPassword, "password", "", "Initial password (required unless --setup-link)")
+	createCmd.Flags().StringVar(&createPassword, "password", "", "Initial password (required unless --setup-link or --one-time-password)")
 	createCmd.Flags().StringVar(&createDisplayName, "display-name", "", "Display name (defaults to username)")
 	createCmd.Flags().BoolVar(&createSetupLink, "setup-link", false, "Provision a setup link instead of an admin-set password (ADR-028)")
-	createCmd.Flags().StringVar(&createBy, "by", "", "Acting admin email (for audit; used with --setup-link)")
+	createCmd.Flags().BoolVar(&createOneTimePassword, "one-time-password", false, "Generate a one-time password instead of an admin-set password (ADR-028 Part E); must be changed on first login")
+	createCmd.Flags().StringVar(&createBy, "by", "", "Acting admin email (for audit; used with --setup-link / --one-time-password)")
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
@@ -45,8 +51,11 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if createEmail == "" {
 		return errors.New("email is required (use --email)")
 	}
-	if !createSetupLink && createPassword == "" {
-		return errors.New("password is required (use --password), or use --setup-link")
+	if createSetupLink && createOneTimePassword {
+		return errors.New("use either --setup-link or --one-time-password, not both")
+	}
+	if !createSetupLink && !createOneTimePassword && createPassword == "" {
+		return errors.New("password is required (use --password), or use --setup-link or --one-time-password")
 	}
 
 	service, err := common.InitializeCoreService()
@@ -80,6 +89,22 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("User created: id=%d username=%s email=%s\n", u.ID, u.Username, u.Email)
 		common.PrintProvisionResult(prov)
+		return nil
+	}
+
+	if createOneTimePassword {
+		var createdBy uint
+		if createBy != "" {
+			if createdBy, err = resolveAdminID(ctx, service, createBy); err != nil {
+				return err
+			}
+		}
+		u, otp, err := service.CreateUserWithOneTimePassword(ctx, req, createdBy)
+		if err != nil {
+			return fmt.Errorf("failed to create user with one-time password: %w", err)
+		}
+		fmt.Printf("User created: id=%d username=%s email=%s\n", u.ID, u.Username, u.Email)
+		common.PrintOneTimePasswordResult(otp)
 		return nil
 	}
 
