@@ -9,6 +9,10 @@ export interface User {
     permissions: string[];
     preferences: UserPreferences;
     lastLogin: string;
+    // ADR-025: when true the account must change its password before using the
+    // app; the RequirePasswordChange guard confines it to the profile page.
+    passwordChangeRequired?: boolean;
+    accountState?: string;
 }
 
 export interface UserPreferences {
@@ -218,6 +222,8 @@ export interface LoginResponse {
     role?: string;
     roles?: string[];
     permissions?: string[];
+    password_change_required?: boolean;
+    account_state?: string;
 }
 
 export interface RefreshTokenResponse {

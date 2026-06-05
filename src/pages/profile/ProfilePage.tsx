@@ -158,6 +158,8 @@ const SecurityTab: React.FC = () => {
                     setCurrent('');
                     setNext('');
                     setConfirm('');
+                    // ADR-025: lift the must-change-password gate now that it's done.
+                    useAuthStore.getState().clearPasswordChangeRequired();
                 },
             }
         );

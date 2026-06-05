@@ -88,7 +88,17 @@ apiClient.interceptors.response.use(
                 }
             }
         } else if (error.response?.status === 403) {
-            authStore.setError('You do not have permission to perform this action.');
+            // ADR-025: a restricted account is blocked from everything but the
+            // password change. Route it to the profile page rather than just
+            // showing a permission error (robust across reloads / a lost flag).
+            const code = (error.response?.data as { error?: string } | undefined)?.error;
+            if (code === 'PasswordChangeRequired') {
+                if (!window.location.pathname.startsWith('/profile')) {
+                    window.location.href = '/profile';
+                }
+            } else {
+                authStore.setError('You do not have permission to perform this action.');
+            }
         } else if (error.response?.status === 429) {
             authStore.setError('Too many requests. Please wait a moment and try again.');
         } else if (error.response?.status && error.response.status >= 500) {

@@ -20,6 +20,8 @@ interface AuthStore extends AuthState {
     setUser: (user: User | null) => void;
     setLoading: (loading: boolean) => void;
     setError: (error: string | null) => void;
+    // ADR-025: lift the password-change gate once the user has changed it.
+    clearPasswordChangeRequired: () => void;
 }
 
 export const useAuthStore = create<AuthStore>()(
@@ -54,6 +56,8 @@ export const useAuthStore = create<AuthStore>()(
                             notifications: { email: true, browser: true, sharing: true, security: true },
                         },
                         lastLogin: new Date().toISOString(),
+                        passwordChangeRequired: response.password_change_required || false,
+                        ...(response.account_state ? { accountState: response.account_state } : {}),
                     };
 
                     set({
@@ -172,6 +176,13 @@ export const useAuthStore = create<AuthStore>()(
 
             setError: (error: string | null) => {
                 set({ error });
+            },
+
+            clearPasswordChangeRequired: () => {
+                const { user } = get();
+                if (user) {
+                    set({ user: { ...user, passwordChangeRequired: false } });
+                }
             },
         }),
         {

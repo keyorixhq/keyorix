@@ -3,7 +3,7 @@ import { useAuth } from './features/auth';
 import { SecretsListPage } from "./pages/secrets/SecretsListPage";
 import { SecretExpiryPage, SecretsHealthPage, RotationPoliciesPage } from "./pages/secrets";
 import { ProjectsListPage, ProjectDetailPage } from './pages/projects';
-import { ProtectedRoute, PublicRoute, AdminRoute, Layout } from './components/layout';
+import { ProtectedRoute, PublicRoute, AdminRoute, Layout, RequirePasswordChange } from './components/layout';
 import { SessionTimeoutWarning } from './components/ui';
 import { LoginPage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';
@@ -47,7 +47,8 @@ function App() {
         <Route
           element={
             <ProtectedRoute>
-              <Layout>
+              <RequirePasswordChange>
+                <Layout>
                 <Routes>
                   <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
                   <Route path={ROUTES.SECRETS} element={<SecretsListPage />} />
@@ -74,7 +75,8 @@ function App() {
                   <Route path={ROUTES.CONNECT} element={<KeyorixConnectPage />} />
                   <Route path={ROUTES.ROADMAP} element={<RoadmapPage />} />
                 </Routes>
-              </Layout>
+                </Layout>
+              </RequirePasswordChange>
             </ProtectedRoute>
           }
           path="/*"
