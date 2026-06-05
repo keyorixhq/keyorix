@@ -13,6 +13,7 @@ import {
 import { InviteToProjectModal } from '../../features/invitations/InviteToProjectModal';
 import { PendingAccessRequestsSection } from '../../features/invitations/PendingAccessRequestsSection';
 import { ProjectInvitationsSection } from '../../features/invitations/ProjectInvitationsSection';
+import { MachineIdentitiesSection } from '../../features/machine-identities';
 
 interface ProjectMembersTabProps {
     projectId: number;
@@ -134,7 +135,11 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                 </button>
             </div>
 
-            {/* Member list */}
+            {/* Human members (the human half of the ADR-023 Humans vs Machine
+                Identities segmentation; machine identities are listed below). */}
+            <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                Human members
+            </h3>
             <div className="rounded-lg border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
                 {isLoading ? (
                     <div className="p-6 space-y-3">
@@ -198,6 +203,10 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                     </ul>
                 )}
             </div>
+
+            {/* ADR-023: machine identities — the non-human half of the Members
+                segmentation. Read-only for ordinary members; admins manage. */}
+            <MachineIdentitiesSection projectId={projectId} />
 
             {/* ADR-024: pending access requests + invitations (admin-only; the
                 queries 403 for non-admins and the sections render nothing). */}
