@@ -26,6 +26,30 @@ type KeyorixCore struct {
 	encryption     *encryption.SecretEncryption
 	now            func() time.Time // For testability
 	passwordPolicy PasswordPolicy
+	auditForwarder AuditForwarder
+}
+
+// AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).
+// Implementations must be non-blocking and best-effort: Forward is called on the
+// audit write path and must never block or fail the audited operation. Defined
+// here (not in the siem package) so core has no dependency on the forwarder impl.
+type AuditForwarder interface {
+	Forward(event *models.AuditEvent)
+}
+
+// SetAuditForwarder wires an audit forwarder. The server calls this at startup
+// when the install configures an audit.siem block. nil disables forwarding.
+func (c *KeyorixCore) SetAuditForwarder(f AuditForwarder) {
+	c.auditForwarder = f
+}
+
+// emitAudit persists an audit event and forwards it to the configured sink.
+// All core audit writers funnel through here so SIEM forwarding is uniform.
+func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
+	_ = c.storage.LogAuditEvent(ctx, event)
+	if c.auditForwarder != nil {
+		c.auditForwarder.Forward(event)
+	}
 }
 
 // NewKeyorixCore creates a new instance of the core business logic.

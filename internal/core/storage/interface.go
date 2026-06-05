@@ -234,6 +234,12 @@ type AuditFilter struct {
 	EndTime   *time.Time
 	Page      int
 	PageSize  int
+
+	// Cursor pagination for incremental SIEM export. When AfterID is set the
+	// query returns events with id > *AfterID in ascending id order (a stable
+	// forward cursor), ignoring Page. Use with the /audit/export endpoint.
+	AfterID   *uint
+	Ascending bool
 }
 
 // RBACAuditFilter defines filtering options for RBAC audit log queries

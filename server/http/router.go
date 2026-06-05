@@ -303,6 +303,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Route("/audit", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("audit.read"))
 			r.Get("/logs", auditHandler.GetAuditLogs)
+			r.Get("/export", auditHandler.ExportAuditLogs)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
 			r.Get("/anomalies", handlers.ListAnomalyAlerts)
 			r.Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)

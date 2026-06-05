@@ -19,6 +19,7 @@ type Config struct {
 	Security    SecurityConfig   `yaml:"security"`
 	SoftDelete  SoftDeleteConfig `yaml:"soft_delete"`
 	Purge       PurgeConfig      `yaml:"purge"`
+	Audit       AuditConfig      `yaml:"audit"`
 
 	// PasswordPolicy is optional. When the block is absent (zero value), the
 	// server keeps its conservative built-in defaults (see core.DefaultPasswordPolicy);
@@ -202,6 +203,27 @@ type SecurityConfig struct {
 type SoftDeleteConfig struct {
 	Enabled       bool `yaml:"enabled"`
 	RetentionDays int  `yaml:"retention_days"`
+}
+
+// AuditConfig groups audit-log delivery integrations.
+type AuditConfig struct {
+	SIEM SIEMConfig `yaml:"siem"`
+}
+
+// SIEMConfig configures native push of audit events to an external SIEM.
+// The token is resolved from KEYORIX_SIEM_TOKEN when that env var is set, so it
+// need not be written into the config file.
+type SIEMConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	Provider           string `yaml:"provider"` // splunk | datadog | webhook
+	Endpoint           string `yaml:"endpoint"`
+	Token              string `yaml:"token"` // use KEYORIX_SIEM_TOKEN env var instead
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+}
+
+// GetToken returns the resolved SIEM token, preferring the environment variable.
+func (s *SIEMConfig) GetToken() string {
+	return resolveSecret("KEYORIX_SIEM_TOKEN", s.Token)
 }
 
 type PurgeConfig struct {

@@ -76,6 +76,7 @@ func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	params.addBool("success", filter.Success)
 	params.addTime("start_time", filter.StartTime)
 	params.addTime("end_time", filter.EndTime)
+	params.addUint("after_id", filter.AfterID)
 	params.addPage(filter.Page, filter.PageSize)
 	return "/api/v1/audit/events" + params.String()
 }

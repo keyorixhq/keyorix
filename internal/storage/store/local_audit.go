@@ -58,6 +58,9 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 		if filter.Success != nil {
 			query = query.Where("success = ?", *filter.Success)
 		}
+		if filter.AfterID != nil {
+			query = query.Where("id > ?", *filter.AfterID)
+		}
 		if filter.Page > 1 {
 			page = filter.Page
 		}
@@ -68,6 +71,16 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 
 	var total int64
 	query.Count(&total)
+
+	// Cursor mode (SIEM export): ascending by id, no page offset — the caller
+	// advances by passing the last seen id as AfterID on the next request.
+	if filter != nil && filter.Ascending {
+		var events []*models.AuditEvent
+		if err := query.Order("id ASC").Limit(pageSize).Find(&events).Error; err != nil {
+			return nil, 0, fmt.Errorf("failed to get audit logs: %w", err)
+		}
+		return events, total, nil
+	}
 
 	var events []*models.AuditEvent
 	offset := (page - 1) * pageSize

@@ -116,9 +116,23 @@ soft_delete:
   retention_days: 30
 
 purge:
-  # Enable periodic purge of expired/deleted database entities 
+  # Enable periodic purge of expired/deleted database entities
   enabled: true
   schedule: "0 0 * * *"
+
+audit:
+  # Native SIEM push: forward every audit event to an external SIEM.
+  # Audit events carry no plaintext secret values, so they are safe to ship.
+  siem:
+    enabled: false
+    # provider: splunk | datadog | webhook
+    provider: "splunk"
+    # Full destination URL (e.g. a Splunk HEC collector endpoint).
+    endpoint: ""
+    # HEC token / DD-API-KEY / bearer token. Prefer the KEYORIX_SIEM_TOKEN env var.
+    token: ""
+    # Skip TLS verification for self-signed SIEM endpoints (not recommended).
+    insecure_skip_verify: false
 
 logging:
   # Enable logging

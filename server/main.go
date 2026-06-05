@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/audit/siem"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/encryption"
@@ -188,6 +189,23 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			RequireSpecial:     pp.RequireSpecial,
 			RejectPersonalInfo: pp.RejectPersonalInfo,
 		})
+	}
+
+	// Wire native SIEM audit forwarding if configured. New returns (nil, nil)
+	// when disabled, so SetAuditForwarder(nil) keeps forwarding off.
+	if sc := cfg.Audit.SIEM; sc.Enabled {
+		forwarder, ferr := siem.New(siem.Config{
+			Enabled:            sc.Enabled,
+			Provider:           siem.Provider(sc.Provider),
+			Endpoint:           sc.Endpoint,
+			Token:              sc.GetToken(),
+			InsecureSkipVerify: sc.InsecureSkipVerify,
+		})
+		if ferr != nil {
+			return nil, nil, fmt.Errorf("failed to init SIEM audit forwarder: %w", ferr)
+		}
+		coreService.SetAuditForwarder(forwarder)
+		log.Printf("SIEM audit forwarding enabled (provider=%s)", sc.Provider)
 	}
 	return coreService, encSvc, nil
 }

@@ -63,7 +63,7 @@ func (c *KeyorixCore) LogShareCreated(ctx context.Context, auditCtx *ShareAuditC
 	}
 
 	// Log the event (ignore errors to not block the main operation)
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // LogShareUpdated logs a share permission update event
@@ -83,7 +83,7 @@ func (c *KeyorixCore) LogShareUpdated(ctx context.Context, auditCtx *ShareAuditC
 	}
 
 	// Log the event (ignore errors to not block the main operation)
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // LogShareRevoked logs a share revocation event
@@ -102,7 +102,7 @@ func (c *KeyorixCore) LogShareRevoked(ctx context.Context, auditCtx *ShareAuditC
 	}
 
 	// Log the event (ignore errors to not block the main operation)
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // LogSharedSecretAccessed logs when a user accesses a shared secret
@@ -116,7 +116,7 @@ func (c *KeyorixCore) LogSharedSecretAccessed(ctx context.Context, auditCtx *Sha
 	}
 
 	// Log the event (ignore errors to not block the main operation)
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // LogGroupShareCreated logs a group share creation event
@@ -130,7 +130,7 @@ func (c *KeyorixCore) LogGroupShareCreated(ctx context.Context, auditCtx *ShareA
 	}
 
 	// Log the event (ignore errors to not block the main operation)
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // LogGroupShareUpdated logs a group share permission update event
@@ -145,7 +145,7 @@ func (c *KeyorixCore) LogGroupShareUpdated(ctx context.Context, auditCtx *ShareA
 	}
 
 	// Log the event (ignore errors to not block the main operation)
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // LogGroupShareRevoked logs a group share revocation event
@@ -159,7 +159,7 @@ func (c *KeyorixCore) LogGroupShareRevoked(ctx context.Context, auditCtx *ShareA
 	}
 
 	// Log the event (ignore errors to not block the main operation)
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
 
 // LogSelfRemovalFromShare logs when a user removes themselves from a shared secret
@@ -173,5 +173,5 @@ func (c *KeyorixCore) LogSelfRemovalFromShare(ctx context.Context, auditCtx *Sha
 	}
 
 	// Log the event (ignore errors to not block the main operation)
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }

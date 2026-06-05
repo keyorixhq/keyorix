@@ -125,5 +125,5 @@ func (c *KeyorixCore) writeImpersonationEvent(ctx context.Context, eventType str
 		ActingAs:       &ta,
 		Impersonation:  true,
 	}
-	_ = c.storage.LogAuditEvent(ctx, event)
+	c.emitAudit(ctx, event)
 }
