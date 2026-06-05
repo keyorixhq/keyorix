@@ -104,24 +104,20 @@ func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUs
 		return nil, nil, fmt.Errorf("%s: credential_delivery.base_url is required to issue a setup link", i18n.T("ErrorValidation", nil))
 	}
 
-	// Create the account with a random, unusable password; the real one is set when
-	// the user consumes the setup link.
+	// Create the account with a random, unusable password and confined directly to
+	// pending_first_login in the SAME write — no second UpdateUser that, on failure,
+	// could strand an active account with a password nobody knows. The real password
+	// is set when the user consumes the setup link.
 	reqCopy := *req
 	unusable, err := randomUnusablePassword()
 	if err != nil {
 		return nil, nil, err
 	}
 	reqCopy.Password = unusable
+	reqCopy.AccountState = AccountPendingFirstLogin
 	user, err := c.CreateUser(ctx, &reqCopy)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	// Confine the account until the link is consumed (CreateUser leaves it active).
-	user.AccountState = AccountPendingFirstLogin
-	user.UpdatedAt = c.now()
-	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
 	res, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
@@ -168,10 +164,22 @@ func (c *KeyorixCore) ResendAccountSetupLink(ctx context.Context, userID, create
 func (c *KeyorixCore) checkResendThrottle(ctx context.Context, purpose, email string) error {
 	key := strings.TrimSpace(strings.ToLower(email))
 
-	if n, err := c.storage.CountSetupTokensSince(ctx, purpose, key, c.now().Add(-24*time.Hour)); err == nil && n >= resendDailyCap {
+	// Fail CLOSED on a count error: an abuse control that silently no-ops whenever
+	// the store hiccups isn't a control. A transient error briefly delays a
+	// legitimate resend (acceptable); it must never open the door to unthrottled
+	// setup-link mail to a victim address.
+	n, err := c.storage.CountSetupTokensSince(ctx, purpose, key, c.now().Add(-24*time.Hour))
+	if err != nil {
+		return fmt.Errorf("%s: could not verify resend limits, please try again", i18n.T("ErrorValidation", nil))
+	}
+	if n >= resendDailyCap {
 		return fmt.Errorf("%s: resend limit reached (max %d per day)", i18n.T("ErrorValidation", nil), resendDailyCap)
 	}
-	if m, err := c.storage.CountSetupTokensSince(ctx, purpose, key, c.now().Add(-resendMinInterval)); err == nil && m >= 1 {
+	m, err := c.storage.CountSetupTokensSince(ctx, purpose, key, c.now().Add(-resendMinInterval))
+	if err != nil {
+		return fmt.Errorf("%s: could not verify resend limits, please try again", i18n.T("ErrorValidation", nil))
+	}
+	if m >= 1 {
 		return fmt.Errorf("%s: please wait before requesting another setup link", i18n.T("ErrorValidation", nil))
 	}
 	return nil

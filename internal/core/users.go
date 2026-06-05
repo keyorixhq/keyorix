@@ -56,7 +56,8 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 		DisplayName:       displayName,
 		PasswordHash:      string(hash),
 		IsActive:          active,
-		PasswordChangedAt: &now, // baseline for max-age expiry (ADR-025)
+		AccountState:      NormalizeAccountState(req.AccountState), // empty → active (ADR-025)
+		PasswordChangedAt: &now,                                    // baseline for max-age expiry (ADR-025)
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}

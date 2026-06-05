@@ -148,14 +148,17 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	anyAudit(ms)
 
 	notFound := func() error { return assertNotFoundErr() }
-	created := &models.User{ID: 9, Username: "dana", Email: "dana@acme.io", DisplayName: "Dana"}
+	created := &models.User{ID: 9, Username: "dana", Email: "dana@acme.io", DisplayName: "Dana", AccountState: AccountPendingFirstLogin}
 
 	ms.On("GetUserByUsername", ctx, "dana").Return(nil, notFound())
 	ms.On("GetUserByEmail", ctx, "dana@acme.io").Return(nil, notFound())
-	ms.On("CreateUser", ctx, mock.AnythingOfType("*models.User")).Return(created, nil)
+	// The account is confined to pending_first_login in the SAME create — no separate
+	// UpdateUser that could strand an active, unknown-password account on failure.
+	ms.On("CreateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
+		return u.AccountState == AccountPendingFirstLogin
+	})).Return(created, nil)
 	ms.On("AddPasswordHistory", ctx, uint(9), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 	ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, notFound())
-	ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(created, nil)
 	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "dana@acme.io").Return(nil)
 	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
@@ -164,6 +167,7 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	}, 7)
 	require.NoError(t, err)
 	assert.Equal(t, AccountPendingFirstLogin, user.AccountState, "account is confined until the link is consumed")
+	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	require.NotNil(t, prov)
 	assert.True(t, strings.HasPrefix(prov.LinkForAdmin, testBaseURL+"/auth/setup/"+setupPrefix))
 }
