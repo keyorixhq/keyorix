@@ -90,11 +90,12 @@ type Config struct {
 
 // New selects a CredentialDelivery implementation from cfg, mirroring siem.New.
 //
-// SMTP transport is not yet implemented in this package; it lands as SMTPDelivery in
-// a follow-up. Until then ModeSMTP (and ModeAuto with SMTP configured) is rejected at
-// construction so an install fails loudly at startup rather than silently dropping
-// invites. ModeAuto with no SMTP, ModeOutOfBand, and ModeLog all work today and cover
-// the air-gapped and zero-config cases that are the priority for the ICP.
+//   - out_of_band — always return the link to the admin (air-gapped installs).
+//   - log         — write the link to the server log (dev/test only).
+//   - smtp        — send via the operator's relay; send failures degrade to
+//     out-of-band rather than failing closed.
+//   - auto ("")   — smtp when an SMTP relay is configured, else out_of_band, so a
+//     zero-config install still works without any mail infrastructure.
 func New(cfg Config) (CredentialDelivery, error) {
 	mode := cfg.Mode
 	if mode == "" {
@@ -105,13 +106,13 @@ func New(cfg Config) (CredentialDelivery, error) {
 		return &OutOfBandDelivery{}, nil
 	case ModeLog:
 		return &LogDelivery{}, nil
+	case ModeSMTP:
+		return newSMTPDelivery(cfg.SMTP)
 	case ModeAuto:
 		if cfg.SMTP.Configured() {
-			return nil, fmt.Errorf("delivery: mode=auto resolved to SMTP but SMTP transport is not yet implemented; set credential_delivery.mode=out_of_band or remove the smtp block")
+			return newSMTPDelivery(cfg.SMTP)
 		}
 		return &OutOfBandDelivery{}, nil
-	case ModeSMTP:
-		return nil, fmt.Errorf("delivery: mode=smtp is not yet implemented; use credential_delivery.mode=out_of_band")
 	default:
 		return nil, fmt.Errorf("delivery: unknown mode %q (want auto|smtp|out_of_band|log)", cfg.Mode)
 	}

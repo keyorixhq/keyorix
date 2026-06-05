@@ -8,6 +8,7 @@ require (
 	github.com/nicksnyder/go-i18n/v2 v2.6.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
+	github.com/wneessen/go-mail v0.7.3
 	golang.org/x/crypto v0.51.0
 	golang.org/x/term v0.43.0
 	golang.org/x/text v0.37.0
