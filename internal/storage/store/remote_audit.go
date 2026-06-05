@@ -73,6 +73,7 @@ func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	params.addUint("user_id", filter.UserID)
 	params.addString("action", filter.Action)
 	params.addString("resource", filter.Resource)
+	params.addString("actor_type", filter.ActorType)
 	params.addBool("success", filter.Success)
 	params.addTime("start_time", filter.StartTime)
 	params.addTime("end_time", filter.EndTime)

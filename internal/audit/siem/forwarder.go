@@ -147,6 +147,7 @@ type eventPayload struct {
 	SecretID       *uint           `json:"secret_id,omitempty"`
 	Description    string          `json:"description"`
 	IPAddress      string          `json:"ip_address,omitempty"`
+	ActorType      string          `json:"actor_type,omitempty"`
 	Success        bool            `json:"success"`
 	Diff           json.RawMessage `json:"diff,omitempty"`
 	Impersonation  bool            `json:"impersonation,omitempty"`
@@ -168,6 +169,7 @@ func toPayload(e *models.AuditEvent) eventPayload {
 		SecretID:       e.SecretNodeID,
 		Description:    e.Description,
 		IPAddress:      e.IPAddress,
+		ActorType:      e.ActorType,
 		Success:        success,
 		Impersonation:  e.Impersonation,
 		ImpersonatedBy: e.ImpersonatedBy,

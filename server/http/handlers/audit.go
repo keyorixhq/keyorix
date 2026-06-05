@@ -26,9 +26,13 @@ func NewAuditHandler(coreService *core.KeyorixCore) *AuditHandler {
 
 // AuditLogEntry is the wire format returned to the frontend.
 type AuditLogEntry struct {
-	ID          uint      `json:"id"`
-	EventType   string    `json:"event_type"`
-	Actor       string    `json:"actor"`
+	ID        uint   `json:"id"`
+	EventType string `json:"event_type"`
+	Actor     string `json:"actor"`
+	// ActorType is the acting-principal kind: "user" or "machine_identity"
+	// (also "system"). Lets the audit view segment/filter human vs machine
+	// activity (ADR-023).
+	ActorType   string    `json:"actor_type"`
 	Description string    `json:"description"`
 	Timestamp   time.Time `json:"timestamp"`
 	// Diff is the structured before/after payload for mutation events (parsed
@@ -84,6 +88,9 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 			filter.EndTime = &t
 		}
 	}
+	if at := r.URL.Query().Get("actor_type"); validActorType(at) {
+		filter.ActorType = &at
+	}
 
 	events, total, err := h.coreService.Storage().GetAuditLogs(r.Context(), filter)
 	if err != nil {
@@ -105,6 +112,7 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 			ID:          e.ID,
 			EventType:   e.EventType,
 			Actor:       actor,
+			ActorType:   actorTypeOrDefault(e.ActorType),
 			Description: e.Description,
 			Timestamp:   e.EventTime,
 		}
@@ -150,6 +158,7 @@ type AuditExportEntry struct {
 	SecretID       *uint           `json:"secret_id,omitempty"`
 	Description    string          `json:"description"`
 	IPAddress      string          `json:"ip_address,omitempty"`
+	ActorType      string          `json:"actor_type"`
 	Success        bool            `json:"success"`
 	Diff           json.RawMessage `json:"diff,omitempty"`
 	Impersonation  bool            `json:"impersonation,omitempty"`
@@ -216,6 +225,7 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 			SecretID:    e.SecretNodeID,
 			Description: e.Description,
 			IPAddress:   e.IPAddress,
+			ActorType:   actorTypeOrDefault(e.ActorType),
 			Success:     success,
 		}
 		if e.Diff != "" {
@@ -236,6 +246,25 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 		"count":       len(entries),
 		"next_cursor": nextCursor,
 	}, "")
+}
+
+// validActorType reports whether s is an audit actor-type filter value.
+func validActorType(s string) bool {
+	switch s {
+	case core.ActorTypeUser, core.ActorTypeMachine, core.ActorTypeSystem:
+		return true
+	default:
+		return false
+	}
+}
+
+// actorTypeOrDefault normalizes a stored actor_type, treating an empty value
+// (legacy rows written before the column existed) as a human user.
+func actorTypeOrDefault(s string) string {
+	if s == "" {
+		return core.ActorTypeUser
+	}
+	return s
 }
 
 // GetRBACAuditLogs handles GET /api/v1/audit/rbac-logs (stub — returns empty).

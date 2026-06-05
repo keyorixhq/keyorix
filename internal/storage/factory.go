@@ -186,6 +186,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if !columnExists(db, "audit_events", "impersonation") {
 			db.Exec("ALTER TABLE audit_events ADD COLUMN impersonation BOOLEAN NOT NULL DEFAULT false")
 		}
+		// ADR-023: actor kind (user vs machine_identity) on every event.
+		if !columnExists(db, "audit_events", "actor_type") {
+			db.Exec("ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'user'")
+		}
 	}
 
 	// Impersonation sessions carry the initiating admin + start time.

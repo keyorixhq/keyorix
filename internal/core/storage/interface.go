@@ -254,6 +254,9 @@ type AuditFilter struct {
 	Action    *string
 	Resource  *string
 	Success   *bool
+	// ActorType filters by acting-principal kind: "user" or "machine_identity"
+	// (also "system"). Nil = all actor types. (ADR-023)
+	ActorType *string
 	StartTime *time.Time
 	EndTime   *time.Time
 	Page      int
