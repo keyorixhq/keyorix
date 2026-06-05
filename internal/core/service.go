@@ -27,6 +27,9 @@ type KeyorixCore struct {
 	now            func() time.Time // For testability
 	passwordPolicy PasswordPolicy
 	auditForwarder AuditForwarder
+	// membershipValidationMode is the ADR-022 install-level onboarding mode;
+	// "" = allowlist default. Set via SetMembershipValidationMode.
+	membershipValidationMode string
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).

@@ -1,0 +1,226 @@
+// membership_lifecycle.go — project membership onboarding state machine (ADR-022).
+//
+// A ProjectMembership tracks a user's onboarding into a project, separate from
+// the role grant (user_roles). The lifecycle is a 5-state machine:
+//
+//	invited → identity_verified → provisioned → active   (revoked is terminal,
+//	                                                       reachable from any
+//	                                                       non-terminal state)
+//
+// The actual project role is granted (via AssignRole) only when a membership
+// reaches `active`, and removed when it is revoked. An install's validation mode
+// controls how much of the chain a new invite must traverse:
+//
+//	open      — self-serve: an invite lands directly in `active`.
+//	allowlist — an admin steps the membership through each state explicitly.
+//	idp       — IdP-resolved users skip invited/identity_verified (provisioned),
+//	            others start at `invited`.
+//
+// Every transition writes a discrete audit event. Email/setup-link delivery
+// (ADR-024) and inviter notifications are separate follow-ups.
+package core
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// Membership states.
+const (
+	MembershipInvited          = "invited"
+	MembershipIdentityVerified = "identity_verified"
+	MembershipProvisioned      = "provisioned"
+	MembershipActive           = "active"
+	MembershipRevoked          = "revoked"
+)
+
+// Validation modes (install-level).
+const (
+	ValidationModeOpen      = "open"
+	ValidationModeAllowlist = "allowlist"
+	ValidationModeIDP       = "idp"
+)
+
+// membershipTransitions lists the allowed next states for each state. revoked is
+// terminal (no outgoing transitions); every non-terminal state may go to revoked.
+var membershipTransitions = map[string][]string{
+	MembershipInvited:          {MembershipIdentityVerified, MembershipRevoked},
+	MembershipIdentityVerified: {MembershipProvisioned, MembershipRevoked},
+	MembershipProvisioned:      {MembershipActive, MembershipRevoked},
+	MembershipActive:           {MembershipRevoked},
+	MembershipRevoked:          {},
+}
+
+// canTransition reports whether a membership may move from → to.
+func canTransition(from, to string) bool {
+	for _, next := range membershipTransitions[from] {
+		if next == to {
+			return true
+		}
+	}
+	return false
+}
+
+// SetMembershipValidationMode overrides the install validation mode (default
+// ValidationModeAllowlist). The server calls this at startup from config.
+func (c *KeyorixCore) SetMembershipValidationMode(mode string) {
+	switch mode {
+	case ValidationModeOpen, ValidationModeAllowlist, ValidationModeIDP:
+		c.membershipValidationMode = mode
+	}
+}
+
+func (c *KeyorixCore) validationMode() string {
+	if c.membershipValidationMode == "" {
+		return ValidationModeAllowlist
+	}
+	return c.membershipValidationMode
+}
+
+// InviteMember starts a membership for userID in projectID with the given
+// intended role. The initial state depends on the install validation mode (and,
+// for idp, whether the user is IdP-resolved). Rejects a duplicate non-revoked
+// membership. When the mode lands the membership directly in `active`, the role
+// grant is applied immediately.
+func (c *KeyorixCore) InviteMember(ctx context.Context, projectID, userID uint, role string, invitedBy uint, idpResolved bool) (*models.ProjectMembership, error) {
+	if projectID == 0 || userID == 0 {
+		return nil, fmt.Errorf("project and user IDs are required")
+	}
+	if role == "" {
+		return nil, fmt.Errorf("a project role is required")
+	}
+	if _, err := c.storage.GetRoleByName(ctx, role); err != nil {
+		return nil, fmt.Errorf("unknown role %q: %w", role, err)
+	}
+	// One active onboarding per (project, user).
+	if existing, err := c.storage.GetActiveProjectMembership(ctx, projectID, userID); err == nil && existing != nil {
+		return nil, fmt.Errorf("user already has a %s membership in this project", existing.State)
+	}
+
+	now := c.now()
+	initial := c.initialMembershipState(idpResolved)
+	m := &models.ProjectMembership{
+		ProjectID: projectID,
+		UserID:    userID,
+		Role:      role,
+		State:     initial,
+		InvitedBy: invitedBy,
+		InvitedAt: now,
+		UpdatedAt: now,
+	}
+	if initial == MembershipActive {
+		t := now
+		m.ActivatedAt = &t
+	}
+	created, err := c.storage.CreateProjectMembership(ctx, m)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create membership: %w", err)
+	}
+
+	// If the mode put us straight into active, grant the role now.
+	if created.State == MembershipActive {
+		if err := c.AddProjectMember(ctx, projectID, userID, role); err != nil {
+			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
+		}
+	}
+	c.logMembershipEvent(ctx, "membership.invited", created, invitedBy)
+	if created.State == MembershipActive {
+		c.logMembershipEvent(ctx, "membership.activated", created, invitedBy)
+	}
+	return created, nil
+}
+
+// initialMembershipState resolves the starting state for a new invite.
+func (c *KeyorixCore) initialMembershipState(idpResolved bool) string {
+	switch c.validationMode() {
+	case ValidationModeOpen:
+		return MembershipActive
+	case ValidationModeIDP:
+		if idpResolved {
+			return MembershipProvisioned // skip invited/identity_verified
+		}
+		return MembershipInvited
+	default: // allowlist
+		return MembershipInvited
+	}
+}
+
+// TransitionMembership advances a membership to the next state, enforcing the
+// state machine. Reaching `active` grants the project role; `revoked` removes it.
+// actorID is the user performing the transition (for the audit trail).
+func (c *KeyorixCore) TransitionMembership(ctx context.Context, membershipID uint, to string, actorID uint) (*models.ProjectMembership, error) {
+	m, err := c.storage.GetProjectMembership(ctx, membershipID)
+	if err != nil {
+		return nil, fmt.Errorf("membership not found")
+	}
+	if !canTransition(m.State, to) {
+		return nil, fmt.Errorf("cannot transition membership from %s to %s", m.State, to)
+	}
+
+	now := c.now()
+	m.State = to
+	m.UpdatedAt = now
+	switch to {
+	case MembershipActive:
+		m.ActivatedAt = &now
+	case MembershipRevoked:
+		m.RevokedAt = &now
+	}
+	if err := c.storage.UpdateProjectMembership(ctx, m); err != nil {
+		return nil, fmt.Errorf("failed to update membership: %w", err)
+	}
+
+	// Side effects on the role grant.
+	switch to {
+	case MembershipActive:
+		if err := c.AddProjectMember(ctx, m.ProjectID, m.UserID, m.Role); err != nil {
+			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
+		}
+	case MembershipRevoked:
+		// Best-effort: the membership is already revoked; a missing grant is fine.
+		_ = c.RemoveProjectMember(ctx, m.ProjectID, m.UserID)
+	}
+
+	c.logMembershipEvent(ctx, "membership."+transitionVerb(to), m, actorID)
+	return m, nil
+}
+
+// (helpers below)
+
+// transitionVerb maps a target state to the audit event suffix.
+func transitionVerb(to string) string {
+	switch to {
+	case MembershipIdentityVerified:
+		return "identity_verified"
+	case MembershipProvisioned:
+		return "provisioned"
+	case MembershipActive:
+		return "activated"
+	case MembershipRevoked:
+		return "revoked"
+	default:
+		return to
+	}
+}
+
+// ListProjectMemberships returns all membership rows for a project.
+func (c *KeyorixCore) ListProjectMemberships(ctx context.Context, projectID uint) ([]*models.ProjectMembership, error) {
+	return c.storage.ListProjectMemberships(ctx, projectID)
+}
+
+// StaleInvites returns memberships still in `invited` state older than the cutoff
+// (ADR-022 stale-invite warnings; default surfaced at >7 days).
+func (c *KeyorixCore) StaleInvites(ctx context.Context, olderThan time.Duration) ([]*models.ProjectMembership, error) {
+	before := c.now().Add(-olderThan)
+	return c.storage.ListStaleInvitedMemberships(ctx, before)
+}
+
+// logMembershipEvent writes an audit event for a membership transition.
+func (c *KeyorixCore) logMembershipEvent(ctx context.Context, eventType string, m *models.ProjectMembership, actorID uint) {
+	aid, pid := actorID, m.ProjectID
+	c.writeAuditEventFull(ctx, eventType, &aid, nil, &pid, "",
+		fmt.Sprintf("membership %d for user %d in project %d → %s", m.ID, m.UserID, m.ProjectID, m.State))
+}

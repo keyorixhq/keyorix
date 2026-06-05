@@ -20,6 +20,7 @@ type Config struct {
 	SoftDelete  SoftDeleteConfig `yaml:"soft_delete"`
 	Purge       PurgeConfig      `yaml:"purge"`
 	Audit       AuditConfig      `yaml:"audit"`
+	Membership  MembershipConfig `yaml:"membership"`
 
 	// PasswordPolicy is optional. When the block is absent (zero value), the
 	// server keeps its conservative built-in defaults (see core.DefaultPasswordPolicy);
@@ -214,6 +215,14 @@ type SoftDeleteConfig struct {
 // AuditConfig groups audit-log delivery integrations.
 type AuditConfig struct {
 	SIEM SIEMConfig `yaml:"siem"`
+}
+
+// MembershipConfig configures the project membership lifecycle (ADR-022).
+type MembershipConfig struct {
+	// ValidationMode controls how a new invite onboards: "open" (active
+	// immediately), "allowlist" (admin steps through each state), or "idp"
+	// (IdP-resolved users skip the early states). Empty = allowlist.
+	ValidationMode string `yaml:"validation_mode"`
 }
 
 // SIEMConfig configures native push of audit events to an external SIEM.

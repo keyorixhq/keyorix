@@ -145,3 +145,10 @@ logging:
   file: "keyorix.log"
   # Log format
   log_format: "text"  
+membership:
+  # Project membership onboarding (ADR-022). validation_mode controls how a new
+  # invite onboards into a project:
+  #   open      - invite is active immediately (self-serve)
+  #   allowlist - an admin steps the membership through each lifecycle state
+  #   idp       - IdP-resolved users skip the early states; others start invited
+  validation_mode: "allowlist"
