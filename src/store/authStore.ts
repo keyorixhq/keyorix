@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AuthState, User, LoginFormData } from '../types';
+import { AuthState, User, LoginFormData, LoginResponse } from '../types';
 import { authService } from '../services/auth';
 import {
     persistAuthData,
@@ -20,6 +20,9 @@ interface AuthStore extends AuthState {
 
     // Actions
     login: (credentials: LoginFormData) => Promise<void>;
+    // ADR-028: land the user logged in from a setup-link consume response (which is
+    // login-shaped) without re-authenticating with a password.
+    completeSetup: (response: LoginResponse) => void;
     logout: () => Promise<void>;
     refreshToken: () => Promise<void>;
     checkAuth: () => Promise<void>;
@@ -100,6 +103,42 @@ export const useAuthStore = create<AuthStore>()(
                     });
                     throw error;
                 }
+            },
+
+            completeSetup: (response: LoginResponse) => {
+                const user: User = {
+                    id: response.user_id,
+                    username: response.username,
+                    displayName: response.display_name || response.username,
+                    email: response.email,
+                    role: response.role || 'user',
+                    roles: response.roles || [],
+                    permissions: response.permissions || [],
+                    preferences: {
+                        language: 'en',
+                        timezone: 'UTC',
+                        theme: 'system',
+                        notifications: { email: true, browser: true, sharing: true, security: true },
+                    },
+                    lastLogin: new Date().toISOString(),
+                    passwordChangeRequired: response.password_change_required || false,
+                    ...(response.account_state ? { accountState: response.account_state } : {}),
+                };
+
+                set({
+                    user,
+                    token: response.token,
+                    isAuthenticated: true,
+                    isLoading: false,
+                    error: null,
+                });
+
+                persistAuthData({
+                    user,
+                    token: response.token,
+                    expiresAt: response.expires_at,
+                    rememberMe: false,
+                });
             },
 
             logout: async () => {
