@@ -39,6 +39,11 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		// password: the account is created in pending_first_login state and a setup
 		// link is delivered (or returned for out-of-band relay).
 		DeliverSetupLink bool `json:"deliver_setup_link,omitempty"`
+		// GenerateOneTimePassword provisions a server-generated initial password instead
+		// of an admin-set one or a setup link: the account is created in
+		// password_reset_required state and the password is returned once for the admin
+		// to relay out-of-band (ADR-028 Part E). The user must change it on first login.
+		GenerateOneTimePassword bool `json:"generate_one_time_password,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -55,6 +60,34 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName: body.DisplayName,
 		Password:    body.Password,
 		IsActive:    body.IsActive,
+	}
+
+	// The three credential modes are mutually exclusive: admin-set password, setup
+	// link, or generated one-time password.
+	if body.DeliverSetupLink && body.GenerateOneTimePassword {
+		sendError(w, "ValidationError", "Choose either deliver_setup_link or generate_one_time_password, not both", http.StatusBadRequest, nil)
+		return
+	}
+
+	// One-time-password path (ADR-028 Part E): server generates the initial password,
+	// returns it once for out-of-band relay, and forces a change on first login.
+	if body.GenerateOneTimePassword {
+		created, otp, err := h.coreService.CreateUserWithOneTimePassword(r.Context(), req, userCtx.UserID)
+		if err != nil {
+			log.Printf("Error creating user with one-time password: %v", err)
+			if strings.Contains(err.Error(), "already exists") {
+				sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
+				return
+			}
+			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		sendSuccess(w, map[string]interface{}{
+			"user":              userToAPIResponse(created),
+			"one_time_password": otp,
+		}, i18n.T("SuccessUserCreated", nil))
+		return
 	}
 
 	// Setup-link provisioning path (ADR-028): no admin password; deliver a link.
@@ -83,7 +116,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	// Classic path: the admin supplies the initial password.
 	if body.Password == "" {
-		sendError(w, "ValidationError", "Password is required unless deliver_setup_link is set", http.StatusBadRequest, nil)
+		sendError(w, "ValidationError", "Password is required unless deliver_setup_link or generate_one_time_password is set", http.StatusBadRequest, nil)
 		return
 	}
 	created, err := h.coreService.CreateUser(r.Context(), req)

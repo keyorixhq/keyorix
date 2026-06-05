@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -141,6 +142,48 @@ func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUs
 	return user, res, nil
 }
 
+// OneTimePasswordResult carries the out-of-band one-time password for the admin to
+// relay (ADR-028 Part E). It is returned once, at creation, and never stored in clear:
+// only the bcrypt hash is persisted, and the account is forced into
+// password_reset_required so the user must replace it on first login.
+type OneTimePasswordResult struct {
+	Email           string `json:"email"`
+	OneTimePassword string `json:"one_time_password"`
+}
+
+// CreateUserWithOneTimePassword creates a user with a server-generated initial password
+// and forces it into password_reset_required (ADR-025), returning the password once for
+// the admin to relay out-of-band (ADR-028 Part E). It is the alternative to the
+// setup-link path for when an admin wants to set an initial credential rather than have
+// the end user choose one: the admin holds the first credential, so the account must
+// change it on first login. The password is never emailed and never persisted in clear
+// (only its bcrypt hash). No base URL is required — there is no link.
+func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *CreateUserRequest, createdBy uint) (*models.User, *OneTimePasswordResult, error) {
+	otp, err := generateOneTimePassword()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create the account directly in password_reset_required with the generated
+	// password, in the SAME write — no second UpdateUser that, on failure, could
+	// strand an active account whose credential the admin already saw.
+	reqCopy := *req
+	reqCopy.Password = otp
+	reqCopy.AccountState = AccountPasswordResetRequired
+	user, err := c.CreateUser(ctx, &reqCopy)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Record that a human saw a credential — the one path the ADR singles out for
+	// compliance (artifact=one_time_password, vs the setup-link artifact).
+	actor := actorOrSubject(createdBy, &user.ID)
+	c.writeAuditEventFull(ctx, "credential.displayed_out_of_band", actor, nil, nil, "",
+		fmt.Sprintf("one-time password shown out-of-band to admin (subject=%s, artifact=one_time_password)", user.Email))
+
+	return user, &OneTimePasswordResult{Email: user.Email, OneTimePassword: otp}, nil
+}
+
 // ResendAccountSetupLink reissues an account_setup link for an existing user,
 // superseding the prior active token, and re-delivers it. Throttled per ADR-028.
 func (c *KeyorixCore) ResendAccountSetupLink(ctx context.Context, userID, createdBy uint) (*ProvisionSetupResult, error) {
@@ -201,4 +244,68 @@ func randomUnusablePassword() (string, error) {
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// One-time-password character classes (ADR-028 Part E). Visually ambiguous characters
+// (0/O, 1/l/I) are excluded so the password survives being read aloud or copied by hand
+// when the admin relays it out of band.
+const (
+	otpLower   = "abcdefghijkmnpqrstuvwxyz" // no l, o
+	otpUpper   = "ABCDEFGHJKLMNPQRSTUVWXYZ" // no I, O
+	otpDigits  = "23456789"                 // no 0, 1
+	otpSpecial = "!@#$%^&*-_=+"
+	otpLength  = 20
+)
+
+// generateOneTimePassword returns a high-entropy password that satisfies the default
+// ADR-025 password policy (length + all four character classes). It seeds one character
+// from each required class so the policy always holds regardless of the random draw,
+// fills the rest from the union, then shuffles so the seeded characters aren't in fixed
+// positions. All randomness is from crypto/rand.
+func generateOneTimePassword() (string, error) {
+	classes := []string{otpLower, otpUpper, otpDigits, otpSpecial}
+	all := otpLower + otpUpper + otpDigits + otpSpecial
+
+	out := make([]byte, otpLength)
+	for i, class := range classes {
+		ch, err := randChar(class)
+		if err != nil {
+			return "", err
+		}
+		out[i] = ch
+	}
+	for i := len(classes); i < otpLength; i++ {
+		ch, err := randChar(all)
+		if err != nil {
+			return "", err
+		}
+		out[i] = ch
+	}
+	if err := shuffleBytes(out); err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// randChar returns a uniformly random byte from set using crypto/rand.
+func randChar(set string) (byte, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(set))))
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return set[n.Int64()], nil
+}
+
+// shuffleBytes performs an in-place Fisher–Yates shuffle using crypto/rand, so the
+// class-seeded characters do not stay in their initial positions.
+func shuffleBytes(b []byte) error {
+	for i := len(b) - 1; i > 0; i-- {
+		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		jj := int(j.Int64())
+		b[i], b[jj] = b[jj], b[i]
+	}
+	return nil
 }
