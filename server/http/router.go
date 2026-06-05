@@ -171,6 +171,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/invitations", catalogHandler.ListInvitations)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/invitations", catalogHandler.CreateInvitation)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/invitations/{invitationId}", catalogHandler.RevokeInvitation)
+		// Resend the invitation's setup link (ADR-028).
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/invitations/{invitationId}/resend", catalogHandler.ResendInvitation)
 		// Access requests (ADR-024): requesting + withdrawing are self-service (any
 		// authenticated user — they don't have project access yet); listing and
 		// approving/rejecting require roles.assign at the project scope.

@@ -57,17 +57,59 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		sendError(w, "ValidationError", "email and role are required", http.StatusBadRequest, nil)
 		return
 	}
-	inv, err := h.coreService.InviteToProject(r.Context(), uint(id), body.Email, body.Role, actor.UserID)
+	inv, prov, err := h.coreService.InviteToProjectWithLink(r.Context(), uint(id), body.Email, body.Role, actor.UserID)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "unknown role") || strings.Contains(err.Error(), "required") {
-			status = http.StatusBadRequest
+		// A nil inv means the invitation was not created at all; a non-nil inv with an
+		// error means it was created but the link could not be provisioned (e.g.
+		// base_url unset) — surface that so the admin can fix config and resend.
+		if inv == nil {
+			status := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "unknown role") || strings.Contains(err.Error(), "required") {
+				status = http.StatusBadRequest
+			}
+			sendError(w, "Error", err.Error(), status, nil)
+			return
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		w.WriteHeader(http.StatusCreated)
+		sendSuccess(w, map[string]interface{}{"invitation": inv, "delivery_error": err.Error()},
+			"Invitation created but the setup link could not be delivered")
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"invitation": inv}, "Invitation created")
+	sendSuccess(w, map[string]interface{}{"invitation": inv, "setup_link": prov}, "Invitation created")
+}
+
+// ResendInvitation handles POST /api/v1/projects/{id}/invitations/{invitationId}/resend
+// (ADR-028): it reissues the invitation's accept link and re-delivers it.
+func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
+	invID, err := strconv.ParseUint(chi.URLParam(r, "invitationId"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid invitation ID", http.StatusBadRequest, nil)
+		return
+	}
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	prov, err := h.coreService.ResendInvitationLink(r.Context(), uint(invID), actor.UserID)
+	if err != nil {
+		msg := err.Error()
+		status := http.StatusInternalServerError
+		switch {
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		case strings.Contains(msg, "only a pending"):
+			status = http.StatusConflict
+		case strings.Contains(msg, "limit") || strings.Contains(msg, "wait"):
+			status = http.StatusTooManyRequests
+		case strings.Contains(msg, "base_url"):
+			status = http.StatusBadRequest
+		}
+		sendError(w, "Error", msg, status, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"setup_link": prov}, "Invitation link resent")
 }
 
 // RevokeInvitation handles DELETE /api/v1/projects/{id}/invitations/{invitationId}.

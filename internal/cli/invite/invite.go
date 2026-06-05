@@ -24,6 +24,7 @@ func init() {
 	InviteCmd.AddCommand(sendCmd)
 	InviteCmd.AddCommand(listCmd)
 	InviteCmd.AddCommand(revokeCmd)
+	InviteCmd.AddCommand(resendCmd)
 }
 
 // resolveUserID resolves an email address to a user ID via the core service.

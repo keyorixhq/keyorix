@@ -64,9 +64,9 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 		Role:      role,
 		State:     InvitationPending,
 		InvitedBy: invitedBy,
-		// Snapshot left empty here; once the membership validation-mode config
-		// (ADR-022) lands, capture it so consumption honours the mode at invite time.
-		ValidationModeAtInvite: "",
+		// Snapshot the install validation mode (ADR-022) so acceptance honours the
+		// mode in force at invite time, not whatever it changes to later.
+		ValidationModeAtInvite: c.validationMode(),
 		ExpiresAt:              &expires,
 		CreatedAt:              now,
 	}
@@ -77,6 +77,55 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 	c.auditProjectScoped(ctx, "invitation.created", invitedBy, projectID,
 		fmt.Sprintf("invited %s to project %d as %s", email, projectID, role))
 	return created, nil
+}
+
+// InviteToProjectWithLink creates an invitation and provisions its accept link
+// (ADR-028): an invitation_accept setup token bound to the invitation, delivered via
+// the configured channel. Returns the invitation and the delivery outcome. If
+// provisioning fails (e.g. base_url unset), the invitation still exists and is
+// returned with a nil result and the error, so the caller can resend rather than
+// losing the invite.
+func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
+	inv, err := c.InviteToProject(ctx, projectID, email, role, invitedBy)
+	if err != nil {
+		return nil, nil, err
+	}
+	prov, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+		Purpose:      SetupPurposeInvitationAccept,
+		SubjectEmail: email,
+		InvitationID: &inv.ID,
+		CreatedBy:    invitedBy,
+	}, "", fmt.Sprintf("%s on project %d", role, projectID))
+	if err != nil {
+		return inv, nil, err
+	}
+	return inv, prov, nil
+}
+
+// ResendInvitationLink reissues the accept link for a still-pending invitation
+// (superseding the prior token) and re-delivers it. Throttled per ADR-028.
+func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, invitationID, actorID uint) (*ProvisionSetupResult, error) {
+	inv, err := c.storage.GetProjectInvitation(ctx, invitationID)
+	if err != nil {
+		return nil, fmt.Errorf("invitation not found")
+	}
+	// Lazy-expire an overdue invite so a resend can't revive a dead one.
+	if inv.State == InvitationPending && inv.ExpiresAt != nil && c.now().After(*inv.ExpiresAt) {
+		inv.State = InvitationExpired
+		_ = c.storage.UpdateProjectInvitation(ctx, inv)
+	}
+	if inv.State != InvitationPending {
+		return nil, fmt.Errorf("only a pending invitation can be resent (state is %s)", inv.State)
+	}
+	if err := c.checkResendThrottle(ctx, SetupPurposeInvitationAccept, inv.Email); err != nil {
+		return nil, err
+	}
+	return c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+		Purpose:      SetupPurposeInvitationAccept,
+		SubjectEmail: inv.Email,
+		InvitationID: &inv.ID,
+		CreatedBy:    actorID,
+	}, "", fmt.Sprintf("%s on project %d", inv.Role, inv.ProjectID))
 }
 
 // ListProjectInvitations returns a project's invitations, marking any pending
