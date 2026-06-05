@@ -92,11 +92,17 @@ export const AdminPage: React.FC = () => {
     const [createDisplayName, setCreateDisplayName] = useState('');
     const [createPassword, setCreatePassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
-    // ADR-028: when on, the admin sets no password — a single-use setup link is
-    // delivered (or returned for out-of-band relay) and the user sets their own.
-    const [createDeliverSetupLink, setCreateDeliverSetupLink] = useState(false);
+    // ADR-028: credential delivery mode for the new account.
+    //   password           — admin sets a password now (classic).
+    //   setup_link         — single-use link delivered / returned for relay; the
+    //                        user sets their own password (account starts pending).
+    //   one_time_password  — server generates a strong password, shown once for
+    //                        out-of-band relay (account starts in reset-required).
+    const [createMode, setCreateMode] = useState<'password' | 'setup_link' | 'one_time_password'>('password');
     const [setupResult, setSetupResult] = useState<SetupLinkResult | null>(null);
+    const [otpResult, setOtpResult] = useState<string | null>(null);
     const [linkCopied, setLinkCopied] = useState(false);
+    const [otpCopied, setOtpCopied] = useState(false);
 
     const [editEmail, setEditEmail] = useState('');
     const [editDisplayName, setEditDisplayName] = useState('');
@@ -136,9 +142,11 @@ export const AdminPage: React.FC = () => {
         setFormError('');
         setCreateUsername(''); setCreateEmail(''); setCreateDisplayName(''); setCreatePassword('');
         setShowPassword(false);
-        setCreateDeliverSetupLink(false);
+        setCreateMode('password');
         setSetupResult(null);
+        setOtpResult(null);
         setLinkCopied(false);
+        setOtpCopied(false);
         setRolesUserId(null);
         setSelectedRoleIds(new Set());
     }
@@ -194,25 +202,42 @@ export const AdminPage: React.FC = () => {
         if (!createEmail.trim()) { setFormError('Email is required'); return; }
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(createEmail.trim())) { setFormError('Please enter a valid email address'); return; }
         if (!createDisplayName.trim()) { setFormError('Display name is required'); return; }
-        // Password is only required on the classic path; the setup-link path sets none.
-        if (!createDeliverSetupLink && createPassword.length < 8) { setFormError('Password must be at least 8 characters'); return; }
+        // A password is only required when the admin is setting one; the
+        // setup-link and one-time-password paths set none.
+        if (createMode === 'password' && createPassword.length < 8) { setFormError('Password must be at least 8 characters'); return; }
         const base = { username: createUsername.trim(), email: createEmail.trim(), display_name: createDisplayName.trim() };
-        const body = createDeliverSetupLink
-            ? { ...base, deliver_setup_link: true }
-            : { ...base, password: createPassword };
+        const body =
+            createMode === 'setup_link' ? { ...base, deliver_setup_link: true } :
+            createMode === 'one_time_password' ? { ...base, generate_one_time_password: true } :
+            { ...base, password: createPassword };
         createMutation.mutate(body, {
             onSuccess: (res) => {
-                // On the setup-link path, keep the modal open to show the delivery
-                // outcome — an out-of-band link the admin must relay, or an emailed
-                // confirmation. The classic path just closes.
-                if (createDeliverSetupLink && res?.setup_link) {
+                // Setup-link / one-time-password keep the modal open to show the
+                // out-of-band artifact the admin must relay; the classic path closes.
+                if (createMode === 'setup_link' && res?.setup_link) {
                     setSetupResult(res.setup_link);
+                } else if (createMode === 'one_time_password' && res?.one_time_password) {
+                    // The backend returns an {email, one_time_password} object (like
+                    // setup_link), so read the password string out of it.
+                    setOtpResult(res.one_time_password.one_time_password);
                 } else {
                     closeModal();
                 }
             },
             onError: (err: any) => setFormError(err.response?.data?.error ?? err.message ?? 'Failed to create user'),
         });
+    }
+
+    async function handleCopyOtp() {
+        if (!otpResult) return;
+        try {
+            await navigator.clipboard.writeText(otpResult);
+            setOtpCopied(true);
+            window.setTimeout(() => setOtpCopied(false), 2000);
+        } catch {
+            // Clipboard can be blocked (insecure context / permissions); the
+            // password stays visible for manual selection, so fail quietly.
+        }
     }
 
     async function handleCopyLink() {
@@ -530,6 +555,24 @@ export const AdminPage: React.FC = () => {
                             <Button variant="primary" onClick={closeModal}>Done</Button>
                         </div>
                     </div>
+                ) : otpResult ? (
+                    <div className="space-y-4">
+                        <Alert type="success" message={`Account created for ${createEmail.trim()}.`} />
+                        <p className="text-sm text-base-secondary">
+                            Relay this one-time password to the user securely — it’s shown once and never stored in clear. They’ll be required to change it at first login.
+                        </p>
+                        <div className="flex items-stretch gap-2">
+                            <code className="flex-1 min-w-0 px-3 py-2 text-sm font-mono break-all rounded-lg border border-base bg-subtle text-base-secondary">
+                                {otpResult}
+                            </code>
+                            <Button variant="outline" onClick={handleCopyOtp} className="shrink-0">
+                                {otpCopied ? 'Copied' : 'Copy'}
+                            </Button>
+                        </div>
+                        <div className="flex justify-end pt-2">
+                            <Button variant="primary" onClick={closeModal}>Done</Button>
+                        </div>
+                    </div>
                 ) : (
                 <div className="space-y-4">
                     {formError && <Alert type="error" message={formError} />}
@@ -546,15 +589,22 @@ export const AdminPage: React.FC = () => {
                         <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="jane@example.com" className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div className="rounded-lg border border-base p-3 space-y-2">
-                        <label className="flex items-start gap-2 cursor-pointer">
-                            <input type="checkbox" checked={createDeliverSetupLink} onChange={(e) => setCreateDeliverSetupLink(e.target.checked)} className="h-4 w-4 mt-0.5 rounded-sm border-base" style={{ accentColor: 'var(--accent)' }} />
-                            <span>
-                                <span className="block text-sm font-medium text-base-secondary">Send a setup link instead of a password</span>
-                                <span className="block text-xs text-base-muted">The user sets their own password via a single-use link. The account starts in pending state until they do.</span>
-                            </span>
-                        </label>
+                        <span className="block text-sm font-medium text-base-secondary mb-1">Initial credential</span>
+                        {([
+                            { mode: 'password', title: 'Set a password now', desc: 'The admin chooses the password and shares it.' },
+                            { mode: 'setup_link', title: 'Send a setup link', desc: 'The user sets their own password via a single-use link. The account starts pending until they do.' },
+                            { mode: 'one_time_password', title: 'Generate a one-time password', desc: 'The server generates a strong password, shown once for you to relay. The user must change it at first login.' },
+                        ] as const).map((opt) => (
+                            <label key={opt.mode} className="flex items-start gap-2 cursor-pointer">
+                                <input type="radio" name="createMode" checked={createMode === opt.mode} onChange={() => setCreateMode(opt.mode)} className="h-4 w-4 mt-0.5 border-base" style={{ accentColor: 'var(--accent)' }} />
+                                <span>
+                                    <span className="block text-sm font-medium text-base-secondary">{opt.title}</span>
+                                    <span className="block text-xs text-base-muted">{opt.desc}</span>
+                                </span>
+                            </label>
+                        ))}
                     </div>
-                    {!createDeliverSetupLink && (
+                    {createMode === 'password' && (
                     <div>
                         <div className="flex items-center justify-between mb-1">
                             <label className="text-sm font-medium text-base-secondary">Password</label>
@@ -583,7 +633,10 @@ export const AdminPage: React.FC = () => {
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>Cancel</Button>
                         <Button variant="primary" onClick={handleCreate} disabled={createMutation.isPending}>
-                            {createMutation.isPending ? 'Creating…' : createDeliverSetupLink ? 'Create & Send Link' : 'Create User'}
+                            {createMutation.isPending ? 'Creating…'
+                                : createMode === 'setup_link' ? 'Create & Send Link'
+                                : createMode === 'one_time_password' ? 'Create & Generate Password'
+                                : 'Create User'}
                         </Button>
                     </div>
                 </div>

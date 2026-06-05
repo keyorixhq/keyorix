@@ -16,8 +16,17 @@ export interface SetupLinkResult {
 // user under `user` and the delivery outcome under `setup_link`; the classic path
 // returns the user fields directly. Callers only read `setup_link`, so the rest stays
 // loose.
+// OneTimePasswordResult mirrors the backend ADR-028 Part E artifact: the
+// generated password is returned once (under `one_time_password`) for the admin
+// to relay out-of-band — never emailed, never stored in clear.
+export interface OneTimePasswordResult {
+    email: string;
+    one_time_password: string;
+}
+
 export interface CreateUserResult {
     setup_link?: SetupLinkResult;
+    one_time_password?: OneTimePasswordResult;
     [key: string]: any;
 }
 
@@ -90,6 +99,9 @@ export const usersApi = {
         // via the setup link (ADR-028) instead of the admin choosing one.
         password?: string;
         deliver_setup_link?: boolean;
+        // ADR-028 Part E: server generates a strong one-time password, returned
+        // once for out-of-band relay. Mutually exclusive with the other two.
+        generate_one_time_password?: boolean;
     }): Promise<CreateUserResult> {
         const response = await apiClient.post('/api/v1/users', body);
         return response.data?.data ?? response.data;

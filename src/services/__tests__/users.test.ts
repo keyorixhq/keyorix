@@ -106,6 +106,27 @@ describe('usersApi.create', () => {
         expect(res.setup_link).toMatchObject({ channel: 'smtp', delivered: true });
         expect(res.setup_link?.link_for_admin).toBeUndefined();
     });
+
+    it('one-time-password path posts the flag and unwraps the nested {email, one_time_password}', async () => {
+        mocked.post.mockResolvedValue({
+            data: { data: { user: { id: 9 }, one_time_password: { email: 'otto@x.io', one_time_password: 'Xk7-mP2q-Rt9w-Zb4n' } } },
+        });
+
+        const res = await usersApi.create({
+            username: 'otto',
+            email: 'otto@x.io',
+            display_name: 'Otto',
+            generate_one_time_password: true,
+        });
+
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users', {
+            username: 'otto',
+            email: 'otto@x.io',
+            display_name: 'Otto',
+            generate_one_time_password: true,
+        });
+        expect(res.one_time_password?.one_time_password).toBe('Xk7-mP2q-Rt9w-Zb4n');
+    });
 });
 
 describe('usersApi ADR-025 lifecycle + views', () => {

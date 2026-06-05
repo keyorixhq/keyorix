@@ -90,6 +90,7 @@ export const useAdminCreateUser = () => {
             display_name: string;
             password?: string;
             deliver_setup_link?: boolean;
+            generate_one_time_password?: boolean;
         }) => usersApi.create(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
     });
