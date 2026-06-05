@@ -215,6 +215,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	if vm := cfg.Membership.ValidationMode; vm != "" {
 		coreService.SetMembershipValidationMode(vm)
 	}
+
+	// Apply the credential-delivery setup-token TTL (ADR-028). GetSetupTokenTTL
+	// falls back to 24h when the block is absent or invalid.
+	coreService.SetSetupTokenTTL(cfg.CredentialDelivery.GetSetupTokenTTL())
+
 	return coreService, encSvc, nil
 }
 

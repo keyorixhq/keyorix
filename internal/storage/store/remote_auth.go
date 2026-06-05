@@ -275,3 +275,30 @@ func (rs *RemoteStorage) RevokePersonalAccessToken(_ context.Context, _ uint) er
 func (rs *RemoteStorage) TouchPersonalAccessToken(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
 	return nil // best-effort; no-op on remote storage
 }
+
+// Setup Token Management (ADR-028) — credential delivery is a server-side concern;
+// a remote CLI client does not mint or consume setup tokens.
+
+func (rs *RemoteStorage) CreateSetupToken(_ context.Context, _ *models.SetupToken) (*models.SetupToken, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) GetSetupTokenByHash(_ context.Context, _ string) (*models.SetupToken, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) SupersedeActiveSetupTokens(_ context.Context, _, _ string) error {
+	return errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) MarkSetupTokenConsumed(_ context.Context, _ uint, _ time.Time) (bool, error) {
+	return false, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) MarkSetupTokenExpired(_ context.Context, _ uint) error {
+	return errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) CountSetupTokensSince(_ context.Context, _, _ string, _ time.Time) (int64, error) {
+	return 0, errUnsupportedRemote
+}

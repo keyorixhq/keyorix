@@ -703,6 +703,44 @@ func (m *MockStorage) TouchPersonalAccessToken(ctx context.Context, id uint, use
 	return args.Error(0)
 }
 
+// Setup Token Management (ADR-028)
+
+func (m *MockStorage) CreateSetupToken(ctx context.Context, t *models.SetupToken) (*models.SetupToken, error) {
+	args := m.Called(ctx, t)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SetupToken), args.Error(1)
+}
+
+func (m *MockStorage) GetSetupTokenByHash(ctx context.Context, hash string) (*models.SetupToken, error) {
+	args := m.Called(ctx, hash)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SetupToken), args.Error(1)
+}
+
+func (m *MockStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose, email string) error {
+	args := m.Called(ctx, purpose, email)
+	return args.Error(0)
+}
+
+func (m *MockStorage) MarkSetupTokenConsumed(ctx context.Context, id uint, consumedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, consumedAt)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) MarkSetupTokenExpired(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockStorage) CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error) {
+	args := m.Called(ctx, purpose, email, since)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 // API Client Management
 
 func (m *MockStorage) CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {
