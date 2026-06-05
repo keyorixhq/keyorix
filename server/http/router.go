@@ -250,6 +250,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/suspend", handlers.SuspendUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/reactivate", handlers.ReactivateUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/require-password-reset", handlers.RequirePasswordReset)
+			// Credential-delivery resend (ADR-028): reissue + redeliver a setup link.
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/resend-setup-link", handlers.ResendSetupLink)
 			r.Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
 			r.Put("/{id}/roles", usersRolesHandler.UpdateUserRoles)
 		})

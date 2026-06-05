@@ -5,6 +5,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
@@ -42,6 +43,29 @@ func InitializeCoreService() (*core.KeyorixCore, error) {
 		return nil, fmt.Errorf("failed to create storage: %w", err)
 	}
 
-	// Create and return core service
-	return core.NewKeyorixCore(storageImpl), nil
+	// Create core service and wire credential delivery (ADR-028) so a CLI admin can
+	// provision / resend setup links. Best-effort: a delivery misconfig (e.g.
+	// mode=smtp with no host) must not break unrelated CLI commands, so on a New
+	// error we leave delivery unset — core then falls back to out-of-band (returns
+	// the link), which is exactly what a CLI admin wants anyway.
+	svc := core.NewKeyorixCore(storageImpl)
+	svc.SetSetupTokenTTL(cfg.CredentialDelivery.GetSetupTokenTTL())
+	cd := cfg.CredentialDelivery
+	if deliverer, derr := delivery.New(delivery.Config{
+		Mode:    cd.Mode,
+		BaseURL: cd.BaseURL,
+		SMTP: delivery.SMTPSettings{
+			Host:     cd.SMTP.Host,
+			Port:     cd.SMTP.Port,
+			Username: cd.SMTP.Username,
+			Password: cd.SMTP.GetPassword(),
+			From:     cd.SMTP.From,
+			TLS:      cd.SMTP.TLS,
+		},
+	}); derr == nil {
+		svc.SetCredentialDelivery(deliverer, cd.BaseURL)
+	} else {
+		svc.SetCredentialDelivery(nil, cd.BaseURL)
+	}
+	return svc, nil
 }
