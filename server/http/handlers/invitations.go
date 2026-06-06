@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -65,6 +66,58 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		if inv == nil {
 			status := http.StatusInternalServerError
 			if strings.Contains(err.Error(), "unknown role") || strings.Contains(err.Error(), "required") {
+				status = http.StatusBadRequest
+			}
+			sendError(w, "Error", err.Error(), status, nil)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		sendSuccess(w, map[string]interface{}{"invitation": inv, "delivery_error": err.Error()},
+			"Invitation created but the setup link could not be delivered")
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	sendSuccess(w, map[string]interface{}{"invitation": inv, "setup_link": prov}, "Invitation created")
+}
+
+// CreateGlobalInvitation is the Global-Admin counterpart to CreateInvitation: a
+// non-project-scoped invite (ADR-024) carrying an optional system role plus
+// per-project assignments, all applied atomically when the user accepts. Gated by
+// users.write (system scope) since it provisions an account-to-be with grants.
+func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body struct {
+		Email              string `json:"email"`
+		Role               string `json:"role"` // system role (optional; defaults to system_viewer)
+		ProjectAssignments []struct {
+			ProjectID uint   `json:"project_id"`
+			Role      string `json:"role"`
+		} `json:"project_assignments"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	if body.Email == "" {
+		sendError(w, "ValidationError", "email is required", http.StatusBadRequest, nil)
+		return
+	}
+	assignments := make([]core.ProjectAssignment, 0, len(body.ProjectAssignments))
+	for _, a := range body.ProjectAssignments {
+		assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
+	}
+	inv, prov, err := h.coreService.InviteGlobalWithLink(r.Context(), body.Email, body.Role, assignments, actor.UserID)
+	if err != nil {
+		// A nil inv means the invitation was not created at all (bad input); a non-nil
+		// inv with an error means it exists but the link couldn't be provisioned (e.g.
+		// base_url unset) — surface that so the admin can fix config and resend.
+		if inv == nil {
+			status := http.StatusInternalServerError
+			if strings.Contains(err.Error(), "unknown") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "needs a") {
 				status = http.StatusBadRequest
 			}
 			sendError(w, "Error", err.Error(), status, nil)

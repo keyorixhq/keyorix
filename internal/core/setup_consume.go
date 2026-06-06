@@ -188,13 +188,15 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
-	// Create the membership under the invite-time validation mode. This grants the
-	// project role immediately when the mode (e.g. open) lands it active; under
-	// allowlist it starts in `invited` for an admin to advance. Done BEFORE flipping
-	// the invitation to accepted: if membership creation fails, the invitation stays
-	// pending (resendable / revocable) rather than being falsely marked accepted with
-	// no membership behind it.
-	if _, err := c.inviteMemberWithMode(ctx, inv.ProjectID, user.ID, inv.Role, inv.InvitedBy, inv.ValidationModeAtInvite, false); err != nil {
+	// Materialize the invitation's grants under the invite-time validation mode. For a
+	// project-scoped invite that's the single project role; for a global invite it's
+	// the system role plus every project assignment (ADR-024). This grants project
+	// roles immediately when the mode (e.g. open) lands them active; under allowlist a
+	// membership starts in `invited` for an admin to advance. Done BEFORE flipping the
+	// invitation to accepted: if any grant fails, the invitation stays pending
+	// (resendable / revocable) rather than being falsely marked accepted with no
+	// grants behind it.
+	if err := c.applyInvitationGrants(ctx, inv, user.ID); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
