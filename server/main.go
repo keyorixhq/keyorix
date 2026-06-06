@@ -340,8 +340,15 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config) error {
+	// Initialize the core service so the gRPC auth interceptor can validate
+	// session tokens (mirrors the HTTP server's own core initialization).
+	coreService, _, err := initializeCoreService(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to initialize core service: %w", err)
+	}
+
 	// Create gRPC server
-	grpcServer, err := grpc.NewServer(cfg)
+	grpcServer, err := grpc.NewServer(cfg, coreService)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC server: %w", err)
 	}

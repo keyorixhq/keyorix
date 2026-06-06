@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -26,8 +27,9 @@ const (
 	userContextKey contextKey = "grpc_user"
 )
 
-// AuthInterceptor returns a unary server interceptor for authentication
-func AuthInterceptor() grpc.UnaryServerInterceptor {
+// AuthInterceptor returns a unary server interceptor that authenticates each
+// request against a real session token via the core service.
+func AuthInterceptor(coreService *core.KeyorixCore) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		// Skip authentication for certain methods
 		if isPublicMethod(info.FullMethod) {
@@ -35,7 +37,7 @@ func AuthInterceptor() grpc.UnaryServerInterceptor {
 		}
 
 		// Extract and validate token
-		userCtx, err := authenticateRequest(ctx)
+		userCtx, err := authenticateRequest(ctx, coreService)
 		if err != nil {
 			return nil, err
 		}
@@ -46,8 +48,9 @@ func AuthInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
-// StreamAuthInterceptor returns a stream server interceptor for authentication
-func StreamAuthInterceptor() grpc.StreamServerInterceptor {
+// StreamAuthInterceptor returns a stream server interceptor that authenticates
+// each stream against a real session token via the core service.
+func StreamAuthInterceptor(coreService *core.KeyorixCore) grpc.StreamServerInterceptor {
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		// Skip authentication for certain methods
 		if isPublicMethod(info.FullMethod) {
@@ -55,7 +58,7 @@ func StreamAuthInterceptor() grpc.StreamServerInterceptor {
 		}
 
 		// Extract and validate token
-		userCtx, err := authenticateRequest(stream.Context())
+		userCtx, err := authenticateRequest(stream.Context(), coreService)
 		if err != nil {
 			return err
 		}
@@ -80,8 +83,16 @@ func (w *wrappedServerStream) Context() context.Context {
 	return w.ctx
 }
 
-// authenticateRequest extracts and validates the authentication token
-func authenticateRequest(ctx context.Context) (*UserContext, error) {
+// authenticateRequest extracts the bearer session token from the request
+// metadata and validates it against the core service — the same session-token
+// path the HTTP API uses. On success it returns the authenticated user's
+// context (id, identity, roles, permissions) for downstream authorization.
+func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*UserContext, error) {
+	if coreService == nil {
+		// Fail closed: a server wired without a core service must not authenticate.
+		return nil, status.Errorf(codes.Internal, "authentication unavailable")
+	}
+
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return nil, status.Errorf(codes.Unauthenticated, "Missing metadata")
@@ -103,49 +114,25 @@ func authenticateRequest(ctx context.Context) (*UserContext, error) {
 		return nil, status.Errorf(codes.Unauthenticated, "Missing token")
 	}
 
-	// TODO: Validate JWT token and extract user information
-	// For now, we'll use a mock implementation
-	userCtx, err := validateGRPCToken(token)
+	// Validate the session token (existence + expiry) and resolve the user.
+	user, _, err := coreService.ValidateSessionToken(ctx, token)
 	if err != nil {
 		return nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
 	}
 
-	return userCtx, nil
-}
-
-// validateGRPCToken validates a JWT token and returns user context
-// TODO: Implement actual JWT validation
-func validateGRPCToken(token string) (*UserContext, error) {
-	// Mock implementation - replace with actual JWT validation
-	if token == "valid-token" {
-		return &UserContext{
-			UserID:   1,
-			Username: "admin",
-			Email:    "admin@example.com",
-			Roles:    []string{"admin", "user"},
-			Permissions: []string{
-				"secrets.read", "secrets.write", "secrets.delete",
-				"users.read", "users.write", "users.delete",
-				"roles.read", "roles.write", "roles.assign",
-				"audit.read", "system.read",
-			},
-		}, nil
+	// Resolve roles + permissions for downstream per-method authorization.
+	identity, err := coreService.GetUserIdentity(ctx, user.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to resolve user identity")
 	}
 
-	if token == "test-token" {
-		return &UserContext{
-			UserID:   2,
-			Username: "testuser",
-			Email:    "test@example.com",
-			Roles:    []string{"viewer"},
-			Permissions: []string{
-				"secrets.read",
-				"users.read",
-			},
-		}, nil
-	}
-
-	return nil, status.Errorf(codes.Unauthenticated, "Invalid token")
+	return &UserContext{
+		UserID:      user.ID,
+		Username:    user.Username,
+		Email:       user.Email,
+		Roles:       identity.Roles,
+		Permissions: identity.Permissions,
+	}, nil
 }
 
 // isPublicMethod checks if a gRPC method is public (doesn't require authentication)
