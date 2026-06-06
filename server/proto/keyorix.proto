@@ -11,23 +11,23 @@ import "google/protobuf/empty.proto";
 service SecretService {
   // Create a new secret
   rpc CreateSecret(CreateSecretRequest) returns (Secret);
-  
-  // Get a secret by ID
+
+  // Get a secret by ID (optionally including the decrypted value)
   rpc GetSecret(GetSecretRequest) returns (Secret);
-  
-  // Get secret with decrypted value
+
+  // Get a secret's decrypted value (counts against max_reads if set)
   rpc GetSecretValue(GetSecretRequest) returns (SecretValue);
-  
-  // Update an existing secret
+
+  // Update an existing secret (a new value creates a new version)
   rpc UpdateSecret(UpdateSecretRequest) returns (Secret);
-  
+
   // Delete a secret
   rpc DeleteSecret(DeleteSecretRequest) returns (google.protobuf.Empty);
-  
+
   // List secrets with filtering and pagination
   rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
-  
-  // Get secret versions
+
+  // Get a secret's version history
   rpc GetSecretVersions(GetSecretVersionsRequest) returns (GetSecretVersionsResponse);
 }
 
@@ -35,107 +35,119 @@ service SecretService {
 service ShareService {
   // Share a secret with another user or group
   rpc ShareSecret(ShareSecretRequest) returns (ShareRecord);
-  
+
   // List shares for a secret
   rpc ListSecretShares(ListSecretSharesRequest) returns (ListSharesResponse);
-  
-  // List shares created by a user
+
+  // List shares created by the calling user
   rpc ListUserShares(ListUserSharesRequest) returns (ListSharesResponse);
-  
-  // List secrets shared with a user
+
+  // List secrets shared with the calling user
   rpc ListSharedSecrets(ListSharedSecretsRequest) returns (ListSecretsResponse);
-  
+
   // Update share permissions
   rpc UpdateSharePermission(UpdateSharePermissionRequest) returns (ShareRecord);
-  
+
   // Revoke a share
   rpc RevokeShare(RevokeShareRequest) returns (google.protobuf.Empty);
 }
 
 // User service for managing users
 service UserService {
-  // Create a new user
-  rpc CreateUser(CreateUserRequest) returns (User);
-  
+  // Create a new user (optionally with a system role + project assignments)
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+
   // Get a user by ID
   rpc GetUser(GetUserRequest) returns (User);
-  
+
   // Update an existing user
   rpc UpdateUser(UpdateUserRequest) returns (User);
-  
-  // Delete a user
+
+  // Soft-delete a user
   rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty);
-  
-  // List users with pagination
+
+  // List users with filtering and pagination
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
 }
 
-// Role service for managing roles and permissions
+// Role service for managing roles and assignments
 service RoleService {
-  // Create a new role
+  // Create a new role with its permission set
   rpc CreateRole(CreateRoleRequest) returns (Role);
-  
-  // Get a role by ID
+
+  // Get a role (with its permissions) by ID
   rpc GetRole(GetRoleRequest) returns (Role);
-  
-  // Update an existing role
+
+  // Update a role's description and/or permission set
   rpc UpdateRole(UpdateRoleRequest) returns (Role);
-  
-  // Delete a role
+
+  // Delete a role (built-in roles cannot be deleted)
   rpc DeleteRole(DeleteRoleRequest) returns (google.protobuf.Empty);
-  
-  // List roles
+
+  // List roles (with their permissions) and pagination
   rpc ListRoles(ListRolesRequest) returns (ListRolesResponse);
-  
-  // Assign role to user
-  rpc AssignRole(AssignRoleRequest) returns (google.protobuf.Empty);
-  
-  // Remove role from user
+
+  // Assign a role to a user, optionally scoped to a project/environment
+  rpc AssignRole(AssignRoleRequest) returns (RoleAssignment);
+
+  // Remove a role assignment from a user
   rpc RemoveRole(RemoveRoleRequest) returns (google.protobuf.Empty);
-  
-  // Get user roles
+
+  // Get all roles assigned to a user
   rpc GetUserRoles(GetUserRolesRequest) returns (GetUserRolesResponse);
 }
 
-// Audit service for audit logs
+// Audit service for reading audit logs
 service AuditService {
-  // Get audit logs
+  // Read the audit log with filtering and pagination
   rpc GetAuditLogs(GetAuditLogsRequest) returns (GetAuditLogsResponse);
-  
-  // Get RBAC audit logs
+
+  // Read RBAC-specific audit events
   rpc GetRBACAuditLogs(GetRBACAuditLogsRequest) returns (GetRBACAuditLogsResponse);
-  
-  // Stream audit logs in real-time
+
+  // Stream audit events as they occur
   rpc StreamAuditLogs(StreamAuditLogsRequest) returns (stream AuditLog);
 }
 
-// System service for system information and health
+// System service for health, info, and metrics
 service SystemService {
-  // Health check
+  // Liveness/readiness check
   rpc HealthCheck(google.protobuf.Empty) returns (HealthResponse);
-  
-  // Get system information
+
+  // Static + runtime system information
   rpc GetSystemInfo(google.protobuf.Empty) returns (SystemInfo);
-  
-  // Get system metrics
+
+  // Operational metrics snapshot
   rpc GetMetrics(google.protobuf.Empty) returns (Metrics);
 }
 
+// ---------------------------------------------------------------------------
 // Secret messages
+// ---------------------------------------------------------------------------
+
 message Secret {
   uint32 id = 1;
   string name = 2;
-  string namespace = 3;
-  string zone = 4;
-  string environment = 5;
-  string type = 6;
-  optional uint32 max_reads = 7;
-  optional google.protobuf.Timestamp expiration = 8;
-  map<string, string> metadata = 9;
-  repeated string tags = 10;
-  string created_by = 11;
-  google.protobuf.Timestamp created_at = 12;
-  google.protobuf.Timestamp updated_at = 13;
+  uint32 project_id = 3;
+  uint32 environment_id = 4;
+  // Human-readable names, populated on list/get where resolved.
+  string project_name = 5;
+  string environment_name = 6;
+  string type = 7;
+  optional int32 max_reads = 8;
+  optional google.protobuf.Timestamp expiration = 9;
+  map<string, string> metadata = 10;
+  repeated string tags = 11;
+  string status = 12;
+  string created_by = 13;
+  uint32 owner_id = 14;
+  google.protobuf.Timestamp created_at = 15;
+  google.protobuf.Timestamp updated_at = 16;
+  // Sharing context relative to the calling user (populated on list).
+  bool is_shared = 17;
+  bool is_owned_by_user = 18;
+  string user_permission = 19; // "read" | "write" | ""
+  uint32 share_count = 20;
 }
 
 message SecretValue {
@@ -149,14 +161,13 @@ message SecretValue {
 message CreateSecretRequest {
   string name = 1;
   string value = 2;
-  string namespace = 3;
-  string zone = 4;
-  string environment = 5;
-  optional string type = 6;
-  optional uint32 max_reads = 7;
-  optional google.protobuf.Timestamp expiration = 8;
-  map<string, string> metadata = 9;
-  repeated string tags = 10;
+  uint32 project_id = 3;
+  uint32 environment_id = 4;
+  string type = 5;
+  optional int32 max_reads = 6;
+  optional google.protobuf.Timestamp expiration = 7;
+  map<string, string> metadata = 8;
+  repeated string tags = 9;
 }
 
 message GetSecretRequest {
@@ -166,16 +177,12 @@ message GetSecretRequest {
 
 message UpdateSecretRequest {
   uint32 id = 1;
-  string name = 2;
-  string value = 3;
-  string namespace = 4;
-  string zone = 5;
-  string environment = 6;
-  optional string type = 7;
-  optional uint32 max_reads = 8;
-  optional google.protobuf.Timestamp expiration = 9;
-  map<string, string> metadata = 10;
-  repeated string tags = 11;
+  // A non-empty value rotates the secret to a new version.
+  optional string value = 2;
+  optional int32 max_reads = 3;
+  optional google.protobuf.Timestamp expiration = 4;
+  map<string, string> metadata = 5;
+  repeated string tags = 6;
 }
 
 message DeleteSecretRequest {
@@ -183,11 +190,16 @@ message DeleteSecretRequest {
 }
 
 message ListSecretsRequest {
-  optional string namespace = 1;
-  optional string zone = 2;
-  optional string environment = 3;
-  uint32 page = 4;
-  uint32 page_size = 5;
+  optional uint32 project_id = 1;
+  optional uint32 environment_id = 2;
+  optional string type = 3;
+  optional string search = 4;
+  // "read" | "write" — filter to secrets the user holds this permission on.
+  optional string permission = 5;
+  bool show_owned_only = 6;
+  bool show_shared_only = 7;
+  uint32 page = 8;
+  uint32 page_size = 9;
 }
 
 message ListSecretsResponse {
@@ -196,6 +208,8 @@ message ListSecretsResponse {
   uint32 page = 3;
   uint32 page_size = 4;
   uint32 total_pages = 5;
+  uint32 owned_count = 6;
+  uint32 shared_count = 7;
 }
 
 message GetSecretVersionsRequest {
@@ -212,18 +226,51 @@ message GetSecretVersionsResponse {
   repeated SecretVersion versions = 1;
 }
 
+// ---------------------------------------------------------------------------
 // User messages
+// ---------------------------------------------------------------------------
+
 message User {
   uint32 id = 1;
   string username = 2;
   string email = 3;
-  google.protobuf.Timestamp created_at = 4;
+  string display_name = 4;
+  bool active = 5;
+  string account_state = 6; // active | pending_first_login | password_reset_required | suspended
+  optional google.protobuf.Timestamp last_login_at = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  uint32 project_count = 10;
+  uint32 active_project_count = 11;
+}
+
+// A project-scoped role grant applied atomically at user creation.
+message ProjectAssignment {
+  uint32 project_id = 1;
+  string role = 2;
 }
 
 message CreateUserRequest {
   string username = 1;
   string email = 2;
-  string password = 3;
+  // Exactly one credential mode: password, deliver_setup_link, or
+  // generate_one_time_password.
+  optional string password = 3;
+  bool deliver_setup_link = 4;
+  bool generate_one_time_password = 5;
+  optional string display_name = 6;
+  optional bool is_active = 7;
+  optional string account_state = 8;
+  // System role + atomic project assignments (ADR-028).
+  optional string role = 9;
+  repeated ProjectAssignment project_assignments = 10;
+}
+
+message CreateUserResponse {
+  User user = 1;
+  // Out-of-band credential artifacts, set only for the matching mode.
+  optional string setup_link = 2;
+  optional string one_time_password = 3;
 }
 
 message GetUserRequest {
@@ -232,8 +279,10 @@ message GetUserRequest {
 
 message UpdateUserRequest {
   uint32 id = 1;
-  string username = 2;
-  string email = 3;
+  optional string username = 2;
+  optional string email = 3;
+  optional string display_name = 4;
+  optional bool active = 5;
 }
 
 message DeleteUserRequest {
@@ -243,6 +292,11 @@ message DeleteUserRequest {
 message ListUsersRequest {
   uint32 page = 1;
   uint32 page_size = 2;
+  optional string search = 3;
+  optional bool is_active = 4;
+  bool include_deleted = 5;
+  // "inactive" = users with no login in the last 30 days.
+  optional string filter = 6;
 }
 
 message ListUsersResponse {
@@ -253,16 +307,32 @@ message ListUsersResponse {
   uint32 total_pages = 5;
 }
 
+// ---------------------------------------------------------------------------
 // Role messages
+// ---------------------------------------------------------------------------
+
+message Permission {
+  uint32 id = 1;
+  string name = 2;
+  string description = 3;
+  string resource = 4;
+  string action = 5;
+}
+
 message Role {
   uint32 id = 1;
   string name = 2;
   string description = 3;
+  repeated Permission permissions = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
 }
 
 message CreateRoleRequest {
   string name = 1;
   string description = 2;
+  // Named permission strings, e.g. "secrets.read".
+  repeated string permissions = 3;
 }
 
 message GetRoleRequest {
@@ -271,8 +341,9 @@ message GetRoleRequest {
 
 message UpdateRoleRequest {
   uint32 id = 1;
-  string name = 2;
-  string description = 3;
+  optional string description = 2;
+  // If provided, replaces the entire permission set.
+  repeated string permissions = 3;
 }
 
 message DeleteRoleRequest {
@@ -292,16 +363,27 @@ message ListRolesResponse {
   uint32 total_pages = 5;
 }
 
+// Scope semantics: project_id=0 → global; project_id=P,environment_id=0 → all
+// environments in P; project_id=P,environment_id=E → only environment E.
 message AssignRoleRequest {
   uint32 user_id = 1;
   uint32 role_id = 2;
-  optional uint32 namespace_id = 3;
+  optional uint32 project_id = 3;
+  optional uint32 environment_id = 4;
+}
+
+message RoleAssignment {
+  uint32 user_id = 1;
+  uint32 role_id = 2;
+  uint32 project_id = 3;
+  uint32 environment_id = 4;
 }
 
 message RemoveRoleRequest {
   uint32 user_id = 1;
   uint32 role_id = 2;
-  optional uint32 namespace_id = 3;
+  optional uint32 project_id = 3;
+  optional uint32 environment_id = 4;
 }
 
 message GetUserRolesRequest {
@@ -309,40 +391,45 @@ message GetUserRolesRequest {
 }
 
 message GetUserRolesResponse {
-  repeated Role roles = 1;
+  uint32 user_id = 1;
+  string username = 2;
+  string email = 3;
+  repeated Role roles = 4;
 }
 
+// ---------------------------------------------------------------------------
 // Audit messages
+// ---------------------------------------------------------------------------
+
 message AuditLog {
   uint32 id = 1;
   string event_type = 2;
-  optional uint32 user_id = 3;
-  optional uint32 secret_id = 4;
-  string description = 5;
-  google.protobuf.Timestamp event_time = 6;
-  string ip_address = 7;
-  string user_agent = 8;
-}
-
-message RBACAuditLog {
-  uint32 id = 1;
-  string action = 2;
-  optional uint32 actor_user_id = 3;
-  optional uint32 target_user_id = 4;
-  optional uint32 role_id = 5;
-  optional uint32 namespace_id = 6;
-  string details = 7;
-  google.protobuf.Timestamp created_at = 8;
+  // Resolved actor username ("system"/"unknown" when not a user).
+  string actor = 3;
+  string actor_type = 4; // user | machine_identity | system
+  optional uint32 user_id = 5;
+  optional uint32 project_id = 6;
+  optional uint32 secret_id = 7;
+  string description = 8;
+  string ip_address = 9;
+  bool success = 10;
+  google.protobuf.Timestamp event_time = 11;
+  // Structured before/after for mutation events (JSON; never plaintext values).
+  optional string diff = 12;
+  bool impersonation = 13;
+  optional string impersonated_by = 14;
+  optional string acting_as = 15;
 }
 
 message GetAuditLogsRequest {
   optional string event_type = 1;
   optional uint32 user_id = 2;
-  optional uint32 secret_id = 3;
-  optional google.protobuf.Timestamp start_date = 4;
-  optional google.protobuf.Timestamp end_date = 5;
-  uint32 page = 6;
-  uint32 page_size = 7;
+  optional uint32 project_id = 3;
+  optional string actor_type = 4;
+  optional google.protobuf.Timestamp start_time = 5;
+  optional google.protobuf.Timestamp end_time = 6;
+  uint32 page = 7;
+  uint32 page_size = 8;
 }
 
 message GetAuditLogsResponse {
@@ -351,6 +438,17 @@ message GetAuditLogsResponse {
   uint32 page = 3;
   uint32 page_size = 4;
   uint32 total_pages = 5;
+}
+
+message RBACAuditLog {
+  uint32 id = 1;
+  string action = 2;
+  optional uint32 actor_user_id = 3;
+  optional uint32 target_user_id = 4;
+  optional uint32 role_id = 5;
+  optional uint32 project_id = 6;
+  string details = 7;
+  google.protobuf.Timestamp created_at = 8;
 }
 
 message GetRBACAuditLogsRequest {
@@ -372,9 +470,66 @@ message GetRBACAuditLogsResponse {
 message StreamAuditLogsRequest {
   optional string event_type = 1;
   optional uint32 user_id = 2;
+  optional uint32 project_id = 3;
 }
 
+// ---------------------------------------------------------------------------
+// Share messages
+// ---------------------------------------------------------------------------
+
+message ShareRecord {
+  uint32 id = 1;
+  uint32 secret_id = 2;
+  uint32 owner_id = 3;
+  uint32 recipient_id = 4;
+  bool is_group = 5;
+  string permission = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message ShareSecretRequest {
+  uint32 secret_id = 1;
+  uint32 recipient_id = 2;
+  bool is_group = 3;
+  string permission = 4;
+}
+
+message ListSecretSharesRequest {
+  uint32 secret_id = 1;
+}
+
+message ListUserSharesRequest {
+  uint32 page = 1;
+  uint32 page_size = 2;
+}
+
+message ListSharedSecretsRequest {
+  uint32 page = 1;
+  uint32 page_size = 2;
+}
+
+message ListSharesResponse {
+  repeated ShareRecord shares = 1;
+  uint32 total = 2;
+  uint32 page = 3;
+  uint32 page_size = 4;
+  uint32 total_pages = 5;
+}
+
+message UpdateSharePermissionRequest {
+  uint32 share_id = 1;
+  string permission = 2;
+}
+
+message RevokeShareRequest {
+  uint32 share_id = 1;
+}
+
+// ---------------------------------------------------------------------------
 // System messages
+// ---------------------------------------------------------------------------
+
 message HealthResponse {
   string status = 1;
   google.protobuf.Timestamp timestamp = 2;
@@ -447,54 +602,4 @@ message SystemMetrics {
   double memory_usage_percent = 2;
   double disk_usage_percent = 3;
   uint32 goroutines = 4;
-}
-
-// Share messages
-message ShareRecord {
-  uint32 id = 1;
-  uint32 secret_id = 2;
-  uint32 owner_id = 3;
-  uint32 recipient_id = 4;
-  bool is_group = 5;
-  string permission = 6;
-  google.protobuf.Timestamp created_at = 7;
-  google.protobuf.Timestamp updated_at = 8;
-}
-
-message ShareSecretRequest {
-  uint32 secret_id = 1;
-  uint32 recipient_id = 2;
-  bool is_group = 3;
-  string permission = 4;
-}
-
-message ListSecretSharesRequest {
-  uint32 secret_id = 1;
-}
-
-message ListUserSharesRequest {
-  uint32 page = 1;
-  uint32 page_size = 2;
-}
-
-message ListSharedSecretsRequest {
-  uint32 page = 1;
-  uint32 page_size = 2;
-}
-
-message ListSharesResponse {
-  repeated ShareRecord shares = 1;
-  uint32 total = 2;
-  uint32 page = 3;
-  uint32 page_size = 4;
-  uint32 total_pages = 5;
-}
-
-message UpdateSharePermissionRequest {
-  uint32 share_id = 1;
-  string permission = 2;
-}
-
-message RevokeShareRequest {
-  uint32 share_id = 1;
 }
