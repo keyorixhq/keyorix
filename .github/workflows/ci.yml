@@ -41,4 +41,7 @@ jobs:
       - name: gosec
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -severity medium ./...
+          # -exclude-generated skips files with the "DO NOT EDIT" header
+          # (generated protobuf code), whose *_FullMethodName string constants
+          # otherwise trip G101 (hardcoded-credential) false positives.
+          gosec -severity medium -exclude-generated ./...
