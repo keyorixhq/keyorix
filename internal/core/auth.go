@@ -16,6 +16,19 @@ import (
 // sessionTouchInterval throttles last_seen_at writes on the auth hot path.
 const sessionTouchInterval = 30 * time.Second
 
+// defaultSessionAccessTTL is the access-token lifetime when no session config is
+// set. It matches the historic hard-coded value, so an install that does not
+// configure a session block keeps the old 24h behaviour.
+const defaultSessionAccessTTL = 24 * time.Hour
+
+// accessTTL returns the configured access-token lifetime, or the 24h default.
+func (c *KeyorixCore) accessTTL() time.Duration {
+	if c.sessionAccessTTL > 0 {
+		return c.sessionAccessTTL
+	}
+	return defaultSessionAccessTTL
+}
+
 // LoginRequest holds credentials for login. UserAgent/IPAddress are captured for
 // the My Account "active sessions" view and are optional.
 type LoginRequest struct {
@@ -47,16 +60,19 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	return created, user, nil
 }
 
-// mintSession creates and persists a new 24h session token for a user. Shared by
-// Login and the setup-token consume flow (auto-login) so session issuance — token
-// generation, expiry, and the captured device fields — stays uniform.
+// mintSession creates and persists a new session token for a user. The access
+// window is the configured access TTL (default 24h); when an absolute ceiling is
+// configured it is stamped once here and carried unchanged through every refresh,
+// so total session lifetime is bounded regardless of how often the token rotates.
+// Shared by Login and the setup-token consume flow (auto-login) so session
+// issuance — token generation, expiry, and the captured device fields — stays uniform.
 func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, ip string) (*models.Session, error) {
 	token, err := generateSecureToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
 	now := c.now()
-	expiresAt := now.Add(24 * time.Hour)
+	expiresAt := now.Add(c.accessTTL())
 	session := &models.Session{
 		UserID:       userID,
 		SessionToken: token,
@@ -64,6 +80,15 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 		IPAddress:    ip,
 		LastSeenAt:   &now,
 		ExpiresAt:    &expiresAt,
+	}
+	if c.sessionAbsoluteTTL > 0 {
+		absolute := now.Add(c.sessionAbsoluteTTL)
+		// A ceiling shorter than one access window is meaningless — never let the
+		// first window already overrun the ceiling.
+		if absolute.Before(expiresAt) {
+			absolute = expiresAt
+		}
+		session.AbsoluteExpiresAt = &absolute
 	}
 	created, err := c.storage.CreateSession(ctx, session)
 	if err != nil {
@@ -88,25 +113,39 @@ func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 	return c.storage.DeleteSession(ctx, session.ID)
 }
 
-// RefreshSession replaces an existing session with a new token.
+// RefreshSession rotates an existing session to a new token with a fresh access
+// window. The access window may have lapsed — that is the normal silent-refresh
+// case — but refresh is refused once the session's absolute ceiling is reached, so
+// rotating the token can never extend a session indefinitely. The ceiling is
+// carried unchanged onto the new session, and the new access window is clamped so
+// it never overruns that ceiling.
 func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models.Session, error) {
 	old, err := c.storage.GetSession(ctx, token)
 	if err != nil {
 		return nil, fmt.Errorf("session not found or expired")
 	}
+	now := c.now()
+	if old.AbsoluteExpiresAt != nil && !now.Before(*old.AbsoluteExpiresAt) {
+		// Past the hard ceiling — re-authentication required, not another refresh.
+		_ = c.storage.DeleteSession(ctx, old.ID)
+		return nil, fmt.Errorf("session lifetime exceeded; re-authentication required")
+	}
 	newToken, err := generateSecureToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
-	expiresAt := c.now().Add(24 * time.Hour)
-	now := c.now()
+	expiresAt := now.Add(c.accessTTL())
+	if old.AbsoluteExpiresAt != nil && expiresAt.After(*old.AbsoluteExpiresAt) {
+		expiresAt = *old.AbsoluteExpiresAt
+	}
 	session := &models.Session{
-		UserID:       old.UserID,
-		SessionToken: newToken,
-		UserAgent:    old.UserAgent,
-		IPAddress:    old.IPAddress,
-		LastSeenAt:   &now,
-		ExpiresAt:    &expiresAt,
+		UserID:            old.UserID,
+		SessionToken:      newToken,
+		UserAgent:         old.UserAgent,
+		IPAddress:         old.IPAddress,
+		LastSeenAt:        &now,
+		ExpiresAt:         &expiresAt,
+		AbsoluteExpiresAt: old.AbsoluteExpiresAt,
 	}
 	created, err := c.storage.CreateSession(ctx, session)
 	if err != nil {
