@@ -170,6 +170,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if !columnExists(db, "sessions", "last_seen_at") {
 			db.Exec("ALTER TABLE sessions ADD COLUMN last_seen_at TIMESTAMP WITH TIME ZONE")
 		}
+		// Absolute session-lifetime ceiling (short-lived tokens): set at login,
+		// carried through refresh, never extended. nil on legacy rows = uncapped.
+		if !columnExists(db, "sessions", "absolute_expires_at") {
+			db.Exec("ALTER TABLE sessions ADD COLUMN absolute_expires_at TIMESTAMP WITH TIME ZONE")
+		}
 	}
 
 	// Audit-design block: diff payload + impersonation attribution on audit rows.

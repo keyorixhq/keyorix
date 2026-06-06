@@ -34,6 +34,12 @@ type KeyorixCore struct {
 	// setupTokenTTL is the lifetime of a credential-delivery setup token (ADR-028);
 	// 0 = DefaultSetupTokenTTL. Set from config via SetSetupTokenTTL.
 	setupTokenTTL time.Duration
+	// sessionAccessTTL is the access-token lifetime; refresh extends by this much.
+	// 0 = defaultSessionAccessTTL (24h). Set from config via SetSessionTTLs.
+	sessionAccessTTL time.Duration
+	// sessionAbsoluteTTL caps total session lifetime from login — refresh never
+	// extends past it. 0 = no ceiling (refreshable indefinitely). Via SetSessionTTLs.
+	sessionAbsoluteTTL time.Duration
 	// credentialDelivery transports setup links (ADR-028). nil = out-of-band: the
 	// link is returned to the caller. Set from config via SetCredentialDelivery.
 	credentialDelivery delivery.CredentialDelivery
@@ -97,6 +103,15 @@ func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
 // falls back to DefaultSetupTokenTTL.
 func (c *KeyorixCore) SetSetupTokenTTL(ttl time.Duration) {
 	c.setupTokenTTL = ttl
+}
+
+// SetSessionTTLs configures the short-lived-token lifetimes. access is the
+// access-token window (refresh extends by this); absolute is the hard ceiling on
+// total session lifetime (0 = no ceiling). The server calls this at startup from
+// the session config block. A non-positive access falls back to the 24h default.
+func (c *KeyorixCore) SetSessionTTLs(access, absolute time.Duration) {
+	c.sessionAccessTTL = access
+	c.sessionAbsoluteTTL = absolute
 }
 
 // Storage returns the underlying storage interface (used by ancillary services such as AnomalyDetector).

@@ -71,15 +71,19 @@ type loginRequestBody struct {
 }
 
 type loginResponseBody struct {
-	Token       string   `json:"token"`
-	ExpiresAt   string   `json:"expires_at,omitempty"`
-	UserID      uint     `json:"user_id"`
-	Username    string   `json:"username"`
-	Email       string   `json:"email"`
-	DisplayName string   `json:"display_name"`
-	Role        string   `json:"role"`        // primary (highest-privilege) role
-	Roles       []string `json:"roles"`       // all assigned role names
-	Permissions []string `json:"permissions"` // distinct permissions across roles
+	Token string `json:"token"`
+	// ExpiresAt is when the current access token lapses — the client should refresh
+	// silently before this. AbsoluteExpiresAt, when present, is the hard ceiling
+	// past which refresh is refused and the user must re-authenticate.
+	ExpiresAt         string   `json:"expires_at,omitempty"`
+	AbsoluteExpiresAt string   `json:"absolute_expires_at,omitempty"`
+	UserID            uint     `json:"user_id"`
+	Username          string   `json:"username"`
+	Email             string   `json:"email"`
+	DisplayName       string   `json:"display_name"`
+	Role              string   `json:"role"`        // primary (highest-privilege) role
+	Roles             []string `json:"roles"`       // all assigned role names
+	Permissions       []string `json:"permissions"` // distinct permissions across roles
 	// PasswordChangeRequired is true when the password has exceeded the policy's
 	// max age (ADR-025 max_age_days) or the account is in a restricted state — the
 	// UI should route to change-password.
@@ -157,6 +161,9 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 	}
 	if session.ExpiresAt != nil {
 		resp.ExpiresAt = session.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	if session.AbsoluteExpiresAt != nil {
+		resp.AbsoluteExpiresAt = session.AbsoluteExpiresAt.UTC().Format(time.RFC3339)
 	}
 	// Surface roles + permissions so the UI can gate nav/routes. Best-effort:
 	// a failure here must not block an otherwise-successful login.
@@ -291,6 +298,9 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if session.ExpiresAt != nil {
 		resp["expires_at"] = session.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	if session.AbsoluteExpiresAt != nil {
+		resp["absolute_expires_at"] = session.AbsoluteExpiresAt.UTC().Format(time.RFC3339)
 	}
 
 	sendSuccess(w, resp, "Token refreshed")

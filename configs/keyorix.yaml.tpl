@@ -152,3 +152,23 @@ membership:
   #   allowlist - an admin steps the membership through each lifecycle state
   #   idp       - IdP-resolved users skip the early states; others start invited
   validation_mode: "allowlist"
+
+session:
+  # Short-lived session tokens with silent auto-refresh. Omit this whole block to
+  # keep the backward-compatible behaviour: a 24h access window and no absolute
+  # ceiling (a session can be refreshed indefinitely).
+  #
+  # access_ttl is how long an issued token is valid before the client must call
+  # POST /auth/refresh (which rotates the token and starts a new window). The login
+  # and refresh responses return `expires_at` so the client can refresh just before
+  # it lapses.
+  access_ttl: "24h"
+  # absolute_ttl caps total session lifetime from login. Refreshing the access
+  # window can never extend a session past it — once reached, refresh is refused
+  # and the user must re-authenticate. Empty or "0" = no ceiling. The login/refresh
+  # responses return `absolute_expires_at` when a ceiling is set.
+  #
+  # Recommended short-lived configuration:
+  #   access_ttl: "30m"
+  #   absolute_ttl: "12h"
+  absolute_ttl: ""

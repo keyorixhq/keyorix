@@ -207,7 +207,13 @@ type Session struct {
 	IPAddress             string     // captured at login
 	LastSeenAt            *time.Time // throttled — updated at most once per validTokenTTL on the auth slow path
 	CreatedAt             time.Time
-	ExpiresAt             *time.Time
+	ExpiresAt             *time.Time // short-lived access window; RefreshSession rotates the token and extends this
+
+	// AbsoluteExpiresAt is the hard ceiling on total session lifetime. It is set
+	// once at login and carried unchanged through every refresh, so refreshing the
+	// access window can never extend a session past it — re-authentication is
+	// required once it lapses. nil = no ceiling (refreshable indefinitely).
+	AbsoluteExpiresAt *time.Time
 
 	// Impersonation: when an admin impersonates another user, a separate session
 	// is issued for the target user with ImpersonatedBy set to the admin's ID and

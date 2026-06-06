@@ -221,6 +221,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// falls back to 24h when the block is absent or invalid.
 	coreService.SetSetupTokenTTL(cfg.CredentialDelivery.GetSetupTokenTTL())
 
+	// Apply session-token lifetimes (short-lived tokens with silent auto-refresh).
+	// Defaults preserve the historic 24h access window with no absolute ceiling, so
+	// an install without a session block behaves exactly as before.
+	coreService.SetSessionTTLs(cfg.Session.GetAccessTTL(), cfg.Session.GetAbsoluteTTL())
+
 	// Wire the credential-delivery channel (ADR-028). New selects out-of-band/SMTP/
 	// log from the configured mode and fails loud on a bad mode (e.g. smtp with no
 	// host), so a misconfigured install does not silently drop setup links.
