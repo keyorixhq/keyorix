@@ -194,6 +194,9 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, membershipID uin
 	}
 
 	c.logMembershipEvent(ctx, "membership."+transitionVerb(to), m, actorID)
+	if to == MembershipActive {
+		c.notifyMembershipActivated(ctx, m)
+	}
 	return m, nil
 }
 

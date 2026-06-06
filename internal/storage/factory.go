@@ -234,6 +234,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	machineExists := tableExists(db, "machine_identities")
 	membershipExists := tableExists(db, "project_memberships")
 	setupTokenExists := tableExists(db, "setup_tokens")
+	notificationsExists := tableExists(db, "notifications")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -286,6 +287,26 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !setupTokenExists {
 		if err := db.AutoMigrate(&models.SetupToken{}); err != nil {
 			return fmt.Errorf("failed to migrate setup_tokens table: %w", err)
+		}
+	}
+
+	// Notifications (ADR-024). Create the table if absent; otherwise add only the
+	// newer ProjectID/Title/Link columns via the Migrator. We must NOT run a full
+	// AutoMigrate on an already-existing table here — on Postgres that re-inspect
+	// trips the pgx "insufficient arguments" prepared-statement bug mid-boot (the
+	// same hazard handled for the other additive tables above).
+	if !notificationsExists {
+		if err := db.AutoMigrate(&models.Notification{}); err != nil {
+			return fmt.Errorf("failed to migrate notifications table: %w", err)
+		}
+	} else {
+		m := db.Migrator()
+		for _, col := range []string{"ProjectID", "Title", "Link"} {
+			if !m.HasColumn(&models.Notification{}, col) {
+				if err := m.AddColumn(&models.Notification{}, col); err != nil {
+					return fmt.Errorf("failed to add notifications.%s column: %w", col, err)
+				}
+			}
 		}
 	}
 

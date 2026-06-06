@@ -64,6 +64,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	rotationPolicyHandler := handlers.NewRotationPolicyHandler(coreService)
 	rbacHandler := handlers.NewRBACHandler(coreService)
 	usersRolesHandler := handlers.NewUsersRolesHandler(coreService)
+	notificationHandler := handlers.NewNotificationHandler(coreService)
 
 	// Auth endpoints (no authentication middleware)
 	r.Post("/auth/login", authHandler.Login)
@@ -139,6 +140,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Delete("/auth/tokens/{id}", patHandler.RevokePAT)
 		// Self-scoped: end the current impersonation session (no permission gate).
 		r.Post("/auth/end-impersonation", impersonationHandler.End)
+
+		// In-app notifications (ADR-024) — self-scoped, no permission gate.
+		r.Get("/notifications", notificationHandler.List)
+		r.Post("/notifications/read-all", notificationHandler.MarkAllRead)
+		r.Post("/notifications/{id}/read", notificationHandler.MarkRead)
 
 		// Dashboard endpoints
 		r.Get("/dashboard/stats", dashboardHandler.GetStats)

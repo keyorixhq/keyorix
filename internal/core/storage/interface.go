@@ -56,6 +56,16 @@ type Storage interface {
 	// ListStaleInvitedMemberships returns memberships still in `invited` state
 	// that were invited before the cutoff.
 	ListStaleInvitedMemberships(ctx context.Context, before time.Time) ([]*models.ProjectMembership, error)
+
+	// In-app notifications (ADR-024).
+	CreateNotification(ctx context.Context, n *models.Notification) (*models.Notification, error)
+	// ListNotifications returns a user's notifications newest-first; when
+	// unreadOnly is set, only unread ones. limit caps the result (0 = default).
+	ListNotifications(ctx context.Context, userID uint, unreadOnly bool, limit int) ([]*models.Notification, error)
+	CountUnreadNotifications(ctx context.Context, userID uint) (int64, error)
+	// MarkNotificationRead marks one notification read, scoped to its owner.
+	MarkNotificationRead(ctx context.Context, id, userID uint) error
+	MarkAllNotificationsRead(ctx context.Context, userID uint) error
 	// ListUserProjectMemberships returns all membership rows for a single user,
 	// newest first (powers the per-user assignments view).
 	ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error)

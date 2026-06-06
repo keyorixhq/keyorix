@@ -210,6 +210,7 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 	}
 	c.auditProjectScoped(ctx, "access_request.created", userID, projectID,
 		fmt.Sprintf("user %d requested %s access to project %d", userID, suggestedRole, projectID))
+	c.notifyAccessRequested(ctx, created)
 	return created, nil
 }
 
@@ -266,6 +267,7 @@ func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, requestID, appro
 	}
 	c.auditProjectScoped(ctx, "access_request.approved", approverID, req.ProjectID,
 		fmt.Sprintf("approved access request %d for user %d as %s", req.ID, req.UserID, role))
+	c.notifyAccessResolved(ctx, req, true)
 	return req, nil
 }
 
@@ -288,6 +290,7 @@ func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, requestID, approv
 	}
 	c.auditProjectScoped(ctx, "access_request.rejected", approverID, req.ProjectID,
 		fmt.Sprintf("rejected access request %d for user %d", req.ID, req.UserID))
+	c.notifyAccessResolved(ctx, req, false)
 	return req, nil
 }
 
