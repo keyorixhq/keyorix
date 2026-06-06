@@ -980,3 +980,32 @@ func (m *MockStorage) CountProjectMembershipsByUsers(ctx context.Context, userID
 	}
 	return args.Get(0).(map[uint]storage.MembershipCounts), args.Error(1)
 }
+
+func (m *MockStorage) CreateNotification(ctx context.Context, n *models.Notification) (*models.Notification, error) {
+	args := m.Called(ctx, n)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Notification), args.Error(1)
+}
+
+func (m *MockStorage) ListNotifications(ctx context.Context, userID uint, unreadOnly bool, limit int) ([]*models.Notification, error) {
+	args := m.Called(ctx, userID, unreadOnly, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Notification), args.Error(1)
+}
+
+func (m *MockStorage) CountUnreadNotifications(ctx context.Context, userID uint) (int64, error) {
+	args := m.Called(ctx, userID)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStorage) MarkNotificationRead(ctx context.Context, id, userID uint) error {
+	return m.Called(ctx, id, userID).Error(0)
+}
+
+func (m *MockStorage) MarkAllNotificationsRead(ctx context.Context, userID uint) error {
+	return m.Called(ctx, userID).Error(0)
+}

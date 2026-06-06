@@ -64,6 +64,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 		return e.EventType == "access_request.approved"
 	})).Return(nil)
 
+	allowNotifications(store) // best-effort outcome notification to the requester
 	out, err := c.ApproveAccessRequest(ctx, 3, 9, "project_developer")
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
@@ -82,6 +83,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
+	allowNotifications(store) // best-effort outcome notification to the requester
 	// Empty grantedRole → uses the suggested role.
 	out, err := c.ApproveAccessRequest(ctx, 3, 9, "")
 	require.NoError(t, err)

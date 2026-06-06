@@ -286,13 +286,18 @@ type SecretTag struct {
 	TagID        uint `gorm:"primaryKey"`
 }
 
+// Notification is an in-app notification addressed to a single user (ADR-024).
+// Surfaced via the header bell; delivery is in-app only (email/Slack is M3+).
 type Notification struct {
 	ID           uint `gorm:"primaryKey"`
-	UserID       uint
+	UserID       uint `gorm:"index"`
 	SecretNodeID *uint
+	ProjectID    *uint // optional project context for the event
 	Type         string
+	Title        string
 	Message      string
-	IsRead       bool
+	Link         string // optional in-app target, e.g. /projects/{id}
+	IsRead       bool   `gorm:"index"`
 	CreatedAt    time.Time
 }
 
