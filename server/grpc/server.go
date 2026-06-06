@@ -8,6 +8,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
+	"github.com/keyorixhq/keyorix/server/grpc/services"
+	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
@@ -45,10 +47,9 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 	// Create server
 	server := grpc.NewServer(opts...)
 
-	// Service registration is wired in a later phase. The generated pb package
-	// exists (server/proto/pb); the services still need to implement the
-	// generated pb.*ServiceServer interfaces before they can be registered here:
-	// pb.RegisterSecretServiceServer(server, secretService)
+	// Register services. The remaining services are migrated to the generated
+	// pb.*ServiceServer interfaces in subsequent phases:
+	pb.RegisterSecretServiceServer(server, services.NewSecretService(coreService))
 	// pb.RegisterUserServiceServer(server, userService)
 	// pb.RegisterRoleServiceServer(server, roleService)
 	// pb.RegisterAuditServiceServer(server, auditService)
@@ -61,7 +62,7 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		log.Println("gRPC reflection enabled")
 	}
 
-	log.Println("gRPC server configured (no services registered yet)")
+	log.Println("gRPC server configured (SecretService registered)")
 	return server, nil
 }
 

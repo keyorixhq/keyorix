@@ -2,436 +2,379 @@ package services
 
 import (
 	"context"
-	"fmt"
-	"log"
-	"math"
+	"encoding/json"
 	"strings"
+	"time"
 
-	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
+	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// SecretGRPCService implements the gRPC secret service
+// SecretGRPCService implements pb.SecretServiceServer, backing each RPC with the
+// shared core service. Authentication/identity is established by the auth
+// interceptor (see interceptors.AuthInterceptor) and read from the context.
 type SecretGRPCService struct {
-	secretService *core.KeyorixCore
-	// TODO: Add UnimplementedSecretServiceServer when proto is generated
+	pb.UnimplementedSecretServiceServer
+	core *core.KeyorixCore
 }
 
-// NewSecretService creates a new secret gRPC service
-func NewSecretService() (*SecretGRPCService, error) {
-	// Load configuration
-	cfg, err := config.LoadConfig()
+// Compile-time assertion that the service satisfies the generated interface.
+var _ pb.SecretServiceServer = (*SecretGRPCService)(nil)
+
+// NewSecretService creates a secret gRPC service backed by the shared core.
+func NewSecretService(coreService *core.KeyorixCore) *SecretGRPCService {
+	return &SecretGRPCService{core: coreService}
+}
+
+// CreateSecret creates a new secret.
+func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecretRequest) (*pb.Secret, error) {
+	user, err := requireUser(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorInitializationFailed", nil), err)
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets")
+	}
+	if req.GetName() == "" || req.GetValue() == "" || req.GetProjectId() == 0 || req.GetEnvironmentId() == 0 || req.GetType() == "" {
+		return nil, status.Error(codes.InvalidArgument, "name, value, project_id, environment_id and type are required")
 	}
 
-	// Connect to database
-	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Auto-migrate models
-	if err := db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}); err != nil {
-		return nil, fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	// Initialize storage and core service
-	storageImpl := store.NewLocalStorage(db)
-	secretService := core.NewKeyorixCore(storageImpl)
-
-	return &SecretGRPCService{
-		secretService: secretService,
-	}, nil
-}
-
-// CreateSecretRequest represents a gRPC create secret request
-type CreateSecretRequest struct {
-	Name        string            `json:"name"`
-	Value       string            `json:"value"`
-	Project     string            `json:"project"`
-	Environment string            `json:"environment"`
-	Type        string            `json:"type,omitempty"`
-	MaxReads    *int32            `json:"max_reads,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	Tags        []string          `json:"tags,omitempty"`
-}
-
-// SecretResponse represents a gRPC secret response
-type SecretResponse struct {
-	Id          uint32            `json:"id"`
-	Name        string            `json:"name"`
-	Project     string            `json:"project"`
-	Environment string            `json:"environment"`
-	Type        string            `json:"type"`
-	MaxReads    *int32            `json:"max_reads"`
-	Metadata    map[string]string `json:"metadata"`
-	Tags        []string          `json:"tags"`
-	CreatedBy   string            `json:"created_by"`
-	CreatedAt   string            `json:"created_at"`
-	UpdatedAt   string            `json:"updated_at"`
-	Version     int32             `json:"version"`
-}
-
-// CreateSecret creates a new secret via gRPC
-func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *CreateSecretRequest) (*SecretResponse, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for secret creation")
-	}
-
-	log.Printf("gRPC CreateSecret called by user %s for secret %s", user.Username, req.Name)
-
-	// Validate request
-	if err := s.validateCreateSecretRequest(req); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "Invalid request: %v", err)
-	}
-
-	// Convert to service request
-	var maxReads *int
-	if req.MaxReads != nil {
-		maxReadsInt := int(*req.MaxReads)
-		maxReads = &maxReadsInt
-	}
-
-	serviceReq := &core.CreateSecretRequest{
-		Name:          req.Name,
-		Value:         []byte(req.Value),
-		ProjectID:     1, // TODO: Convert project string to ID
-		EnvironmentID: 1, // TODO: Convert environment string to ID
-		Type:          req.Type,
-		MaxReads:      maxReads,
-		Metadata:      req.Metadata,
-		Tags:          req.Tags,
+	secret, err := s.core.CreateSecret(ctx, &core.CreateSecretRequest{
+		Name:          req.GetName(),
+		Value:         []byte(req.GetValue()),
+		ProjectID:     uint(req.GetProjectId()),
+		EnvironmentID: uint(req.GetEnvironmentId()),
+		Type:          req.GetType(),
+		MaxReads:      int32PtrToIntPtr(req.MaxReads),
+		Expiration:    tsToTimePtr(req.GetExpiration()),
+		Metadata:      req.GetMetadata(),
+		Tags:          req.GetTags(),
 		CreatedBy:     user.Username,
-	}
-
-	// Call service
-	secret, err := s.secretService.CreateSecret(ctx, serviceReq)
+		OwnerID:       user.UserID,
+	})
 	if err != nil {
-		log.Printf("Error creating secret via gRPC: %v", err)
-		if strings.Contains(err.Error(), "already exists") {
-			return nil, status.Errorf(codes.AlreadyExists, "Secret with this name already exists")
-		}
-		return nil, status.Errorf(codes.Internal, "Failed to create secret")
+		return nil, mapSecretError(err)
 	}
-
-	// Convert response
-	return s.convertToGRPCSecretResponse(secret), nil
+	return secretNodeToProto(secret), nil
 }
 
-// GetSecret retrieves a secret by ID via gRPC
-func (s *SecretGRPCService) GetSecret(ctx context.Context, req *GetSecretRequest) (*SecretResponse, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check basic permissions
-	if !s.hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for secret access")
-	}
-
-	log.Printf("gRPC GetSecret called by user %s for secret ID %d", user.Username, req.Id)
-
-	// Call service with permission check for shared secrets
-	secret, err := s.secretService.GetSecretWithPermissionCheck(ctx, uint(req.Id), user.UserID)
+// GetSecret returns a secret's metadata (subject to ownership/share checks).
+func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequest) (*pb.Secret, error) {
+	user, err := requireUser(ctx)
 	if err != nil {
-		log.Printf("Error getting secret via gRPC: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.NotFound, "Secret not found")
-		} else if strings.Contains(err.Error(), "permission denied") {
-			return nil, status.Errorf(codes.PermissionDenied, "Access denied to this secret")
-		}
-		return nil, status.Errorf(codes.Internal, "Failed to get secret")
+		return nil, err
 	}
-
-	// Convert response
-	return s.convertToGRPCSecretResponse(secret), nil
-}
-
-// GetSecretRequest represents a gRPC get secret request
-type GetSecretRequest struct {
-	Id           uint32 `json:"id"`
-	IncludeValue bool   `json:"include_value"`
-}
-
-// ListSecretsRequest represents a gRPC list secrets request
-type ListSecretsRequest struct {
-	Project     string   `json:"project,omitempty"`
-	Environment string   `json:"environment,omitempty"`
-	Type        string   `json:"type,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Page        int32    `json:"page"`
-	PageSize    int32    `json:"page_size"`
-}
-
-// ListSecretsResponse represents a gRPC list secrets response
-type ListSecretsResponse struct {
-	Secrets    []*SecretResponse `json:"secrets"`
-	Total      int64             `json:"total"`
-	Page       int32             `json:"page"`
-	PageSize   int32             `json:"page_size"`
-	TotalPages int32             `json:"total_pages"`
-}
-
-// ListSecrets lists secrets with filtering and pagination via gRPC
-func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *ListSecretsRequest) (*ListSecretsResponse, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+	if !hasPermission(user.Permissions, "secrets.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read secrets")
 	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for secret listing")
-	}
-
-	log.Printf("gRPC ListSecrets called by user %s", user.Username)
-
-	// Validate pagination
-	if req.Page < 1 {
-		req.Page = 1
-	}
-	if req.PageSize < 1 || req.PageSize > 100 {
-		req.PageSize = 20
-	}
-
-	// Convert to service request
-	projectID := uint(1)     // TODO: Convert project string to ID
-	environmentID := uint(1) // TODO: Convert environment string to ID
-
-	filter := &storage.SecretFilter{
-		ProjectID:     &projectID,
-		EnvironmentID: &environmentID,
-		Page:          int(req.Page),
-		PageSize:      int(req.PageSize),
-	}
-
-	if req.Type != "" {
-		filter.Type = &req.Type
-	}
-
-	// Call service
-	secrets, total, err := s.secretService.ListSecrets(ctx, filter)
+	secret, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
 	if err != nil {
-		log.Printf("Error listing secrets via gRPC: %v", err)
-		return nil, status.Errorf(codes.Internal, "Failed to list secrets")
+		return nil, mapSecretError(err)
 	}
+	return secretNodeToProto(secret), nil
+}
 
-	// Convert response
-	grpcSecrets := make([]*SecretResponse, len(secrets))
-	for i, secret := range secrets {
-		grpcSecrets[i] = s.convertToGRPCSecretResponse(secret)
+// GetSecretValue returns a secret's decrypted value (counts toward max_reads).
+// version_number/read_count are not populated here — use GetSecretVersions for
+// version history.
+func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecretRequest) (*pb.SecretValue, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	var totalPages int32
-	if req.PageSize > 0 {
-		tp := (total + int64(req.PageSize) - 1) / int64(req.PageSize)
-		if tp > int64(math.MaxInt32) {
-			tp = math.MaxInt32
-		}
-		totalPages = int32(tp)
+	if !hasPermission(user.Permissions, "secrets.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read secrets")
 	}
-
-	return &ListSecretsResponse{
-		Secrets:    grpcSecrets,
-		Total:      total,
-		Page:       req.Page,
-		PageSize:   req.PageSize,
-		TotalPages: totalPages,
+	// Resolve the name first (metadata read, no read-count side effect).
+	secret, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	if err != nil {
+		return nil, mapSecretError(err)
+	}
+	value, err := s.core.GetSecretValueWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	if err != nil {
+		return nil, mapSecretError(err)
+	}
+	return &pb.SecretValue{
+		Id:    req.GetId(),
+		Name:  secret.Name,
+		Value: string(value),
 	}, nil
 }
 
-// Helper methods
+// UpdateSecret updates a secret; a non-empty value rotates it to a new version.
+func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecretRequest) (*pb.Secret, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to update secrets")
+	}
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
 
-// hasPermission checks if user has a specific permission
-func (s *SecretGRPCService) hasPermission(permissions []string, required string) bool {
-	for _, perm := range permissions {
-		if perm == required {
+	updateReq := &core.UpdateSecretRequest{
+		ID:         uint(req.GetId()),
+		MaxReads:   int32PtrToIntPtr(req.MaxReads),
+		Expiration: tsToTimePtr(req.GetExpiration()),
+		Metadata:   req.GetMetadata(),
+		Tags:       req.GetTags(),
+		UpdatedBy:  user.Username,
+		UserID:     user.UserID,
+	}
+	if v := req.GetValue(); v != "" {
+		updateReq.Value = []byte(v)
+	}
+
+	secret, err := s.core.UpdateSecretWithPermissionCheck(ctx, updateReq)
+	if err != nil {
+		return nil, mapSecretError(err)
+	}
+	return secretNodeToProto(secret), nil
+}
+
+// DeleteSecret deletes a secret (owner-only, enforced by core).
+func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecretRequest) (*emptypb.Empty, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.delete") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to delete secrets")
+	}
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+	if err := s.core.DeleteSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); err != nil {
+		return nil, mapSecretError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
+// ListSecrets lists secrets visible to the caller with sharing context.
+func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecretsRequest) (*pb.ListSecretsResponse, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list secrets")
+	}
+
+	page := int(req.GetPage())
+	if page < 1 {
+		page = 1
+	}
+	pageSize := int(req.GetPageSize())
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	filter := &models.SecretListFilter{
+		Search:         optString(req.Search),
+		ProjectID:      optUint(req.ProjectId),
+		EnvironmentID:  optUint(req.EnvironmentId),
+		Type:           optString(req.Type),
+		Permission:     req.GetPermission(),
+		ShowOwnedOnly:  req.GetShowOwnedOnly(),
+		ShowSharedOnly: req.GetShowSharedOnly(),
+		Page:           page,
+		PageSize:       pageSize,
+	}
+
+	resp, err := s.core.ListSecretsWithSharingInfo(ctx, user.UserID, filter)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to list secrets")
+	}
+
+	secrets := make([]*pb.Secret, 0, len(resp.Secrets))
+	for _, sec := range resp.Secrets {
+		secrets = append(secrets, sharingInfoToProto(sec))
+	}
+	return &pb.ListSecretsResponse{
+		Secrets:     secrets,
+		Total:       i64ToU32(resp.Total),
+		Page:        intToU32(resp.Page),
+		PageSize:    intToU32(resp.PageSize),
+		TotalPages:  intToU32(resp.TotalPages),
+		OwnedCount:  intToU32(resp.OwnedCount),
+		SharedCount: intToU32(resp.SharedCount),
+	}, nil
+}
+
+// GetSecretVersions returns a secret's version history (subject to access checks).
+func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSecretVersionsRequest) (*pb.GetSecretVersionsResponse, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read secrets")
+	}
+	versions, err := s.core.GetSecretVersionsWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
+	if err != nil {
+		return nil, mapSecretError(err)
+	}
+	out := make([]*pb.SecretVersion, 0, len(versions))
+	for _, v := range versions {
+		out = append(out, &pb.SecretVersion{
+			VersionNumber: intToU32(v.VersionNumber),
+			CreatedAt:     timestamppb.New(v.CreatedAt),
+			ReadCount:     intToU32(v.ReadCount),
+		})
+	}
+	return &pb.GetSecretVersionsResponse{Versions: out}, nil
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+// requireUser returns the authenticated user from the context or an
+// Unauthenticated error. The auth interceptor populates this on every
+// non-public RPC.
+func requireUser(ctx context.Context) (*interceptors.UserContext, error) {
+	user := interceptors.GetUserFromGRPCContext(ctx)
+	if user == nil {
+		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+	return user, nil
+}
+
+func hasPermission(permissions []string, required string) bool {
+	for _, p := range permissions {
+		if p == required {
 			return true
 		}
 	}
 	return false
 }
 
-// validateCreateSecretRequest validates a create secret request
-func (s *SecretGRPCService) validateCreateSecretRequest(req *CreateSecretRequest) error {
-	if req.Name == "" {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelName", nil))
-	}
-	if req.Value == "" {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelValue", nil))
-	}
-	if req.Project == "" {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelProject", nil))
-	}
-	if req.Environment == "" {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEnvironment", nil))
-	}
-	if len(req.Name) > 255 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelName", nil))
-	}
-	if req.MaxReads != nil && *req.MaxReads < 1 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelMaxReads", nil))
-	}
-	return nil
-}
-
-// convertToGRPCSecretResponse converts service response to gRPC response
-func (s *SecretGRPCService) convertToGRPCSecretResponse(secret *models.SecretNode) *SecretResponse {
-	var maxReads *int32
-	if secret.MaxReads != nil {
-		maxReadsInt32, err := safeconv.IntToInt32(*secret.MaxReads)
-		if err != nil {
-			log.Printf("Warning: MaxReads conversion overflow for secret %d: %v", secret.ID, err)
-			maxReadsInt32 = 0
-		}
-		maxReads = &maxReadsInt32
-	}
-
-	return &SecretResponse{
-		Id: func() uint32 {
-			id, err := safeconv.UintToUint32(secret.ID)
-			if err != nil {
-				log.Printf("Warning: ID conversion overflow for secret %d: %v", secret.ID, err)
-				return 0
-			}
-			return id
-		}(),
-		Name:        secret.Name,
-		Project:     fmt.Sprintf("%d", secret.ProjectID),     // TODO: Convert ID to name
-		Environment: fmt.Sprintf("%d", secret.EnvironmentID), // TODO: Convert ID to name
-		Type:        secret.Type,
-		MaxReads:    maxReads,
-		Metadata:    make(map[string]string), // TODO: Implement metadata
-		Tags:        []string{},              // TODO: Implement tags
-		CreatedBy:   secret.CreatedBy,
-		CreatedAt:   secret.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:   secret.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		Version:     1, // TODO: Implement version tracking
+// mapSecretError translates core errors into gRPC status codes.
+func mapSecretError(err error) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		return status.Error(codes.NotFound, "secret not found")
+	case strings.Contains(msg, "permission denied"), strings.Contains(msg, "access denied"):
+		return status.Error(codes.PermissionDenied, "access denied to this secret")
+	case strings.Contains(msg, "already exists"):
+		return status.Error(codes.AlreadyExists, "secret with this name already exists")
+	default:
+		return status.Error(codes.Internal, "secret operation failed")
 	}
 }
 
-// UpdateSecret updates an existing secret via gRPC
-func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *UpdateSecretRequest) (*SecretResponse, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+func secretNodeToProto(n *models.SecretNode) *pb.Secret {
+	return &pb.Secret{
+		Id:            intToU32(int(n.ID)),
+		Name:          n.Name,
+		ProjectId:     intToU32(int(n.ProjectID)),
+		EnvironmentId: intToU32(int(n.EnvironmentID)),
+		Type:          n.Type,
+		MaxReads:      intPtrToInt32Ptr(n.MaxReads),
+		Expiration:    timePtrToTs(n.Expiration),
+		Metadata:      metadataToMap(n.Metadata),
+		Tags:          []string{}, // tags are not stored on the secret node
+		Status:        n.Status,
+		CreatedBy:     n.CreatedBy,
+		OwnerId:       intToU32(int(n.OwnerID)),
+		CreatedAt:     timestamppb.New(n.CreatedAt),
+		UpdatedAt:     timestamppb.New(n.UpdatedAt),
+		IsShared:      n.IsShared,
 	}
+}
 
-	// Check basic permissions
-	if !s.hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for secret update")
+func sharingInfoToProto(s *models.SecretWithSharingInfo) *pb.Secret {
+	out := secretNodeToProto(s.SecretNode)
+	out.ProjectName = s.ProjectName
+	out.EnvironmentName = s.EnvironmentName
+	out.IsShared = s.IsShared
+	out.IsOwnedByUser = s.IsOwnedByUser
+	out.UserPermission = s.UserPermission
+	out.ShareCount = intToU32(s.ShareCount)
+	return out
+}
+
+func metadataToMap(raw models.JSON) map[string]string {
+	if len(raw) == 0 {
+		return map[string]string{}
 	}
+	m := map[string]string{}
+	_ = json.Unmarshal(raw, &m) // best-effort; non-string maps yield empty
+	return m
+}
 
-	log.Printf("gRPC UpdateSecret called by user %s for secret ID %d", user.Username, req.Id)
-
-	// Validate request
-	if req.Id == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "Secret ID is required")
+// numeric conversions — overflow is unrealistic for IDs/counts; clamp on the
+// off chance rather than failing the RPC.
+func intToU32(v int) uint32 {
+	x, err := safeconv.UintToUint32(uint(v))
+	if err != nil || v < 0 {
+		return 0
 	}
+	return x
+}
 
-	// Convert to service request
-	var maxReads *int
-	if req.MaxReads != nil {
-		maxReadsInt := int(*req.MaxReads)
-		maxReads = &maxReadsInt
+func i64ToU32(v int64) uint32 {
+	if v < 0 {
+		return 0
 	}
+	return intToU32(int(v))
+}
 
-	serviceReq := &core.UpdateSecretRequest{
-		ID:        uint(req.Id),
-		MaxReads:  maxReads,
-		UpdatedBy: user.Username,
-		UserID:    user.UserID, // Add user ID for permission checking
+func intPtrToInt32Ptr(p *int) *int32 {
+	if p == nil {
+		return nil
 	}
-
-	if req.Value != "" {
-		serviceReq.Value = []byte(req.Value)
-	}
-
-	// Call service with permission check for shared secrets
-	secret, err := s.secretService.UpdateSecretWithPermissionCheck(ctx, serviceReq)
+	v, err := safeconv.IntToInt32(*p)
 	if err != nil {
-		log.Printf("Error updating secret via gRPC: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.NotFound, "Secret not found")
-		} else if strings.Contains(err.Error(), "permission denied") {
-			return nil, status.Errorf(codes.PermissionDenied, "Access denied to this secret")
-		}
-		return nil, status.Errorf(codes.Internal, "Failed to update secret")
+		v = 0
 	}
-
-	// Convert response
-	return s.convertToGRPCSecretResponse(secret), nil
+	return &v
 }
 
-// UpdateSecretRequest represents a gRPC update secret request
-type UpdateSecretRequest struct {
-	Id       uint32            `json:"id"`
-	Name     string            `json:"name,omitempty"`
-	Value    string            `json:"value,omitempty"`
-	Type     string            `json:"type,omitempty"`
-	MaxReads *int32            `json:"max_reads,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
-	Tags     []string          `json:"tags,omitempty"`
+func int32PtrToIntPtr(p *int32) *int {
+	if p == nil {
+		return nil
+	}
+	v := int(*p)
+	return &v
 }
 
-// DeleteSecret deletes a secret via gRPC
-func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *DeleteSecretRequest) error {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return status.Errorf(codes.Unauthenticated, "User not authenticated")
+func tsToTimePtr(ts *timestamppb.Timestamp) *time.Time {
+	if ts == nil {
+		return nil
 	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.delete") {
-		return status.Errorf(codes.PermissionDenied, "Insufficient permissions for secret deletion")
-	}
-
-	log.Printf("gRPC DeleteSecret called by user %s for secret ID %d", user.Username, req.Id)
-
-	// Validate request
-	if req.Id == 0 {
-		return status.Errorf(codes.InvalidArgument, "Secret ID is required")
-	}
-
-	// Call service with permission check for shared secrets
-	err := s.secretService.DeleteSecretWithPermissionCheck(ctx, uint(req.Id), user.UserID)
-	if err != nil {
-		log.Printf("Error deleting secret via gRPC: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			return status.Errorf(codes.NotFound, "Secret not found")
-		} else if strings.Contains(err.Error(), "permission denied") {
-			return status.Errorf(codes.PermissionDenied, "Access denied to this secret")
-		}
-		return status.Errorf(codes.Internal, "Failed to delete secret")
-	}
-
-	return nil
+	t := ts.AsTime()
+	return &t
 }
 
-// DeleteSecretRequest represents a gRPC delete secret request
-type DeleteSecretRequest struct {
-	Id uint32 `json:"id"`
+func timePtrToTs(t *time.Time) *timestamppb.Timestamp {
+	if t == nil {
+		return nil
+	}
+	return timestamppb.New(*t)
+}
+
+func optString(p *string) *string {
+	if p == nil || *p == "" {
+		return nil
+	}
+	return p
+}
+
+func optUint(p *uint32) *uint {
+	if p == nil || *p == 0 {
+		return nil
+	}
+	v := uint(*p)
+	return &v
 }
