@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi } from '../../services/admin';
-import { usersApi } from '../../services/users';
+import { usersApi, type ProjectAssignment } from '../../services/users';
 import { queryKeys } from '../../lib/queryClient';
 import { useAuthStore } from '../../store/authStore';
 import type { User } from '../../types';
@@ -91,6 +91,8 @@ export const useAdminCreateUser = () => {
             password?: string;
             deliver_setup_link?: boolean;
             generate_one_time_password?: boolean;
+            role?: string;
+            project_assignments?: ProjectAssignment[];
         }) => usersApi.create(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
     });

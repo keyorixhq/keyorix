@@ -107,6 +107,36 @@ describe('usersApi.create', () => {
         expect(res.setup_link?.link_for_admin).toBeUndefined();
     });
 
+    it('atomic path forwards the system role + project assignments alongside the password', async () => {
+        mocked.post.mockResolvedValue({
+            data: { data: { id: 11, username: 'ada' } },
+        });
+
+        await usersApi.create({
+            username: 'ada',
+            email: 'ada@x.io',
+            display_name: 'Ada',
+            password: 'hunter2hunter2',
+            role: 'system_auditor',
+            project_assignments: [
+                { project_id: 1, role: 'project_admin' },
+                { project_id: 4, role: 'project_viewer' },
+            ],
+        });
+
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/users', {
+            username: 'ada',
+            email: 'ada@x.io',
+            display_name: 'Ada',
+            password: 'hunter2hunter2',
+            role: 'system_auditor',
+            project_assignments: [
+                { project_id: 1, role: 'project_admin' },
+                { project_id: 4, role: 'project_viewer' },
+            ],
+        });
+    });
+
     it('one-time-password path posts the flag and unwraps the nested {email, one_time_password}', async () => {
         mocked.post.mockResolvedValue({
             data: { data: { user: { id: 9 }, one_time_password: { email: 'otto@x.io', one_time_password: 'Xk7-mP2q-Rt9w-Zb4n' } } },

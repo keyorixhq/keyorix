@@ -28,8 +28,13 @@ import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
-import type { SetupLinkResult } from '../../services/users';
-import { AccountStateBadge, StaleAccountsSection } from '../../features/admin';
+import type { SetupLinkResult, ProjectAssignment } from '../../services/users';
+import { SYSTEM_ROLES } from '../../services/users';
+import { AccountStateBadge, StaleAccountsSection, ProjectAssignmentsPicker } from '../../features/admin';
+
+// "system_auditor" → "Auditor"; the leading "system_" is stripped since the
+// whole control is already labelled "System role".
+const systemRoleLabel = (role: string) => role.replace(/^system_/, '').replace(/^\w/, c => c.toUpperCase());
 
 interface APIUser {
     id: number;
@@ -99,6 +104,11 @@ export const AdminPage: React.FC = () => {
     //   one_time_password  — server generates a strong password, shown once for
     //                        out-of-band relay (account starts in reset-required).
     const [createMode, setCreateMode] = useState<'password' | 'setup_link' | 'one_time_password'>('password');
+    // ADR-028 atomic provisioning (admin-set-password path only): an optional
+    // system-role override ('' = backend default of system_viewer) and a set of
+    // project-scoped role grants applied with the create in one transaction.
+    const [createSystemRole, setCreateSystemRole] = useState('');
+    const [createAssignments, setCreateAssignments] = useState<ProjectAssignment[]>([]);
     const [setupResult, setSetupResult] = useState<SetupLinkResult | null>(null);
     const [otpResult, setOtpResult] = useState<string | null>(null);
     const [linkCopied, setLinkCopied] = useState(false);
@@ -143,6 +153,8 @@ export const AdminPage: React.FC = () => {
         setCreateUsername(''); setCreateEmail(''); setCreateDisplayName(''); setCreatePassword('');
         setShowPassword(false);
         setCreateMode('password');
+        setCreateSystemRole('');
+        setCreateAssignments([]);
         setSetupResult(null);
         setOtpResult(null);
         setLinkCopied(false);
@@ -206,10 +218,21 @@ export const AdminPage: React.FC = () => {
         // setup-link and one-time-password paths set none.
         if (createMode === 'password' && createPassword.length < 8) { setFormError('Password must be at least 8 characters'); return; }
         const base = { username: createUsername.trim(), email: createEmail.trim(), display_name: createDisplayName.trim() };
+        // Atomic role/project assignments ride only on the admin-set-password path
+        // (the backend rejects them with setup-link / one-time-password). Send the
+        // backend-only shape — drop the UI's display-only project_name.
+        const passwordBody = {
+            ...base,
+            password: createPassword,
+            ...(createSystemRole ? { role: createSystemRole } : {}),
+            ...(createAssignments.length
+                ? { project_assignments: createAssignments.map(({ project_id, role }) => ({ project_id, role })) }
+                : {}),
+        };
         const body =
             createMode === 'setup_link' ? { ...base, deliver_setup_link: true } :
             createMode === 'one_time_password' ? { ...base, generate_one_time_password: true } :
-            { ...base, password: createPassword };
+            passwordBody;
         createMutation.mutate(body, {
             onSuccess: (res) => {
                 // Setup-link / one-time-password keep the modal open to show the
@@ -605,6 +628,7 @@ export const AdminPage: React.FC = () => {
                         ))}
                     </div>
                     {createMode === 'password' && (
+                    <>
                     <div>
                         <div className="flex items-center justify-between mb-1">
                             <label className="text-sm font-medium text-base-secondary">Password</label>
@@ -629,6 +653,21 @@ export const AdminPage: React.FC = () => {
                             </button>
                         </div>
                     </div>
+                    <div>
+                        <label className="block text-sm font-medium text-base-secondary mb-1">System role <span className="font-normal text-base-muted">(optional)</span></label>
+                        <select
+                            value={createSystemRole}
+                            onChange={(e) => setCreateSystemRole(e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-base rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-surface"
+                        >
+                            <option value="">Default (Viewer)</option>
+                            {SYSTEM_ROLES.map(r => (
+                                <option key={r} value={r}>{systemRoleLabel(r)}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <ProjectAssignmentsPicker assignments={createAssignments} onChange={setCreateAssignments} disabled={createMutation.isPending} />
+                    </>
                     )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>Cancel</Button>

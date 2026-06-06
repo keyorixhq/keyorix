@@ -62,6 +62,21 @@ export interface UserMembership {
     state: string;
 }
 
+// ProjectAssignment is one project-scoped role grant applied atomically at
+// create time (ADR-028 atomic POST /users). `project_id` keys the grant; the
+// optional `project_name` is carried by the UI for display and is ignored by the
+// backend.
+export interface ProjectAssignment {
+    project_id: number;
+    role: string;
+    project_name?: string;
+}
+
+// SYSTEM_ROLES are the install-wide roles (ADR-021) offered as the optional
+// system-role override on the Global-Admin create dialog. Omitting the override
+// lets the backend apply its system_viewer baseline.
+export const SYSTEM_ROLES = ['system_admin', 'system_auditor', 'system_viewer'] as const;
+
 export const usersApi = {
     async list(params?: {
         page?: number;
@@ -102,6 +117,12 @@ export const usersApi = {
         // ADR-028 Part E: server generates a strong one-time password, returned
         // once for out-of-band relay. Mutually exclusive with the other two.
         generate_one_time_password?: boolean;
+        // ADR-028 atomic provisioning (admin-set-password path only): an optional
+        // system-role override and a set of project-scoped role assignments, applied
+        // with the create in one transaction. Rejected by the backend alongside
+        // deliver_setup_link / generate_one_time_password.
+        role?: string;
+        project_assignments?: ProjectAssignment[];
     }): Promise<CreateUserResult> {
         const response = await apiClient.post('/api/v1/users', body);
         return response.data?.data ?? response.data;
