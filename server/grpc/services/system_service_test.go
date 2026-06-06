@@ -67,4 +67,9 @@ func TestSystemService_GetMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, m.GetSecrets())
 	require.NotNil(t, m.GetUsers())
+	require.NotNil(t, m.GetRequests())
+	require.NotNil(t, m.GetPerformance())
+	require.NotNil(t, m.GetSystem())
+	// Goroutine count is always positive in a running test binary.
+	assert.Greater(t, m.GetSystem().GetGoroutines(), uint32(0))
 }
