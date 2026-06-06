@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
     Bars3Icon,
-    BellIcon,
     UserCircleIcon,
     ArrowRightOnRectangleIcon,
     SunIcon,
@@ -13,6 +12,7 @@ import {
 import { Dropdown, DropdownItem } from '../ui/Dropdown';
 
 import { useAuth } from '../../features/auth';
+import { NotificationBell } from '../../features/notifications';
 import { useUIStore } from '../../store/uiStore';
 import { ROUTES } from '../../constants';
 
@@ -84,15 +84,8 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, className }) => {
 
                     {/* Right — theme toggle + notifications + user menu */}
                     <div className="flex items-center space-x-2">
-                        {/* Notifications — coming soon, intentionally inert */}
-                        <div
-                            className="p-2 rounded-md relative"
-                            style={{ color: 'var(--text-muted)', opacity: 0.35, cursor: 'default' }}
-                            title="Notifications — coming soon"
-                            aria-hidden="true"
-                        >
-                            <BellIcon className="h-6 w-6" />
-                        </div>
+                        {/* Notifications (ADR-024) — unread badge + dropdown. */}
+                        <NotificationBell />
 
                         {/* Theme toggle — cycles dark → light → system */}
                         <button
