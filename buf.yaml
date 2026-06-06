@@ -1,0 +1,19 @@
+version: v2
+modules:
+  - path: server/proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # The proto predates buf lint; these would require renaming the wire
+    # contract. Enforce STANDARD on everything else.
+    - PACKAGE_VERSION_SUFFIX
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    # keyorix.proto sits at the module root rather than keyorix/v1/; moving it
+    # would change import paths. Deferred — tracked with the gRPC build-out.
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - FILE

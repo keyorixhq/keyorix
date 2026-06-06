@@ -1,0 +1,2 @@
+# Generated protobuf code — collapse diffs and exclude from language stats.
+server/proto/pb/*.pb.go linguist-generated=true
