@@ -184,14 +184,34 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	return user, roleNames, nil
 }
 
-// RequestPasswordReset initiates a password reset for the given email.
-// Best-effort: returns nil for unknown emails to avoid email enumeration.
+// RequestPasswordReset issues a password-reset link for the given email and
+// delivers it via the configured credential-delivery channel (ADR-028). The
+// recipient consumes it at /auth/setup/{token} to set a new password
+// (completePasswordSetup handles the password_reset_link purpose).
+//
+// Always returns nil: the outcome must not reveal whether the email maps to an
+// account (enumeration-safe), so unknown addresses, suspended accounts, throttled
+// repeats, and delivery/config failures are all swallowed. The attempt itself is
+// audited inside provisionSetupLink.
 func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) error {
-	_, err := c.storage.GetUserByEmail(ctx, email)
+	user, err := c.storage.GetUserByEmail(ctx, email)
 	if err != nil {
 		return nil // Don't reveal whether the email exists.
 	}
-	// TODO: send reset email
+	// Never send a reset to a login-blocked (e.g. suspended) account.
+	if AccountLoginBlocked(user.AccountState) {
+		return nil
+	}
+	// Throttle abusive repeats to a victim address (same control as resend).
+	if err := c.checkResendThrottle(ctx, SetupPurposePasswordResetLink, user.Email); err != nil {
+		return nil
+	}
+	_, _ = c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+		Purpose:       SetupPurposePasswordResetLink,
+		SubjectEmail:  user.Email,
+		SubjectUserID: &user.ID,
+		CreatedBy:     0, // self-service (no issuing admin)
+	}, user.DisplayName, "")
 	return nil
 }
 
