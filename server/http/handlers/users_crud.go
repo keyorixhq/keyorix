@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -44,6 +45,14 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		// password_reset_required state and the password is returned once for the admin
 		// to relay out-of-band (ADR-028 Part E). The user must change it on first login.
 		GenerateOneTimePassword bool `json:"generate_one_time_password,omitempty"`
+		// Atomic provisioning (ADR-028): an optional system role override and a set
+		// of project-scoped role assignments, applied with the create in one
+		// transaction. Supported on the admin-set-password path only.
+		Role               string `json:"role,omitempty"`
+		ProjectAssignments []struct {
+			ProjectID uint   `json:"project_id"`
+			Role      string `json:"role"`
+		} `json:"project_assignments,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -66,6 +75,15 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// link, or generated one-time password.
 	if body.DeliverSetupLink && body.GenerateOneTimePassword {
 		sendError(w, "ValidationError", "Choose either deliver_setup_link or generate_one_time_password, not both", http.StatusBadRequest, nil)
+		return
+	}
+
+	// Atomic role/project assignments are supported only on the admin-set-password
+	// path for now (the setup-link / one-time-password paths create the account in
+	// a restricted state before the user finishes setup).
+	hasAssignments := body.Role != "" || len(body.ProjectAssignments) > 0
+	if hasAssignments && (body.DeliverSetupLink || body.GenerateOneTimePassword) {
+		sendError(w, "ValidationError", "role/project_assignments are only supported with an admin-set password", http.StatusBadRequest, nil)
 		return
 	}
 
@@ -119,14 +137,29 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "Password is required unless deliver_setup_link or generate_one_time_password is set", http.StatusBadRequest, nil)
 		return
 	}
-	created, err := h.coreService.CreateUser(r.Context(), req)
+
+	var created *models.User
+	var err error
+	if hasAssignments {
+		assignments := make([]core.ProjectAssignment, 0, len(body.ProjectAssignments))
+		for _, a := range body.ProjectAssignments {
+			assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
+		}
+		created, err = h.coreService.CreateUserWithAssignments(r.Context(), req, body.Role, assignments)
+	} else {
+		created, err = h.coreService.CreateUser(r.Context(), req)
+	}
 	if err != nil {
 		log.Printf("Error creating user: %v", err)
-		if strings.Contains(err.Error(), "already exists") {
+		switch {
+		case strings.Contains(err.Error(), "already exists"):
 			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
-			return
+		case strings.Contains(err.Error(), "unknown role"), strings.Contains(err.Error(), "unknown project"),
+			strings.Contains(err.Error(), "each project assignment"):
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+		default:
+			sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
 		}
-		sendError(w, "InternalError", "Failed to create user", http.StatusInternalServerError, nil)
 		return
 	}
 
