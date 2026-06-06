@@ -2,208 +2,311 @@ package services
 
 import (
 	"context"
-	"log"
+	"strings"
 
-	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
+	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// RoleService implements the gRPC role service
-type RoleService struct {
-	// TODO: Add UnimplementedRoleServiceServer when proto is generated
+// RoleGRPCService implements pb.RoleServiceServer, backing each RPC with the
+// shared core service (role CRUD + permission wiring via storage, reads via the
+// core RBAC helpers).
+type RoleGRPCService struct {
+	pb.UnimplementedRoleServiceServer
+	core *core.KeyorixCore
 }
 
-// NewRoleService creates a new role service
-func NewRoleService() *RoleService {
-	return &RoleService{}
+// Compile-time assertion that the service satisfies the generated interface.
+var _ pb.RoleServiceServer = (*RoleGRPCService)(nil)
+
+// NewRoleService creates a role gRPC service backed by the shared core.
+func NewRoleService(coreService *core.KeyorixCore) *RoleGRPCService {
+	return &RoleGRPCService{core: coreService}
 }
 
-// CreateRole creates a new role
-func (s *RoleService) CreateRole(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// CreateRole creates a role and assigns its permission set.
+func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequest) (*pb.Role, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(actor.Permissions, "roles.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create roles")
+	}
+	if req.GetName() == "" || req.GetDescription() == "" || len(req.GetPermissions()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "name, description and at least one permission are required")
 	}
 
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "roles.write" {
-			hasPermission = true
-			break
+	permIDs, err := s.resolvePermissionIDs(ctx, req.GetPermissions())
+	if err != nil {
+		return nil, err
+	}
+
+	role, err := s.core.Storage().CreateRole(ctx, &models.Role{Name: req.GetName(), Description: req.GetDescription()})
+	if err != nil {
+		return nil, mapRoleError(err)
+	}
+	for _, pid := range permIDs {
+		if err := s.core.Storage().AssignPermissionToRole(ctx, role.ID, pid); err != nil {
+			return nil, status.Error(codes.Internal, "failed to assign permissions to role")
+		}
+	}
+	return s.roleByID(ctx, role.ID)
+}
+
+// GetRole returns a role with its permissions.
+func (s *RoleGRPCService) GetRole(ctx context.Context, req *pb.GetRoleRequest) (*pb.Role, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(actor.Permissions, "roles.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read roles")
+	}
+	return s.roleByID(ctx, uint(req.GetId()))
+}
+
+// UpdateRole updates a role's description and/or replaces its permission set.
+func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequest) (*pb.Role, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(actor.Permissions, "roles.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to update roles")
+	}
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+
+	role, current, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
+	if err != nil {
+		return nil, mapRoleError(err)
+	}
+
+	if req.Description != nil {
+		role.Description = req.GetDescription()
+		if _, err := s.core.Storage().UpdateRole(ctx, role); err != nil {
+			return nil, mapRoleError(err)
 		}
 	}
 
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
-	}
-
-	log.Printf("gRPC CreateRole called by user %s", user.Username)
-
-	// TODO: Implement actual role creation logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
-}
-
-// GetRole retrieves a role by ID
-func (s *RoleService) GetRole(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "roles.read" {
-			hasPermission = true
-			break
+	// A provided permission list replaces the entire set.
+	if len(req.GetPermissions()) > 0 {
+		permIDs, err := s.resolvePermissionIDs(ctx, req.GetPermissions())
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range current {
+			if err := s.core.Storage().RemovePermissionFromRole(ctx, role.ID, p.ID); err != nil {
+				return nil, status.Error(codes.Internal, "failed to update role permissions")
+			}
+		}
+		for _, pid := range permIDs {
+			if err := s.core.Storage().AssignPermissionToRole(ctx, role.ID, pid); err != nil {
+				return nil, status.Error(codes.Internal, "failed to update role permissions")
+			}
 		}
 	}
 
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
-	}
-
-	log.Printf("gRPC GetRole called by user %s", user.Username)
-
-	// TODO: Implement actual role retrieval logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	return s.roleByID(ctx, role.ID)
 }
 
-// UpdateRole updates an existing role
-func (s *RoleService) UpdateRole(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// DeleteRole deletes a role.
+func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequest) (*emptypb.Empty, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "roles.write" {
-			hasPermission = true
-			break
-		}
+	if !hasPermission(actor.Permissions, "roles.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to delete roles")
 	}
-
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-
-	log.Printf("gRPC UpdateRole called by user %s", user.Username)
-
-	// TODO: Implement actual role update logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	if err := s.core.Storage().DeleteRole(ctx, uint(req.GetId())); err != nil {
+		return nil, mapRoleError(err)
+	}
+	return &emptypb.Empty{}, nil
 }
 
-// DeleteRole deletes a role
-func (s *RoleService) DeleteRole(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// ListRoles lists roles with their permissions, paginated in memory.
+func (s *RoleGRPCService) ListRoles(ctx context.Context, req *pb.ListRolesRequest) (*pb.ListRolesResponse, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(actor.Permissions, "roles.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list roles")
 	}
 
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "roles.delete" {
-			hasPermission = true
-			break
-		}
+	all, err := s.core.ListRolesWithPermissions(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to list roles")
+	}
+	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
+	total := len(all)
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
 	}
 
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+	out := make([]*pb.Role, 0, end-start)
+	for _, rwp := range all[start:end] {
+		r := rwp.Role
+		out = append(out, roleToProto(&r, rwp.Permissions))
 	}
-
-	log.Printf("gRPC DeleteRole called by user %s", user.Username)
-
-	// TODO: Implement actual role deletion logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	return &pb.ListRolesResponse{
+		Roles:      out,
+		Total:      intToU32(total),
+		Page:       intToU32(page),
+		PageSize:   intToU32(pageSize),
+		TotalPages: intToU32(totalPages(total, pageSize)),
+	}, nil
 }
 
-// AssignRole assigns a role to a user
-func (s *RoleService) AssignRole(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// AssignRole assigns a role to a user at an optional project/environment scope.
+func (s *RoleGRPCService) AssignRole(ctx context.Context, req *pb.AssignRoleRequest) (*pb.RoleAssignment, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "roles.assign" {
-			hasPermission = true
-			break
-		}
+	if !hasPermission(actor.Permissions, "roles.assign") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to assign roles")
 	}
-
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+	if req.GetUserId() == 0 || req.GetRoleId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "user_id and role_id are required")
 	}
-
-	log.Printf("gRPC AssignRole called by user %s", user.Username)
-
-	// TODO: Implement actual role assignment logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	scope := corestorage.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
+	if err := s.core.Storage().AssignRole(ctx, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
+		return nil, mapRoleError(err)
+	}
+	return &pb.RoleAssignment{
+		UserId:        req.GetUserId(),
+		RoleId:        req.GetRoleId(),
+		ProjectId:     req.GetProjectId(),
+		EnvironmentId: req.GetEnvironmentId(),
+	}, nil
 }
 
-// RemoveRole removes a role from a user
-func (s *RoleService) RemoveRole(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// RemoveRole removes a role assignment from a user.
+func (s *RoleGRPCService) RemoveRole(ctx context.Context, req *pb.RemoveRoleRequest) (*emptypb.Empty, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "roles.assign" {
-			hasPermission = true
-			break
-		}
+	if !hasPermission(actor.Permissions, "roles.assign") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to remove role assignments")
 	}
-
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+	if req.GetUserId() == 0 || req.GetRoleId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "user_id and role_id are required")
 	}
-
-	log.Printf("gRPC RemoveRole called by user %s", user.Username)
-
-	// TODO: Implement actual role removal logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	scope := corestorage.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
+	if err := s.core.Storage().RemoveRole(ctx, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
+		return nil, mapRoleError(err)
+	}
+	return &emptypb.Empty{}, nil
 }
 
-// ListRoles lists roles with filtering and pagination
-func (s *RoleService) ListRoles(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// GetUserRoles returns all roles assigned to a user.
+func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRolesRequest) (*pb.GetUserRolesResponse, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
+	if !hasPermission(actor.Permissions, "roles.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read role assignments")
+	}
+	assignment, err := s.core.GetUserRoleAssignment(ctx, uint(req.GetUserId()))
+	if err != nil {
+		return nil, mapRoleError(err)
+	}
+	roles := make([]*pb.Role, 0, len(assignment.Roles))
+	for _, r := range assignment.Roles {
+		roles = append(roles, roleToProto(r, nil))
+	}
+	return &pb.GetUserRolesResponse{
+		UserId:   intToU32(int(assignment.UserID)),
+		Username: assignment.Username,
+		Email:    assignment.Email,
+		Roles:    roles,
+	}, nil
+}
 
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "roles.read" {
-			hasPermission = true
-			break
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+// roleByID fetches a role with its permissions and maps it to proto.
+func (s *RoleGRPCService) roleByID(ctx context.Context, id uint) (*pb.Role, error) {
+	role, perms, err := s.core.GetRoleWithPermissions(ctx, id)
+	if err != nil {
+		return nil, mapRoleError(err)
+	}
+	return roleToProto(role, perms), nil
+}
+
+// resolvePermissionIDs maps permission names to IDs, rejecting unknown names.
+func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, names []string) ([]uint, error) {
+	perms, err := s.core.Storage().ListPermissions(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to resolve permissions")
+	}
+	byName := make(map[string]uint, len(perms))
+	for _, p := range perms {
+		byName[p.Name] = p.ID
+	}
+	ids := make([]uint, 0, len(names))
+	for _, n := range names {
+		id, ok := byName[n]
+		if !ok {
+			return nil, status.Errorf(codes.InvalidArgument, "unknown permission %q", n)
 		}
+		ids = append(ids, id)
 	}
+	return ids, nil
+}
 
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+func roleToProto(r *models.Role, perms []*models.Permission) *pb.Role {
+	out := &pb.Role{
+		Id:          intToU32(int(r.ID)),
+		Name:        r.Name,
+		Description: r.Description,
 	}
+	for _, p := range perms {
+		out.Permissions = append(out.Permissions, permissionToProto(p))
+	}
+	return out
+}
 
-	log.Printf("gRPC ListRoles called by user %s", user.Username)
+func permissionToProto(p *models.Permission) *pb.Permission {
+	return &pb.Permission{
+		Id:          intToU32(int(p.ID)),
+		Name:        p.Name,
+		Description: p.Description,
+		Resource:    p.Resource,
+		Action:      p.Action,
+	}
+}
 
-	// TODO: Implement actual role listing logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+// mapRoleError translates core/storage role errors into gRPC status codes.
+func mapRoleError(err error) error {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "not found"):
+		return status.Error(codes.NotFound, "role not found")
+	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"), strings.Contains(msg, "unique"):
+		return status.Error(codes.AlreadyExists, "a role with that name already exists")
+	default:
+		return status.Error(codes.Internal, "role operation failed")
+	}
 }
