@@ -220,7 +220,28 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 		})
 	}
 
-	// TODO: include group-shared secrets when group functionality is fully wired.
+	// Secrets shared with any group the user belongs to.
+	groups, err := c.storage.GetUserGroups(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, group := range groups {
+		groupShares, err := c.storage.ListSharesByGroup(ctx, group.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, share := range groupShares {
+			groupID := group.ID
+			permissions = append(permissions, &models.UserSecretPermission{
+				SecretID:   share.SecretID,
+				UserID:     userID,
+				Permission: share.Permission,
+				Source:     "group_share",
+				ShareID:    &share.ID,
+				GroupID:    &groupID,
+			})
+		}
+	}
 
 	return permissions, nil
 }
