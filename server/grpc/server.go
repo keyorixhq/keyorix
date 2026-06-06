@@ -6,26 +6,29 @@ import (
 	"log"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
 )
 
-// NewServer creates a new gRPC server with all services registered
-func NewServer(cfg *config.Config) (*grpc.Server, error) {
+// NewServer creates a new gRPC server. The auth interceptor validates session
+// tokens against the shared core service. Service registration is wired in a
+// later phase; until then the server runs with interceptors only.
+func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server, error) {
 	// Create server options
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
 			interceptors.LoggingInterceptor(),
 			interceptors.RecoveryInterceptor(),
-			interceptors.AuthInterceptor(),
+			interceptors.AuthInterceptor(coreService),
 			interceptors.MetricsInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
 			interceptors.StreamLoggingInterceptor(),
 			interceptors.StreamRecoveryInterceptor(),
-			interceptors.StreamAuthInterceptor(),
+			interceptors.StreamAuthInterceptor(coreService),
 		),
 	}
 
@@ -42,10 +45,9 @@ func NewServer(cfg *config.Config) (*grpc.Server, error) {
 	// Create server
 	server := grpc.NewServer(opts...)
 
-	// TODO: Initialize services when protobuf definitions are ready
-	// For now, the gRPC server runs without registered services
-
-	// TODO: Register protobuf services when proto files are generated
+	// Service registration is wired in a later phase. The generated pb package
+	// exists (server/proto/pb); the services still need to implement the
+	// generated pb.*ServiceServer interfaces before they can be registered here:
 	// pb.RegisterSecretServiceServer(server, secretService)
 	// pb.RegisterUserServiceServer(server, userService)
 	// pb.RegisterRoleServiceServer(server, roleService)
@@ -59,7 +61,7 @@ func NewServer(cfg *config.Config) (*grpc.Server, error) {
 		log.Println("gRPC reflection enabled")
 	}
 
-	log.Printf("gRPC server configured with %d services", 6)
+	log.Println("gRPC server configured (no services registered yet)")
 	return server, nil
 }
 

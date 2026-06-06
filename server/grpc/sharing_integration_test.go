@@ -21,8 +21,10 @@ func newTestServer(t *testing.T) (*grpc.Server, *services.ShareGRPCService) {
 	shareService, err := services.NewShareService(nil)
 	require.NoError(t, err)
 
+	// These tests invoke service methods directly (no RPC routes through the
+	// interceptor), so a nil core service here is never exercised.
 	server := grpc.NewServer(
-		grpc.UnaryInterceptor(interceptors.AuthInterceptor()),
+		grpc.UnaryInterceptor(interceptors.AuthInterceptor(nil)),
 	)
 	return server, shareService
 }
