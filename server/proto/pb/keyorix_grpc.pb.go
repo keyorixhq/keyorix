@@ -37,17 +37,17 @@ const (
 type SecretServiceClient interface {
 	// Create a new secret
 	CreateSecret(ctx context.Context, in *CreateSecretRequest, opts ...grpc.CallOption) (*Secret, error)
-	// Get a secret by ID
+	// Get a secret by ID (optionally including the decrypted value)
 	GetSecret(ctx context.Context, in *GetSecretRequest, opts ...grpc.CallOption) (*Secret, error)
-	// Get secret with decrypted value
+	// Get a secret's decrypted value (counts against max_reads if set)
 	GetSecretValue(ctx context.Context, in *GetSecretRequest, opts ...grpc.CallOption) (*SecretValue, error)
-	// Update an existing secret
+	// Update an existing secret (a new value creates a new version)
 	UpdateSecret(ctx context.Context, in *UpdateSecretRequest, opts ...grpc.CallOption) (*Secret, error)
 	// Delete a secret
 	DeleteSecret(ctx context.Context, in *DeleteSecretRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// List secrets with filtering and pagination
 	ListSecrets(ctx context.Context, in *ListSecretsRequest, opts ...grpc.CallOption) (*ListSecretsResponse, error)
-	// Get secret versions
+	// Get a secret's version history
 	GetSecretVersions(ctx context.Context, in *GetSecretVersionsRequest, opts ...grpc.CallOption) (*GetSecretVersionsResponse, error)
 }
 
@@ -137,17 +137,17 @@ func (c *secretServiceClient) GetSecretVersions(ctx context.Context, in *GetSecr
 type SecretServiceServer interface {
 	// Create a new secret
 	CreateSecret(context.Context, *CreateSecretRequest) (*Secret, error)
-	// Get a secret by ID
+	// Get a secret by ID (optionally including the decrypted value)
 	GetSecret(context.Context, *GetSecretRequest) (*Secret, error)
-	// Get secret with decrypted value
+	// Get a secret's decrypted value (counts against max_reads if set)
 	GetSecretValue(context.Context, *GetSecretRequest) (*SecretValue, error)
-	// Update an existing secret
+	// Update an existing secret (a new value creates a new version)
 	UpdateSecret(context.Context, *UpdateSecretRequest) (*Secret, error)
 	// Delete a secret
 	DeleteSecret(context.Context, *DeleteSecretRequest) (*emptypb.Empty, error)
 	// List secrets with filtering and pagination
 	ListSecrets(context.Context, *ListSecretsRequest) (*ListSecretsResponse, error)
-	// Get secret versions
+	// Get a secret's version history
 	GetSecretVersions(context.Context, *GetSecretVersionsRequest) (*GetSecretVersionsResponse, error)
 	mustEmbedUnimplementedSecretServiceServer()
 }
@@ -386,9 +386,9 @@ type ShareServiceClient interface {
 	ShareSecret(ctx context.Context, in *ShareSecretRequest, opts ...grpc.CallOption) (*ShareRecord, error)
 	// List shares for a secret
 	ListSecretShares(ctx context.Context, in *ListSecretSharesRequest, opts ...grpc.CallOption) (*ListSharesResponse, error)
-	// List shares created by a user
+	// List shares created by the calling user
 	ListUserShares(ctx context.Context, in *ListUserSharesRequest, opts ...grpc.CallOption) (*ListSharesResponse, error)
-	// List secrets shared with a user
+	// List secrets shared with the calling user
 	ListSharedSecrets(ctx context.Context, in *ListSharedSecretsRequest, opts ...grpc.CallOption) (*ListSecretsResponse, error)
 	// Update share permissions
 	UpdateSharePermission(ctx context.Context, in *UpdateSharePermissionRequest, opts ...grpc.CallOption) (*ShareRecord, error)
@@ -474,9 +474,9 @@ type ShareServiceServer interface {
 	ShareSecret(context.Context, *ShareSecretRequest) (*ShareRecord, error)
 	// List shares for a secret
 	ListSecretShares(context.Context, *ListSecretSharesRequest) (*ListSharesResponse, error)
-	// List shares created by a user
+	// List shares created by the calling user
 	ListUserShares(context.Context, *ListUserSharesRequest) (*ListSharesResponse, error)
-	// List secrets shared with a user
+	// List secrets shared with the calling user
 	ListSharedSecrets(context.Context, *ListSharedSecretsRequest) (*ListSecretsResponse, error)
 	// Update share permissions
 	UpdateSharePermission(context.Context, *UpdateSharePermissionRequest) (*ShareRecord, error)
@@ -689,15 +689,15 @@ const (
 //
 // User service for managing users
 type UserServiceClient interface {
-	// Create a new user
-	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error)
+	// Create a new user (optionally with a system role + project assignments)
+	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*CreateUserResponse, error)
 	// Get a user by ID
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*User, error)
 	// Update an existing user
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
-	// Delete a user
+	// Soft-delete a user
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// List users with pagination
+	// List users with filtering and pagination
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
 }
 
@@ -709,9 +709,9 @@ func NewUserServiceClient(cc grpc.ClientConnInterface) UserServiceClient {
 	return &userServiceClient{cc}
 }
 
-func (c *userServiceClient) CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error) {
+func (c *userServiceClient) CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*CreateUserResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(User)
+	out := new(CreateUserResponse)
 	err := c.cc.Invoke(ctx, UserService_CreateUser_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -765,15 +765,15 @@ func (c *userServiceClient) ListUsers(ctx context.Context, in *ListUsersRequest,
 //
 // User service for managing users
 type UserServiceServer interface {
-	// Create a new user
-	CreateUser(context.Context, *CreateUserRequest) (*User, error)
+	// Create a new user (optionally with a system role + project assignments)
+	CreateUser(context.Context, *CreateUserRequest) (*CreateUserResponse, error)
 	// Get a user by ID
 	GetUser(context.Context, *GetUserRequest) (*User, error)
 	// Update an existing user
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
-	// Delete a user
+	// Soft-delete a user
 	DeleteUser(context.Context, *DeleteUserRequest) (*emptypb.Empty, error)
-	// List users with pagination
+	// List users with filtering and pagination
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
 	mustEmbedUnimplementedUserServiceServer()
 }
@@ -785,7 +785,7 @@ type UserServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedUserServiceServer struct{}
 
-func (UnimplementedUserServiceServer) CreateUser(context.Context, *CreateUserRequest) (*User, error) {
+func (UnimplementedUserServiceServer) CreateUser(context.Context, *CreateUserRequest) (*CreateUserResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateUser not implemented")
 }
 func (UnimplementedUserServiceServer) GetUser(context.Context, *GetUserRequest) (*User, error) {
@@ -958,23 +958,23 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Role service for managing roles and permissions
+// Role service for managing roles and assignments
 type RoleServiceClient interface {
-	// Create a new role
+	// Create a new role with its permission set
 	CreateRole(ctx context.Context, in *CreateRoleRequest, opts ...grpc.CallOption) (*Role, error)
-	// Get a role by ID
+	// Get a role (with its permissions) by ID
 	GetRole(ctx context.Context, in *GetRoleRequest, opts ...grpc.CallOption) (*Role, error)
-	// Update an existing role
+	// Update a role's description and/or permission set
 	UpdateRole(ctx context.Context, in *UpdateRoleRequest, opts ...grpc.CallOption) (*Role, error)
-	// Delete a role
+	// Delete a role (built-in roles cannot be deleted)
 	DeleteRole(ctx context.Context, in *DeleteRoleRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// List roles
+	// List roles (with their permissions) and pagination
 	ListRoles(ctx context.Context, in *ListRolesRequest, opts ...grpc.CallOption) (*ListRolesResponse, error)
-	// Assign role to user
-	AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// Remove role from user
+	// Assign a role to a user, optionally scoped to a project/environment
+	AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*RoleAssignment, error)
+	// Remove a role assignment from a user
 	RemoveRole(ctx context.Context, in *RemoveRoleRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// Get user roles
+	// Get all roles assigned to a user
 	GetUserRoles(ctx context.Context, in *GetUserRolesRequest, opts ...grpc.CallOption) (*GetUserRolesResponse, error)
 }
 
@@ -1036,9 +1036,9 @@ func (c *roleServiceClient) ListRoles(ctx context.Context, in *ListRolesRequest,
 	return out, nil
 }
 
-func (c *roleServiceClient) AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *roleServiceClient) AssignRole(ctx context.Context, in *AssignRoleRequest, opts ...grpc.CallOption) (*RoleAssignment, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
+	out := new(RoleAssignment)
 	err := c.cc.Invoke(ctx, RoleService_AssignRole_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -1070,23 +1070,23 @@ func (c *roleServiceClient) GetUserRoles(ctx context.Context, in *GetUserRolesRe
 // All implementations must embed UnimplementedRoleServiceServer
 // for forward compatibility.
 //
-// Role service for managing roles and permissions
+// Role service for managing roles and assignments
 type RoleServiceServer interface {
-	// Create a new role
+	// Create a new role with its permission set
 	CreateRole(context.Context, *CreateRoleRequest) (*Role, error)
-	// Get a role by ID
+	// Get a role (with its permissions) by ID
 	GetRole(context.Context, *GetRoleRequest) (*Role, error)
-	// Update an existing role
+	// Update a role's description and/or permission set
 	UpdateRole(context.Context, *UpdateRoleRequest) (*Role, error)
-	// Delete a role
+	// Delete a role (built-in roles cannot be deleted)
 	DeleteRole(context.Context, *DeleteRoleRequest) (*emptypb.Empty, error)
-	// List roles
+	// List roles (with their permissions) and pagination
 	ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error)
-	// Assign role to user
-	AssignRole(context.Context, *AssignRoleRequest) (*emptypb.Empty, error)
-	// Remove role from user
+	// Assign a role to a user, optionally scoped to a project/environment
+	AssignRole(context.Context, *AssignRoleRequest) (*RoleAssignment, error)
+	// Remove a role assignment from a user
 	RemoveRole(context.Context, *RemoveRoleRequest) (*emptypb.Empty, error)
-	// Get user roles
+	// Get all roles assigned to a user
 	GetUserRoles(context.Context, *GetUserRolesRequest) (*GetUserRolesResponse, error)
 	mustEmbedUnimplementedRoleServiceServer()
 }
@@ -1113,7 +1113,7 @@ func (UnimplementedRoleServiceServer) DeleteRole(context.Context, *DeleteRoleReq
 func (UnimplementedRoleServiceServer) ListRoles(context.Context, *ListRolesRequest) (*ListRolesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListRoles not implemented")
 }
-func (UnimplementedRoleServiceServer) AssignRole(context.Context, *AssignRoleRequest) (*emptypb.Empty, error) {
+func (UnimplementedRoleServiceServer) AssignRole(context.Context, *AssignRoleRequest) (*RoleAssignment, error) {
 	return nil, status.Error(codes.Unimplemented, "method AssignRole not implemented")
 }
 func (UnimplementedRoleServiceServer) RemoveRole(context.Context, *RemoveRoleRequest) (*emptypb.Empty, error) {
@@ -1341,13 +1341,13 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Audit service for audit logs
+// Audit service for reading audit logs
 type AuditServiceClient interface {
-	// Get audit logs
+	// Read the audit log with filtering and pagination
 	GetAuditLogs(ctx context.Context, in *GetAuditLogsRequest, opts ...grpc.CallOption) (*GetAuditLogsResponse, error)
-	// Get RBAC audit logs
+	// Read RBAC-specific audit events
 	GetRBACAuditLogs(ctx context.Context, in *GetRBACAuditLogsRequest, opts ...grpc.CallOption) (*GetRBACAuditLogsResponse, error)
-	// Stream audit logs in real-time
+	// Stream audit events as they occur
 	StreamAuditLogs(ctx context.Context, in *StreamAuditLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AuditLog], error)
 }
 
@@ -1402,13 +1402,13 @@ type AuditService_StreamAuditLogsClient = grpc.ServerStreamingClient[AuditLog]
 // All implementations must embed UnimplementedAuditServiceServer
 // for forward compatibility.
 //
-// Audit service for audit logs
+// Audit service for reading audit logs
 type AuditServiceServer interface {
-	// Get audit logs
+	// Read the audit log with filtering and pagination
 	GetAuditLogs(context.Context, *GetAuditLogsRequest) (*GetAuditLogsResponse, error)
-	// Get RBAC audit logs
+	// Read RBAC-specific audit events
 	GetRBACAuditLogs(context.Context, *GetRBACAuditLogsRequest) (*GetRBACAuditLogsResponse, error)
-	// Stream audit logs in real-time
+	// Stream audit events as they occur
 	StreamAuditLogs(*StreamAuditLogsRequest, grpc.ServerStreamingServer[AuditLog]) error
 	mustEmbedUnimplementedAuditServiceServer()
 }
@@ -1533,13 +1533,13 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// System service for system information and health
+// System service for health, info, and metrics
 type SystemServiceClient interface {
-	// Health check
+	// Liveness/readiness check
 	HealthCheck(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealthResponse, error)
-	// Get system information
+	// Static + runtime system information
 	GetSystemInfo(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*SystemInfo, error)
-	// Get system metrics
+	// Operational metrics snapshot
 	GetMetrics(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Metrics, error)
 }
 
@@ -1585,13 +1585,13 @@ func (c *systemServiceClient) GetMetrics(ctx context.Context, in *emptypb.Empty,
 // All implementations must embed UnimplementedSystemServiceServer
 // for forward compatibility.
 //
-// System service for system information and health
+// System service for health, info, and metrics
 type SystemServiceServer interface {
-	// Health check
+	// Liveness/readiness check
 	HealthCheck(context.Context, *emptypb.Empty) (*HealthResponse, error)
-	// Get system information
+	// Static + runtime system information
 	GetSystemInfo(context.Context, *emptypb.Empty) (*SystemInfo, error)
-	// Get system metrics
+	// Operational metrics snapshot
 	GetMetrics(context.Context, *emptypb.Empty) (*Metrics, error)
 	mustEmbedUnimplementedSystemServiceServer()
 }
