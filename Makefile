@@ -4,7 +4,25 @@ BUILD_DIR=./bin
 VERSION?=dev
 LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION)"
 
-.PHONY: build build-cli build-server install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs
+.PHONY: build build-cli build-server install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint
+
+# Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
+PROTOC_GEN_GO_VERSION=v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION=v1.6.2
+
+# Install the protoc-gen-go / protoc-gen-go-grpc plugins buf invokes. buf itself
+# must be installed separately (`brew install bufbuild/buf/buf`).
+proto-deps:
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+
+proto-lint:
+	buf lint
+
+# Regenerate server/proto/pb/*.pb.go from server/proto/keyorix.proto. Runs
+# proto-deps first so a fresh checkout works; needs the Go bin dir on PATH.
+proto: proto-deps
+	PATH="$$(go env GOPATH)/bin:$$PATH" buf generate
 
 build: build-cli build-server
 
