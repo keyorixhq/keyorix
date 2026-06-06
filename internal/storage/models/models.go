@@ -32,14 +32,19 @@ type ProjectInvitation struct {
 	ID                     uint   `gorm:"primaryKey"`
 	ProjectID              uint   `gorm:"index"`
 	Email                  string `gorm:"index"`
-	Role                   string // intended project role
+	Role                   string // intended project role (project-scoped invite)
 	State                  string // pending | accepted | revoked | expired
 	InvitedBy              uint
 	ValidationModeAtInvite string // snapshot of the install validation mode at invite time
-	ExpiresAt              *time.Time
-	CreatedAt              time.Time
-	AcceptedAt             *time.Time
-	RevokedAt              *time.Time
+	// Global invite (ADR-024): a non-project-scoped invitation (ProjectID 0) that, on
+	// accept, grants a system role plus the per-project assignments below. Both empty
+	// for a project-scoped invite.
+	SystemRole      string // optional system role granted on accept
+	AssignmentsJSON string `gorm:"type:text"` // optional JSON []{project_id, role} for multi-project grants
+	ExpiresAt       *time.Time
+	CreatedAt       time.Time
+	AcceptedAt      *time.Time
+	RevokedAt       *time.Time
 }
 
 // AccessRequest is a user's request for a role in a project (ADR-024). State

@@ -250,10 +250,21 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
-	// Create project_invitations / access_requests if missing (ADR-024, additive).
+	// Create project_invitations if missing (ADR-024, additive); otherwise add only
+	// the newer global-invite columns via the Migrator (same pgx hazard as the
+	// notifications block below — never full-AutoMigrate an existing table here).
 	if !invitationsExists {
 		if err := db.AutoMigrate(&models.ProjectInvitation{}); err != nil {
 			return fmt.Errorf("failed to migrate project_invitations table: %w", err)
+		}
+	} else {
+		m := db.Migrator()
+		for _, col := range []string{"SystemRole", "AssignmentsJSON"} {
+			if !m.HasColumn(&models.ProjectInvitation{}, col) {
+				if err := m.AddColumn(&models.ProjectInvitation{}, col); err != nil {
+					return fmt.Errorf("failed to add project_invitations.%s column: %w", col, err)
+				}
+			}
 		}
 	}
 	if !accessReqExists {

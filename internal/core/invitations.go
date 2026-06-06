@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -100,6 +101,131 @@ func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uin
 		return inv, nil, err
 	}
 	return inv, prov, nil
+}
+
+// InviteGlobal creates a non-project-scoped invitation (ProjectID 0) that, on
+// accept, grants a system role plus a set of project assignments in one go — the
+// invitation analogue of CreateUserWithAssignments (ADR-024/028). The system role
+// and every assignment (project + role) are validated and deduped up front, so
+// acceptance can't later fail on an unknown role or project. The per-project
+// grants are snapshotted as JSON on the invitation.
+func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, error) {
+	if email == "" {
+		return nil, fmt.Errorf("email is required")
+	}
+	sysRole := systemRole
+	if sysRole == "" {
+		sysRole = "system_viewer"
+	}
+	if _, err := c.storage.GetRoleByName(ctx, sysRole); err != nil {
+		return nil, fmt.Errorf("unknown role %q (system): %w", sysRole, err)
+	}
+
+	// Validate + dedup assignments before persisting anything.
+	seen := map[uint]bool{}
+	clean := make([]ProjectAssignment, 0, len(assignments))
+	for _, a := range assignments {
+		if a.ProjectID == 0 || a.Role == "" {
+			return nil, fmt.Errorf("each project assignment needs a project_id and a role")
+		}
+		if seen[a.ProjectID] {
+			continue
+		}
+		seen[a.ProjectID] = true
+		if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
+			return nil, fmt.Errorf("unknown project %d: %w", a.ProjectID, err)
+		}
+		if _, err := c.storage.GetRoleByName(ctx, a.Role); err != nil {
+			return nil, fmt.Errorf("unknown role %q: %w", a.Role, err)
+		}
+		clean = append(clean, ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
+	}
+	assignJSON := ""
+	if len(clean) > 0 {
+		b, err := json.Marshal(clean)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode assignments: %w", err)
+		}
+		assignJSON = string(b)
+	}
+
+	now := c.now()
+	expires := now.Add(invitationTTL)
+	inv := &models.ProjectInvitation{
+		ProjectID:              0, // global
+		Email:                  email,
+		Role:                   "",
+		State:                  InvitationPending,
+		InvitedBy:              invitedBy,
+		SystemRole:             sysRole,
+		AssignmentsJSON:        assignJSON,
+		ValidationModeAtInvite: c.validationMode(),
+		ExpiresAt:              &expires,
+		CreatedAt:              now,
+	}
+	created, err := c.storage.CreateProjectInvitation(ctx, inv)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create invitation: %w", err)
+	}
+	c.auditProjectScoped(ctx, "invitation.created", invitedBy, 0,
+		fmt.Sprintf("invited %s globally as %s with %d project assignment(s)", email, sysRole, len(clean)))
+	return created, nil
+}
+
+// InviteGlobalWithLink creates a global invitation and provisions its accept link
+// (ADR-028), mirroring InviteToProjectWithLink. A nil result with a non-nil error
+// and a non-nil invitation means the invite exists but the link couldn't be
+// delivered (e.g. base_url unset) — the caller can resend.
+func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
+	inv, err := c.InviteGlobal(ctx, email, systemRole, assignments, invitedBy)
+	if err != nil {
+		return nil, nil, err
+	}
+	prov, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+		Purpose:      SetupPurposeInvitationAccept,
+		SubjectEmail: email,
+		InvitationID: &inv.ID,
+		CreatedBy:    invitedBy,
+	}, "", fmt.Sprintf("%s + %d project assignment(s)", inv.SystemRole, len(assignments)))
+	if err != nil {
+		return inv, nil, err
+	}
+	return inv, prov, nil
+}
+
+// applyInvitationGrants materializes an invitation's role grants onto a freshly
+// created (accepting) user. A global invite (ADR-024) grants its system role plus
+// each project assignment from AssignmentsJSON; a project-scoped invite grants the
+// single project role. Everything was validated at invite time, so a failure here
+// is a storage error (leaving the invitation pending/resendable), not bad input.
+func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) error {
+	// Global invite: system role + multi-project assignments.
+	if inv.SystemRole != "" || inv.AssignmentsJSON != "" {
+		if inv.SystemRole != "" {
+			role, err := c.storage.GetRoleByName(ctx, inv.SystemRole)
+			if err != nil {
+				return fmt.Errorf("unknown system role %q: %w", inv.SystemRole, err)
+			}
+			if err := c.storage.AssignRole(ctx, userID, role.ID, storage.Scope{ProjectID: 0}); err != nil {
+				return fmt.Errorf("failed to grant system role: %w", err)
+			}
+		}
+		if inv.AssignmentsJSON != "" {
+			var assignments []ProjectAssignment
+			if err := json.Unmarshal([]byte(inv.AssignmentsJSON), &assignments); err != nil {
+				return fmt.Errorf("failed to decode assignments: %w", err)
+			}
+			for _, a := range assignments {
+				if _, err := c.inviteMemberWithMode(ctx, a.ProjectID, userID, a.Role, inv.InvitedBy, inv.ValidationModeAtInvite, false); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	// Project-scoped invite: single project membership.
+	_, err := c.inviteMemberWithMode(ctx, inv.ProjectID, userID, inv.Role, inv.InvitedBy, inv.ValidationModeAtInvite, false)
+	return err
 }
 
 // ResendInvitationLink reissues the accept link for a still-pending invitation

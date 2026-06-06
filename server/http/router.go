@@ -179,6 +179,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/invitations/{invitationId}", catalogHandler.RevokeInvitation)
 		// Resend the invitation's setup link (ADR-028).
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/invitations/{invitationId}/resend", catalogHandler.ResendInvitation)
+		// Global (non-project-scoped) invitation (ADR-024): system role + multi-project
+		// assignments applied atomically on accept. A system-admin operation (users.write).
+		r.With(customMiddleware.RequirePermission("users.write")).Post("/invitations", catalogHandler.CreateGlobalInvitation)
 		// Access requests (ADR-024): requesting + withdrawing are self-service (any
 		// authenticated user — they don't have project access yet); listing and
 		// approving/rejecting require roles.assign at the project scope.

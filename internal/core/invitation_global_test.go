@@ -1,0 +1,139 @@
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+)
+
+func TestInviteGlobal_ValidatesAndSnapshotsAssignments(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+
+	// GetProject is a fixed stub in the mock (always resolves), so only roles are
+	// asserted here.
+	store.On("GetRoleByName", ctx, "system_auditor").Return(&models.Role{ID: 3, Name: "system_auditor"}, nil)
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
+	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
+		// Global invite: no project scope, system role set, assignments snapshotted.
+		if inv.ProjectID != 0 || inv.Role != "" || inv.SystemRole != "system_auditor" || inv.State != InvitationPending {
+			return false
+		}
+		var got []ProjectAssignment
+		if err := json.Unmarshal([]byte(inv.AssignmentsJSON), &got); err != nil {
+			return false
+		}
+		return len(got) == 2 // 3 in → one deduped
+	})).Return(&models.ProjectInvitation{ID: 12, State: InvitationPending}, nil)
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == "invitation.created"
+	})).Return(nil)
+
+	inv, err := c.InviteGlobal(ctx, "carol@acme.io", "system_auditor", []ProjectAssignment{
+		{ProjectID: 1, Role: "project_developer"},
+		{ProjectID: 2, Role: "project_viewer"},
+		{ProjectID: 1, Role: "project_viewer"}, // duplicate project — deduped
+	}, 9)
+
+	require.NoError(t, err)
+	assert.Equal(t, InvitationPending, inv.State)
+	store.AssertExpectations(t)
+}
+
+func TestInviteGlobal_RejectsUnknownRole(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+
+	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1}, nil)
+	store.On("GetRoleByName", ctx, "bogus_role").Return(nil, assertNotFoundErr())
+
+	_, err := c.InviteGlobal(ctx, "carol@acme.io", "", []ProjectAssignment{
+		{ProjectID: 1, Role: "bogus_role"},
+	}, 9)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown role")
+	// Nothing persisted on a validation failure.
+	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
+}
+
+func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+
+	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1}, nil)
+
+	_, err := c.InviteGlobal(ctx, "carol@acme.io", "", []ProjectAssignment{
+		{ProjectID: 1, Role: ""},
+	}, 9)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "needs a project_id and a role")
+	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
+}
+
+func TestInviteGlobal_DefaultsSystemViewer(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+
+	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1, Name: "system_viewer"}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
+		return inv.SystemRole == "system_viewer" && inv.AssignmentsJSON == ""
+	})).Return(&models.ProjectInvitation{ID: 13, State: InvitationPending}, nil)
+	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+
+	_, err := c.InviteGlobal(ctx, "dave@acme.io", "", nil, 9)
+	require.NoError(t, err)
+	store.AssertExpectations(t)
+}
+
+// applyInvitationGrants on a global invite must grant the system role at scope 0
+// plus one membership per assignment.
+func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	anyAudit(store)
+	ctx := context.Background()
+
+	assignments, _ := json.Marshal([]ProjectAssignment{
+		{ProjectID: 1, Role: "project_developer"},
+		{ProjectID: 2, Role: "project_viewer"},
+	})
+	inv := &models.ProjectInvitation{
+		ID: 12, ProjectID: 0, Email: "carol@acme.io", InvitedBy: 9,
+		SystemRole: "system_auditor", AssignmentsJSON: string(assignments),
+		ValidationModeAtInvite: ValidationModeOpen,
+	}
+
+	// System role grant at scope 0.
+	store.On("GetRoleByName", ctx, "system_auditor").Return(&models.Role{ID: 3}, nil)
+	store.On("AssignRole", ctx, uint(20), uint(3), storage.Scope{ProjectID: 0}).Return(nil)
+	// One membership per assignment (open mode → active → role granted).
+	for _, a := range []struct {
+		pid    uint
+		role   string
+		roleID uint
+	}{{1, "project_developer", 5}, {2, "project_viewer", 6}} {
+		store.On("GetRoleByName", ctx, a.role).Return(&models.Role{ID: a.roleID, Name: a.role}, nil)
+		store.On("GetActiveProjectMembership", ctx, a.pid, uint(20)).Return(nil, assertNotFoundErr())
+		store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+			return m.ProjectID == a.pid && m.UserID == 20
+		})).Return(&models.ProjectMembership{ProjectID: a.pid, UserID: 20, Role: a.role, State: MembershipActive}, nil)
+		store.On("AssignRole", ctx, uint(20), a.roleID, storage.Scope{ProjectID: a.pid}).Return(nil)
+	}
+
+	err := c.applyInvitationGrants(ctx, inv, 20)
+	require.NoError(t, err)
+	store.AssertExpectations(t)
+}
