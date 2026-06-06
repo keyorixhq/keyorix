@@ -2,547 +2,245 @@ package services
 
 import (
 	"context"
-	"fmt"
-	"log"
-	"math"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
-	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
+	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// ShareGRPCService implements the gRPC share service
+// ShareGRPCService implements pb.ShareServiceServer, backing each RPC with the
+// shared core service. Identity is established by the auth interceptor and read
+// from the context.
 type ShareGRPCService struct {
-	coreService *core.KeyorixCore
-	// TODO: Add UnimplementedShareServiceServer when proto is generated
+	pb.UnimplementedShareServiceServer
+	core *core.KeyorixCore
 }
 
-// NewShareService creates a new share gRPC service
-func NewShareService(coreService *core.KeyorixCore) (*ShareGRPCService, error) {
-	return &ShareGRPCService{
-		coreService: coreService,
-	}, nil
+// Compile-time assertion that the service satisfies the generated interface.
+var _ pb.ShareServiceServer = (*ShareGRPCService)(nil)
+
+// NewShareService creates a share gRPC service backed by the shared core.
+func NewShareService(coreService *core.KeyorixCore) *ShareGRPCService {
+	return &ShareGRPCService{core: coreService}
 }
 
-// ShareSecretRequest represents a gRPC share secret request
-type ShareSecretRequest struct {
-	SecretID    uint32 `json:"secret_id"`
-	RecipientID uint32 `json:"recipient_id"`
-	IsGroup     bool   `json:"is_group"`
-	Permission  string `json:"permission"`
-}
-
-// ShareRecord represents a gRPC share record response
-type ShareRecord struct {
-	ID          uint32                 `json:"id"`
-	SecretID    uint32                 `json:"secret_id"`
-	OwnerID     uint32                 `json:"owner_id"`
-	RecipientID uint32                 `json:"recipient_id"`
-	IsGroup     bool                   `json:"is_group"`
-	Permission  string                 `json:"permission"`
-	CreatedAt   *timestamppb.Timestamp `json:"created_at"`
-	UpdatedAt   *timestamppb.Timestamp `json:"updated_at"`
-}
-
-// ShareSecret shares a secret with another user or group via gRPC
-func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *ShareSecretRequest) (*ShareRecord, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// ShareSecret shares a secret with another user or group.
+func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretRequest) (*pb.ShareRecord, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to share secrets")
+	}
+	if req.GetSecretId() == 0 || req.GetRecipientId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "secret_id and recipient_id are required")
+	}
+	if req.GetPermission() != "read" && req.GetPermission() != "write" {
+		return nil, status.Error(codes.InvalidArgument, "permission must be 'read' or 'write'")
 	}
 
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for sharing secrets")
-	}
-
-	log.Printf("gRPC ShareSecret called by user %s for secret ID %d", user.Username, req.SecretID)
-
-	// Validate request
-	if req.SecretID == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "Secret ID is required")
-	}
-	if req.RecipientID == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "Recipient ID is required")
-	}
-	if req.Permission != "read" && req.Permission != "write" {
-		return nil, status.Errorf(codes.InvalidArgument, "Permission must be 'read' or 'write'")
-	}
-
-	var shareRecord *models.ShareRecord
-	var err error
-
-	// Guard against nil coreService (e.g. in tests that pass nil)
-	if s.coreService == nil {
-		return nil, status.Errorf(codes.Internal, "Share service not configured")
-	}
-
-	// Handle group sharing differently
-	if req.IsGroup {
-		// Convert to group share service request
-		groupReq := &core.GroupShareSecretRequest{
-			SecretID:   uint(req.SecretID),
-			GroupID:    uint(req.RecipientID),
-			Permission: req.Permission,
+	var record *models.ShareRecord
+	if req.GetIsGroup() {
+		record, err = s.core.ShareSecretWithGroup(ctx, &core.GroupShareSecretRequest{
+			SecretID:   uint(req.GetSecretId()),
+			GroupID:    uint(req.GetRecipientId()),
+			Permission: req.GetPermission(),
 			SharedBy:   user.UserID,
-		}
-
-		// Call service for group sharing
-		shareRecord, err = s.coreService.ShareSecretWithGroup(ctx, groupReq)
+		})
 	} else {
-		// Convert to user share service request
-		userReq := &core.ShareSecretRequest{
-			SecretID:    uint(req.SecretID),
-			RecipientID: uint(req.RecipientID),
+		record, err = s.core.ShareSecret(ctx, &core.ShareSecretRequest{
+			SecretID:    uint(req.GetSecretId()),
+			RecipientID: uint(req.GetRecipientId()),
 			IsGroup:     false,
-			Permission:  req.Permission,
+			Permission:  req.GetPermission(),
 			SharedBy:    user.UserID,
-		}
-
-		// Call service for user sharing
-		shareRecord, err = s.coreService.ShareSecret(ctx, userReq)
+		})
 	}
-
-	// Handle errors
 	if err != nil {
-		log.Printf("Error sharing secret via gRPC: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.NotFound, "Secret not found")
-		} else if strings.Contains(err.Error(), "not authorized") {
-			return nil, status.Errorf(codes.PermissionDenied, "Not authorized to share this secret")
-		} else {
-			return nil, status.Errorf(codes.Internal, "Failed to share secret")
-		}
+		return nil, mapShareError(err)
 	}
-
-	// Convert response
-	return s.convertToGRPCShareRecord(shareRecord), nil
+	return shareRecordToProto(record), nil
 }
 
-// ListSecretSharesRequest represents a gRPC list secret shares request
-type ListSecretSharesRequest struct {
-	SecretID uint32 `json:"secret_id"`
-}
-
-// ListSharesResponse represents a gRPC list shares response
-type ListSharesResponse struct {
-	Shares     []*ShareRecord `json:"shares"`
-	Total      uint32         `json:"total"`
-	Page       uint32         `json:"page"`
-	PageSize   uint32         `json:"page_size"`
-	TotalPages uint32         `json:"total_pages"`
-}
-
-// ListSecretShares lists all shares for a secret via gRPC
-func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *ListSecretSharesRequest) (*ListSharesResponse, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for viewing shares")
-	}
-
-	log.Printf("gRPC ListSecretShares called by user %s for secret ID %d", user.Username, req.SecretID)
-
-	// Validate request
-	if req.SecretID == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "Secret ID is required")
-	}
-
-	// Call service
-	shares, err := s.coreService.ListSecretShares(ctx, uint(req.SecretID))
+// ListSecretShares lists all shares for a secret.
+func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *pb.ListSecretSharesRequest) (*pb.ListSharesResponse, error) {
+	user, err := requireUser(ctx)
 	if err != nil {
-		log.Printf("Error listing secret shares via gRPC: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.NotFound, "Secret not found")
-		} else {
-			return nil, status.Errorf(codes.Internal, "Failed to list secret shares")
-		}
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to view shares")
+	}
+	if req.GetSecretId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
 	}
 
-	// Convert response
-	grpcShares := make([]*ShareRecord, len(shares))
-	for i, share := range shares {
-		grpcShares[i] = s.convertToGRPCShareRecord(share)
+	shares, err := s.core.ListSecretShares(ctx, uint(req.GetSecretId()))
+	if err != nil {
+		return nil, mapShareError(err)
+	}
+	return sharesToResponse(shares, 1, len(shares)), nil
+}
+
+// ListUserShares lists shares created by the calling user.
+func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *pb.ListUserSharesRequest) (*pb.ListSharesResponse, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to view shares")
 	}
 
-	return &ListSharesResponse{
-		Shares:     grpcShares,
-		Total:      safeUint32(len(grpcShares)),
-		Page:       1,
-		PageSize:   safeUint32(len(grpcShares)),
-		TotalPages: 1,
+	shares, err := s.core.ListSharesByUser(ctx, user.UserID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to list user shares")
+	}
+	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
+	return sharesToResponse(shares, page, pageSize), nil
+}
+
+// ListSharedSecrets lists secrets shared with the calling user.
+func (s *ShareGRPCService) ListSharedSecrets(ctx context.Context, req *pb.ListSharedSecretsRequest) (*pb.ListSecretsResponse, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to view shared secrets")
+	}
+
+	secrets, err := s.core.ListSharedSecrets(ctx, user.UserID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to list shared secrets")
+	}
+	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
+	out := make([]*pb.Secret, 0, len(secrets))
+	for _, sec := range secrets {
+		out = append(out, secretNodeToProto(sec))
+	}
+	return &pb.ListSecretsResponse{
+		Secrets:     out,
+		Total:       intToU32(len(out)),
+		Page:        intToU32(page),
+		PageSize:    intToU32(pageSize),
+		TotalPages:  intToU32(totalPages(len(out), pageSize)),
+		SharedCount: intToU32(len(out)),
 	}, nil
 }
 
-// ListUserSharesRequest represents a gRPC list user shares request
-type ListUserSharesRequest struct {
-	Page     uint32 `json:"page"`
-	PageSize uint32 `json:"page_size"`
-}
-
-// ListUserShares lists all shares created by a user via gRPC
-func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *ListUserSharesRequest) (*ListSharesResponse, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for viewing shares")
-	}
-
-	log.Printf("gRPC ListUserShares called by user %s", user.Username)
-
-	// Validate pagination
-	if req.Page < 1 {
-		req.Page = 1
-	}
-	if req.PageSize < 1 || req.PageSize > 100 {
-		req.PageSize = 20
-	}
-
-	// Call service
-	shares, err := s.coreService.ListSharesByUser(ctx, user.UserID)
+// UpdateSharePermission changes the permission level of an existing share.
+func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *pb.UpdateSharePermissionRequest) (*pb.ShareRecord, error) {
+	user, err := requireUser(ctx)
 	if err != nil {
-		log.Printf("Error listing user shares via gRPC: %v", err)
-		return nil, status.Errorf(codes.Internal, "Failed to list user shares")
+		return nil, err
+	}
+	if !hasPermission(user.Permissions, "secrets.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to update shares")
+	}
+	if req.GetShareId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "share_id is required")
+	}
+	if req.GetPermission() != "read" && req.GetPermission() != "write" {
+		return nil, status.Error(codes.InvalidArgument, "permission must be 'read' or 'write'")
 	}
 
-	// Convert response
-	grpcShares := make([]*ShareRecord, len(shares))
-	for i, share := range shares {
-		grpcShares[i] = s.convertToGRPCShareRecord(share)
-	}
-
-	return &ListSharesResponse{
-		Shares:     grpcShares,
-		Total:      safeUint32(len(grpcShares)),
-		Page:       req.Page,
-		PageSize:   req.PageSize,
-		TotalPages: safeUint32((len(grpcShares) + int(req.PageSize) - 1) / int(req.PageSize)),
-	}, nil
-}
-
-// ListSharedSecretsRequest represents a gRPC list shared secrets request
-type ListSharedSecretsRequest struct {
-	Page     uint32 `json:"page"`
-	PageSize uint32 `json:"page_size"`
-}
-
-// ListSharedSecretsResponse represents a gRPC list shared secrets response
-type ListSharedSecretsResponse struct {
-	Secrets    []*SecretResponse `json:"secrets"`
-	Total      uint32            `json:"total"`
-	Page       uint32            `json:"page"`
-	PageSize   uint32            `json:"page_size"`
-	TotalPages uint32            `json:"total_pages"`
-}
-
-// ListSharedSecrets lists all secrets shared with a user via gRPC
-func (s *ShareGRPCService) ListSharedSecrets(ctx context.Context, req *ListSharedSecretsRequest) (*ListSecretsResponse, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for viewing shared secrets")
-	}
-
-	log.Printf("gRPC ListSharedSecrets called by user %s", user.Username)
-
-	// Validate pagination
-	if req.Page < 1 {
-		req.Page = 1
-	}
-	if req.PageSize < 1 || req.PageSize > 100 {
-		req.PageSize = 20
-	}
-
-	// Call service
-	secrets, err := s.coreService.ListSharedSecrets(ctx, user.UserID)
-	if err != nil {
-		log.Printf("Error listing shared secrets via gRPC: %v", err)
-		return nil, status.Errorf(codes.Internal, "Failed to list shared secrets")
-	}
-
-	// Convert response
-	grpcSecrets := make([]*SecretResponse, len(secrets))
-	for i, secret := range secrets {
-		grpcSecrets[i] = s.convertToGRPCSecretResponse(secret)
-	}
-
-	var totalPagesShared int32
-	if req.PageSize > 0 {
-		tp := (int64(len(grpcSecrets)) + int64(req.PageSize) - 1) / int64(req.PageSize)
-		if tp > int64(math.MaxInt32) {
-			tp = math.MaxInt32
-		}
-		totalPagesShared = int32(tp)
-	}
-
-	return &ListSecretsResponse{
-		Secrets:    grpcSecrets,
-		Total:      int64(len(grpcSecrets)),
-		Page:       safeInt32FromUint32(req.Page),
-		PageSize:   safeInt32FromUint32(req.PageSize),
-		TotalPages: totalPagesShared,
-	}, nil
-}
-
-// UpdateSharePermissionRequest represents a gRPC update share permission request
-type UpdateSharePermissionRequest struct {
-	ShareID    uint32 `json:"share_id"`
-	Permission string `json:"permission"`
-}
-
-// UpdateSharePermission updates the permission level of a share via gRPC
-func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *UpdateSharePermissionRequest) (*ShareRecord, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for updating shares")
-	}
-
-	log.Printf("gRPC UpdateSharePermission called by user %s for share ID %d", user.Username, req.ShareID)
-
-	// Validate request
-	if req.ShareID == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "Share ID is required")
-	}
-	if req.Permission != "read" && req.Permission != "write" {
-		return nil, status.Errorf(codes.InvalidArgument, "Permission must be 'read' or 'write'")
-	}
-
-	// Convert to service request
-	serviceReq := &core.UpdateShareRequest{
-		ShareID:    uint(req.ShareID),
-		Permission: req.Permission,
+	record, err := s.core.UpdateSharePermission(ctx, &core.UpdateShareRequest{
+		ShareID:    uint(req.GetShareId()),
+		Permission: req.GetPermission(),
 		UpdatedBy:  user.UserID,
-	}
-
-	// Call service
-	shareRecord, err := s.coreService.UpdateSharePermission(ctx, serviceReq)
+	})
 	if err != nil {
-		log.Printf("Error updating share permission via gRPC: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.NotFound, "Share not found")
-		} else if strings.Contains(err.Error(), "not authorized") {
-			return nil, status.Errorf(codes.PermissionDenied, "Not authorized to update this share")
-		} else {
-			return nil, status.Errorf(codes.Internal, "Failed to update share permission")
-		}
+		return nil, mapShareError(err)
 	}
-
-	// Convert response
-	return s.convertToGRPCShareRecord(shareRecord), nil
+	return shareRecordToProto(record), nil
 }
 
-// RevokeShareRequest represents a gRPC revoke share request
-type RevokeShareRequest struct {
-	ShareID uint32 `json:"share_id"`
-}
-
-// RevokeShare revokes a share via gRPC
-func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *RevokeShareRequest) (*emptypb.Empty, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for revoking shares")
-	}
-
-	log.Printf("gRPC RevokeShare called by user %s for share ID %d", user.Username, req.ShareID)
-
-	// Validate request
-	if req.ShareID == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "Share ID is required")
-	}
-
-	// Call service
-	err := s.coreService.RevokeShare(ctx, uint(req.ShareID), user.UserID)
+// RevokeShare revokes a share.
+func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareRequest) (*emptypb.Empty, error) {
+	user, err := requireUser(ctx)
 	if err != nil {
-		log.Printf("Error revoking share via gRPC: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.NotFound, "Share not found")
-		} else if strings.Contains(err.Error(), "not authorized") {
-			return nil, status.Errorf(codes.PermissionDenied, "Not authorized to revoke this share")
-		} else {
-			return nil, status.Errorf(codes.Internal, "Failed to revoke share")
-		}
+		return nil, err
 	}
-
+	if !hasPermission(user.Permissions, "secrets.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to revoke shares")
+	}
+	if req.GetShareId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "share_id is required")
+	}
+	if err := s.core.RevokeShare(ctx, uint(req.GetShareId()), user.UserID); err != nil {
+		return nil, mapShareError(err)
+	}
 	return &emptypb.Empty{}, nil
 }
 
-// RemoveSelfFromShareRequest represents a gRPC remove self from share request
-type RemoveSelfFromShareRequest struct {
-	SecretID uint32 `json:"secret_id"`
-}
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
 
-// RemoveSelfFromShare allows a user to remove themselves from a shared secret via gRPC
-func (s *ShareGRPCService) RemoveSelfFromShare(ctx context.Context, req *RemoveSelfFromShareRequest) (*emptypb.Empty, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
-	}
-
-	// Check permissions
-	if !s.hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions for removing self from shares")
-	}
-
-	log.Printf("gRPC RemoveSelfFromShare called by user %s for secret ID %d", user.Username, req.SecretID)
-
-	// Validate request
-	if req.SecretID == 0 {
-		return nil, status.Errorf(codes.InvalidArgument, "Secret ID is required")
-	}
-
-	// Call service
-	err := s.coreService.RemoveSelfFromShare(ctx, uint(req.SecretID), user.UserID)
-	if err != nil {
-		log.Printf("Error removing self from share via gRPC: %v", err)
-		if strings.Contains(err.Error(), "not found") {
-			return nil, status.Errorf(codes.NotFound, "Share not found")
-		} else {
-			return nil, status.Errorf(codes.Internal, "Failed to remove self from share")
-		}
-	}
-
-	return &emptypb.Empty{}, nil
-}
-
-// Helper methods
-
-// hasPermission checks if user has a specific permission
-func (s *ShareGRPCService) hasPermission(permissions []string, required string) bool {
-	for _, perm := range permissions {
-		if perm == required {
-			return true
-		}
-	}
-	return false
-}
-
-// convertToGRPCShareRecord converts a storage share record to a gRPC share record
-func (s *ShareGRPCService) convertToGRPCShareRecord(share *models.ShareRecord) *ShareRecord {
-	return &ShareRecord{
-		ID: func() uint32 {
-			id, err := safeconv.UintToUint32(share.ID)
-			if err != nil {
-				log.Printf("Warning: ID conversion overflow for share %d: %v", share.ID, err)
-				return 0
-			}
-			return id
-		}(),
-		SecretID: func() uint32 {
-			id, err := safeconv.UintToUint32(share.SecretID)
-			if err != nil {
-				log.Printf("Warning: SecretID conversion overflow for share %d: %v", share.ID, err)
-				return 0
-			}
-			return id
-		}(),
-		OwnerID: func() uint32 {
-			id, err := safeconv.UintToUint32(share.OwnerID)
-			if err != nil {
-				log.Printf("Warning: OwnerID conversion overflow for share %d: %v", share.ID, err)
-				return 0
-			}
-			return id
-		}(),
-		RecipientID: func() uint32 {
-			id, err := safeconv.UintToUint32(share.RecipientID)
-			if err != nil {
-				log.Printf("Warning: RecipientID conversion overflow for share %d: %v", share.ID, err)
-				return 0
-			}
-			return id
-		}(),
-		IsGroup:    share.IsGroup,
-		Permission: share.Permission,
-		CreatedAt:  timestamppb.New(share.CreatedAt),
-		UpdatedAt:  timestamppb.New(share.UpdatedAt),
+// mapShareError translates core sharing errors into gRPC status codes.
+func mapShareError(err error) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		return status.Error(codes.NotFound, "share or secret not found")
+	case strings.Contains(msg, "not authorized"), strings.Contains(msg, "permission denied"):
+		return status.Error(codes.PermissionDenied, "not authorized for this share")
+	default:
+		return status.Error(codes.Internal, "share operation failed")
 	}
 }
 
-// safeUint32 converts int to uint32 safely, clamping to MaxUint32
-func safeUint32(n int) uint32 {
-	if n < 0 {
+func shareRecordToProto(r *models.ShareRecord) *pb.ShareRecord {
+	return &pb.ShareRecord{
+		Id:          intToU32(int(r.ID)),
+		SecretId:    intToU32(int(r.SecretID)),
+		OwnerId:     intToU32(int(r.OwnerID)),
+		RecipientId: intToU32(int(r.RecipientID)),
+		IsGroup:     r.IsGroup,
+		Permission:  r.Permission,
+		CreatedAt:   timestamppb.New(r.CreatedAt),
+		UpdatedAt:   timestamppb.New(r.UpdatedAt),
+	}
+}
+
+func sharesToResponse(shares []*models.ShareRecord, page, pageSize int) *pb.ListSharesResponse {
+	out := make([]*pb.ShareRecord, 0, len(shares))
+	for _, sh := range shares {
+		out = append(out, shareRecordToProto(sh))
+	}
+	return &pb.ListSharesResponse{
+		Shares:     out,
+		Total:      intToU32(len(out)),
+		Page:       intToU32(page),
+		PageSize:   intToU32(pageSize),
+		TotalPages: intToU32(totalPages(len(out), pageSize)),
+	}
+}
+
+// normalizePage applies the standard page (>=1) / page_size (1..100, default 20)
+// defaults shared by the paginated list RPCs.
+func normalizePage(page, pageSize uint32) (int, int) {
+	p := int(page)
+	if p < 1 {
+		p = 1
+	}
+	ps := int(pageSize)
+	if ps < 1 || ps > 100 {
+		ps = 20
+	}
+	return p, ps
+}
+
+func totalPages(total, pageSize int) int {
+	if pageSize <= 0 {
 		return 0
 	}
-	if uint64(n) > uint64(math.MaxUint32) {
-		return math.MaxUint32
-	}
-	return uint32(n)
-}
-
-// safeInt32FromUint32 converts uint32 to int32 safely
-func safeInt32FromUint32(n uint32) int32 {
-	if n > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	return int32(n)
-}
-
-// convertToGRPCSecretResponse converts a storage secret node to a gRPC secret response
-func (s *ShareGRPCService) convertToGRPCSecretResponse(secret *models.SecretNode) *SecretResponse {
-	var maxReads *int32
-	if secret.MaxReads != nil {
-		maxReadsInt32, err := safeconv.IntToInt32(*secret.MaxReads)
-		if err != nil {
-			log.Printf("Warning: MaxReads conversion overflow for secret %d: %v", secret.ID, err)
-			maxReadsInt32 = 0
-		}
-		maxReads = &maxReadsInt32
-	}
-
-	return &SecretResponse{
-		Id: func() uint32 {
-			id, err := safeconv.UintToUint32(secret.ID)
-			if err != nil {
-				log.Printf("Warning: ID conversion overflow for secret %d: %v", secret.ID, err)
-				return 0
-			}
-			return id
-		}(),
-		Name:        secret.Name,
-		Project:     fmt.Sprintf("%d", secret.ProjectID),     // TODO: Convert ID to name
-		Environment: fmt.Sprintf("%d", secret.EnvironmentID), // TODO: Convert ID to name
-		Type:        secret.Type,
-		MaxReads:    maxReads,
-		Metadata:    make(map[string]string), // TODO: Implement metadata
-		Tags:        []string{},              // TODO: Implement tags
-		CreatedBy:   secret.CreatedBy,
-		CreatedAt:   secret.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:   secret.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		Version:     1, // TODO: Implement proper versioning
-	}
+	return (total + pageSize - 1) / pageSize
 }
