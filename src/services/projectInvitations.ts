@@ -1,4 +1,5 @@
 import { apiClient } from './client';
+import type { SetupLinkResult } from './users';
 
 // ADR-024 onboarding: project invitations (admin invites an email) and access
 // requests (a user asks for a role; an admin approves/rejects). Both are
@@ -56,6 +57,14 @@ const normalizeAccessRequest = (r: any): AccessRequest => ({
     createdAt: r.CreatedAt ?? r.created_at ?? r.createdAt ?? undefined,
 });
 
+// GlobalInviteResult is the POST /invitations response: the created invitation plus
+// the setup-link delivery outcome (mirrors the ADR-028 credential-delivery shape).
+export interface GlobalInviteResult {
+    invitation: ProjectInvitation;
+    setup_link?: SetupLinkResult;
+    delivery_error?: string;
+}
+
 export const projectInvitationsApi = {
     // ── Invitations ──────────────────────────────────────────────────────────
     async listInvitations(projectId: number): Promise<ProjectInvitation[]> {
@@ -72,6 +81,28 @@ export const projectInvitationsApi = {
 
     async revokeInvitation(projectId: number, invitationId: number): Promise<void> {
         await apiClient.delete(`/api/v1/projects/${projectId}/invitations/${invitationId}`);
+    },
+
+    // Global (non-project-scoped) invitation (ADR-024): an optional system role plus
+    // per-project assignments, applied atomically when the user accepts. Returns the
+    // invitation plus the setup-link delivery outcome (link for out-of-band relay, or
+    // a delivery_error if the link couldn't be sent but the invite was still created).
+    async createGlobal(
+        email: string,
+        role: string,
+        assignments: { project_id: number; role: string }[]
+    ): Promise<GlobalInviteResult> {
+        const response = await apiClient.post('/api/v1/invitations', {
+            email,
+            ...(role ? { role } : {}),
+            ...(assignments.length ? { project_assignments: assignments } : {}),
+        });
+        const data = response.data?.data ?? response.data ?? {};
+        return {
+            invitation: normalizeInvitation(data.invitation ?? data),
+            setup_link: data.setup_link,
+            delivery_error: data.delivery_error,
+        };
     },
 
     // ── Access requests ────────────────────────────────────────────────────────

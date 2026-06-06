@@ -82,6 +82,49 @@ describe('projectInvitationsApi.createInvitation', () => {
     });
 });
 
+describe('projectInvitationsApi.createGlobal', () => {
+    it('posts email + system role + assignments and unwraps {invitation, setup_link}', async () => {
+        mocked.post.mockResolvedValue({
+            data: {
+                data: {
+                    invitation: { ID: 12, ProjectID: 0, Email: 'carol@x.io', State: 'pending' },
+                    setup_link: { email: 'carol@x.io', channel: 'out_of_band', delivered: false, link_for_admin: 'https://k/x/abc' },
+                },
+            },
+        });
+
+        const res = await projectInvitationsApi.createGlobal('carol@x.io', 'system_auditor', [
+            { project_id: 1, role: 'project_developer' },
+        ]);
+
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/invitations', {
+            email: 'carol@x.io',
+            role: 'system_auditor',
+            project_assignments: [{ project_id: 1, role: 'project_developer' }],
+        });
+        expect(res.invitation).toMatchObject({ id: 12, projectId: 0, email: 'carol@x.io', state: 'pending' });
+        expect(res.setup_link?.link_for_admin).toBe('https://k/x/abc');
+    });
+
+    it('omits role and project_assignments when empty (backend defaults apply)', async () => {
+        mocked.post.mockResolvedValue({ data: { data: { invitation: { ID: 13, Email: 'd@x.io', State: 'pending' } } } });
+
+        await projectInvitationsApi.createGlobal('d@x.io', '', []);
+
+        expect(mocked.post).toHaveBeenCalledWith('/api/v1/invitations', { email: 'd@x.io' });
+    });
+
+    it('surfaces delivery_error when the link could not be sent', async () => {
+        mocked.post.mockResolvedValue({
+            data: { data: { invitation: { ID: 14, Email: 'e@x.io', State: 'pending' }, delivery_error: 'base_url unset' } },
+        });
+
+        const res = await projectInvitationsApi.createGlobal('e@x.io', '', []);
+        expect(res.setup_link).toBeUndefined();
+        expect(res.delivery_error).toBe('base_url unset');
+    });
+});
+
 describe('projectInvitationsApi.listAccessRequests', () => {
     it('unwraps {data:{access_requests}} and normalizes UserID/SuggestedRole', async () => {
         mocked.get.mockResolvedValue({

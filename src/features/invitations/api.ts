@@ -31,6 +31,25 @@ export function useCreateInvitation(projectId: number) {
     });
 }
 
+// Global (non-project-scoped) invitation: system role + multi-project assignments,
+// applied atomically on accept (ADR-024). Invalidates every project's invitation
+// list since the invite isn't scoped to one project.
+export function useCreateGlobalInvitation() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({
+            email,
+            role,
+            assignments,
+        }: {
+            email: string;
+            role: string;
+            assignments: { project_id: number; role: string }[];
+        }) => projectInvitationsApi.createGlobal(email, role, assignments),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: INVITATION_KEYS.all }),
+    });
+}
+
 export function useRevokeInvitation(projectId: number) {
     const queryClient = useQueryClient();
     return useMutation({

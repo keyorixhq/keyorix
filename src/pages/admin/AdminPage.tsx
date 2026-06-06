@@ -11,6 +11,7 @@ import {
     UserCircleIcon,
     ShieldCheckIcon,
     ArrowPathIcon,
+    EnvelopeIcon,
 } from '@heroicons/react/24/outline';
 import {
     useAdminUserList,
@@ -31,6 +32,7 @@ import { useUIStore } from '../../store/uiStore';
 import type { SetupLinkResult, ProjectAssignment } from '../../services/users';
 import { SYSTEM_ROLES } from '../../services/users';
 import { AccountStateBadge, StaleAccountsSection, ProjectAssignmentsPicker } from '../../features/admin';
+import { GlobalInviteUserModal } from '../../features/invitations/GlobalInviteUserModal';
 
 // "system_auditor" → "Auditor"; the leading "system_" is stripped since the
 // whole control is already labelled "System role".
@@ -87,6 +89,7 @@ export const AdminPage: React.FC = () => {
     const [showDeleted, setShowDeleted] = useState(false);
     const filterInactive = searchParams.get('filter') === 'inactive';
     const [activeModal, setActiveModal] = useState<ActiveModal>(null);
+    const [inviteOpen, setInviteOpen] = useState(false);
     const [formError, setFormError] = useState('');
     const [pageError, setPageError] = useState('');
     const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -373,6 +376,9 @@ export const AdminPage: React.FC = () => {
                                 <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
                             </>
                         )}
+                        <Button variant="outline" onClick={() => setInviteOpen(true)}>
+                            <EnvelopeIcon className="h-4 w-4 mr-1.5" />Invite User
+                        </Button>
                         <Button variant="primary" onClick={() => { setFormError(''); setActiveModal({ type: 'create' }); }}>
                             <PlusIcon className="h-4 w-4 mr-1.5" />New User
                         </Button>
@@ -778,6 +784,8 @@ export const AdminPage: React.FC = () => {
                     </div>
                 </div>
             </Modal>
+
+            <GlobalInviteUserModal isOpen={inviteOpen} onClose={() => setInviteOpen(false)} />
         </>
     );
 };
