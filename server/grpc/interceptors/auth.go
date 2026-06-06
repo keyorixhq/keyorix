@@ -140,7 +140,7 @@ func isPublicMethod(method string) bool {
 	publicMethods := []string{
 		"/grpc.health.v1.Health/Check",
 		"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
-		// Add other public methods here
+		"/keyorix.v1.SystemService/HealthCheck", // liveness probe — no auth
 	}
 
 	for _, publicMethod := range publicMethods {
