@@ -51,7 +51,7 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 	// pb.*ServiceServer interfaces in subsequent phases:
 	pb.RegisterSecretServiceServer(server, services.NewSecretService(coreService))
 	pb.RegisterShareServiceServer(server, services.NewShareService(coreService))
-	// pb.RegisterUserServiceServer(server, userService)
+	pb.RegisterUserServiceServer(server, services.NewUserService(coreService))
 	// pb.RegisterRoleServiceServer(server, roleService)
 	// pb.RegisterAuditServiceServer(server, auditService)
 	// pb.RegisterSystemServiceServer(server, systemService)
@@ -62,7 +62,7 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		log.Println("gRPC reflection enabled")
 	}
 
-	log.Println("gRPC server configured (Secret + Share services registered)")
+	log.Println("gRPC server configured (Secret + Share + User services registered)")
 	return server, nil
 }
 

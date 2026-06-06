@@ -2,154 +2,278 @@ package services
 
 import (
 	"context"
-	"log"
+	"strings"
+	"time"
 
-	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
+	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// UserService implements the gRPC user service
-type UserService struct {
-	// TODO: Add UnimplementedUserServiceServer when proto is generated
+// UserGRPCService implements pb.UserServiceServer, backing each RPC with the
+// shared core service.
+type UserGRPCService struct {
+	pb.UnimplementedUserServiceServer
+	core *core.KeyorixCore
 }
 
-// NewUserService creates a new user service
-func NewUserService() *UserService {
-	return &UserService{}
+// Compile-time assertion that the service satisfies the generated interface.
+var _ pb.UserServiceServer = (*UserGRPCService)(nil)
+
+// NewUserService creates a user gRPC service backed by the shared core.
+func NewUserService(coreService *core.KeyorixCore) *UserGRPCService {
+	return &UserGRPCService{core: coreService}
 }
 
-// CreateUser creates a new user
-func (s *UserService) CreateUser(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// CreateUser provisions a user via one of three credential modes: a password,
+// an out-of-band setup link, or a one-time password. A system role + project
+// assignments may be supplied with the password mode (the atomic ADR-028 path).
+func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(actor.Permissions, "users.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create users")
+	}
+	if req.GetUsername() == "" || req.GetEmail() == "" {
+		return nil, status.Error(codes.InvalidArgument, "username and email are required")
 	}
 
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "users.write" {
-			hasPermission = true
-			break
+	setupLink := req.GetDeliverSetupLink()
+	otp := req.GetGenerateOneTimePassword()
+	if setupLink && otp {
+		return nil, status.Error(codes.InvalidArgument, "choose at most one of deliver_setup_link or generate_one_time_password")
+	}
+	role := req.GetRole()
+	assignments := toProjectAssignments(req.GetProjectAssignments())
+	if (setupLink || otp) && (role != "" || len(assignments) > 0) {
+		return nil, status.Error(codes.InvalidArgument, "role and project_assignments are only supported with password-based creation")
+	}
+
+	displayName := req.GetDisplayName()
+	if displayName == "" {
+		displayName = req.GetUsername()
+	}
+	coreReq := &core.CreateUserRequest{
+		Username:    req.GetUsername(),
+		Email:       req.GetEmail(),
+		DisplayName: displayName,
+		Password:    req.GetPassword(),
+		IsActive:    req.IsActive,
+	}
+	if as := req.GetAccountState(); as != "" {
+		coreReq.AccountState = as
+	}
+
+	resp := &pb.CreateUserResponse{}
+	var u *models.User
+	switch {
+	case setupLink:
+		var prov *core.ProvisionSetupResult
+		u, prov, err = s.core.CreateUserWithSetupLink(ctx, coreReq, actor.UserID)
+		if err == nil && prov != nil {
+			resp.SetupLink = optStringValue(prov.LinkForAdmin)
 		}
+	case otp:
+		var res *core.OneTimePasswordResult
+		u, res, err = s.core.CreateUserWithOneTimePassword(ctx, coreReq, actor.UserID)
+		if err == nil && res != nil {
+			resp.OneTimePassword = optStringValue(res.OneTimePassword)
+		}
+	default:
+		if req.GetPassword() == "" {
+			return nil, status.Error(codes.InvalidArgument, "password is required unless deliver_setup_link or generate_one_time_password is set")
+		}
+		u, err = s.core.CreateUserWithAssignments(ctx, coreReq, role, assignments)
+	}
+	if err != nil {
+		return nil, mapUserError(err)
 	}
 
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
-	}
-
-	log.Printf("gRPC CreateUser called by user %s", user.Username)
-
-	// TODO: Implement actual user creation logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	resp.User = s.userToProto(ctx, u)
+	return resp, nil
 }
 
-// GetUser retrieves a user by ID
-func (s *UserService) GetUser(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// GetUser returns a user by ID.
+func (s *UserGRPCService) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "users.read" {
-			hasPermission = true
-			break
-		}
+	if !hasPermission(actor.Permissions, "users.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read users")
 	}
-
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+	u, err := s.core.GetUser(ctx, uint(req.GetId()))
+	if err != nil {
+		return nil, mapUserError(err)
 	}
-
-	log.Printf("gRPC GetUser called by user %s", user.Username)
-
-	// TODO: Implement actual user retrieval logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	return s.userToProto(ctx, u), nil
 }
 
-// UpdateUser updates an existing user
-func (s *UserService) UpdateUser(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// UpdateUser updates a user's mutable fields.
+func (s *UserGRPCService) UpdateUser(ctx context.Context, req *pb.UpdateUserRequest) (*pb.User, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "users.write" {
-			hasPermission = true
-			break
-		}
+	if !hasPermission(actor.Permissions, "users.write") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to update users")
 	}
-
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-
-	log.Printf("gRPC UpdateUser called by user %s", user.Username)
-
-	// TODO: Implement actual user update logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	u, err := s.core.UpdateUser(ctx, &core.UpdateUserRequest{
+		ID:          uint(req.GetId()),
+		Username:    req.GetUsername(),
+		Email:       req.GetEmail(),
+		DisplayName: req.GetDisplayName(),
+		IsActive:    req.Active,
+	})
+	if err != nil {
+		return nil, mapUserError(err)
+	}
+	return s.userToProto(ctx, u), nil
 }
 
-// DeleteUser deletes a user
-func (s *UserService) DeleteUser(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// DeleteUser soft-deletes a user.
+func (s *UserGRPCService) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*emptypb.Empty, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "users.delete" {
-			hasPermission = true
-			break
-		}
+	if !hasPermission(actor.Permissions, "users.delete") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to delete users")
 	}
-
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-
-	log.Printf("gRPC DeleteUser called by user %s", user.Username)
-
-	// TODO: Implement actual user deletion logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+	if err := s.core.DeleteUser(ctx, uint(req.GetId())); err != nil {
+		return nil, mapUserError(err)
+	}
+	return &emptypb.Empty{}, nil
 }
 
-// ListUsers lists users with filtering and pagination
-func (s *UserService) ListUsers(ctx context.Context, req interface{}) (interface{}, error) {
-	// Get user from context
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Errorf(codes.Unauthenticated, "User not authenticated")
+// ListUsers lists users with filtering and pagination.
+func (s *UserGRPCService) ListUsers(ctx context.Context, req *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(actor.Permissions, "users.read") {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list users")
+	}
+	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
+
+	filter := &corestorage.UserFilter{
+		Search:         optString(req.Search),
+		IsActive:       req.IsActive,
+		IncludeDeleted: req.GetIncludeDeleted(),
+		Page:           page,
+		PageSize:       pageSize,
+	}
+	// "inactive" surfaces accounts with no login in the last 30 days.
+	if req.GetFilter() == "inactive" {
+		cutoff := time.Now().AddDate(0, 0, -30)
+		filter.InactiveSince = &cutoff
 	}
 
-	// Check permissions
-	hasPermission := false
-	for _, perm := range user.Permissions {
-		if perm == "users.read" {
-			hasPermission = true
-			break
-		}
+	users, total, err := s.core.ListUsers(ctx, filter)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to list users")
 	}
 
-	if !hasPermission {
-		return nil, status.Errorf(codes.PermissionDenied, "Insufficient permissions")
+	ids := make([]uint, 0, len(users))
+	for _, u := range users {
+		ids = append(ids, u.ID)
 	}
+	counts := s.projectCounts(ctx, ids)
 
-	log.Printf("gRPC ListUsers called by user %s", user.Username)
+	out := make([]*pb.User, 0, len(users))
+	for _, u := range users {
+		out = append(out, userToProtoWithCounts(u, counts[u.ID]))
+	}
+	return &pb.ListUsersResponse{
+		Users:      out,
+		Total:      i64ToU32(total),
+		Page:       intToU32(page),
+		PageSize:   intToU32(pageSize),
+		TotalPages: intToU32(totalPages(int(total), pageSize)),
+	}, nil
+}
 
-	// TODO: Implement actual user listing logic
-	return nil, status.Errorf(codes.Unimplemented, "Method not implemented yet")
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+// userToProto maps a user and resolves its project-membership counts.
+func (s *UserGRPCService) userToProto(ctx context.Context, u *models.User) *pb.User {
+	counts := s.projectCounts(ctx, []uint{u.ID})
+	return userToProtoWithCounts(u, counts[u.ID])
+}
+
+func userToProtoWithCounts(u *models.User, c corestorage.MembershipCounts) *pb.User {
+	return &pb.User{
+		Id:                 intToU32(int(u.ID)),
+		Username:           u.Username,
+		Email:              u.Email,
+		DisplayName:        u.DisplayName,
+		Active:             u.IsActive,
+		AccountState:       u.AccountState,
+		LastLoginAt:        timePtrToTs(u.LastLoginAt),
+		CreatedAt:          timestamppb.New(u.CreatedAt),
+		UpdatedAt:          timestamppb.New(u.UpdatedAt),
+		ProjectCount:       intToU32(c.Total),
+		ActiveProjectCount: intToU32(c.Active),
+	}
+}
+
+// projectCounts is best-effort: on error the counts are absent (zero).
+func (s *UserGRPCService) projectCounts(ctx context.Context, ids []uint) map[uint]corestorage.MembershipCounts {
+	if len(ids) == 0 {
+		return nil
+	}
+	counts, err := s.core.ProjectMembershipCounts(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	return counts
+}
+
+func toProjectAssignments(in []*pb.ProjectAssignment) []core.ProjectAssignment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]core.ProjectAssignment, 0, len(in))
+	for _, a := range in {
+		out = append(out, core.ProjectAssignment{ProjectID: uint(a.GetProjectId()), Role: a.GetRole()})
+	}
+	return out
+}
+
+func optStringValue(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// mapUserError translates core user errors into gRPC status codes.
+func mapUserError(err error) error {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "not found"):
+		return status.Error(codes.NotFound, "user not found")
+	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"):
+		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")
+	case strings.Contains(msg, "validation"), strings.Contains(msg, "required"), strings.Contains(msg, "invalid"), strings.Contains(msg, "must be"):
+		return status.Error(codes.InvalidArgument, err.Error())
+	default:
+		return status.Error(codes.Internal, "user operation failed")
+	}
 }
