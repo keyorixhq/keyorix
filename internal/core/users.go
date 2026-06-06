@@ -15,10 +15,18 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// CreateUser creates a new user with business logic validation.
-func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*models.User, error) {
+// ProjectAssignment grants Role to the new user at a project's scope, applied
+// atomically with the user create (ADR-028).
+type ProjectAssignment struct {
+	ProjectID uint
+	Role      string
+}
+
+// buildUserForCreate validates the request and constructs the (unsaved) user
+// record plus its bcrypt hash. Shared by CreateUser and CreateUserWithAssignments.
+func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserRequest) (*models.User, string, error) {
 	if err := c.validateCreateUserRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
 	displayName := req.DisplayName
@@ -28,21 +36,21 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
 	if _, err := c.storage.GetUserByUsername(ctx, req.Username); err == nil {
-		return nil, fmt.Errorf("%s: username already exists", i18n.T("ErrorValidation", nil))
+		return nil, "", fmt.Errorf("%s: username already exists", i18n.T("ErrorValidation", nil))
 	} else if err != nil && !strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
 	existing, err := c.storage.GetUserByEmail(ctx, req.Email)
 	if err == nil && existing != nil {
-		return nil, fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
+		return nil, "", fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
 	}
 	if err != nil && !strings.Contains(err.Error(), i18n.T("ErrorUserNotFound", nil)) {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
 	now := c.now()
@@ -61,6 +69,17 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
+	return user, string(hash), nil
+}
+
+// CreateUser creates a new user with business logic validation. It auto-assigns
+// the system_viewer baseline role (best-effort). For atomic create-with-role and
+// project assignments see CreateUserWithAssignments.
+func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*models.User, error) {
+	user, hash, err := c.buildUserForCreate(ctx, req)
+	if err != nil {
+		return nil, err
+	}
 
 	createdUser, err := c.storage.CreateUser(ctx, user)
 	if err != nil {
@@ -70,17 +89,77 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 	// Seed password history with the initial password so the no-reuse rule
 	// (ADR-025) counts it. Best-effort — user creation has already succeeded.
 	if c.passwordPolicy.HistoryCount > 0 {
-		_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, string(hash), now)
+		_ = c.storage.AddPasswordHistory(ctx, createdUser.ID, hash, c.now())
 	}
 
 	// Auto-assign the system_viewer role (ADR-021): a minimal install-wide
-	// baseline. Real access to a project comes from a project role granted via the
-	// Members tab. Failure is non-fatal — the user is created regardless.
+	// baseline. Failure is non-fatal — the user is created regardless.
 	if role, err := c.storage.GetRoleByName(ctx, "system_viewer"); err == nil {
 		_ = c.storage.AssignRole(ctx, createdUser.ID, role.ID, Scope{})
 	}
 
 	return createdUser, nil
+}
+
+// CreateUserWithAssignments creates a user and grants a system role plus a set of
+// project-scoped roles in one transaction (ADR-028 atomic provisioning). All role
+// names and project IDs are resolved and validated up front, so an invalid input
+// fails before anything is written; a storage failure mid-way rolls everything
+// back. systemRole defaults to system_viewer when empty.
+func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *CreateUserRequest, systemRole string, assignments []ProjectAssignment) (*models.User, error) {
+	user, hash, err := c.buildUserForCreate(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve every grant before touching the database. Dedup by role+project so a
+	// repeated assignment can't trip the unique constraint inside the transaction.
+	grants := make([]storage.RoleGrant, 0, len(assignments)+1)
+	seen := map[[2]uint]bool{}
+	addGrant := func(roleID, projectID uint) {
+		key := [2]uint{roleID, projectID}
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		grants = append(grants, storage.RoleGrant{RoleID: roleID, Scope: storage.Scope{ProjectID: projectID}})
+	}
+
+	sysRole := systemRole
+	if sysRole == "" {
+		sysRole = "system_viewer"
+	}
+	sr, err := c.storage.GetRoleByName(ctx, sysRole)
+	if err != nil {
+		return nil, fmt.Errorf("%s: unknown role %q (system)", i18n.T("ErrorValidation", nil), sysRole)
+	}
+	addGrant(sr.ID, 0)
+
+	for _, a := range assignments {
+		if a.ProjectID == 0 || a.Role == "" {
+			return nil, fmt.Errorf("%s: each project assignment needs a project_id and a role", i18n.T("ErrorValidation", nil))
+		}
+		if _, err := c.storage.GetProject(ctx, a.ProjectID); err != nil {
+			return nil, fmt.Errorf("%s: unknown project %d", i18n.T("ErrorValidation", nil), a.ProjectID)
+		}
+		r, err := c.storage.GetRoleByName(ctx, a.Role)
+		if err != nil {
+			return nil, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
+		}
+		addGrant(r.ID, a.ProjectID)
+	}
+
+	created, err := c.storage.CreateUserWithRoleGrants(ctx, user, grants)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Best-effort password-history seed, after the atomic create (ADR-025).
+	if c.passwordPolicy.HistoryCount > 0 {
+		_ = c.storage.AddPasswordHistory(ctx, created.ID, hash, c.now())
+	}
+
+	return created, nil
 }
 
 // GetUser retrieves a user by ID.

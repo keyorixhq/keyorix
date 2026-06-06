@@ -99,6 +99,10 @@ type Storage interface {
 
 	// User Management
 	CreateUser(ctx context.Context, user *models.User) (*models.User, error)
+	// CreateUserWithRoleGrants creates the user and applies all role grants in a
+	// single transaction (ADR-028 atomic provisioning); on any failure nothing is
+	// persisted.
+	CreateUserWithRoleGrants(ctx context.Context, user *models.User, grants []RoleGrant) (*models.User, error)
 	GetUser(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
 	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
@@ -337,6 +341,13 @@ type RBACAuditFilter struct {
 type Scope struct {
 	ProjectID     uint
 	EnvironmentID uint
+}
+
+// RoleGrant is a single role-to-scope grant applied atomically alongside a user
+// creation (ADR-028 atomic provisioning).
+type RoleGrant struct {
+	RoleID uint
+	Scope  Scope
 }
 
 // Permission represents a fine-grained permission

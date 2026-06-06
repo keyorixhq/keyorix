@@ -150,6 +150,10 @@ func (rs *RemoteStorage) ListUsersInStateBefore(_ context.Context, _ string, _ t
 	return nil, fmt.Errorf("ListUsersInStateBefore not implemented for remote storage")
 }
 
+func (rs *RemoteStorage) CreateUserWithRoleGrants(_ context.Context, _ *models.User, _ []storage.RoleGrant) (*models.User, error) {
+	return nil, fmt.Errorf("CreateUserWithRoleGrants not implemented for remote storage")
+}
+
 // buildUserFilterPath constructs the /api/v1/users query string.
 func buildUserFilterPath(filter *storage.UserFilter) string {
 	if filter == nil {

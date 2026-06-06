@@ -30,6 +30,33 @@ func (ls *LocalStorage) CreateUser(ctx context.Context, user *models.User) (*mod
 	return user, nil
 }
 
+// CreateUserWithRoleGrants creates the user and every role grant inside one
+// transaction (ADR-028). If any grant insert fails, the user is rolled back too,
+// so a create never leaves a half-provisioned account.
+func (ls *LocalStorage) CreateUserWithRoleGrants(ctx context.Context, user *models.User, grants []storage.RoleGrant) (*models.User, error) {
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		for _, g := range grants {
+			ur := models.UserRole{
+				UserID:        user.ID,
+				RoleID:        g.RoleID,
+				ProjectID:     g.Scope.ProjectID,
+				EnvironmentID: g.Scope.EnvironmentID,
+			}
+			if err := tx.Create(&ur).Error; err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
 func (ls *LocalStorage) GetUser(ctx context.Context, id uint) (*models.User, error) {
 	var user models.User
 	if err := ls.db.WithContext(ctx).First(&user, id).Error; err != nil {
