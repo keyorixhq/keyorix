@@ -33,14 +33,18 @@ type CreateSecretRequest struct {
 
 // UpdateSecretRequest represents a request to update an existing secret.
 type UpdateSecretRequest struct {
-	ID         uint              `json:"id" validate:"required"`
-	Value      []byte            `json:"value,omitempty"`
-	MaxReads   *int              `json:"max_reads,omitempty" validate:"omitempty,min=1"`
-	Expiration *time.Time        `json:"expiration,omitempty"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
-	Tags       []string          `json:"tags,omitempty"`
-	UpdatedBy  string            `json:"updated_by" validate:"required"`
-	UserID     uint              `json:"user_id,omitempty"`
+	ID         uint       `json:"id" validate:"required"`
+	Value      []byte     `json:"value,omitempty"`
+	MaxReads   *int       `json:"max_reads,omitempty" validate:"omitempty,min=1"`
+	Expiration *time.Time `json:"expiration,omitempty"`
+	// ClearExpiration removes an existing expiration. It is distinct from leaving
+	// Expiration nil (which means "leave unchanged"): without this flag there is no
+	// way to make an expiring secret non-expiring.
+	ClearExpiration bool              `json:"clear_expiration,omitempty"`
+	Metadata        map[string]string `json:"metadata,omitempty"`
+	Tags            []string          `json:"tags,omitempty"`
+	UpdatedBy       string            `json:"updated_by" validate:"required"`
+	UserID          uint              `json:"user_id,omitempty"`
 }
 
 // CreateSecret creates a new secret with business logic validation.
@@ -128,7 +132,9 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	if req.MaxReads != nil {
 		secret.MaxReads = req.MaxReads
 	}
-	if req.Expiration != nil {
+	if req.ClearExpiration {
+		secret.Expiration = nil
+	} else if req.Expiration != nil {
 		secret.Expiration = req.Expiration
 	}
 	if req.Metadata != nil {

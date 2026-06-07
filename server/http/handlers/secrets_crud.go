@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -156,6 +157,10 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
 		Value    string `json:"value,omitempty"`
 		MaxReads *int   `json:"max_reads,omitempty" validate:"omitempty,min=1"`
+		// Expiration sets a new expiry (RFC3339); ClearExpiration removes an existing
+		// one. They are mutually exclusive.
+		Expiration      string `json:"expiration,omitempty"`
+		ClearExpiration bool   `json:"clear_expiration,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -165,15 +170,28 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
+	if reqBody.Expiration != "" && reqBody.ClearExpiration {
+		h.sendError(w, "ValidationError", "expiration and clear_expiration are mutually exclusive", http.StatusBadRequest, nil)
+		return
+	}
 
 	req := &core.UpdateSecretRequest{
-		ID:        uint(id),
-		MaxReads:  reqBody.MaxReads,
-		UpdatedBy: userCtx.Username,
-		UserID:    userCtx.UserID,
+		ID:              uint(id),
+		MaxReads:        reqBody.MaxReads,
+		ClearExpiration: reqBody.ClearExpiration,
+		UpdatedBy:       userCtx.Username,
+		UserID:          userCtx.UserID,
 	}
 	if reqBody.Value != "" {
 		req.Value = []byte(reqBody.Value)
+	}
+	if reqBody.Expiration != "" {
+		exp, perr := time.Parse(time.RFC3339, reqBody.Expiration)
+		if perr != nil {
+			h.sendError(w, "ValidationError", "invalid expiration (use RFC3339)", http.StatusBadRequest, nil)
+			return
+		}
+		req.Expiration = &exp
 	}
 
 	// Capture pre-update metadata for the audit diff (raw fetch, no read-count
