@@ -10,6 +10,8 @@ import (
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -85,8 +87,9 @@ func (s *SystemGRPCService) GetSystemInfo(ctx context.Context, _ *emptypb.Empty)
 
 // GetMetrics returns an operational snapshot: gRPC request counters (collected
 // by the metrics interceptor), Go runtime stats, and cheap domain counts
-// (active secrets, total users). CPU/disk usage and DB latency are not measured
-// yet and report zero.
+// (active secrets, total users). Host CPU/disk usage come from gopsutil and DB
+// latency from a timed storage health check; each is best-effort (reports 0 on
+// error).
 func (s *SystemGRPCService) GetMetrics(ctx context.Context, _ *emptypb.Empty) (*pb.Metrics, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
@@ -119,7 +122,12 @@ func (s *SystemGRPCService) GetMetrics(ctx context.Context, _ *emptypb.Empty) (*
 	system := &pb.SystemMetrics{
 		Goroutines:         uint32(runtime.NumGoroutine()), // #nosec G115 — goroutine count fits uint32
 		MemoryUsagePercent: memPercent,
+		CpuUsagePercent:    hostCPUPercent(),
+		DiskUsagePercent:   hostDiskPercent(),
 	}
+
+	// DB round-trip latency: time a storage health check.
+	performance.DbLatencyMs = s.dbLatencyMs(ctx)
 
 	// Domain counts.
 	activeSecrets := uint64(len(s.core.ListActiveSecrets(ctx)))
@@ -143,6 +151,35 @@ func nonNegU64(v int64) uint64 {
 		return 0
 	}
 	return uint64(v)
+}
+
+// hostCPUPercent returns overall host CPU utilisation since the previous call
+// (interval 0 is non-blocking). Best-effort: 0 on error.
+func hostCPUPercent() float64 {
+	pcts, err := cpu.Percent(0, false)
+	if err != nil || len(pcts) == 0 {
+		return 0
+	}
+	return pcts[0]
+}
+
+// hostDiskPercent returns root-filesystem usage percent. Best-effort: 0 on error.
+func hostDiskPercent() float64 {
+	usage, err := disk.Usage("/")
+	if err != nil || usage == nil {
+		return 0
+	}
+	return usage.UsedPercent
+}
+
+// dbLatencyMs times a storage health check (one DB round-trip). Best-effort:
+// 0 if the health check errors.
+func (s *SystemGRPCService) dbLatencyMs(ctx context.Context) float64 {
+	start := time.Now()
+	if err := s.core.Storage().HealthCheck(ctx); err != nil {
+		return 0
+	}
+	return float64(time.Since(start).Microseconds()) / 1000.0
 }
 
 func encStatus(enabled bool) string {
