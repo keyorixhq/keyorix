@@ -26,6 +26,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(middleware.RealIP)
 	r.Use(customMiddleware.Logger())
 	r.Use(customMiddleware.Recovery())
+	r.Use(customMiddleware.PrometheusMiddleware)
 	r.Use(middleware.Timeout(60 * time.Second))
 
 	// CORS configuration - updated for web dashboard
@@ -80,6 +81,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	// Health check endpoint
 	r.Get("/health", handlers.HealthCheck)
+
+	// Prometheus metrics — unauthenticated by design (standard for scraping); keep
+	// it inside your perimeter. Exposes HTTP request metrics + Go runtime/process.
+	r.Handle("/metrics", customMiddleware.MetricsHandler())
 
 	// Status page endpoint - serves stylish status dashboard
 	r.Get("/status", func(w http.ResponseWriter, r *http.Request) {
