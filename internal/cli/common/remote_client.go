@@ -166,6 +166,33 @@ func (c *RemoteClient) Put(ctx context.Context, path string, body interface{}, o
 	return nil
 }
 
+// DeleteWithBody sends a DELETE to path carrying a JSON body (some endpoints —
+// e.g. DELETE /user-roles — identify the target in the body rather than the URL).
+// No response body is expected.
+func (c *RemoteClient) DeleteWithBody(ctx context.Context, path string, body interface{}) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal request body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.Endpoint+path, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
+	}
+	return nil
+}
+
 // Delete sends a DELETE to path. No response body is expected.
 func (c *RemoteClient) Delete(ctx context.Context, path string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.Endpoint+path, nil)

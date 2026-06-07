@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -33,6 +34,11 @@ func init() {
 }
 
 func runAssignRole(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runAssignRoleRemote(ctx, rc, userEmail, roleName)
+	}
+
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -52,7 +58,6 @@ func runAssignRole(cmd *cobra.Command, args []string) error {
 	coreService := core.NewKeyorixCore(storage)
 
 	// Use core service to assign role
-	ctx := context.Background()
 	err = coreService.AssignRoleToUser(ctx, userEmail, roleName)
 	if err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)

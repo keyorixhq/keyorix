@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -28,6 +29,11 @@ func init() {
 }
 
 func runListPermissions(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runListPermissionsRemote(ctx, rc, listPermissionsUserEmail)
+	}
+
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -48,9 +54,6 @@ func runListPermissions(cmd *cobra.Command, args []string) error {
 	// Initialize storage and core service
 	storage := store.NewLocalStorage(db)
 	service := core.NewKeyorixCore(storage)
-
-	// Create context
-	ctx := context.Background()
 
 	permissions, err := service.ListUserPermissionsByEmail(ctx, listPermissionsUserEmail)
 	if err != nil {

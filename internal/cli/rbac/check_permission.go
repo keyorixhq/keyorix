@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -35,6 +36,11 @@ func init() {
 }
 
 func runCheckPermission(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runCheckPermissionRemote(ctx, rc, checkUserEmail, checkPermissionName)
+	}
+
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -55,9 +61,6 @@ func runCheckPermission(cmd *cobra.Command, args []string) error {
 	// Initialize storage and core service
 	storage := store.NewLocalStorage(db)
 	service := core.NewKeyorixCore(storage)
-
-	// Create context
-	ctx := context.Background()
 
 	// Permissions are named "resource.action" (e.g. secrets.read, system.admin).
 	resource, action, perr := splitPermissionName(checkPermissionName)
