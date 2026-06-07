@@ -107,6 +107,7 @@ Thumbs.db
 *.temp
 *.bak
 *.backup
+backup.yaml
 /core
 
 # --- Go Workspace Files ---

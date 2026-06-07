@@ -1,4 +1,4 @@
-environment: development
+environment: production
 server:
   http:
     enabled: true
@@ -11,5 +11,11 @@ storage:
     name: keyorix
     user: keyorix
     ssl_mode: disable
-encryption:
-  enabled: true
+    # Password comes from KEYORIX_DB_PASSWORD (set in .env), never committed here.
+  encryption:
+    enabled: true
+    # The wrapped DEK + KEK salt live on the persisted `keys` volume (see
+    # docker-compose.yml). These MUST survive restarts — losing them, or changing
+    # KEYORIX_MASTER_PASSWORD, makes every stored secret undecryptable.
+    dek_path: "/app/keys/data.key"
+    salt_path: "/app/keys/kek.salt"

@@ -1,16 +1,18 @@
 #!/bin/sh
 set -e
 
-echo "Starting Keyorix..."
+echo "Starting Keyorix server..."
 
-# Seed default admin user and namespace via the API
-# Wait for server to start, then seed
+# Run the server in the background so we can perform an optional first-boot admin
+# bootstrap once it is healthy, then hand the process the foreground.
 ./keyorix-server &
 SERVER_PID=$!
 
-# Wait for health check to pass
+# Always re-foreground the server on exit so signals propagate to it.
+trap 'kill -TERM "$SERVER_PID" 2>/dev/null' TERM INT
+
 echo "Waiting for server to be ready..."
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
     if wget --quiet --spider http://localhost:8080/health 2>/dev/null; then
         echo "Server is ready"
         break
@@ -18,20 +20,23 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# Check if admin user already exists by trying to login
-STATUS=$(wget --quiet -O- --post-data='{"username":"admin","password":"Admin123!"}' \
-    --header='Content-Type: application/json' \
-    http://localhost:8080/auth/login 2>/dev/null | grep -c "token" || true)
-
-if [ "$STATUS" -eq 0 ]; then
-    echo "Seeding default admin user..."
-    wget --quiet -O- --post-data='{"username":"admin","password":"Admin123!","email":"admin@keyorix.local","role":"admin"}' \
+# First-boot admin bootstrap (optional, idempotent). Only runs when an admin
+# password is supplied via the environment — there are NO hardcoded credentials.
+# POST /system/init is safe to call repeatedly: it reports already_initialized
+# and changes nothing once an admin exists.
+if [ -n "$KEYORIX_ADMIN_PASSWORD" ]; then
+    ADMIN_USER="${KEYORIX_ADMIN_USERNAME:-admin}"
+    ADMIN_EMAIL="${KEYORIX_ADMIN_EMAIL:-admin@keyorix.local}"
+    echo "Bootstrapping admin user '$ADMIN_USER' (idempotent)..."
+    wget --quiet -O- \
         --header='Content-Type: application/json' \
-        http://localhost:8080/api/v1/system/seed 2>/dev/null || true
-    echo "Admin user created: admin / Admin123!"
+        --post-data="{\"username\":\"$ADMIN_USER\",\"email\":\"$ADMIN_EMAIL\",\"password\":\"$KEYORIX_ADMIN_PASSWORD\",\"display_name\":\"Administrator\"}" \
+        http://localhost:8080/system/init 2>/dev/null || \
+        echo "Bootstrap call failed (server may already be initialised) — continuing."
 else
-    echo "Admin user already exists, skipping seed"
+    echo "KEYORIX_ADMIN_PASSWORD not set — skipping auto-bootstrap."
+    echo "Initialise manually: keyorix system init --server http://<host>:8080"
 fi
 
-# Wait for server process
-wait $SERVER_PID
+# Hand the server the foreground.
+wait "$SERVER_PID"
