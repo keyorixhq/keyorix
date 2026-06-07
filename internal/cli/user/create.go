@@ -58,6 +58,17 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return errors.New("password is required (use --password), or use --setup-link or --one-time-password")
 	}
 
+	// Remote mode: go through the server so the user lands in the SAME store the
+	// dashboard/API use, instead of a local SQLite file. Currently the password
+	// mode is supported remotely; the setup-link / one-time-password provisioning
+	// flows are embedded-only for now.
+	if rc, ok := common.NewRemoteClient(); ok {
+		if createSetupLink || createOneTimePassword {
+			return errors.New("--setup-link / --one-time-password are not yet supported in remote mode; use --password, or run this command on the server host")
+		}
+		return runCreateRemote(rc)
+	}
+
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
@@ -110,6 +121,31 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	u, err := service.CreateUser(ctx, req)
 	if err != nil {
+		return fmt.Errorf("failed to create user: %w", err)
+	}
+	fmt.Printf("User created: id=%d username=%s email=%s\n", u.ID, u.Username, u.Email)
+	return nil
+}
+
+// runCreateRemote creates the user via POST /api/v1/users (password mode), so it
+// lands in the server's store rather than a local SQLite file.
+func runCreateRemote(rc *common.RemoteClient) error {
+	display := createDisplayName
+	if display == "" {
+		display = createUsername
+	}
+	body := map[string]string{
+		"username":     createUsername,
+		"email":        createEmail,
+		"display_name": display,
+		"password":     createPassword,
+	}
+	var u struct {
+		ID       uint   `json:"id"`
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	}
+	if err := rc.Post(context.Background(), "/api/v1/users", body, &u); err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
 	fmt.Printf("User created: id=%d username=%s email=%s\n", u.ID, u.Username, u.Email)
