@@ -23,10 +23,16 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 
-	// Get the secret to check ownership
+	// Get the secret to check ownership.
 	secret, err := c.GetSecret(ctx, req.SecretID)
 	if err != nil {
 		return nil, err
+	}
+	// Only the owner may share a secret — mirror the direct (non-group) path.
+	// Without this, any caller with secrets.write could group-share a secret they
+	// do not own, granting their group read/write access to it.
+	if secret.OwnerID != req.SharedBy {
+		return nil, fmt.Errorf("not authorized to share this secret")
 	}
 
 	// Create share record

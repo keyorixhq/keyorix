@@ -229,3 +229,22 @@ func TestKeyorixCore_ListGroupShares_ValidationError(t *testing.T) {
 	// Assert
 	assert.Error(t, err)
 }
+
+// Regression (security review): a non-owner must not be able to group-share a
+// secret they don't own, even with secrets.write — the owner check in
+// ShareSecretWithGroup enforces it (previously missing).
+func TestShareSecretWithGroup_NonOwnerDenied(t *testing.T) {
+	require.NoError(t, i18n.Initialize(&config.Config{
+		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+	}))
+	ms := new(MockStorage)
+	c := &KeyorixCore{storage: ms, now: time.Now}
+	ms.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 1}, nil)
+
+	_, err := c.ShareSecretWithGroup(context.Background(), &GroupShareSecretRequest{
+		SecretID: 1, GroupID: 2, Permission: "read", SharedBy: 99, // not the owner
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not authorized")
+	ms.AssertNotCalled(t, "CreateShareRecord", mock.Anything, mock.Anything)
+}

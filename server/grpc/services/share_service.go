@@ -81,7 +81,7 @@ func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *pb.ListSec
 		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
 	}
 
-	shares, err := s.core.ListSecretShares(ctx, uint(req.GetSecretId()))
+	shares, err := s.core.ListSecretSharesWithPermissionCheck(ctx, uint(req.GetSecretId()), user.UserID)
 	if err != nil {
 		return nil, mapShareError(err)
 	}
