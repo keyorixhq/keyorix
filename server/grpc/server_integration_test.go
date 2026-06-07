@@ -34,8 +34,9 @@ func TestGRPCServer_EndToEnd(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
 	require.NoError(t, h.DB.AutoMigrate(&models.Session{}, &models.SecretVersion{}))
-	// An environment that belongs to the seeded project 1 (seeded envs have none).
+	// Environments that belong to the seeded projects 1 and 2 (seeded envs have none).
 	require.NoError(t, h.DB.Create(&models.Environment{ID: 10, ProjectID: 1, Name: "dev"}).Error)
+	require.NoError(t, h.DB.Create(&models.Environment{ID: 20, ProjectID: 2, Name: "dev"}).Error)
 
 	// A user with the super_admin role (role id 1), and a live session token.
 	user := h.CreateTestUser(t, "e2e-admin", 100)
@@ -43,6 +44,20 @@ func TestGRPCServer_EndToEnd(t *testing.T) {
 	expires := time.Now().Add(time.Hour)
 	_, err := h.Storage.CreateSession(context.Background(), &models.Session{
 		UserID: user.ID, SessionToken: token, ExpiresAt: &expires,
+	})
+	require.NoError(t, err)
+
+	// A project-1-scoped writer: the "editor" role (id 3) grants secrets.write, but
+	// the grant is scoped to project 1 only. Crucially, this user's FLAT permission
+	// set (what the interceptor resolves and what the old gRPC handler checked) still
+	// advertises secrets.write with no scope — so a wire-level test is the real proof
+	// that creation is gated on the scoped check, not the flat list.
+	const scopedToken = "e2e-scoped-token"
+	project1 := uint(1)
+	scopedWriter := h.CreateTestUser(t, "e2e-scoped-writer", 200)
+	h.AssignUserRole(t, scopedWriter.ID, 3, &project1) // editor @ project 1 only
+	_, err = h.Storage.CreateSession(context.Background(), &models.Session{
+		UserID: scopedWriter.ID, SessionToken: scopedToken, ExpiresAt: &expires,
 	})
 	require.NoError(t, err)
 
@@ -64,6 +79,7 @@ func TestGRPCServer_EndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	authedCtx := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+token))
+	scopedCtx := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+scopedToken))
 
 	t.Run("HealthCheck is public (no token)", func(t *testing.T) {
 		resp, err := pb.NewSystemServiceClient(conn).HealthCheck(ctx, &emptypb.Empty{})
@@ -97,5 +113,28 @@ func TestGRPCServer_EndToEnd(t *testing.T) {
 		sec, err := secrets.GetSecret(authedCtx, &pb.GetSecretRequest{Id: createdID})
 		require.NoError(t, err)
 		assert.Equal(t, "e2e-secret", sec.GetName())
+	})
+
+	// Scoped-authz regression (extends the #54 unit fix to the wire). The scoped
+	// writer holds secrets.write only at project 1. Through the real interceptor
+	// stack — session validated → flat RBAC permissions resolved → service — the
+	// CreateSecret scope check must allow creation in project 1 and deny it in
+	// project 2, even though the resolved flat permission set advertises
+	// secrets.write globally.
+	t.Run("scoped writer can create within its project", func(t *testing.T) {
+		sec, err := secrets.CreateSecret(scopedCtx, &pb.CreateSecretRequest{
+			Name: "in-scope", Value: "v", ProjectId: 1, EnvironmentId: 10, Type: "password",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, uint32(1), sec.GetProjectId())
+	})
+
+	t.Run("scoped writer is denied creating in another project", func(t *testing.T) {
+		_, err := secrets.CreateSecret(scopedCtx, &pb.CreateSecretRequest{
+			Name: "cross-project", Value: "v", ProjectId: 2, EnvironmentId: 20, Type: "password",
+		})
+		require.Error(t, err)
+		assert.Equal(t, codes.PermissionDenied, status.Code(err),
+			"a project-1-scoped writer must not create secrets in project 2 over gRPC")
 	})
 }
