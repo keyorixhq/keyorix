@@ -37,15 +37,34 @@ func newSecretTestRig(t *testing.T) *secretTestRig {
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
 		&models.SecretVersion{}, &models.User{}, &models.Role{}, &models.ShareRecord{},
+		&models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "development"}).Error)
 	// The owner user (id 1) — ListSecretsWithSharingInfo resolves owner usernames.
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@example.com"}).Error)
 
+	// CreateSecret authorizes secrets.write at the target scope via the RBAC graph
+	// (mirroring the HTTP handler), so the test DB needs real grants — the flat
+	// UserContext.Permissions no longer gate creation. Seed a "writer" role that
+	// grants secrets.read/write/delete and assign user 1 globally so the owner can
+	// create/read/update/delete in every test below.
+	require.NoError(t, db.Create(&models.Role{ID: writerRoleID, Name: "writer"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 3, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 2}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 3}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID}).Error) // global (project 0, env 0)
+
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
 	return &secretTestRig{svc: NewSecretService(coreService), db: db}
 }
+
+// writerRoleID is the seeded role granting secrets.read/write/delete in the rig.
+const writerRoleID = 1
 
 // authCtx returns a context carrying a user with the given permissions, as the
 // auth interceptor would populate after validating a session.
@@ -87,9 +106,43 @@ func TestSecretService_CreateSecret_Unauthenticated(t *testing.T) {
 
 func TestSecretService_CreateSecret_PermissionDenied(t *testing.T) {
 	r := newSecretTestRig(t)
-	ctx := authCtx(1, "reader", "secrets.read") // no write
+	// User 2 holds no RBAC role, so Authorize denies regardless of any flat
+	// permission claimed in the context.
+	ctx := authCtx(2, "reader", "secrets.read") // no write grant
 	_, err := r.svc.CreateSecret(ctx, &pb.CreateSecretRequest{
 		Name: "x", Value: "y", ProjectId: 1, EnvironmentId: 1, Type: "password",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// Regression (gRPC scoped-authz hardening): CreateSecret must authorize
+// secrets.write at the TARGET project/environment, not against the flat global
+// permission set. A user whose secrets.write is granted only in project 1 must
+// not be able to create a secret in project 2 — even though their flat
+// UserContext.Permissions advertise secrets.write. Previously the gRPC handler
+// checked only the flat list and let a project-scoped writer create anywhere.
+func TestSecretService_CreateSecret_ScopedToOtherProjectDenied(t *testing.T) {
+	r := newSecretTestRig(t)
+	// A second project/environment the scoped writer has no grant in.
+	require.NoError(t, r.db.Create(&models.Project{ID: 2, Name: "other"}).Error)
+	require.NoError(t, r.db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "development"}).Error)
+	// User 3: writer role scoped to project 1 only (env 0 = all envs in project 1).
+	require.NoError(t, r.db.Create(&models.User{ID: 3, Username: "scoped", Email: "scoped@example.com"}).Error)
+	require.NoError(t, r.db.Create(&models.UserRole{UserID: 3, RoleID: writerRoleID, ProjectID: 1}).Error)
+
+	// The flat list advertises write — the bug would have honoured it everywhere.
+	ctx := authCtx(3, "scoped", "secrets.write", "secrets.read")
+
+	// In-scope (project 1): allowed.
+	_, err := r.svc.CreateSecret(ctx, &pb.CreateSecretRequest{
+		Name: "in-scope", Value: "v", ProjectId: 1, EnvironmentId: 1, Type: "password",
+	})
+	require.NoError(t, err)
+
+	// Out-of-scope (project 2): denied.
+	_, err = r.svc.CreateSecret(ctx, &pb.CreateSecretRequest{
+		Name: "cross-project", Value: "v", ProjectId: 2, EnvironmentId: 2, Type: "password",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
