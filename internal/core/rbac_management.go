@@ -154,7 +154,7 @@ func (c *KeyorixCore) GetUserRolesByID(ctx context.Context, userID uint) ([]*mod
 // given scope. Only assignments at exactly that scope are considered: roles
 // present there but not in roleIDs are removed; roles in roleIDs not already
 // assigned there are added. Assignments at other scopes are left untouched.
-func (c *KeyorixCore) SetUserRoles(ctx context.Context, userID uint, roleIDs []uint, scope Scope) error {
+func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, roleIDs []uint, scope Scope) error {
 	current, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -169,17 +169,39 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, userID uint, roleIDs []u
 	}
 	for _, id := range current {
 		if !newSet[id] {
-			if err := c.storage.RemoveRole(ctx, userID, id, scope); err != nil {
-				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			if err := c.RemoveUserRole(ctx, actorID, userID, id, scope); err != nil {
+				return err
 			}
 		}
 	}
 	for _, id := range roleIDs {
 		if !currentSet[id] {
-			if err := c.storage.AssignRole(ctx, userID, id, scope); err != nil {
-				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			if err := c.AssignUserRole(ctx, actorID, userID, id, scope); err != nil {
+				return err
 			}
 		}
 	}
+	return nil
+}
+
+// AssignUserRole assigns a role to a user at the given scope and records an RBAC
+// audit event. actorID is the acting principal (0 when unauthenticated, e.g. a
+// local CLI invocation). This is the audited choke point all role-assignment
+// paths funnel through.
+func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
+	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
+	return nil
+}
+
+// RemoveUserRole removes a role from a user at the given scope and records an
+// RBAC audit event. See AssignUserRole for actorID semantics.
+func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
+	if err := c.storage.RemoveRole(ctx, userID, roleID, scope); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
 	return nil
 }

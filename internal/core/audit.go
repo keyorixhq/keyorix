@@ -2,11 +2,60 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// RBAC audit event types. Role assignments/removals are written to the shared
+// audit_events table and surfaced together by ListRBACAuditLogs.
+const (
+	EventRoleAssigned = "role.assigned"
+	EventRoleRemoved  = "role.removed"
+)
+
+// rbacAuditDetail is the structured payload stored in an RBAC event's Diff field,
+// carrying the target/role/scope that the generic AuditEvent row cannot.
+type rbacAuditDetail struct {
+	TargetUserID  uint `json:"target_user_id"`
+	RoleID        uint `json:"role_id"`
+	ProjectID     uint `json:"project_id,omitempty"`
+	EnvironmentID uint `json:"environment_id,omitempty"`
+}
+
+// LogRoleAssigned / LogRoleRemoved record an RBAC change. actorID is the user who
+// made the change (0 = no authenticated principal, e.g. a local CLI invocation);
+// the target/role/scope are captured in the event's structured diff.
+func (c *KeyorixCore) LogRoleAssigned(ctx context.Context, actorID, targetUserID, roleID uint, scope Scope) {
+	c.logRoleChange(ctx, EventRoleAssigned, "assigned to", actorID, targetUserID, roleID, scope)
+}
+
+func (c *KeyorixCore) LogRoleRemoved(ctx context.Context, actorID, targetUserID, roleID uint, scope Scope) {
+	c.logRoleChange(ctx, EventRoleRemoved, "removed from", actorID, targetUserID, roleID, scope)
+}
+
+func (c *KeyorixCore) logRoleChange(ctx context.Context, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope) {
+	detail, _ := json.Marshal(rbacAuditDetail{
+		TargetUserID:  targetUserID,
+		RoleID:        roleID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+	})
+	var actor *uint
+	if actorID != 0 {
+		a := actorID
+		actor = &a
+	}
+	var projectID *uint
+	if scope.ProjectID != 0 {
+		p := scope.ProjectID
+		projectID = &p
+	}
+	desc := fmt.Sprintf("role %d %s user %d", roleID, verb, targetUserID)
+	c.writeAuditEventDiff(ctx, eventType, actor, nil, projectID, "", desc, string(detail))
+}
 
 // writeAuditEvent persists an audit_events row (basic — no project/IP context).
 func (c *KeyorixCore) writeAuditEvent(ctx context.Context, eventType string, userID *uint, secretID *uint, description string) {

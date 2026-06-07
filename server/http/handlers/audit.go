@@ -267,14 +267,48 @@ func actorTypeOrDefault(s string) string {
 	return s
 }
 
-// GetRBACAuditLogs handles GET /api/v1/audit/rbac-logs (stub — returns empty).
+// GetRBACAuditLogs handles GET /api/v1/audit/rbac-logs — the role-assignment
+// audit trail (role.assigned / role.removed).
 func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
+
+	page, pageSize := 1, 50
+	if p, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && p > 0 {
+		page = p
+	}
+	if ps, err := strconv.Atoi(r.URL.Query().Get("page_size")); err == nil && ps > 0 && ps <= 100 {
+		pageSize = ps
+	}
+
+	entries, total, err := h.coreService.ListRBACAuditLogs(r.Context(), page, pageSize)
+	if err != nil {
+		sendError(w, "InternalError", "Failed to retrieve RBAC audit logs", http.StatusInternalServerError, nil)
+		return
+	}
+
+	logs := make([]map[string]interface{}, 0, len(entries))
+	for _, e := range entries {
+		logs = append(logs, map[string]interface{}{
+			"id":             e.ID,
+			"action":         e.Action,
+			"actor_user_id":  e.ActorUserID,
+			"target_user_id": e.TargetUserID,
+			"role_id":        e.RoleID,
+			"project_id":     e.ProjectID,
+			"details":        e.Details,
+			"created_at":     e.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
+	totalPages := 0
+	if pageSize > 0 {
+		totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
+	}
 	sendSuccess(w, map[string]interface{}{
-		"logs": []interface{}{}, "page": 1, "page_size": 50, "total": 0, "total_pages": 0,
+		"logs": logs, "page": page, "page_size": pageSize, "total": total, "total_pages": totalPages,
 	}, "")
 }

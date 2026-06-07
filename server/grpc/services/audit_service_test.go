@@ -76,3 +76,27 @@ func TestAuditService_GetRBACAuditLogs_EmptyButOK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetLogs())
 }
+
+func TestAuditService_GetRBACAuditLogs_ReturnsRoleChanges(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.UserRole{}))
+	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	require.NoError(t, c.AssignUserRole(context.Background(), 5, 10, 2, core.Scope{ProjectID: 3}))
+
+	svc := NewAuditService(c)
+	resp, err := svc.GetRBACAuditLogs(auditCtx(), &pb.GetRBACAuditLogsRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.GetLogs(), 1)
+
+	log := resp.GetLogs()[0]
+	assert.Equal(t, core.EventRoleAssigned, log.GetAction())
+	require.NotNil(t, log.ActorUserId)
+	assert.Equal(t, uint32(5), log.GetActorUserId())
+	require.NotNil(t, log.TargetUserId)
+	assert.Equal(t, uint32(10), log.GetTargetUserId())
+	require.NotNil(t, log.RoleId)
+	assert.Equal(t, uint32(2), log.GetRoleId())
+	require.NotNil(t, log.ProjectId)
+	assert.Equal(t, uint32(3), log.GetProjectId())
+}

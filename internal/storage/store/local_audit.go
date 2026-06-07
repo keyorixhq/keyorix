@@ -49,6 +49,9 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 		if filter.Action != nil {
 			query = query.Where("event_type = ?", *filter.Action)
 		}
+		if len(filter.Actions) > 0 {
+			query = query.Where("event_type IN ?", filter.Actions)
+		}
 		if filter.StartTime != nil {
 			query = query.Where("event_time >= ?", *filter.StartTime)
 		}

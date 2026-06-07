@@ -122,7 +122,8 @@ func (h *UsersRolesHandler) GetUserMembershipsForUser(w http.ResponseWriter, r *
 
 // UpdateUserRoles handles PUT /api/v1/users/{id}/roles — full role replacement.
 func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Request) {
-	if middleware.GetUserFromContext(r.Context()) == nil {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
@@ -162,7 +163,7 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 	}
 
 	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
-	if err := h.coreService.SetUserRoles(r.Context(), userID, req.RoleIDs, scope); err != nil {
+	if err := h.coreService.SetUserRoles(r.Context(), actor.UserID, userID, req.RoleIDs, scope); err != nil {
 		log.Printf("Error setting roles for user %d: %v", userID, err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)

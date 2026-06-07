@@ -68,8 +68,7 @@ func (s *AuditGRPCService) GetAuditLogs(ctx context.Context, req *pb.GetAuditLog
 	}, nil
 }
 
-// GetRBACAuditLogs has no dedicated backing store yet; it returns an empty page
-// (mirroring the HTTP behaviour) rather than failing.
+// GetRBACAuditLogs returns the RBAC audit trail (role assignments/removals).
 func (s *AuditGRPCService) GetRBACAuditLogs(ctx context.Context, req *pb.GetRBACAuditLogsRequest) (*pb.GetRBACAuditLogsResponse, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
@@ -79,13 +78,45 @@ func (s *AuditGRPCService) GetRBACAuditLogs(ctx context.Context, req *pb.GetRBAC
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read audit logs")
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
+
+	entries, total, err := s.core.ListRBACAuditLogs(ctx, page, pageSize)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to read RBAC audit logs")
+	}
+
+	logs := make([]*pb.RBACAuditLog, 0, len(entries))
+	for _, e := range entries {
+		logs = append(logs, rbacEntryToProto(e))
+	}
 	return &pb.GetRBACAuditLogsResponse{
-		Logs:       []*pb.RBACAuditLog{},
-		Total:      0,
+		Logs:       logs,
+		Total:      i64ToU32(total),
 		Page:       intToU32(page),
 		PageSize:   intToU32(pageSize),
-		TotalPages: 0,
+		TotalPages: intToU32(totalPages(int(total), pageSize)),
 	}, nil
+}
+
+func rbacEntryToProto(e *core.RBACAuditEntry) *pb.RBACAuditLog {
+	out := &pb.RBACAuditLog{
+		Id:        intToU32(int(e.ID)),
+		Action:    e.Action,
+		Details:   e.Details,
+		CreatedAt: timestamppb.New(e.CreatedAt),
+	}
+	if e.ActorUserID != nil {
+		out.ActorUserId = ptrU32(*e.ActorUserID)
+	}
+	if e.TargetUserID != nil {
+		out.TargetUserId = ptrU32(*e.TargetUserID)
+	}
+	if e.RoleID != nil {
+		out.RoleId = ptrU32(*e.RoleID)
+	}
+	if e.ProjectID != nil {
+		out.ProjectId = ptrU32(*e.ProjectID)
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
