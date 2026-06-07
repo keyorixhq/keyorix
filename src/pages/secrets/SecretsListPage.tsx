@@ -13,6 +13,7 @@ import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
 import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow } from '../../features/secrets';
 import { ShareSecretModal } from '../../features/sharing';
+import { useProjects, useProjectEnvironments } from '../../features/projects';
 
 const SECRET_TYPES: { value: SecretType | 'all'; label: string }[] = [
     { value: 'all', label: 'All Types' }, { value: 'text', label: 'Text' },
@@ -62,6 +63,29 @@ export const SecretsListPage: React.FC = () => {
     const [createValue, setCreateValue] = React.useState('');
     const [createType, setCreateType] = React.useState<SecretType>('text');
     const [createError, setCreateError] = React.useState('');
+    // Target project/environment for a new secret. The All-Secrets create form is
+    // not scoped to a project, so the user must pick one — previously this was
+    // hardcoded to project 1 / env 1, which errored or misfiled on any other DB.
+    const [createProjectId, setCreateProjectId] = React.useState(0);
+    const [createEnvId, setCreateEnvId] = React.useState(0);
+    const { data: createProjects } = useProjects();
+    const { data: createEnvironments } = useProjectEnvironments(createProjectId);
+    // Default the project to the first available once projects load.
+    React.useEffect(() => {
+        const first = createProjects?.[0];
+        if (createProjectId === 0 && first) {
+            setCreateProjectId(first.id);
+        }
+    }, [createProjects, createProjectId]);
+    // When the project changes (or its environments load), keep the selected
+    // environment valid — default to the first env of the chosen project.
+    React.useEffect(() => {
+        if (!createEnvironments) return;
+        const stillValid = createEnvironments.some(e => e.id === createEnvId);
+        if (!stillValid) {
+            setCreateEnvId(createEnvironments[0]?.id ?? 0);
+        }
+    }, [createEnvironments, createEnvId]);
     const [editName, setEditName] = React.useState('');
     const [editType, setEditType] = React.useState<SecretType>('text');
     const [editValue, setEditValue] = React.useState('');
@@ -308,7 +332,7 @@ export const SecretsListPage: React.FC = () => {
             </Modal>
 
             <Modal isOpen={list.activeModal === 'create-secret'} onClose={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} title="Create New Secret" size="md">
-                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); list.createMutation.mutate({ name: createName, value: createValue, type: createType, project_id: 1, environment_id: 1 } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); } }); }} className="space-y-4">
+                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); if (!createProjectId || !createEnvId) { setCreateError('Select a project and environment for the new secret.'); return; } list.createMutation.mutate({ name: createName, value: createValue, type: createType, project_id: createProjectId, environment_id: createEnvId } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); } }); }} className="space-y-4">
                     {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name <span className="text-red-500">*</span></label>
@@ -330,6 +354,24 @@ export const SecretsListPage: React.FC = () => {
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Type</label>
                         <Select value={createType} onChange={(e) => setCreateType(e.target.value as SecretType)} options={[{ value: 'text', label: 'Generic' }, { value: 'password', label: 'Password' }, { value: 'api_key', label: 'API Key' }, { value: 'certificate', label: 'Certificate' }, { value: 'json', label: 'JSON' }]} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Project <span className="text-red-500">*</span></label>
+                            <Select
+                                value={String(createProjectId)}
+                                onChange={(e) => setCreateProjectId(Number(e.target.value))}
+                                options={(createProjects ?? []).map(p => ({ value: String(p.id), label: p.name }))}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Environment <span className="text-red-500">*</span></label>
+                            <Select
+                                value={String(createEnvId)}
+                                onChange={(e) => setCreateEnvId(Number(e.target.value))}
+                                options={(createEnvironments ?? []).map(env => ({ value: String(env.id), label: env.name }))}
+                            />
+                        </div>
                     </div>
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base ">
                         <Button type="button" variant="outline" onClick={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} disabled={list.createMutation.isPending}>Cancel</Button>
