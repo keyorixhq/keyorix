@@ -19,9 +19,10 @@ import (
 // whom, at what scope, and when.
 type RBACAuditEntry struct {
 	ID           uint
-	Action       string // role.assigned | role.removed
+	Action       string // role.assigned | role.removed | role.group_assigned | role.group_removed
 	ActorUserID  *uint  // the principal who made the change (nil for system/CLI)
-	TargetUserID *uint
+	TargetUserID *uint  // set for user-role events
+	GroupID      *uint  // set for group-role events
 	RoleID       *uint
 	ProjectID    *uint
 	Details      string
@@ -39,7 +40,7 @@ func (c *KeyorixCore) ListRBACAuditLogs(ctx context.Context, page, pageSize int)
 	}
 
 	events, total, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-		Actions:  []string{EventRoleAssigned, EventRoleRemoved},
+		Actions:  rbacAuditEventTypes,
 		Page:     page,
 		PageSize: pageSize,
 	})
@@ -62,6 +63,10 @@ func (c *KeyorixCore) ListRBACAuditLogs(ctx context.Context, page, pageSize int)
 			if d.TargetUserID != 0 {
 				t := d.TargetUserID
 				entry.TargetUserID = &t
+			}
+			if d.GroupID != 0 {
+				g := d.GroupID
+				entry.GroupID = &g
 			}
 			if d.RoleID != 0 {
 				r := d.RoleID

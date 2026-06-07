@@ -110,6 +110,9 @@ func rbacEntryToProto(e *core.RBACAuditEntry) *pb.RBACAuditLog {
 	if e.TargetUserID != nil {
 		out.TargetUserId = ptrU32(*e.TargetUserID)
 	}
+	if e.GroupID != nil {
+		out.GroupId = ptrU32(*e.GroupID)
+	}
 	if e.RoleID != nil {
 		out.RoleId = ptrU32(*e.RoleID)
 	}

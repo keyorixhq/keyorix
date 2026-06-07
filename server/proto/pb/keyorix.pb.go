@@ -2768,15 +2768,18 @@ func (x *GetAuditLogsResponse) GetTotalPages() uint32 {
 }
 
 type RBACAuditLog struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Action        string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
-	ActorUserId   *uint32                `protobuf:"varint,3,opt,name=actor_user_id,json=actorUserId,proto3,oneof" json:"actor_user_id,omitempty"`
-	TargetUserId  *uint32                `protobuf:"varint,4,opt,name=target_user_id,json=targetUserId,proto3,oneof" json:"target_user_id,omitempty"`
-	RoleId        *uint32                `protobuf:"varint,5,opt,name=role_id,json=roleId,proto3,oneof" json:"role_id,omitempty"`
-	ProjectId     *uint32                `protobuf:"varint,6,opt,name=project_id,json=projectId,proto3,oneof" json:"project_id,omitempty"`
-	Details       string                 `protobuf:"bytes,7,opt,name=details,proto3" json:"details,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Id           uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Action       string                 `protobuf:"bytes,2,opt,name=action,proto3" json:"action,omitempty"`
+	ActorUserId  *uint32                `protobuf:"varint,3,opt,name=actor_user_id,json=actorUserId,proto3,oneof" json:"actor_user_id,omitempty"`
+	TargetUserId *uint32                `protobuf:"varint,4,opt,name=target_user_id,json=targetUserId,proto3,oneof" json:"target_user_id,omitempty"`
+	RoleId       *uint32                `protobuf:"varint,5,opt,name=role_id,json=roleId,proto3,oneof" json:"role_id,omitempty"`
+	ProjectId    *uint32                `protobuf:"varint,6,opt,name=project_id,json=projectId,proto3,oneof" json:"project_id,omitempty"`
+	Details      string                 `protobuf:"bytes,7,opt,name=details,proto3" json:"details,omitempty"`
+	CreatedAt    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// Set for group-role events (role.group_assigned / role.group_removed): the
+	// group the role was granted to / removed from.
+	GroupId       *uint32 `protobuf:"varint,9,opt,name=group_id,json=groupId,proto3,oneof" json:"group_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2865,6 +2868,13 @@ func (x *RBACAuditLog) GetCreatedAt() *timestamppb.Timestamp {
 		return x.CreatedAt
 	}
 	return nil
+}
+
+func (x *RBACAuditLog) GetGroupId() uint32 {
+	if x != nil && x.GroupId != nil {
+		return *x.GroupId
+	}
+	return 0
 }
 
 type GetRBACAuditLogsRequest struct {
@@ -4607,7 +4617,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x04page\x18\x03 \x01(\rR\x04page\x12\x1b\n" +
 	"\tpage_size\x18\x04 \x01(\rR\bpageSize\x12\x1f\n" +
 	"\vtotal_pages\x18\x05 \x01(\rR\n" +
-	"totalPages\"\xe1\x02\n" +
+	"totalPages\"\x8e\x03\n" +
 	"\fRBACAuditLog\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x12'\n" +
@@ -4618,12 +4628,14 @@ const file_keyorix_proto_rawDesc = "" +
 	"project_id\x18\x06 \x01(\rH\x03R\tprojectId\x88\x01\x01\x12\x18\n" +
 	"\adetails\x18\a \x01(\tR\adetails\x129\n" +
 	"\n" +
-	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAtB\x10\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x1e\n" +
+	"\bgroup_id\x18\t \x01(\rH\x04R\agroupId\x88\x01\x01B\x10\n" +
 	"\x0e_actor_user_idB\x11\n" +
 	"\x0f_target_user_idB\n" +
 	"\n" +
 	"\b_role_idB\r\n" +
-	"\v_project_id\"\xeb\x01\n" +
+	"\v_project_idB\v\n" +
+	"\t_group_id\"\xeb\x01\n" +
 	"\x17GetRBACAuditLogsRequest\x12\x1b\n" +
 	"\x06action\x18\x01 \x01(\tH\x00R\x06action\x88\x01\x01\x12'\n" +
 	"\ractor_user_id\x18\x02 \x01(\rH\x01R\vactorUserId\x88\x01\x01\x12)\n" +

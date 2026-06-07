@@ -449,6 +449,9 @@ message RBACAuditLog {
   optional uint32 project_id = 6;
   string details = 7;
   google.protobuf.Timestamp created_at = 8;
+  // Set for group-role events (role.group_assigned / role.group_removed): the
+  // group the role was granted to / removed from.
+  optional uint32 group_id = 9;
 }
 
 message GetRBACAuditLogsRequest {
