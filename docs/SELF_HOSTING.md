@@ -117,7 +117,15 @@ proxy in front of the `web` container (Caddy, Traefik, nginx, or your cloud load
 balancer). Point it at `web:80` and forward `X-Forwarded-Proto: https`. Do not
 expose `8088` directly to the internet.
 
-## 8. Troubleshooting
+## 8. Metrics (Prometheus)
+
+The backend exposes Prometheus metrics at **`GET /metrics`** (unauthenticated by
+design — keep it inside your perimeter, don't expose it publicly). It includes Go
+runtime + process collectors and per-route HTTP metrics
+(`keyorix_http_requests_total`, `keyorix_http_request_duration_seconds`). Point
+your own Prometheus at `backend:8080/metrics`.
+
+## 9. Troubleshooting
 
 | Symptom | Cause / fix |
 |---------|-------------|
@@ -126,7 +134,7 @@ expose `8088` directly to the internet.
 | Backend can't decrypt secrets after a change | `KEYORIX_MASTER_PASSWORD` changed or the `keyorix_keys` volume was lost. Restore both from backup (section 5). |
 | Login returns 404 | Reverse proxy not forwarding `/auth/` — Keyorix serves login at the root path, not under `/api/`. The bundled `web` image already handles this. |
 
-## 9. Single-binary / air-gapped deployment
+## 10. Single-binary / air-gapped deployment
 
 For environments where Docker isn't available, `keyorix-server` is a single Go
 binary (`make build` → `keyorix-server`) that runs against any PostgreSQL with
