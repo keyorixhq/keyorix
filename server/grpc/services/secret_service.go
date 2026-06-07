@@ -39,11 +39,15 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets")
-	}
 	if req.GetName() == "" || req.GetValue() == "" || req.GetProjectId() == 0 || req.GetEnvironmentId() == 0 || req.GetType() == "" {
 		return nil, status.Error(codes.InvalidArgument, "name, value, project_id, environment_id and type are required")
+	}
+	// Authorize secrets.write AT THE TARGET project/environment, not the flat
+	// global permission set — a project-scoped writer must not create in another
+	// project. Mirrors the HTTP CreateSecret handler (scope from the body).
+	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
+	if allowed, err := s.core.Authorize(ctx, user.UserID, "secrets.write", scope); err != nil || !allowed {
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets in this project")
 	}
 
 	secret, err := s.core.CreateSecret(ctx, &core.CreateSecretRequest{
