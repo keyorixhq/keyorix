@@ -2,6 +2,7 @@ package http
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/http/handlers"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
+	"github.com/keyorixhq/keyorix/server/webui"
 )
 
 // NewRouter creates and configures the HTTP router
@@ -370,56 +372,58 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// OpenAPI spec endpoint
 	r.Get("/openapi.yaml", handlers.OpenAPISpec)
 
-	// Serve web dashboard static files
-	webDir := getWebAssetsPath(cfg)
-	if webDir != "" {
-		// Serve static assets with cache headers
-		r.Route("/static", func(r chi.Router) {
-			r.Use(setCacheHeaders)
-			fileServer := http.FileServer(http.Dir(filepath.Join(webDir, "static")))
-			r.Handle("/*", http.StripPrefix("/static", fileServer))
-		})
-
-		// Serve other assets (favicon, manifest, etc.)
-		r.Route("/assets", func(r chi.Router) {
-			r.Use(setCacheHeaders)
-			fileServer := http.FileServer(http.Dir(filepath.Join(webDir, "assets")))
-			r.Handle("/*", http.StripPrefix("/assets", fileServer))
-		})
-
-		// Serve service worker
-		r.Get("/sw.js", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/javascript")
-			w.Header().Set("Cache-Control", "no-cache")
-			http.ServeFile(w, r, filepath.Join(webDir, "sw.js"))
-		})
-
-		// Serve manifest and other root files
-		r.Get("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			http.ServeFile(w, r, filepath.Join(webDir, "manifest.json"))
-		})
-
-		r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(webDir, "favicon.ico"))
-		})
-
-		// SPA fallback - serve index.html for all non-API routes
-		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-			// Don't serve SPA for API routes
-			if strings.HasPrefix(r.URL.Path, "/api/") {
-				http.NotFound(w, r)
-				return
-			}
-
-			// Serve index.html for SPA routing
-			w.Header().Set("Content-Type", "text/html")
-			w.Header().Set("Cache-Control", "no-cache")
-			http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
-		})
+	// Serve the web dashboard. Prefer an on-disk build (mounted in the Docker
+	// stack, or present in dev); otherwise fall back to the build embedded in the
+	// binary, so a single keyorix-server can serve the UI with no web container
+	// (the air-gap "one file" deployment).
+	if webDir := getWebAssetsPath(cfg); webDir != "" {
+		log.Printf("Serving web UI from %s", webDir)
+		registerWebUI(r, http.Dir(webDir))
+	} else if webui.HasRealBuild() {
+		log.Printf("Serving embedded web UI (single-binary mode)")
+		registerWebUI(r, webui.HTTPFS())
+	} else {
+		log.Printf("Web UI not bundled in this build; serving API only (placeholder page at /)")
+		registerWebUI(r, webui.HTTPFS())
 	}
 
 	return r, nil
+}
+
+// registerWebUI wires the SPA's static assets and the client-side-routing
+// fallback against fsys, which is rooted at the dist directory (so request paths
+// map directly: /assets/x -> dist/assets/x). fsys is either an on-disk build
+// (http.Dir) or the embedded build (webui.HTTPFS()).
+func registerWebUI(r chi.Router, fsys http.FileSystem) {
+	fileServer := http.FileServer(fsys)
+
+	r.With(setCacheHeaders).Handle("/assets/*", fileServer)
+	r.With(setCacheHeaders).Handle("/static/*", fileServer)
+	r.Handle("/sw.js", fileServer)
+	r.Handle("/manifest.json", fileServer)
+	r.Handle("/favicon.ico", fileServer)
+
+	// SPA fallback: serve index.html for any non-API route that didn't match a
+	// registered handler, so client-side routes (e.g. /admin/users) resolve.
+	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		if strings.HasPrefix(req.URL.Path, "/api/") {
+			http.NotFound(w, req)
+			return
+		}
+		f, err := fsys.Open("index.html")
+		if err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		defer func() { _ = f.Close() }()
+		fi, err := f.Stat()
+		if err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeContent(w, req, "index.html", fi.ModTime(), f)
+	})
 }
 
 // getAllowedOrigins returns the allowed origins for CORS based on configuration

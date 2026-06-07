@@ -158,6 +158,21 @@ your own Prometheus at `backend:8080/metrics`.
 ## 10. Single-binary / air-gapped deployment
 
 For environments where Docker isn't available, `keyorix-server` is a single Go
-binary (`make build` → `keyorix-server`) that runs against any PostgreSQL with
-`KEYORIX_MASTER_PASSWORD` + `KEYORIX_DB_PASSWORD` set. Serving the bundled web UI
-from the binary is on the roadmap; today the web UI ships as the `web` container.
+binary that runs against any PostgreSQL with `KEYORIX_MASTER_PASSWORD` +
+`KEYORIX_DB_PASSWORD` set — and it can serve the **web dashboard from the binary
+itself**, so the whole product is one file plus a database. No web container, no
+nginx.
+
+```sh
+make build-ui      # builds keyorix-web and embeds it into bin/keyorix-server
+                   # (override the web checkout: make build-ui KEYORIX_WEB_DIR=/path)
+KEYORIX_MASTER_PASSWORD=… KEYORIX_DB_PASSWORD=… ./bin/keyorix-server
+```
+
+Copy `keyorix-server` to the target host, point it at PostgreSQL, and the API +
+UI are served on one port (default 8080). Set TLS directly via `server.http.tls`
+in the config for HTTPS without a proxy.
+
+`make build` (without the UI) produces an API-only binary that serves a small
+placeholder page in place of the dashboard — use `make build-ui` for the full
+single-file deployment.

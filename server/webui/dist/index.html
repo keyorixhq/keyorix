@@ -1,0 +1,25 @@
+<!doctype html>
+<!--
+  Placeholder served by dev/test builds of keyorix-server. A release build
+  (`make build-ui`) replaces this dist/ with the real keyorix-web bundle, so the
+  single binary serves the full dashboard. If you are seeing this page in
+  production, the web UI was not bundled into this build.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Keyorix</title>
+  </head>
+  <body>
+    <main style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem;">
+      <h1>Keyorix API server</h1>
+      <p>
+        This build does not bundle the web dashboard. The API is running and
+        healthy at <code>/health</code>. To get the dashboard, use the Docker
+        stack (web container) or a release binary built with
+        <code>make build-ui</code>.
+      </p>
+    </main>
+  </body>
+</html>

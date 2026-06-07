@@ -4,7 +4,7 @@ BUILD_DIR=./bin
 VERSION?=dev
 LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION)"
 
-.PHONY: build build-cli build-server install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint
+.PHONY: build build-cli build-server build-ui install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -31,6 +31,25 @@ build-cli:
 
 build-server:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server/main.go
+
+# Path to the keyorix-web checkout (override: make build-ui KEYORIX_WEB_DIR=/path).
+KEYORIX_WEB_DIR ?= ../keyorix-web
+
+# build-ui: build the web dashboard and embed it into the server binary, so a
+# single keyorix-server serves both API and UI (air-gap "one file" deploy).
+# Requires pnpm + a keyorix-web checkout at KEYORIX_WEB_DIR. The committed
+# placeholder is restored afterward so the working tree stays clean — the binary
+# already has the real UI embedded.
+build-ui:
+	@command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required to build the web UI"; exit 1; }
+	@test -d "$(KEYORIX_WEB_DIR)" || { echo "keyorix-web not found at $(KEYORIX_WEB_DIR); set KEYORIX_WEB_DIR=<path>"; exit 1; }
+	cd "$(KEYORIX_WEB_DIR)" && pnpm install --frozen-lockfile && pnpm build
+	rm -rf server/webui/dist
+	mkdir -p server/webui/dist
+	cp -R "$(KEYORIX_WEB_DIR)"/dist/. server/webui/dist/
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server/main.go
+	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
+	@echo "Built $(BUILD_DIR)/$(BINARY_SERVER) with the web UI embedded."
 
 install-cli: build-cli
 	sudo mv $(BUILD_DIR)/$(BINARY_CLI) /usr/local/bin/$(BINARY_CLI)

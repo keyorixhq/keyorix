@@ -181,3 +181,8 @@ temp/
 
 data_key
 certs/
+
+# Embedded web UI: commit only the placeholder; release builds (`make build-ui`)
+# copy the real keyorix-web bundle in, which must not be committed.
+/server/webui/dist/*
+!/server/webui/dist/index.html
