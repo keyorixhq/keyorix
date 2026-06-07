@@ -297,6 +297,7 @@ func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) 
 			"action":         e.Action,
 			"actor_user_id":  e.ActorUserID,
 			"target_user_id": e.TargetUserID,
+			"group_id":       e.GroupID,
 			"role_id":        e.RoleID,
 			"project_id":     e.ProjectID,
 			"details":        e.Details,

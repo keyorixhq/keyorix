@@ -580,7 +580,7 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 	}
 
 	scope := core.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if err := h.coreService.AssignRoleToGroup(r.Context(), groupID, body.RoleID, scope); err != nil {
+	if err := h.coreService.AssignRoleToGroup(r.Context(), userCtx.UserID, groupID, body.RoleID, scope); err != nil {
 		log.Printf("Error assigning role to group: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
@@ -617,7 +617,7 @@ func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request
 		EnvironmentID: queryUint(r, "environment_id"),
 	}
 
-	if err := h.coreService.RemoveRoleFromGroup(r.Context(), groupID, roleID, scope); err != nil {
+	if err := h.coreService.RemoveRoleFromGroup(r.Context(), userCtx.UserID, groupID, roleID, scope); err != nil {
 		log.Printf("Error removing role from group: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)

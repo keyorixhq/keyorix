@@ -72,6 +72,34 @@ func TestRBACAuditTrail_SystemActor(t *testing.T) {
 	assert.Equal(t, uint(4), *entries[0].RoleID)
 }
 
+func TestRBACAuditTrail_GroupRole(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.AuditEvent{}, &models.Group{}, &models.Role{}, &models.GroupRole{},
+	))
+	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	c := NewKeyorixCore(store.NewLocalStorage(db))
+	ctx := context.Background()
+
+	require.NoError(t, c.AssignRoleToGroup(ctx, 5, 7, 2, Scope{ProjectID: 3}))
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	e := entries[0]
+	assert.Equal(t, EventRoleGroupAssigned, e.Action)
+	require.NotNil(t, e.ActorUserID)
+	assert.Equal(t, uint(5), *e.ActorUserID)
+	require.NotNil(t, e.GroupID)
+	assert.Equal(t, uint(7), *e.GroupID)
+	require.NotNil(t, e.RoleID)
+	assert.Equal(t, uint(2), *e.RoleID)
+	assert.Nil(t, e.TargetUserID, "group event has no target user")
+}
+
 // SetUserRoles diffs the current vs desired set and audits each resulting change.
 func TestRBACAuditTrail_SetUserRolesEmitsPerChange(t *testing.T) {
 	c := newRBACAuditCore(t)

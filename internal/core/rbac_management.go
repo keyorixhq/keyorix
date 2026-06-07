@@ -78,8 +78,9 @@ func (c *KeyorixCore) GetGroupRoles(ctx context.Context, groupID uint) ([]*model
 	return roles, nil
 }
 
-// AssignRoleToGroup verifies both exist then assigns the role at scope.
-func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error {
+// AssignRoleToGroup verifies both exist then assigns the role at scope and
+// records an RBAC audit event. actorID is the acting principal (0 = none).
+func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
@@ -89,17 +90,20 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, groupID, roleID uin
 	if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogGroupRoleAssigned(ctx, actorID, groupID, roleID, scope)
 	return nil
 }
 
-// RemoveRoleFromGroup verifies the group exists then removes the role at scope.
-func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope Scope) error {
+// RemoveRoleFromGroup verifies the group exists then removes the role at scope
+// and records an RBAC audit event. actorID is the acting principal (0 = none).
+func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
 	if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogGroupRoleRemoved(ctx, actorID, groupID, roleID, scope)
 	return nil
 }
 

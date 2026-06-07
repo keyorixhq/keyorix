@@ -12,14 +12,23 @@ import (
 // RBAC audit event types. Role assignments/removals are written to the shared
 // audit_events table and surfaced together by ListRBACAuditLogs.
 const (
-	EventRoleAssigned = "role.assigned"
-	EventRoleRemoved  = "role.removed"
+	EventRoleAssigned      = "role.assigned"
+	EventRoleRemoved       = "role.removed"
+	EventRoleGroupAssigned = "role.group_assigned" // #nosec G101 -- audit event type, not a credential
+	EventRoleGroupRemoved  = "role.group_removed"  // #nosec G101 -- audit event type, not a credential
 )
+
+// rbacAuditEventTypes is the set of event types that make up the RBAC audit log.
+var rbacAuditEventTypes = []string{
+	EventRoleAssigned, EventRoleRemoved,
+	EventRoleGroupAssigned, EventRoleGroupRemoved,
+}
 
 // rbacAuditDetail is the structured payload stored in an RBAC event's Diff field,
 // carrying the target/role/scope that the generic AuditEvent row cannot.
 type rbacAuditDetail struct {
-	TargetUserID  uint `json:"target_user_id"`
+	TargetUserID  uint `json:"target_user_id,omitempty"`
+	GroupID       uint `json:"group_id,omitempty"`
 	RoleID        uint `json:"role_id"`
 	ProjectID     uint `json:"project_id,omitempty"`
 	EnvironmentID uint `json:"environment_id,omitempty"`
@@ -37,12 +46,39 @@ func (c *KeyorixCore) LogRoleRemoved(ctx context.Context, actorID, targetUserID,
 }
 
 func (c *KeyorixCore) logRoleChange(ctx context.Context, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope) {
-	detail, _ := json.Marshal(rbacAuditDetail{
+	desc := fmt.Sprintf("role %d %s user %d", roleID, verb, targetUserID)
+	c.writeRBACAudit(ctx, eventType, desc, actorID, scope, rbacAuditDetail{
 		TargetUserID:  targetUserID,
 		RoleID:        roleID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 	})
+}
+
+// LogGroupRoleAssigned / LogGroupRoleRemoved record a role granted to / removed
+// from a group. See LogRoleAssigned for actorID semantics.
+func (c *KeyorixCore) LogGroupRoleAssigned(ctx context.Context, actorID, groupID, roleID uint, scope Scope) {
+	c.logGroupRoleChange(ctx, EventRoleGroupAssigned, "assigned to group", actorID, groupID, roleID, scope)
+}
+
+func (c *KeyorixCore) LogGroupRoleRemoved(ctx context.Context, actorID, groupID, roleID uint, scope Scope) {
+	c.logGroupRoleChange(ctx, EventRoleGroupRemoved, "removed from group", actorID, groupID, roleID, scope)
+}
+
+func (c *KeyorixCore) logGroupRoleChange(ctx context.Context, eventType, verb string, actorID, groupID, roleID uint, scope Scope) {
+	desc := fmt.Sprintf("role %d %s %d", roleID, verb, groupID)
+	c.writeRBACAudit(ctx, eventType, desc, actorID, scope, rbacAuditDetail{
+		GroupID:       groupID,
+		RoleID:        roleID,
+		ProjectID:     scope.ProjectID,
+		EnvironmentID: scope.EnvironmentID,
+	})
+}
+
+// writeRBACAudit is the shared writer for RBAC audit events: actor as UserID,
+// scope's project as ProjectID, and the structured detail in the diff.
+func (c *KeyorixCore) writeRBACAudit(ctx context.Context, eventType, desc string, actorID uint, scope Scope, detail rbacAuditDetail) {
+	encoded, _ := json.Marshal(detail)
 	var actor *uint
 	if actorID != 0 {
 		a := actorID
@@ -53,8 +89,7 @@ func (c *KeyorixCore) logRoleChange(ctx context.Context, eventType, verb string,
 		p := scope.ProjectID
 		projectID = &p
 	}
-	desc := fmt.Sprintf("role %d %s user %d", roleID, verb, targetUserID)
-	c.writeAuditEventDiff(ctx, eventType, actor, nil, projectID, "", desc, string(detail))
+	c.writeAuditEventDiff(ctx, eventType, actor, nil, projectID, "", desc, string(encoded))
 }
 
 // writeAuditEvent persists an audit_events row (basic — no project/IP context).
