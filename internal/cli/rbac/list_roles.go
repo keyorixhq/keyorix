@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -20,6 +21,11 @@ var listRolesCmd = &cobra.Command{
 }
 
 func runListRoles(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runListRolesRemote(ctx, rc)
+	}
+
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -39,9 +45,6 @@ func runListRoles(cmd *cobra.Command, args []string) error {
 
 	// Initialize storage
 	storage := store.NewLocalStorage(db)
-
-	// Create context
-	ctx := context.Background()
 
 	// TODO: Implement ListRoles in core service
 	// For now, use storage directly
