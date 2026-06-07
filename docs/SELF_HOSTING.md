@@ -112,10 +112,31 @@ Schema migrations run automatically on boot and are additive. **Back up first**
 
 ## 7. TLS
 
-The stack serves plain HTTP on `8088` by design — terminate TLS at a reverse
-proxy in front of the `web` container (Caddy, Traefik, nginx, or your cloud load
-balancer). Point it at `web:80` and forward `X-Forwarded-Proto: https`. Do not
-expose `8088` directly to the internet.
+The default stack serves plain HTTP on `8088`. Two ways to get HTTPS:
+
+**Bundled (recommended) — the `tls` profile.** An optional Caddy front-end that
+terminates TLS and proxies to the web container:
+
+```sh
+# In .env, set KEYORIX_DOMAIN to your real domain (DNS must point here, and
+# ports 80 + 443 must be reachable from the internet for the ACME challenge):
+#   KEYORIX_DOMAIN=keyorix.example.com
+docker compose --profile tls up -d
+```
+
+Caddy automatically provisions and renews a publicly-trusted certificate
+(Let's Encrypt / ZeroSSL). Issued certs persist on the `caddy_data` volume so
+restarts don't re-request them. For a `localhost` value Caddy uses its internal
+CA (browsers warn unless you trust Caddy's root). When running the `tls` profile,
+don't also expose web's `8088` publicly — front everything through Caddy on
+80/443.
+
+**Your own proxy.** Or terminate TLS at an existing Caddy/Traefik/nginx/LB in
+front of the `web` container: point it at `web:80` and forward
+`X-Forwarded-Proto: https`.
+
+The single-binary `keyorix-server` also supports TLS directly
+(`server.http.tls` in the config) for non-Docker deployments.
 
 ## 8. Metrics (Prometheus)
 
