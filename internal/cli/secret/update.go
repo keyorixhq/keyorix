@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -60,6 +61,10 @@ func init() {
 func runUpdate(cmd *cobra.Command, args []string) error {
 	if updateID == 0 {
 		return errors.New("secret ID is required (use --id)")
+	}
+
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runUpdateRemote(rc)
 	}
 
 	cfg, err := config.LoadConfig()
@@ -131,6 +136,70 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runUpdateRemote updates the secret through the server (PUT /api/v1/secrets/{id})
+// so it operates on the same store the dashboard/API use. Supports value,
+// max-reads, and expiration (set or clear); --type is not supported by the
+// endpoint (and is ignored in embedded mode too).
+func runUpdateRemote(rc *common.RemoteClient) error {
+	ctx := context.Background()
+
+	// Fetch current state for the display + interactive defaults. The GET response
+	// (without include_value) is the secret node itself, with PascalCase keys that
+	// unmarshal straight into models.SecretNode.
+	var current models.SecretNode
+	if err := rc.Get(ctx, fmt.Sprintf("/api/v1/secrets/%d", updateID), &current); err != nil {
+		return fmt.Errorf("failed to get current secret: %w", err)
+	}
+
+	fmt.Printf("🔄 Updating Secret: %s (ID: %d)\n", current.Name, current.ID)
+	fmt.Printf("Current Type: %s\n", current.Type)
+	if current.MaxReads != nil {
+		fmt.Printf("Current Max Reads: %d\n", *current.MaxReads)
+	}
+	if current.Expiration != nil {
+		fmt.Printf("Current Expiration: %s\n", current.Expiration.Format(time.RFC3339))
+	}
+	fmt.Println()
+
+	var req *core.UpdateSecretRequest
+	var err error
+	if updateInteractive {
+		req, err = interactiveUpdate(&current)
+	} else {
+		req, err = buildUpdateRequest()
+	}
+	if err != nil {
+		return fmt.Errorf("failed to build request: %w", err)
+	}
+
+	body := map[string]interface{}{}
+	if len(req.Value) > 0 {
+		body["value"] = string(req.Value)
+	}
+	if req.MaxReads != nil {
+		body["max_reads"] = *req.MaxReads
+	}
+	if req.ClearExpiration {
+		body["clear_expiration"] = true
+	} else if req.Expiration != nil {
+		body["expiration"] = req.Expiration.Format(time.RFC3339)
+	}
+
+	var updated models.SecretNode
+	if err := rc.Put(ctx, fmt.Sprintf("/api/v1/secrets/%d", updateID), body, &updated); err != nil {
+		return fmt.Errorf("failed to update secret: %w", err)
+	}
+
+	fmt.Printf("✅ Secret updated successfully!\n")
+	fmt.Printf("ID: %d\n", updated.ID)
+	fmt.Printf("Name: %s\n", updated.Name)
+	fmt.Printf("Type: %s\n", updated.Type)
+	if len(req.Value) > 0 {
+		fmt.Printf("🔐 New encrypted version created\n")
+	}
+	return nil
+}
+
 func buildUpdateRequest() (*core.UpdateSecretRequest, error) {
 	req := &core.UpdateSecretRequest{
 		ID:        updateID,
@@ -168,7 +237,7 @@ func buildUpdateRequest() (*core.UpdateSecretRequest, error) {
 	}
 
 	if updateClearExp {
-		req.Expiration = nil
+		req.ClearExpiration = true
 	} else if updateExpiration != "" {
 		exp, err := time.Parse(time.RFC3339, updateExpiration)
 		if err != nil {
@@ -253,7 +322,7 @@ func interactiveUpdate(current *models.SecretNode) (*core.UpdateSecretRequest, e
 
 	if askBool("Update expiration?") {
 		if askBool("Clear expiration?") {
-			req.Expiration = nil
+			req.ClearExpiration = true
 		} else {
 			expirationStr := ask("Expiration (RFC3339 format)", currentExp)
 			if expirationStr != "" && expirationStr != currentExp {
