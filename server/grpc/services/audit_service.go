@@ -2,18 +2,25 @@ package services
 
 import (
 	"context"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// AuditGRPCService implements pb.AuditServiceServer. StreamAuditLogs has no
-// backing yet, so it is left as the embedded Unimplemented default.
+// Audit-stream tail tuning: how often to poll for new events, and the max events
+// drained per poll. The interval is a var so tests can shorten it.
+var auditStreamPollInterval = 2 * time.Second
+
+const auditStreamBatch = 100
+
+// AuditGRPCService implements pb.AuditServiceServer.
 type AuditGRPCService struct {
 	pb.UnimplementedAuditServiceServer
 	core *core.KeyorixCore
@@ -123,6 +130,76 @@ func rbacEntryToProto(e *core.RBACAuditEntry) *pb.RBACAuditLog {
 		out.ProjectId = ptrU32(*e.ProjectID)
 	}
 	return out
+}
+
+// StreamAuditLogs tails the audit log: it streams audit events as they occur
+// (events created after the stream opens — use GetAuditLogs for history),
+// applying the same event_type/user/project filters. Implemented by polling the
+// forward id cursor (AuditFilter.AfterID/Ascending) every auditStreamPollInterval,
+// which avoids a separate pub/sub broker and reuses the existing query path. The
+// stream ends when the client disconnects (context cancellation).
+func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, stream pb.AuditService_StreamAuditLogsServer) error {
+	ctx := stream.Context()
+	actor := interceptors.GetUserFromGRPCContext(ctx)
+	if actor == nil {
+		return status.Error(codes.Unauthenticated, "user not authenticated")
+	}
+	if !hasPermission(actor.Permissions, "audit.read") {
+		return status.Error(codes.PermissionDenied, "insufficient permissions to read audit logs")
+	}
+
+	// Start at the current head so we tail new events, not the backlog.
+	cursor, err := s.latestAuditID(ctx)
+	if err != nil {
+		return status.Error(codes.Internal, "failed to start audit stream")
+	}
+
+	ticker := time.NewTicker(auditStreamPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			after := cursor
+			events, _, err := s.core.Storage().GetAuditLogs(ctx, &corestorage.AuditFilter{
+				AfterID:   &after,
+				Ascending: true,
+				PageSize:  auditStreamBatch,
+				Action:    optString(req.EventType),
+				UserID:    optUint(req.UserId),
+				ProjectID: optUint(req.ProjectId),
+			})
+			if err != nil {
+				return status.Error(codes.Internal, "failed to read audit logs")
+			}
+			if len(events) == 0 {
+				continue
+			}
+			names := s.core.ResolveUsernames(ctx, events)
+			for _, e := range events {
+				if err := stream.Send(auditEventToProto(e, names)); err != nil {
+					return err // client gone / send failed
+				}
+				cursor = e.ID
+			}
+		}
+	}
+}
+
+// latestAuditID returns the most recent audit event id (the tail starting point),
+// or 0 when the log is empty. The default GetAuditLogs order is newest-first and
+// ids autoincrement with insertion, so the first row carries the head id.
+func (s *AuditGRPCService) latestAuditID(ctx context.Context) (uint, error) {
+	events, _, err := s.core.Storage().GetAuditLogs(ctx, &corestorage.AuditFilter{Page: 1, PageSize: 1})
+	if err != nil {
+		return 0, err
+	}
+	if len(events) == 0 {
+		return 0, nil
+	}
+	return events[0].ID, nil
 }
 
 // ---------------------------------------------------------------------------
