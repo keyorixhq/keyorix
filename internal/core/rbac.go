@@ -19,8 +19,9 @@ func (c *KeyorixCore) AssignRoleToUser(ctx context.Context, userEmail, roleName 
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	if err := c.storage.AssignRole(ctx, user.ID, role.ID, Scope{}); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	// actorID 0: invoked without an authenticated session (local CLI/system).
+	if err := c.AssignUserRole(ctx, 0, user.ID, role.ID, Scope{}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -35,8 +36,9 @@ func (c *KeyorixCore) RemoveRoleFromUser(ctx context.Context, userEmail, roleNam
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	if err := c.storage.RemoveRole(ctx, user.ID, role.ID, Scope{}); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	// actorID 0: invoked without an authenticated session (local CLI/system).
+	if err := c.RemoveUserRole(ctx, 0, user.ID, role.ID, Scope{}); err != nil {
+		return err
 	}
 	return nil
 }

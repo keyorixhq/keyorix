@@ -299,8 +299,11 @@ type AuditFilter struct {
 	ProjectID *uint
 	UserID    *uint
 	Action    *string
-	Resource  *string
-	Success   *bool
+	// Actions matches any of several event types (event_type IN). Used to pull a
+	// related family of events together, e.g. the RBAC audit log (role.*).
+	Actions  []string
+	Resource *string
+	Success  *bool
 	// ActorType filters by acting-principal kind: "user" or "machine_identity"
 	// (also "system"). Nil = all actor types. (ADR-023)
 	ActorType *string

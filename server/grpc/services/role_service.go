@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
-	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -186,8 +185,8 @@ func (s *RoleGRPCService) AssignRole(ctx context.Context, req *pb.AssignRoleRequ
 	if req.GetUserId() == 0 || req.GetRoleId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "user_id and role_id are required")
 	}
-	scope := corestorage.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
-	if err := s.core.Storage().AssignRole(ctx, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
+	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
+	if err := s.core.AssignUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
 		return nil, mapRoleError(err)
 	}
 	return &pb.RoleAssignment{
@@ -210,8 +209,8 @@ func (s *RoleGRPCService) RemoveRole(ctx context.Context, req *pb.RemoveRoleRequ
 	if req.GetUserId() == 0 || req.GetRoleId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "user_id and role_id are required")
 	}
-	scope := corestorage.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
-	if err := s.core.Storage().RemoveRole(ctx, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
+	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
+	if err := s.core.RemoveUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
 		return nil, mapRoleError(err)
 	}
 	return &emptypb.Empty{}, nil
