@@ -56,6 +56,31 @@ services:
     depends_on:
       - backend
 
+  # Optional HTTPS front-end. Enable with `docker compose --profile tls up -d`.
+  # Caddy terminates TLS and proxies to web. Set KEYORIX_DOMAIN to a real domain
+  # (with 80/443 reachable + DNS pointing here) for an automatic, publicly-trusted
+  # certificate; the default `localhost` uses Caddy's internal CA. See
+  # docs/SELF_HOSTING.md §7. When using this, don't also expose web's 8088 publicly.
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      KEYORIX_DOMAIN: ${KEYORIX_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persist issued certificates so restarts don't re-request them (ACME has
+      # rate limits).
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
 volumes:
   postgres_data:
   keyorix_keys:
+  caddy_data:
+  caddy_config:

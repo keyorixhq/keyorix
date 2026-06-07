@@ -1,0 +1,15 @@
+# Keyorix TLS front-end — used only by the optional `tls` compose profile
+# (`docker compose --profile tls up -d`).
+#
+# Caddy terminates HTTPS and reverse-proxies to the web container (which serves
+# the SPA and proxies the API to the backend). With a real domain set in
+# KEYORIX_DOMAIN, Caddy automatically provisions and renews a publicly-trusted
+# certificate (Let's Encrypt / ZeroSSL) — ports 80 and 443 must be reachable from
+# the internet and DNS must point at this host. For the default `localhost` it
+# uses Caddy's internal CA (browsers warn unless you trust Caddy's root).
+#
+# Add `email you@example.com` below for ACME expiry notifications if you like.
+
+{$KEYORIX_DOMAIN:localhost} {
+	reverse_proxy web:80
+}
