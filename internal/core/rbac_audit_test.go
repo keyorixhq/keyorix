@@ -100,6 +100,39 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 	assert.Nil(t, e.TargetUserID, "group event has no target user")
 }
 
+func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
+	))
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 8, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
+	c := NewKeyorixCore(store.NewLocalStorage(db))
+	ctx := context.Background()
+
+	require.NoError(t, c.AssignPermissionToRole(ctx, 5, 2, 8))
+	require.NoError(t, c.RemovePermissionFromRole(ctx, 5, 2, 8))
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	var added *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventPermissionAdded {
+			added = e
+		}
+	}
+	require.NotNil(t, added, "expected a permission.assigned entry")
+	require.NotNil(t, added.ActorUserID)
+	assert.Equal(t, uint(5), *added.ActorUserID)
+	require.NotNil(t, added.RoleID)
+	assert.Equal(t, uint(2), *added.RoleID)
+	require.NotNil(t, added.PermissionID)
+	assert.Equal(t, uint(8), *added.PermissionID)
+}
+
 // SetUserRoles diffs the current vs desired set and audits each resulting change.
 func TestRBACAuditTrail_SetUserRolesEmitsPerChange(t *testing.T) {
 	c := newRBACAuditCore(t)

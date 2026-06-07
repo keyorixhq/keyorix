@@ -24,6 +24,7 @@ type RBACAuditEntry struct {
 	TargetUserID *uint  // set for user-role events
 	GroupID      *uint  // set for group-role events
 	RoleID       *uint
+	PermissionID *uint // set for permission-to-role events
 	ProjectID    *uint
 	Details      string
 	CreatedAt    time.Time
@@ -71,6 +72,10 @@ func (c *KeyorixCore) ListRBACAuditLogs(ctx context.Context, page, pageSize int)
 			if d.RoleID != 0 {
 				r := d.RoleID
 				entry.RoleID = &r
+			}
+			if d.PermissionID != 0 {
+				pid := d.PermissionID
+				entry.PermissionID = &pid
 			}
 			if d.ProjectID != 0 {
 				p := d.ProjectID

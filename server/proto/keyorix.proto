@@ -452,6 +452,9 @@ message RBACAuditLog {
   // Set for group-role events (role.group_assigned / role.group_removed): the
   // group the role was granted to / removed from.
   optional uint32 group_id = 9;
+  // Set for permission-to-role events (permission.assigned / permission.removed):
+  // the permission granted to / removed from the role.
+  optional uint32 permission_id = 10;
 }
 
 message GetRBACAuditLogsRequest {

@@ -299,6 +299,7 @@ func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) 
 			"target_user_id": e.TargetUserID,
 			"group_id":       e.GroupID,
 			"role_id":        e.RoleID,
+			"permission_id":  e.PermissionID,
 			"project_id":     e.ProjectID,
 			"details":        e.Details,
 			"created_at":     e.CreatedAt.UTC().Format(time.RFC3339),

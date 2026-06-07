@@ -168,7 +168,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue // skip unknown permission names
 		}
-		if err := h.coreService.Storage().AssignPermissionToRole(r.Context(), role.ID, perm.ID); err != nil {
+		if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, role.ID, perm.ID); err != nil {
 			log.Printf("Warning: could not assign permission %q to role %d: %v", permName, role.ID, err)
 		} else {
 			assignedPerms = append(assignedPerms, perm)
@@ -253,14 +253,14 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	if req.Permissions != nil {
 		existing, _ := h.coreService.Storage().GetRolePermissions(r.Context(), id)
 		for _, ep := range existing {
-			_ = h.coreService.Storage().RemovePermissionFromRole(r.Context(), id, ep.ID)
+			_ = h.coreService.RemovePermissionFromRole(r.Context(), userCtx.UserID, id, ep.ID)
 		}
 		for _, permName := range *req.Permissions {
 			perm, err := h.findPermissionByName(r.Context(), permName)
 			if err != nil {
 				continue
 			}
-			_ = h.coreService.Storage().AssignPermissionToRole(r.Context(), id, perm.ID)
+			_ = h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, id, perm.ID)
 		}
 	}
 
@@ -481,7 +481,7 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.coreService.AssignPermissionToRole(r.Context(), roleID, body.PermissionID); err != nil {
+	if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, roleID, body.PermissionID); err != nil {
 		log.Printf("Error assigning permission to role: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
@@ -512,7 +512,7 @@ func (h *RBACHandler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := h.coreService.RemovePermissionFromRole(r.Context(), roleID, permID); err != nil {
+	if err := h.coreService.RemovePermissionFromRole(r.Context(), userCtx.UserID, roleID, permID); err != nil {
 		log.Printf("Error removing permission from role: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)

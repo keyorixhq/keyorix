@@ -51,7 +51,7 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 		return nil, mapRoleError(err)
 	}
 	for _, pid := range permIDs {
-		if err := s.core.Storage().AssignPermissionToRole(ctx, role.ID, pid); err != nil {
+		if err := s.core.AssignPermissionToRole(ctx, actor.UserID, role.ID, pid); err != nil {
 			return nil, status.Error(codes.Internal, "failed to assign permissions to role")
 		}
 	}
@@ -102,12 +102,12 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 			return nil, err
 		}
 		for _, p := range current {
-			if err := s.core.Storage().RemovePermissionFromRole(ctx, role.ID, p.ID); err != nil {
+			if err := s.core.RemovePermissionFromRole(ctx, actor.UserID, role.ID, p.ID); err != nil {
 				return nil, status.Error(codes.Internal, "failed to update role permissions")
 			}
 		}
 		for _, pid := range permIDs {
-			if err := s.core.Storage().AssignPermissionToRole(ctx, role.ID, pid); err != nil {
+			if err := s.core.AssignPermissionToRole(ctx, actor.UserID, role.ID, pid); err != nil {
 				return nil, status.Error(codes.Internal, "failed to update role permissions")
 			}
 		}
