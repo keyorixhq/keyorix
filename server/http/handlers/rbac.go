@@ -327,7 +327,9 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
-	if err := h.coreService.Storage().AssignRole(r.Context(), req.UserID, req.RoleID, scope); err != nil {
+	// Through the audited core choke point (records role.assigned with the actor),
+	// not storage directly — keeps this endpoint in the RBAC audit trail.
+	if err := h.coreService.AssignUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope); err != nil {
 		log.Printf("Error assigning role: %v", err)
 		if strings.Contains(err.Error(), "already assigned") {
 			sendError(w, "ConflictError", "Role already assigned to user", http.StatusConflict, nil)
@@ -360,7 +362,8 @@ func (h *RBACHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
-	if err := h.coreService.Storage().RemoveRole(r.Context(), req.UserID, req.RoleID, scope); err != nil {
+	// Through the audited core choke point (records role.removed with the actor).
+	if err := h.coreService.RemoveUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope); err != nil {
 		log.Printf("Error removing role: %v", err)
 		if strings.Contains(err.Error(), "not assigned") {
 			sendError(w, "NotFound", "Role not assigned to user", http.StatusNotFound, nil)

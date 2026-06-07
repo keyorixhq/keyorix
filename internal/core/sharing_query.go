@@ -43,6 +43,29 @@ func (c *KeyorixCore) ListSecretShares(ctx context.Context, secretID uint) ([]*m
 	return shares, nil
 }
 
+// ListSecretSharesWithPermissionCheck lists a secret's shares, but only for its
+// owner — the share list (recipients, permission levels) is owner-only, matching
+// UpdateSharePermission/RevokeShare. Without this, any caller with secrets.read
+// could enumerate who has access to any secret. Authenticated request surfaces
+// (HTTP/gRPC) use this; the local CLI uses ListSecretShares directly.
+func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, secretID, userID uint) ([]*models.ShareRecord, error) {
+	if secretID == 0 {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+	}
+	secret, err := c.GetSecret(ctx, secretID)
+	if err != nil {
+		return nil, err
+	}
+	if secret.OwnerID != userID {
+		return nil, fmt.Errorf("not authorized to view shares for this secret")
+	}
+	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return shares, nil
+}
+
 // ListSharesByUser lists shares involving the user (received as recipient + outgoing as owner).
 func (c *KeyorixCore) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
 	if userID == 0 {

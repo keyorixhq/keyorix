@@ -161,3 +161,14 @@ func TestShareService_ListSharedSecrets(t *testing.T) {
 	require.GreaterOrEqual(t, len(resp.GetSecrets()), 1)
 	assert.Equal(t, "shared-secret", resp.GetSecrets()[0].GetName())
 }
+
+// Regression (security review): listing a secret's shares is owner-only on the
+// gRPC surface (flat permissions, no scope middleware) — a non-owner with
+// secrets.read must be denied, not shown the recipient list.
+func TestShareService_ListSecretShares_NonOwnerDenied(t *testing.T) {
+	r := newShareTestRig(t) // secret owned by user 1
+	ctx := authCtx(2, "intruder", "secrets.read", "secrets.write")
+	_, err := r.svc.ListSecretShares(ctx, &pb.ListSecretSharesRequest{SecretId: r.secretID})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}

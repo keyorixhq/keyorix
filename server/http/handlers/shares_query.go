@@ -31,6 +31,9 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The route already enforces scoped secrets.read on this secret
+	// (RequireScopedPermission in the router), so listing its shares is already
+	// access-gated here.
 	shares, err := h.coreService.ListSecretShares(r.Context(), uint(id))
 	if err != nil {
 		log.Printf("Error listing secret shares: %v", err)
