@@ -1,8 +1,11 @@
 package config
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
@@ -165,16 +168,34 @@ func testRemoteConnection(cfg *config.Config) error {
 		return fmt.Errorf("remote configuration not found")
 	}
 
-	// TODO: Implement actual connection test
-	// For now, just validate configuration
 	if cfg.Storage.Remote.BaseURL == "" {
 		return fmt.Errorf("remote server URL not configured")
 	}
-
 	fmt.Printf("🌐 Remote server: %s\n", cfg.Storage.Remote.BaseURL)
-	fmt.Printf("✅ Configuration appears valid\n")
-	fmt.Printf("💡 Note: Actual connection test will be implemented in next phase\n")
 
+	timeout := time.Duration(cfg.Storage.Remote.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	client := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.Storage.Remote.TLSVerify}, // #nosec G402 — honors the configured tls_verify
+		},
+	}
+
+	// Any HTTP response (even 401) proves the server is reachable; only a
+	// transport error means we couldn't connect. We probe a real API path.
+	resp, err := client.Get(cfg.Storage.Remote.BaseURL + "/api/v1/system/info")
+	if err != nil {
+		return fmt.Errorf("could not reach remote server: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	fmt.Printf("✅ Reachable (HTTP %d)\n", resp.StatusCode)
+	if resp.StatusCode == http.StatusUnauthorized {
+		fmt.Printf("💡 Server is up; this probe is unauthenticated, so credentials were not verified\n")
+	}
 	return nil
 }
 

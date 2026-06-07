@@ -3,6 +3,7 @@ package rbac
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -58,11 +59,11 @@ func runCheckPermission(cmd *cobra.Command, args []string) error {
 	// Create context
 	ctx := context.Background()
 
-	// Parse permission into resource and action
-	// For now, assume format like "secrets.read" or "system.admin"
-	// TODO: Implement proper permission parsing
-	resource := "secrets"
-	action := checkPermissionName
+	// Permissions are named "resource.action" (e.g. secrets.read, system.admin).
+	resource, action, perr := splitPermissionName(checkPermissionName)
+	if perr != nil {
+		return perr
+	}
 
 	hasPermission, err := service.HasPermissionByEmail(ctx, checkUserEmail, resource, action)
 	if err != nil {
@@ -76,4 +77,13 @@ func runCheckPermission(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// splitPermissionName parses a "resource.action" permission name into its parts.
+func splitPermissionName(name string) (resource, action string, err error) {
+	parts := strings.SplitN(name, ".", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("permission must be in 'resource.action' form (e.g. secrets.read), got %q", name)
+	}
+	return parts[0], parts[1], nil
 }
