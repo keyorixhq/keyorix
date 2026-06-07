@@ -221,22 +221,29 @@ func (rs *RemoteStorage) AssignPermissionToRole(_ context.Context, _, _ uint) er
 
 // ListPermissions is not implemented in remote storage.
 func (rs *RemoteStorage) ListPermissions(_ context.Context) ([]*models.Permission, error) {
-	return nil, fmt.Errorf("not implemented: ListPermissions")
+	return nil, remoteUnsupported("ListPermissions")
 }
 
 // GetPermission is not implemented in remote storage.
 func (rs *RemoteStorage) GetPermission(_ context.Context, _ uint) (*models.Permission, error) {
-	return nil, fmt.Errorf("not implemented: GetPermission")
+	return nil, remoteUnsupported("GetPermission")
 }
 
 // GetRolePermissions is not implemented in remote storage.
 func (rs *RemoteStorage) GetRolePermissions(_ context.Context, _ uint) ([]*models.Permission, error) {
-	return nil, fmt.Errorf("not implemented: GetRolePermissions")
+	return nil, remoteUnsupported("GetRolePermissions")
 }
 
-// RemovePermissionFromRole is not implemented in remote storage.
-func (rs *RemoteStorage) RemovePermissionFromRole(_ context.Context, _, _ uint) error {
-	return fmt.Errorf("not implemented: RemovePermissionFromRole")
+// RemovePermissionFromRole revokes a permission from a role via the REST API.
+func (rs *RemoteStorage) RemovePermissionFromRole(ctx context.Context, roleID, permissionID uint) error {
+	resp, err := rs.client.Delete(ctx, fmt.Sprintf("/api/v1/roles/%d/permissions/%d", roleID, permissionID))
+	if err != nil {
+		return fmt.Errorf("failed to remove permission from role: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("remove permission from role failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
 // GetGroupRoles lists the roles assigned to a group via remote API.
@@ -319,53 +326,53 @@ func (rs *RemoteStorage) CreateEnvironment(_ context.Context, _ *models.Environm
 }
 
 func (rs *RemoteStorage) ListProjects(_ context.Context) ([]*models.Project, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("ListProjects")
 }
 
 func (rs *RemoteStorage) ListProjectsWithCounts(_ context.Context, _ bool) ([]storage.ProjectWithCounts, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("ListProjectsWithCounts")
 }
 
 func (rs *RemoteStorage) GetProject(_ context.Context, _ uint) (*models.Project, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("GetProject")
 }
 
 func (rs *RemoteStorage) UpdateProject(_ context.Context, _ *models.Project) (*models.Project, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("UpdateProject")
 }
 
 func (rs *RemoteStorage) DeleteProject(_ context.Context, _ uint) error {
-	return fmt.Errorf("not implemented in remote storage")
+	return remoteUnsupported("DeleteProject")
 }
 
 func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) error {
-	return fmt.Errorf("not implemented in remote storage")
+	return remoteUnsupported("RestoreProject")
 }
 
 func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("ListEnvironments")
 }
 
 func (rs *RemoteStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([]*models.Environment, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("ListEnvironmentsByProject")
 }
 
 func (rs *RemoteStorage) ListEnvironmentsByProjectIncludingDeleted(_ context.Context, _ uint) ([]*models.Environment, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("ListEnvironmentsByProjectIncludingDeleted")
 }
 
 func (rs *RemoteStorage) ListProjectMembers(_ context.Context, _ uint) ([]storage.ProjectMember, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("ListProjectMembers")
 }
 
 func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {
-	return nil, fmt.Errorf("not implemented in remote storage")
+	return nil, remoteUnsupported("GetEnvironment")
 }
 
 func (rs *RemoteStorage) DeleteEnvironment(_ context.Context, _ uint) error {
-	return fmt.Errorf("not implemented in remote storage")
+	return remoteUnsupported("DeleteEnvironment")
 }
 
 func (rs *RemoteStorage) RestoreEnvironment(_ context.Context, _ uint) error {
-	return fmt.Errorf("not implemented in remote storage")
+	return remoteUnsupported("RestoreEnvironment")
 }

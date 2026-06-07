@@ -6,39 +6,38 @@ package store
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 func (rs *RemoteStorage) CreateProjectInvitation(_ context.Context, _ *models.ProjectInvitation) (*models.ProjectInvitation, error) {
-	return nil, fmt.Errorf("CreateProjectInvitation not implemented for remote storage")
+	return nil, remoteUnsupported("CreateProjectInvitation")
 }
 
 func (rs *RemoteStorage) GetProjectInvitation(_ context.Context, _ uint) (*models.ProjectInvitation, error) {
-	return nil, fmt.Errorf("GetProjectInvitation not implemented for remote storage")
+	return nil, remoteUnsupported("GetProjectInvitation")
 }
 
 func (rs *RemoteStorage) UpdateProjectInvitation(_ context.Context, _ *models.ProjectInvitation) error {
-	return fmt.Errorf("UpdateProjectInvitation not implemented for remote storage")
+	return remoteUnsupported("UpdateProjectInvitation")
 }
 
 func (rs *RemoteStorage) ListProjectInvitations(_ context.Context, _ uint) ([]*models.ProjectInvitation, error) {
-	return nil, fmt.Errorf("ListProjectInvitations not implemented for remote storage")
+	return nil, remoteUnsupported("ListProjectInvitations")
 }
 
 func (rs *RemoteStorage) CreateAccessRequest(_ context.Context, _ *models.AccessRequest) (*models.AccessRequest, error) {
-	return nil, fmt.Errorf("CreateAccessRequest not implemented for remote storage")
+	return nil, remoteUnsupported("CreateAccessRequest")
 }
 
 func (rs *RemoteStorage) GetAccessRequest(_ context.Context, _ uint) (*models.AccessRequest, error) {
-	return nil, fmt.Errorf("GetAccessRequest not implemented for remote storage")
+	return nil, remoteUnsupported("GetAccessRequest")
 }
 
 func (rs *RemoteStorage) UpdateAccessRequest(_ context.Context, _ *models.AccessRequest) error {
-	return fmt.Errorf("UpdateAccessRequest not implemented for remote storage")
+	return remoteUnsupported("UpdateAccessRequest")
 }
 
 func (rs *RemoteStorage) ListAccessRequests(_ context.Context, _ uint) ([]*models.AccessRequest, error) {
-	return nil, fmt.Errorf("ListAccessRequests not implemented for remote storage")
+	return nil, remoteUnsupported("ListAccessRequests")
 }
