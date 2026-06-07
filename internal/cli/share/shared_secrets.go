@@ -6,6 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -31,6 +32,13 @@ func init() {
 }
 
 func runSharedSecrets(cmd *cobra.Command, args []string) error {
+	if rc, ok := common.NewRemoteClient(); ok {
+		// The server scopes this to the authenticated caller, so --user-id is
+		// ignored in remote mode (an embedded admin can query any user; over the
+		// API you see your own shared secrets).
+		return runSharedSecretsRemote(rc)
+	}
+
 	// Load config and connect to database
 	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {

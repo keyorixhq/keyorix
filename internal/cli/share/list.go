@@ -6,6 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -31,6 +32,10 @@ func init() {
 }
 
 func runList(cmd *cobra.Command, args []string) error {
+	if rc, ok := common.NewRemoteClient(); ok {
+		return runListRemote(rc, listSecretID)
+	}
+
 	// Load config and connect to database
 	cfg, err := config.Load("keyorix.yaml")
 	if err != nil {
