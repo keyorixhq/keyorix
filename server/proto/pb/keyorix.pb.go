@@ -2779,7 +2779,10 @@ type RBACAuditLog struct {
 	CreatedAt    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	// Set for group-role events (role.group_assigned / role.group_removed): the
 	// group the role was granted to / removed from.
-	GroupId       *uint32 `protobuf:"varint,9,opt,name=group_id,json=groupId,proto3,oneof" json:"group_id,omitempty"`
+	GroupId *uint32 `protobuf:"varint,9,opt,name=group_id,json=groupId,proto3,oneof" json:"group_id,omitempty"`
+	// Set for permission-to-role events (permission.assigned / permission.removed):
+	// the permission granted to / removed from the role.
+	PermissionId  *uint32 `protobuf:"varint,10,opt,name=permission_id,json=permissionId,proto3,oneof" json:"permission_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2873,6 +2876,13 @@ func (x *RBACAuditLog) GetCreatedAt() *timestamppb.Timestamp {
 func (x *RBACAuditLog) GetGroupId() uint32 {
 	if x != nil && x.GroupId != nil {
 		return *x.GroupId
+	}
+	return 0
+}
+
+func (x *RBACAuditLog) GetPermissionId() uint32 {
+	if x != nil && x.PermissionId != nil {
+		return *x.PermissionId
 	}
 	return 0
 }
@@ -4617,7 +4627,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x04page\x18\x03 \x01(\rR\x04page\x12\x1b\n" +
 	"\tpage_size\x18\x04 \x01(\rR\bpageSize\x12\x1f\n" +
 	"\vtotal_pages\x18\x05 \x01(\rR\n" +
-	"totalPages\"\x8e\x03\n" +
+	"totalPages\"\xca\x03\n" +
 	"\fRBACAuditLog\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x12'\n" +
@@ -4629,13 +4639,16 @@ const file_keyorix_proto_rawDesc = "" +
 	"\adetails\x18\a \x01(\tR\adetails\x129\n" +
 	"\n" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x1e\n" +
-	"\bgroup_id\x18\t \x01(\rH\x04R\agroupId\x88\x01\x01B\x10\n" +
+	"\bgroup_id\x18\t \x01(\rH\x04R\agroupId\x88\x01\x01\x12(\n" +
+	"\rpermission_id\x18\n" +
+	" \x01(\rH\x05R\fpermissionId\x88\x01\x01B\x10\n" +
 	"\x0e_actor_user_idB\x11\n" +
 	"\x0f_target_user_idB\n" +
 	"\n" +
 	"\b_role_idB\r\n" +
 	"\v_project_idB\v\n" +
-	"\t_group_id\"\xeb\x01\n" +
+	"\t_group_idB\x10\n" +
+	"\x0e_permission_id\"\xeb\x01\n" +
 	"\x17GetRBACAuditLogsRequest\x12\x1b\n" +
 	"\x06action\x18\x01 \x01(\tH\x00R\x06action\x88\x01\x01\x12'\n" +
 	"\ractor_user_id\x18\x02 \x01(\rH\x01R\vactorUserId\x88\x01\x01\x12)\n" +

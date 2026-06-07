@@ -44,8 +44,9 @@ func (c *KeyorixCore) GetRoleWithPermissions(ctx context.Context, roleID uint) (
 	return role, perms, nil
 }
 
-// AssignPermissionToRole verifies both exist and assigns the permission.
-func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, roleID, permissionID uint) error {
+// AssignPermissionToRole verifies both exist, assigns the permission, and records
+// an RBAC audit event. actorID is the acting principal (0 = none).
+func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleID, permissionID uint) error {
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
@@ -55,17 +56,20 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, roleID, permis
 	if err := c.storage.AssignPermissionToRole(ctx, roleID, permissionID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogPermissionAssigned(ctx, actorID, roleID, permissionID)
 	return nil
 }
 
-// RemovePermissionFromRole verifies the role exists then removes the permission.
-func (c *KeyorixCore) RemovePermissionFromRole(ctx context.Context, roleID, permissionID uint) error {
+// RemovePermissionFromRole verifies the role exists, removes the permission, and
+// records an RBAC audit event. actorID is the acting principal (0 = none).
+func (c *KeyorixCore) RemovePermissionFromRole(ctx context.Context, actorID, roleID, permissionID uint) error {
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
 	if err := c.storage.RemovePermissionFromRole(ctx, roleID, permissionID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogPermissionRemoved(ctx, actorID, roleID, permissionID)
 	return nil
 }
 

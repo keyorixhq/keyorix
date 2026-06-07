@@ -16,12 +16,15 @@ const (
 	EventRoleRemoved       = "role.removed"
 	EventRoleGroupAssigned = "role.group_assigned" // #nosec G101 -- audit event type, not a credential
 	EventRoleGroupRemoved  = "role.group_removed"  // #nosec G101 -- audit event type, not a credential
+	EventPermissionAdded   = "permission.assigned" // #nosec G101 -- audit event type, not a credential
+	EventPermissionRemoved = "permission.removed"  // #nosec G101 -- audit event type, not a credential
 )
 
 // rbacAuditEventTypes is the set of event types that make up the RBAC audit log.
 var rbacAuditEventTypes = []string{
 	EventRoleAssigned, EventRoleRemoved,
 	EventRoleGroupAssigned, EventRoleGroupRemoved,
+	EventPermissionAdded, EventPermissionRemoved,
 }
 
 // rbacAuditDetail is the structured payload stored in an RBAC event's Diff field,
@@ -30,6 +33,7 @@ type rbacAuditDetail struct {
 	TargetUserID  uint `json:"target_user_id,omitempty"`
 	GroupID       uint `json:"group_id,omitempty"`
 	RoleID        uint `json:"role_id"`
+	PermissionID  uint `json:"permission_id,omitempty"`
 	ProjectID     uint `json:"project_id,omitempty"`
 	EnvironmentID uint `json:"environment_id,omitempty"`
 }
@@ -72,6 +76,24 @@ func (c *KeyorixCore) logGroupRoleChange(ctx context.Context, eventType, verb st
 		RoleID:        roleID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
+	})
+}
+
+// LogPermissionAssigned / LogPermissionRemoved record a permission granted to /
+// removed from a role. See LogRoleAssigned for actorID semantics.
+func (c *KeyorixCore) LogPermissionAssigned(ctx context.Context, actorID, roleID, permissionID uint) {
+	c.logPermissionChange(ctx, EventPermissionAdded, "granted to role", actorID, roleID, permissionID)
+}
+
+func (c *KeyorixCore) LogPermissionRemoved(ctx context.Context, actorID, roleID, permissionID uint) {
+	c.logPermissionChange(ctx, EventPermissionRemoved, "removed from role", actorID, roleID, permissionID)
+}
+
+func (c *KeyorixCore) logPermissionChange(ctx context.Context, eventType, verb string, actorID, roleID, permissionID uint) {
+	desc := fmt.Sprintf("permission %d %s %d", permissionID, verb, roleID)
+	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{
+		RoleID:       roleID,
+		PermissionID: permissionID,
 	})
 }
 
