@@ -214,7 +214,11 @@ export interface AuthState {
 
 export interface LoginResponse {
     token: string;
+    // expires_at is when the current access token lapses — the client refreshes
+    // silently before this. absolute_expires_at, when present, is the hard ceiling
+    // past which refresh is refused and the user must re-authenticate.
     expires_at: string;
+    absolute_expires_at?: string;
     user_id: number;
     username: string;
     email: string;
@@ -228,7 +232,9 @@ export interface LoginResponse {
 
 export interface RefreshTokenResponse {
     token: string;
-    expiresAt: string;
+    // snake_case to match the backend payload ({token, expires_at, absolute_expires_at}).
+    expires_at: string;
+    absolute_expires_at?: string;
 }
 
 export interface PasswordResetRequest {

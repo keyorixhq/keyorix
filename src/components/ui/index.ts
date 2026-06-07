@@ -1,5 +1,6 @@
 // UI Components
 export * from './SessionTimeoutWarning';
+export * from './AbsoluteSessionExpiryWarning';
 export * from './Button';
 export * from './Input';
 export * from './Select';

@@ -25,6 +25,8 @@ import {
     persistAuthData,
     clearPersistedAuthData,
     updateTokenExpiry,
+    updateAbsoluteTokenExpiry,
+    getTimeUntilAbsoluteExpiry,
     isTokenValid,
     getTimeUntilExpiry,
     shouldRefreshToken,
@@ -115,5 +117,31 @@ describe('persist / clear', () => {
         expect(memStore.map.has('tokenExpiresAt')).toBe(false);
         expect(memStore.map.has('rememberMe')).toBe(false);
         expect(isTokenValid()).toBe(false);
+    });
+});
+
+describe('getTimeUntilAbsoluteExpiry', () => {
+    it('returns null when no ceiling is configured', () => {
+        expect(getTimeUntilAbsoluteExpiry()).toBeNull();
+    });
+
+    it('returns remaining ms when the ceiling is in the future', () => {
+        updateAbsoluteTokenExpiry(future(10 * 60_000));
+        const ms = getTimeUntilAbsoluteExpiry();
+        expect(ms).not.toBeNull();
+        expect(ms!).toBeGreaterThan(9 * 60_000);
+        expect(ms!).toBeLessThanOrEqual(10 * 60_000);
+    });
+
+    it('clamps to 0 once the ceiling has passed', () => {
+        updateAbsoluteTokenExpiry(past(60_000));
+        expect(getTimeUntilAbsoluteExpiry()).toBe(0);
+    });
+
+    it('returns null again after the ceiling is cleared', () => {
+        updateAbsoluteTokenExpiry(future(60_000));
+        expect(getTimeUntilAbsoluteExpiry()).not.toBeNull();
+        updateAbsoluteTokenExpiry(undefined);
+        expect(getTimeUntilAbsoluteExpiry()).toBeNull();
     });
 });

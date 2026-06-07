@@ -4,7 +4,7 @@ import { SecretsListPage } from "./pages/secrets/SecretsListPage";
 import { SecretExpiryPage, SecretsHealthPage, RotationPoliciesPage } from "./pages/secrets";
 import { ProjectsListPage, ProjectDetailPage } from './pages/projects';
 import { ProtectedRoute, PublicRoute, AdminRoute, Layout, RequirePasswordChange } from './components/layout';
-import { SessionTimeoutWarning } from './components/ui';
+import { SessionTimeoutWarning, AbsoluteSessionExpiryWarning } from './components/ui';
 import { LoginPage, SetupPage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';
 import { AuditLogPage } from './pages/audit/AuditLogPage';
@@ -108,6 +108,7 @@ function App() {
       </Routes>
 
       <SessionTimeoutWarning />
+      <AbsoluteSessionExpiryWarning />
     </>
   );
 }

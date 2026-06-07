@@ -6,6 +6,8 @@ import {
     persistAuthData,
     clearPersistedAuthData,
     updateTokenExpiry,
+    updateAbsoluteTokenExpiry,
+    isAbsoluteExpiryPassed,
     isTokenValid,
     getTimeUntilExpiry
 } from '../utils/auth';
@@ -37,6 +39,10 @@ interface AuthStore extends AuthState {
     // End impersonation: tell the server, then restore the admin's session.
     endImpersonation: () => Promise<void>;
 }
+
+// Shared in-flight refresh promise so concurrent callers coalesce onto a single
+// POST /auth/refresh (see refreshToken). Module-scoped: there is one auth store.
+let inFlightRefresh: Promise<void> | null = null;
 
 export const useAuthStore = create<AuthStore>()(
     persist(
@@ -90,6 +96,7 @@ export const useAuthStore = create<AuthStore>()(
                         user,
                         token: response.token,
                         expiresAt: response.expires_at,
+                        absoluteExpiresAt: response.absolute_expires_at,
                         rememberMe: credentials.rememberMe,
                     });
                 } catch (error) {
@@ -137,6 +144,7 @@ export const useAuthStore = create<AuthStore>()(
                     user,
                     token: response.token,
                     expiresAt: response.expires_at,
+                    absoluteExpiresAt: response.absolute_expires_at,
                     rememberMe: false,
                 });
             },
@@ -166,21 +174,45 @@ export const useAuthStore = create<AuthStore>()(
             },
 
             refreshToken: async () => {
-                try {
-                    const response = await authService.refreshToken();
-
-                    set({
-                        token: response.token,
-                        error: null,
-                    });
-
-                    // Update token expiration
-                    updateTokenExpiry(response.expiresAt);
-                } catch (error) {
-                    // If refresh fails, logout user
-                    await get().logout();
-                    throw error;
+                // Single-flight: short-lived tokens make it likely that several
+                // in-flight requests hit expiry at once. Without dedup each would
+                // POST /auth/refresh and rotate the token out from under the others
+                // (every rotation deletes the prior session → cascading 401s). Share
+                // one refresh across concurrent callers instead.
+                if (inFlightRefresh) {
+                    return inFlightRefresh;
                 }
+                inFlightRefresh = (async () => {
+                    try {
+                        // Past the absolute ceiling there is nothing to refresh into —
+                        // re-authentication is required. Skip the round-trip and log out.
+                        if (isAbsoluteExpiryPassed()) {
+                            await get().logout();
+                            throw new Error('Session lifetime exceeded');
+                        }
+
+                        const response = await authService.refreshToken();
+
+                        set({
+                            token: response.token,
+                            error: null,
+                        });
+
+                        // Advance the access window and carry the (possibly absent)
+                        // ceiling. Note: the field is expires_at to match the backend
+                        // payload — reading the old camelCase expiresAt silently stored
+                        // undefined and logged the user out on the next request.
+                        updateTokenExpiry(response.expires_at);
+                        updateAbsoluteTokenExpiry(response.absolute_expires_at);
+                    } catch (error) {
+                        // If refresh fails, logout user
+                        await get().logout();
+                        throw error;
+                    } finally {
+                        inFlightRefresh = null;
+                    }
+                })();
+                return inFlightRefresh;
             },
 
             checkAuth: async () => {
