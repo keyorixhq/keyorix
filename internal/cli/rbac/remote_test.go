@@ -32,6 +32,12 @@ func fakeRBACServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/api/v1/roles/2/permissions", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"permissions":[{"name":"secrets.read"},{"name":"users.read"}]}}`))
 	})
+	mux.HandleFunc("/api/v1/audit/rbac-logs", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"logs":[
+			{"id":2,"action":"role.assigned","actor_user_id":1,"target_user_id":5,"role_id":1,"project_id":0,"details":"","created_at":"2026-06-07T10:00:00Z"},
+			{"id":1,"action":"role.removed","actor_user_id":1,"target_user_id":5,"role_id":2,"created_at":"2026-06-07T09:00:00Z"}
+		],"total":2,"page":1,"page_size":50,"total_pages":1}}`))
+	})
 	mux.HandleFunc("/api/v1/user-roles", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
@@ -105,4 +111,10 @@ func TestRemoteCommandWrappers(t *testing.T) {
 
 	// A malformed permission name is rejected before any request.
 	require.Error(t, runCheckPermissionRemote(ctx, rc, "alice@test.com", "notvalid"))
+}
+
+func TestRunAuditLogsRemote(t *testing.T) {
+	rc := remoteClientFor(t, fakeRBACServer(t))
+	// Exercises the full request + decode path against the fake /audit/rbac-logs.
+	require.NoError(t, runAuditLogsRemote(context.Background(), rc, 1, 50))
 }
