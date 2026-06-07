@@ -14,6 +14,7 @@ import { CompliancePage } from './pages/compliance/CompliancePage';
 import { KeyorixConnectPage } from './pages/integrations/KeyorixConnectPage';
 import { RoadmapPage } from './pages/roadmap/RoadmapPage';
 import { ProfilePage } from './pages/profile';
+import { SharingManagementPage } from './pages/sharing';
 import { ROUTES } from './constants';
 
 function App() {
@@ -65,7 +66,7 @@ function App() {
                   <Route path="/projects/:id/*" element={<ProjectDetailPage />} />
                   {/* Other */}
                   <Route path={ROUTES.AUDIT} element={<AuditLogPage />} />
-                  <Route path={ROUTES.SHARING} element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Sharing — coming soon</div>} />
+                  <Route path={ROUTES.SHARING} element={<SharingManagementPage />} />
                   <Route path={ROUTES.PROFILE} element={<ProfilePage />} />
                   {/* Access Control (admin-only) */}
                   <Route path={ROUTES.ADMIN_USERS} element={<AdminRoute><AdminPage /></AdminRoute>} />

@@ -14,6 +14,7 @@ import {
     PuzzlePieceIcon,
     ScaleIcon,
     RocketLaunchIcon,
+    ShareIcon,
 } from '@heroicons/react/24/outline';
 import { useUIStore } from '../../store/uiStore';
 import { useAuth } from '../../features/auth';
@@ -69,6 +70,12 @@ const NAV: NavItem[] = [
             { kind: 'leaf', name: 'Dynamic Secrets', href: '/secrets/dynamic', soon: true },
             { kind: 'leaf', name: 'Rotation Policies', href: '/secrets/rotation' },
         ],
+    },
+    {
+        kind: 'leaf',
+        name: 'Sharing',
+        href: '/sharing',
+        icon: ShareIcon,
     },
     {
         kind: 'leaf',
