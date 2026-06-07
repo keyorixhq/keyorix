@@ -74,7 +74,7 @@ func (rs *RemoteStorage) GetUserByEmail(ctx context.Context, email string) (*mod
 
 // GetUserByUsername is not implemented for remote storage.
 func (rs *RemoteStorage) GetUserByUsername(_ context.Context, _ string) (*models.User, error) {
-	return nil, fmt.Errorf("GetUserByUsername not implemented for remote storage")
+	return nil, remoteUnsupported("GetUserByUsername")
 }
 
 // UpdateUser updates an existing user via remote API.
@@ -147,11 +147,11 @@ func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilt
 }
 
 func (rs *RemoteStorage) ListUsersInStateBefore(_ context.Context, _ string, _ time.Time) ([]*models.User, error) {
-	return nil, fmt.Errorf("ListUsersInStateBefore not implemented for remote storage")
+	return nil, remoteUnsupported("ListUsersInStateBefore")
 }
 
 func (rs *RemoteStorage) CreateUserWithRoleGrants(_ context.Context, _ *models.User, _ []storage.RoleGrant) (*models.User, error) {
-	return nil, fmt.Errorf("CreateUserWithRoleGrants not implemented for remote storage")
+	return nil, remoteUnsupported("CreateUserWithRoleGrants")
 }
 
 // buildUserFilterPath constructs the /api/v1/users query string.
@@ -178,35 +178,35 @@ func (rs *RemoteStorage) GetUserGroups(_ context.Context, _ uint) ([]*models.Gro
 // --- Groups (stubs — not yet implemented on remote API) ---
 
 func (rs *RemoteStorage) CreateGroup(_ context.Context, _ *models.Group) (*models.Group, error) {
-	return nil, fmt.Errorf("CreateGroup not implemented for remote storage")
+	return nil, remoteUnsupported("CreateGroup")
 }
 
 func (rs *RemoteStorage) GetGroup(_ context.Context, _ uint) (*models.Group, error) {
-	return nil, fmt.Errorf("GetGroup not implemented for remote storage")
+	return nil, remoteUnsupported("GetGroup")
 }
 
 func (rs *RemoteStorage) UpdateGroup(_ context.Context, _ *models.Group) (*models.Group, error) {
-	return nil, fmt.Errorf("UpdateGroup not implemented for remote storage")
+	return nil, remoteUnsupported("UpdateGroup")
 }
 
 func (rs *RemoteStorage) DeleteGroup(_ context.Context, _ uint) error {
-	return fmt.Errorf("DeleteGroup not implemented for remote storage")
+	return remoteUnsupported("DeleteGroup")
 }
 
 func (rs *RemoteStorage) ListGroups(_ context.Context) ([]*models.Group, error) {
-	return nil, fmt.Errorf("ListGroups not implemented for remote storage")
+	return nil, remoteUnsupported("ListGroups")
 }
 
 func (rs *RemoteStorage) AddUserToGroup(_ context.Context, _, _ uint) error {
-	return fmt.Errorf("AddUserToGroup not implemented for remote storage")
+	return remoteUnsupported("AddUserToGroup")
 }
 
 func (rs *RemoteStorage) RemoveUserFromGroup(_ context.Context, _, _ uint) error {
-	return fmt.Errorf("RemoveUserFromGroup not implemented for remote storage")
+	return remoteUnsupported("RemoveUserFromGroup")
 }
 
 func (rs *RemoteStorage) ListGroupMembers(_ context.Context, _ uint) ([]*models.User, error) {
-	return nil, fmt.Errorf("ListGroupMembers not implemented for remote storage")
+	return nil, remoteUnsupported("ListGroupMembers")
 }
 
 // --- Password history (ADR-025) ---

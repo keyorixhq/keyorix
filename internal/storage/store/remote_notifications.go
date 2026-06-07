@@ -12,21 +12,37 @@ import (
 )
 
 func (rs *RemoteStorage) CreateNotification(_ context.Context, _ *models.Notification) (*models.Notification, error) {
-	return nil, fmt.Errorf("CreateNotification not implemented for remote storage")
+	return nil, remoteUnsupported("CreateNotification")
 }
 
 func (rs *RemoteStorage) ListNotifications(_ context.Context, _ uint, _ bool, _ int) ([]*models.Notification, error) {
-	return nil, fmt.Errorf("ListNotifications not implemented for remote storage")
+	return nil, remoteUnsupported("ListNotifications")
 }
 
 func (rs *RemoteStorage) CountUnreadNotifications(_ context.Context, _ uint) (int64, error) {
-	return 0, fmt.Errorf("CountUnreadNotifications not implemented for remote storage")
+	return 0, remoteUnsupported("CountUnreadNotifications")
 }
 
-func (rs *RemoteStorage) MarkNotificationRead(_ context.Context, _, _ uint) error {
-	return fmt.Errorf("MarkNotificationRead not implemented for remote storage")
+func (rs *RemoteStorage) MarkNotificationRead(ctx context.Context, id, _ uint) error {
+	// The server scopes the mark to the authenticated user (the client's own
+	// session), so userID is implicit in the endpoint.
+	resp, err := rs.client.Post(ctx, fmt.Sprintf("/api/v1/notifications/%d/read", id), nil)
+	if err != nil {
+		return fmt.Errorf("failed to mark notification read: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("mark notification read failed: %s", resp.Error.Error())
+	}
+	return nil
 }
 
-func (rs *RemoteStorage) MarkAllNotificationsRead(_ context.Context, _ uint) error {
-	return fmt.Errorf("MarkAllNotificationsRead not implemented for remote storage")
+func (rs *RemoteStorage) MarkAllNotificationsRead(ctx context.Context, _ uint) error {
+	resp, err := rs.client.Post(ctx, "/api/v1/notifications/read-all", nil)
+	if err != nil {
+		return fmt.Errorf("failed to mark all notifications read: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("mark all notifications read failed: %s", resp.Error.Error())
+	}
+	return nil
 }

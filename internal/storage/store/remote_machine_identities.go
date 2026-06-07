@@ -6,23 +6,22 @@ package store
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 func (rs *RemoteStorage) CreateMachineIdentity(_ context.Context, _ *models.MachineIdentity) (*models.MachineIdentity, error) {
-	return nil, fmt.Errorf("CreateMachineIdentity not implemented for remote storage")
+	return nil, remoteUnsupported("CreateMachineIdentity")
 }
 
 func (rs *RemoteStorage) GetMachineIdentity(_ context.Context, _ uint) (*models.MachineIdentity, error) {
-	return nil, fmt.Errorf("GetMachineIdentity not implemented for remote storage")
+	return nil, remoteUnsupported("GetMachineIdentity")
 }
 
 func (rs *RemoteStorage) UpdateMachineIdentity(_ context.Context, _ *models.MachineIdentity) error {
-	return fmt.Errorf("UpdateMachineIdentity not implemented for remote storage")
+	return remoteUnsupported("UpdateMachineIdentity")
 }
 
 func (rs *RemoteStorage) ListMachineIdentities(_ context.Context, _ uint) ([]*models.MachineIdentity, error) {
-	return nil, fmt.Errorf("ListMachineIdentities not implemented for remote storage")
+	return nil, remoteUnsupported("ListMachineIdentities")
 }
