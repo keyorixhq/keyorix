@@ -350,7 +350,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		&models.PasswordReset{},
 		&models.Tag{},
 		&models.SecretTag{},
-		&models.Notification{},
+		// NOTE: Notification is intentionally NOT listed here — it is migrated by the
+		// dedicated block above (create-if-absent / add-columns-if-present). Listing
+		// it again re-inspects the just-created table and trips the pgx "insufficient
+		// arguments" bug on a fresh Postgres first boot (same hazard as RotationPolicy).
 		&models.AuditEvent{},
 		&models.Setting{},
 		&models.SystemMetadata{},

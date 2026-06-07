@@ -1,33 +1,61 @@
+# Keyorix self-hosted stack: web UI + API server + PostgreSQL.
+#
+#   1. cp .env.example .env   and fill in the (required) passwords
+#   2. docker compose up -d
+#   3. open http://localhost:8088  and log in with the admin you set in .env
+#
+# All secrets come from .env — there are NO baked-in default passwords. See
+# docs/SELF_HOSTING.md for production hardening (TLS, backups, upgrades).
 services:
   postgres:
     image: postgres:15-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: keyorix
       POSTGRES_USER: keyorix
-      POSTGRES_PASSWORD: keyorix123
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${KEYORIX_DB_PASSWORD:?KEYORIX_DB_PASSWORD is required (see .env.example)}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U keyorix"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
-  keyorix:
-    build:
-      context: .
-      dockerfile: server/Dockerfile
-    ports:
-      - "8080:8080"
+  backend:
+    image: ghcr.io/keyorixhq/keyorix-server:latest
+    # To build from source instead of pulling the published image, comment out
+    # `image:` above and uncomment:
+    # build:
+    #   context: .
+    #   dockerfile: server/Dockerfile
+    restart: unless-stopped
     environment:
-      KEYORIX_DB_PASSWORD: keyorix123
+      KEYORIX_DB_PASSWORD: ${KEYORIX_DB_PASSWORD:?KEYORIX_DB_PASSWORD is required}
+      # Master passphrase for the encryption KEK. REQUIRED. Changing it after
+      # first boot makes all stored secrets undecryptable.
+      KEYORIX_MASTER_PASSWORD: ${KEYORIX_MASTER_PASSWORD:?KEYORIX_MASTER_PASSWORD is required}
+      # Optional first-boot admin bootstrap (idempotent). Omit to initialise
+      # manually with `keyorix system init`.
+      KEYORIX_ADMIN_USERNAME: ${KEYORIX_ADMIN_USERNAME:-admin}
+      KEYORIX_ADMIN_EMAIL: ${KEYORIX_ADMIN_EMAIL:-admin@keyorix.local}
+      KEYORIX_ADMIN_PASSWORD: ${KEYORIX_ADMIN_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - ./keyorix.docker.yaml:/app/keyorix.yaml:ro
+      # The encryption keys (wrapped DEK + KEK salt) MUST persist across restarts.
+      - keyorix_keys:/app/keys
+
+  web:
+    image: ghcr.io/keyorixhq/keyorix-web:latest
+    restart: unless-stopped
+    ports:
+      - "8088:80"
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
+  keyorix_keys:
