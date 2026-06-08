@@ -248,6 +248,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Route("/rotation-policies", func(r chi.Router) {
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/", rotationPolicyHandler.List)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/evaluate", rotationPolicyHandler.Evaluate)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/status", rotationPolicyHandler.Status)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", policyScope)).Get("/{id}", rotationPolicyHandler.Get)
 			r.Post("/", rotationPolicyHandler.Create)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", policyScope)).Put("/{id}", rotationPolicyHandler.Update)

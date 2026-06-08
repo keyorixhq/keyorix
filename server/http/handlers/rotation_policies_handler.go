@@ -313,3 +313,35 @@ func (h *RotationPolicyHandler) Evaluate(w http.ResponseWriter, r *http.Request)
 
 	h.sendSuccess(w, evaluations, "")
 }
+
+// Status handles GET /api/v1/rotation-policies/status — the rotation posture of
+// every policy-covered secret (overdue / due_soon / ok), powering the dashboard
+// rotation inspector and health score. Unlike Evaluate it does not filter to
+// only overdue/approaching secrets.
+func (h *RotationPolicyHandler) Status(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	var projectID *uint
+	if v := r.URL.Query().Get("project_id"); v != "" {
+		id, err := strconv.ParseUint(v, 10, 32)
+		if err != nil {
+			h.sendError(w, "InvalidParameter", "Invalid project_id", http.StatusBadRequest, nil)
+			return
+		}
+		uid := uint(id)
+		projectID = &uid
+	}
+
+	entries, err := h.coreService.GetRotationStatus(r.Context(), projectID)
+	if err != nil {
+		log.Printf("Error getting rotation status: %v", err)
+		h.sendError(w, "InternalError", "Failed to get rotation status", http.StatusInternalServerError, nil)
+		return
+	}
+
+	h.sendSuccess(w, entries, "")
+}

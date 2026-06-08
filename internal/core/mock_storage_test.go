@@ -885,8 +885,12 @@ func (m *MockStorage) GetRotationPolicy(_ context.Context, id uint) (*models.Rot
 	return &models.RotationPolicy{ID: id}, nil
 }
 
-func (m *MockStorage) ListRotationPolicies(_ context.Context, _ *uint, _ *uint) ([]*models.RotationPolicy, error) {
-	return nil, nil
+func (m *MockStorage) ListRotationPolicies(ctx context.Context, projectID *uint, environmentID *uint) ([]*models.RotationPolicy, error) {
+	args := m.Called(ctx, projectID, environmentID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.RotationPolicy), args.Error(1)
 }
 
 func (m *MockStorage) UpdateRotationPolicy(_ context.Context, _ *models.RotationPolicy) error {

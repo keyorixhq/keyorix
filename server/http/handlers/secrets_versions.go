@@ -91,5 +91,10 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Audit the rotation (async, detached) so the rotation inspector and the
+	// activity feed have an attributable secret.rotated event.
+	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	go h.coreService.LogSecretRotatedWithProject(core.DetachedAuditContext(r.Context()), userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua) // #nosec G118
+
 	h.sendSuccess(w, secret, "Secret rotated successfully")
 }
