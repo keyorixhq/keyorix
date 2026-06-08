@@ -32,6 +32,7 @@ export const secretsApi = {
             permissions: [],
             metadata: {},
             Expiration: s.Expiration ?? null,
+            lastRotatedAt: s.LastRotatedAt ?? null,
         }));
         return {
             data: mappedSecrets,

@@ -44,6 +44,7 @@ export interface Secret {
     metadata: Record<string, string>;
     tags: string[];
     Expiration?: string | null;
+    lastRotatedAt?: string | null;
 }
 
 export type SecretType = 'text' | 'password' | 'api_key' | 'certificate' | 'json';
@@ -273,6 +274,22 @@ export interface RotationPolicyEvaluation {
     days_overdue: number;
     is_overdue: boolean;
     is_approaching: boolean;
+}
+
+export type RotationStatus = 'overdue' | 'due_soon' | 'ok';
+
+export interface RotationStatusEntry {
+    policy_id: number;
+    policy_name: string;
+    interval_days: number;
+    alert_days_before: number;
+    secret_id: number;
+    secret_name: string;
+    environment_id: number;
+    last_rotated_at: string | null;
+    days_since_rotation: number;
+    days_overdue: number;
+    status: RotationStatus;
 }
 
 export interface CreateRotationPolicyPayload {

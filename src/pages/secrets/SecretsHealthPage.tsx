@@ -265,7 +265,7 @@ export function SecretsHealthPage() {
 
                                     {!rotation.available && (
                                         <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                                            * Rotation score is excluded from the total until rotation tracking is enabled.
+                                            * Rotation score is excluded from the total until a rotation policy applies to a secret.
                                         </p>
                                     )}
                                 </div>
@@ -306,17 +306,59 @@ export function SecretsHealthPage() {
                             <SectionCard
                                 title="Rotation Health"
                                 icon={<ArrowPathIcon className="h-4 w-4" />}
+                                linkLabel="Manage policies →"
+                                linkTo="/secrets/rotation"
                             >
-                                <div className="flex flex-col items-center justify-center py-8 text-center gap-3">
-                                    <ArrowPathIcon className="h-8 w-8" style={{ color: 'var(--text-muted)' }} />
-                                    <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
-                                        Rotation tracking coming soon
-                                    </p>
-                                    <p className="text-xs max-w-xs" style={{ color: 'var(--text-muted)' }}>
-                                        Rotation data will appear here once secrets have been rotated via the CLI or dashboard.
-                                        The <code className="px-1 py-0.5 rounded-sm text-[11px]" style={{ backgroundColor: 'var(--bg-subtle)' }}>last_rotated_at</code> field is not yet tracked.
-                                    </p>
-                                </div>
+                                {!rotation.available ? (
+                                    <div className="flex flex-col items-center justify-center py-8 text-center gap-3">
+                                        <ArrowPathIcon className="h-8 w-8" style={{ color: 'var(--text-muted)' }} />
+                                        <p className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+                                            No rotation policies yet
+                                        </p>
+                                        <p className="text-xs max-w-xs" style={{ color: 'var(--text-muted)' }}>
+                                            Create a rotation policy to track how current your secrets are.
+                                            Rotation is excluded from the health score until at least one policy applies.
+                                        </p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <StatRow label="Overdue" value={rotation.overdue} dot={rotation.overdue > 0 ? 'red' : 'green'} />
+                                        <StatRow label="Due soon" value={rotation.dueSoon} dot={rotation.dueSoon > 0 ? 'amber' : 'green'} />
+                                        <StatRow label="Up to date" value={rotation.ok} dot="green" />
+                                        <StatRow label="Secrets under policy" value={rotation.covered} dot="neutral" />
+
+                                        {rotation.overdue > 0 && (
+                                            <div className="mt-4 space-y-2">
+                                                {rotation.items
+                                                    .filter(e => e.status === 'overdue')
+                                                    .sort((a, b) => b.days_overdue - a.days_overdue)
+                                                    .slice(0, 4)
+                                                    .map(e => (
+                                                        <div
+                                                            key={`${e.policy_id}-${e.secret_id}`}
+                                                            className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border"
+                                                            style={{
+                                                                backgroundColor: isDark ? 'rgba(239,68,68,0.06)' : '#fff5f5',
+                                                                borderColor: isDark ? 'rgba(239,68,68,0.20)' : '#fca5a5',
+                                                            }}
+                                                        >
+                                                            <span className="text-xs font-medium truncate" style={{ color: isDark ? '#f87171' : '#991b1b' }}>
+                                                                {e.secret_name}
+                                                            </span>
+                                                            <span className="text-xs tabular-nums shrink-0" style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}>
+                                                                {e.days_overdue}d overdue · {e.interval_days}d policy
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                {rotation.overdue > 4 && (
+                                                    <p className="text-xs text-center pt-1" style={{ color: 'var(--text-muted)' }}>
+                                                        +{rotation.overdue - 4} more overdue
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
                             </SectionCard>
 
                             {/* Card 3 — Access Health */}

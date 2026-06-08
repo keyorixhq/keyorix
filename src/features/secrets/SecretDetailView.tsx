@@ -10,9 +10,10 @@ import {
     TagIcon,
     MapPinIcon,
     UserIcon,
-    KeyIcon
+    KeyIcon,
+    ArrowPathIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions } from './api';
+import { useSecretVersions, useRotateSecret } from './api';
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
 const formatTime = (d: string | Date) =>
@@ -21,6 +22,19 @@ import { Secret } from '../../types';
 import { Button } from '../../components/ui/Button';
 import { Spinner, Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
+import { Modal } from '../../components/ui/Modal';
+import { Textarea } from '../../components/ui/Textarea';
+
+const relativeFromNow = (d: string | Date): string => {
+    const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
+    if (days <= 0) return 'today';
+    if (days === 1) return 'yesterday';
+    if (days < 30) return `${days} days ago`;
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`;
+    const years = Math.floor(days / 365);
+    return `${years} year${years === 1 ? '' : 's'} ago`;
+};
 
 interface SecretDetailViewProps {
     secret: Secret;
@@ -39,8 +53,27 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
 }) => {
     const [showValue, setShowValue] = useState(false);
     const [copySuccess, setCopySuccess] = useState(false);
+    const [showRotate, setShowRotate] = useState(false);
+    const [rotateValue, setRotateValue] = useState('');
 
     const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
+    const rotateMutation = useRotateSecret(secret.id);
+
+    const closeRotate = () => {
+        setShowRotate(false);
+        setRotateValue('');
+        rotateMutation.reset();
+    };
+
+    const handleRotate = () => {
+        if (!rotateValue.trim()) return;
+        rotateMutation.mutate(rotateValue, {
+            onSuccess: () => {
+                setShowValue(false); // force a re-reveal so the new version is fetched
+                closeRotate();
+            },
+        });
+    };
 
     const latestVersion = versions && versions.length > 0
         ? versions.reduce((a, b) => a.VersionNumber >= b.VersionNumber ? a : b)
@@ -110,6 +143,12 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             <ClockIcon className="h-4 w-4 mr-1" />
                             {formatDate(secret.lastModified)} at {formatTime(secret.lastModified)}
                         </div>
+                        <div className="flex items-center">
+                            <ArrowPathIcon className="h-4 w-4 mr-1" />
+                            {secret.lastRotatedAt
+                                ? `Rotated ${relativeFromNow(secret.lastRotatedAt)}`
+                                : 'Never rotated'}
+                        </div>
                     </div>
                 </div>
 
@@ -121,6 +160,14 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     >
                         <PencilIcon className="h-4 w-4 mr-2" />
                         Edit
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowRotate(true)}
+                    >
+                        <ArrowPathIcon className="h-4 w-4 mr-2" />
+                        Rotate
                     </Button>
                     <Button
                         variant="outline"
@@ -327,6 +374,57 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     Close
                 </Button>
             </div>
+
+            {/* Rotate modal */}
+            <Modal isOpen={showRotate} onClose={closeRotate} title={`Rotate ${secret.name}`} size="md">
+                <div className="space-y-4">
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                        Enter the new value for this secret. Rotating stores a new version (the previous
+                        value is kept in history) and records the rotation timestamp.
+                    </p>
+
+                    <Textarea
+                        label="New value"
+                        value={rotateValue}
+                        onChange={(e) => setRotateValue(e.target.value)}
+                        placeholder="New secret value"
+                        rows={4}
+                        autoComplete="off"
+                        disabled={rotateMutation.isPending}
+                    />
+
+                    {rotateMutation.isError && (
+                        <Alert
+                            type="error"
+                            title="Rotation failed"
+                            message="The secret could not be rotated. Please try again."
+                        />
+                    )}
+
+                    <div className="flex items-center justify-end space-x-3 pt-2">
+                        <Button variant="outline" onClick={closeRotate} disabled={rotateMutation.isPending}>
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="primary"
+                            onClick={handleRotate}
+                            disabled={!rotateValue.trim() || rotateMutation.isPending}
+                        >
+                            {rotateMutation.isPending ? (
+                                <>
+                                    <Spinner size="sm" />
+                                    <span className="ml-2">Rotating…</span>
+                                </>
+                            ) : (
+                                <>
+                                    <ArrowPathIcon className="h-4 w-4 mr-2" />
+                                    Rotate secret
+                                </>
+                            )}
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };

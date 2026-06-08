@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../services/client';
-import { RotationPolicy, RotationPolicyEvaluation, CreateRotationPolicyPayload } from '../../types';
+import { RotationPolicy, RotationPolicyEvaluation, RotationStatusEntry, CreateRotationPolicyPayload } from '../../types';
 
 const BASE = '/api/v1/rotation-policies';
 
@@ -52,6 +52,24 @@ export function useRotationPolicyEvaluations(projectId?: number) {
         staleTime: 2 * 60 * 1000,
     });
     return { evaluations: data ?? [], isLoading, error };
+}
+
+// useRotationStatus returns the rotation posture of every policy-covered secret
+// (overdue / due_soon / ok). The handler serializes RotationStatusEntry with
+// json tags, so the payload is already snake_case — no normalizer needed.
+export function useRotationStatus(projectId?: number) {
+    const { data, isLoading, error } = useQuery({
+        queryKey: ['rotation-policies', 'status', projectId],
+        queryFn: async () => {
+            const params: Record<string, unknown> = {};
+            if (projectId) params.project_id = projectId;
+            const response = await apiClient.get(`${BASE}/status`, { params });
+            const raw = response.data.data;
+            return (raw ?? []) as RotationStatusEntry[];
+        },
+        staleTime: 2 * 60 * 1000,
+    });
+    return { entries: data ?? [], isLoading, error };
 }
 
 export function useCreateRotationPolicy() {

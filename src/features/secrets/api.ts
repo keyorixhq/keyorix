@@ -59,6 +59,21 @@ export const useUpdateSecret = (id: number) => {
     });
 };
 
+export const useRotateSecret = (id: number) => {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (newValue: string) => secretsApi.rotate(id, newValue),
+        onSuccess: () => {
+            // A rotation stores a new version and stamps last_rotated_at, so the
+            // version history, the secret detail, and the lists are all stale.
+            queryClient.invalidateQueries({ queryKey: queryKeys.secrets.versions(id) });
+            invalidateQueries.secrets.detail(id);
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
 export const useDeleteSecret = () => {
     const queryClient = useQueryClient();
 

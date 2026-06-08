@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { secretsApi } from '../../services/secrets';
 import { useDashboardStats, useAnomalyAlerts } from '../dashboard';
+import { useRotationStatus } from './useRotationPolicies';
 import { AnomalyAlert } from '../../types';
 
 export function useSecretsHealth() {
@@ -17,6 +18,7 @@ export function useSecretsHealth() {
 
     const { data: stats, isLoading: statsLoading, error: statsError } = useDashboardStats();
     const { data: anomalyData, isLoading: anomalyLoading } = useAnomalyAlerts(true);
+    const { entries: rotationEntries, isLoading: rotationLoading } = useRotationStatus();
 
     const metrics = useMemo(() => {
         const secrets = secretsData?.data ?? [];
@@ -45,9 +47,17 @@ export function useSecretsHealth() {
         const expiryPct = total === 0 ? 100 : Math.round(((total - expired) / total) * 100);
 
         // ── Rotation ──────────────────────────────────────────────────────
-        // last_rotated_at is not yet present on the Secret type; mark unavailable
-        const rotationAvailable = false;
-        const rotationPct = 100; // neutral weight when data unavailable
+        // Backed by the rotation-status endpoint (every policy-covered secret,
+        // classified overdue/due_soon/ok). Unavailable only when no rotation
+        // policy covers any secret, in which case it stays neutral in the score.
+        const rotationCovered = rotationEntries.length;
+        const rotationOverdue = rotationEntries.filter(e => e.status === 'overdue').length;
+        const rotationDueSoon = rotationEntries.filter(e => e.status === 'due_soon').length;
+        const rotationOk = rotationEntries.filter(e => e.status === 'ok').length;
+        const rotationAvailable = rotationCovered > 0;
+        const rotationPct = rotationAvailable
+            ? Math.round((rotationOk / rotationCovered) * 100)
+            : 100; // neutral weight when no policy covers anything
 
         // ── Access ────────────────────────────────────────────────────────
         // Approximate: reads in last 30d vs total secrets count
@@ -75,6 +85,11 @@ export function useSecretsHealth() {
             rotation: {
                 available: rotationAvailable,
                 pct: rotationPct,
+                covered: rotationCovered,
+                overdue: rotationOverdue,
+                dueSoon: rotationDueSoon,
+                ok: rotationOk,
+                items: rotationEntries,
             },
             access: {
                 reads30d,
@@ -87,11 +102,11 @@ export function useSecretsHealth() {
                 items: anomalyItems,
             },
         };
-    }, [secretsData, stats, anomalyData]);
+    }, [secretsData, stats, anomalyData, rotationEntries]);
 
     return {
         ...metrics,
-        isLoading: secretsLoading || statsLoading || anomalyLoading,
+        isLoading: secretsLoading || statsLoading || anomalyLoading || rotationLoading,
         error: secretsError ?? statsError ?? null,
     };
 }
