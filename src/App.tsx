@@ -1,7 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './features/auth';
 import { SecretsListPage } from "./pages/secrets/SecretsListPage";
-import { SecretExpiryPage, SecretsHealthPage, RotationPoliciesPage } from "./pages/secrets";
+import { SecretExpiryPage, SecretsHealthPage, RotationPoliciesPage, UsageAnalyticsPage } from "./pages/secrets";
 import { ProjectsListPage, ProjectDetailPage } from './pages/projects';
 import { ProtectedRoute, PublicRoute, AdminRoute, Layout, RequirePasswordChange } from './components/layout';
 import { SessionTimeoutWarning, AbsoluteSessionExpiryWarning } from './components/ui';
@@ -61,6 +61,7 @@ function App() {
                   <Route path="/secrets/rotation" element={<RotationPoliciesPage />} />
                   <Route path="/secrets/expiry" element={<SecretExpiryPage />} />
                   <Route path="/secrets/health" element={<SecretsHealthPage />} />
+                  <Route path="/secrets/usage" element={<UsageAnalyticsPage />} />
                   {/* Projects hierarchy */}
                   <Route path={ROUTES.PROJECTS} element={<ProjectsListPage />} />
                   <Route path="/projects/:id/*" element={<ProjectDetailPage />} />

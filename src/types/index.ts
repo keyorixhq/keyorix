@@ -276,6 +276,21 @@ export interface RotationPolicyEvaluation {
     is_approaching: boolean;
 }
 
+export interface SecretUsageStat {
+    secret_id: number;
+    secret_name: string;
+    environment_id: number;
+    read_count: number;
+    last_read: string | null;
+}
+
+export interface UnusedSecretStat {
+    secret_id: number;
+    secret_name: string;
+    environment_id: number;
+    last_read: string | null;
+}
+
 export type RotationStatus = 'overdue' | 'due_soon' | 'ok';
 
 export interface RotationStatusEntry {

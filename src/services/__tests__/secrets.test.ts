@@ -56,3 +56,26 @@ describe('secretsApi.rotate', () => {
         expect(mocked.post).toHaveBeenCalledWith('/api/v1/secrets/1/rotate', { new_value: 'new-secret-value' });
     });
 });
+
+describe('secretsApi usage analytics', () => {
+    it('mostAccessed unwraps {data:{secrets}} and passes window/limit params', async () => {
+        mocked.get.mockResolvedValue({
+            data: { data: { secrets: [{ secret_id: 1, secret_name: 'hot', read_count: 9, last_read: '2026-06-01T00:00:00Z' }], days: 60 } },
+        });
+
+        const out = await secretsApi.mostAccessed({ days: 60, limit: 5 });
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/most-accessed', { params: { days: 60, limit: 5 } });
+        expect(out).toHaveLength(1);
+        expect(out[0]).toMatchObject({ secret_id: 1, read_count: 9 });
+    });
+
+    it('unused unwraps secrets and defaults to an empty array', async () => {
+        mocked.get.mockResolvedValue({ data: { data: { secrets: null, days: 30 } } });
+
+        const out = await secretsApi.unused({ days: 30 });
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/usage/unused', { params: { days: 30 } });
+        expect(out).toEqual([]);
+    });
+});

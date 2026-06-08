@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, Secret, SecretFormData } from '../types';
+import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 export const secretsApi = {
@@ -70,5 +70,22 @@ export const secretsApi = {
     async rotate(id: number, newValue: string) {
         const response = await apiClient.post(`/api/v1/secrets/${id}/rotate`, { new_value: newValue });
         return response.data;
+    },
+
+    async mostAccessed(params?: { days?: number; limit?: number; projectId?: number }): Promise<SecretUsageStat[]> {
+        const query: Record<string, unknown> = {};
+        if (params?.days) query.days = params.days;
+        if (params?.limit) query.limit = params.limit;
+        if (params?.projectId) query.project_id = params.projectId;
+        const response = await apiClient.get('/api/v1/secrets/usage/most-accessed', { params: query });
+        return (response.data.data?.secrets ?? []) as SecretUsageStat[];
+    },
+
+    async unused(params?: { days?: number; projectId?: number }): Promise<UnusedSecretStat[]> {
+        const query: Record<string, unknown> = {};
+        if (params?.days) query.days = params.days;
+        if (params?.projectId) query.project_id = params.projectId;
+        const response = await apiClient.get('/api/v1/secrets/usage/unused', { params: query });
+        return (response.data.data?.secrets ?? []) as UnusedSecretStat[];
     },
 };

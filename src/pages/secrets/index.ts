@@ -1,3 +1,4 @@
 export { SecretsHealthPage } from './SecretsHealthPage';
 export { SecretExpiryPage } from './SecretExpiryPage';
 export { RotationPoliciesPage } from './RotationPoliciesPage';
+export { UsageAnalyticsPage } from './UsageAnalyticsPage';
