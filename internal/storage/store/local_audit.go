@@ -11,6 +11,7 @@ package store
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"time"
 
@@ -32,6 +33,133 @@ func (ls *LocalStorage) ListSecretAccessLogs(ctx context.Context, secretID uint,
 		Where("secret_node_id = ? AND access_time >= ?", secretID, since).
 		Find(&logs)
 	return logs, result.Error
+}
+
+// scanTime portably scans a SQL timestamp that some drivers return as time.Time
+// (Postgres) and others as a string from an aggregate like MAX() (SQLite).
+type scanTime struct{ t *time.Time }
+
+// Value satisfies driver.Valuer so GORM treats scanTime as a scalar field
+// (not a relation); the queries are read-only so it is never actually written.
+func (s scanTime) Value() (driver.Value, error) {
+	if s.t == nil {
+		return nil, nil
+	}
+	return *s.t, nil
+}
+
+func (s *scanTime) Scan(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	switch v := value.(type) {
+	case time.Time:
+		t := v
+		s.t = &t
+		return nil
+	case []byte:
+		return s.parse(string(v))
+	case string:
+		return s.parse(v)
+	default:
+		return fmt.Errorf("scanTime: unsupported type %T", value)
+	}
+}
+
+func (s *scanTime) parse(str string) error {
+	for _, layout := range []string{
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05-07:00",
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, str); err == nil {
+			s.t = &t
+			return nil
+		}
+	}
+	return fmt.Errorf("scanTime: cannot parse %q", str)
+}
+
+// MostAccessedSecrets ranks secrets by read count in the window, joining
+// secret_nodes for the name/environment. Reads are the usage signal, so only
+// access logs with action="read" are counted.
+func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	q := ls.db.WithContext(ctx).
+		Table("secret_access_logs AS l").
+		Select("l.secret_node_id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, COUNT(*) AS read_count, MAX(l.access_time) AS last_read").
+		Joins("JOIN secret_nodes s ON s.id = l.secret_node_id").
+		Where("s.is_secret = ?", true).
+		Where("l.action = ?", "read").
+		Where("l.access_time >= ?", since).
+		Group("l.secret_node_id, s.name, s.environment_id").
+		Order("read_count DESC, last_read DESC").
+		Limit(limit)
+	if projectID != nil {
+		q = q.Where("s.project_id = ?", *projectID)
+	}
+
+	type row struct {
+		SecretID      uint
+		SecretName    string
+		EnvironmentID uint
+		ReadCount     int64
+		LastRead      scanTime
+	}
+	var rows []row
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	stats := make([]storage.SecretUsageStat, 0, len(rows))
+	for _, r := range rows {
+		stats = append(stats, storage.SecretUsageStat{
+			SecretID: r.SecretID, SecretName: r.SecretName, EnvironmentID: r.EnvironmentID,
+			ReadCount: r.ReadCount, LastRead: r.LastRead.t,
+		})
+	}
+	return stats, nil
+}
+
+// UnusedSecrets returns secrets whose most recent read is older than
+// notReadSince (or that have never been read), ordered never-read first. Only
+// real secrets (is_secret) are considered, not folder nodes.
+func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
+	q := ls.db.WithContext(ctx).
+		Table("secret_nodes AS s").
+		Select("s.id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, MAX(l.access_time) AS last_read").
+		Joins("LEFT JOIN secret_access_logs l ON l.secret_node_id = s.id AND l.action = ?", "read").
+		Where("s.is_secret = ?", true).
+		Group("s.id, s.name, s.environment_id").
+		Having("MAX(l.access_time) IS NULL OR MAX(l.access_time) < ?", notReadSince).
+		Order("(MAX(l.access_time) IS NULL) DESC, last_read ASC")
+	if projectID != nil {
+		q = q.Where("s.project_id = ?", *projectID)
+	}
+
+	type row struct {
+		SecretID      uint
+		SecretName    string
+		EnvironmentID uint
+		LastRead      scanTime
+	}
+	var rows []row
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	stats := make([]storage.UnusedSecretStat, 0, len(rows))
+	for _, r := range rows {
+		stats = append(stats, storage.UnusedSecretStat{
+			SecretID: r.SecretID, SecretName: r.SecretName, EnvironmentID: r.EnvironmentID,
+			LastRead: r.LastRead.t,
+		})
+	}
+	return stats, nil
 }
 
 // GetAuditLogs retrieves audit events with optional filtering and pagination.
