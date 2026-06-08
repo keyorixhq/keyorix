@@ -79,3 +79,17 @@ describe('secretsApi usage analytics', () => {
         expect(out).toEqual([]);
     });
 });
+
+describe('secretsApi.risk', () => {
+    it('fetches and unwraps the per-secret risk score', async () => {
+        mocked.get.mockResolvedValue({
+            data: { data: { secret_id: 7, secret_name: 'k', score: 72, band: 'high', factors: [{ key: 'expiry', label: 'Expiry', score: 100, weight: 0.3, detail: 'Expired' }] } },
+        });
+
+        const out = await secretsApi.risk(7);
+
+        expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/7/risk');
+        expect(out).toMatchObject({ secret_id: 7, score: 72, band: 'high' });
+        expect(out.factors).toHaveLength(1);
+    });
+});

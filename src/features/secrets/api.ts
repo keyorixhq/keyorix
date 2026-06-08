@@ -59,6 +59,15 @@ export const useUpdateSecret = (id: number) => {
     });
 };
 
+export const useSecretRisk = (id: number, enabled = true) => {
+    return useQuery({
+        queryKey: [...queryKeys.secrets.detail(id), 'risk'],
+        queryFn: () => secretsApi.risk(id),
+        enabled,
+        staleTime: 2 * 60 * 1000,
+    });
+};
+
 export const useRotateSecret = (id: number) => {
     const queryClient = useQueryClient();
 

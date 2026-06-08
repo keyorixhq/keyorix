@@ -291,6 +291,24 @@ export interface UnusedSecretStat {
     last_read: string | null;
 }
 
+export type RiskBand = 'low' | 'medium' | 'high';
+
+export interface SecretRiskFactor {
+    key: string;
+    label: string;
+    score: number;  // 0-100 risk (higher = riskier)
+    weight: number;
+    detail: string;
+}
+
+export interface SecretRiskScore {
+    secret_id: number;
+    secret_name: string;
+    score: number;  // 0-100 weighted composite
+    band: RiskBand;
+    factors: SecretRiskFactor[];
+}
+
 export type RotationStatus = 'overdue' | 'due_soon' | 'ok';
 
 export interface RotationStatusEntry {

@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat } from '../types';
+import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 export const secretsApi = {
@@ -87,5 +87,10 @@ export const secretsApi = {
         if (params?.projectId) query.project_id = params.projectId;
         const response = await apiClient.get('/api/v1/secrets/usage/unused', { params: query });
         return (response.data.data?.secrets ?? []) as UnusedSecretStat[];
+    },
+
+    async risk(id: number): Promise<SecretRiskScore> {
+        const response = await apiClient.get<ApiResponse<SecretRiskScore>>(`/api/v1/secrets/${id}/risk`);
+        return response.data.data;
     },
 };

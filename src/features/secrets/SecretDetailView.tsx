@@ -11,9 +11,11 @@ import {
     MapPinIcon,
     UserIcon,
     KeyIcon,
-    ArrowPathIcon
+    ArrowPathIcon,
+    ShieldExclamationIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk } from './api';
+import { RiskBand } from '../../types';
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
 const formatTime = (d: string | Date) =>
@@ -35,6 +37,14 @@ const relativeFromNow = (d: string | Date): string => {
     const years = Math.floor(days / 365);
     return `${years} year${years === 1 ? '' : 's'} ago`;
 };
+
+const RISK_BAND_STYLE: Record<RiskBand, { label: string; color: string }> = {
+    low: { label: 'Low risk', color: '#10b981' },
+    medium: { label: 'Medium risk', color: '#f59e0b' },
+    high: { label: 'High risk', color: '#ef4444' },
+};
+
+const factorColor = (score: number): string => (score >= 67 ? '#ef4444' : score >= 34 ? '#f59e0b' : '#10b981');
 
 interface SecretDetailViewProps {
     secret: Secret;
@@ -58,6 +68,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
 
     const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
     const rotateMutation = useRotateSecret(secret.id);
+    const { data: risk } = useSecretRisk(secret.id);
 
     const closeRotate = () => {
         setShowRotate(false);
@@ -277,6 +288,49 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     </div>
                 )}
             </div>
+
+            {/* Risk Score */}
+            {risk && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-medium text-gray-900 dark:text-white flex items-center">
+                            <ShieldExclamationIcon className="h-5 w-5 mr-2" />
+                            Risk Score
+                        </h3>
+                        <div className="flex items-center gap-3">
+                            <span className="text-2xl font-bold tabular-nums" style={{ color: RISK_BAND_STYLE[risk.band].color }}>
+                                {risk.score}
+                                <span className="text-sm font-normal text-gray-400"> / 100</span>
+                            </span>
+                            <span
+                                className="px-2.5 py-1 rounded-full text-xs font-semibold"
+                                style={{ color: RISK_BAND_STYLE[risk.band].color, backgroundColor: `${RISK_BAND_STYLE[risk.band].color}1a` }}
+                            >
+                                {RISK_BAND_STYLE[risk.band].label}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="space-y-3">
+                        {risk.factors.map(f => (
+                            <div key={f.key} className="space-y-1">
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-700 dark:text-gray-300">
+                                        {f.label}
+                                        <span className="text-gray-400 dark:text-gray-500 ml-2">{Math.round(f.weight * 100)}%</span>
+                                    </span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">{f.detail}</span>
+                                </div>
+                                <div className="h-1.5 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700">
+                                    <div
+                                        className="h-full rounded-full transition-all duration-700"
+                                        style={{ width: `${f.score}%`, backgroundColor: factorColor(f.score) }}
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Tags */}
             {secret.tags.length > 0 && (
