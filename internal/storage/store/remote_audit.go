@@ -123,6 +123,16 @@ func (rs *RemoteStorage) ListSecretAccessLogs(_ context.Context, _ uint, _ time.
 	return nil, fmt.Errorf("ListSecretAccessLogs not available in remote mode")
 }
 
+// MostAccessedSecrets is not available in remote mode; usage analytics aggregate server-side.
+func (rs *RemoteStorage) MostAccessedSecrets(_ context.Context, _ *uint, _ time.Time, _ int) ([]storage.SecretUsageStat, error) {
+	return nil, fmt.Errorf("MostAccessedSecrets not available in remote mode")
+}
+
+// UnusedSecrets is not available in remote mode; usage analytics aggregate server-side.
+func (rs *RemoteStorage) UnusedSecrets(_ context.Context, _ *uint, _ time.Time) ([]storage.UnusedSecretStat, error) {
+	return nil, fmt.Errorf("UnusedSecrets not available in remote mode")
+}
+
 // CreateAnomalyAlert is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAlert) error {
 	return fmt.Errorf("CreateAnomalyAlert not available in remote mode")
