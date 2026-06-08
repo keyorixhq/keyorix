@@ -587,6 +587,22 @@ func (m *MockStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, s
 	return args.Get(0).([]models.SecretAccessLog), args.Error(1)
 }
 
+func (m *MockStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
+	args := m.Called(ctx, projectID, since, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.SecretUsageStat), args.Error(1)
+}
+
+func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
+	args := m.Called(ctx, projectID, notReadSince)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.UnusedSecretStat), args.Error(1)
+}
+
 func (m *MockStorage) CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error {
 	args := m.Called(ctx, alert)
 	return args.Error(0)

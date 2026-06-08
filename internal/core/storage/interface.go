@@ -183,6 +183,14 @@ type Storage interface {
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
+	// MostAccessedSecrets returns the most-read secrets (optionally scoped to a
+	// project) in the window since `since`, ordered by read count descending,
+	// capped at `limit`. Backs the usage-analytics dashboard.
+	MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]SecretUsageStat, error)
+	// UnusedSecrets returns secrets (optionally scoped to a project) with no read
+	// access since `notReadSince` — including never-read secrets — ordered
+	// never-read first, then oldest last read.
+	UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
 	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
@@ -399,6 +407,24 @@ type ProjectWithCounts struct {
 	LastActivity     string `json:"last_activity,omitempty"` // most recent of project update or any secret change
 	Deleted          bool   `json:"deleted"`                 // true when soft-deleted (only returned when includeDeleted)
 	DeletedAt        string `json:"deleted_at,omitempty"`    // RFC3339 timestamp when soft-deleted
+}
+
+// SecretUsageStat is one row of the most-accessed-secrets report.
+type SecretUsageStat struct {
+	SecretID      uint       `json:"secret_id"`
+	SecretName    string     `json:"secret_name"`
+	EnvironmentID uint       `json:"environment_id"`
+	ReadCount     int64      `json:"read_count"`
+	LastRead      *time.Time `json:"last_read"`
+}
+
+// UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when
+// the secret has never been read.
+type UnusedSecretStat struct {
+	SecretID      uint       `json:"secret_id"`
+	SecretName    string     `json:"secret_name"`
+	EnvironmentID uint       `json:"environment_id"`
+	LastRead      *time.Time `json:"last_read"`
 }
 
 // ProjectMember is a user who holds a role at a project's scope (ADR-021).
