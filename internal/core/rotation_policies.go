@@ -121,6 +121,96 @@ func (c *KeyorixCore) DeleteRotationPolicy(ctx context.Context, id uint) error {
 	return nil
 }
 
+// Rotation status values returned by GetRotationStatus.
+const (
+	RotationStatusOverdue = "overdue"
+	RotationStatusDueSoon = "due_soon"
+	RotationStatusOK      = "ok"
+)
+
+// RotationStatusEntry is the per-secret rotation posture under a policy. Unlike
+// RotationPolicyEvaluation (which only surfaces overdue/approaching secrets),
+// GetRotationStatus returns every policy-covered secret with an explicit status,
+// so the dashboard can render a full inspector and a rotation health score.
+type RotationStatusEntry struct {
+	PolicyID          uint       `json:"policy_id"`
+	PolicyName        string     `json:"policy_name"`
+	IntervalDays      int        `json:"interval_days"`
+	AlertDaysBefore   int        `json:"alert_days_before"`
+	SecretID          uint       `json:"secret_id"`
+	SecretName        string     `json:"secret_name"`
+	EnvironmentID     uint       `json:"environment_id"`
+	LastRotatedAt     *time.Time `json:"last_rotated_at"`
+	DaysSinceRotation int        `json:"days_since_rotation"`
+	DaysOverdue       int        `json:"days_overdue"` // positive = overdue, negative = days remaining
+	Status            string     `json:"status"`       // overdue | due_soon | ok
+}
+
+// GetRotationStatus returns the rotation posture of every secret covered by an
+// active rotation policy (optionally scoped to a project), classified as
+// overdue / due_soon / ok. Secrets never rotated fall back to their creation
+// time, mirroring EvaluateRotationPolicies.
+func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID *uint) ([]*RotationStatusEntry, error) {
+	policies, err := c.storage.ListRotationPolicies(ctx, projectID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list rotation policies: %w", err)
+	}
+
+	var entries []*RotationStatusEntry
+	now := c.now()
+
+	for _, policy := range policies {
+		if !policy.IsActive {
+			continue
+		}
+
+		filter := &storage.SecretFilter{Page: 1, PageSize: 1000}
+		if policy.Scope == "project" {
+			filter.ProjectID = policy.ProjectID
+		} else {
+			filter.EnvironmentID = policy.EnvironmentID
+		}
+
+		secrets, _, err := c.storage.ListSecrets(ctx, filter)
+		if err != nil {
+			continue
+		}
+
+		for _, secret := range secrets {
+			lastRotated := secret.CreatedAt
+			if secret.LastRotatedAt != nil {
+				lastRotated = *secret.LastRotatedAt
+			}
+
+			daysSince := int(now.Sub(lastRotated).Hours() / 24)
+			daysOverdue := daysSince - policy.IntervalDays
+
+			status := RotationStatusOK
+			if daysOverdue > 0 {
+				status = RotationStatusOverdue
+			} else if (policy.IntervalDays - daysSince) <= policy.AlertDaysBefore {
+				status = RotationStatusDueSoon
+			}
+
+			entries = append(entries, &RotationStatusEntry{
+				PolicyID:          policy.ID,
+				PolicyName:        policy.Name,
+				IntervalDays:      policy.IntervalDays,
+				AlertDaysBefore:   policy.AlertDaysBefore,
+				SecretID:          secret.ID,
+				SecretName:        secret.Name,
+				EnvironmentID:     secret.EnvironmentID,
+				LastRotatedAt:     secret.LastRotatedAt,
+				DaysSinceRotation: daysSince,
+				DaysOverdue:       daysOverdue,
+				Status:            status,
+			})
+		}
+	}
+
+	return entries, nil
+}
+
 func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID *uint) ([]*RotationPolicyEvaluation, error) {
 	policies, err := c.storage.ListRotationPolicies(ctx, projectID, nil)
 	if err != nil {

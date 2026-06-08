@@ -237,6 +237,22 @@ func (c *KeyorixCore) LogSecretUpdatedWithDiff(ctx context.Context, userID uint,
 	c.writeAccessLog(ctx, secretID, username, "update", ip, ua)
 }
 
+// LogSecretRotated writes audit_events + secret_access_logs for a secret rotation.
+func (c *KeyorixCore) LogSecretRotated(ctx context.Context, userID uint, secretID uint, username, secretName, ip, ua string) {
+	uid, sid := userID, secretID
+	c.writeAuditEvent(ctx, "secret.rotated", &uid, &sid,
+		fmt.Sprintf("User %s rotated secret %s", username, secretName))
+	c.writeAccessLog(ctx, secretID, username, "rotate", ip, ua)
+}
+
+// LogSecretRotatedWithProject writes audit_events + secret_access_logs including project context.
+func (c *KeyorixCore) LogSecretRotatedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) {
+	uid, sid, pid := userID, secretID, projectID
+	c.writeAuditEventFull(ctx, "secret.rotated", &uid, &sid, &pid, ip,
+		fmt.Sprintf("User %s rotated secret %s", username, secretName))
+	c.writeAccessLog(ctx, secretID, username, "rotate", ip, ua)
+}
+
 // LogSecretDeleted writes audit_events + secret_access_logs for a secret deletion.
 func (c *KeyorixCore) LogSecretDeleted(ctx context.Context, userID uint, secretID uint, username, secretName, ip, ua string) {
 	uid, sid := userID, secretID
