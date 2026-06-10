@@ -196,6 +196,12 @@ type Storage interface {
 	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
 	GetAuditLogs(ctx context.Context, filter *AuditFilter) ([]*models.AuditEvent, int64, error)
 	GetRBACAuditLogs(ctx context.Context, filter *RBACAuditFilter) ([]*RBACAuditLog, int64, error)
+	// AuditRetentionStats returns the total audit event count and the oldest /
+	// newest event timestamps. Keyorix never purges audit events, so these raw
+	// aggregates let an operator demonstrate how far back the trail reaches
+	// (NIS2 mandates 12 months of retention). Oldest/Newest are nil on an empty
+	// table.
+	AuditRetentionStats(ctx context.Context) (*AuditRetentionStats, error)
 	GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error)
 	// CountImpersonatedActions returns the number of impersonated audit events
 	// recorded for actingAs by impersonator since `since`, excluding the
@@ -416,6 +422,15 @@ type SecretUsageStat struct {
 	EnvironmentID uint       `json:"environment_id"`
 	ReadCount     int64      `json:"read_count"`
 	LastRead      *time.Time `json:"last_read"`
+}
+
+// AuditRetentionStats holds the raw aggregates backing the audit-retention
+// coverage report: how many audit events exist and the timestamps of the
+// oldest and newest. Oldest/Newest are nil when the audit table is empty.
+type AuditRetentionStats struct {
+	TotalEvents int64
+	Oldest      *time.Time
+	Newest      *time.Time
 }
 
 // UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when

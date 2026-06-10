@@ -314,3 +314,23 @@ func (h *AuditHandler) GetRBACAuditLogs(w http.ResponseWriter, r *http.Request) 
 		"logs": logs, "page": page, "page_size": pageSize, "total": total, "total_pages": totalPages,
 	}, "")
 }
+
+// GetAuditRetention handles GET /api/v1/audit/retention — reports how far back
+// the audit trail demonstrably reaches (total events, oldest/newest event,
+// coverage days, and whether that covers the NIS2-mandated 12 months). Keyorix
+// never purges audit events, so this makes the unlimited-retention claim
+// auditable rather than merely asserted.
+func (h *AuditHandler) GetAuditRetention(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	cov, err := h.coreService.AuditRetentionCoverage(r.Context())
+	if err != nil {
+		sendError(w, "InternalError", "Failed to compute audit retention coverage", http.StatusInternalServerError, nil)
+		return
+	}
+
+	sendSuccess(w, cov, "")
+}

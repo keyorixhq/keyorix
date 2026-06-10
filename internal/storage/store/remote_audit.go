@@ -133,6 +133,11 @@ func (rs *RemoteStorage) UnusedSecrets(_ context.Context, _ *uint, _ time.Time) 
 	return nil, fmt.Errorf("UnusedSecrets not available in remote mode")
 }
 
+// AuditRetentionStats is not available in remote mode; retention coverage aggregates server-side.
+func (rs *RemoteStorage) AuditRetentionStats(_ context.Context) (*storage.AuditRetentionStats, error) {
+	return nil, fmt.Errorf("AuditRetentionStats not available in remote mode")
+}
+
 // CreateAnomalyAlert is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAlert) error {
 	return fmt.Errorf("CreateAnomalyAlert not available in remote mode")

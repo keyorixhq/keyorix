@@ -357,6 +357,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/logs", auditHandler.GetAuditLogs)
 			r.Get("/export", auditHandler.ExportAuditLogs)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
+			r.Get("/retention", auditHandler.GetAuditRetention)
 			r.Get("/anomalies", handlers.ListAnomalyAlerts)
 			r.Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})

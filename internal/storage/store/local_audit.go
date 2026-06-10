@@ -162,6 +162,30 @@ func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notR
 	return stats, nil
 }
 
+// AuditRetentionStats returns the total audit event count plus the oldest and
+// newest event_time in a single aggregate query. Keyorix applies no retention
+// cap, so MIN(event_time) is the true start of the trail — the basis for the
+// retention-coverage report. Oldest/Newest stay nil on an empty table.
+func (ls *LocalStorage) AuditRetentionStats(ctx context.Context) (*storage.AuditRetentionStats, error) {
+	type row struct {
+		Total  int64
+		Oldest scanTime
+		Newest scanTime
+	}
+	var r row
+	if err := ls.db.WithContext(ctx).
+		Model(&models.AuditEvent{}).
+		Select("COUNT(*) AS total, MIN(event_time) AS oldest, MAX(event_time) AS newest").
+		Scan(&r).Error; err != nil {
+		return nil, err
+	}
+	return &storage.AuditRetentionStats{
+		TotalEvents: r.Total,
+		Oldest:      r.Oldest.t,
+		Newest:      r.Newest.t,
+	}, nil
+}
+
 // GetAuditLogs retrieves audit events with optional filtering and pagination.
 func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
 	query := ls.db.WithContext(ctx).Model(&models.AuditEvent{})
