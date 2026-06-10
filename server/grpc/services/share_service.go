@@ -224,23 +224,4 @@ func sharesToResponse(shares []*models.ShareRecord, page, pageSize int) *pb.List
 	}
 }
 
-// normalizePage applies the standard page (>=1) / page_size (1..100, default 20)
-// defaults shared by the paginated list RPCs.
-func normalizePage(page, pageSize uint32) (int, int) {
-	p := int(page)
-	if p < 1 {
-		p = 1
-	}
-	ps := int(pageSize)
-	if ps < 1 || ps > 100 {
-		ps = 20
-	}
-	return p, ps
-}
-
-func totalPages(total, pageSize int) int {
-	if pageSize <= 0 {
-		return 0
-	}
-	return (total + pageSize - 1) / pageSize
-}
+// Shared pagination helpers (normalizePage / totalPages) live in conversions.go.
