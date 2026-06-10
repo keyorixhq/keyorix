@@ -274,6 +274,36 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		}
 	}()
 
+	// Start the retention purge scheduler (ADR-032) — opt-in. Hard-deletes
+	// soft-deleted users/projects/environments older than the retention window.
+	if cfg.Purge.Enabled {
+		retentionDays := cfg.SoftDelete.GetRetentionDays()
+		interval := cfg.Purge.GetInterval()
+		log.Printf("Retention purge scheduler enabled: every %s, %d-day retention", interval, retentionDays)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runPurge := func() {
+				cutoff := time.Now().AddDate(0, 0, -retentionDays)
+				if res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff); err != nil {
+					log.Printf("Retention purge error: %v", err)
+				} else if res.Total() > 0 {
+					log.Printf("Retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d)",
+						res.Total(), res.Users, res.Projects, res.Environments)
+				}
+			}
+			runPurge() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runPurge()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	// Create HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Server.HTTP.Port),

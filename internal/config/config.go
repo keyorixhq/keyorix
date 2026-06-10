@@ -219,6 +219,15 @@ type SoftDeleteConfig struct {
 	RetentionDays int  `yaml:"retention_days"`
 }
 
+// GetRetentionDays returns the soft-delete grace period in days, defaulting to
+// 30 when unset (ADR-032).
+func (c SoftDeleteConfig) GetRetentionDays() int {
+	if c.RetentionDays <= 0 {
+		return 30
+	}
+	return c.RetentionDays
+}
+
 // AuditConfig groups audit-log delivery integrations.
 type AuditConfig struct {
 	SIEM SIEMConfig `yaml:"siem"`
@@ -363,6 +372,17 @@ func (c *CredentialDeliveryConfig) DeliveryConfig() delivery.Config {
 type PurgeConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
+}
+
+// GetInterval returns the purge run interval, parsing Schedule as a Go duration
+// (e.g. "24h", "6h"); defaults to 24h when unset or unparseable (ADR-032).
+func (c PurgeConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // resolveSecret returns the value of envVar if set and non-empty, otherwise fallback.

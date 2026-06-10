@@ -365,6 +365,21 @@ func (m *MockStorage) RestoreUser(ctx context.Context, id uint) error {
 	return args.Error(0)
 }
 
+func (m *MockStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockStorage) ListUsers(ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error) {
 	args := m.Called(ctx, filter)
 	if args.Get(0) == nil {
