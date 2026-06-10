@@ -224,6 +224,18 @@ func (c *KeyorixCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, u
 	return c.DeleteSecret(ctx, id)
 }
 
+// RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033), bringing it
+// back within the retention window.
+func (c *KeyorixCore) RestoreSecret(ctx context.Context, id uint) error {
+	if id == 0 {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+	}
+	if err := c.storage.RestoreSecret(ctx, id); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 // ListSecrets lists secrets with filtering and pagination.
 func (c *KeyorixCore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	if filter == nil {

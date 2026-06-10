@@ -33,6 +33,7 @@ func (ls *LocalStorage) ListProjectSecretsForDrift(ctx context.Context, projectI
 		Where("s.project_id = ?", projectID).
 		Where("e.project_id = ?", projectID).
 		Where("e.deleted_at IS NULL").
+		Where("s.deleted_at IS NULL").
 		Where("s.is_secret = ?", true).
 		Order("s.name ASC, s.environment_id ASC").
 		Scan(&rows).Error; err != nil {

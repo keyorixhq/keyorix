@@ -288,8 +288,8 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				if res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff); err != nil {
 					log.Printf("Retention purge error: %v", err)
 				} else if res.Total() > 0 {
-					log.Printf("Retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d)",
-						res.Total(), res.Users, res.Projects, res.Environments)
+					log.Printf("Retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d, secrets=%d)",
+						res.Total(), res.Users, res.Projects, res.Environments, res.Secrets)
 				}
 			}
 			runPurge() // run once on startup

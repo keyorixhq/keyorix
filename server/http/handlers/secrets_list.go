@@ -57,6 +57,9 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		filter.Search = &search
 	}
 
+	if r.URL.Query().Get("include_deleted") == "true" {
+		filter.IncludeDeleted = true
+	}
 	if r.URL.Query().Get("show_owned_only") == "true" {
 		filter.ShowOwnedOnly = true
 	}

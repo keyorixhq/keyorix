@@ -46,15 +46,15 @@ func TestRestoreProjectCascade(t *testing.T) {
 	assert.True(t, all[0].Deleted)
 	assert.NotEmpty(t, all[0].DeletedAt)
 
-	// Restore brings back the project and its environments. Secrets are NOT
-	// restored — DeleteProject hard-deletes them (no soft-delete on SecretNode).
+	// Restore brings back the project, its environments, AND its secrets —
+	// secrets now soft-delete with the project and restore with it (ADR-033).
 	require.NoError(t, ls.RestoreProject(ctx, proj.ID))
 
 	restored, err := ls.ListProjectsWithCounts(ctx, false)
 	require.NoError(t, err)
 	require.Len(t, restored, 1)
 	assert.False(t, restored[0].Deleted)
-	assert.Equal(t, int64(0), restored[0].SecretCount, "secrets are hard-deleted, not restored")
+	assert.Equal(t, int64(1), restored[0].SecretCount, "secrets are soft-deleted with the project and restored (ADR-033)")
 	assert.Equal(t, int64(1), restored[0].EnvironmentCount, "environment should be restored")
 
 	envs, err := ls.ListEnvironmentsByProject(ctx, proj.ID)

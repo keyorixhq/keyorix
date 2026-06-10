@@ -158,7 +158,7 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 	directQuery := `
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
-		WHERE sr.recipient_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL
+		WHERE sr.recipient_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 	`
 	if err := ls.db.Raw(directQuery, userID, false).Scan(&secrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
@@ -168,7 +168,7 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
 		JOIN user_groups ug ON sr.recipient_id = ug.group_id
-		WHERE ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL
+		WHERE ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 	`
 	var groupSecrets []*models.SecretNode
 	if err := ls.db.Raw(groupQuery, userID, true).Scan(&groupSecrets).Error; err != nil {

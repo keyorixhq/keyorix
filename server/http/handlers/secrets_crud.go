@@ -155,6 +155,30 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	h.sendSuccess(w, response, "")
 }
 
+// RestoreSecret handles POST /api/v1/secrets/{id}/restore — clears a
+// soft-deleted secret's deleted_at (ADR-033). Authorized by the route's scoped
+// secrets.write gate at the secret's own project/environment.
+func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.RestoreSecret(r.Context(), uint(id)); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		h.sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	h.sendSuccess(w, nil, "Secret restored")
+}
+
 // UpdateSecret handles PUT /api/v1/secrets/{id}
 func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

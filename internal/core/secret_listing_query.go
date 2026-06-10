@@ -281,12 +281,13 @@ func (c *KeyorixCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortB
 // convertToStorageFilter converts SecretListFilter to storage.SecretFilter.
 func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
 	f := &storage.SecretFilter{
-		Page:          filter.Page,
-		PageSize:      filter.PageSize,
-		Type:          filter.Type,
-		CreatedBy:     filter.CreatedBy,
-		ProjectID:     filter.ProjectID,
-		EnvironmentID: filter.EnvironmentID,
+		Page:           filter.Page,
+		PageSize:       filter.PageSize,
+		Type:           filter.Type,
+		CreatedBy:      filter.CreatedBy,
+		ProjectID:      filter.ProjectID,
+		EnvironmentID:  filter.EnvironmentID,
+		IncludeDeleted: filter.IncludeDeleted,
 	}
 	if f.Page < 1 {
 		f.Page = 1

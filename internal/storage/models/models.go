@@ -165,6 +165,11 @@ type SecretNode struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	LastRotatedAt *time.Time
+	// DeletedAt enables soft delete (ADR-033). DELETE stamps it; restore clears
+	// it; the purge scheduler hard-deletes rows past the retention window. GORM
+	// auto-scopes `deleted_at IS NULL` on model-based queries — raw/Table/Joins
+	// queries on secret_nodes must filter it explicitly.
+	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 type SecretVersion struct {

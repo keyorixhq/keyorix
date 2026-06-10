@@ -195,6 +195,24 @@ func (m *MockStorage) DeleteSecret(ctx context.Context, id uint) error {
 	return args.Error(0)
 }
 
+func (m *MockStorage) RestoreSecret(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockStorage) GetSecretIncludingDeleted(ctx context.Context, id uint) (*models.SecretNode, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SecretNode), args.Error(1)
+}
+
+func (m *MockStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	args := m.Called(ctx, filter)
 	if args.Get(0) == nil {

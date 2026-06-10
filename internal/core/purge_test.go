@@ -16,6 +16,7 @@ func TestPurgeExpiredSoftDeletes_CountsAndAudits(t *testing.T) {
 	store.On("PurgeDeletedUsersBefore", mock.Anything, before).Return(int64(2), nil)
 	store.On("PurgeDeletedProjectsBefore", mock.Anything, before).Return(int64(1), nil)
 	store.On("PurgeDeletedEnvironmentsBefore", mock.Anything, before).Return(int64(3), nil)
+	store.On("PurgeDeletedSecretsBefore", mock.Anything, before).Return(int64(4), nil)
 
 	// Something was purged → a single system-actored data.purged event is written.
 	var auditedActorType string
@@ -33,7 +34,8 @@ func TestPurgeExpiredSoftDeletes_CountsAndAudits(t *testing.T) {
 	require.Equal(t, int64(2), res.Users)
 	require.Equal(t, int64(1), res.Projects)
 	require.Equal(t, int64(3), res.Environments)
-	require.Equal(t, int64(6), res.Total())
+	require.Equal(t, int64(4), res.Secrets)
+	require.Equal(t, int64(10), res.Total())
 	require.Equal(t, ActorTypeSystem, auditedActorType, "purge is actored as system")
 }
 
@@ -43,6 +45,7 @@ func TestPurgeExpiredSoftDeletes_NoAuditWhenNothingPurged(t *testing.T) {
 	store.On("PurgeDeletedUsersBefore", mock.Anything, before).Return(int64(0), nil)
 	store.On("PurgeDeletedProjectsBefore", mock.Anything, before).Return(int64(0), nil)
 	store.On("PurgeDeletedEnvironmentsBefore", mock.Anything, before).Return(int64(0), nil)
+	store.On("PurgeDeletedSecretsBefore", mock.Anything, before).Return(int64(0), nil)
 	// No LogAuditEvent expectation: a zero-purge run must not emit an event.
 
 	c := NewKeyorixCore(store)

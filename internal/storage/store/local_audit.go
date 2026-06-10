@@ -88,7 +88,7 @@ func (ls *LocalStorage) MostAccessedSecrets(ctx context.Context, projectID *uint
 	q := ls.db.WithContext(ctx).
 		Table("secret_access_logs AS l").
 		Select("l.secret_node_id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, COUNT(*) AS read_count, MAX(l.access_time) AS last_read").
-		Joins("JOIN secret_nodes s ON s.id = l.secret_node_id").
+		Joins("JOIN secret_nodes s ON s.id = l.secret_node_id AND s.deleted_at IS NULL").
 		Where("s.is_secret = ?", true).
 		Where("l.action = ?", "read").
 		Where("l.access_time >= ?", since).
@@ -130,6 +130,7 @@ func (ls *LocalStorage) UnusedSecrets(ctx context.Context, projectID *uint, notR
 		Select("s.id AS secret_id, s.name AS secret_name, s.environment_id AS environment_id, MAX(l.access_time) AS last_read").
 		Joins("LEFT JOIN secret_access_logs l ON l.secret_node_id = s.id AND l.action = ?", "read").
 		Where("s.is_secret = ?", true).
+		Where("s.deleted_at IS NULL").
 		Group("s.id, s.name, s.environment_id").
 		Having("MAX(l.access_time) IS NULL OR MAX(l.access_time) < ?", notReadSince).
 		Order("(MAX(l.access_time) IS NULL) DESC, last_read ASC")

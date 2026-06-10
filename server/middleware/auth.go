@@ -363,6 +363,23 @@ func ScopeFromSecretParam(param string) ScopeResolver {
 	}
 }
 
+// ScopeFromDeletedSecretParam resolves the scope of a secret that may be
+// soft-deleted (loads it Unscoped). Used by the restore route, where the target
+// secret is by definition soft-deleted and unloadable via the normal path.
+func ScopeFromDeletedSecretParam(param string) ScopeResolver {
+	return func(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+		id, err := scopePathUint(r, param)
+		if err != nil {
+			return core.Scope{}, errInvalidTarget
+		}
+		secret, err := cs.Storage().GetSecretIncludingDeleted(r.Context(), id)
+		if err != nil {
+			return core.Scope{}, errTargetNotFound
+		}
+		return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
+	}
+}
+
 // ScopeFromShareParam treats the named path param as a share ID and resolves the
 // scope of the shared secret.
 func ScopeFromShareParam(param string) ScopeResolver {
