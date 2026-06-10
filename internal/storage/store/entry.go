@@ -50,6 +50,7 @@ package store
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/keyorixhq/keyorix/internal/storage/remote"
 	"gorm.io/gorm"
@@ -72,6 +73,10 @@ func NewRemoteStorage(config *remote.Config) (*RemoteStorage, error) {
 // LocalStorage implements storage.Storage via direct GORM database access.
 type LocalStorage struct {
 	db *gorm.DB
+	// auditChainMu serializes audit-event appends so the read-chain-head +
+	// insert critical section is atomic within this process (ADR-029). The
+	// PostgreSQL advisory lock in LogAuditEvent extends this across processes.
+	auditChainMu sync.Mutex
 }
 
 // NewLocalStorage creates a LocalStorage backed by the given *gorm.DB.

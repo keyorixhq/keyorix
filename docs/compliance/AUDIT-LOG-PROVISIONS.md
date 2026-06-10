@@ -115,9 +115,14 @@ row states the expectation and the Keyorix capability that addresses it.
 | 8 | Records can be forwarded to monitoring/SIEM | Splunk HEC / Datadog / webhook push connectors | ✅ (operator-configured) |
 | 9 | Records are retained for the required period | Operator-owned PostgreSQL, no cap; coverage is demonstrable via `GET /api/v1/audit/retention` (oldest event + `meets_nis2_12_month`) | ✅ (operator-controlled) |
 | 10 | Records support incident detection | Built-in anomaly alerts + filterable/streamable audit query | ✅ |
-| 11 | Tamper resistance of records | Append-style writes in operator-controlled DB; **WORM/cryptographic chaining is Roadmap** | ⚠️ Roadmap |
+| 11 | Tamper resistance of records | **SHA-256 hash chain** over every audit event (ADR-029); any modification/deletion/insertion is detectable via `GET /api/v1/audit/verify`. Physical WORM/immutable storage remains operator-owned. | ✅ tamper-*evident* (physical immutability operator-owned) |
 
-> **Honest gap:** Keyorix does not yet provide cryptographic chaining /
-> write-once-read-many tamper-evidence on the audit table itself; integrity today
-> relies on operator-controlled PostgreSQL and standard DB controls. This is a
-> tracked roadmap item — do not represent it as shipped.
+> **Scope note (tamper-evidence vs. tamper-proofing):** Keyorix hash-chains the
+> audit table (each event binds the previous event's hash — ADR-029), so any
+> after-the-fact alteration, deletion, or reordering is **detectable** by
+> re-walking the chain (`GET /api/v1/audit/verify`). This is tamper-*evidence*,
+> not prevention: an actor with database access can still alter rows, but cannot
+> do so undetectably — and cannot at all once an `entry_hash` has been exported
+> off-box (the SIEM push connectors forward every event). Physical
+> write-once-read-many storage and an external timestamp/notary anchor remain
+> operator-owned infrastructure choices, outside the application.
