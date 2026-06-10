@@ -69,6 +69,24 @@ func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, project, "")
 }
 
+// GetProjectDrift handles GET /api/v1/projects/{id}/drift — the
+// cross-environment drift report for the project (keys missing in some
+// environments, or present everywhere with diverging settings).
+func (h *CatalogHandler) GetProjectDrift(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	report, err := h.coreService.DetectProjectDrift(r.Context(), uint(id))
+	if err != nil {
+		sendError(w, "InternalError", "Failed to compute drift", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, report, "")
+}
+
 // CreateProject handles POST /api/v1/projects
 func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
