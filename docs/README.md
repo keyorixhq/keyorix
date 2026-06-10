@@ -22,7 +22,7 @@ Complete documentation for the production-ready Keyorix secret management system
 
 ### API Documentation
 - **[API_REFERENCE.md](./API_REFERENCE.md)** - Complete REST and gRPC API reference
-- **[OpenAPI Spec](../server/openapi.yaml)** - Machine-readable API specification
+- **[OpenAPI Spec](../server/http/handlers/openapi.yaml)** - Machine-readable API specification (served at `/openapi.yaml`)
 - **Swagger UI** - Interactive API documentation at `/swagger/`
 
 ### Security & Compliance

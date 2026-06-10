@@ -1,0 +1,2532 @@
+openapi: 3.0.3
+info:
+  title: Keyorix API
+  version: 1.0.0
+  description: |
+    Keyorix is a self-hostable secrets manager with scoped RBAC, audit logging,
+    rotation, sharing, and machine-identity authentication.
+
+    ## Authentication
+    Most endpoints require a Bearer token: `Authorization: Bearer <token>`.
+    Three credential types are accepted, all via the same header:
+      - **Session tokens** — issued by `POST /auth/login` (and `/auth/refresh`).
+      - **Personal access tokens** (`kx_pat_…`) — created at `POST /api/v1/auth/tokens`.
+      - **Machine tokens** (`kx_machine_…`, ADR-030) — issued per machine identity.
+    Public endpoints (login, refresh, logout, password-reset, system init, the
+    setup-token flow, health, and Prometheus metrics) need no token.
+
+    ## Response envelope
+    Unless noted, success responses wrap the payload as `{ "data": <…>, "message": "<…>" }`.
+    Errors use `{ "error": { "code": <int>, "message": <string>, "type": <string> } }`.
+
+    ## Authorization
+    Operations are gated by scoped RBAC permissions (e.g. `secrets.read`,
+    `roles.assign`) at a project/environment scope. A 403 indicates the caller's
+    roles do not grant the permission at the target scope.
+servers:
+  - url: /
+    description: Same-origin (paths are absolute from the host root)
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - {name: Auth, description: Authentication & self-service account management}
+  - {name: System, description: Health, info, and metrics}
+  - {name: Projects, description: Projects and cross-environment drift}
+  - {name: Environments, description: Project environments}
+  - {name: Members, description: Project membership (role grants)}
+  - {name: Memberships, description: Membership onboarding lifecycle (ADR-022)}
+  - {name: Invitations, description: Invitations (ADR-024)}
+  - {name: AccessRequests, description: Self-service access requests (ADR-024)}
+  - {name: MachineIdentities, description: Machine identities, tokens & RBAC (ADR-023/030)}
+  - {name: Secrets, description: Secret lifecycle, versions, usage, risk}
+  - {name: Shares, description: Secret sharing}
+  - {name: RotationPolicies, description: Rotation policies & status}
+  - {name: Users, description: User management & impersonation}
+  - {name: Groups, description: Groups}
+  - {name: Roles, description: Roles & permissions}
+  - {name: Permissions, description: Permission catalog}
+  - {name: ServiceAccounts, description: Service accounts & their tokens}
+  - {name: UserRoles, description: Direct user-role assignment}
+  - {name: Audit, description: Audit logs, export, retention, tamper-evidence, anomalies}
+  - {name: Notifications, description: In-app notifications}
+  - {name: Dashboard, description: Dashboard stats & activity}
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate with username and password
+      operationId: authLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string}
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      token: {type: string, description: Session bearer token}
+                      expires_at: {type: string, format: date-time}
+                      absolute_expires_at: {type: string, format: date-time, description: Hard ceiling past which refresh is refused}
+                      user_id: {type: integer}
+                      username: {type: string}
+                      email: {type: string}
+                      display_name: {type: string}
+                      role: {type: string}
+                      roles: {type: array, items: {type: string}}
+                      permissions: {type: array, items: {type: string}}
+                      password_change_required: {type: boolean}
+                      account_state: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Invalidate the supplied bearer token
+      operationId: authLogout
+      responses:
+        '200': {description: Logged out}
+        '400': {$ref: '#/components/responses/Error'}
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Issue a new session token and invalidate the old one
+      operationId: authRefresh
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      token: {type: string}
+                      expires_at: {type: string, format: date-time}
+                      absolute_expires_at: {type: string, format: date-time}
+        '401': {$ref: '#/components/responses/Error'}
+  /auth/password-reset:
+    post:
+      tags: [Auth]
+      summary: Request a password reset (enumeration-safe; always 200)
+      operationId: authPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties: {email: {type: string, format: email}}
+      responses:
+        '200': {description: Always succeeds to prevent email enumeration}
+  /system/init:
+    post:
+      tags: [System]
+      summary: Bootstrap the server (admin user + default project/environments)
+      operationId: systemInit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username: {type: string}
+                email: {type: string, format: email}
+                password: {type: string, format: password}
+      responses:
+        '200':
+          description: System initialised (idempotent; already_initialized=true if previously bootstrapped)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      already_initialized: {type: boolean}
+                      environments: {type: array, items: {type: string}}
+                      project: {type: string}
+                      user:
+                        type: object
+                        properties:
+                          id: {type: integer}
+                          username: {type: string}
+                          email: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
+  /auth/setup/{token}:
+    get:
+      tags: [Auth]
+      summary: Describe a single-use setup token without consuming it
+      operationId: authGetSetupToken
+      parameters:
+        - {name: token, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Non-sensitive description of the setup token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      purpose: {type: string}
+                      email: {type: string}
+                      display_name: {type: string}
+        '410': {description: The setup link is no longer valid (unknown/expired/used)}
+  /auth/setup/consume:
+    post:
+      tags: [Auth]
+      summary: Consume a setup token, set the password, and log in
+      operationId: authConsumeSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: {type: string}
+                password: {type: string, format: password}
+      responses:
+        '200': {description: 'Account setup complete; payload identical to login'}
+        '400': {$ref: '#/components/responses/Error'}
+  /health:
+    get:
+      tags: [System]
+      summary: Liveness/health check (not wrapped in the data/message envelope)
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: healthy}
+                  timestamp: {type: string, format: date-time}
+                  version: {type: string}
+                  checks: {type: object}
+  /metrics:
+    get:
+      tags: [System]
+      summary: Prometheus metrics exposition
+      operationId: prometheusMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition format
+          content:
+            text/plain: {schema: {type: string}}
+  /api/v1/auth/profile:
+    get:
+      tags: [Auth]
+      summary: Get the current user's profile
+      operationId: getAuthProfile
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Self profile (id, username, email, display_name, role, roles, permissions, last_login_at)}
+        '401': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Auth]
+      summary: Update own display name and email
+      operationId: updateAuthProfile
+      security: [{bearerAuth: []}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: {type: string}
+                email: {type: string, format: email}
+      responses:
+        '200': {description: Profile updated}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/change-password:
+    post:
+      tags: [Auth]
+      summary: Change own password (drops other sessions)
+      operationId: changePassword
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: {type: string, format: password}
+                new_password: {type: string, format: password}
+      responses:
+        '200': {description: Password changed}
+        '400': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/sessions:
+    get:
+      tags: [Auth]
+      summary: List the caller's active sessions
+      operationId: listSessions
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 'Active sessions; the request own session is flagged current'}
+  /api/v1/auth/sessions/{id}:
+    delete:
+      tags: [Auth]
+      summary: Revoke one of the caller's sessions
+      operationId: revokeSession
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
+      responses:
+        '204': {description: Session revoked}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/tokens:
+    get:
+      tags: [Auth]
+      summary: List the caller's personal access tokens
+      operationId: listPATs
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 'Personal access tokens (secret never returned)'}
+    post:
+      tags: [Auth]
+      summary: Create a personal access token (raw token returned once)
+      operationId: createPAT
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                expires_at: {type: string, format: date-time, nullable: true, description: 'RFC3339; omit/null for non-expiring'}
+      responses:
+        '201': {description: 'Token created; plaintext token in data.token shown once'}
+        '400': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/tokens/{id}:
+    delete:
+      tags: [Auth]
+      summary: Revoke one of the caller's personal access tokens
+      operationId: revokePAT
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
+      responses:
+        '204': {description: Token revoked}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/end-impersonation:
+    post:
+      tags: [Auth]
+      summary: End the current impersonation session
+      operationId: endImpersonation
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Impersonation ended}
+  /api/v1/system/info:
+    get:
+      tags: [System]
+      summary: Server information (requires system.read)
+      operationId: getSystemInfo
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 'System info (version, build, db, security features)'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/system/metrics:
+    get:
+      tags: [System]
+      summary: System performance metrics (requires system.read)
+      operationId: getSystemMetrics
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: 'Runtime, HTTP, database, and secrets metrics'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/projects:
+    get:
+      tags: [Projects]
+      summary: List projects with secret and environment counts
+      operationId: listProjects
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: include_deleted
+          in: query
+          description: When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
+          schema: {type: string, enum: ['true', 'false']}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data.projects is an array of project objects (including secret and environment counts; soft-deleted ones carry deleted/deleted_at)."
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Projects]
+      summary: Create a project
+      operationId: createProject
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                description: {type: string}
+      responses:
+        '201':
+          description: "Envelope {data, message='Project created'}. data is the created project object."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}:
+    get:
+      tags: [Projects]
+      summary: Get a project by ID
+      operationId: getProject
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data is the project object."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Projects]
+      summary: Update a project's name/description
+      operationId: updateProject
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                description: {type: string}
+      responses:
+        '200':
+          description: "Envelope {data, message='Project updated'}. data is the updated project object."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Projects]
+      summary: Delete a project
+      operationId: deleteProject
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+        - name: force
+          in: query
+          description: When 'true', cascade-delete even when the project contains secrets (otherwise a non-empty project yields 409).
+          schema: {type: string, enum: ['true', 'false']}
+      responses:
+        '200':
+          description: "Envelope {data=null, message='Project deleted'}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/restore:
+    post:
+      tags: [Projects]
+      summary: Restore a soft-deleted project
+      operationId: restoreProject
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      responses:
+        '200':
+          description: "Envelope {data=null, message='Project restored'}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/drift:
+    get:
+      tags: [Projects]
+      summary: Cross-environment drift report for a project
+      operationId: getProjectDrift
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data is the drift report: environments[] (per-environment listing), drifted_keys[] (keys missing in some environments or with diverging settings), and summary."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/members:
+    get:
+      tags: [Members]
+      summary: List a project's members (role grants)
+      operationId: listProjectMembers
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data.members is an array of project member objects."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Members]
+      summary: Add a member to a project with a role
+      operationId: addProjectMember
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id: {type: integer, format: uint32}
+                role: {type: string}
+      responses:
+        '201':
+          description: "Envelope {data=null, message='Member added'}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/members/{userId}:
+    put:
+      tags: [Members]
+      summary: Update a project member's role
+      operationId: updateProjectMember
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+        - name: userId
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: {type: string}
+      responses:
+        '200':
+          description: "Envelope {data=null, message='Member role updated'}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Members]
+      summary: Remove a member from a project
+      operationId: removeProjectMember
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+        - name: userId
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      responses:
+        '200':
+          description: "Envelope {data=null, message='Member removed'}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/memberships:
+    get:
+      tags: [Memberships]
+      summary: List project memberships (onboarding state machine)
+      operationId: listProjectMemberships
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+        - name: stale
+          in: query
+          description: When 'true', returns only this project's invited memberships older than 7 days.
+          schema: {type: string, enum: ['true', 'false']}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data.memberships is an array of membership objects (state: invited|identity_verified|provisioned|active|revoked)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Memberships]
+      summary: Invite a member (creates an invited membership)
+      operationId: inviteMember
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id: {type: integer, format: uint32}
+                role: {type: string}
+                idp_resolved: {type: boolean}
+      responses:
+        '201':
+          description: "Envelope {data, message='Member invited'}. data.membership is the created membership object."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/memberships/{membershipId}:
+    put:
+      tags: [Memberships]
+      summary: Transition a membership through the onboarding state machine
+      operationId: transitionMembership
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+        - name: membershipId
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [verify, provision, activate, revoke]
+                  description: "verify→identity_verified, provision→provisioned, activate→active, revoke→revoked."
+      responses:
+        '200':
+          description: "Envelope {data, message='Membership updated'}. data.membership is the updated membership object."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/environments:
+    get:
+      tags: [Environments]
+      summary: List all environments (global, backward-compat)
+      operationId: listEnvironments
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope {data, message}. data.environments is an array of environment objects."
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/environments:
+    get:
+      tags: [Environments]
+      summary: List a project's environments
+      operationId: listProjectEnvironments
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+        - name: include_deleted
+          in: query
+          description: When 'true', also returns soft-deleted environments.
+          schema: {type: string, enum: ['true', 'false']}
+      responses:
+        '200':
+          description: "Envelope {data, message}. data.environments is an array of environment objects."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Environments]
+      summary: Create an environment in a project
+      operationId: createProjectEnvironment
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+      responses:
+        '201':
+          description: "Envelope {data, message='Environment created'}. data is the created environment object (project_id, name)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{projectId}/environments/{id}/restore:
+    post:
+      tags: [Environments]
+      summary: Restore a soft-deleted environment
+      operationId: restoreEnvironment
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          description: Owning project ID; the permission scope resolves from it because the environment row is soft-deleted.
+          schema: {type: integer, format: uint32}
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      responses:
+        '200':
+          description: "Envelope {data=null, message='Environment restored'}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/environments/{id}:
+    delete:
+      tags: [Environments]
+      summary: Delete an environment
+      operationId: deleteEnvironment
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: uint32}
+      responses:
+        '200':
+          description: "Envelope {data=null, message='Environment deleted'}."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/invitations:
+    get:
+      tags: [Invitations]
+      summary: List project invitations
+      operationId: listProjectInvitations
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with `data.invitations` (array of invitation objects).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Invitations]
+      summary: Invite a user to the project
+      operationId: createProjectInvitation
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: {type: string, format: email}
+                role: {type: string, description: Project role to assign on accept}
+      responses:
+        '201':
+          description: >-
+            Envelope with `data.invitation` plus `data.setup_link`
+            (or `data.delivery_error` when the link could not be delivered).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/invitations/{invitationId}:
+    delete:
+      tags: [Invitations]
+      summary: Revoke a pending invitation
+      operationId: revokeProjectInvitation
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: invitationId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with null `data` and a confirmation message.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/invitations/{invitationId}/resend:
+    post:
+      tags: [Invitations]
+      summary: Resend a pending invitation link
+      operationId: resendProjectInvitation
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: invitationId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with `data.setup_link` (the reissued accept link).
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/invitations:
+    post:
+      tags: [Invitations]
+      summary: Create a global (non-project) invitation
+      operationId: createGlobalInvitation
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: {type: string, format: email}
+                role:
+                  type: string
+                  description: System role (optional; defaults to system_viewer)
+                project_assignments:
+                  type: array
+                  description: Per-project roles applied atomically on accept
+                  items:
+                    type: object
+                    properties:
+                      project_id: {type: integer}
+                      role: {type: string}
+      responses:
+        '201':
+          description: >-
+            Envelope with `data.invitation` plus `data.setup_link`
+            (or `data.delivery_error` when the link could not be delivered).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/access-requests:
+    get:
+      tags: [AccessRequests]
+      summary: List project access requests
+      operationId: listAccessRequests
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with `data.access_requests` (array of access-request objects).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [AccessRequests]
+      summary: Request access to a project (self-service)
+      operationId: createAccessRequest
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                suggested_role: {type: string, description: Project role the requester would like}
+                reason: {type: string}
+      responses:
+        '201':
+          description: Envelope with `data.access_request` (the created pending request).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/access-requests/{requestId}:
+    put:
+      tags: [AccessRequests]
+      summary: Approve or reject an access request
+      operationId: resolveAccessRequest
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: requestId, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [approve, reject]}
+                granted_role: {type: string, description: Role to grant on approve}
+                reason: {type: string, description: Reason on reject}
+      responses:
+        '200':
+          description: Envelope with null `data` and a confirmation message.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/access-requests/{requestId}/withdraw:
+    post:
+      tags: [AccessRequests]
+      summary: Withdraw your own access request (self-service)
+      operationId: withdrawAccessRequest
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: requestId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with null `data` and a confirmation message.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/machine-identities:
+    get:
+      tags: [MachineIdentities]
+      summary: List machine identities
+      operationId: listMachineIdentities
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with `data.machine_identities` (array of machine-identity objects).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [MachineIdentities]
+      summary: Create a machine identity
+      operationId: createMachineIdentity
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                identity_type: {type: string}
+                description: {type: string}
+      responses:
+        '201':
+          description: Envelope with `data.machine_identity` (the created identity).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/machine-identities/{machineId}:
+    put:
+      tags: [MachineIdentities]
+      summary: Transition a machine identity state
+      operationId: transitionMachineIdentity
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [activate, suspend, revoke]}
+      responses:
+        '200':
+          description: Envelope with `data.machine_identity` (the updated identity).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/machine-identities/{machineId}/tokens:
+    get:
+      tags: [MachineIdentities]
+      summary: List machine tokens (metadata only)
+      operationId: listMachineTokens
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: >-
+            Envelope with `data.tokens`; each item has `id`, `name`, `prefix`,
+            `last_used_at`, `expires_at`, `revoked`, `created_at` (never the raw token).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [MachineIdentities]
+      summary: Issue a machine token (raw token shown once)
+      operationId: issueMachineToken
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                expires_in_days: {type: integer, description: Optional; omit or 0 for no expiry}
+      responses:
+        '201':
+          description: >-
+            Envelope with `data.token` (raw token, returned ONCE), `data.id`,
+            `data.prefix`, and `data.expires_at`.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}:
+    delete:
+      tags: [MachineIdentities]
+      summary: Revoke a machine token
+      operationId: revokeMachineToken
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+        - {name: tokenId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with null `data` and a confirmation message.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/machine-identities/{machineId}/roles:
+    post:
+      tags: [MachineIdentities]
+      summary: Grant a project role to a machine identity
+      operationId: grantMachineRole
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id]
+              properties:
+                role_id: {type: integer}
+      responses:
+        '200':
+          description: Envelope with null `data` and a confirmation message.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}:
+    delete:
+      tags: [MachineIdentities]
+      summary: Remove a project role from a machine identity
+      operationId: removeMachineRole
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: machineId, in: path, required: true, schema: {type: integer}}
+        - {name: roleId, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope with null `data` and a confirmation message.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets:
+    get:
+      tags: [Secrets]
+      summary: List secrets
+      operationId: listSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}}
+        - {name: environment_id, in: query, schema: {type: integer}}
+        - {name: search, in: query, schema: {type: string}}
+        - {name: type, in: query, schema: {type: string}}
+        - {name: page, in: query, schema: {type: integer, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, default: 20, maximum: 100}}
+        - {name: show_owned_only, in: query, schema: {type: boolean}}
+        - {name: show_shared_only, in: query, schema: {type: boolean}}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. `data` holds the paginated list
+            (`secrets` array plus pagination fields).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Secrets]
+      summary: Create a secret
+      operationId: createSecret
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, value, environment_id, type]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                value: {type: string}
+                project_id: {type: integer}
+                environment_id: {type: integer}
+                type: {type: string}
+                max_reads: {type: integer, minimum: 1, nullable: true}
+                metadata: {type: object, additionalProperties: {type: string}}
+                tags: {type: array, items: {type: string}}
+      responses:
+        '201':
+          description: >-
+            Envelope `{data, message}`. `data` is the created secret node
+            (`id`, `name`, `project_id`, `environment_id`, `type`).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}:
+    get:
+      tags: [Secrets]
+      summary: Get a secret
+      operationId: getSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - name: include_value
+          in: query
+          description: When `true`, response `data` becomes `{secret, value}` with the decrypted value.
+          schema: {type: boolean}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. `data` is the secret node, or
+            `{secret, value}` when `include_value=true`.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Secrets]
+      summary: Update a secret
+      operationId: updateSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: >-
+                `expiration` (RFC3339) and `clear_expiration` are mutually
+                exclusive.
+              properties:
+                value: {type: string}
+                max_reads: {type: integer, minimum: 1, nullable: true}
+                expiration: {type: string, format: date-time}
+                clear_expiration: {type: boolean}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the updated secret node.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Secrets]
+      summary: Delete a secret
+      operationId: deleteSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '204': {description: Secret deleted (no content).}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/rotate:
+    post:
+      tags: [Secrets]
+      summary: Rotate a secret value
+      operationId: rotateSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_value]
+              properties:
+                new_value: {type: string}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the rotated secret node.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/versions:
+    get:
+      tags: [Secrets]
+      summary: List secret versions
+      operationId: getSecretVersions
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.versions` is the version history array.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/risk:
+    get:
+      tags: [Secrets]
+      summary: Get a secret's risk score
+      operationId: getSecretRisk
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. `data` is the composite risk score
+            (expiry / rotation / usage / exposure factors).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/usage/most-accessed:
+    get:
+      tags: [Secrets]
+      summary: List most-accessed secrets
+      operationId: getMostAccessedSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}}
+        - {name: days, in: query, schema: {type: integer, default: 30}}
+        - {name: limit, in: query, schema: {type: integer, default: 10}}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. `data.secrets` ranks secrets by read
+            count; `data.days` echoes the window.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/usage/unused:
+    get:
+      tags: [Secrets]
+      summary: List unused secrets
+      operationId: getUnusedSecrets
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}}
+        - {name: days, in: query, schema: {type: integer, default: 30}}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. `data.secrets` lists secrets unread in
+            the last N days (never-read first); `data.days` echoes the window.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/shares:
+    get:
+      tags: [Shares]
+      summary: List a secret's shares
+      operationId: listSecretShares
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.shares` is the share records array.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/share:
+    post:
+      tags: [Shares]
+      summary: Share a secret
+      operationId: shareSecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient_id, permission]
+              properties:
+                recipient_id:
+                  type: integer
+                  description: User ID, or group ID when `is_group` is true.
+                is_group: {type: boolean}
+                permission: {type: string, enum: [read, write]}
+      responses:
+        '201':
+          description: Envelope `{data, message}`. `data` is the created share record.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/shares:
+    get:
+      tags: [Shares]
+      summary: List shares created by the caller
+      operationId: listShares
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.shares` is the share records array.
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/shares/{id}:
+    put:
+      tags: [Shares]
+      summary: Update a share's permission
+      operationId: updateSharePermission
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permission]
+              properties:
+                permission: {type: string, enum: [read, write]}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the updated share record.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Shares]
+      summary: Revoke a share
+      operationId: revokeShare
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '204': {description: Share revoked (no content).}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/shared-secrets:
+    get:
+      tags: [Shares]
+      summary: List secrets shared with the caller
+      operationId: listSharedSecrets
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data.secrets` is the shared secret nodes array.
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/rotation-policies:
+    get:
+      tags: [RotationPolicies]
+      summary: List rotation policies
+      operationId: listRotationPolicies
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}}
+        - {name: environment_id, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the rotation policies array.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [RotationPolicies]
+      summary: Create a rotation policy
+      operationId: createRotationPolicy
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scope, interval_days]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                description: {type: string}
+                scope: {type: string, enum: [project, environment]}
+                project_id: {type: integer, nullable: true}
+                environment_id: {type: integer, nullable: true}
+                interval_days: {type: integer, minimum: 1, maximum: 365}
+                alert_days_before: {type: integer, minimum: 0, maximum: 90}
+                notify_on_breach: {type: boolean}
+      responses:
+        '201':
+          description: Envelope `{data, message}`. `data` is the created rotation policy.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/rotation-policies/evaluate:
+    get:
+      tags: [RotationPolicies]
+      summary: Evaluate rotation policies
+      operationId: evaluateRotationPolicies
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. `data` lists secrets that are overdue or
+            approaching their rotation deadline.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/rotation-policies/status:
+    get:
+      tags: [RotationPolicies]
+      summary: Get rotation posture per secret
+      operationId: getRotationStatus
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: project_id, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: >-
+            Envelope `{data, message}`. `data` reports rotation posture
+            (`overdue` / `due_soon` / `ok`) for every policy-covered secret.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/rotation-policies/{id}:
+    get:
+      tags: [RotationPolicies]
+      summary: Get a rotation policy
+      operationId: getRotationPolicy
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the rotation policy.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [RotationPolicies]
+      summary: Update a rotation policy
+      operationId: updateRotationPolicy
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, interval_days]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                description: {type: string}
+                interval_days: {type: integer, minimum: 1, maximum: 365}
+                alert_days_before: {type: integer, minimum: 0, maximum: 90}
+                notify_on_breach: {type: boolean}
+                is_active: {type: boolean}
+      responses:
+        '200':
+          description: Envelope `{data, message}`. `data` is the updated rotation policy.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [RotationPolicies]
+      summary: Delete a rotation policy
+      operationId: deleteRotationPolicy
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      responses:
+        '204': {description: Rotation policy deleted (no content).}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: List users
+      operationId: listUsers
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: page, in: query, schema: {type: integer, default: 1}}
+        - {name: page_size, in: query, schema: {type: integer, default: 20, maximum: 100}}
+        - {name: search, in: query, schema: {type: string}}
+        - {name: username, in: query, schema: {type: string}}
+        - {name: email, in: query, schema: {type: string}}
+        - {name: is_active, in: query, schema: {type: boolean}}
+        - {name: include_deleted, in: query, schema: {type: boolean}}
+        - {name: filter, in: query, description: "Set to `inactive` for users with no login in the last 30 days.", schema: {type: string, enum: [inactive]}}
+      responses:
+        '200':
+          description: "Envelope `data` has `users[]` (each with id, username, email, display_name, project_count, active_project_count), `page`, `page_size`, `total`, `total_pages`."
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Users]
+      summary: Create user
+      operationId: createUser
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, display_name]
+              properties:
+                username: {type: string, minLength: 3, maxLength: 50}
+                email: {type: string, format: email}
+                display_name: {type: string, minLength: 1, maxLength: 100}
+                password: {type: string, minLength: 8, description: "Required unless deliver_setup_link or generate_one_time_password is set."}
+                is_active: {type: boolean}
+                deliver_setup_link: {type: boolean, description: "Provision via account-setup link instead of an admin-set password."}
+                generate_one_time_password: {type: boolean, description: "Server-generated one-time password, returned once. Mutually exclusive with deliver_setup_link."}
+                role: {type: string, description: "Optional system role override (admin-set-password path only)."}
+                project_assignments:
+                  type: array
+                  description: "Project-scoped role assignments applied atomically (admin-set-password path only)."
+                  items:
+                    type: object
+                    properties:
+                      project_id: {type: integer}
+                      role: {type: string}
+      responses:
+        '201':
+          description: "Envelope `data` is the created user. With generate_one_time_password it is `{user, one_time_password}`; with deliver_setup_link it is `{user, setup_link}`."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/search:
+    get:
+      tags: [Users]
+      summary: Search users
+      operationId: searchUsers
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: q, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: "Envelope `data.users[]` with id, username, email (max 10)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/stale:
+    get:
+      tags: [Users]
+      summary: List stale (stuck-state) accounts
+      operationId: listStaleUsers
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: state, in: query, description: "Account state to filter.", schema: {type: string, enum: [pending_first_login, password_reset_required], default: pending_first_login}}
+        - {name: days, in: query, description: "Minimum age in days in the restricted state.", schema: {type: integer, default: 7}}
+      responses:
+        '200':
+          description: "Envelope `data` has `users[]`, `state`, `days`."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Users]
+      summary: Get user
+      operationId: getUser
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is the user (id, username, email, display_name, project_count, active_project_count)."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Users]
+      summary: Update user
+      operationId: updateUser
+      security: [{bearerAuth: []}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username: {type: string, minLength: 3, maxLength: 50}
+                email: {type: string, format: email}
+                display_name: {type: string, minLength: 1, maxLength: 100}
+                active: {type: boolean}
+      responses:
+        '200':
+          description: "Envelope `data` is the updated user."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Users]
+      summary: Delete (soft-delete) user
+      operationId: deleteUser
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: User deleted.}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}/restore:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Restore soft-deleted user
+      operationId: restoreUser
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope with `message`; `data` is null."}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}/suspend:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Suspend user
+      operationId: suspendUser
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope with `message`; `data` is null."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}/reactivate:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Reactivate user
+      operationId: reactivateUser
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope with `message`; `data` is null."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}/require-password-reset:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Require password reset on next login
+      operationId: requirePasswordReset
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope with `message`; `data` is null."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}/resend-setup-link:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Reissue and resend account-setup link
+      operationId: resendSetupLink
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is the delivery outcome (includes the link itself in out-of-band mode)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}/roles:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Users]
+      summary: Get user roles
+      operationId: getUserRolesForUser
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data.roles[]` with id, name."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Users]
+      summary: Replace user roles at a scope
+      operationId: updateUserRoles
+      security: [{bearerAuth: []}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role_ids: {type: array, items: {type: integer}}
+                project_id: {type: integer, description: "Scope (0 = global)."}
+                environment_id: {type: integer, description: "Scope (0 = global)."}
+      responses:
+        '200':
+          description: "Envelope `data.roles[]` with id, name (post-replacement)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/users/{id}/memberships:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Users]
+      summary: List user project memberships
+      operationId: getUserMembershipsForUser
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data.memberships[]` with project_id, project_name, role, state."
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/admin/impersonate:
+    post:
+      tags: [Users]
+      summary: Start impersonating a user
+      operationId: startImpersonation
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {type: integer}
+      responses:
+        '200':
+          description: "Envelope `data` is a short-lived target session: token, expires_at, user_id, username, display_name, impersonated_by."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/groups:
+    get:
+      tags: [Groups]
+      summary: List groups
+      operationId: listGroups
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` has `groups[]` (id, name, description) and `total`."
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Groups]
+      summary: Create group
+      operationId: createGroup
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                description: {type: string}
+      responses:
+        '201':
+          description: "Envelope `data` is the created group (id, name, description)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/groups/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Groups]
+      summary: Get group
+      operationId: getGroup
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is the group (id, name, description)."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Groups]
+      summary: Update group
+      operationId: updateGroup
+      security: [{bearerAuth: []}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                description: {type: string}
+      responses:
+        '200':
+          description: "Envelope `data` is the updated group."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Groups]
+      summary: Delete group
+      operationId: deleteGroup
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: Group deleted.}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/groups/{id}/members:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Groups]
+      summary: List group members
+      operationId: getGroupMembers
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` has `members[]` (user objects) and `total`."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Groups]
+      summary: Add group member
+      operationId: addGroupMember
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: {type: integer}
+      responses:
+        '200':
+          description: "Envelope `data` is `{group_id, user_id}`."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/groups/{id}/members/{userId}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: userId, in: path, required: true, schema: {type: integer}}
+    delete:
+      tags: [Groups]
+      summary: Remove group member
+      operationId: removeGroupMember
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: Member removed.}
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/groups/{id}/roles:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Groups]
+      summary: List group role assignments
+      operationId: getGroupRoles
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is `{group_id, roles}`."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Groups]
+      summary: Assign role to group at a scope
+      operationId: assignRoleToGroup
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id]
+              properties:
+                role_id: {type: integer}
+                project_id: {type: integer, description: "Scope (0 = global)."}
+                environment_id: {type: integer, description: "Scope (0 = global)."}
+      responses:
+        '201':
+          description: "Envelope `data` is `{group_id, role_id}`."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/groups/{id}/roles/{roleId}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: roleId, in: path, required: true, schema: {type: integer}}
+      - {name: project_id, in: query, schema: {type: integer}, description: "Scope (0 = global)."}
+      - {name: environment_id, in: query, schema: {type: integer}, description: "Scope (0 = global)."}
+    delete:
+      tags: [Groups]
+      summary: Remove role from group
+      operationId: removeRoleFromGroup
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: Role removed from group.}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/roles:
+    get:
+      tags: [Roles]
+      summary: List roles with permissions
+      operationId: listRoles
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` has `roles[]` (with permissions) and `total`."
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Roles]
+      summary: Create role
+      operationId: createRole
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, description, permissions]
+              properties:
+                name: {type: string, minLength: 3, maxLength: 50}
+                description: {type: string, minLength: 1, maxLength: 200}
+                permissions: {type: array, minItems: 1, items: {type: string}, description: "Permission names."}
+      responses:
+        '201':
+          description: "Envelope `data` is `{role, permissions}` (assigned permissions)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+
+  /api/v1/roles/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Roles]
+      summary: Get role with permissions
+      operationId: getRole
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is `{role, permissions}`."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [Roles]
+      summary: Update role
+      operationId: updateRole
+      security: [{bearerAuth: []}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: {type: string, minLength: 1, maxLength: 200}
+                permissions: {type: array, minItems: 1, items: {type: string}, description: "Replaces the role's permissions by name."}
+      responses:
+        '200':
+          description: "Envelope `data` is `{role, permissions}`."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Roles]
+      summary: Delete role
+      operationId: deleteRole
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: Role deleted.}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/roles/{id}/permissions:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [Roles]
+      summary: List role permissions
+      operationId: getRolePermissions
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is `{role_id, role_name, permissions}`."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Roles]
+      summary: Assign permission to role
+      operationId: assignPermissionToRole
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permission_id]
+              properties:
+                permission_id: {type: integer}
+      responses:
+        '201':
+          description: "Envelope `data` is `{role_id, permission_id}`."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/roles/{id}/permissions/{permissionId}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: permissionId, in: path, required: true, schema: {type: integer}}
+    delete:
+      tags: [Roles]
+      summary: Remove permission from role
+      operationId: removePermissionFromRole
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: Permission removed from role.}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/permissions:
+    get:
+      tags: [Permissions]
+      summary: List permissions
+      operationId: listPermissions
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: resource, in: query, description: "Optional filter by resource.", schema: {type: string}}
+      responses:
+        '200':
+          description: "Envelope `data` has `permissions[]` (id, name, resource, ...) and `total`."
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/service-accounts:
+    get:
+      tags: [ServiceAccounts]
+      summary: List service accounts
+      operationId: listServiceAccounts
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data[]` of service accounts (id, name, description, client_id, scopes, is_active, created_at)."
+        '401': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [ServiceAccounts]
+      summary: Create service account
+      operationId: createServiceAccount
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                description: {type: string}
+                scopes: {type: string}
+      responses:
+        '201':
+          description: "Envelope `data` is the account plus the one-time `client_secret` (returned once)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+
+  /api/v1/service-accounts/{clientId}:
+    parameters:
+      - {name: clientId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [ServiceAccounts]
+      summary: Get service account
+      operationId: getServiceAccount
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is the service account (id, name, description, client_id, scopes, is_active, created_at)."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    put:
+      tags: [ServiceAccounts]
+      summary: Update service account
+      operationId: updateServiceAccount
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 255}
+                description: {type: string}
+                scopes: {type: string}
+                is_active: {type: boolean}
+      responses:
+        '200':
+          description: "Envelope `data` is the updated service account."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [ServiceAccounts]
+      summary: Revoke service account
+      operationId: deactivateServiceAccount
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: Service account revoked.}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/service-accounts/{clientId}/tokens:
+    parameters:
+      - {name: clientId, in: path, required: true, schema: {type: string}}
+    get:
+      tags: [ServiceAccounts]
+      summary: List service account tokens
+      operationId: listServiceAccountTokens
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data[]` of tokens (id, client_id, user_id, scope, revoked, expires_at, created_at)."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [ServiceAccounts]
+      summary: Create service account token
+      operationId: createServiceAccountToken
+      security: [{bearerAuth: []}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scope: {type: string}
+                expires_at: {type: string, format: date-time}
+      responses:
+        '201':
+          description: "Envelope `data` is the token plus the one-time plain `token` (returned once)."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/service-accounts/{clientId}/tokens/{tokenId}:
+    parameters:
+      - {name: clientId, in: path, required: true, schema: {type: string}}
+      - {name: tokenId, in: path, required: true, schema: {type: integer}}
+    delete:
+      tags: [ServiceAccounts]
+      summary: Revoke service account token
+      operationId: revokeServiceAccountToken
+      security: [{bearerAuth: []}]
+      responses:
+        '204': {description: Token revoked.}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/user-roles:
+    post:
+      tags: [UserRoles]
+      summary: Assign role to user at a scope
+      operationId: assignUserRole
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role_id]
+              properties:
+                user_id: {type: integer}
+                role_id: {type: integer}
+                project_id: {type: integer, description: "Scope (0 = global)."}
+                environment_id: {type: integer, description: "Scope (0 = global)."}
+      responses:
+        '201':
+          description: "Envelope `data` is `{user_id, role_id}`."
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [UserRoles]
+      summary: Remove role from user at a scope
+      operationId: removeUserRole
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role_id]
+              properties:
+                user_id: {type: integer}
+                role_id: {type: integer}
+                project_id: {type: integer, description: "Scope (0 = global)."}
+                environment_id: {type: integer, description: "Scope (0 = global)."}
+      responses:
+        '204': {description: Role removed from user.}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/user-roles/user/{userId}:
+    parameters:
+      - {name: userId, in: path, required: true, schema: {type: integer}}
+    get:
+      tags: [UserRoles]
+      summary: Get a user's role assignment
+      operationId: getUserRoleAssignment
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope `data` is the user's role assignment."
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/audit/logs:
+    get:
+      tags: [Audit]
+      summary: List audit log entries (UI-oriented, paginated)
+      operationId: listAuditLogs
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: action, in: query, schema: {type: string}, description: Filter by event type/action.}
+        - {name: user_id, in: query, schema: {type: integer}, description: Filter by acting user ID.}
+        - {name: project_id, in: query, schema: {type: integer}, description: Filter by project ID.}
+        - {name: actor_type, in: query, schema: {type: string, enum: [user, machine_identity, system]}, description: Segment human vs machine activity (ADR-023).}
+        - {name: start_time, in: query, schema: {type: string, format: date-time}, description: RFC3339 lower bound (inclusive).}
+        - {name: end_time, in: query, schema: {type: string, format: date-time}, description: RFC3339 upper bound (inclusive).}
+        - {name: page, in: query, schema: {type: integer, default: 1, minimum: 1}}
+        - {name: page_size, in: query, schema: {type: integer, default: 50, maximum: 100}}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data has logs[] (each: id, event_type, actor,
+            actor_type, description, timestamp, optional diff, and impersonation /
+            impersonated_by / acting_as when impersonated), plus page, page_size,
+            total, total_pages.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/audit/export:
+    get:
+      tags: [Audit]
+      summary: Cursor-paginated full-fidelity audit feed for SIEM pull
+      operationId: exportAuditLogs
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: after_id, in: query, schema: {type: integer}, description: Cursor — pass the last returned event id to fetch the next page.}
+        - {name: since, in: query, schema: {type: string, format: date-time}, description: RFC3339 lower bound on event time.}
+        - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data has events[] (each: id, event_type, timestamp,
+            actor, user_id, project_id, secret_id, description, ip_address, actor_type,
+            success, optional diff/impersonation/impersonated_by/acting_as), count, and
+            next_cursor (the id for the next after_id, or null when caught up).
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/audit/rbac-logs:
+    get:
+      tags: [Audit]
+      summary: List the role-assignment audit trail
+      operationId: listRBACAuditLogs
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: page, in: query, schema: {type: integer, default: 1, minimum: 1}}
+        - {name: page_size, in: query, schema: {type: integer, default: 50, maximum: 100}}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data has logs[] (each: id, action, actor_user_id,
+            target_user_id, group_id, role_id, permission_id, project_id, details,
+            created_at), plus page, page_size, total, total_pages.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/audit/retention:
+    get:
+      tags: [Audit]
+      summary: Report audit-trail retention coverage (ADR-029)
+      operationId: getAuditRetention
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: retention_policy (always "unlimited"),
+            total_events, oldest_event, newest_event (nullable timestamps), coverage_days,
+            and meets_nis2_12_month (true once the trail spans the NIS2 12-month window).
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/audit/verify:
+    get:
+      tags: [Audit]
+      summary: Verify the tamper-evidence hash chain (ADR-029)
+      operationId: verifyAuditChain
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: valid, chained_events, unchained_events; on
+            failure (valid=false) also first_broken_id and reason naming the first
+            divergent event.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/audit/anomalies:
+    get:
+      tags: [Audit]
+      summary: List anomaly alerts
+      operationId: listAnomalyAlerts
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: acknowledged, in: query, schema: {type: boolean}, description: Filter by acknowledged state; omit to return all.}
+        - {name: unacknowledged, in: query, schema: {type: boolean}, description: Legacy alias (CLI) — true returns only unacknowledged alerts.}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: alerts[] (each: ID, SecretNodeID, SecretName,
+            AlertType (off_hours|new_ip|frequency_spike|new_user), Severity (low|medium|high),
+            Description, AccessedBy, IPAddress, DetectedAt, Acknowledged, CreatedAt) and total.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/audit/anomalies/{id}/acknowledge:
+    post:
+      tags: [Audit]
+      summary: Acknowledge an anomaly alert
+      operationId: acknowledgeAnomalyAlert
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}, description: Anomaly alert ID.}
+      responses:
+        '200':
+          description: 'Envelope {data, message}. data: {acknowledged: true}.'
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List the authenticated user's notifications
+      operationId: listNotifications
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: unread, in: query, schema: {type: boolean}, description: true returns only unread notifications.}
+        - {name: limit, in: query, schema: {type: integer}, description: Max notifications to return (0/absent = no limit).}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: notifications[] (each: id, type, title, message,
+            link, is_read, created_at, optional project_id), newest first, plus unread_count
+            for the bell badge.
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all of the user's notifications read
+      operationId: markAllNotificationsRead
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: 'Envelope {data, message}. data: {all_read: true}.'
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark a single notification read
+      operationId: markNotificationRead
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}, description: Notification ID (must belong to the caller).}
+      responses:
+        '200':
+          description: 'Envelope {data, message}. data: {id, is_read: true}.'
+        '401': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/dashboard/stats:
+    get:
+      tags: [Dashboard]
+      summary: Dashboard summary statistics
+      operationId: getDashboardStats
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: totalSecrets, sharedSecrets, secretsSharedWithMe,
+            activeUsers, auditEvents30d, auditLogins30d, auditSecretReads30d,
+            failedAuthAttempts24h, inactiveUsers; optional trend objects
+            (totalSecretsTrend/sharedSecretsTrend/sharedWithMeTrend, each {value, isPositive}),
+            expiringSecrets[] (id, name, environment, expiresAt, daysLeft, expired), and
+            recentActivity[] (id, type, secretName, timestamp, actor).
+        '401': {$ref: '#/components/responses/Error'}
+  /api/v1/dashboard/activity:
+    get:
+      tags: [Dashboard]
+      summary: Paginated activity feed
+      operationId: getDashboardActivity
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: page, in: query, schema: {type: integer, default: 1, minimum: 1}}
+        - {name: pageSize, in: query, schema: {type: integer, default: 10, maximum: 100}}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: items[] (each: id, type, secretName, timestamp,
+            actor), total, page, pageSize.
+        '401': {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Session token, personal access token (kx_pat_…), or machine token (kx_machine_…).
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties:
+                  code: {type: integer}
+                  message: {type: string}
+                  type: {type: string}

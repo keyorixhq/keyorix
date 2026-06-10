@@ -27,7 +27,7 @@ server/
 │   └── interceptors/      # gRPC middleware (auth, logging, etc.)
 ├── middleware/             # Shared middleware (HTTP & gRPC)
 ├── proto/                  # Protocol buffer definitions
-├── openapi.yaml           # OpenAPI 3.0 specification
+├── http/handlers/openapi.yaml  # OpenAPI 3.0 spec (embedded; served at /openapi.yaml)
 └── README.md              # This file
 ```
 
