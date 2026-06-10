@@ -195,6 +195,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if !columnExists(db, "audit_events", "actor_type") {
 			db.Exec("ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'user'")
 		}
+		// ADR-029: tamper-evidence hash chain. Empty on legacy rows (the chain
+		// begins at the first event written after these columns exist).
+		if !columnExists(db, "audit_events", "prev_hash") {
+			db.Exec("ALTER TABLE audit_events ADD COLUMN prev_hash TEXT NOT NULL DEFAULT ''")
+		}
+		if !columnExists(db, "audit_events", "entry_hash") {
+			db.Exec("ALTER TABLE audit_events ADD COLUMN entry_hash TEXT NOT NULL DEFAULT ''")
+		}
 	}
 
 	// Impersonation sessions carry the initiating admin + start time.

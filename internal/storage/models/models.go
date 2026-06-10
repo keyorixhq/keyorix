@@ -346,6 +346,15 @@ type AuditEvent struct {
 	// "system" marks events with no authenticated principal. Defaults to "user"
 	// so legacy rows and back-compat writers read as human-actored.
 	ActorType string `gorm:"default:user"`
+
+	// Tamper-evidence hash chain (ADR-029). PrevHash is the EntryHash of the
+	// immediately preceding chained event (a fixed genesis constant for the
+	// first chained event); EntryHash is SHA256(canonical(fields) ‖ PrevHash).
+	// Each entry binds its predecessor, so any modification/deletion/insertion
+	// is detectable by re-walking the chain (see VerifyAuditChain). Both are
+	// empty on legacy rows written before ADR-029 (an unchained prefix).
+	PrevHash  string `gorm:"index"`
+	EntryHash string `gorm:"index"`
 }
 
 type Setting struct {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 // nis2RetentionDays is the audit-log retention window NIS2 (and DORA) expect an
@@ -62,4 +64,15 @@ func (c *KeyorixCore) AuditRetentionCoverage(ctx context.Context) (*AuditRetenti
 		cov.MeetsNIS2TwelveMonth = days >= nis2RetentionDays
 	}
 	return cov, nil
+}
+
+// VerifyAuditChain re-walks the tamper-evidence hash chain (ADR-029) and reports
+// whether the audit trail is intact. Backs GET /api/v1/audit/verify — see
+// docs/adr-029-audit-log-tamper-evidence.md.
+func (c *KeyorixCore) VerifyAuditChain(ctx context.Context) (*storage.AuditChainVerification, error) {
+	v, err := c.storage.VerifyAuditChain(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
+	}
+	return v, nil
 }

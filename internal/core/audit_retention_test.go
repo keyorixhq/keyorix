@@ -53,6 +53,21 @@ func TestAuditRetentionCoverage_YoungDeployment(t *testing.T) {
 	require.Equal(t, RetentionPolicyUnlimited, cov.RetentionPolicy)
 }
 
+func TestVerifyAuditChain_PassesThrough(t *testing.T) {
+	brokenID := uint(42)
+	store := new(MockStorage)
+	store.On("VerifyAuditChain", mock.Anything).Return(&storage.AuditChainVerification{
+		Valid: false, ChainedEvents: 41, FirstBrokenID: &brokenID, Reason: "event modified",
+	}, nil)
+
+	c := NewKeyorixCore(store)
+	v, err := c.VerifyAuditChain(context.Background())
+	require.NoError(t, err)
+	require.False(t, v.Valid)
+	require.Equal(t, &brokenID, v.FirstBrokenID)
+	require.Equal(t, "event modified", v.Reason)
+}
+
 func TestAuditRetentionCoverage_Empty(t *testing.T) {
 	store := new(MockStorage)
 	store.On("AuditRetentionStats", mock.Anything).Return(&storage.AuditRetentionStats{

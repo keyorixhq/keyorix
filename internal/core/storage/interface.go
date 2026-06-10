@@ -202,6 +202,12 @@ type Storage interface {
 	// (NIS2 mandates 12 months of retention). Oldest/Newest are nil on an empty
 	// table.
 	AuditRetentionStats(ctx context.Context) (*AuditRetentionStats, error)
+	// VerifyAuditChain re-walks the tamper-evidence hash chain (ADR-029) over
+	// audit_events and reports whether it is intact. The first divergence —
+	// modified field, deleted/inserted row, or broken linkage — is reported
+	// with the offending event id. A leading run of pre-ADR-029 rows with empty
+	// hashes is counted as an unchained legacy prefix, not a failure.
+	VerifyAuditChain(ctx context.Context) (*AuditChainVerification, error)
 	GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error)
 	// CountImpersonatedActions returns the number of impersonated audit events
 	// recorded for actingAs by impersonator since `since`, excluding the
@@ -431,6 +437,25 @@ type AuditRetentionStats struct {
 	TotalEvents int64
 	Oldest      *time.Time
 	Newest      *time.Time
+}
+
+// AuditChainVerification is the verdict of re-walking the audit hash chain
+// (ADR-029). Valid is true when every chained event's hash and linkage check
+// out. On failure, FirstBrokenID and Reason identify the first divergence.
+type AuditChainVerification struct {
+	// Valid is true when the chained suffix is intact end to end.
+	Valid bool
+	// ChainedEvents is the number of hash-chained events verified.
+	ChainedEvents int64
+	// UnchainedEvents is the leading run of legacy rows (pre-ADR-029, empty
+	// hashes) skipped before the chain begins.
+	UnchainedEvents int64
+	// FirstBrokenID is the id of the first event that failed verification, nil
+	// when Valid.
+	FirstBrokenID *uint
+	// Reason is a human-readable description of the first failure, empty when
+	// Valid.
+	Reason string
 }
 
 // UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when

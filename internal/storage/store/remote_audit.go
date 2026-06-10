@@ -138,6 +138,11 @@ func (rs *RemoteStorage) AuditRetentionStats(_ context.Context) (*storage.AuditR
 	return nil, fmt.Errorf("AuditRetentionStats not available in remote mode")
 }
 
+// VerifyAuditChain is not available in remote mode; chain verification runs server-side.
+func (rs *RemoteStorage) VerifyAuditChain(_ context.Context) (*storage.AuditChainVerification, error) {
+	return nil, fmt.Errorf("VerifyAuditChain not available in remote mode")
+}
+
 // CreateAnomalyAlert is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAlert) error {
 	return fmt.Errorf("CreateAnomalyAlert not available in remote mode")
