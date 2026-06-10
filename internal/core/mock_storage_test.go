@@ -62,7 +62,19 @@ func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment
 	return nil, nil
 }
 
-func (m *MockStorage) ListEnvironmentsByProject(_ context.Context, _ uint) ([]*models.Environment, error) {
+func (m *MockStorage) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
+	if len(m.ExpectedCalls) == 0 {
+		return nil, nil
+	}
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "ListEnvironmentsByProject" {
+			args := m.Called(ctx, projectID)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).([]*models.Environment), args.Error(1)
+		}
+	}
 	return nil, nil
 }
 
@@ -189,6 +201,14 @@ func (m *MockStorage) ListSecrets(ctx context.Context, filter *storage.SecretFil
 		return nil, args.Get(1).(int64), args.Error(2)
 	}
 	return args.Get(0).([]*models.SecretNode), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockStorage) ListProjectSecretsForDrift(ctx context.Context, projectID uint) ([]storage.DriftSecretRow, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.DriftSecretRow), args.Error(1)
 }
 
 func (m *MockStorage) GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error) {

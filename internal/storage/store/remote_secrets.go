@@ -120,6 +120,11 @@ func (rs *RemoteStorage) ListSecrets(ctx context.Context, filter *storage.Secret
 	return result.Secrets, result.Total, nil
 }
 
+// ListProjectSecretsForDrift is not available in remote mode; drift detection aggregates server-side.
+func (rs *RemoteStorage) ListProjectSecretsForDrift(_ context.Context, _ uint) ([]storage.DriftSecretRow, error) {
+	return nil, fmt.Errorf("ListProjectSecretsForDrift not available in remote mode")
+}
+
 // buildSecretFilterPath constructs the /api/v1/secrets query string from filter fields.
 func buildSecretFilterPath(filter *storage.SecretFilter) string {
 	if filter == nil {

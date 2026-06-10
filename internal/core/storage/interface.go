@@ -80,6 +80,12 @@ type Storage interface {
 	UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	DeleteSecret(ctx context.Context, id uint) error
 	ListSecrets(ctx context.Context, filter *SecretFilter) ([]*models.SecretNode, int64, error)
+	// ListProjectSecretsForDrift returns one lightweight row per secret in the
+	// project (folders excluded, secrets in soft-deleted environments excluded),
+	// carrying just the fields cross-environment drift detection pivots on:
+	// environment id, name, type, and whether expiration / max_reads are set. No
+	// secret values are read.
+	ListProjectSecretsForDrift(ctx context.Context, projectID uint) ([]DriftSecretRow, error)
 	GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error)
 	CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error)
 	GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error)
@@ -290,6 +296,18 @@ type SecretFilter struct {
 	CreatedBefore *time.Time
 	Page          int
 	PageSize      int
+}
+
+// DriftSecretRow is one secret's drift-relevant projection: which environment it
+// lives in, its name (the cross-environment key), its type, and whether it has
+// an expiration / max-reads cap set. Used to build the per-key × per-environment
+// presence matrix for cross-environment drift detection.
+type DriftSecretRow struct {
+	EnvironmentID uint
+	Name          string
+	Type          string
+	HasExpiration bool
+	HasMaxReads   bool
 }
 
 // UserFilter defines filtering options for user queries
