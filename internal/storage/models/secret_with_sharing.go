@@ -52,6 +52,9 @@ type SecretListFilter struct {
 	// Sorting
 	SortBy    string // "name", "created_at", "shared_at", "owner"
 	SortOrder string // "asc", "desc"
+
+	// IncludeDeleted also returns soft-deleted secrets (ADR-033) for a restore UI.
+	IncludeDeleted bool
 }
 
 // SecretListResponse represents the response for listing secrets with sharing information

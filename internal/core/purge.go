@@ -12,10 +12,13 @@ type PurgeResult struct {
 	Users        int64 `json:"users"`
 	Projects     int64 `json:"projects"`
 	Environments int64 `json:"environments"`
+	Secrets      int64 `json:"secrets"`
 }
 
 // Total is the combined count of purged rows.
-func (r PurgeResult) Total() int64 { return r.Users + r.Projects + r.Environments }
+func (r PurgeResult) Total() int64 {
+	return r.Users + r.Projects + r.Environments + r.Secrets
+}
 
 // PurgeExpiredSoftDeletes hard-deletes every soft-deleted user, project, and
 // environment whose deleted_at predates `before`. Each entity is purged
@@ -35,12 +38,13 @@ func (c *KeyorixCore) PurgeExpiredSoftDeletes(ctx context.Context, before time.T
 	res.Users = record(c.storage.PurgeDeletedUsersBefore(ctx, before))
 	res.Projects = record(c.storage.PurgeDeletedProjectsBefore(ctx, before))
 	res.Environments = record(c.storage.PurgeDeletedEnvironmentsBefore(ctx, before))
+	res.Secrets = record(c.storage.PurgeDeletedSecretsBefore(ctx, before))
 
 	if res.Total() > 0 {
 		sysCtx := WithActorType(ctx, ActorTypeSystem)
 		c.writeAuditEvent(sysCtx, "data.purged", nil, nil,
-			fmt.Sprintf("retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d) older than %s",
-				res.Total(), res.Users, res.Projects, res.Environments, before.UTC().Format(time.RFC3339)))
+			fmt.Sprintf("retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d, secrets=%d) older than %s",
+				res.Total(), res.Users, res.Projects, res.Environments, res.Secrets, before.UTC().Format(time.RFC3339)))
 	}
 
 	return res, firstErr

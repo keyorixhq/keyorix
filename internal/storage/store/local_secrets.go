@@ -62,7 +62,7 @@ func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDelet
 		       COUNT(DISTINCT e.id) AS environment_count,
 		       MAX(s.updated_at) AS last_secret_activity
 		FROM projects p
-		LEFT JOIN secret_nodes s ON s.project_id = p.id
+		LEFT JOIN secret_nodes s ON s.project_id = p.id AND s.deleted_at IS NULL
 		LEFT JOIN environments e ON e.project_id = p.id AND e.deleted_at IS NULL
 		` + where + `
 		GROUP BY p.id
@@ -155,6 +155,12 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) error {
 		if err := tx.Unscoped().Model(&models.Environment{}).
 			Where("project_id = ?", id).Update("deleted_at", nil).Error; err != nil {
 			return fmt.Errorf("failed to restore project environments: %w", err)
+		}
+		// Secrets cascade-restore too (ADR-033 made them soft-deletable; the
+		// DeleteProject cascade soft-deletes them, so a restore must bring them back).
+		if err := tx.Unscoped().Model(&models.SecretNode{}).
+			Where("project_id = ?", id).Update("deleted_at", nil).Error; err != nil {
+			return fmt.Errorf("failed to restore project secrets: %w", err)
 		}
 		return nil
 	})
@@ -281,12 +287,39 @@ func (ls *LocalStorage) DeleteSecret(ctx context.Context, id uint) error {
 	return nil
 }
 
+// GetSecretIncludingDeleted loads a secret even when soft-deleted (Unscoped).
+func (ls *LocalStorage) GetSecretIncludingDeleted(ctx context.Context, id uint) (*models.SecretNode, error) {
+	var secret models.SecretNode
+	if err := ls.db.WithContext(ctx).Unscoped().First(&secret, id).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+	}
+	return &secret, nil
+}
+
+// RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033). Uses
+// Unscoped to reach the soft-deleted row, which GORM hides by default.
+func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
+	result := ls.db.WithContext(ctx).Unscoped().Model(&models.SecretNode{}).
+		Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	return nil
+}
+
 // ListSecrets lists secrets with filtering and pagination.
 // When project_id is provided, results are always scoped to that project via
 // a JOIN through environments — prevents cross-project leakage if a caller
 // passes a mismatched environment_id.
 func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	query := ls.db.WithContext(ctx).Model(&models.SecretNode{})
+	if filter.IncludeDeleted {
+		// Reach soft-deleted rows too (restore UI); GORM hides them by default.
+		query = query.Unscoped()
+	}
 
 	if filter.ProjectID != nil {
 		// JOIN ensures environment_id is always verified against the project,

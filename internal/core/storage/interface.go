@@ -93,6 +93,11 @@ type Storage interface {
 	GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error)
 	UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	DeleteSecret(ctx context.Context, id uint) error
+	// RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033).
+	RestoreSecret(ctx context.Context, id uint) error
+	// GetSecretIncludingDeleted loads a secret even if soft-deleted (Unscoped),
+	// so the restore route can resolve a deleted secret's scope (ADR-033).
+	GetSecretIncludingDeleted(ctx context.Context, id uint) (*models.SecretNode, error)
 	ListSecrets(ctx context.Context, filter *SecretFilter) ([]*models.SecretNode, int64, error)
 	// ListProjectSecretsForDrift returns one lightweight row per secret in the
 	// project (folders excluded, secrets in soft-deleted environments excluded),
@@ -136,6 +141,7 @@ type Storage interface {
 	PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error)
 	PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error)
 	PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error)
+	PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error)
 	ListUsers(ctx context.Context, filter *UserFilter) ([]*models.User, int64, error)
 	// ListUsersInStateBefore returns users whose account_state equals state and
 	// who were created before the cutoff (ADR-025 stale-account warnings).
@@ -315,6 +321,9 @@ type SecretFilter struct {
 	CreatedBefore *time.Time
 	Page          int
 	PageSize      int
+	// IncludeDeleted, when true, also returns soft-deleted secrets (ADR-033) —
+	// for a restore UI. Default false: GORM auto-scopes deleted_at IS NULL.
+	IncludeDeleted bool
 }
 
 // DriftSecretRow is one secret's drift-relevant projection: which environment it

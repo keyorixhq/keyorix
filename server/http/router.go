@@ -238,6 +238,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/share", shareHandler.ShareSecret)
 
 			r.With(customMiddleware.RequireScopedPermission("secrets.delete", secretScope)).Delete("/{id}", secretHandler.DeleteSecret)
+			// Restore resolves scope from the (soft-deleted) secret via the unscoped resolver.
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", customMiddleware.ScopeFromDeletedSecretParam("id"))).Post("/{id}/restore", secretHandler.RestoreSecret)
 		})
 
 		// Shares endpoints. The user's own share list stays a global-read op;

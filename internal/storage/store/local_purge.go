@@ -36,3 +36,7 @@ func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before t
 func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {
 	return ls.purgeDeletedBefore(ctx, &models.Environment{}, before)
 }
+
+func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
+	return ls.purgeDeletedBefore(ctx, &models.SecretNode{}, before)
+}

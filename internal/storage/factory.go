@@ -143,6 +143,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE")
 	}
+	// ADR-033: secrets soft-delete. Additive deleted_at (nil = live).
+	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "deleted_at") {
+		db.Exec("ALTER TABLE secret_nodes ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE")
+	}
 
 	// Track last successful login per user (nil = never logged in).
 	if tableExists(db, "users") && !columnExists(db, "users", "last_login_at") {

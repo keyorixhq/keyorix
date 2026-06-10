@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -97,6 +98,28 @@ func (rs *RemoteStorage) DeleteSecret(ctx context.Context, id uint) error {
 		return fmt.Errorf("delete secret failed: %s", resp.Error.Error())
 	}
 	return nil
+}
+
+// GetSecretIncludingDeleted is not available in remote mode; restore resolves server-side.
+func (rs *RemoteStorage) GetSecretIncludingDeleted(_ context.Context, _ uint) (*models.SecretNode, error) {
+	return nil, remoteUnsupported("GetSecretIncludingDeleted")
+}
+
+func (rs *RemoteStorage) RestoreSecret(ctx context.Context, id uint) error {
+	path := fmt.Sprintf("/api/v1/secrets/%d/restore", id)
+	resp, err := rs.client.Post(ctx, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to restore secret: %w", err)
+	}
+	if !resp.Success {
+		return fmt.Errorf("restore secret failed: %s", resp.Error.Error())
+	}
+	return nil
+}
+
+// Retention purge runs server-side (ADR-032/033); not available in remote mode.
+func (rs *RemoteStorage) PurgeDeletedSecretsBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("PurgeDeletedSecretsBefore")
 }
 
 // ListSecrets lists secrets with optional filtering via remote API.
