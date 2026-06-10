@@ -28,10 +28,12 @@ import (
 type sessionValidator interface {
 	ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error)
 	ValidatePATToken(ctx context.Context, token string) (*models.User, []string, error)
+	ValidateMachineToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error)
 }
 
 // patTokenPrefix marks a personal access token (kept in sync with core.patPrefix).
 const patTokenPrefix = "kx_pat_"
+const machineTokenPrefix = "kx_machine_"
 
 // UserContext represents the authenticated user context. It carries identity
 // only — authorization is resolved per-request against the target scope by
@@ -49,6 +51,29 @@ type UserContext struct {
 	// account must change its password before using non-allowlisted endpoints.
 	AccountState string `json:"account_state,omitempty"`
 	Restricted   bool   `json:"-"`
+	// MachineIdentityID is set (and UserID is 0) when the request authenticated
+	// with a machine token (ADR-030). ActorType is "machine_identity" for such
+	// requests and "user" otherwise.
+	MachineIdentityID *uint  `json:"machine_identity_id,omitempty"`
+	ActorType         string `json:"actor_type,omitempty"`
+}
+
+// ActorKind returns the principal's actor type ("user" or "machine_identity"),
+// defaulting to user for legacy/empty contexts.
+func (u *UserContext) ActorKind() string {
+	if u.ActorType == core.ActorTypeMachine {
+		return core.ActorTypeMachine
+	}
+	return core.ActorTypeUser
+}
+
+// PrincipalID returns the id to authorize against: the machine identity id for a
+// machine request, otherwise the user id.
+func (u *UserContext) PrincipalID() uint {
+	if u.MachineIdentityID != nil {
+		return *u.MachineIdentityID
+	}
+	return u.UserID
 }
 
 // contextKey is used for context keys to avoid collisions
@@ -170,8 +195,9 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 			}
 
 			// Resolve impersonation once, on the slow path, so it is cached with
-			// the identity. PATs are never impersonation sessions (prefix check).
-			if coreService != nil && !strings.HasPrefix(token, patTokenPrefix) {
+			// the identity. PATs and machine tokens are never impersonation
+			// sessions (prefix check).
+			if coreService != nil && !strings.HasPrefix(token, patTokenPrefix) && !strings.HasPrefix(token, machineTokenPrefix) {
 				userCtx.ImpersonatedBy = coreService.SessionImpersonator(r.Context(), token)
 			}
 
@@ -217,7 +243,7 @@ func RequireScopedPermission(permission string, resolve ScopeResolver) func(http
 					// Reveal "not found" only to callers who hold the permission
 					// globally; otherwise deny without confirming the resource
 					// exists (avoids existence enumeration by unprivileged users).
-					if ok, aerr := cs.Authorize(r.Context(), userCtx.UserID, permission, core.Scope{}); aerr == nil && ok {
+					if ok, aerr := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, core.Scope{}); aerr == nil && ok {
 						notFoundResponse(w, "Resource not found")
 					} else {
 						forbiddenResponse(w, "Insufficient permissions")
@@ -227,7 +253,7 @@ func RequireScopedPermission(permission string, resolve ScopeResolver) func(http
 				badRequestResponse(w, "Invalid target")
 				return
 			}
-			allowed, err := cs.Authorize(r.Context(), userCtx.UserID, permission, scope)
+			allowed, err := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, scope)
 			if err != nil || !allowed {
 				forbiddenResponse(w, "Insufficient permissions")
 				return
@@ -428,6 +454,11 @@ func buildRequestContext(parent context.Context, userCtx *UserContext, coreServi
 	if userCtx != nil && userCtx.ImpersonatedBy != nil {
 		ctx = core.WithImpersonation(ctx, *userCtx.ImpersonatedBy)
 	}
+	// Tag machine requests so every audit event they produce is actored as a
+	// machine identity (ADR-023/030 plumbing).
+	if userCtx != nil && userCtx.MachineIdentityID != nil {
+		ctx = core.WithActorType(ctx, core.ActorTypeMachine)
+	}
 	return ctx
 }
 
@@ -446,6 +477,23 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	if validator == nil {
 		return nil, http.ErrNotSupported
 	}
+	// Machine tokens (ADR-030) authenticate AS a machine identity, not a user.
+	if strings.HasPrefix(token, machineTokenPrefix) {
+		m, roleNames, err := validator.ValidateMachineToken(ctx, token)
+		if err != nil {
+			return nil, err
+		}
+		mid := m.ID
+		return &UserContext{
+			UserID:            0,
+			MachineIdentityID: &mid,
+			ActorType:         core.ActorTypeMachine,
+			Username:          m.Name,
+			Roles:             roleNames,
+			AccountState:      core.AccountActive,
+		}, nil
+	}
+
 	// Route by prefix: PATs authenticate AS their owning user, resolving to the same
 	// UserContext shape as a session — so authorization downstream is identical.
 	var (
@@ -466,6 +514,7 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		Username:     user.Username,
 		Email:        user.Email,
 		Roles:        roleNames,
+		ActorType:    core.ActorTypeUser,
 		AccountState: core.NormalizeAccountState(user.AccountState),
 		Restricted:   core.AccountRestricted(user.AccountState),
 	}, nil

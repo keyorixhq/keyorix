@@ -57,6 +57,17 @@ func (fakeValidator) ValidatePATToken(_ context.Context, token string) (*models.
 	return nil, nil, fmt.Errorf("invalid token")
 }
 
+func (fakeValidator) ValidateMachineToken(_ context.Context, token string) (*models.MachineIdentity, []string, error) {
+	if token == "kx_machine_validtoken" {
+		return &models.MachineIdentity{
+			ID:    9,
+			Name:  "ci-bot",
+			State: "active",
+		}, []string{"project_viewer"}, nil
+	}
+	return nil, nil, fmt.Errorf("invalid token")
+}
+
 // newTestAuthMiddleware builds the Authentication middleware with the fake
 // validator. The coreService passed to authenticationWithValidator is nil here
 // because none of these tests exercise downstream handlers that pull the core

@@ -82,7 +82,15 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	response, err := h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
+	// Machine principals (ADR-030) have no user identity for the owned/shared
+	// model; they list by their authorized scope (already gated by the route).
+	var response *models.SecretListResponse
+	var err error
+	if userCtx.MachineIdentityID != nil {
+		response, err = h.coreService.ListSecretsInScope(r.Context(), filter)
+	} else {
+		response, err = h.coreService.ListSecretsWithSharingInfo(r.Context(), userCtx.UserID, filter)
+	}
 	if err != nil {
 		log.Printf("Error listing secrets: %v", err)
 		h.sendError(w, "InternalError", "Failed to list secrets", http.StatusInternalServerError, nil)

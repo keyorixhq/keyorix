@@ -30,6 +30,27 @@ type Scope = storage.Scope
 // expected to be assigned at a project scope (bypasses within that project).
 var adminRoleNames = []string{"super_admin", "admin", "system_admin", "project_admin"}
 
+// AuthorizePrincipal reports whether a principal — a human user or a machine
+// identity (ADR-030) — may exercise permission against the target scope. It is
+// the actor-aware entrypoint the auth gates use; Authorize is the user-only
+// wrapper kept for source compatibility. Machine principals resolve their
+// permissions from machine_identity_roles and receive NO admin-role bypass: a
+// machine is never a global super-user, so a leaked machine token is bounded to
+// the permissions of its explicit grants. Fails closed.
+func (c *KeyorixCore) AuthorizePrincipal(ctx context.Context, actorType string, principalID uint, permission string, scope Scope) (bool, error) {
+	if actorType == ActorTypeMachine {
+		roleIDs, err := c.storage.GetMachineRoleIDsAt(ctx, principalID, scope)
+		if err != nil {
+			return false, err
+		}
+		if len(roleIDs) == 0 {
+			return false, nil
+		}
+		return c.storage.RoleSetHasPermission(ctx, roleIDs, permission)
+	}
+	return c.Authorize(ctx, principalID, permission, scope)
+}
+
 // Authorize reports whether userID may exercise permission (e.g. "secrets.read")
 // against the target scope. Fails closed: any resolution error returns
 // (false, err).

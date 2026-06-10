@@ -517,6 +517,34 @@ type MachineIdentity struct {
 	RevokedAt    *time.Time
 }
 
+// MachineIdentityCredential is an opaque bearer token a machine identity uses to
+// authenticate (ADR-030), mirroring PersonalAccessToken. Only the SHA-256 hash
+// is stored — the raw `kx_machine_…` token is shown once at issuance. A machine
+// may hold several active credentials (rotation). A credential is usable only
+// while un-revoked, unexpired, AND its machine identity is still `active`.
+type MachineIdentityCredential struct {
+	ID                uint   `gorm:"primaryKey"`
+	MachineIdentityID uint   `gorm:"index;not null"`
+	Name              string // operator-facing label
+	TokenHash         string `gorm:"uniqueIndex;not null"` // SHA-256 hex (never the plaintext)
+	TokenPrefix       string `gorm:"index"`                // leading chars for display ("kx_machine_ab12cd")
+	LastUsedAt        *time.Time
+	ExpiresAt         *time.Time // nil = never expires
+	Revoked           bool       `gorm:"default:false"`
+	CreatedAt         time.Time
+}
+
+// MachineIdentityRole grants a role to a machine identity at a project/
+// environment scope (ADR-030), mirroring UserRole. 0 = global scope. Machine
+// principals never receive an admin-role bypass, so a leaked machine token is
+// bounded to the permissions of its granted roles.
+type MachineIdentityRole struct {
+	MachineIdentityID uint `gorm:"primaryKey"`
+	RoleID            uint `gorm:"primaryKey"`
+	ProjectID         uint `gorm:"primaryKey;not null;default:0"`
+	EnvironmentID     uint `gorm:"primaryKey;not null;default:0"`
+}
+
 // ProjectMembership tracks the onboarding lifecycle of a user into a project
 // (ADR-022), separate from the actual role grant (user_roles). It carries a
 // 5-state machine: invited → identity_verified → provisioned → active, with

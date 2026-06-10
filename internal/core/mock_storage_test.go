@@ -983,6 +983,79 @@ func (m *MockStorage) ListMachineIdentities(ctx context.Context, projectID uint)
 	return args.Get(0).([]*models.MachineIdentity), args.Error(1)
 }
 
+func (m *MockStorage) CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error) {
+	args := m.Called(ctx, c)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentityCredential), args.Error(1)
+}
+
+func (m *MockStorage) GetMachineIdentityCredentialByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, error) {
+	args := m.Called(ctx, hash)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentityCredential), args.Error(1)
+}
+
+func (m *MockStorage) GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentityCredential), args.Error(1)
+}
+
+func (m *MockStorage) ListMachineIdentityCredentials(ctx context.Context, machineID uint) ([]*models.MachineIdentityCredential, error) {
+	args := m.Called(ctx, machineID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.MachineIdentityCredential), args.Error(1)
+}
+
+func (m *MockStorage) RevokeMachineIdentityCredential(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockStorage) TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
+	// Best-effort on the auth hot path — tolerate tests that don't set an expectation.
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "TouchMachineIdentityCredential" {
+			return m.Called(ctx, id, usedAt, staleness).Error(0)
+		}
+	}
+	return nil
+}
+
+func (m *MockStorage) AssignMachineRole(ctx context.Context, machineID, roleID uint, scope storage.Scope) error {
+	args := m.Called(ctx, machineID, roleID, scope)
+	return args.Error(0)
+}
+
+func (m *MockStorage) RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope storage.Scope) error {
+	args := m.Called(ctx, machineID, roleID, scope)
+	return args.Error(0)
+}
+
+func (m *MockStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope storage.Scope) ([]uint, error) {
+	args := m.Called(ctx, machineID, scope)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]uint), args.Error(1)
+}
+
+func (m *MockStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error) {
+	args := m.Called(ctx, machineID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Role), args.Error(1)
+}
+
 // Project membership lifecycle (ADR-022).
 func (m *MockStorage) CreateProjectMembership(ctx context.Context, pm *models.ProjectMembership) (*models.ProjectMembership, error) {
 	args := m.Called(ctx, pm)
