@@ -334,3 +334,30 @@ func (h *AuditHandler) GetAuditRetention(w http.ResponseWriter, r *http.Request)
 
 	sendSuccess(w, cov, "")
 }
+
+// VerifyAuditChain handles GET /api/v1/audit/verify — re-walks the
+// tamper-evidence hash chain (ADR-029) and reports whether the audit trail is
+// intact, naming the first divergent event on failure.
+func (h *AuditHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	v, err := h.coreService.VerifyAuditChain(r.Context())
+	if err != nil {
+		sendError(w, "InternalError", "Failed to verify audit chain", http.StatusInternalServerError, nil)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"valid":            v.Valid,
+		"chained_events":   v.ChainedEvents,
+		"unchained_events": v.UnchainedEvents,
+	}
+	if !v.Valid {
+		resp["first_broken_id"] = v.FirstBrokenID
+		resp["reason"] = v.Reason
+	}
+	sendSuccess(w, resp, "")
+}

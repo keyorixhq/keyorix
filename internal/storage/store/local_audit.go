@@ -19,10 +19,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {
-	return ls.db.WithContext(ctx).Create(event).Error
-}
-
 func (ls *LocalStorage) CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error {
 	return ls.db.WithContext(ctx).Create(log).Error
 }
