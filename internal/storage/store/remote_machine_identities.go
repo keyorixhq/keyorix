@@ -67,3 +67,23 @@ func (rs *RemoteStorage) GetMachineRoleIDsAt(_ context.Context, _ uint, _ storag
 func (rs *RemoteStorage) GetMachineRoles(_ context.Context, _ uint) ([]*models.Role, error) {
 	return nil, remoteUnsupported("GetMachineRoles")
 }
+
+func (rs *RemoteStorage) CreateOIDCBinding(_ context.Context, _ *models.MachineIdentityOIDCBinding) (*models.MachineIdentityOIDCBinding, error) {
+	return nil, remoteUnsupported("CreateOIDCBinding")
+}
+
+func (rs *RemoteStorage) GetMachineByOIDCSubject(_ context.Context, _, _ string) (*models.MachineIdentity, error) {
+	return nil, remoteUnsupported("GetMachineByOIDCSubject")
+}
+
+func (rs *RemoteStorage) ListOIDCBindings(_ context.Context, _ uint) ([]*models.MachineIdentityOIDCBinding, error) {
+	return nil, remoteUnsupported("ListOIDCBindings")
+}
+
+func (rs *RemoteStorage) GetOIDCBindingByID(_ context.Context, _ uint) (*models.MachineIdentityOIDCBinding, error) {
+	return nil, remoteUnsupported("GetOIDCBindingByID")
+}
+
+func (rs *RemoteStorage) DeleteOIDCBinding(_ context.Context, _ uint) error {
+	return remoteUnsupported("DeleteOIDCBinding")
+}

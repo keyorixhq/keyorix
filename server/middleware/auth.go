@@ -29,6 +29,8 @@ type sessionValidator interface {
 	ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error)
 	ValidatePATToken(ctx context.Context, token string) (*models.User, []string, error)
 	ValidateMachineToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error)
+	ValidateOIDCToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error)
+	OIDCEnabled() bool
 }
 
 // patTokenPrefix marks a personal access token (kept in sync with core.patPrefix).
@@ -197,7 +199,7 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 			// Resolve impersonation once, on the slow path, so it is cached with
 			// the identity. PATs and machine tokens are never impersonation
 			// sessions (prefix check).
-			if coreService != nil && !strings.HasPrefix(token, patTokenPrefix) && !strings.HasPrefix(token, machineTokenPrefix) {
+			if coreService != nil && !strings.HasPrefix(token, patTokenPrefix) && !strings.HasPrefix(token, machineTokenPrefix) && !looksLikeJWT(token) {
 				userCtx.ImpersonatedBy = coreService.SessionImpersonator(r.Context(), token)
 			}
 
@@ -487,6 +489,30 @@ func GetUserFromContext(ctx context.Context) *UserContext {
 	return nil
 }
 
+// machineUserContext builds the request principal for a machine identity (used
+// by both opaque machine tokens and federated OIDC tokens) — UserID 0, the
+// machine id, and ActorType machine_identity so RBAC and audit are identical.
+func machineUserContext(m *models.MachineIdentity, roleNames []string) *UserContext {
+	mid := m.ID
+	return &UserContext{
+		UserID:            0,
+		MachineIdentityID: &mid,
+		ActorType:         core.ActorTypeMachine,
+		Username:          m.Name,
+		Roles:             roleNames,
+		AccountState:      core.AccountActive,
+	}
+}
+
+// looksLikeJWT reports whether a bearer is a three-segment dotted JWT and not a
+// kx_-prefixed Keyorix credential.
+func looksLikeJWT(token string) bool {
+	if strings.HasPrefix(token, machineTokenPrefix) || strings.HasPrefix(token, patTokenPrefix) {
+		return false
+	}
+	return strings.Count(token, ".") == 2
+}
+
 // validateToken validates a session token via the supplied validator and returns
 // the resolved UserContext. Permissions are no longer precomputed here — they are
 // resolved per request, scoped to the target, by core.Authorize.
@@ -500,15 +526,18 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		if err != nil {
 			return nil, err
 		}
-		mid := m.ID
-		return &UserContext{
-			UserID:            0,
-			MachineIdentityID: &mid,
-			ActorType:         core.ActorTypeMachine,
-			Username:          m.Name,
-			Roles:             roleNames,
-			AccountState:      core.AccountActive,
-		}, nil
+		return machineUserContext(m, roleNames), nil
+	}
+
+	// Federated OIDC / Kubernetes-JWT tokens (ADR-031) also authenticate AS a
+	// machine identity. A JWT is a three-segment dotted token and is not one of
+	// the kx_ prefixes; only attempt it when OIDC is configured.
+	if validator.OIDCEnabled() && looksLikeJWT(token) {
+		m, roleNames, err := validator.ValidateOIDCToken(ctx, token)
+		if err != nil {
+			return nil, err
+		}
+		return machineUserContext(m, roleNames), nil
 	}
 
 	// Route by prefix: PATs authenticate AS their owning user, resolving to the same

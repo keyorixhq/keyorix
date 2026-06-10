@@ -1089,6 +1089,43 @@ func (m *MockStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]*m
 	return args.Get(0).([]*models.Role), args.Error(1)
 }
 
+func (m *MockStorage) CreateOIDCBinding(ctx context.Context, b *models.MachineIdentityOIDCBinding) (*models.MachineIdentityOIDCBinding, error) {
+	args := m.Called(ctx, b)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentityOIDCBinding), args.Error(1)
+}
+
+func (m *MockStorage) GetMachineByOIDCSubject(ctx context.Context, issuer, subject string) (*models.MachineIdentity, error) {
+	args := m.Called(ctx, issuer, subject)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentity), args.Error(1)
+}
+
+func (m *MockStorage) ListOIDCBindings(ctx context.Context, machineID uint) ([]*models.MachineIdentityOIDCBinding, error) {
+	args := m.Called(ctx, machineID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.MachineIdentityOIDCBinding), args.Error(1)
+}
+
+func (m *MockStorage) GetOIDCBindingByID(ctx context.Context, id uint) (*models.MachineIdentityOIDCBinding, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentityOIDCBinding), args.Error(1)
+}
+
+func (m *MockStorage) DeleteOIDCBinding(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 // Project membership lifecycle (ADR-022).
 func (m *MockStorage) CreateProjectMembership(ctx context.Context, pm *models.ProjectMembership) (*models.ProjectMembership, error) {
 	args := m.Called(ctx, pm)

@@ -68,6 +68,16 @@ func (fakeValidator) ValidateMachineToken(_ context.Context, token string) (*mod
 	return nil, nil, fmt.Errorf("invalid token")
 }
 
+func (fakeValidator) OIDCEnabled() bool { return true }
+
+func (fakeValidator) ValidateOIDCToken(_ context.Context, token string) (*models.MachineIdentity, []string, error) {
+	// A three-segment dotted token whose middle segment marks it valid.
+	if token == "header.valid.sig" {
+		return &models.MachineIdentity{ID: 11, Name: "k8s-sa", State: "active"}, []string{"project_viewer"}, nil
+	}
+	return nil, nil, fmt.Errorf("invalid token")
+}
+
 // newTestAuthMiddleware builds the Authentication middleware with the fake
 // validator. The coreService passed to authenticationWithValidator is nil here
 // because none of these tests exercise downstream handlers that pull the core

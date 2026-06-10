@@ -298,6 +298,104 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 	sendSuccess(w, nil, "Machine role "+verb)
 }
 
+// CreateOIDCBinding handles POST /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings.
+// Body: {"issuer": "...", "subject": "..."} (ADR-031).
+func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Request) {
+	projectID, machineID, actor, ok := h.machineRouteCtx(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Issuer  string `json:"issuer"`
+		Subject string `json:"subject"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	b, err := h.coreService.CreateOIDCBinding(r.Context(), projectID, machineID, body.Issuer, body.Subject, actor.UserID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			status = http.StatusNotFound
+		case strings.Contains(err.Error(), "required"):
+			status = http.StatusBadRequest
+		case strings.Contains(err.Error(), "already bound"):
+			status = http.StatusConflict
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	sendSuccess(w, map[string]interface{}{"id": b.ID, "issuer": b.Issuer, "subject": b.Subject}, "OIDC binding created")
+}
+
+// ListOIDCBindings handles GET /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings.
+func (h *CatalogHandler) ListOIDCBindings(w http.ResponseWriter, r *http.Request) {
+	projectID, machineID, _, ok := h.machineRouteCtx(w, r)
+	if !ok {
+		return
+	}
+	bindings, err := h.coreService.ListOIDCBindings(r.Context(), projectID, machineID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	out := make([]map[string]interface{}, 0, len(bindings))
+	for _, b := range bindings {
+		out = append(out, map[string]interface{}{"id": b.ID, "issuer": b.Issuer, "subject": b.Subject, "created_at": b.CreatedAt})
+	}
+	sendSuccess(w, map[string]interface{}{"bindings": out}, "")
+}
+
+// DeleteOIDCBinding handles DELETE /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}.
+func (h *CatalogHandler) DeleteOIDCBinding(w http.ResponseWriter, r *http.Request) {
+	projectID, machineID, actor, ok := h.machineRouteCtx(w, r)
+	if !ok {
+		return
+	}
+	bindingID, err := strconv.ParseUint(chi.URLParam(r, "bindingId"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid binding ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.DeleteOIDCBinding(r.Context(), projectID, machineID, uint(bindingID), actor.UserID); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	sendSuccess(w, nil, "OIDC binding removed")
+}
+
+// machineRouteCtx parses the project + machine path params and the actor,
+// writing the appropriate error response and returning ok=false on failure.
+func (h *CatalogHandler) machineRouteCtx(w http.ResponseWriter, r *http.Request) (projectID, machineID uint, actor *middleware.UserContext, ok bool) {
+	pid, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	mid, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
+		return
+	}
+	actor = middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	return uint(pid), uint(mid), actor, true
+}
+
 func machineActionState(action string) (string, bool) {
 	switch action {
 	case "activate":

@@ -136,3 +136,57 @@ func (ls *LocalStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]
 	}
 	return roles, nil
 }
+
+// --- OIDC bindings (ADR-031) ---
+
+func (ls *LocalStorage) CreateOIDCBinding(ctx context.Context, b *models.MachineIdentityOIDCBinding) (*models.MachineIdentityOIDCBinding, error) {
+	if err := ls.db.WithContext(ctx).Create(b).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return b, nil
+}
+
+// GetMachineByOIDCSubject resolves the machine identity bound to (issuer, subject).
+func (ls *LocalStorage) GetMachineByOIDCSubject(ctx context.Context, issuer, subject string) (*models.MachineIdentity, error) {
+	var m models.MachineIdentity
+	err := ls.db.WithContext(ctx).
+		Table("machine_identities").
+		Joins("JOIN machine_identity_oidc_bindings b ON b.machine_identity_id = machine_identities.id").
+		Where("b.issuer = ? AND b.subject = ?", issuer, subject).
+		First(&m).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	return &m, nil
+}
+
+func (ls *LocalStorage) ListOIDCBindings(ctx context.Context, machineID uint) ([]*models.MachineIdentityOIDCBinding, error) {
+	var rows []*models.MachineIdentityOIDCBinding
+	err := ls.db.WithContext(ctx).
+		Where("machine_identity_id = ?", machineID).
+		Order("created_at DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
+}
+
+func (ls *LocalStorage) GetOIDCBindingByID(ctx context.Context, id uint) (*models.MachineIdentityOIDCBinding, error) {
+	var b models.MachineIdentityOIDCBinding
+	if err := ls.db.WithContext(ctx).First(&b, id).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	return &b, nil
+}
+
+func (ls *LocalStorage) DeleteOIDCBinding(ctx context.Context, id uint) error {
+	result := ls.db.WithContext(ctx).Delete(&models.MachineIdentityOIDCBinding{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	return nil
+}

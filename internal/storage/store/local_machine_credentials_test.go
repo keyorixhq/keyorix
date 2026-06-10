@@ -48,6 +48,42 @@ func TestMachineCredentialLifecycle(t *testing.T) {
 	assert.True(t, got.Revoked, "revoke flips the flag, row preserved for audit")
 }
 
+func TestOIDCBindingResolution(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.MachineIdentity{}, &models.MachineIdentityOIDCBinding{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+
+	require.NoError(t, ls.db.Create(&models.MachineIdentity{ID: 5, Name: "ci", State: "active"}).Error)
+	_, err = ls.CreateOIDCBinding(ctx, &models.MachineIdentityOIDCBinding{
+		MachineIdentityID: 5, Issuer: "https://k8s.local", Subject: "system:serviceaccount:ci:deployer",
+	})
+	require.NoError(t, err)
+
+	// Resolve by (issuer, subject) → the machine.
+	m, err := ls.GetMachineByOIDCSubject(ctx, "https://k8s.local", "system:serviceaccount:ci:deployer")
+	require.NoError(t, err)
+	assert.Equal(t, uint(5), m.ID)
+
+	// A different subject does not resolve.
+	_, err = ls.GetMachineByOIDCSubject(ctx, "https://k8s.local", "other")
+	require.Error(t, err)
+
+	// (issuer, subject) is unique — a duplicate binding is rejected.
+	_, err = ls.CreateOIDCBinding(ctx, &models.MachineIdentityOIDCBinding{
+		MachineIdentityID: 5, Issuer: "https://k8s.local", Subject: "system:serviceaccount:ci:deployer",
+	})
+	require.Error(t, err, "duplicate (issuer,subject) binding rejected by unique index")
+
+	bindings, err := ls.ListOIDCBindings(ctx, 5)
+	require.NoError(t, err)
+	require.Len(t, bindings, 1)
+	require.NoError(t, ls.DeleteOIDCBinding(ctx, bindings[0].ID))
+	_, err = ls.GetMachineByOIDCSubject(ctx, "https://k8s.local", "system:serviceaccount:ci:deployer")
+	require.Error(t, err, "binding gone after delete")
+}
+
 func TestMachineRoleGrantScopeResolution(t *testing.T) {
 	ls := newMachineCredTestStore(t)
 	ctx := context.Background()

@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/go-chi/chi/v5 v5.2.2
 	github.com/go-chi/cors v1.2.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/nicksnyder/go-i18n/v2 v2.6.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/shirou/gopsutil/v4 v4.26.5

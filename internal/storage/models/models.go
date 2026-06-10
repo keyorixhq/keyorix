@@ -550,6 +550,24 @@ type MachineIdentityRole struct {
 	EnvironmentID     uint `gorm:"primaryKey;not null;default:0"`
 }
 
+// MachineIdentityOIDCBinding maps an external token's (issuer, subject) to a
+// machine identity (ADR-031), so a Kubernetes projected SA token or any OIDC JWT
+// can authenticate as that machine. The (Issuer, Subject) pair is unique — one
+// external principal maps to exactly one machine.
+type MachineIdentityOIDCBinding struct {
+	ID                uint   `gorm:"primaryKey"`
+	MachineIdentityID uint   `gorm:"index;not null"`
+	Issuer            string `gorm:"uniqueIndex:idx_oidc_iss_sub;not null"`
+	Subject           string `gorm:"uniqueIndex:idx_oidc_iss_sub;not null"`
+	CreatedBy         uint
+	CreatedAt         time.Time
+}
+
+// TableName pins the table name. GORM does not treat "OIDC" as a known
+// initialism, so its default pluralization would not match the explicit name
+// used in the migration guard and the GetMachineByOIDCSubject join.
+func (MachineIdentityOIDCBinding) TableName() string { return "machine_identity_oidc_bindings" }
+
 // ProjectMembership tracks the onboarding lifecycle of a user into a project
 // (ADR-022), separate from the actual role grant (user_roles). It carries a
 // 5-state machine: invited → identity_verified → provisioned → active, with
