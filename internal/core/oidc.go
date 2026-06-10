@@ -117,6 +117,12 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject 
 	return claims.Issuer, claims.Subject, nil
 }
 
+// TrustsIssuer reports whether the issuer is in the configured allowlist.
+func (v *OIDCVerifier) TrustsIssuer(issuer string) bool {
+	_, ok := v.issuers[issuer]
+	return ok
+}
+
 // SetOIDCVerifier wires the federation verifier (built from config at startup).
 // nil disables OIDC auth.
 func (c *KeyorixCore) SetOIDCVerifier(v *OIDCVerifier) {
@@ -166,6 +172,12 @@ func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*model
 func (c *KeyorixCore) CreateOIDCBinding(ctx context.Context, projectID, machineID uint, issuer, subject string, actorID uint) (*models.MachineIdentityOIDCBinding, error) {
 	if strings.TrimSpace(issuer) == "" || strings.TrimSpace(subject) == "" {
 		return nil, fmt.Errorf("issuer and subject are required")
+	}
+	// Surface operator typos early: a binding to an issuer Keyorix doesn't trust
+	// would never authenticate (Verify rejects untrusted issuers independently),
+	// so reject it at creation when OIDC is configured.
+	if c.oidcVerifier != nil && !c.oidcVerifier.TrustsIssuer(strings.TrimSpace(issuer)) {
+		return nil, fmt.Errorf("issuer %q is not a configured trusted OIDC issuer", issuer)
 	}
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
