@@ -33,6 +33,57 @@ export interface ProjectMember {
     roleName: string;
 }
 
+// Cross-environment drift detection (M2). A key is consistent, present in some
+// environments but not others, or present everywhere with diverging settings.
+export type DriftStatus = 'missing_in_some' | 'metadata_drift';
+
+export interface DriftEnvironment {
+    id: number;
+    name: string;
+}
+
+export interface DriftKey {
+    name: string;
+    presentIn: number[];
+    missingFrom: number[];
+    status: DriftStatus;
+    driftFields: string[];
+}
+
+export interface DriftSummary {
+    environmentCount: number;
+    totalKeys: number;
+    consistentKeys: number;
+    missingInSome: number;
+    metadataDrift: number;
+}
+
+export interface ProjectDrift {
+    projectId: number;
+    environments: DriftEnvironment[];
+    driftedKeys: DriftKey[];
+    summary: DriftSummary;
+}
+
+const normalizeDrift = (d: any): ProjectDrift => ({
+    projectId: d.project_id ?? d.projectId ?? 0,
+    environments: (d.environments ?? []).map((e: any) => ({ id: e.id ?? e.ID, name: e.name ?? e.Name })),
+    driftedKeys: (d.drifted_keys ?? d.driftedKeys ?? []).map((k: any) => ({
+        name: k.name ?? '',
+        presentIn: k.present_in ?? k.presentIn ?? [],
+        missingFrom: k.missing_from ?? k.missingFrom ?? [],
+        status: k.status,
+        driftFields: k.drift_fields ?? k.driftFields ?? [],
+    })),
+    summary: {
+        environmentCount: d.summary?.environment_count ?? 0,
+        totalKeys: d.summary?.total_keys ?? 0,
+        consistentKeys: d.summary?.consistent_keys ?? 0,
+        missingInSome: d.summary?.missing_in_some ?? 0,
+        metadataDrift: d.summary?.metadata_drift ?? 0,
+    },
+});
+
 // ADR-021 project roles offered in the Members tab.
 export const PROJECT_ROLES = ['project_admin', 'project_developer', 'project_viewer', 'project_auditor'] as const;
 
@@ -121,5 +172,10 @@ export const projectsApi = {
 
     async removeMember(projectId: number, userId: number): Promise<void> {
         await apiClient.delete(`/api/v1/projects/${projectId}/members/${userId}`);
+    },
+
+    async drift(projectId: number): Promise<ProjectDrift> {
+        const response = await apiClient.get(`/api/v1/projects/${projectId}/drift`);
+        return normalizeDrift(response.data.data ?? response.data);
     },
 };

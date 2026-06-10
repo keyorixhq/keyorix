@@ -4,6 +4,7 @@ import { ChevronRightIcon, FolderIcon } from '@heroicons/react/24/outline';
 import { useProject } from '../../features/projects/api';
 import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ProjectMembersTab } from './ProjectMembersTab';
+import { ProjectDriftTab } from './ProjectDriftTab';
 import { ProjectActivityTab } from './ProjectActivityTab';
 import { ProjectSettingsTab } from './ProjectSettingsTab';
 import { ROUTES } from '../../constants';
@@ -16,6 +17,7 @@ interface Tab { id: string; label: string; path: string; }
 const TABS: Tab[] = [
     { id: 'secrets',  label: 'Secrets',  path: '' },
     { id: 'members',  label: 'Members',  path: '/members' },
+    { id: 'drift',    label: 'Drift',    path: '/drift' },
     { id: 'activity', label: 'Activity', path: '/activity' },
     { id: 'settings', label: 'Settings', path: '/settings' },
 ];
@@ -122,6 +124,7 @@ export const ProjectDetailPage: React.FC = () => {
             <Routes>
                 <Route index element={<ProjectSecretsTab projectId={projectId} />} />
                 <Route path="members" element={<ProjectMembersTab projectId={projectId} />} />
+                <Route path="drift" element={<ProjectDriftTab projectId={projectId} />} />
                 <Route path="activity" element={<ProjectActivityTab projectId={projectId} />} />
                 <Route path="settings" element={<ProjectSettingsTab projectId={projectId} />} />
                 <Route path="*" element={<Navigate to={`/projects/${projectId}`} replace />} />
