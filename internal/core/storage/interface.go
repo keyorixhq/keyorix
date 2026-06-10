@@ -131,6 +131,11 @@ type Storage interface {
 	UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error
 	DeleteUser(ctx context.Context, id uint) error
 	RestoreUser(ctx context.Context, id uint) error
+	// PurgeDeleted*Before hard-delete soft-deleted rows whose deleted_at is
+	// older than `before`, returning the number purged (ADR-032). Irreversible.
+	PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error)
+	PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error)
+	PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error)
 	ListUsers(ctx context.Context, filter *UserFilter) ([]*models.User, int64, error)
 	// ListUsersInStateBefore returns users whose account_state equals state and
 	// who were created before the cutoff (ADR-025 stale-account warnings).

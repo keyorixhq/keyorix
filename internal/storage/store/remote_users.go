@@ -126,6 +126,19 @@ func (rs *RemoteStorage) RestoreUser(ctx context.Context, id uint) error {
 	return nil
 }
 
+// Retention purge runs server-side (ADR-032); not available in remote mode.
+func (rs *RemoteStorage) PurgeDeletedUsersBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("PurgeDeletedUsersBefore")
+}
+
+func (rs *RemoteStorage) PurgeDeletedProjectsBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("PurgeDeletedProjectsBefore")
+}
+
+func (rs *RemoteStorage) PurgeDeletedEnvironmentsBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("PurgeDeletedEnvironmentsBefore")
+}
+
 // ListUsers lists users with optional filtering via remote API.
 func (rs *RemoteStorage) ListUsers(ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error) {
 	path := buildUserFilterPath(filter)

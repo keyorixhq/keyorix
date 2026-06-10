@@ -113,14 +113,20 @@ password_policy:
   max_age_days: 0                # expire a password after N days (0 = never; login flags it)
 
 soft_delete:
-  # Enable soft-deletion for all database entities
+  # Soft-deletion is built in for users/projects/environments (DELETE sets
+  # deleted_at; restore endpoints clear it). retention_days is the grace period
+  # the purge scheduler below honours before a soft-deleted row is permanently
+  # removed (default 30).
   enabled: true
   retention_days: 30
 
 purge:
-  # Enable periodic purge of expired/deleted database entities
-  enabled: true
-  schedule: "0 0 * * *"
+  # ADR-032 retention purge. When enabled, a background job permanently deletes
+  # soft-deleted users/projects/environments whose deleted_at is older than
+  # soft_delete.retention_days. This is IRREVERSIBLE — opt-in (default off).
+  enabled: false
+  # Run interval as a Go duration (e.g. "24h", "6h"). Default 24h.
+  schedule: "24h"
 
 audit:
   # Native SIEM push: forward every audit event to an external SIEM.
