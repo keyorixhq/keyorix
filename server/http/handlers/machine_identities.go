@@ -112,6 +112,11 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 // IssueMachineToken handles POST /api/v1/projects/{id}/machine-identities/{machineId}/tokens.
 // Returns the raw token ONCE. Body: {"name": "...", "expires_in_days": 90}.
 func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
@@ -135,7 +140,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		t := time.Now().AddDate(0, 0, body.ExpiresInDays)
 		expiresAt = &t
 	}
-	result, err := h.coreService.IssueMachineToken(r.Context(), uint(machineID), body.Name, expiresAt, actor.UserID)
+	result, err := h.coreService.IssueMachineToken(r.Context(), uint(projectID), uint(machineID), body.Name, expiresAt, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {
@@ -159,12 +164,17 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 // ListMachineTokens handles GET /api/v1/projects/{id}/machine-identities/{machineId}/tokens.
 // Returns credential metadata only — never the token.
 func (h *CatalogHandler) ListMachineTokens(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
 		return
 	}
-	creds, err := h.coreService.ListMachineTokens(r.Context(), uint(machineID))
+	creds, err := h.coreService.ListMachineTokens(r.Context(), uint(projectID), uint(machineID))
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
 		return
@@ -186,6 +196,11 @@ func (h *CatalogHandler) ListMachineTokens(w http.ResponseWriter, r *http.Reques
 
 // RevokeMachineToken handles DELETE /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}.
 func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
@@ -201,7 +216,7 @@ func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Reque
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
-	if err := h.coreService.RevokeMachineToken(r.Context(), uint(machineID), uint(tokenID), actor.UserID); err != nil {
+	if err := h.coreService.RevokeMachineToken(r.Context(), uint(projectID), uint(machineID), uint(tokenID), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
