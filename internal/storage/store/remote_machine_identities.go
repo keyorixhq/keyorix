@@ -6,7 +6,9 @@ package store
 
 import (
 	"context"
+	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -24,4 +26,44 @@ func (rs *RemoteStorage) UpdateMachineIdentity(_ context.Context, _ *models.Mach
 
 func (rs *RemoteStorage) ListMachineIdentities(_ context.Context, _ uint) ([]*models.MachineIdentity, error) {
 	return nil, remoteUnsupported("ListMachineIdentities")
+}
+
+func (rs *RemoteStorage) CreateMachineIdentityCredential(_ context.Context, _ *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error) {
+	return nil, remoteUnsupported("CreateMachineIdentityCredential")
+}
+
+func (rs *RemoteStorage) GetMachineIdentityCredentialByHash(_ context.Context, _ string) (*models.MachineIdentityCredential, error) {
+	return nil, remoteUnsupported("GetMachineIdentityCredentialByHash")
+}
+
+func (rs *RemoteStorage) GetMachineIdentityCredentialByID(_ context.Context, _ uint) (*models.MachineIdentityCredential, error) {
+	return nil, remoteUnsupported("GetMachineIdentityCredentialByID")
+}
+
+func (rs *RemoteStorage) ListMachineIdentityCredentials(_ context.Context, _ uint) ([]*models.MachineIdentityCredential, error) {
+	return nil, remoteUnsupported("ListMachineIdentityCredentials")
+}
+
+func (rs *RemoteStorage) RevokeMachineIdentityCredential(_ context.Context, _ uint) error {
+	return remoteUnsupported("RevokeMachineIdentityCredential")
+}
+
+func (rs *RemoteStorage) TouchMachineIdentityCredential(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
+	return remoteUnsupported("TouchMachineIdentityCredential")
+}
+
+func (rs *RemoteStorage) AssignMachineRole(_ context.Context, _, _ uint, _ storage.Scope) error {
+	return remoteUnsupported("AssignMachineRole")
+}
+
+func (rs *RemoteStorage) RemoveMachineRole(_ context.Context, _, _ uint, _ storage.Scope) error {
+	return remoteUnsupported("RemoveMachineRole")
+}
+
+func (rs *RemoteStorage) GetMachineRoleIDsAt(_ context.Context, _ uint, _ storage.Scope) ([]uint, error) {
+	return nil, remoteUnsupported("GetMachineRoleIDsAt")
+}
+
+func (rs *RemoteStorage) GetMachineRoles(_ context.Context, _ uint) ([]*models.Role, error) {
+	return nil, remoteUnsupported("GetMachineRoles")
 }

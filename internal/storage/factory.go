@@ -245,6 +245,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	accessReqExists := tableExists(db, "access_requests")
 	pwHistExists := tableExists(db, "password_histories")
 	machineExists := tableExists(db, "machine_identities")
+	machineCredExists := tableExists(db, "machine_identity_credentials")
+	machineRoleExists := tableExists(db, "machine_identity_roles")
 	membershipExists := tableExists(db, "project_memberships")
 	setupTokenExists := tableExists(db, "setup_tokens")
 	notificationsExists := tableExists(db, "notifications")
@@ -297,6 +299,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !machineExists {
 		if err := db.AutoMigrate(&models.MachineIdentity{}); err != nil {
 			return fmt.Errorf("failed to migrate machine_identities table: %w", err)
+		}
+	}
+
+	// Create machine-token tables if missing (ADR-030, additive, safe on existing DBs).
+	if !machineCredExists {
+		if err := db.AutoMigrate(&models.MachineIdentityCredential{}); err != nil {
+			return fmt.Errorf("failed to migrate machine_identity_credentials table: %w", err)
+		}
+	}
+	if !machineRoleExists {
+		if err := db.AutoMigrate(&models.MachineIdentityRole{}); err != nil {
+			return fmt.Errorf("failed to migrate machine_identity_roles table: %w", err)
 		}
 	}
 

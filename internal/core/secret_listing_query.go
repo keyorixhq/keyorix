@@ -14,6 +14,61 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// ListSecretsInScope lists every secret in the filter's project/environment
+// scope, with no per-user ownership or sharing resolution. It backs machine
+// principals (ADR-030), which have no user identity and whose authorization to
+// the scope is already enforced by the route's scoped-permission gate. The
+// response shape matches ListSecretsWithSharingInfo so the handler is uniform;
+// the sharing fields are owner-agnostic (a machine does not "own" or have
+// secrets "shared with" it).
+func (c *KeyorixCore) ListSecretsInScope(ctx context.Context, filter *models.SecretListFilter) (*models.SecretListResponse, error) {
+	if filter == nil {
+		filter = &models.SecretListFilter{}
+	}
+	storageFilter := c.convertToStorageFilter(filter)
+	secrets, _, err := c.storage.ListSecrets(ctx, storageFilter)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+
+	all := make([]*models.SecretWithSharingInfo, 0, len(secrets))
+	for _, secret := range secrets {
+		all = append(all, &models.SecretWithSharingInfo{SecretNode: secret})
+	}
+	all = c.applySecretFilters(all, filter)
+	c.sortSecrets(all, filter.SortBy, filter.SortOrder)
+
+	total := int64(len(all))
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := filter.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	totalInt := int(total)
+	if start > totalInt {
+		start = totalInt
+	}
+	if end > totalInt {
+		end = totalInt
+	}
+	totalPages := (totalInt + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	return &models.SecretListResponse{
+		Secrets:    all[start:end],
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}, nil
+}
+
 // ListSecretsWithSharingInfo lists secrets with sharing information for a specific user.
 func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) {
 	if filter == nil {

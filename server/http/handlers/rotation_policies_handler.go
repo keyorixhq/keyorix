@@ -137,7 +137,7 @@ func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		eid = *reqBody.EnvironmentID
 	}
 	scope := core.Scope{ProjectID: pid, EnvironmentID: eid}
-	if allowed, err := h.coreService.Authorize(r.Context(), userCtx.UserID, "secrets.write", scope); err != nil || !allowed {
+	if allowed, err := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope); err != nil || !allowed {
 		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
 		return
 	}

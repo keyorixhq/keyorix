@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -50,7 +51,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	// Authorize against the target project/environment from the body — the
 	// create route carries no path scope for the middleware to resolve.
 	scope := core.Scope{ProjectID: reqBody.ProjectID, EnvironmentID: reqBody.EnvironmentID}
-	if allowed, err := h.coreService.Authorize(r.Context(), userCtx.UserID, "secrets.write", scope); err != nil || !allowed {
+	if allowed, err := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "secrets.write", scope); err != nil || !allowed {
 		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
 		return
 	}
@@ -104,7 +105,17 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+	// Machine principals (ADR-030) are already authorized at the secret's scope
+	// by the route's scoped-permission gate; the per-user owner/sharing check
+	// (and its user-id requirement) does not apply to them, so fetch directly.
+	isMachine := userCtx.MachineIdentityID != nil
+
+	var secret *models.SecretNode
+	if isMachine {
+		secret, err = h.coreService.GetSecret(r.Context(), uint(id))
+	} else {
+		secret, err = h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+	}
 	if err != nil {
 		log.Printf("Error getting secret: %v", err)
 		if strings.Contains(err.Error(), "not found") {
@@ -119,7 +130,12 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 
 	var response interface{} = secret
 	if r.URL.Query().Get("include_value") == "true" { //nolint:goconst
-		value, err := h.coreService.GetSecretValueWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+		var value []byte
+		if isMachine {
+			value, err = h.coreService.GetSecretValue(r.Context(), uint(id))
+		} else {
+			value, err = h.coreService.GetSecretValueWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+		}
 		if err != nil {
 			log.Printf("Error getting secret value: %v", err)
 			if strings.Contains(err.Error(), "permission denied") {

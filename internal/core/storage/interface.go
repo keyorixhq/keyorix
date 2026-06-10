@@ -45,6 +45,20 @@ type Storage interface {
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
 
+	// Machine-token credentials (ADR-030) — opaque bearer tokens, hashed at rest.
+	CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error)
+	GetMachineIdentityCredentialByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, error)
+	GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error)
+	ListMachineIdentityCredentials(ctx context.Context, machineID uint) ([]*models.MachineIdentityCredential, error)
+	RevokeMachineIdentityCredential(ctx context.Context, id uint) error
+	TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
+
+	// Machine-identity role grants (ADR-030) — mirror the user_roles surface.
+	AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope) error
+	RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope Scope) error
+	GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope Scope) ([]uint, error)
+	GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error)
+
 	// Project membership lifecycle (ADR-022). Separate from the role grant.
 	CreateProjectMembership(ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error)
 	GetProjectMembership(ctx context.Context, id uint) (*models.ProjectMembership, error)
