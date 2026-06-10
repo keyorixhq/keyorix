@@ -59,6 +59,14 @@ type Storage interface {
 	GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope Scope) ([]uint, error)
 	GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error)
 
+	// Machine-identity OIDC bindings (ADR-031) — map an external token's
+	// (issuer, subject) to a machine identity for federated authentication.
+	CreateOIDCBinding(ctx context.Context, b *models.MachineIdentityOIDCBinding) (*models.MachineIdentityOIDCBinding, error)
+	GetMachineByOIDCSubject(ctx context.Context, issuer, subject string) (*models.MachineIdentity, error)
+	ListOIDCBindings(ctx context.Context, machineID uint) ([]*models.MachineIdentityOIDCBinding, error)
+	GetOIDCBindingByID(ctx context.Context, id uint) (*models.MachineIdentityOIDCBinding, error)
+	DeleteOIDCBinding(ctx context.Context, id uint) error
+
 	// Project membership lifecycle (ADR-022). Separate from the role grant.
 	CreateProjectMembership(ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error)
 	GetProjectMembership(ctx context.Context, id uint) (*models.ProjectMembership, error)

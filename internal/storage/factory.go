@@ -251,6 +251,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	machineExists := tableExists(db, "machine_identities")
 	machineCredExists := tableExists(db, "machine_identity_credentials")
 	machineRoleExists := tableExists(db, "machine_identity_roles")
+	machineOIDCExists := tableExists(db, "machine_identity_oidc_bindings")
 	membershipExists := tableExists(db, "project_memberships")
 	setupTokenExists := tableExists(db, "setup_tokens")
 	notificationsExists := tableExists(db, "notifications")
@@ -315,6 +316,12 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !machineRoleExists {
 		if err := db.AutoMigrate(&models.MachineIdentityRole{}); err != nil {
 			return fmt.Errorf("failed to migrate machine_identity_roles table: %w", err)
+		}
+	}
+	// ADR-031: OIDC federation bindings.
+	if !machineOIDCExists {
+		if err := db.AutoMigrate(&models.MachineIdentityOIDCBinding{}); err != nil {
+			return fmt.Errorf("failed to migrate machine_identity_oidc_bindings table: %w", err)
 		}
 	}
 

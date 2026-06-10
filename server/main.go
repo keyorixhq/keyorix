@@ -236,6 +236,24 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 	coreService.SetCredentialDelivery(deliverer, cd.BaseURL)
 
+	// Wire OIDC / Kubernetes-JWT federation (ADR-031) when configured. A bad
+	// issuer config (e.g. missing audiences) fails loud rather than silently
+	// disabling federation.
+	if oidc := cfg.OIDC; oidc.Enabled && len(oidc.Issuers) > 0 {
+		trusted := make([]core.OIDCTrustedIssuer, 0, len(oidc.Issuers))
+		jwksURIs := make(map[string]string, len(oidc.Issuers))
+		for _, iss := range oidc.Issuers {
+			trusted = append(trusted, core.OIDCTrustedIssuer{Issuer: iss.Issuer, Audiences: iss.Audiences})
+			jwksURIs[iss.Issuer] = iss.JWKSURI
+		}
+		verifier, verr := core.NewOIDCVerifier(trusted, core.NewHTTPJWKSResolver(jwksURIs))
+		if verr != nil {
+			return nil, nil, fmt.Errorf("failed to init OIDC federation: %w", verr)
+		}
+		coreService.SetOIDCVerifier(verifier)
+		log.Printf("OIDC federation enabled for %d issuer(s)", len(oidc.Issuers))
+	}
+
 	return coreService, encSvc, nil
 }
 

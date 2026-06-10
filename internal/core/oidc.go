@@ -1,0 +1,212 @@
+// oidc.go — machine-identity federation via OIDC / Kubernetes JWTs (ADR-031).
+//
+// An external workload (e.g. a Kubernetes pod with a projected service-account
+// token) presents a JWT instead of a Keyorix-issued secret. The verifier checks
+// the signature against the issuer's JWKS and validates iss/aud/exp; the core
+// then maps the (issuer, subject) to a machine identity and resolves its roles —
+// reusing the ADR-030 machine principal, RBAC, and audit path unchanged.
+package core
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// oidcClockSkew is the leeway allowed on exp/nbf to tolerate small clock drift.
+const oidcClockSkew = 60 * time.Second
+
+// JWKSResolver returns the public signing key for an (issuer, kid). The
+// production implementation fetches and caches the issuer's JWKS; tests inject a
+// static key.
+type JWKSResolver interface {
+	Key(ctx context.Context, issuer, kid string) (interface{}, error)
+}
+
+// OIDCTrustedIssuer is one operator-configured issuer the verifier will accept.
+type OIDCTrustedIssuer struct {
+	Issuer    string
+	Audiences []string
+}
+
+// OIDCVerifier verifies federated JWTs against an operator-curated set of
+// trusted issuers. It is pure token logic — no storage — so it is unit-testable
+// with a generated key and no network.
+type OIDCVerifier struct {
+	issuers map[string]map[string]struct{} // issuer -> set of allowed audiences
+	jwks    JWKSResolver
+	leeway  time.Duration
+}
+
+// NewOIDCVerifier builds a verifier over the trusted issuers. An issuer with no
+// configured audiences is rejected at build time — audience binding is required
+// (fail closed), since an unaudienced token is replayable across services.
+func NewOIDCVerifier(issuers []OIDCTrustedIssuer, jwks JWKSResolver) (*OIDCVerifier, error) {
+	m := make(map[string]map[string]struct{}, len(issuers))
+	for _, iss := range issuers {
+		if strings.TrimSpace(iss.Issuer) == "" {
+			return nil, fmt.Errorf("oidc: an issuer entry has an empty issuer URL")
+		}
+		if len(iss.Audiences) == 0 {
+			return nil, fmt.Errorf("oidc: issuer %q has no audiences configured (required)", iss.Issuer)
+		}
+		auds := make(map[string]struct{}, len(iss.Audiences))
+		for _, a := range iss.Audiences {
+			if a != "" {
+				auds[a] = struct{}{}
+			}
+		}
+		m[iss.Issuer] = auds
+	}
+	return &OIDCVerifier{issuers: m, jwks: jwks, leeway: oidcClockSkew}, nil
+}
+
+// Verify checks the JWT's signature against the issuer's JWKS and validates
+// iss (trusted), aud (intersects the issuer's allowlist), and exp/nbf. It
+// returns the (issuer, subject) on success. Asymmetric algorithms only — HMAC
+// is rejected so a leaked JWKS document can never be used to forge tokens.
+func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject string, err error) {
+	var claims jwt.RegisteredClaims
+	parser := jwt.NewParser(
+		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"}),
+		jwt.WithLeeway(v.leeway),
+		jwt.WithExpirationRequired(),
+	)
+
+	keyfunc := func(token *jwt.Token) (interface{}, error) {
+		iss, ierr := token.Claims.GetIssuer()
+		if ierr != nil || iss == "" {
+			return nil, fmt.Errorf("missing issuer")
+		}
+		if _, ok := v.issuers[iss]; !ok {
+			return nil, fmt.Errorf("untrusted issuer")
+		}
+		kid, _ := token.Header["kid"].(string)
+		return v.jwks.Key(ctx, iss, kid)
+	}
+
+	token, err := parser.ParseWithClaims(raw, &claims, keyfunc)
+	if err != nil {
+		return "", "", fmt.Errorf("oidc token verification failed: %w", err)
+	}
+	if !token.Valid {
+		return "", "", fmt.Errorf("oidc token invalid")
+	}
+
+	auds, ok := v.issuers[claims.Issuer]
+	if !ok {
+		return "", "", fmt.Errorf("untrusted issuer")
+	}
+	audOK := false
+	for _, a := range claims.Audience {
+		if _, ok := auds[a]; ok {
+			audOK = true
+			break
+		}
+	}
+	if !audOK {
+		return "", "", fmt.Errorf("oidc token audience not allowed")
+	}
+	if strings.TrimSpace(claims.Subject) == "" {
+		return "", "", fmt.Errorf("oidc token has no subject")
+	}
+	return claims.Issuer, claims.Subject, nil
+}
+
+// SetOIDCVerifier wires the federation verifier (built from config at startup).
+// nil disables OIDC auth.
+func (c *KeyorixCore) SetOIDCVerifier(v *OIDCVerifier) {
+	c.oidcVerifier = v
+}
+
+// OIDCEnabled reports whether federated authentication is configured.
+func (c *KeyorixCore) OIDCEnabled() bool {
+	return c.oidcVerifier != nil
+}
+
+// ValidateOIDCToken verifies a federated JWT and resolves it to its bound
+// machine identity + roles (ADR-031), mirroring ValidateMachineToken so the
+// middleware builds the same machine principal. Rejects when OIDC is disabled,
+// the token fails verification, no binding exists, or the machine is not active.
+func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*models.MachineIdentity, []string, error) {
+	if c.oidcVerifier == nil {
+		return nil, nil, fmt.Errorf("oidc authentication is not enabled")
+	}
+	issuer, subject, err := c.oidcVerifier.Verify(ctx, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	m, err := c.storage.GetMachineByOIDCSubject(ctx, issuer, subject)
+	if err != nil {
+		return nil, nil, fmt.Errorf("no machine identity bound to this token")
+	}
+	if m.State != MachineActive {
+		return nil, nil, fmt.Errorf("machine identity is %s", m.State)
+	}
+	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
+	if err != nil {
+		return m, []string{}, nil
+	}
+	roleNames := make([]string, len(roles))
+	for i, r := range roles {
+		roleNames[i] = r.Name
+	}
+	return m, roleNames, nil
+}
+
+// --- Binding management (ADR-031) ---
+
+// CreateOIDCBinding binds an external (issuer, subject) to a machine identity in
+// the given project. Audited; the machine must belong to the project (the
+// handler also gates roles.assign there).
+func (c *KeyorixCore) CreateOIDCBinding(ctx context.Context, projectID, machineID uint, issuer, subject string, actorID uint) (*models.MachineIdentityOIDCBinding, error) {
+	if strings.TrimSpace(issuer) == "" || strings.TrimSpace(subject) == "" {
+		return nil, fmt.Errorf("issuer and subject are required")
+	}
+	m, err := c.machineInProject(ctx, projectID, machineID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := c.storage.CreateOIDCBinding(ctx, &models.MachineIdentityOIDCBinding{
+		MachineIdentityID: machineID,
+		Issuer:            strings.TrimSpace(issuer),
+		Subject:           strings.TrimSpace(subject),
+		CreatedBy:         actorID,
+		CreatedAt:         c.now(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OIDC binding (already bound?): %w", err)
+	}
+	c.logMachineEvent(ctx, "machine_identity.oidc_bound", m, actorID)
+	return b, nil
+}
+
+// ListOIDCBindings returns a machine's OIDC bindings (after the project check).
+func (c *KeyorixCore) ListOIDCBindings(ctx context.Context, projectID, machineID uint) ([]*models.MachineIdentityOIDCBinding, error) {
+	if _, err := c.machineInProject(ctx, projectID, machineID); err != nil {
+		return nil, err
+	}
+	return c.storage.ListOIDCBindings(ctx, machineID)
+}
+
+// DeleteOIDCBinding removes a binding after verifying it belongs to the machine
+// and the machine belongs to the project.
+func (c *KeyorixCore) DeleteOIDCBinding(ctx context.Context, projectID, machineID, bindingID, actorID uint) error {
+	m, err := c.machineInProject(ctx, projectID, machineID)
+	if err != nil {
+		return err
+	}
+	b, err := c.storage.GetOIDCBindingByID(ctx, bindingID)
+	if err != nil || b.MachineIdentityID != machineID {
+		return fmt.Errorf("binding not found")
+	}
+	if err := c.storage.DeleteOIDCBinding(ctx, bindingID); err != nil {
+		return err
+	}
+	c.logMachineEvent(ctx, "machine_identity.oidc_unbound", m, actorID)
+	return nil
+}

@@ -28,6 +28,9 @@ type KeyorixCore struct {
 	now            func() time.Time // For testability
 	passwordPolicy PasswordPolicy
 	auditForwarder AuditForwarder
+	// oidcVerifier verifies federated machine-identity JWTs (ADR-031); nil = OIDC
+	// auth disabled. Set from config via SetOIDCVerifier.
+	oidcVerifier *OIDCVerifier
 	// membershipValidationMode is the ADR-022 install-level onboarding mode;
 	// "" = allowlist default. Set via SetMembershipValidationMode.
 	membershipValidationMode string

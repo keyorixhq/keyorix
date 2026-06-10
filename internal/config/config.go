@@ -21,9 +21,13 @@ type Config struct {
 	Security    SecurityConfig   `yaml:"security"`
 	SoftDelete  SoftDeleteConfig `yaml:"soft_delete"`
 	Purge       PurgeConfig      `yaml:"purge"`
-	Audit       AuditConfig      `yaml:"audit"`
-	Membership  MembershipConfig `yaml:"membership"`
-	Session     SessionConfig    `yaml:"session"`
+	// OIDC configures machine-identity federation (ADR-031): trusted issuers
+	// whose JWTs (e.g. Kubernetes projected service-account tokens) Keyorix
+	// verifies and maps to a machine identity. Empty/disabled = OIDC auth off.
+	OIDC       OIDCConfig       `yaml:"oidc"`
+	Audit      AuditConfig      `yaml:"audit"`
+	Membership MembershipConfig `yaml:"membership"`
+	Session    SessionConfig    `yaml:"session"`
 
 	// CredentialDelivery configures how a new principal receives their first-credential
 	// setup link (ADR-028). Absent (zero value) = auto mode, out-of-band when no SMTP.
@@ -177,6 +181,20 @@ type ClientConfig struct {
 type AuthConfig struct {
 	Type   string `yaml:"type"`    // "none", "api_key"
 	APIKey string `yaml:"api_key"` // use KEYORIX_API_KEY env var instead
+}
+
+// OIDCConfig is the trusted-issuer allowlist for machine-identity federation.
+type OIDCConfig struct {
+	Enabled bool               `yaml:"enabled"`
+	Issuers []OIDCIssuerConfig `yaml:"issuers"`
+}
+
+// OIDCIssuerConfig describes one trusted token issuer.
+type OIDCIssuerConfig struct {
+	Name      string   `yaml:"name"`      // operator label
+	Issuer    string   `yaml:"issuer"`    // must equal the JWT `iss` exactly
+	JWKSURI   string   `yaml:"jwks_uri"`  // where the issuer's signing keys live
+	Audiences []string `yaml:"audiences"` // the JWT `aud` must contain one of these
 }
 
 // GetAPIKey returns the resolved API key, preferring the environment variable.
