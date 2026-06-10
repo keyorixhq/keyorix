@@ -12,6 +12,7 @@ Complete documentation for the production-ready Keyorix secret management system
 | [Security Guide](./SECURITY.md) | Security features and best practices | ✅ New |
 | [Performance Guide](./PERFORMANCE.md) | Performance metrics and optimization | ✅ New |
 | [Deployment Guide](../DEPLOYMENT_GUIDE.md) | Production deployment instructions | ✅ Updated |
+| [Migration Guide](./MIGRATION.md) | Import secrets from Vault / AWS / Azure / files | ✅ New |
 
 ## 📖 **Core Documentation**
 
