@@ -595,6 +595,14 @@ func (m *MockStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, 
 	return args.Get(0).([]storage.SecretUsageStat), args.Error(1)
 }
 
+func (m *MockStorage) AuditRetentionStats(ctx context.Context) (*storage.AuditRetentionStats, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*storage.AuditRetentionStats), args.Error(1)
+}
+
 func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
 	args := m.Called(ctx, projectID, notReadSince)
 	if args.Get(0) == nil {

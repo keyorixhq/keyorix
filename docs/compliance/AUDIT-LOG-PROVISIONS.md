@@ -82,7 +82,16 @@ exposing the secrets they describe.
 - Audit history is stored in **your** PostgreSQL. Keyorix imposes **no retention
   cap and no retention paywall** — retain logs for as long as your policy
   requires (NIS2-grade durable record-keeping is a configuration of *your*
-  database lifecycle, not a Keyorix limit).
+  database lifecycle, not a Keyorix limit). There is no purge job, no TTL, and
+  no time-window on the audit query path — events are kept indefinitely.
+- **Demonstrate coverage** — `GET /api/v1/audit/retention` reports the total
+  event count, the **oldest** and **newest** event, how many days back the trail
+  reaches (`coverage_days`), and a `meets_nis2_12_month` flag that is `true` once
+  the earliest retained event is at least 12 months old. This turns the
+  "we retain everything" statement into a figure an auditor can read directly.
+  `retention_policy` is always `"unlimited"`. (A young deployment reads
+  `meets_nis2_12_month: false` with no retention deficiency — there is simply not
+  yet 12 months of history; the policy is unlimited regardless.)
 - Standard PostgreSQL backup/restore applies; the [self-hosting
   runbook](../SELF_HOSTING.md) documents it.
 
@@ -104,7 +113,7 @@ row states the expectation and the Keyorix capability that addresses it.
 | 6 | Records do not expose the protected data | No plaintext/keys/tokens in logs (regression-tested) | ✅ |
 | 7 | Records are exportable for examination | Cursor-paginated pull export | ✅ |
 | 8 | Records can be forwarded to monitoring/SIEM | Splunk HEC / Datadog / webhook push connectors | ✅ (operator-configured) |
-| 9 | Records are retained for the required period | Operator-owned PostgreSQL, no cap | ✅ (operator-controlled) |
+| 9 | Records are retained for the required period | Operator-owned PostgreSQL, no cap; coverage is demonstrable via `GET /api/v1/audit/retention` (oldest event + `meets_nis2_12_month`) | ✅ (operator-controlled) |
 | 10 | Records support incident detection | Built-in anomaly alerts + filterable/streamable audit query | ✅ |
 | 11 | Tamper resistance of records | Append-style writes in operator-controlled DB; **WORM/cryptographic chaining is Roadmap** | ⚠️ Roadmap |
 
