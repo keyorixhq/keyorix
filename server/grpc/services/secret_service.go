@@ -2,14 +2,10 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
-	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -245,23 +241,6 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 // requireUser returns the authenticated user from the context or an
 // Unauthenticated error. The auth interceptor populates this on every
 // non-public RPC.
-func requireUser(ctx context.Context) (*interceptors.UserContext, error) {
-	user := interceptors.GetUserFromGRPCContext(ctx)
-	if user == nil {
-		return nil, status.Error(codes.Unauthenticated, "user not authenticated")
-	}
-	return user, nil
-}
-
-func hasPermission(permissions []string, required string) bool {
-	for _, p := range permissions {
-		if p == required {
-			return true
-		}
-	}
-	return false
-}
-
 // mapSecretError translates core errors into gRPC status codes.
 func mapSecretError(err error) error {
 	msg := err.Error()
@@ -277,108 +256,4 @@ func mapSecretError(err error) error {
 	}
 }
 
-func secretNodeToProto(n *models.SecretNode) *pb.Secret {
-	return &pb.Secret{
-		Id:            intToU32(int(n.ID)),
-		Name:          n.Name,
-		ProjectId:     intToU32(int(n.ProjectID)),
-		EnvironmentId: intToU32(int(n.EnvironmentID)),
-		Type:          n.Type,
-		MaxReads:      intPtrToInt32Ptr(n.MaxReads),
-		Expiration:    timePtrToTs(n.Expiration),
-		Metadata:      metadataToMap(n.Metadata),
-		Tags:          []string{}, // tags are not stored on the secret node
-		Status:        n.Status,
-		CreatedBy:     n.CreatedBy,
-		OwnerId:       intToU32(int(n.OwnerID)),
-		CreatedAt:     timestamppb.New(n.CreatedAt),
-		UpdatedAt:     timestamppb.New(n.UpdatedAt),
-		IsShared:      n.IsShared,
-	}
-}
-
-func sharingInfoToProto(s *models.SecretWithSharingInfo) *pb.Secret {
-	out := secretNodeToProto(s.SecretNode)
-	out.ProjectName = s.ProjectName
-	out.EnvironmentName = s.EnvironmentName
-	out.IsShared = s.IsShared
-	out.IsOwnedByUser = s.IsOwnedByUser
-	out.UserPermission = s.UserPermission
-	out.ShareCount = intToU32(s.ShareCount)
-	return out
-}
-
-func metadataToMap(raw models.JSON) map[string]string {
-	if len(raw) == 0 {
-		return map[string]string{}
-	}
-	m := map[string]string{}
-	_ = json.Unmarshal(raw, &m) // best-effort; non-string maps yield empty
-	return m
-}
-
-// numeric conversions — overflow is unrealistic for IDs/counts; clamp on the
-// off chance rather than failing the RPC.
-func intToU32(v int) uint32 {
-	x, err := safeconv.UintToUint32(uint(v))
-	if err != nil || v < 0 {
-		return 0
-	}
-	return x
-}
-
-func i64ToU32(v int64) uint32 {
-	if v < 0 {
-		return 0
-	}
-	return intToU32(int(v))
-}
-
-func intPtrToInt32Ptr(p *int) *int32 {
-	if p == nil {
-		return nil
-	}
-	v, err := safeconv.IntToInt32(*p)
-	if err != nil {
-		v = 0
-	}
-	return &v
-}
-
-func int32PtrToIntPtr(p *int32) *int {
-	if p == nil {
-		return nil
-	}
-	v := int(*p)
-	return &v
-}
-
-func tsToTimePtr(ts *timestamppb.Timestamp) *time.Time {
-	if ts == nil {
-		return nil
-	}
-	t := ts.AsTime()
-	return &t
-}
-
-func timePtrToTs(t *time.Time) *timestamppb.Timestamp {
-	if t == nil {
-		return nil
-	}
-	return timestamppb.New(*t)
-}
-
-func optString(p *string) *string {
-	if p == nil || *p == "" {
-		return nil
-	}
-	return p
-}
-
-func optUint(p *uint32) *uint {
-	if p == nil || *p == 0 {
-		return nil
-	}
-	v := uint(*p)
-	return &v
-}
+// Shared proto-conversion, pagination, and identity helpers live in conversions.go.
