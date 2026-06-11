@@ -98,6 +98,12 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
 		return fmt.Errorf("failed to update account state: %w", err)
 	}
+	// A state that blocks login must also terminate the user's existing sessions,
+	// so suspension is effective immediately instead of lingering until the token
+	// expires. ValidateSessionToken also rejects blocked accounts as a backstop.
+	if AccountLoginBlocked(state) {
+		_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
+	}
 	aid := adminID
 	c.writeAuditEventFull(ctx, eventType, &aid, nil, nil, "",
 		fmt.Sprintf("user %d account state set to %s", userID, state))
