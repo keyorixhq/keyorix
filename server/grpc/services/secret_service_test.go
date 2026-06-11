@@ -148,6 +148,62 @@ func TestSecretService_CreateSecret_ScopedToOtherProjectDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// Regression (gRPC scoped-authz hardening): per-secret reads/writes/deletes must
+// authorize at the SECRET'S project/environment, not the flat global permission
+// set. A user who even OWNS a secret in a project where they hold no RBAC grant
+// must still be denied over gRPC — matching the HTTP scoped gate. Previously the
+// flat secrets.* check passed and the downstream owner check let them through, so
+// a project-1 writer could read/update/delete their secret sitting in project 2.
+func TestSecretService_PerSecretOps_ScopedToOtherProjectDenied(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.Create(&models.Project{ID: 2, Name: "other"}).Error)
+	require.NoError(t, r.db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "development"}).Error)
+	// User 3: writer scoped to project 1 only — no grant in project 2.
+	require.NoError(t, r.db.Create(&models.User{ID: 3, Username: "scoped", Email: "scoped@example.com"}).Error)
+	require.NoError(t, r.db.Create(&models.UserRole{UserID: 3, RoleID: writerRoleID, ProjectID: 1}).Error)
+	// A secret in project 2 that user 3 OWNS (so the owner check alone would pass).
+	require.NoError(t, r.db.Create(&models.SecretNode{
+		ID: 50, Name: "p2-secret", ProjectID: 2, EnvironmentID: 2, OwnerID: 3, Status: "active", Type: "password",
+	}).Error)
+
+	// Flat list advertises every permission — the bug would have honoured it.
+	ctx := authCtx(3, "scoped", "secrets.read", "secrets.write", "secrets.delete")
+
+	_, err := r.svc.GetSecret(ctx, &pb.GetSecretRequest{Id: 50})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "GetSecret cross-project")
+
+	_, err = r.svc.GetSecretValue(ctx, &pb.GetSecretRequest{Id: 50})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "GetSecretValue cross-project")
+
+	_, err = r.svc.UpdateSecret(ctx, &pb.UpdateSecretRequest{Id: 50})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "UpdateSecret cross-project")
+
+	_, err = r.svc.DeleteSecret(ctx, &pb.DeleteSecretRequest{Id: 50})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "DeleteSecret cross-project")
+
+	_, err = r.svc.GetSecretVersions(ctx, &pb.GetSecretVersionsRequest{Id: 50})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "GetSecretVersions cross-project")
+}
+
+// A scoped user CAN operate on a secret within a project where they hold the
+// grant — confirming the scoped check didn't over-restrict legitimate access.
+func TestSecretService_PerSecretOps_InScopeAllowed(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.Create(&models.User{ID: 3, Username: "scoped", Email: "scoped@example.com"}).Error)
+	require.NoError(t, r.db.Create(&models.UserRole{UserID: 3, RoleID: writerRoleID, ProjectID: 1}).Error)
+	ctx := authCtx(3, "scoped", "secrets.read", "secrets.write")
+
+	created := r.createSecret(t, ctx, "in-scope", "v") // project 1, where user 3 has the grant
+	got, err := r.svc.GetSecret(ctx, &pb.GetSecretRequest{Id: created.GetId()})
+	require.NoError(t, err)
+	assert.Equal(t, "in-scope", got.GetName())
+}
+
 func TestSecretService_CreateSecret_Validation(t *testing.T) {
 	r := newSecretTestRig(t)
 	ctx := authCtx(1, "writer", "secrets.write")
