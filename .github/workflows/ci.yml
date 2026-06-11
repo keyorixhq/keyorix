@@ -45,3 +45,31 @@ jobs:
           # (generated protobuf code), whose *_FullMethodName string constants
           # otherwise trip G101 (hardcoded-credential) false positives.
           gosec -severity medium -exclude-generated ./...
+
+  helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: |
+          helm lint deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci
+
+      - name: Render + schema-validate (kubeconform)
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar -xz kubeconform
+          # Render both the bundled-DB and external-DB paths and validate against
+          # the Kubernetes schema.
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci \
+            --set auth.adminPassword=ci --set ingress.enabled=true \
+            | ./kubeconform -strict -summary -kubernetes-version 1.29.0
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.enabled=false \
+            --set externalDatabase.host=db.example.com --set externalDatabase.password=ci \
+            | ./kubeconform -strict -summary -kubernetes-version 1.29.0

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "keyorix.fullname" . }}-test
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+spec:
+  restartPolicy: Never
+  containers:
+    - name: health
+      image: busybox:1.36
+      command: ["wget"]
+      args:
+        - "--spider"
+        - "-S"
+        - "http://{{ include "keyorix.server.fullname" . }}:{{ .Values.server.service.port }}/health"
