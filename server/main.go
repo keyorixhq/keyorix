@@ -246,7 +246,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			trusted = append(trusted, core.OIDCTrustedIssuer{Issuer: iss.Issuer, Audiences: iss.Audiences})
 			jwksURIs[iss.Issuer] = iss.JWKSURI
 		}
-		verifier, verr := core.NewOIDCVerifier(trusted, core.NewHTTPJWKSResolver(jwksURIs))
+		resolver, rerr := core.NewHTTPJWKSResolver(jwksURIs)
+		if rerr != nil {
+			return nil, nil, fmt.Errorf("invalid OIDC jwks_uri: %w", rerr)
+		}
+		verifier, verr := core.NewOIDCVerifier(trusted, resolver)
 		if verr != nil {
 			return nil, nil, fmt.Errorf("failed to init OIDC federation: %w", verr)
 		}
