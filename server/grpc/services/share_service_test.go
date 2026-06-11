@@ -21,6 +21,7 @@ import (
 type shareTestRig struct {
 	svc      *ShareGRPCService
 	core     *core.KeyorixCore
+	db       *gorm.DB
 	secretID uint32
 }
 
@@ -37,12 +38,25 @@ func newShareTestRig(t *testing.T) *shareTestRig {
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
 		&models.SecretVersion{}, &models.User{}, &models.Role{}, &models.ShareRecord{},
-		&models.Group{}, &models.UserGroup{}, // ListSharedSecrets joins user_groups
+		&models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.ProjectMembership{},
 	))
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "default"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "development"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@example.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recipient", Email: "rcpt@example.com"}).Error)
+
+	// Share ops now scope-check via the RBAC graph (like HTTP), so seed real
+	// grants: a writer role (secrets.read/write/delete) assigned to the owner
+	// globally. Mirrors newSecretTestRig.
+	require.NoError(t, db.Create(&models.Role{ID: writerRoleID, Name: "writer"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 3, Name: "secrets.delete", Resource: "secrets", Action: "delete"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 2}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 3}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID}).Error) // global
 
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
 	secret, err := coreService.CreateSecret(context.Background(), &core.CreateSecretRequest{
@@ -54,8 +68,35 @@ func newShareTestRig(t *testing.T) *shareTestRig {
 	return &shareTestRig{
 		svc:      NewShareService(coreService),
 		core:     coreService,
+		db:       db,
 		secretID: intToU32(int(secret.ID)),
 	}
+}
+
+// Regression (gRPC scoped-authz hardening): share ops must authorize at the
+// SECRET'S project, not the flat global permission set. A user scoped to project
+// 1 who even OWNS a secret in project 2 is denied sharing it / listing its shares
+// over gRPC — matching the HTTP scoped gate.
+func TestShareService_ShareSecret_ScopedToOtherProjectDenied(t *testing.T) {
+	r := newShareTestRig(t)
+	require.NoError(t, r.db.Create(&models.Project{ID: 2, Name: "other"}).Error)
+	require.NoError(t, r.db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "development"}).Error)
+	require.NoError(t, r.db.Create(&models.User{ID: 3, Username: "scoped", Email: "scoped@example.com"}).Error)
+	require.NoError(t, r.db.Create(&models.UserRole{UserID: 3, RoleID: writerRoleID, ProjectID: 1}).Error) // project 1 only
+	// A secret in project 2 owned by user 3 (owner check alone would pass).
+	require.NoError(t, r.db.Create(&models.SecretNode{
+		ID: 90, Name: "p2", ProjectID: 2, EnvironmentID: 2, OwnerID: 3, Status: "active", Type: "password",
+	}).Error)
+
+	ctx := authCtx(3, "scoped", "secrets.read", "secrets.write")
+
+	_, err := r.svc.ShareSecret(ctx, &pb.ShareSecretRequest{SecretId: 90, RecipientId: 2, Permission: "read"})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "ShareSecret cross-project")
+
+	_, err = r.svc.ListSecretShares(ctx, &pb.ListSecretSharesRequest{SecretId: 90})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "ListSecretShares cross-project")
 }
 
 func ownerCtx() context.Context {
@@ -91,9 +132,11 @@ func TestShareService_ShareSecret_Unauthenticated(t *testing.T) {
 
 func TestShareService_ShareSecret_PermissionDenied(t *testing.T) {
 	r := newShareTestRig(t)
-	ctx := authCtx(1, "owner", "secrets.read") // no write
+	// User 2 holds no RBAC role in the secret's scope, so the scoped check denies
+	// regardless of any flat permission advertised in the context.
+	ctx := authCtx(2, "recipient", "secrets.write", "secrets.read")
 	_, err := r.svc.ShareSecret(ctx, &pb.ShareSecretRequest{
-		SecretId: r.secretID, RecipientId: 2, Permission: "read",
+		SecretId: r.secretID, RecipientId: 3, Permission: "read",
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
