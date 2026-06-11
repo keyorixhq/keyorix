@@ -230,9 +230,14 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 
 // ResendInvitationLink reissues the accept link for a still-pending invitation
 // (superseding the prior token) and re-delivers it. Throttled per ADR-028.
-func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, invitationID, actorID uint) (*ProvisionSetupResult, error) {
+func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, projectID, invitationID, actorID uint) (*ProvisionSetupResult, error) {
 	inv, err := c.storage.GetProjectInvitation(ctx, invitationID)
 	if err != nil {
+		return nil, fmt.Errorf("invitation not found")
+	}
+	// The caller is authorized within projectID; an invitation in another project
+	// must not be resendable through it (cross-project guard).
+	if inv.ProjectID != projectID {
 		return nil, fmt.Errorf("invitation not found")
 	}
 	// Lazy-expire an overdue invite so a resend can't revive a dead one.
@@ -272,9 +277,12 @@ func (c *KeyorixCore) ListProjectInvitations(ctx context.Context, projectID uint
 }
 
 // RevokeInvitation cancels a pending invitation.
-func (c *KeyorixCore) RevokeInvitation(ctx context.Context, invitationID, actorID uint) error {
+func (c *KeyorixCore) RevokeInvitation(ctx context.Context, projectID, invitationID, actorID uint) error {
 	inv, err := c.storage.GetProjectInvitation(ctx, invitationID)
 	if err != nil {
+		return fmt.Errorf("invitation not found")
+	}
+	if inv.ProjectID != projectID {
 		return fmt.Errorf("invitation not found")
 	}
 	if inv.State != InvitationPending {

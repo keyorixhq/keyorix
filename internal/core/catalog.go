@@ -71,9 +71,10 @@ func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	return c.storage.DeleteEnvironment(ctx, id)
 }
 
-// RestoreEnvironment clears the soft-delete on an environment.
-func (c *KeyorixCore) RestoreEnvironment(ctx context.Context, id uint) error {
-	return c.storage.RestoreEnvironment(ctx, id)
+// RestoreEnvironment clears the soft-delete on an environment, scoped to
+// projectID so a caller authorized for one project cannot restore another's.
+func (c *KeyorixCore) RestoreEnvironment(ctx context.Context, projectID, id uint) error {
+	return c.storage.RestoreEnvironment(ctx, projectID, id)
 }
 
 // CreateProject creates a new project and seeds it with default environments.

@@ -39,11 +39,25 @@ func TestRevokeInvitation_RejectsNonPending(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
-	store.On("GetProjectInvitation", ctx, uint(7)).Return(&models.ProjectInvitation{ID: 7, State: InvitationAccepted}, nil)
+	store.On("GetProjectInvitation", ctx, uint(7)).Return(&models.ProjectInvitation{ID: 7, ProjectID: 1, State: InvitationAccepted}, nil)
 
-	err := c.RevokeInvitation(ctx, 7, 9)
+	err := c.RevokeInvitation(ctx, 1, 7, 9)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only a pending")
+	store.AssertNotCalled(t, "UpdateProjectInvitation", mock.Anything, mock.Anything)
+}
+
+// Cross-project guard: revoking an invitation in project 2 while authorized for
+// project 1 must be rejected.
+func TestRevokeInvitation_RejectsOtherProject(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	store.On("GetProjectInvitation", ctx, uint(7)).Return(&models.ProjectInvitation{ID: 7, ProjectID: 2, State: InvitationPending}, nil)
+
+	err := c.RevokeInvitation(ctx, 1, 7, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 	store.AssertNotCalled(t, "UpdateProjectInvitation", mock.Anything, mock.Anything)
 }
 

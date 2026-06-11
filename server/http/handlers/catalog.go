@@ -240,13 +240,17 @@ func (h *CatalogHandler) ListProjectEnvironments(w http.ResponseWriter, r *http.
 // Nested under the project so the permission scope resolves from the project ID
 // (the environment row itself is soft-deleted and not loadable by the scope check).
 func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "projectId"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid environment ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RestoreEnvironment(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.RestoreEnvironment(r.Context(), uint(projectID), uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound

@@ -36,7 +36,13 @@ var resendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		prov, err := service.ResendInvitationLink(ctx, resendID, actorID)
+		// Project-scoped core method (cross-project guard); the embedded CLI admin
+		// operates on the invitation's own project.
+		inv, err := service.Storage().GetProjectInvitation(ctx, resendID)
+		if err != nil {
+			return fmt.Errorf("invitation %d not found", resendID)
+		}
+		prov, err := service.ResendInvitationLink(ctx, inv.ProjectID, resendID, actorID)
 		if err != nil {
 			return fmt.Errorf("failed to resend invitation link: %w", err)
 		}

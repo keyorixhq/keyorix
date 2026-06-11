@@ -41,7 +41,13 @@ func runRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := service.RevokeInvitation(ctx, revokeID, actorID); err != nil {
+	// The core method is project-scoped (cross-project guard); the embedded CLI
+	// admin operates on the invitation's own project.
+	inv, err := service.Storage().GetProjectInvitation(ctx, revokeID)
+	if err != nil {
+		return fmt.Errorf("invitation %d not found", revokeID)
+	}
+	if err := service.RevokeInvitation(ctx, inv.ProjectID, revokeID, actorID); err != nil {
 		return fmt.Errorf("failed to revoke invitation: %w", err)
 	}
 	fmt.Printf("Invitation %d revoked.\n", revokeID)

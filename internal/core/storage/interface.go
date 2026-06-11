@@ -22,7 +22,9 @@ type Storage interface {
 	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
 	GetEnvironment(ctx context.Context, id uint) (*models.Environment, error)
 	DeleteEnvironment(ctx context.Context, id uint) error
-	RestoreEnvironment(ctx context.Context, id uint) error
+	// RestoreEnvironment restores a soft-deleted environment, scoped to projectID
+	// so a caller authorized for one project cannot restore another's environment.
+	RestoreEnvironment(ctx context.Context, projectID, id uint) error
 	ListEnvironments(ctx context.Context) ([]*models.Environment, error)
 	ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error)
 	ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error)
