@@ -199,37 +199,6 @@ func (se *SecretEncryption) RetrieveLargeSecret(secretNodeID uint) ([]byte, erro
 	return plaintext, nil
 }
 
-// RotateSecretEncryption re-encrypts a secret with new keys
-func (se *SecretEncryption) RotateSecretEncryption(versionID uint) error {
-	if !se.service.IsEnabled() {
-		return fmt.Errorf("encryption is disabled")
-	}
-
-	// Retrieve and decrypt with old key
-	plaintext, err := se.RetrieveSecret(versionID)
-	if err != nil {
-		return fmt.Errorf("failed to retrieve secret for rotation: %w", err)
-	}
-
-	// Re-encrypt with new key
-	encryptedData, metadata, err := se.service.EncryptSecret(plaintext)
-	if err != nil {
-		return fmt.Errorf("failed to re-encrypt secret: %w", err)
-	}
-
-	// Update the version
-	updates := map[string]interface{}{
-		"encrypted_value":     encryptedData,
-		"encryption_metadata": models.JSON(metadata),
-	}
-
-	if err := se.db.Model(&models.SecretVersion{}).Where("id = ?", versionID).Updates(updates).Error; err != nil {
-		return fmt.Errorf("failed to update rotated secret: %w", err)
-	}
-
-	return nil
-}
-
 // GetEncryptionStatus returns the current encryption status
 func (se *SecretEncryption) GetEncryptionStatus() map[string]interface{} {
 	status := map[string]interface{}{
