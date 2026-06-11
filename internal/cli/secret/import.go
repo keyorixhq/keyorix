@@ -26,30 +26,59 @@ var (
 
 var importCmd = &cobra.Command{
 	Use:   "import",
-	Short: "Import secrets from a file",
-	Long: `Import secrets from a dotenv, Vault YAML, or JSON file.
+	Short: "Import secrets from a file or a live source (Vault / AWS / Azure)",
+	Long: `Import secrets from a file, or directly from a running secrets manager.
 
-Examples:
+File mode (--file):
   keyorix secret import --file .env --format dotenv --env production
   keyorix secret import --file vault-export.yaml --format vault --env production
   keyorix secret import --file secrets.json --format json --env staging
   keyorix secret import --file .env --format dotenv --env development --dry-run
 
-Supported formats:
+Live-source mode (--source) — reads directly from a running provider using your
+local credentials and never sends them to the Keyorix server:
+  keyorix secret import --source vault --vault-path prod --env production
+  keyorix secret import --source aws   --aws-region eu-west-1 --env production
+  keyorix secret import --source azure --azure-vault-url https://kv.vault.azure.net --env production
+
+Supported file formats (--format):
   dotenv  .env files (KEY=VALUE, comments and blank lines ignored)
   vault   Medusa/Vault YAML export (path hierarchy, last two segments become name)
-  json    Flat key-value JSON object`,
+  json    Flat key-value JSON object
+
+Live sources (--source):
+  vault   HashiCorp Vault KV engine (VAULT_ADDR / VAULT_TOKEN or --vault-* flags)
+  aws     AWS Secrets Manager (standard AWS credential chain)
+  azure   Azure Key Vault (DefaultAzureCredential)
+
+Multi-field secrets (Vault KV paths, AWS/Azure JSON values) explode into one
+Keyorix secret per field ("<name>-<field>") unless --no-explode is set.`,
 	RunE: runImport,
 }
 
 func init() {
-	importCmd.Flags().StringVar(&importFile, "file", "", "Path to the file to import (required)")
+	importCmd.Flags().StringVar(&importFile, "file", "", "Path to the file to import (file mode)")
 	importCmd.Flags().StringVar(&importFormat, "format", "dotenv", "File format: dotenv, vault, json")
 	importCmd.Flags().StringVar(&importEnv, "env", "development", "Environment name (e.g. production)")
 	importCmd.Flags().StringVar(&importProject, "project", "default", "Project name")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "Show what would be imported without creating anything")
 	importCmd.Flags().BoolVar(&importSkipExisting, "skip-existing", true, "Skip secrets that already exist instead of failing")
-	_ = importCmd.MarkFlagRequired("file")
+
+	// Live-source flags (mutually exclusive with --file).
+	importCmd.Flags().StringVar(&importSource, "source", "", "Live source: vault, aws, azure (instead of --file)")
+	importCmd.Flags().StringVar(&importPrefix, "prefix", "", "Prepend this prefix to every imported secret name")
+	importCmd.Flags().BoolVar(&importNoExplode, "no-explode", false, "Store JSON-object values as a single secret instead of one per field")
+	// Vault
+	importCmd.Flags().StringVar(&vaultAddr, "vault-addr", "", "Vault address (default: $VAULT_ADDR)")
+	importCmd.Flags().StringVar(&vaultToken, "vault-token", "", "Vault token (default: $VAULT_TOKEN)")
+	importCmd.Flags().StringVar(&vaultMount, "vault-mount", "secret", "Vault KV mount path")
+	importCmd.Flags().StringVar(&vaultPath, "vault-path", "", "Vault path prefix to import (default: whole mount)")
+	importCmd.Flags().IntVar(&vaultKVVersion, "vault-kv-version", 2, "Vault KV engine version (1 or 2)")
+	// AWS
+	importCmd.Flags().StringVar(&awsRegion, "aws-region", "", "AWS region (default: SDK credential chain)")
+	importCmd.Flags().StringVar(&awsPrefix, "aws-prefix", "", "Only import AWS secrets whose name starts with this prefix")
+	// Azure
+	importCmd.Flags().StringVar(&azureVaultURL, "azure-vault-url", "", "Azure Key Vault URL (https://<vault>.vault.azure.net)")
 }
 
 // secretEntry is a parsed key/value pair ready to be created.
@@ -59,18 +88,15 @@ type secretEntry struct {
 }
 
 func runImport(cmd *cobra.Command, args []string) error {
-	clean := filepath.Clean(importFile)
-	if _, err := os.Stat(clean); err != nil {
-		return fmt.Errorf("cannot open file %q: %w", importFile, err)
-	}
+	ctx := cmd.Context()
 
-	entries, err := parseFile(clean, importFormat)
+	entries, err := collectEntries(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to parse %s file: %w", importFormat, err)
+		return err
 	}
 
 	if len(entries) == 0 {
-		fmt.Println("No secrets found in file.")
+		fmt.Println("No secrets found.")
 		return nil
 	}
 
@@ -92,8 +118,6 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no remote server configured; set KEYORIX_SERVER and KEYORIX_TOKEN or run 'keyorix auth login'")
 	}
 
-	ctx := cmd.Context()
-
 	nsID, err := resolveProjectID(ctx, rc, importProject)
 	if err != nil {
 		return err
@@ -104,6 +128,34 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	return doImport(ctx, rc, entries, nsID, envID)
+}
+
+// collectEntries gathers the secrets to import from exactly one of the two
+// modes: a live provider (--source) or a local file (--file). The modes are
+// mutually exclusive and one is required.
+func collectEntries(ctx context.Context) ([]secretEntry, error) {
+	switch {
+	case importSource != "" && importFile != "":
+		return nil, fmt.Errorf("--source and --file are mutually exclusive; use one")
+	case importSource != "":
+		entries, err := fetchFromSource(ctx, importSource)
+		if err != nil {
+			return nil, fmt.Errorf("read from %s: %w", importSource, err)
+		}
+		return entries, nil
+	case importFile != "":
+		clean := filepath.Clean(importFile)
+		if _, err := os.Stat(clean); err != nil {
+			return nil, fmt.Errorf("cannot open file %q: %w", importFile, err)
+		}
+		entries, err := parseFile(clean, importFormat)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %s file: %w", importFormat, err)
+		}
+		return entries, nil
+	default:
+		return nil, fmt.Errorf("specify a source: --file <path> (with --format) or --source <vault|aws|azure>")
+	}
 }
 
 // ── Name resolution ───────────────────────────────────────────────────────────
