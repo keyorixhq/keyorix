@@ -13,6 +13,7 @@ Complete documentation for the production-ready Keyorix secret management system
 | [Performance Guide](./PERFORMANCE.md) | Performance metrics and optimization | ✅ New |
 | [Deployment Guide](../DEPLOYMENT_GUIDE.md) | Production deployment instructions | ✅ Updated |
 | [Migration Guide](./MIGRATION.md) | Import secrets from Vault / AWS / Azure / files | ✅ New |
+| [CI/CD Guide](./CI_CD.md) | Fetch secrets in GitHub Actions / GitLab CI / CircleCI | ✅ New |
 
 ## 📖 **Core Documentation**
 
