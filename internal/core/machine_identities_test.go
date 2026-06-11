@@ -90,7 +90,7 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		})).Return(nil)
 		store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
-		m, err := c.TransitionMachineIdentity(ctx, 10, MachineSuspended, 9)
+		m, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineSuspended, 9)
 		require.NoError(t, err)
 		assert.Equal(t, MachineSuspended, m.State)
 	})
@@ -105,7 +105,7 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		})).Return(nil)
 		store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
-		_, err := c.TransitionMachineIdentity(ctx, 10, MachineRevoked, 9)
+		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineRevoked, 9)
 		require.NoError(t, err)
 	})
 
@@ -113,11 +113,25 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)
 		ctx := context.Background()
-		store.On("GetMachineIdentity", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, State: MachineRevoked}, nil)
+		store.On("GetMachineIdentity", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineRevoked}, nil)
 
-		_, err := c.TransitionMachineIdentity(ctx, 10, MachineActive, 9)
+		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineActive, 9)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot transition")
+		store.AssertNotCalled(t, "UpdateMachineIdentity", mock.Anything, mock.Anything)
+	})
+
+	// Cross-project guard: a machine in project 2 must not be reachable when the
+	// caller is authorized for project 1.
+	t.Run("rejects a machine in another project", func(t *testing.T) {
+		store := new(MockStorage)
+		c := newMachineCore(store)
+		ctx := context.Background()
+		store.On("GetMachineIdentity", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 2, State: MachineActive}, nil)
+
+		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineSuspended, 9)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
 		store.AssertNotCalled(t, "UpdateMachineIdentity", mock.Anything, mock.Anything)
 	})
 }

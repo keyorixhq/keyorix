@@ -72,6 +72,11 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 // TransitionMachineIdentity handles PUT /api/v1/projects/{id}/machine-identities/{machineId}.
 // Body: {"action": "activate" | "suspend" | "revoke"}.
 func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
 	machineID, err := strconv.ParseUint(chi.URLParam(r, "machineId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid machine identity ID", http.StatusBadRequest, nil)
@@ -94,7 +99,7 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 		sendError(w, "ValidationError", "action must be activate, suspend, or revoke", http.StatusBadRequest, nil)
 		return
 	}
-	m, err := h.coreService.TransitionMachineIdentity(r.Context(), uint(machineID), to, actor.UserID)
+	m, err := h.coreService.TransitionMachineIdentity(r.Context(), uint(projectID), uint(machineID), to, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {

@@ -110,12 +110,28 @@ func TestTransitionMembership_RejectsIllegalJump(t *testing.T) {
 	c := newMembershipCore(store)
 	ctx := context.Background()
 	store.On("GetProjectMembership", ctx, uint(50)).
-		Return(&models.ProjectMembership{ID: 50, State: MembershipInvited}, nil)
+		Return(&models.ProjectMembership{ID: 50, ProjectID: 1, State: MembershipInvited}, nil)
 
-	_, err := c.TransitionMembership(ctx, 50, MembershipActive, 9)
+	_, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot transition")
 	store.AssertNotCalled(t, "UpdateProjectMembership", mock.Anything, mock.Anything)
+}
+
+// Cross-project guard: a membership in project 2 must not be transitionable when
+// the caller is authorized for project 1 (would otherwise grant a role in 2).
+func TestTransitionMembership_RejectsOtherProject(t *testing.T) {
+	store := new(MockStorage)
+	c := newMembershipCore(store)
+	ctx := context.Background()
+	store.On("GetProjectMembership", ctx, uint(50)).
+		Return(&models.ProjectMembership{ID: 50, ProjectID: 2, UserID: 2, Role: "project_admin", State: MembershipProvisioned}, nil)
+
+	_, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	store.AssertNotCalled(t, "UpdateProjectMembership", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestTransitionMembership_ActivateGrantsRole(t *testing.T) {
@@ -131,7 +147,7 @@ func TestTransitionMembership_ActivateGrantsRole(t *testing.T) {
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	out, err := c.TransitionMembership(ctx, 50, MembershipActive, 9)
+	out, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipActive, out.State)
 	store.AssertCalled(t, "AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
@@ -151,7 +167,7 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 	store.On("RemoveRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	out, err := c.TransitionMembership(ctx, 50, MembershipRevoked, 9)
+	out, err := c.TransitionMembership(ctx, 1, 50, MembershipRevoked, 9)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipRevoked, out.State)
 	store.AssertCalled(t, "RemoveRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
