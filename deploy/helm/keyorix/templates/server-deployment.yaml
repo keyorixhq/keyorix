@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "keyorix.server.fullname" . }}
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  # Single instance: the keys volume is ReadWriteOnce and the KEK is per-instance.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        {{- include "keyorix.labels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/server-config.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: server
+          image: {{ include "keyorix.server.image" . }}
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.server.service.port }}
+          env:
+            - name: KEYORIX_MASTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keyorix.secretName" . }}
+                  key: KEYORIX_MASTER_PASSWORD
+            - name: KEYORIX_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keyorix.secretName" . }}
+                  key: KEYORIX_DB_PASSWORD
+            - name: KEYORIX_ADMIN_USERNAME
+              value: {{ .Values.auth.adminUsername | quote }}
+            - name: KEYORIX_ADMIN_EMAIL
+              value: {{ .Values.auth.adminEmail | quote }}
+            {{- if or .Values.auth.adminPassword .Values.auth.existingSecret }}
+            - name: KEYORIX_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keyorix.secretName" . }}
+                  key: KEYORIX_ADMIN_PASSWORD
+                  optional: true
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/keyorix.yaml
+              subPath: keyorix.yaml
+              readOnly: true
+            - name: keys
+              mountPath: /app/keys
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.server.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "keyorix.server.fullname" . }}-config
+        - name: keys
+          {{- if .Values.server.keysPersistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "keyorix.server.fullname" . }}-keys
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.server.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

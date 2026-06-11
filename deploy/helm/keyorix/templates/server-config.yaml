@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "keyorix.server.fullname" . }}-config
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+data:
+  keyorix.yaml: |
+    environment: production
+    server:
+      http:
+        enabled: true
+        port: "{{ .Values.server.service.port }}"
+    storage:
+      type: postgres
+      database:
+        host: {{ include "keyorix.dbHost" . }}
+        port: "{{ .Values.postgresql.enabled | ternary 5432 .Values.externalDatabase.port }}"
+        name: {{ .Values.postgresql.enabled | ternary .Values.postgresql.auth.database .Values.externalDatabase.database }}
+        user: {{ .Values.postgresql.enabled | ternary .Values.postgresql.auth.username .Values.externalDatabase.user }}
+        ssl_mode: {{ .Values.postgresql.enabled | ternary "disable" .Values.externalDatabase.sslMode }}
+      encryption:
+        enabled: true
+        # The wrapped DEK + KEK salt live on the persisted keys volume. These MUST
+        # survive restarts — losing them, or changing KEYORIX_MASTER_PASSWORD,
+        # makes every stored secret undecryptable.
+        dek_path: "/app/keys/data.key"
+        salt_path: "/app/keys/kek.salt"

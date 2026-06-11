@@ -1,0 +1,95 @@
+# Default values for the Keyorix chart.
+
+# ── Required secrets ──────────────────────────────────────────────────────────
+# The KEK is derived from masterPassword. Changing it after first boot makes
+# every stored secret undecryptable — set it once and keep it. Provide it here,
+# or set auth.existingSecret to bring your own Secret (recommended for prod).
+auth:
+  # The encryption master passphrase. REQUIRED unless existingSecret is set.
+  masterPassword: ""
+  # Optional first-boot admin bootstrap (idempotent). Leave password empty to
+  # run `keyorix system init` manually instead.
+  adminUsername: "admin"
+  adminEmail: "admin@keyorix.local"
+  adminPassword: ""
+  # Bring your own Secret instead of the values above. It must contain keys:
+  #   KEYORIX_MASTER_PASSWORD, KEYORIX_DB_PASSWORD, and optionally
+  #   KEYORIX_ADMIN_PASSWORD.
+  existingSecret: ""
+
+# ── API server ────────────────────────────────────────────────────────────────
+server:
+  image:
+    repository: ghcr.io/keyorixhq/keyorix-server
+    # Published GHCR tags today are `latest` / `main` / `sha-<commit>` (no semver
+    # tags yet). Pin to a `sha-*` or a future `vX.Y.Z` tag for reproducibility.
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # The server holds the encryption keys on a single ReadWriteOnce volume and is
+  # a single logical instance — do not scale beyond 1 replica.
+  replicas: 1
+  service:
+    port: 8080
+  # Persistent volume for the wrapped DEK + KEK salt (/app/keys). MUST persist —
+  # losing it makes every stored secret undecryptable. Back it up.
+  keysPersistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── Web UI ────────────────────────────────────────────────────────────────────
+web:
+  enabled: true
+  image:
+    repository: ghcr.io/keyorixhq/keyorix-web
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
+
+# ── Ingress (for the web UI) ──────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: keyorix.local
+  tls: []   # e.g. [{ secretName: keyorix-tls, hosts: [keyorix.example.com] }]
+
+# ── Bundled PostgreSQL ────────────────────────────────────────────────────────
+# A minimal in-chart Postgres for evaluation. For production, set enabled:false
+# and point externalDatabase at a managed/HA PostgreSQL.
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "15-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    username: keyorix
+    database: keyorix
+    # Password for the bundled DB. REQUIRED when postgresql.enabled and no
+    # auth.existingSecret is set.
+    password: ""
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: ""
+  resources: {}
+
+# Used when postgresql.enabled is false.
+externalDatabase:
+  host: ""
+  port: 5432
+  database: keyorix
+  user: keyorix
+  sslMode: require
+
+imagePullSecrets: []
