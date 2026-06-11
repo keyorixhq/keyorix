@@ -15,7 +15,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -37,13 +39,50 @@ type jwksEntry struct {
 	fetchedAt time.Time
 }
 
-// NewHTTPJWKSResolver builds a resolver over the issuer->jwks_uri map.
-func NewHTTPJWKSResolver(jwksURIs map[string]string) *HTTPJWKSResolver {
+// NewHTTPJWKSResolver builds a resolver over the issuer->jwks_uri map. Each
+// jwks_uri must use https so the issuer's signing keys are never fetched over
+// plaintext — a MITM on an http jwks_uri could swap the keys and forge federation
+// tokens. http is permitted only for loopback hosts (local development/testing).
+func NewHTTPJWKSResolver(jwksURIs map[string]string) (*HTTPJWKSResolver, error) {
+	for issuer, uri := range jwksURIs {
+		if err := validateJWKSScheme(uri); err != nil {
+			return nil, fmt.Errorf("issuer %q: %w", issuer, err)
+		}
+	}
 	return &HTTPJWKSResolver{
 		jwksURIs: jwksURIs,
 		client:   &http.Client{Timeout: 10 * time.Second},
 		cache:    map[string]*jwksEntry{},
+	}, nil
+}
+
+// validateJWKSScheme requires https for a jwks_uri (http only for loopback).
+func validateJWKSScheme(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid jwks_uri %q: %w", raw, err)
 	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if isLoopbackHost(u.Hostname()) {
+			return nil
+		}
+		return fmt.Errorf("jwks_uri %q must use https (http is allowed only for localhost)", raw)
+	default:
+		return fmt.Errorf("jwks_uri %q must use https", raw)
+	}
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // Key returns the public key for (issuer, kid), fetching/refreshing the issuer's

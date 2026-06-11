@@ -34,7 +34,9 @@ func TestHTTPJWKSResolver_FetchAndCache(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	// srv.URL is http://127.0.0.1:… (loopback) — allowed for tests.
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
 
 	got, err := r.Key(context.Background(), "https://iss", "k1")
 	require.NoError(t, err)
@@ -51,4 +53,20 @@ func TestHTTPJWKSResolver_FetchAndCache(t *testing.T) {
 	// Unknown issuer fails.
 	_, err = r.Key(context.Background(), "https://other", "k1")
 	require.ErrorContains(t, err, "no jwks_uri")
+}
+
+func TestNewHTTPJWKSResolver_RejectsInsecureScheme(t *testing.T) {
+	// Plaintext http to a non-loopback host is refused (signing-key MITM).
+	_, err := NewHTTPJWKSResolver(map[string]string{"https://iss": "http://idp.example.com/jwks"})
+	require.ErrorContains(t, err, "must use https")
+
+	// https is accepted.
+	_, err = NewHTTPJWKSResolver(map[string]string{"https://iss": "https://idp.example.com/jwks"})
+	require.NoError(t, err)
+
+	// http to loopback is allowed (dev/test).
+	for _, uri := range []string{"http://localhost:8200/jwks", "http://127.0.0.1:8200/jwks", "http://[::1]:8200/jwks"} {
+		_, err = NewHTTPJWKSResolver(map[string]string{"https://iss": uri})
+		require.NoErrorf(t, err, "loopback %s should be allowed", uri)
+	}
 }
