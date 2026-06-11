@@ -160,9 +160,14 @@ func initialMembershipStateForMode(mode string, idpResolved bool) string {
 // TransitionMembership advances a membership to the next state, enforcing the
 // state machine. Reaching `active` grants the project role; `revoked` removes it.
 // actorID is the user performing the transition (for the audit trail).
-func (c *KeyorixCore) TransitionMembership(ctx context.Context, membershipID uint, to string, actorID uint) (*models.ProjectMembership, error) {
+func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membershipID uint, to string, actorID uint) (*models.ProjectMembership, error) {
 	m, err := c.storage.GetProjectMembership(ctx, membershipID)
 	if err != nil {
+		return nil, fmt.Errorf("membership not found")
+	}
+	// The caller is authorized within projectID; a membership in another project
+	// must not be reachable through it (cross-project guard).
+	if m.ProjectID != projectID {
 		return nil, fmt.Errorf("membership not found")
 	}
 	if !canTransition(m.State, to) {

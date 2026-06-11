@@ -94,11 +94,13 @@ func (c *KeyorixCore) ListMachineIdentities(ctx context.Context, projectID uint)
 }
 
 // TransitionMachineIdentity advances a machine identity to a new state,
-// enforcing the state machine, and audits the change.
-func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, id uint, to string, actorID uint) (*models.MachineIdentity, error) {
-	m, err := c.storage.GetMachineIdentity(ctx, id)
+// enforcing the state machine, and audits the change. The machine must belong to
+// projectID — the caller's authorization is scoped to that project, so a machine
+// in another project must not be reachable through it (cross-project guard).
+func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, projectID, id uint, to string, actorID uint) (*models.MachineIdentity, error) {
+	m, err := c.machineInProject(ctx, projectID, id)
 	if err != nil {
-		return nil, fmt.Errorf("machine identity not found")
+		return nil, err
 	}
 	if !canTransitionMachine(m.State, to) {
 		return nil, fmt.Errorf("cannot transition machine identity from %s to %s", m.State, to)

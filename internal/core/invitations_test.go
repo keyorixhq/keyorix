@@ -65,7 +65,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	})).Return(nil)
 
 	allowNotifications(store) // best-effort outcome notification to the requester
-	out, err := c.ApproveAccessRequest(ctx, 3, 9, "project_developer")
+	out, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "project_developer")
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
 	store.AssertCalled(t, "AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
@@ -85,7 +85,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 
 	allowNotifications(store) // best-effort outcome notification to the requester
 	// Empty grantedRole → uses the suggested role.
-	out, err := c.ApproveAccessRequest(ctx, 3, 9, "")
+	out, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "")
 	require.NoError(t, err)
 	assert.Equal(t, "project_viewer", out.GrantedRole)
 }
@@ -94,11 +94,28 @@ func TestApproveAccessRequest_RejectsNonPending(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)
 	ctx := context.Background()
-	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{ID: 3, State: AccessRequestApproved}, nil)
+	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{ID: 3, ProjectID: 1, State: AccessRequestApproved}, nil)
 
-	_, err := c.ApproveAccessRequest(ctx, 3, 9, "project_viewer")
+	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "project_viewer")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only a pending")
+	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Cross-project guard: approving a request that belongs to project 2 while the
+// caller is authorized for project 1 must be rejected — otherwise the role grant
+// lands in a project the caller has no rights over (privilege escalation).
+func TestApproveAccessRequest_RejectsOtherProject(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
+		ID: 3, ProjectID: 2, UserID: 2, SuggestedRole: "project_admin", State: AccessRequestPending,
+	}, nil)
+
+	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "project_admin")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 

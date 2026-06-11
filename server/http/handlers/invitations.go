@@ -244,6 +244,11 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 // ResolveAccessRequest handles PUT /api/v1/projects/{id}/access-requests/{requestId}
 // for an admin: body {"action":"approve"|"reject", "granted_role":..., "reason":...}.
 func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
 	reqID, err := strconv.ParseUint(chi.URLParam(r, "requestId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid request ID", http.StatusBadRequest, nil)
@@ -266,9 +271,9 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 	var resolveErr error
 	switch body.Action {
 	case "approve":
-		_, resolveErr = h.coreService.ApproveAccessRequest(r.Context(), uint(reqID), actor.UserID, body.GrantedRole)
+		_, resolveErr = h.coreService.ApproveAccessRequest(r.Context(), uint(projectID), uint(reqID), actor.UserID, body.GrantedRole)
 	case "reject":
-		_, resolveErr = h.coreService.RejectAccessRequest(r.Context(), uint(reqID), actor.UserID, body.Reason)
+		_, resolveErr = h.coreService.RejectAccessRequest(r.Context(), uint(projectID), uint(reqID), actor.UserID, body.Reason)
 	default:
 		sendError(w, "ValidationError", "action must be approve or reject", http.StatusBadRequest, nil)
 		return

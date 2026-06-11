@@ -97,6 +97,11 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 // TransitionMembership handles PUT /api/v1/projects/{id}/memberships/{membershipId}.
 // Body: {"action": "verify" | "provision" | "activate" | "revoke"}.
 func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
 	membershipID, err := strconv.ParseUint(chi.URLParam(r, "membershipId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid membership ID", http.StatusBadRequest, nil)
@@ -119,7 +124,7 @@ func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Req
 		sendError(w, "ValidationError", "action must be verify, provision, activate, or revoke", http.StatusBadRequest, nil)
 		return
 	}
-	m, err := h.coreService.TransitionMembership(r.Context(), uint(membershipID), to, actor.UserID)
+	m, err := h.coreService.TransitionMembership(r.Context(), uint(projectID), uint(membershipID), to, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {

@@ -360,9 +360,15 @@ func (c *KeyorixCore) ListAccessRequests(ctx context.Context, projectID uint) ([
 // ApproveAccessRequest approves a pending request, granting grantedRole (falling
 // back to the suggested role) at the project scope. No auto-approval — an admin
 // performs this explicitly.
-func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, requestID, approverID uint, grantedRole string) (*models.AccessRequest, error) {
+func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, requestID, approverID uint, grantedRole string) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
+		return nil, fmt.Errorf("access request not found")
+	}
+	// The approver is authorized within projectID; a request belonging to another
+	// project must not be approvable through it, or the role grant would land in a
+	// project the caller has no rights over (cross-project privilege escalation).
+	if req.ProjectID != projectID {
 		return nil, fmt.Errorf("access request not found")
 	}
 	if req.State != AccessRequestPending {
@@ -398,9 +404,12 @@ func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, requestID, appro
 }
 
 // RejectAccessRequest rejects a pending request with a reason.
-func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, requestID, approverID uint, reason string) (*models.AccessRequest, error) {
+func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, requestID, approverID uint, reason string) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
+		return nil, fmt.Errorf("access request not found")
+	}
+	if req.ProjectID != projectID {
 		return nil, fmt.Errorf("access request not found")
 	}
 	if req.State != AccessRequestPending {

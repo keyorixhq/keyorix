@@ -54,16 +54,24 @@ func runReview(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// The approve/reject core methods are project-scoped (cross-project guard);
+	// the embedded CLI admin operates on the request's own project.
+	existing, err := service.Storage().GetAccessRequest(ctx, reviewID)
+	if err != nil {
+		return fmt.Errorf("access request %d not found", reviewID)
+	}
+	projectID := existing.ProjectID
+
 	switch reviewAction {
 	case "approve":
-		req, err := service.ApproveAccessRequest(ctx, reviewID, approverID, reviewRole)
+		req, err := service.ApproveAccessRequest(ctx, projectID, reviewID, approverID, reviewRole)
 		if err != nil {
 			return fmt.Errorf("failed to approve access request: %w", err)
 		}
 		fmt.Printf("Access request %d approved: granted role %q to %s.\n",
 			req.ID, req.GrantedRole, userLabel(ctx, service, req.UserID))
 	case "reject":
-		req, err := service.RejectAccessRequest(ctx, reviewID, approverID, reviewReason)
+		req, err := service.RejectAccessRequest(ctx, projectID, reviewID, approverID, reviewReason)
 		if err != nil {
 			return fmt.Errorf("failed to reject access request: %w", err)
 		}

@@ -65,7 +65,7 @@ func lifecycleRunE(action, targetState string) func(*cobra.Command, []string) er
 		if err != nil {
 			return fmt.Errorf("failed to initialize service: %w", err)
 		}
-		if _, err := svc.TransitionMachineIdentity(ctx, m.ID, targetState, 0); err != nil {
+		if _, err := svc.TransitionMachineIdentity(ctx, m.ProjectID, m.ID, targetState, 0); err != nil {
 			return fmt.Errorf("failed to %s machine identity: %w", action, err)
 		}
 		fmt.Printf("Machine identity %q → %s\n", m.Name, targetState)
