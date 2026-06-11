@@ -57,6 +57,6 @@ jobs:
           # Chart version = the tag without the leading 'v' (semver); app version
           # = the full tag, so the chart pins the matching image by default.
           version="${GITHUB_REF_NAME#v}"
-          helm package deploy/helm/keyorix --version "$version" --app-version "${GITHUB_REF_NAME}"
+          helm package deploy/helm/keyorix --version "$version" --app-version "$version"
           echo "$GH_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
           helm push "keyorix-${version}.tgz" oci://ghcr.io/keyorixhq/charts
