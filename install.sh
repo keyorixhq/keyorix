@@ -53,8 +53,8 @@ fi
 
 info "Latest version: ${LATEST}"
 
-# Download URL
-BINARY_NAME="${BINARY}-${OS}-${ARCH}"
+# Download URL — release assets are named with underscores (keyorix_linux_amd64).
+BINARY_NAME="${BINARY}_${OS}_${ARCH}"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST}/${BINARY_NAME}"
 
 # Download binary
@@ -66,6 +66,35 @@ if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}"
 else
     wget -qO "$TMP_BIN" "$DOWNLOAD_URL" || error "Download failed. Check https://github.com/${REPO}/releases/${LATEST}"
+fi
+
+# Verify SHA-256 checksum against the release's published checksums.txt.
+info "Verifying checksum..."
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${LATEST}/checksums.txt"
+if command -v curl >/dev/null 2>&1; then
+    EXPECTED=$(curl -fsSL "$CHECKSUMS_URL" | awk -v n="$BINARY_NAME" '$2==n {print $1}')
+else
+    EXPECTED=$(wget -qO- "$CHECKSUMS_URL" | awk -v n="$BINARY_NAME" '$2==n {print $1}')
+fi
+
+if [ -n "$EXPECTED" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$TMP_BIN" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL=$(shasum -a 256 "$TMP_BIN" | awk '{print $1}')
+    else
+        ACTUAL=""
+    fi
+    if [ -n "$ACTUAL" ] && [ "$ACTUAL" != "$EXPECTED" ]; then
+        error "Checksum mismatch for ${BINARY_NAME}: expected ${EXPECTED}, got ${ACTUAL}. Aborting."
+    fi
+    if [ -n "$ACTUAL" ]; then
+        success "Checksum verified"
+    else
+        info "No sha256 tool found; skipping checksum verification"
+    fi
+else
+    info "No checksum published for ${BINARY_NAME}; skipping verification"
 fi
 
 # Make executable
