@@ -20,7 +20,9 @@ import (
 	"gorm.io/gorm"
 )
 
-const sweepBatchSize = 500
+// sweepBatchSize is how many secret_versions rows are re-encrypted per batch.
+// A var (not const) so tests can shrink it to exercise multi-batch pagination.
+var sweepBatchSize = 500
 
 // SweepResult holds statistics from a completed sweep.
 type SweepResult struct {
@@ -96,7 +98,11 @@ func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *Encrypt
 
 	for {
 		var batch []models.SecretVersion
-		if err := tx.Offset(offset).Limit(sweepBatchSize).Find(&batch).Error; err != nil {
+		// Order by the immutable primary key: this batch loop re-encrypts (updates)
+		// rows in place, and without a stable ORDER BY, offset pagination could skip
+		// or double-visit rows as the engine re-orders the unupdated result set —
+		// silently leaving some versions under the old DEK. id is never updated.
+		if err := tx.Order("id").Offset(offset).Limit(sweepBatchSize).Find(&batch).Error; err != nil {
 			return totalSwept, totalLegacyUpgraded, fmt.Errorf("failed to fetch secret_versions batch at offset %d: %w", offset, err)
 		}
 		if len(batch) == 0 {
