@@ -24,6 +24,7 @@ ships so you can map them onto your own compliance programme.
 | [`AUDIT-LOG-PROVISIONS.md`](./AUDIT-LOG-PROVISIONS.md) | Audit-log & record-keeping provisions mapping — what Keyorix logs, how, and how it satisfies logging/record-keeping requirements (incl. a DORA-oriented checklist). |
 | [`SECURITY-FAQ.md`](./SECURITY-FAQ.md) | Buyer/security-team FAQ — the questions that come up in a vendor security review. |
 | [`SECURITY-VERIFICATION.md`](./SECURITY-VERIFICATION.md) | Verification & hardening evidence — the security audits performed, issues found and fixed, surfaces verified clean, and the standing CI gates. The evidence behind the controls statement. |
+| [`ENS-CONTROLS.md`](./ENS-CONTROLS.md) | Controls mapping for Spain's Esquema Nacional de Seguridad (ENS, RD 311/2022) — the same shipped capabilities mapped to ENS measure families and security dimensions. |
 
 ## Why on-premise matters for compliance
 
