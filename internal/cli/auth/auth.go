@@ -102,7 +102,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 	cfg.Storage.Remote.BaseURL = server
 	cfg.Storage.Remote.APIKey = apiKey
-	cfg.Storage.Remote.TLSVerify = true
+	cfg.Storage.Remote.TLSVerify = config.BoolPtr(true)
 	cfg.Storage.Remote.TimeoutSeconds = 30
 	cfg.Storage.Remote.RetryAttempts = 3
 

@@ -10,7 +10,7 @@ import (
 
 func cfgFor(url string) *appconfig.Config {
 	c := &appconfig.Config{}
-	c.Storage.Remote = &appconfig.RemoteConfig{BaseURL: url, TLSVerify: false}
+	c.Storage.Remote = &appconfig.RemoteConfig{BaseURL: url, TLSVerify: appconfig.BoolPtr(false)}
 	return c
 }
 

@@ -164,13 +164,26 @@ type RemoteConfig struct {
 	APIKey         string `yaml:"api_key"` // use KEYORIX_REMOTE_API_KEY env var instead
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 	RetryAttempts  int    `yaml:"retry_attempts"`
-	TLSVerify      bool   `yaml:"tls_verify"`
+	// TLSVerify is a pointer so "unset" is distinguishable from an explicit
+	// false: omitting tls_verify must NOT disable certificate verification on
+	// the (highly sensitive) secrets-manager API channel. Resolve via VerifyTLS.
+	TLSVerify *bool `yaml:"tls_verify"`
 }
 
 // GetAPIKey returns the resolved API key, preferring the environment variable.
 func (r *RemoteConfig) GetAPIKey() string {
 	return resolveSecret("KEYORIX_REMOTE_API_KEY", r.APIKey)
 }
+
+// VerifyTLS reports whether TLS certificate verification is enabled for the
+// remote connection. Secure by default: verification is on unless the operator
+// EXPLICITLY sets `tls_verify: false`. An omitted key verifies.
+func (r *RemoteConfig) VerifyTLS() bool {
+	return r.TLSVerify == nil || *r.TLSVerify
+}
+
+// BoolPtr returns a pointer to b — for setting optional *bool config fields.
+func BoolPtr(b bool) *bool { return &b }
 
 type ClientConfig struct {
 	Endpoint string     `yaml:"endpoint"`

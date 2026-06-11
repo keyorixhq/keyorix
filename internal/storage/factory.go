@@ -114,7 +114,7 @@ func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage
 		APIKey:         cfg.Storage.Remote.GetAPIKey(),
 		TimeoutSeconds: cfg.Storage.Remote.TimeoutSeconds,
 		RetryAttempts:  cfg.Storage.Remote.RetryAttempts,
-		TLSVerify:      cfg.Storage.Remote.TLSVerify,
+		TLSVerify:      cfg.Storage.Remote.VerifyTLS(), // secure-by-default resolution
 	}
 
 	return store.NewRemoteStorage(remoteConfig)

@@ -89,7 +89,7 @@ func TestRemoteCLIIntegration(t *testing.T) {
 				APIKey:         "test-api-key",
 				TimeoutSeconds: 30,
 				RetryAttempts:  3,
-				TLSVerify:      false,
+				TLSVerify:      config.BoolPtr(false),
 			},
 		},
 	}
@@ -159,7 +159,7 @@ func TestLocalToRemoteSwitching(t *testing.T) {
 				APIKey:         "test-api-key",
 				TimeoutSeconds: 30,
 				RetryAttempts:  3,
-				TLSVerify:      false,
+				TLSVerify:      config.BoolPtr(false),
 			},
 		},
 	}
@@ -200,7 +200,7 @@ func TestConfigurationPersistence(t *testing.T) {
 				APIKey:         "test-key-123",
 				TimeoutSeconds: 45,
 				RetryAttempts:  5,
-				TLSVerify:      true,
+				TLSVerify:      config.BoolPtr(true),
 			},
 		},
 	}
@@ -223,7 +223,7 @@ func TestConfigurationPersistence(t *testing.T) {
 	assert.Equal(t, "test-key-123", loadedCfg.Storage.Remote.APIKey)
 	assert.Equal(t, 45, loadedCfg.Storage.Remote.TimeoutSeconds)
 	assert.Equal(t, 5, loadedCfg.Storage.Remote.RetryAttempts)
-	assert.True(t, loadedCfg.Storage.Remote.TLSVerify)
+	assert.True(t, loadedCfg.Storage.Remote.VerifyTLS())
 }
 
 func TestErrorHandling(t *testing.T) {
@@ -280,7 +280,7 @@ func TestEnvironmentVariableSupport(t *testing.T) {
 				APIKey:         "${TEST_API_KEY}",
 				TimeoutSeconds: 30,
 				RetryAttempts:  3,
-				TLSVerify:      true,
+				TLSVerify:      config.BoolPtr(true),
 			},
 		},
 	}
@@ -301,7 +301,7 @@ func TestEnvironmentVariableSupport(t *testing.T) {
 		APIKey:         loadedCfg.Storage.Remote.APIKey,
 		TimeoutSeconds: loadedCfg.Storage.Remote.TimeoutSeconds,
 		RetryAttempts:  loadedCfg.Storage.Remote.RetryAttempts,
-		TLSVerify:      loadedCfg.Storage.Remote.TLSVerify,
+		TLSVerify:      loadedCfg.Storage.Remote.VerifyTLS(),
 	}
 
 	err = remoteConfig.Validate()
