@@ -1,5 +1,10 @@
 # Migrating secrets into Keyorix
 
+> **Want to see it first?** [`demo/vault-migration/`](../demo/vault-migration/README.md)
+> is a one-command demo that stands up Keyorix + a throwaway Vault and migrates
+> live secrets end to end.
+
+
 `keyorix secret import` pulls existing secrets into Keyorix — either from a file
 or **directly from a running secrets manager** (HashiCorp Vault, AWS Secrets
 Manager, Azure Key Vault). It runs in remote mode against your Keyorix server, so
