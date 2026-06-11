@@ -35,14 +35,16 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretR
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to share secrets")
-	}
 	if req.GetSecretId() == 0 || req.GetRecipientId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "secret_id and recipient_id are required")
 	}
 	if req.GetPermission() != "read" && req.GetPermission() != "write" {
 		return nil, status.Error(codes.InvalidArgument, "permission must be 'read' or 'write'")
+	}
+	// Scope secrets.write to the shared secret's project (mirrors the HTTP
+	// /secrets/{id}/share route), not the flat global permission set.
+	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetSecretId()), "secrets.write"); err != nil {
+		return nil, err
 	}
 
 	var record *models.ShareRecord
@@ -74,11 +76,11 @@ func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *pb.ListSec
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to view shares")
-	}
 	if req.GetSecretId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
+	}
+	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetSecretId()), "secrets.read"); err != nil {
+		return nil, err
 	}
 
 	shares, err := s.core.ListSecretSharesWithPermissionCheck(ctx, uint(req.GetSecretId()), user.UserID)
@@ -141,14 +143,14 @@ func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *pb.Up
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to update shares")
-	}
 	if req.GetShareId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "share_id is required")
 	}
 	if req.GetPermission() != "read" && req.GetPermission() != "write" {
 		return nil, status.Error(codes.InvalidArgument, "permission must be 'read' or 'write'")
+	}
+	if err := s.authorizeShareScoped(ctx, user.UserID, uint(req.GetShareId()), "secrets.write"); err != nil {
+		return nil, err
 	}
 
 	record, err := s.core.UpdateSharePermission(ctx, &core.UpdateShareRequest{
@@ -168,11 +170,11 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(user.Permissions, "secrets.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to revoke shares")
-	}
 	if req.GetShareId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "share_id is required")
+	}
+	if err := s.authorizeShareScoped(ctx, user.UserID, uint(req.GetShareId()), "secrets.write"); err != nil {
+		return nil, err
 	}
 	if err := s.core.RevokeShare(ctx, uint(req.GetShareId()), user.UserID); err != nil {
 		return nil, mapShareError(err)
@@ -183,6 +185,27 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+// authorizeShareScoped resolves a share's underlying secret and checks the
+// permission at that secret's project/environment — mirroring HTTP's
+// ScopeFromShareParam, so mutating a specific share enforces the same scoped
+// RBAC as HTTP rather than the flat global set. A missing share/secret yields
+// NotFound; the downstream core call still enforces ownership.
+func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, userID, shareID uint, perm string) error {
+	share, err := s.core.Storage().GetShareRecord(ctx, shareID)
+	if err != nil {
+		return status.Error(codes.NotFound, "share not found")
+	}
+	secret, err := s.core.Storage().GetSecret(ctx, share.SecretID)
+	if err != nil {
+		return status.Error(codes.NotFound, "share not found")
+	}
+	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
+	if allowed, err := s.core.Authorize(ctx, userID, perm, scope); err != nil || !allowed {
+		return status.Error(codes.PermissionDenied, "insufficient permissions for this share")
+	}
+	return nil
+}
 
 // mapShareError translates core sharing errors into gRPC status codes.
 func mapShareError(err error) error {

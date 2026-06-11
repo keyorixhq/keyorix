@@ -71,7 +71,7 @@ func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizeSecretScoped(ctx, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
 		return nil, err
 	}
 	secret, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
@@ -89,7 +89,7 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizeSecretScoped(ctx, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
 		return nil, err
 	}
 	// Resolve the name first (metadata read, no read-count side effect).
@@ -117,7 +117,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	if err := s.authorizeSecretScoped(ctx, user.UserID, uint(req.GetId()), "secrets.write"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.write"); err != nil {
 		return nil, err
 	}
 
@@ -150,7 +150,7 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	if err := s.authorizeSecretScoped(ctx, user.UserID, uint(req.GetId()), "secrets.delete"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.delete"); err != nil {
 		return nil, err
 	}
 	if err := s.core.DeleteSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); err != nil {
@@ -220,7 +220,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if err != nil {
 		return nil, err
 	}
-	if err := s.authorizeSecretScoped(ctx, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
 		return nil, err
 	}
 	versions, err := s.core.GetSecretVersionsWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
@@ -251,13 +251,13 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 // permission set. A missing secret yields NotFound (not PermissionDenied) to
 // avoid leaking existence; the downstream *WithPermissionCheck core calls still
 // enforce ownership/share on top of this.
-func (s *SecretGRPCService) authorizeSecretScoped(ctx context.Context, userID, secretID uint, perm string) error {
-	secret, err := s.core.Storage().GetSecret(ctx, secretID)
+func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, userID, secretID uint, perm string) error {
+	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
 		return status.Error(codes.NotFound, "secret not found")
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	if allowed, err := s.core.Authorize(ctx, userID, perm, scope); err != nil || !allowed {
+	if allowed, err := cs.Authorize(ctx, userID, perm, scope); err != nil || !allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions for this secret")
 	}
 	return nil
