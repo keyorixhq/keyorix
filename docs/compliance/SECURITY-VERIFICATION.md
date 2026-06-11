@@ -32,6 +32,7 @@ Three subsystem audits have been completed. Coverage and verdict:
 | **Authentication / cryptography / RBAC core** | Envelope encryption (AES-256-GCM, AAD binding), KEK/DEK management & rotation sweep, session/PAT/machine-token validation, scoped RBAC enforcement | Hardened — see log below; primitives confirmed sound |
 | **HTTP API layer** | Every route's authorization guard vs. its handler; per-object access (owner/scope/share); input validation | Hardened — cross-project isolation gaps closed |
 | **Token issuance / credential delivery / OIDC federation** | Token entropy & hashing, JWT verifier (alg/aud/iss/exp), machine-token auth, ADR-028 delivery, PAT scope | Clean — one secure-by-default hardening applied |
+| **Storage / persistence & remote client** | Raw-SQL parameterisation, soft-delete query scoping, tenant filters, migrations, the remote-client TLS trust boundary | Hardened — remote-client TLS made secure-by-default; SQL/scoping/migration surfaces verified clean |
 
 ### Verified-correct properties (evidence of sound design)
 
@@ -98,6 +99,12 @@ each strengthens:
   `http` `jwks_uri`, which would fetch issuer signing keys over plaintext (a MITM
   could swap keys and forge tokens). `https` is now required (`http` only for
   loopback in development). *(Severity: low; secure-by-default.)*
+- **Remote-client TLS verification secure-by-default.** A `keyorix.yaml` (CLI in
+  remote mode) that omitted `tls_verify` resolved to certificate verification
+  *off*, exposing the secrets-manager API channel — bearer token and all
+  retrieved secrets — to a man-in-the-middle. Verification is now on unless the
+  operator explicitly opts out (`tls_verify: false`). *(Severity: high;
+  secure-by-default.)*
 
 ## Standing CI security gates
 
@@ -126,5 +133,6 @@ Documented tradeoffs, not open defects:
 
 ## Change history
 
-This document is updated as further subsystem audits complete (next candidates:
-the storage layer and the remote-client path).
+All five security-critical surfaces — authentication/cryptography/RBAC, the HTTP
+API, token/credential/OIDC, and storage/remote-client — have now been audited and
+hardened. This document is updated as further reviews complete.
