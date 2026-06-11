@@ -66,3 +66,35 @@ func TestSessionConfigParsing(t *testing.T) {
 	zero := SessionConfig{AbsoluteTTL: "0"}
 	assert.Equal(t, time.Duration(0), zero.GetAbsoluteTTL(), `"0" → no ceiling`)
 }
+
+// TLS verification for the remote storage client is SECURE BY DEFAULT: an omitted
+// tls_verify must not disable certificate validation on the secrets-manager API.
+func TestRemoteConfig_VerifyTLS_SecureByDefault(t *testing.T) {
+	// Unset (the dangerous case before the fix) → verification ON.
+	unset := &RemoteConfig{BaseURL: "https://x"}
+	assert.True(t, unset.VerifyTLS(), "omitted tls_verify must verify")
+
+	// A config file that omits the key parses to nil → verify.
+	var loaded Config
+	require.NoError(t, yamlUnmarshalForTest(t, "storage:\n  type: remote\n  remote:\n    base_url: https://x\n", &loaded))
+	require.NotNil(t, loaded.Storage.Remote)
+	assert.True(t, loaded.Storage.Remote.VerifyTLS(), "parsed-without-key must verify")
+
+	// Explicit opt-out is honoured.
+	assert.False(t, (&RemoteConfig{TLSVerify: BoolPtr(false)}).VerifyTLS())
+	// Explicit true verifies.
+	assert.True(t, (&RemoteConfig{TLSVerify: BoolPtr(true)}).VerifyTLS())
+}
+
+func yamlUnmarshalForTest(t *testing.T, y string, c *Config) error {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "keyorix.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(y), 0o600))
+	loaded, err := Load(p)
+	if err != nil {
+		return err
+	}
+	*c = *loaded
+	return nil
+}

@@ -127,7 +127,7 @@ func (c *CLI) initClientMode() error {
 				APIKey:         c.config.Client.Auth.GetAPIKey(),
 				TimeoutSeconds: int(c.config.GetTimeout().Seconds()),
 				RetryAttempts:  3,
-				TLSVerify:      true,
+				TLSVerify:      config.BoolPtr(true),
 			},
 		},
 	}

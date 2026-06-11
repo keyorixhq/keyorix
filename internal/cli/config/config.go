@@ -109,7 +109,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	cfg.Storage.Remote.BaseURL = url
 	cfg.Storage.Remote.APIKey = apiKey
 	cfg.Storage.Remote.TimeoutSeconds = timeout
-	cfg.Storage.Remote.TLSVerify = true
+	cfg.Storage.Remote.TLSVerify = config.BoolPtr(true)
 
 	if err := config.Save("keyorix.yaml", cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
@@ -180,7 +180,7 @@ func testRemoteConnection(cfg *config.Config) error {
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.Storage.Remote.TLSVerify}, // #nosec G402 — honors the configured tls_verify
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: !cfg.Storage.Remote.VerifyTLS()}, // #nosec G402 — honors tls_verify (secure by default)
 		},
 	}
 
