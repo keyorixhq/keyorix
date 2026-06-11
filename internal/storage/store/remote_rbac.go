@@ -373,6 +373,6 @@ func (rs *RemoteStorage) DeleteEnvironment(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteEnvironment")
 }
 
-func (rs *RemoteStorage) RestoreEnvironment(_ context.Context, _ uint) error {
+func (rs *RemoteStorage) RestoreEnvironment(_ context.Context, _, _ uint) error {
 	return remoteUnsupported("RestoreEnvironment")
 }

@@ -93,12 +93,19 @@ func TestRestoreEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, withDeleted, 1)
 
-	require.NoError(t, ls.RestoreEnvironment(ctx, env.ID))
+	// Restoring under the wrong project is a no-op → not found (cross-project guard).
+	err = ls.RestoreEnvironment(ctx, proj.ID+999, env.ID)
+	require.Error(t, err)
+	stillDeleted, err := ls.ListEnvironmentsByProject(ctx, proj.ID)
+	require.NoError(t, err)
+	assert.Empty(t, stillDeleted)
+
+	require.NoError(t, ls.RestoreEnvironment(ctx, proj.ID, env.ID))
 	live, err = ls.ListEnvironmentsByProject(ctx, proj.ID)
 	require.NoError(t, err)
 	assert.Len(t, live, 1)
 
 	// Restoring a live environment errors.
-	err = ls.RestoreEnvironment(ctx, env.ID)
+	err = ls.RestoreEnvironment(ctx, proj.ID, env.ID)
 	require.Error(t, err)
 }

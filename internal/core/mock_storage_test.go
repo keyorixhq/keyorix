@@ -152,7 +152,7 @@ func (m *MockStorage) DeleteEnvironment(_ context.Context, _ uint) error {
 	return nil
 }
 
-func (m *MockStorage) RestoreEnvironment(_ context.Context, _ uint) error {
+func (m *MockStorage) RestoreEnvironment(_ context.Context, _, _ uint) error {
 	return nil
 }
 

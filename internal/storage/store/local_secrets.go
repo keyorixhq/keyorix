@@ -217,9 +217,9 @@ func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 }
 
 // RestoreEnvironment clears deleted_at on a soft-deleted environment.
-func (ls *LocalStorage) RestoreEnvironment(ctx context.Context, id uint) error {
+func (ls *LocalStorage) RestoreEnvironment(ctx context.Context, projectID, id uint) error {
 	result := ls.db.WithContext(ctx).Unscoped().Model(&models.Environment{}).
-		Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+		Where("id = ? AND project_id = ? AND deleted_at IS NOT NULL", id, projectID).Update("deleted_at", nil)
 	if result.Error != nil {
 		return fmt.Errorf("failed to restore environment: %w", result.Error)
 	}

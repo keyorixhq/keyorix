@@ -135,6 +135,11 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 // ResendInvitation handles POST /api/v1/projects/{id}/invitations/{invitationId}/resend
 // (ADR-028): it reissues the invitation's accept link and re-delivers it.
 func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
 	invID, err := strconv.ParseUint(chi.URLParam(r, "invitationId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid invitation ID", http.StatusBadRequest, nil)
@@ -145,7 +150,7 @@ func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
-	prov, err := h.coreService.ResendInvitationLink(r.Context(), uint(invID), actor.UserID)
+	prov, err := h.coreService.ResendInvitationLink(r.Context(), uint(projectID), uint(invID), actor.UserID)
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusInternalServerError
@@ -167,6 +172,11 @@ func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request
 
 // RevokeInvitation handles DELETE /api/v1/projects/{id}/invitations/{invitationId}.
 func (h *CatalogHandler) RevokeInvitation(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
 	invID, err := strconv.ParseUint(chi.URLParam(r, "invitationId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid invitation ID", http.StatusBadRequest, nil)
@@ -177,7 +187,7 @@ func (h *CatalogHandler) RevokeInvitation(w http.ResponseWriter, r *http.Request
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
-	if err := h.coreService.RevokeInvitation(r.Context(), uint(invID), actor.UserID); err != nil {
+	if err := h.coreService.RevokeInvitation(r.Context(), uint(projectID), uint(invID), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
 		switch {
 		case strings.Contains(err.Error(), "not found"):
