@@ -189,6 +189,55 @@ func TestRotateDEKWithSweep_ReEncryptsAllRows(t *testing.T) {
 	}
 }
 
+// TestRotateDEKWithSweep_MultipleBatches verifies that a rotation spanning more
+// than one pagination batch re-encrypts EVERY row. A row skipped by unstable
+// offset pagination would remain under the old DEK and fail to decrypt below.
+func TestRotateDEKWithSweep_MultipleBatches(t *testing.T) {
+	db := newTestDB(t)
+	svc, _ := newTestService(t, "test-passphrase")
+
+	// Shrink the batch so a handful of rows spans several batches.
+	orig := sweepBatchSize
+	sweepBatchSize = 2
+	defer func() { sweepBatchSize = orig }()
+
+	const projectID = uint(1)
+	nodeID := seedSecretNode(t, db, projectID)
+	const n = 5
+	values := make(map[int]string, n)
+	for i := 1; i <= n; i++ {
+		val := fmt.Sprintf("secret-value-%d", i)
+		seedSecretVersion(t, db, svc, nodeID, projectID, i, val)
+		values[i] = val
+	}
+
+	oldDEK := captureCurrentDEK(t, svc)
+	if err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
+		t.Fatalf("RotateDEKWithSweep failed: %v", err)
+	}
+	if string(oldDEK) == string(captureCurrentDEK(t, svc)) {
+		t.Fatal("DEK did not change after rotation")
+	}
+
+	var versions []models.SecretVersion
+	if err := db.Where("secret_node_id = ?", nodeID).Find(&versions).Error; err != nil {
+		t.Fatalf("failed to fetch versions: %v", err)
+	}
+	if len(versions) != n {
+		t.Fatalf("expected %d versions, got %d", n, len(versions))
+	}
+	for _, v := range versions {
+		aad := SecretAAD(nodeID, projectID, v.VersionNumber)
+		plaintext, err := svc.DecryptSecretWithAAD(v.EncryptedValue, aad)
+		if err != nil {
+			t.Fatalf("version %d not re-encrypted under the new DEK (sweep skipped it): %v", v.VersionNumber, err)
+		}
+		if string(plaintext) != values[v.VersionNumber] {
+			t.Errorf("version %d: got %q, want %q", v.VersionNumber, plaintext, values[v.VersionNumber])
+		}
+	}
+}
+
 // TestRotateDEKWithSweep_UpgradesLegacyAAD verifies that legacy rows (no AAD)
 // are decrypted without AAD and re-encrypted with AAD after the sweep.
 func TestRotateDEKWithSweep_UpgradesLegacyAAD(t *testing.T) {
