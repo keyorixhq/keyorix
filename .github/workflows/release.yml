@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write # create the release and upload assets
+  packages: write # push the Helm chart to GHCR (OCI)
 
 jobs:
   build-and-release:
@@ -40,3 +41,22 @@ jobs:
               --title "Keyorix ${{ github.ref_name }}" \
               --generate-notes
           fi
+
+  publish-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package + push chart to GHCR (OCI)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Chart version = the tag without the leading 'v' (semver); app version
+          # = the full tag, so the chart pins the matching image by default.
+          version="${GITHUB_REF_NAME#v}"
+          helm package deploy/helm/keyorix --version "$version" --app-version "${GITHUB_REF_NAME}"
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "keyorix-${version}.tgz" oci://ghcr.io/keyorixhq/charts

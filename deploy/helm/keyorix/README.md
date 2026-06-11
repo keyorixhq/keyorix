@@ -7,14 +7,24 @@ persistent volume, the web UI proxying to it, and a bundled (or external) Postgr
 
 ## Quick start
 
+From a published release (the chart is pushed to GHCR as an OCI artifact on each
+`vX.Y.Z` tag):
+
 ```sh
-helm install keyorix ./deploy/helm/keyorix \
+helm install keyorix oci://ghcr.io/keyorixhq/charts/keyorix \
   --set auth.masterPassword='change-me-and-keep-it' \
   --set postgresql.auth.password='a-strong-db-password' \
   --set auth.adminPassword='Admin123!'
 ```
 
-Then follow the printed NOTES (port-forward the web service and log in).
+Or from a source checkout, swap the chart reference for `./deploy/helm/keyorix`.
+
+Then follow the printed NOTES (port-forward the web service and log in). After
+install you can smoke-test the deployment:
+
+```sh
+helm test keyorix
+```
 
 > ⚠️ **`auth.masterPassword` derives the encryption KEK.** Set it once and keep it
 > — changing it, or losing the server's keys PVC, makes every stored secret
