@@ -14,6 +14,7 @@ Complete documentation for the production-ready Keyorix secret management system
 | [Deployment Guide](../DEPLOYMENT_GUIDE.md) | Production deployment instructions | ✅ Updated |
 | [Migration Guide](./MIGRATION.md) | Import secrets from Vault / AWS / Azure / files | ✅ New |
 | [CI/CD Guide](./CI_CD.md) | Fetch secrets in GitHub Actions / GitLab CI / CircleCI | ✅ New |
+| [Helm chart](../deploy/helm/keyorix/README.md) | Deploy Keyorix on Kubernetes | ✅ New |
 
 ## 📖 **Core Documentation**
 

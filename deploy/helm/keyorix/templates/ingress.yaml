@@ -1,0 +1,34 @@
+{{- if .Values.ingress.enabled -}}
+{{- if not .Values.web.enabled -}}
+{{- fail "ingress.enabled requires web.enabled (the ingress routes to the web UI)." -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "keyorix.fullname" . }}
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "keyorix.web.fullname" . }}
+                port:
+                  number: {{ .Values.web.service.port }}
+{{- end -}}

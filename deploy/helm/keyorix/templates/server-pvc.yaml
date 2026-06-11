@@ -1,0 +1,21 @@
+{{- if .Values.server.keysPersistence.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "keyorix.server.fullname" . }}-keys
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+  annotations:
+    # Keep the encryption keys even if the release is uninstalled — deleting this
+    # PVC makes every stored secret undecryptable.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ .Values.server.keysPersistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.server.keysPersistence.size }}
+  {{- with .Values.server.keysPersistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end -}}

@@ -1,0 +1,6 @@
+.git
+*.tmp
+*.bak
+rendered.yaml
+r2.yaml
+ci/

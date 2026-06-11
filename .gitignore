@@ -3,8 +3,10 @@
 # =============================================================================
 
 # --- Binary Executables ---
-keyorix
-keyorix-*
+# Anchored to the repo root so they match the built binaries, not any nested
+# directory named `keyorix` (e.g. deploy/helm/keyorix/).
+/keyorix
+/keyorix-server
 server/keyorix-server
 cmd/keyorix
 cmd/keyorix-server
