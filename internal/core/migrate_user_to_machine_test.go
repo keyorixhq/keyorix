@@ -22,12 +22,14 @@ func TestMigrateUserToMachine(t *testing.T) {
 		store.On("CreateMachineIdentity", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
 			return m.ProjectID == 3 && m.Name == "ci-bot" && m.IdentityType == MachineTypeService && m.State == MachineActive
 		})).Return(&models.MachineIdentity{ID: 20, ProjectID: 3, Name: "ci-bot", IdentityType: MachineTypeService, State: MachineActive}, nil)
-		// SuspendUser path: GetUser → UpdateUser(account_state=suspended).
+		// SuspendUser path: GetUser → UpdateUser(account_state=suspended) →
+		// purge the migrated user's sessions (suspension revokes existing tokens).
 		store.On("GetUser", ctx, uint(7)).
 			Return(&models.User{ID: 7, Username: "ci-bot", AccountState: "active"}, nil)
 		store.On("UpdateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
 			return u.ID == 7 && u.AccountState == AccountSuspended
 		})).Return(&models.User{ID: 7, AccountState: AccountSuspended}, nil)
+		store.On("DeleteSessionsForUserExcept", ctx, uint(7), uint(0)).Return(nil)
 
 		seen := map[string]bool{}
 		store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {

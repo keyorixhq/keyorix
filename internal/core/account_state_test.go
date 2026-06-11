@@ -59,9 +59,16 @@ func TestAdminAccountTransitions(t *testing.T) {
 			store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 				return e.EventType == tc.event
 			})).Return(nil)
+			// A login-blocking transition (suspend) must purge the user's sessions.
+			if AccountLoginBlocked(tc.wantState) {
+				store.On("DeleteSessionsForUserExcept", ctx, uint(2), uint(0)).Return(nil)
+			}
 
 			require.NoError(t, tc.call(c, ctx))
 			store.AssertExpectations(t)
+			if !AccountLoginBlocked(tc.wantState) {
+				store.AssertNotCalled(t, "DeleteSessionsForUserExcept", mock.Anything, mock.Anything, mock.Anything)
+			}
 		})
 	}
 }
@@ -78,6 +85,50 @@ func TestLogin_BlocksSuspended(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "suspended")
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// A suspended or deactivated account must not authenticate via an existing,
+// not-yet-expired session token (the suspend/deactivate revocation gap).
+func TestValidateSessionToken_RejectsBlockedOrInactive(t *testing.T) {
+	future := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC) // after newAccountCore's fixed now
+	cases := []struct {
+		name string
+		user *models.User
+	}{
+		{"suspended", &models.User{ID: 2, IsActive: true, AccountState: AccountSuspended}},
+		{"inactive", &models.User{ID: 2, IsActive: false, AccountState: AccountActive}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := new(MockStorage)
+			c := newAccountCore(store)
+			ctx := context.Background()
+			store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 2, ExpiresAt: &future}, nil)
+			store.On("TouchSession", ctx, uint(7), mock.Anything, mock.Anything).Return(nil)
+			store.On("GetUser", ctx, uint(2)).Return(tc.user, nil)
+
+			_, _, err := c.ValidateSessionToken(ctx, "tok")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "not active")
+			store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestValidateSessionToken_AllowsActive(t *testing.T) {
+	future := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	store := new(MockStorage)
+	c := newAccountCore(store)
+	ctx := context.Background()
+	store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 2, ExpiresAt: &future}, nil)
+	store.On("TouchSession", ctx, uint(7), mock.Anything, mock.Anything).Return(nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, IsActive: true, AccountState: AccountActive}, nil)
+	store.On("GetUserRoles", ctx, uint(2)).Return([]*models.Role{{Name: "viewer"}}, nil)
+
+	user, roles, err := c.ValidateSessionToken(ctx, "tok")
+	require.NoError(t, err)
+	assert.Equal(t, uint(2), user.ID)
+	assert.Equal(t, []string{"viewer"}, roles)
 }
 
 func TestChangePassword_ClearsRestriction(t *testing.T) {

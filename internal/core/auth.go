@@ -173,6 +173,12 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if err != nil {
 		return nil, nil, fmt.Errorf("user not found")
 	}
+	// Reject sessions whose account has since been deactivated or suspended, so an
+	// admin's suspend/deactivate takes effect on already-issued tokens rather than
+	// lingering until expiry. Mirrors the active-state check in ValidatePATToken.
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+		return nil, nil, fmt.Errorf("account is not active")
+	}
 	roles, err := c.storage.GetUserRoles(ctx, user.ID)
 	if err != nil {
 		return user, []string{}, nil
