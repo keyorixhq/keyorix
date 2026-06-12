@@ -3,6 +3,18 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.9.0 — 2026-06-12
+
+### Added
+- **`keyorix dynamic-secret` CLI** — issue and manage on-demand database
+  credentials (ADR-035) from the terminal: `list`, `issue <config-id>`,
+  `leases <config-id>`, `renew <lease-id>`, `revoke <lease-id>` (aliases:
+  `dynamic-secrets`, `dyn`). The issued username/password is shown once on
+  `issue`. Config creation stays API/UI-only (it takes the privileged admin DSN).
+  ([#117], ADR-035)
+
+[#117]: https://github.com/keyorixhq/keyorix/pull/117
+
 ## v0.8.0 — 2026-06-12
 
 ### Added
