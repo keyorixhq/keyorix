@@ -188,3 +188,6 @@ certs/
 # copy the real keyorix-web bundle in, which must not be committed.
 /server/webui/dist/*
 !/server/webui/dist/index.html
+
+# compiled binary debris (use bin/ via make build)
+/main
