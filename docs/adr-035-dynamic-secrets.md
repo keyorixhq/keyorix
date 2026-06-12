@@ -99,3 +99,20 @@ sweeper should be enabled when using MySQL targets, otherwise a credential lives
 until an explicit revoke. The Postgres engine remains belt-and-suspenders (role
 expiry **and** sweep). The MySQL driver (`go-sql-driver/mysql`, pure Go) links
 into the server; no cloud SDK is added.
+
+## Addendum (2026-06-12): lease lifecycle — max-TTL ceiling + renewal
+
+Two of the originally-deferred items shipped together:
+
+- **Per-config max-TTL ceiling** (`DynamicSecretConfig.MaxTTLSeconds`, 0 = none).
+  Caps the lifetime of any lease from the config regardless of the TTL a caller
+  requests: the issue TTL is clamped to it, and config creation rejects a
+  `default_ttl_seconds` greater than `max_ttl_seconds`. A real safety control —
+  it bounds credential exposure even if a caller asks for a long TTL.
+- **Renewable leases** — `POST …/leases/{leaseID}/renew {ttl_seconds}` extends an
+  **active** lease's expiry (a new `CredentialEngine.Renew` pushes PostgreSQL's
+  `VALID UNTIL` forward; MySQL is a no-op enforced by the sweep). Renewal is
+  **capped** so a lease's total lifetime from issue can never exceed the config's
+  max-TTL — a renewal that wouldn't extend (cap reached) is rejected. Audited as
+  `dynamic_lease.renewed`. Renewal reduces credential churn vs. re-issuing while
+  the max-TTL keeps the hard bound on exposure.

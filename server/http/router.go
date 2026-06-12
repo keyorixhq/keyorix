@@ -301,6 +301,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/configs/{id}", dynamicSecretHandler.GetConfig)
 			r.Post("/configs/{id}/issue", dynamicSecretHandler.IssueLease)
 			r.Get("/configs/{id}/leases", dynamicSecretHandler.ListLeases)
+			r.Post("/leases/{leaseID}/renew", dynamicSecretHandler.RenewLease)
 			r.Post("/leases/{leaseID}/revoke", dynamicSecretHandler.RevokeLease)
 		})
 

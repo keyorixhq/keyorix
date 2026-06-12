@@ -76,3 +76,20 @@ func (e *PostgresEngine) Revoke(ctx context.Context, adminDSN, roleName string) 
 	}
 	return nil
 }
+
+// Renew extends the role's VALID UNTIL to expiresAt, so the credential stays
+// usable for the renewed window without re-issuing.
+func (e *PostgresEngine) Renew(ctx context.Context, adminDSN, roleName string, expiresAt time.Time) error {
+	conn, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		return fmt.Errorf("connect to target: %w", err)
+	}
+	defer conn.Close(ctx)
+
+	ident := pgx.Identifier{roleName}.Sanitize()
+	validUntil := expiresAt.UTC().Format(time.RFC3339)
+	if _, err := conn.Exec(ctx, fmt.Sprintf("ALTER ROLE %s VALID UNTIL '%s'", ident, validUntil)); err != nil {
+		return fmt.Errorf("renew role %s: %w", roleName, err)
+	}
+	return nil
+}

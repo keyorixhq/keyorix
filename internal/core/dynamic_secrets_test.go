@@ -150,6 +150,66 @@ func TestDynamicSecrets_IssueRejectsUnknownConfig(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDynamicSecrets_MaxTTLClampsIssue(t *testing.T) {
+	c, _, _, fixed := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "capped", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		DefaultTTLSeconds: 600, MaxTTLSeconds: 1800,
+	})
+	require.NoError(t, err)
+
+	// Request 1h but the config caps at 30m → expiry is now+30m.
+	issued, err := c.IssueLease(ctx, cfg.ID, 3600, 7)
+	require.NoError(t, err)
+	assert.Equal(t, fixed.Add(30*time.Minute), issued.ExpiresAt, "issue TTL must be clamped to max_ttl_seconds")
+}
+
+func TestDynamicSecrets_CreateRejectsDefaultOverMax(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
+		Name: "bad", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		DefaultTTLSeconds: 3600, MaxTTLSeconds: 600,
+	})
+	require.Error(t, err)
+}
+
+func TestDynamicSecrets_RenewExtendsAndRespectsMaxTTL(t *testing.T) {
+	c, _, fake, fixed := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "renewable", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		DefaultTTLSeconds: 600, MaxTTLSeconds: 1200, // 10m default, 20m hard cap
+	})
+	require.NoError(t, err)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7) // expiry = fixed+10m
+	require.NoError(t, err)
+	require.Equal(t, fixed.Add(10*time.Minute), issued.ExpiresAt)
+
+	// Renew for 20m from now; the fixed clock means now=issue time, so the new
+	// expiry is fixed+20m — exactly the IssuedAt+max ceiling, extending from +10m.
+	exp, err := c.RenewLease(ctx, issued.LeaseID, 1200, 7)
+	require.NoError(t, err)
+	assert.Equal(t, fixed.Add(20*time.Minute), exp)
+	assert.Contains(t, fake.Renewed, issued.Username, "the engine renewed the role")
+
+	// A further renewal can't extend past IssuedAt+max (20m) → rejected.
+	_, err = c.RenewLease(ctx, issued.LeaseID, 1200, 7)
+	require.Error(t, err, "renewal beyond the max-TTL ceiling is rejected")
+}
+
+func TestDynamicSecrets_RenewRejectsInactiveLease(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	require.NoError(t, c.RevokeLease(ctx, issued.LeaseID, 7, "manual"))
+	_, err = c.RenewLease(ctx, issued.LeaseID, 0, 7)
+	require.Error(t, err, "a revoked lease cannot be renewed")
+}
+
 // TestDynamicSecrets_RealFactoryValidatesBackend checks the real engine factory
 // (no fake): config creation accepts the supported backends and rejects others.
 func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {

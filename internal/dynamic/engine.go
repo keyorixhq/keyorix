@@ -27,6 +27,10 @@ type CredentialEngine interface {
 	Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (cred Credential, roleName string, err error)
 	// Revoke removes the role/credential from the target.
 	Revoke(ctx context.Context, adminDSN, roleName string) error
+	// Renew extends the credential's validity to expiresAt on backends that carry a
+	// DB-level expiry (PostgreSQL VALID UNTIL). Backends without one (MySQL) make it
+	// a no-op — the lease's new expiry is enforced by the auto-revoke sweep.
+	Renew(ctx context.Context, adminDSN, roleName string, expiresAt time.Time) error
 	BackendType() string
 }
 
@@ -64,11 +68,13 @@ func randString(n int) (string, error) {
 // FakeEngine is an in-memory engine for tests: it records issued and revoked
 // roles without touching any real database.
 type FakeEngine struct {
-	mu        sync.Mutex
-	Issued    []string
-	Revoked   []string
-	FailIssue bool
+	mu         sync.Mutex
+	Issued     []string
+	Revoked    []string
+	Renewed    []string
+	FailIssue  bool
 	FailRevoke bool
+	FailRenew  bool
 }
 
 func (f *FakeEngine) BackendType() string { return "fake" }
@@ -96,5 +102,15 @@ func (f *FakeEngine) Revoke(_ context.Context, _, roleName string) error {
 		return fmt.Errorf("fake revoke failure")
 	}
 	f.Revoked = append(f.Revoked, roleName)
+	return nil
+}
+
+func (f *FakeEngine) Renew(_ context.Context, _, roleName string, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.FailRenew {
+		return fmt.Errorf("fake renew failure")
+	}
+	f.Renewed = append(f.Renewed, roleName)
 	return nil
 }

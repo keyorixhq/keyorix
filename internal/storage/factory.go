@@ -299,10 +299,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
-	// Create the dynamic-secrets tables if missing (ADR-035, additive).
+	// Create the dynamic-secrets tables if missing (ADR-035, additive); otherwise add
+	// only the newer max-TTL column via the Migrator (same pgx hazard — never
+	// full-AutoMigrate an existing table here).
 	if !dynConfigExists {
 		if err := db.AutoMigrate(&models.DynamicSecretConfig{}); err != nil {
 			return fmt.Errorf("failed to migrate dynamic_secret_configs table: %w", err)
+		}
+	} else {
+		m := db.Migrator()
+		if !m.HasColumn(&models.DynamicSecretConfig{}, "MaxTTLSeconds") {
+			if err := m.AddColumn(&models.DynamicSecretConfig{}, "MaxTTLSeconds"); err != nil {
+				return fmt.Errorf("failed to add dynamic_secret_configs.max_ttl_seconds column: %w", err)
+			}
 		}
 	}
 	if !dynLeaseExists {
