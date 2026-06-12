@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,6 +54,40 @@ func TestHTTPJWKSResolver_FetchAndCache(t *testing.T) {
 	// Unknown issuer fails.
 	_, err = r.Key(context.Background(), "https://other", "k1")
 	require.ErrorContains(t, err, "no jwks_uri")
+}
+
+// On a transient JWKS fetch failure, a cached key is served only within a bounded
+// grace window past the TTL — so a key the issuer rotated out (e.g. compromised)
+// cannot be honoured indefinitely while the issuer is unreachable.
+func TestHTTPJWKSResolver_StaleFallbackBounded(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	// A JWKS endpoint that always fails, forcing reliance on the cache.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
+
+	seedCache := func(age time.Duration) {
+		r.mu.Lock()
+		r.cache["https://iss"] = &jwksEntry{
+			keys:      map[string]interface{}{"k1": &key.PublicKey},
+			fetchedAt: time.Now().Add(-age),
+		}
+		r.mu.Unlock()
+	}
+
+	// Stale but within the grace window: the cached key is served despite the fetch failure.
+	seedCache(jwksCacheTTL + jwksStaleGrace - time.Minute)
+	got, err := r.Key(context.Background(), "https://iss", "k1")
+	require.NoError(t, err)
+	assert.Equal(t, &key.PublicKey, got)
+
+	// Beyond the grace window: a failed refetch fails closed (rotated-out key not honoured).
+	seedCache(jwksCacheTTL + jwksStaleGrace + time.Minute)
+	_, err = r.Key(context.Background(), "https://iss", "k1")
+	require.Error(t, err)
 }
 
 func TestNewHTTPJWKSResolver_RejectsInsecureScheme(t *testing.T) {

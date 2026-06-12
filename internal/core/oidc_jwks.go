@@ -25,6 +25,14 @@ import (
 // jwksCacheTTL bounds how long a fetched key set is trusted before a refetch.
 const jwksCacheTTL = 1 * time.Hour
 
+// jwksStaleGrace bounds how far PAST the TTL a cached key set may still be served
+// as a fallback when a JWKS refetch fails transiently. Without a bound, a key the
+// issuer rotated out — e.g. because its private key was compromised — would keep
+// verifying federation tokens for as long as the issuer's JWKS endpoint is
+// unreachable from Keyorix, defeating rotation-as-revocation. After the grace
+// window, a failed refetch fails closed.
+const jwksStaleGrace = 10 * time.Minute
+
 // HTTPJWKSResolver implements JWKSResolver by fetching each issuer's jwks_uri.
 type HTTPJWKSResolver struct {
 	jwksURIs map[string]string // issuer -> jwks_uri (operator-configured)
@@ -107,8 +115,11 @@ func (r *HTTPJWKSResolver) Key(ctx context.Context, issuer, kid string) (interfa
 
 	keys, err := r.fetch(ctx, jwksURI)
 	if err != nil {
-		// Fall back to a stale cache rather than failing on a transient fetch error.
-		if entry != nil {
+		// Fall back to a recently-cached key set on a transient fetch error — but
+		// ONLY within a bounded grace window past the TTL, so a rotated-out (possibly
+		// compromised) key cannot be honoured indefinitely while the issuer is
+		// unreachable. Beyond the window, fail closed.
+		if entry != nil && time.Since(entry.fetchedAt) < jwksCacheTTL+jwksStaleGrace {
 			if k, ok := entry.keys[kid]; ok {
 				return k, nil
 			}
