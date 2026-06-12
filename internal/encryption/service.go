@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 )
 
 // Service provides high-level encryption operations for the application.
@@ -49,6 +50,11 @@ func (s *Service) Initialize(passphrase string) error {
 	if !s.config.Enabled {
 		return fmt.Errorf("encryption is disabled in configuration")
 	}
+	provider, err := s.buildKeyProvider(passphrase)
+	if err != nil {
+		return err
+	}
+	s.keyManager.SetKeyProvider(provider)
 	if err := s.keyManager.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize key manager: %w", err)
 	}
@@ -60,6 +66,23 @@ func (s *Service) Initialize(passphrase string) error {
 	s.encryptionService = encSvc
 	s.initialized = true
 	return nil
+}
+
+// buildKeyProvider selects the KEK source from config (ADR-038). The default and
+// the absent/zero value is the passphrase provider, byte-identical to the
+// historical derivation; file/env supply externally-managed raw key material.
+func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error) {
+	kp := s.config.KeyProvider
+	switch kp.Type {
+	case "", "password":
+		return crypto.NewPasswordKeyProvider(passphrase, s.keyManager.baseDir, s.config.SaltPath), nil
+	case "file":
+		return crypto.NewFileKeyProvider(kp.FilePath), nil
+	case "env":
+		return crypto.NewEnvKeyProvider(kp.EnvVar), nil
+	default:
+		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env)", kp.Type)
+	}
 }
 
 // IsEnabled returns whether encryption is enabled in config.

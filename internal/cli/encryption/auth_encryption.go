@@ -84,7 +84,7 @@ func runAuthEncryptionStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	passphrase, _ := masterPassphrase()
+	passphrase, _ := masterPassphrase(cfg)
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
@@ -130,7 +130,7 @@ func runEnableAuthEncryption(cmd *cobra.Command, args []string) error {
 		fmt.Println("✅ Authentication encryption is already enabled")
 		return nil
 	}
-	passphrase, _ := masterPassphrase()
+	passphrase, _ := masterPassphrase(cfg)
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
@@ -154,7 +154,7 @@ func runRotateAuthEncryption(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	passphrase, _ := masterPassphrase()
+	passphrase, _ := masterPassphrase(cfg)
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}

@@ -230,6 +230,20 @@ type EncryptionConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	DEKPath  string `yaml:"dek_path"`
 	SaltPath string `yaml:"salt_path"`
+	// KeyProvider selects where the KEK comes from (ADR-038). Absent/zero value =
+	// the default passphrase derivation (KEYORIX_MASTER_PASSWORD + on-disk salt),
+	// byte-identical to the historical behaviour.
+	KeyProvider KeyProviderConfig `yaml:"key_provider"`
+}
+
+// KeyProviderConfig selects the KEK source. type: "password" (default) derives the
+// KEK from KEYORIX_MASTER_PASSWORD; "file" reads raw key material from FilePath;
+// "env" reads it from the EnvVar's value (hex or base64). file/env suit a KEK
+// injected by a KMS, sealed/SOPS secret, or CSI driver.
+type KeyProviderConfig struct {
+	Type     string `yaml:"type"`
+	FilePath string `yaml:"file_path"`
+	EnvVar   string `yaml:"env_var"`
 }
 
 type SecretsConfig struct {

@@ -130,19 +130,22 @@ func main() {
 	}
 }
 
-// initializeEncryption derives the KEK from KEYORIX_MASTER_PASSWORD and returns
-// an initialized encryption.Service. If encryption is disabled in config, it returns
-// nil without error. Exits loudly if encryption is enabled but no passphrase is set.
+// initializeEncryption sources the KEK per the configured key provider (ADR-038)
+// and returns an initialized encryption.Service. If encryption is disabled in
+// config, it returns nil without error. For the default "password" provider it
+// requires KEYORIX_MASTER_PASSWORD; for the "file"/"env" providers the KEK comes
+// from key material elsewhere, so no passphrase is needed.
 func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 	if !cfg.Storage.Encryption.Enabled {
 		return nil, nil
 	}
 
+	providerType := cfg.Storage.Encryption.KeyProvider.Type
 	passphrase := strings.TrimSpace(os.Getenv("KEYORIX_MASTER_PASSWORD"))
-	if passphrase == "" {
+	if (providerType == "" || providerType == "password") && passphrase == "" {
 		return nil, fmt.Errorf(
-			"encryption is enabled but KEYORIX_MASTER_PASSWORD is not set; " +
-				"set this environment variable before starting the server")
+			"encryption is enabled with the password key provider but KEYORIX_MASTER_PASSWORD " +
+				"is not set; set it, or configure storage.encryption.key_provider (file/env)")
 	}
 
 	baseDir := ""
@@ -155,7 +158,11 @@ func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 		return nil, fmt.Errorf("failed to initialize encryption (KEK derivation): %w", err)
 	}
 
-	log.Printf("Encryption initialised — KEK derived from passphrase, key version: %s", svc.GetKeyVersion())
+	kekSource := providerType
+	if kekSource == "" {
+		kekSource = "password"
+	}
+	log.Printf("Encryption initialised — KEK source: %s, key version: %s", kekSource, svc.GetKeyVersion())
 	return svc, nil
 }
 
