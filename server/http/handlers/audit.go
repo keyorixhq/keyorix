@@ -164,6 +164,11 @@ type AuditExportEntry struct {
 	Impersonation  bool            `json:"impersonation,omitempty"`
 	ImpersonatedBy string          `json:"impersonated_by,omitempty"`
 	ActingAs       string          `json:"acting_as,omitempty"`
+	// PrevHash/EntryHash are the ADR-029 chain links. Exporting them gives the SIEM
+	// (the off-box observer) the anchor needed to detect on-box tampering —
+	// including tail-truncation, which on-box re-verification cannot catch.
+	PrevHash  string `json:"prev_hash,omitempty"`
+	EntryHash string `json:"entry_hash,omitempty"`
 }
 
 // ExportAuditLogs handles GET /api/v1/audit/export — a cursor-paginated,
@@ -227,6 +232,8 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 			IPAddress:   e.IPAddress,
 			ActorType:   actorTypeOrDefault(e.ActorType),
 			Success:     success,
+			PrevHash:    e.PrevHash,
+			EntryHash:   e.EntryHash,
 		}
 		if e.Diff != "" {
 			entry.Diff = json.RawMessage(e.Diff)
@@ -354,6 +361,10 @@ func (h *AuditHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request) 
 		"valid":            v.Valid,
 		"chained_events":   v.ChainedEvents,
 		"unchained_events": v.UnchainedEvents,
+		// The verified chain head — record (chained_events, head_hash) externally to
+		// detect tail-truncation / re-seed that an on-box re-walk can't catch alone.
+		"head_hash": v.HeadHash,
+		"head_id":   v.HeadID,
 	}
 	if !v.Valid {
 		resp["first_broken_id"] = v.FirstBrokenID
