@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
+  # the tools that gate our security checks are themselves a supply-chain
+  # surface. govulncheck deliberately floats — Google x/ tool, vuln DB is
+  # fetched live regardless of binary version.
+  GOSEC_VERSION: v2.26.1
+  GOLANGCI_LINT_VERSION: v2.12.2
+  GITLEAKS_VERSION: 8.30.1
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -40,11 +49,44 @@ jobs:
 
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
           # -exclude-generated skips files with the "DO NOT EDIT" header
           # (generated protobuf code), whose *_FullMethodName string constants
           # otherwise trip G101 (hardcoded-credential) false positives.
           gosec -severity medium -exclude-generated ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      # Promotes the previously local-only `make lint` to a CI gate:
+      # errcheck, staticcheck, unused, goconst, ineffassign (.golangci.yml).
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a secret committed and later deleted is still leaked.
+          fetch-depth: 0
+
+      # Pinned binary instead of gitleaks-action (the action requires a
+      # license key for org accounts; the CLI is MIT).
+      - name: gitleaks (full history)
+        run: |
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks detect --source . --verbose --redact
 
   helm-chart:
     runs-on: ubuntu-latest

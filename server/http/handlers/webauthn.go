@@ -122,7 +122,7 @@ func (h *AuthHandler) DeleteWebAuthnCredential(w http.ResponseWriter, r *http.Re
 // Body: { mfa_challenge }. Public (the challenge from /auth/login is the bearer).
 func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if checkLoginRateLimit(ip) {
+	if h.checkLoginRateLimit(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
 		return
 	}
@@ -135,7 +135,7 @@ func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request)
 	}
 	assertion, sessionToken, err := h.coreService.BeginWebAuthnLogin(r.Context(), body.Challenge)
 	if err != nil {
-		recordLoginAttempt(ip)
+		h.recordLoginAttempt(r.Context(), ip)
 		h.writeWebAuthnErr(w, err)
 		return
 	}
@@ -149,7 +149,7 @@ func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request)
 // Body: { mfa_challenge, webauthn_session, credential: <PublicKeyCredential> }.
 func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if checkLoginRateLimit(ip) {
+	if h.checkLoginRateLimit(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
 		return
 	}
@@ -169,7 +169,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	}
 	session, user, err := h.coreService.FinishWebAuthnLogin(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get("User-Agent"), ip, parsed)
 	if err != nil {
-		recordLoginAttempt(ip)
+		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}
@@ -183,7 +183,7 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 // body — the authenticator reveals which resident passkey/user to use.
 func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if checkLoginRateLimit(ip) {
+	if h.checkLoginRateLimit(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
 		return
 	}
@@ -202,7 +202,7 @@ func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *h
 // session. Body: { webauthn_session, credential: <PublicKeyCredential> }.
 func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
-	if checkLoginRateLimit(ip) {
+	if h.checkLoginRateLimit(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
 		return
 	}
@@ -221,7 +221,7 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 	}
 	session, user, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get("User-Agent"), ip, parsed)
 	if err != nil {
-		recordLoginAttempt(ip)
+		h.recordLoginAttempt(r.Context(), ip)
 		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
 		return
 	}

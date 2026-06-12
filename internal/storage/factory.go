@@ -267,6 +267,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	dynLeaseExists := tableExists(db, "dynamic_secret_leases")
 	webauthnCredExists := tableExists(db, "web_authn_credentials")
 	webauthnSessExists := tableExists(db, "web_authn_sessions")
+	loginAttemptExists := tableExists(db, "login_attempts")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -329,6 +330,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !webauthnSessExists {
 		if err := db.AutoMigrate(&models.WebAuthnSession{}); err != nil {
 			return fmt.Errorf("failed to migrate web_authn_sessions table: %w", err)
+		}
+	}
+
+	// Create the login_attempts table if missing (ADR-040 rate limiting, additive).
+	if !loginAttemptExists {
+		if err := db.AutoMigrate(&models.LoginAttempt{}); err != nil {
+			return fmt.Errorf("failed to migrate login_attempts table: %w", err)
 		}
 	}
 

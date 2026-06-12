@@ -19,6 +19,15 @@ func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() er
 	return true, fn()
 }
 
+// Login rate-limiting stubs (core rate-limit logic is tested against real SQLite).
+func (m *MockStorage) RecordLoginAttempt(_ context.Context, _ string, _ time.Time) error { return nil }
+func (m *MockStorage) CountRecentLoginAttempts(_ context.Context, _ string, _ time.Time) (int64, error) {
+	return 0, nil
+}
+func (m *MockStorage) PruneLoginAttempts(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
+}
+
 // Permission Management
 
 func (m *MockStorage) CreatePermission(_ context.Context, permission *models.Permission) (*models.Permission, error) {

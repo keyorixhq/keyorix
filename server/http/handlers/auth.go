@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,41 +15,17 @@ import (
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// loginRateLimiter tracks failed login attempts per IP.
-var loginRateLimiter = struct {
-	sync.Mutex
-	attempts map[string][]time.Time
-}{attempts: make(map[string][]time.Time)}
-
-const (
-	loginMaxAttempts = 10
-	loginWindow      = 15 * time.Minute
-)
-
-// checkLoginRateLimit returns true if the IP has exceeded the login attempt limit.
-func checkLoginRateLimit(ip string) bool {
-	loginRateLimiter.Lock()
-	defer loginRateLimiter.Unlock()
-
-	now := time.Now()
-	cutoff := now.Add(-loginWindow)
-
-	var recent []time.Time
-	for _, t := range loginRateLimiter.attempts[ip] {
-		if t.After(cutoff) {
-			recent = append(recent, t)
-		}
-	}
-	loginRateLimiter.attempts[ip] = recent
-
-	return len(recent) >= loginMaxAttempts
+// checkLoginRateLimit returns true if the IP has exceeded the login-attempt budget
+// within the window. Backed by the DB so the limit holds across HA replicas
+// (ADR-040). Fails open on a storage error — it's a backstop on top of the real
+// credential check, not the auth gate itself.
+func (h *AuthHandler) checkLoginRateLimit(ctx context.Context, ip string) bool {
+	return h.coreService.IsLoginRateLimited(ctx, ip)
 }
 
-// recordLoginAttempt records a failed login attempt for the IP.
-func recordLoginAttempt(ip string) {
-	loginRateLimiter.Lock()
-	defer loginRateLimiter.Unlock()
-	loginRateLimiter.attempts[ip] = append(loginRateLimiter.attempts[ip], time.Now())
+// recordLoginAttempt records a failed login attempt for the IP (best-effort).
+func (h *AuthHandler) recordLoginAttempt(ctx context.Context, ip string) {
+	h.coreService.RecordFailedLogin(ctx, ip)
 }
 
 // AuthHandler handles authentication HTTP requests.
@@ -112,7 +87,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {
 		ip = ip[:idx]
 	}
-	if checkLoginRateLimit(ip) {
+	if h.checkLoginRateLimit(r.Context(), ip) {
 		sendError(w, "TooManyRequests", "Too many login attempts. Try again later.", http.StatusTooManyRequests, nil)
 		return
 	}
@@ -148,7 +123,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			}, "MFA required")
 			return
 		}
-		recordLoginAttempt(ip)
+		h.recordLoginAttempt(r.Context(), ip)
 		go h.coreService.LogAuthFailure(context.Background(), body.Username, ip) // #nosec G118
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
