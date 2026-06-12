@@ -3,6 +3,26 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.7.0 — 2026-06-12
+
+Passwordless authentication and high-availability deployment.
+
+### Added
+- **Passwordless (usernameless) passkey login** — a registered passkey alone signs
+  a user in, with no password. Registration now creates a discoverable credential,
+  and login requires user verification (PIN/biometric), so a single gesture proves
+  both possession and the user. Joins the existing password, password+TOTP, and
+  password+passkey options. ([#112], ADR-036)
+- **High-availability deployment** — Keyorix can now run as multiple stateless API
+  replicas behind a load balancer. The background schedulers (anomaly detection,
+  retention purge, dynamic-secrets auto-revoke) are gated by a PostgreSQL advisory
+  lock so each runs on a single replica at a time instead of duplicating work on
+  every replica. With the file/env KEK providers (v0.6.0) for shared keys, this
+  completes the multi-replica story. ([#111], ADR-039)
+
+[#111]: https://github.com/keyorixhq/keyorix/pull/111
+[#112]: https://github.com/keyorixhq/keyorix/pull/112
+
 ## v0.6.0 — 2026-06-12
 
 Key-management flexibility and a more complete dynamic-secrets engine: bring your
