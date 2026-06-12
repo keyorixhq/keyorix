@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"gorm.io/gorm"
 )
 
@@ -86,6 +87,22 @@ func (s *Service) RotateDEK(passphrase string) error {
 	}
 	s.encryptionService = encSvc
 	return nil
+}
+
+// RewrapDEKWithProvider re-wraps the in-memory DEK with a KEK from newProvider and
+// atomically replaces the on-disk wrapped DEK (ADR-041 KEK-provider migration). The
+// DEK value is unchanged, so every existing ciphertext stays valid — only the
+// wrapping key changes; no data is re-encrypted and no DB lock is taken. The
+// service must already be Initialized with the CURRENT provider. The caller should
+// then verify the new provider unwraps the DEK before discarding the previous
+// wrapped-DEK backup.
+func (s *Service) RewrapDEKWithProvider(newProvider crypto.KeyProvider) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("encryption service not initialized")
+	}
+	return s.keyManager.RewrapDEK(newProvider)
 }
 
 // ValidateKeyFiles validates encryption key files exist with correct permissions.
