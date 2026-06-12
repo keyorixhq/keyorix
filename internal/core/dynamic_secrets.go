@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -103,6 +104,13 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	if err != nil {
 		return nil, err
 	}
+	// A backend with no DB-level expiry (MySQL/MongoDB) relies entirely on the
+	// auto-revoke sweeper to enforce the lease TTL. Issuing from it while the
+	// sweeper is disabled would mint a credential whose advertised expiry is never
+	// enforced — a false promise — so refuse and point the operator at the fix.
+	if !engine.SupportsNativeExpiry() && !c.dynamicSweepEnabled {
+		return nil, fmt.Errorf("cannot issue from the %s backend while the auto-revoke sweeper is disabled: its lease TTL is enforced only by the sweeper, so the credential would never expire — enable dynamic_secrets.sweep_enabled", cfg.BackendType)
+	}
 	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt admin DSN: %w", err)
@@ -117,13 +125,13 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	credEnc, credMeta, err := c.encryptAuthSecret(string(credJSON))
 	if err != nil {
 		// The role exists on the target — revoke it so we don't leak it.
-		_ = engine.Revoke(ctx, adminDSN, roleName)
+		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
 		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
 	}
 
 	leaseID, err := generateSecureToken()
 	if err != nil {
-		_ = engine.Revoke(ctx, adminDSN, roleName)
+		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
 		return nil, err
 	}
 	expiresAt := c.now().Add(ttl)
@@ -140,7 +148,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 		ExpiresAt:      expiresAt,
 	})
 	if err != nil {
-		_ = engine.Revoke(ctx, adminDSN, roleName)
+		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
 		return nil, fmt.Errorf("failed to persist lease: %w", err)
 	}
 	uid := userID
@@ -148,6 +156,49 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	c.writeAuditEventFull(ctx, "dynamic_lease.issued", &uid, nil, &pid, "",
 		fmt.Sprintf("issued dynamic credential (lease=%s, config=%q, ttl=%s)", lease.LeaseID, cfg.Name, ttl))
 	return &IssuedLease{LeaseID: lease.LeaseID, Username: cred.Username, Password: cred.Password, ExpiresAt: expiresAt}, nil
+}
+
+// cleanupOrphanedRole drops a just-minted role after a post-mint failure aborts the
+// issue (encryption / token-gen / lease-persist failed). If the drop itself fails,
+// the role would otherwise be a LIVE credential with no lease row — invisible to
+// every list/sweep/revoke path (all keyed off the lease table) and therefore
+// permanent and undrop-able. To keep it visible, we record a revoke_failed lease
+// capturing the role name and audit it, mirroring RevokeLease's failure handling.
+func (c *KeyorixCore) cleanupOrphanedRole(ctx context.Context, cfg *models.DynamicSecretConfig, engine dynamic.CredentialEngine, adminDSN, roleName string, userID uint) {
+	if err := engine.Revoke(ctx, adminDSN, roleName); err == nil {
+		return // role dropped cleanly — nothing to track
+	} else {
+		now := c.now()
+		leaseID, gerr := generateSecureToken()
+		if gerr != nil {
+			leaseID = "orphan-" + roleName // last-resort id so the row still persists
+		}
+		// No credential is stored — the issue was aborted; only the role name
+		// matters so an operator can drop it. CredentialEnc is intentionally empty.
+		_, _ = c.storage.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
+			ConfigID:      cfg.ID,
+			LeaseID:       leaseID,
+			ProjectID:     cfg.ProjectID,
+			EnvironmentID: cfg.EnvironmentID,
+			RoleName:      roleName,
+			Status:        "revoke_failed",
+			RevokeError:   "orphaned on aborted issue: " + err.Error(),
+			IssuedAt:      now,
+			ExpiresAt:     now,
+			RevokedAt:     &now,
+		})
+		var uidPtr *uint
+		if userID != 0 {
+			uidPtr = &userID
+		}
+		var pidPtr *uint
+		if cfg.ProjectID != 0 {
+			pid := cfg.ProjectID
+			pidPtr = &pid
+		}
+		c.writeAuditEventFull(ctx, "dynamic_lease.revoke_failed", uidPtr, nil, pidPtr, "",
+			fmt.Sprintf("FAILED to clean up orphaned dynamic role %s after an aborted issue (config=%q): %v — drop it manually", roleName, cfg.Name, err))
+	}
 }
 
 // RevokeLease revokes a lease on the target and marks it revoked (or

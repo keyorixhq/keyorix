@@ -15,6 +15,10 @@ type PostgresEngine struct{}
 
 func (e *PostgresEngine) BackendType() string { return "postgres" }
 
+// SupportsNativeExpiry is true: PostgreSQL roles carry a VALID UNTIL, so the
+// credential disables itself at expiry even without the auto-revoke sweeper.
+func (e *PostgresEngine) SupportsNativeExpiry() bool { return true }
+
 // Issue creates a `kx_dyn_<random>` LOGIN role with a random password and a
 // VALID UNTIL of now+ttl, then runs the operator's creation template ({{name}} →
 // the role). Role name and password are crypto/rand from an identifier/quote-safe

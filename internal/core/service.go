@@ -25,20 +25,25 @@ import (
 //   - dashboard.go     — Dashboard stats and activity feed
 //   - catalog.go       — Project / environment passthrough
 type KeyorixCore struct {
-	storage        storage.Storage
-	encryption     *encryption.SecretEncryption
+	storage    storage.Storage
+	encryption *encryption.SecretEncryption
 	// authEncryptor reversibly encrypts auth secrets that cannot be hashed (the
 	// TOTP MFA shared secret). nil or disabled = passthrough (store plaintext),
 	// consistent with the rest of the product when encryption is off. Wired from
 	// the initialised encryption.Service at server startup via SetAuthEncryptor.
-	authEncryptor  *encryption.Service
+	authEncryptor *encryption.Service
 	// dynamicEngineFactory resolves a dynamic-secrets credential engine by backend
 	// type (ADR-035). nil = the real dynamic.New; overridable in tests with a fake.
 	dynamicEngineFactory func(string) (dynamic.CredentialEngine, error)
+	// dynamicSweepEnabled mirrors config dynamic_secrets.sweep_enabled. Backends
+	// without DB-level expiry (MySQL/MongoDB) rely entirely on the sweeper to
+	// enforce a lease's TTL, so IssueLease refuses to mint from them when it is off
+	// (the credential would otherwise never expire). Set via SetDynamicSweepEnabled.
+	dynamicSweepEnabled bool
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
 	// Set from config at startup via SetWebAuthn.
-	webauthnRP *webauthn.WebAuthn
-	now                  func() time.Time // For testability
+	webauthnRP     *webauthn.WebAuthn
+	now            func() time.Time // For testability
 	passwordPolicy PasswordPolicy
 	auditForwarder AuditForwarder
 	// oidcVerifier verifies federated machine-identity JWTs (ADR-031); nil = OIDC
@@ -138,6 +143,13 @@ func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte) (string, error) {
 // inject a fake engine).
 func (c *KeyorixCore) SetDynamicEngineFactory(f func(string) (dynamic.CredentialEngine, error)) {
 	c.dynamicEngineFactory = f
+}
+
+// SetDynamicSweepEnabled records whether the auto-revoke sweeper is running
+// (config dynamic_secrets.sweep_enabled). Wired at startup so IssueLease can refuse
+// to mint a credential from a backend whose TTL only the sweeper would enforce.
+func (c *KeyorixCore) SetDynamicSweepEnabled(enabled bool) {
+	c.dynamicSweepEnabled = enabled
 }
 
 // dynamicEngine resolves an engine for a backend type via the factory (or the

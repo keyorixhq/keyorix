@@ -30,7 +30,10 @@ func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamic.FakeEngi
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
 	require.NoError(t, enc.Initialize("test-passphrase"))
 
-	fake := &dynamic.FakeEngine{}
+	// The default config in these tests is a "postgres" target, so the fake mimics a
+	// backend with DB-level expiry (VALID UNTIL) — issuing does not require the
+	// sweeper. Tests that exercise the no-native-expiry gate flip NativeExpiry off.
+	fake := &dynamic.FakeEngine{NativeExpiry: true}
 	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
 	c.SetAuthEncryptor(enc)
@@ -256,4 +259,54 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 		Name: "bad", ProjectID: 1, BackendType: "redis", AdminDSN: "x",
 	})
 	require.Error(t, err, "an unsupported backend must be rejected at config creation")
+}
+
+// A backend without DB-level expiry (MySQL/MongoDB) must not issue while the
+// auto-revoke sweeper is disabled — otherwise the lease TTL is never enforced.
+func TestDynamicSecrets_IssueRequiresSweeperForNoExpiryBackend(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+	fake.NativeExpiry = false // mimic MySQL/MongoDB
+
+	// Sweeper disabled (the default): refuse, and mint nothing.
+	_, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sweep_enabled")
+	assert.Empty(t, fake.Issued, "no role is minted when the issue is refused")
+
+	// Enable the sweeper → issuing proceeds.
+	c.SetDynamicSweepEnabled(true)
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	assert.NotEmpty(t, issued.LeaseID)
+	assert.Len(t, fake.Issued, 1)
+}
+
+// A failed cleanup-revoke after an aborted issue must leave a visible
+// revoke_failed lease (so the orphaned target role is not silently permanent),
+// while a clean drop records nothing.
+func TestDynamicSecrets_CleanupOrphanedRole(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	t.Run("clean drop leaves no trace", func(t *testing.T) {
+		c.cleanupOrphanedRole(ctx, cfg, fake, adminDSNPlain, "kx_orphan_ok", 7)
+		assert.Contains(t, fake.Revoked, "kx_orphan_ok")
+		leases, err := c.ListDynamicSecretLeases(ctx, cfg.ID)
+		require.NoError(t, err)
+		assert.Empty(t, leases, "a clean drop records no lease")
+	})
+
+	t.Run("failed drop records a revoke_failed lease", func(t *testing.T) {
+		fake.FailRevoke = true
+		c.cleanupOrphanedRole(ctx, cfg, fake, adminDSNPlain, "kx_orphan_stuck", 7)
+		leases, err := c.ListDynamicSecretLeases(ctx, cfg.ID)
+		require.NoError(t, err)
+		require.Len(t, leases, 1)
+		assert.Equal(t, "revoke_failed", leases[0].Status)
+		assert.Equal(t, "kx_orphan_stuck", leases[0].RoleName)
+		assert.Contains(t, leases[0].RevokeError, "orphaned")
+	})
 }
