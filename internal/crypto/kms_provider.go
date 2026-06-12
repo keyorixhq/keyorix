@@ -15,8 +15,8 @@ import (
 // KMSClient is the minimal envelope-encryption surface a cloud KMS exposes: wrap
 // (Encrypt) and unwrap (Decrypt) a small blob with a key that never leaves the
 // KMS/HSM. Keeping it an interface keeps this package free of any cloud SDK — the
-// AWS (and future GCP/Azure) implementations live in subpackages, and tests use a
-// fake. ciphertext is opaque, provider-specific KMS output.
+// AWS / GCP / Azure implementations live in subpackages, and tests use a fake.
+// ciphertext is opaque, provider-specific KMS output.
 type KMSClient interface {
 	Encrypt(ctx context.Context, plaintext []byte) (ciphertext []byte, err error)
 	Decrypt(ctx context.Context, ciphertext []byte) (plaintext []byte, err error)

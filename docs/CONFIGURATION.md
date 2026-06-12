@@ -124,7 +124,7 @@ storage:
 
     # key_provider — default is "password" when omitted.
     key_provider:
-      type: password              # password | file | env | aws-kms | gcp-kms
+      type: password              # password | file | env | aws-kms | gcp-kms | azure-kms
 
       # type: file — read raw key material from a path (mounted CSI/sealed
       # secret, KMS sidecar output). Accepts 32 raw bytes, hex, or base64.
@@ -133,11 +133,13 @@ storage:
       # type: env — read the KEK (hex or base64) from the named env var's value.
       # env_var: KEYORIX_KEK
 
-      # type: aws-kms / gcp-kms — envelope-wrap the KEK with a cloud KMS key
-      # (ADR-041); the wrapping key stays in the KMS/HSM. Credentials come from the
-      # standard cloud environment (AWS: env/instance-profile/IRSA; GCP: ADC).
-      # kms_key_id: arn:aws:kms:eu-west-1:123456789012:key/abcd-…              # aws-kms
-      # kms_key_id: projects/p/locations/eu/keyRings/r/cryptoKeys/keyorix-kek  # gcp-kms
+      # type: aws-kms / gcp-kms / azure-kms — envelope-wrap the KEK with a cloud
+      # KMS/HSM key (ADR-041); the wrapping key stays in the KMS/HSM. Credentials
+      # come from the standard cloud environment (AWS: env/instance-profile/IRSA;
+      # GCP: ADC; Azure: DefaultAzureCredential / managed identity).
+      # kms_key_id: arn:aws:kms:eu-west-1:123456789012:key/abcd-…                  # aws-kms
+      # kms_key_id: projects/p/locations/eu/keyRings/r/cryptoKeys/keyorix-kek      # gcp-kms
+      # kms_key_id: https://myvault.vault.azure.net/keys/keyorix-kek               # azure-kms
       # wrapped_key_path: keys/kek.kms
 ```
 
@@ -146,10 +148,12 @@ storage:
   prior releases — existing `dek.key` files keep working.
 - **`file`** / **`env`**: the KEK is externally managed (e.g. injected by a KMS,
   CSI driver, or sealed/SOPS secret). `KEYORIX_MASTER_PASSWORD` is **not** required.
-- **`aws-kms`** / **`gcp-kms`** (ADR-041): the KEK is a random key **wrapped by a
-  cloud KMS key**; only the wrapped blob is on disk (`wrapped_key_path`), unwrapped
-  via KMS at startup. The wrapping key never leaves the KMS/HSM.
-  `KEYORIX_MASTER_PASSWORD` is **not** required. Startup needs KMS reachable
+- **`aws-kms`** / **`gcp-kms`** / **`azure-kms`** (ADR-041): the KEK is a random key
+  **wrapped by a cloud KMS/HSM key**; only the wrapped blob is on disk
+  (`wrapped_key_path`), unwrapped via the KMS at startup. The wrapping key never
+  leaves the KMS/HSM. `kms_key_id` is an AWS key ID/ARN/alias, a GCP crypto-key
+  resource name, or an Azure Key Vault key identifier URL.
+  `KEYORIX_MASTER_PASSWORD` is **not** required. Startup needs the KMS reachable
   (fail-closed).
 
 > Rotating the **DEK** (`keyorix encryption rotate`) re-encrypts all rows under a

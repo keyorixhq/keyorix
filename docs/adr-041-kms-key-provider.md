@@ -91,8 +91,23 @@ is inherently pinned (the ciphertext cannot select a different key — the same
 property AWS gets via explicit `KeyId` pinning). Keyorix now offers AWS **or** GCP
 KMS for the wrapping key.
 
+## Addendum (2026-06-12): Azure Key Vault backend
+
+A third backend, **`azure-kms`**, ships behind the same `KMSClient` interface
+(`internal/crypto/azurekms`, the only place the Azure Key Vault SDK is imported).
+It uses the identical envelope flow and the generic `KMSKeyProvider` — no change to
+the provider logic or the data path. The KEK is wrapped/unwrapped with the vault
+key's `wrapKey`/`unwrapKey` operations (RSA-OAEP-256) rather than encrypt/decrypt,
+but the `Encrypt`/`Decrypt` interface is unchanged. `kms_key_id` holds the Key
+Vault **key identifier URL**
+(`https://{vault}.vault.azure.net/keys/{name}[/{version}]`; an omitted version uses
+the key's current version); credentials come from `DefaultAzureCredential` (env,
+managed identity, workload identity). Like GCP, the operation names the key, so the
+key is inherently pinned — the ciphertext cannot select a different key. Keyorix now
+offers AWS, GCP, **or** Azure for the wrapping key.
+
 ## Deferred
 
-Azure Key Vault backend (same `KMSClient` interface); AWS `GenerateDataKey` as an
-optimisation; KMS-key rotation runbook; a re-wrap ("migrate KEK provider") tool so
-an existing install can move to KMS without a manual DEK re-encryption.
+AWS `GenerateDataKey` as an optimisation; KMS-key rotation runbook; a re-wrap
+("migrate KEK provider") tool so an existing install can move to KMS without a
+manual DEK re-encryption.
