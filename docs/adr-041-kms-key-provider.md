@@ -79,9 +79,20 @@ DEK end-to-end. The AWS glue (`awskms.New`) is thin and exercised against real K
 only in a live environment. `make build` + full suite + `go vet` + golangci-lint +
 gitleaks green.
 
+## Addendum (2026-06-12): GCP KMS backend
+
+A second backend, **`gcp-kms`**, ships behind the same `KMSClient` interface
+(`internal/crypto/gcpkms`, the only place the GCP KMS SDK is imported). It uses the
+identical envelope flow and the generic `KMSKeyProvider` — no change to the
+provider logic or the data path. `kms_key_id` holds the GCP crypto-key resource
+name (`projects/P/locations/L/keyRings/R/cryptoKeys/K`); credentials come from
+Application Default Credentials. GCP KMS decrypts with the *named* key, so the key
+is inherently pinned (the ciphertext cannot select a different key — the same
+property AWS gets via explicit `KeyId` pinning). Keyorix now offers AWS **or** GCP
+KMS for the wrapping key.
+
 ## Deferred
 
-GCP KMS and Azure Key Vault backends (same `KMSClient` interface); AWS
-`GenerateDataKey` as an optimisation; KMS-key rotation runbook; a re-wrap
-("migrate KEK provider") tool so an existing install can move to KMS without a
-manual DEK re-encryption.
+Azure Key Vault backend (same `KMSClient` interface); AWS `GenerateDataKey` as an
+optimisation; KMS-key rotation runbook; a re-wrap ("migrate KEK provider") tool so
+an existing install can move to KMS without a manual DEK re-encryption.
