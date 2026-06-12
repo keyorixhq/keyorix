@@ -14,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/crypto/awskms"
+	"github.com/keyorixhq/keyorix/internal/crypto/gcpkms"
 )
 
 // Service provides high-level encryption operations for the application.
@@ -88,8 +89,14 @@ func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error
 			return nil, err
 		}
 		return crypto.NewKMSKeyProvider(kmsClient, "aws-kms", s.keyManager.baseDir, kp.WrappedKeyPath), nil
+	case "gcp-kms":
+		kmsClient, err := gcpkms.New(context.Background(), kp.KMSKeyID)
+		if err != nil {
+			return nil, err
+		}
+		return crypto.NewKMSKeyProvider(kmsClient, "gcp-kms", s.keyManager.baseDir, kp.WrappedKeyPath), nil
 	default:
-		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, aws-kms)", kp.Type)
+		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, aws-kms, gcp-kms)", kp.Type)
 	}
 }
 
