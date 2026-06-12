@@ -4,7 +4,23 @@
 // detection) per tick; on SQLite (inherently single-instance) the job always runs.
 package store
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
+
+// runProtected runs a scheduler job, converting a panic into an error so a single
+// bad tick can't kill the scheduler goroutine (and so the advisory lock is still
+// released by the caller's defers). Mirrors that the pre-ADR-039 schedulers had no
+// panic guard either, but this is now the natural choke point to add one.
+func runProtected(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("scheduler job panicked: %v", r)
+		}
+	}()
+	return fn()
+}
 
 // WithSchedulerLock runs fn iff this process can acquire the advisory lock `key`.
 //
@@ -17,7 +33,7 @@ import "context"
 // SQLite / non-Postgres: there is only one instance, so fn always runs.
 func (ls *LocalStorage) WithSchedulerLock(ctx context.Context, key int64, fn func() error) (bool, error) {
 	if ls.db.Dialector.Name() != "postgres" {
-		return true, fn()
+		return true, runProtected(fn)
 	}
 	sqlDB, err := ls.db.DB()
 	if err != nil {
@@ -38,5 +54,5 @@ func (ls *LocalStorage) WithSchedulerLock(ctx context.Context, key int64, fn fun
 	}
 	// Release before the deferred Close so the pooled connection carries no lock.
 	defer func() { _, _ = conn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", key) }()
-	return true, fn()
+	return true, runProtected(fn)
 }

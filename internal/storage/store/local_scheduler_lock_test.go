@@ -43,3 +43,15 @@ func TestWithSchedulerLock_SQLiteAlwaysRuns(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got)
 }
+
+// A panic in the job is converted to an error rather than killing the caller's
+// scheduler goroutine.
+func TestWithSchedulerLock_RecoversPanic(t *testing.T) {
+	ls := newSchedLockStore(t)
+	got, err := ls.WithSchedulerLock(context.Background(), 7, func() error {
+		panic("kaboom")
+	})
+	assert.True(t, got)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "panicked")
+}

@@ -325,9 +325,11 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 		runDetect := func() {
-			_, _ = coreService.Storage().WithSchedulerLock(ctx, schedLockAnomaly, func() error {
+			if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockAnomaly, func() error {
 				return detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx))
-			})
+			}); err != nil {
+				log.Printf("Anomaly detection scheduler error: %v", err)
+			}
 		}
 		runDetect() // run once immediately on startup
 		for {
@@ -351,7 +353,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			defer ticker.Stop()
 			runPurge := func() {
 				// Single-replica-gated (ADR-039): only one replica runs the purge.
-				_, _ = coreService.Storage().WithSchedulerLock(ctx, schedLockPurge, func() error {
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockPurge, func() error {
 					cutoff := time.Now().AddDate(0, 0, -retentionDays)
 					res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff)
 					if err != nil {
@@ -363,7 +365,9 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 							res.Total(), res.Users, res.Projects, res.Environments, res.Secrets)
 					}
 					return nil
-				})
+				}); err != nil {
+					log.Printf("Retention purge scheduler error: %v", err)
+				}
 			}
 			runPurge() // run once on startup
 			for {
@@ -388,17 +392,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			runSweep := func() {
 				// Single-replica-gated (ADR-039): one replica revokes per tick, so
 				// replicas don't storm the target DBs revoking the same leases.
-				_, _ = coreService.Storage().WithSchedulerLock(ctx, schedLockDynamicSweep, func() error {
-					n, err := coreService.RevokeExpiredLeases(ctx, time.Now())
-					if err != nil {
-						log.Printf("Dynamic-secrets sweep error: %v", err)
-						return err
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockDynamicSweep, func() error {
+					n, rerr := coreService.RevokeExpiredLeases(ctx, time.Now())
+					if rerr != nil {
+						log.Printf("Dynamic-secrets sweep error: %v", rerr)
+						return rerr
 					}
 					if n > 0 {
 						log.Printf("Dynamic-secrets sweep revoked %d expired lease(s)", n)
 					}
 					return nil
-				})
+				}); err != nil {
+					log.Printf("Dynamic-secrets sweep scheduler error: %v", err)
+				}
 			}
 			runSweep() // run once on startup
 			for {
