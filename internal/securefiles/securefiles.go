@@ -55,21 +55,77 @@ func SafeReadFile(baseDir, filePath string) ([]byte, error) {
 	return os.ReadFile(cleanPath)
 }
 
+// resolveInside joins and cleans baseDir/path and verifies the result stays
+// inside baseDir, returning the validated absolute-ish clean path.
+func resolveInside(baseDir, path string) (string, error) {
+	cleanPath := filepath.Clean(filepath.Join(baseDir, path))
+	ok, err := isPathInsideBase(baseDir, cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("path validation error: %w", err)
+	}
+	if !ok {
+		return "", fmt.Errorf("access denied: file %q is outside of %q", cleanPath, baseDir)
+	}
+	return cleanPath, nil
+}
+
 // SecureWriteFile writes data to filepath.Join(baseDir, path), validating
 // that the resolved path remains inside baseDir.
 func SecureWriteFile(baseDir, path string, data []byte, perm os.FileMode) error {
-	fullPath := filepath.Join(baseDir, path)
-	cleanPath := filepath.Clean(fullPath)
-
-	ok, err := isPathInsideBase(baseDir, cleanPath)
+	cleanPath, err := resolveInside(baseDir, path)
 	if err != nil {
-		return fmt.Errorf("path validation error: %w", err)
+		return err
 	}
-	if !ok {
-		return fmt.Errorf("access denied: file %q is outside of %q", cleanPath, baseDir)
-	}
-
 	return os.WriteFile(cleanPath, data, perm)
+}
+
+// SecureWriteFileSync writes data like SecureWriteFile but fsyncs the file before
+// returning, so the bytes are durable on disk rather than merely in the page
+// cache. Use it for key material (DEK/KEK/salt) whose loss is unrecoverable: a
+// non-durable write can be lost on power failure even after the call returns,
+// which — combined with overwriting the previous key — risks orphaning all
+// ciphertext. Pair it with SyncDir after any rename to make the rename durable
+// too. The file mode is enforced even if the file pre-existed with a looser mode.
+func SecureWriteFileSync(baseDir, path string, data []byte, perm os.FileMode) error {
+	cleanPath, err := resolveInside(baseDir, path)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside
+	if err != nil {
+		return err
+	}
+	// O_TRUNC keeps a pre-existing file's mode; force the intended perms.
+	if cerr := f.Chmod(perm); cerr != nil {
+		_ = f.Close()
+		return cerr
+	}
+	if _, werr := f.Write(data); werr != nil {
+		_ = f.Close()
+		return werr
+	}
+	if serr := f.Sync(); serr != nil {
+		_ = f.Close()
+		return serr
+	}
+	return f.Close()
+}
+
+// SyncDir fsyncs the directory dirPath so a preceding file create or rename
+// within it is durable (the directory entry is flushed). On platforms where
+// opening a directory for sync is unsupported the error is returned to the
+// caller to decide; on Linux/macOS this is the standard create→fsync(file)→
+// rename→fsync(dir) durability pattern.
+func SyncDir(dirPath string) error {
+	d, err := os.Open(dirPath) // #nosec G304 -- caller-controlled key directory, not network input
+	if err != nil {
+		return err
+	}
+	if serr := d.Sync(); serr != nil {
+		_ = d.Close()
+		return serr
+	}
+	return d.Close()
 }
 
 // FixFilePerms verifies file permissions and ownership.

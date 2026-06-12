@@ -51,8 +51,13 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 		return fmt.Errorf("re-wrap DEK: wrap DEK with new KEK: %w", err)
 	}
 
+	// Durability is load-bearing here: this is the one operation where the OLD
+	// wrapping key is about to be retired, so the new wrapped DEK must be on disk
+	// (not just in the page cache) before — and the rename durable after — we
+	// declare success. A non-durable write that is lost to a power failure after
+	// the operator retires the old KEK would orphan all ciphertext irreversibly.
 	pendingDEKPath := km.dekPath + ".pending"
-	if err := securefiles.SecureWriteFile(km.baseDir, pendingDEKPath, wrapped, 0600); err != nil {
+	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingDEKPath, wrapped, 0600); err != nil {
 		return fmt.Errorf("re-wrap DEK: write pending DEK: %w", err)
 	}
 	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
@@ -60,6 +65,9 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 	if err := os.Rename(pendingPath, activePath); err != nil {
 		_ = os.Remove(pendingPath)
 		return fmt.Errorf("re-wrap DEK: promote pending DEK to active: %w", err)
+	}
+	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
+		return fmt.Errorf("re-wrap DEK: fsync key directory after promote: %w", err)
 	}
 	return nil
 }

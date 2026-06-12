@@ -18,6 +18,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -238,13 +239,31 @@ func migrateProviderWithConfig(cfg *config.Config, opts migrateOpts, confirm boo
 	return nil
 }
 
-// copyFile copies src to dst with 0600 permissions.
+// copyFile copies src to dst with 0600 permissions, fsyncing the destination file
+// and its directory so the copy is durable. The backup this produces is the
+// rollback target if migration verification fails — a non-durable backup lost to a
+// crash could leave neither a valid old nor new wrapped DEK on disk.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src) // #nosec G304 -- operator-configured key path under baseDir
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0600) // #nosec G703 -- operator-configured key path under baseDir (local CLI tool, not network input)
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) // #nosec G304 -- operator-configured key path under baseDir (local CLI tool, not network input)
+	if err != nil {
+		return err
+	}
+	if _, werr := f.Write(data); werr != nil {
+		_ = f.Close()
+		return werr
+	}
+	if serr := f.Sync(); serr != nil {
+		_ = f.Close()
+		return serr
+	}
+	if cerr := f.Close(); cerr != nil {
+		return cerr
+	}
+	return securefiles.SyncDir(filepath.Dir(dst))
 }
 
 // restoreBackup copies the backup back over the active DEK path. Best-effort: logs

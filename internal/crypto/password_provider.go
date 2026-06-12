@@ -60,7 +60,7 @@ func (p *PasswordKeyProvider) ensureSalt() ([]byte, error) {
 		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 			return nil, fmt.Errorf("failed to generate salt: %w", err)
 		}
-		if err := securefiles.SecureWriteFile(p.baseDir, p.saltPath, salt, 0600); err != nil {
+		if err := securefiles.SecureWriteFileSync(p.baseDir, p.saltPath, salt, 0600); err != nil {
 			return nil, fmt.Errorf("failed to write salt: %w", err)
 		}
 		return salt, nil

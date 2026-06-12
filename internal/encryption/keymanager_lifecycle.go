@@ -126,7 +126,7 @@ func (km *KeyManager) ensureSaltExists() ([]byte, error) {
 		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 			return nil, fmt.Errorf("failed to generate salt: %w", err)
 		}
-		if err := securefiles.SecureWriteFile(km.baseDir, km.saltPath, salt, 0600); err != nil {
+		if err := securefiles.SecureWriteFileSync(km.baseDir, km.saltPath, salt, 0600); err != nil {
 			return nil, fmt.Errorf("failed to write salt: %w", err)
 		}
 		fmt.Printf("✅ Generated new KEK salt at %s\n", saltFullPath)
@@ -158,7 +158,7 @@ func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 		if err != nil {
 			return fmt.Errorf("failed to wrap DEK: %w", err)
 		}
-		if err := securefiles.SecureWriteFile(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
+		if err := securefiles.SecureWriteFileSync(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
 			return fmt.Errorf("failed to write wrapped DEK: %w", err)
 		}
 		fmt.Printf("✅ Generated and wrapped new DEK at %s\n", dekFullPath)

@@ -135,6 +135,21 @@ unwraps it; the old provider no longer does; a failing provider leaves the activ
 intact) and an end-to-end CLI test (password → env migration round-trips a secret and
 keeps a backup).
 
+### Crash-durable key writes (hardening, 2026-06-12)
+
+Every write of unrecoverable key material — the wrapped DEK (first run, rotation,
+migration), the KMS-wrapped KEK blob, and the KEK salt — goes through
+`securefiles.SecureWriteFileSync`, which `fsync`s the file before returning, and any
+subsequent `rename` is followed by `securefiles.SyncDir` to flush the directory
+entry. This closes a durability gap surfaced by an internal audit: `os.WriteFile`
+leaves bytes in the page cache, so a power failure after the call returned (and
+after the operator retired the old KEK, which `migrate-provider` explicitly invites)
+could lose the new wrapped DEK while the old wrapping key is gone — orphaning all
+ciphertext irreversibly. The migration backup copy is fsync'd for the same reason
+(it is the rollback target). The standard write-temp → `fsync(file)` → `rename` →
+`fsync(dir)` pattern now holds on every key-material path; the data path is
+unchanged.
+
 ## Deferred
 
 AWS `GenerateDataKey` as an optimisation; KMS-key rotation runbook (rotating the CMK
