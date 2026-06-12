@@ -57,12 +57,19 @@ func TestMFA_FullFlow(t *testing.T) {
 	assert.NotEqual(t, secret, string(row.SecretEnc), "TOTP secret must be encrypted at rest")
 	assert.False(t, row.Activated)
 
+	// A session minted before MFA is enabled must be purged on activation.
+	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "pre-mfa"}).Error)
+
 	// ── Activate ──
 	code, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
 	codes, err := c.ActivateMFA(ctx, 1, code)
 	require.NoError(t, err)
 	assert.Len(t, codes, 10)
+
+	var preSessions int64
+	require.NoError(t, db.Model(&models.Session{}).Where("user_id = ?", 1).Count(&preSessions).Error)
+	assert.Zero(t, preSessions, "pre-enrolment sessions are invalidated on MFA activation")
 
 	var user models.User
 	require.NoError(t, db.First(&user, 1).Error)
