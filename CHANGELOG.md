@@ -3,6 +3,25 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.8.0 — 2026-06-12
+
+### Added
+- **Cluster-wide login rate limiting** — brute-force protection now counts failed
+  attempts in the database rather than per-process memory, so the 10-attempts /
+  15-minutes-per-IP limit holds across HA replicas (the old in-memory limiter
+  enforced it independently on each replica). Covers every login surface —
+  password, TOTP, WebAuthn second-factor, and passwordless. ([#114], ADR-040)
+
+### Changed
+- CI hygiene: the `lint` (golangci-lint) and `gitleaks` jobs are green and
+  meaningful again — a `.gitleaks.toml` allowlist scopes the scanner to real
+  source/config (away from sample-credential fixtures in demos/docs/tests), and
+  the linter config keeps the bug-catching checks while dropping pure-style noise.
+  Several genuine issues those linters surfaced were fixed. ([#115])
+
+[#114]: https://github.com/keyorixhq/keyorix/pull/114
+[#115]: https://github.com/keyorixhq/keyorix/pull/115
+
 ## v0.7.0 — 2026-06-12
 
 Passwordless authentication and high-availability deployment.
