@@ -3,6 +3,27 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.10.0 — 2026-06-12
+
+The bring-your-own-KMS release.
+
+### Added
+- **KMS-backed KEK providers** — the key-encryption key's *wrapping* key can now
+  live in a cloud KMS/HSM via envelope encryption: only the KMS-wrapped KEK blob
+  is stored on disk and it is unwrapped via KMS at startup, so the wrapping key
+  never exists in plaintext on the host. Both **AWS KMS** (`type: aws-kms`) and
+  **GCP KMS** (`type: gcp-kms`) are supported, behind a common interface; startup
+  is fail-closed if the KMS is unreachable. Joins the existing password / file /
+  env providers. ([#120], [#121], ADR-041)
+- **Dynamic-secret incident kill switch** — `keyorix dynamic-secret revoke-all
+  <config-id>` (and `POST …/configs/{id}/revoke-all`) revokes every active lease
+  from a config at once, for when a target database or config is compromised.
+  ([#119], ADR-035)
+
+[#119]: https://github.com/keyorixhq/keyorix/pull/119
+[#120]: https://github.com/keyorixhq/keyorix/pull/120
+[#121]: https://github.com/keyorixhq/keyorix/pull/121
+
 ## v0.9.0 — 2026-06-12
 
 ### Added
