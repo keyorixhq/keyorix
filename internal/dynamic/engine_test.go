@@ -18,8 +18,48 @@ func TestNew_Backends(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "mysql", my.BackendType())
 
+	mg, err := New("mongodb")
+	require.NoError(t, err)
+	assert.Equal(t, "mongodb", mg.BackendType())
+
 	_, err = New("redis")
 	require.Error(t, err, "an unsupported backend is rejected")
+}
+
+func TestParseMongoRoles(t *testing.T) {
+	// Empty template → empty roles array (a user with no privileges).
+	roles, err := parseMongoRoles("")
+	require.NoError(t, err)
+	assert.Empty(t, roles)
+
+	// A role spec with built-in (string) and {role, db} entries parses through.
+	roles, err = parseMongoRoles(`{"roles": [{"role": "readWrite", "db": "app"}, "clusterMonitor"]}`)
+	require.NoError(t, err)
+	require.Len(t, roles, 2)
+	assert.Equal(t, "clusterMonitor", roles[1])
+
+	// Non-JSON is rejected with a helpful message.
+	_, err = parseMongoRoles("GRANT SELECT ON app.* TO {{name}}")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be JSON")
+
+	// Valid JSON object without a roles array is rejected.
+	_, err = parseMongoRoles(`{"db": "app"}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "roles")
+}
+
+func TestMongoEngine_RevokeRejectsUnsafeRole(t *testing.T) {
+	// Defense-in-depth: a tampered role name is rejected before any connection.
+	err := (&MongoEngine{}).Revoke(context.Background(), "mongodb://admin:p@h:27017/", "evil'; drop")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsafe mysql username")
+}
+
+func TestMongoEngine_InvalidURIRejected(t *testing.T) {
+	// A malformed URI is rejected at connect time, before any user is created.
+	_, _, err := (&MongoEngine{}).Issue(context.Background(), "http://not-a-mongo-uri", `{"roles": []}`, 0)
+	require.Error(t, err)
 }
 
 func TestMySQLAccountRef(t *testing.T) {

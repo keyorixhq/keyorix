@@ -238,11 +238,15 @@ dynamic_secrets:
 ```
 
 Targets are registered via the API with an admin DSN, a backend type
-(`postgres` or `mysql`), an optional creation template, and a default TTL.
+(`postgres`, `mysql`, or `mongodb`), an optional creation template, and a default
+TTL. For `mongodb` the creation template is a JSON role spec
+(`{"roles": [{"role": "readWrite", "db": "app"}]}`) and the admin DSN is a MongoDB
+connection URI; for the SQL backends it is an SQL grant template using `{{name}}`.
 
-> **Enable the sweeper for MySQL targets.** MySQL accounts have no `VALID UNTIL`,
-> so a MySQL lease's TTL is enforced *only* by the sweeper. PostgreSQL roles
-> additionally carry a DB-level expiry (belt-and-suspenders).
+> **Enable the sweeper for MySQL and MongoDB targets.** MySQL and MongoDB accounts
+> have no `VALID UNTIL` equivalent, so their lease TTL is enforced *only* by the
+> sweeper. PostgreSQL roles additionally carry a DB-level expiry (belt-and-
+> suspenders).
 
 ---
 

@@ -41,8 +41,10 @@ func New(backendType string) (CredentialEngine, error) {
 		return &PostgresEngine{}, nil
 	case "mysql":
 		return &MySQLEngine{}, nil
+	case "mongodb":
+		return &MongoEngine{}, nil
 	default:
-		return nil, fmt.Errorf("unsupported dynamic-secret backend %q (supported: postgres, mysql)", backendType)
+		return nil, fmt.Errorf("unsupported dynamic-secret backend %q (supported: postgres, mysql, mongodb)", backendType)
 	}
 }
 
