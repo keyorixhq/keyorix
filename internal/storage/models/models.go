@@ -275,9 +275,12 @@ type DynamicSecretConfig struct {
 	// "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};"
 	CreationTemplate string
 	DefaultTTLSeconds int
-	CreatedBy         string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// MaxTTLSeconds caps the lifetime of any lease from this config (issue + all
+	// renewals), regardless of the TTL a caller requests. 0 = no ceiling.
+	MaxTTLSeconds int
+	CreatedBy     string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // DynamicSecretLease is one issued credential: a short-lived role on the target

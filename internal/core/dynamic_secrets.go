@@ -24,6 +24,7 @@ type CreateDynamicSecretConfigRequest struct {
 	AdminDSN          string
 	CreationTemplate  string
 	DefaultTTLSeconds int
+	MaxTTLSeconds     int
 	CreatedBy         string
 }
 
@@ -44,6 +45,9 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if _, err := c.dynamicEngine(req.BackendType); err != nil {
 		return nil, err
 	}
+	if req.MaxTTLSeconds > 0 && req.DefaultTTLSeconds > req.MaxTTLSeconds {
+		return nil, fmt.Errorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)
+	}
 	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
@@ -57,6 +61,7 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 		AdminDSNMeta:      dsnMeta,
 		CreationTemplate:  req.CreationTemplate,
 		DefaultTTLSeconds: req.DefaultTTLSeconds,
+		MaxTTLSeconds:     req.MaxTTLSeconds,
 		CreatedBy:         req.CreatedBy,
 		CreatedAt:         c.now(),
 		UpdatedAt:         c.now(),
@@ -209,12 +214,72 @@ func (c *KeyorixCore) RevokeExpiredLeases(ctx context.Context, before time.Time)
 	return revoked, nil
 }
 
+// dynamicTTL resolves the requested TTL (override, else config default, else 1h)
+// and clamps it to the config's MaxTTLSeconds ceiling when one is set.
 func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) time.Duration {
-	if override > 0 {
-		return time.Duration(override) * time.Second
+	ttl := defaultDynamicTTL
+	switch {
+	case override > 0:
+		ttl = time.Duration(override) * time.Second
+	case cfg.DefaultTTLSeconds > 0:
+		ttl = time.Duration(cfg.DefaultTTLSeconds) * time.Second
 	}
-	if cfg.DefaultTTLSeconds > 0 {
-		return time.Duration(cfg.DefaultTTLSeconds) * time.Second
+	if cfg.MaxTTLSeconds > 0 {
+		if max := time.Duration(cfg.MaxTTLSeconds) * time.Second; ttl > max {
+			ttl = max
+		}
 	}
-	return defaultDynamicTTL
+	return ttl
+}
+
+// RenewLease extends an active lease's expiry by ttlSeconds (or the config
+// default), capped so the lease's total lifetime from issue never exceeds the
+// config's MaxTTLSeconds. On backends with a DB-level expiry (PostgreSQL) it also
+// pushes the role's VALID UNTIL forward. Returns the new expiry.
+func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds int, userID uint) (time.Time, error) {
+	lease, err := c.storage.GetDynamicSecretLease(ctx, leaseID)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("lease not found")
+	}
+	if lease.Status != "active" {
+		return time.Time{}, fmt.Errorf("lease is not active (status %s)", lease.Status)
+	}
+	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("config not found")
+	}
+	newExpiry := c.now().Add(c.dynamicTTL(cfg, ttlSeconds))
+	// Never let renewal push total lifetime past the config's max-TTL ceiling.
+	if cfg.MaxTTLSeconds > 0 {
+		if hardCap := lease.IssuedAt.Add(time.Duration(cfg.MaxTTLSeconds) * time.Second); newExpiry.After(hardCap) {
+			newExpiry = hardCap
+		}
+	}
+	if !newExpiry.After(lease.ExpiresAt) {
+		return time.Time{}, fmt.Errorf("renewal would not extend the lease (max-TTL ceiling reached)")
+	}
+	engine, err := c.dynamicEngine(cfg.BackendType)
+	if err != nil {
+		return time.Time{}, err
+	}
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to decrypt admin DSN: %w", err)
+	}
+	if err := engine.Renew(ctx, adminDSN, lease.RoleName, newExpiry); err != nil {
+		return time.Time{}, fmt.Errorf("failed to renew on target: %w", err)
+	}
+	lease.ExpiresAt = newExpiry
+	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
+		return time.Time{}, err
+	}
+	uid := userID
+	var uidPtr *uint
+	if userID != 0 {
+		uidPtr = &uid
+	}
+	pid := lease.ProjectID
+	c.writeAuditEventFull(ctx, "dynamic_lease.renewed", uidPtr, nil, &pid, "",
+		fmt.Sprintf("renewed dynamic lease %s (new expiry %s)", lease.LeaseID, newExpiry.UTC().Format(time.RFC3339)))
+	return newExpiry, nil
 }

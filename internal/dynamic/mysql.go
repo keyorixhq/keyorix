@@ -111,6 +111,12 @@ func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	return nil
 }
 
+// Renew is a no-op for MySQL: accounts carry no VALID UNTIL, so the renewed expiry
+// is enforced entirely by the lease's updated ExpiresAt + the auto-revoke sweep.
+func (e *MySQLEngine) Renew(_ context.Context, _, _ string, _ time.Time) error {
+	return nil
+}
+
 // openMySQL opens and verifies a connection to the target using the admin DSN.
 func openMySQL(ctx context.Context, adminDSN string) (*sql.DB, error) {
 	if _, err := mysql.ParseDSN(adminDSN); err != nil {

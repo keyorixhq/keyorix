@@ -68,6 +68,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		AdminDSN          string `json:"admin_dsn"`
 		CreationTemplate  string `json:"creation_template"`
 		DefaultTTLSeconds int    `json:"default_ttl_seconds"`
+		MaxTTLSeconds     int    `json:"max_ttl_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
@@ -86,6 +87,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		AdminDSN:          body.AdminDSN,
 		CreationTemplate:  body.CreationTemplate,
 		DefaultTTLSeconds: body.DefaultTTLSeconds,
+		MaxTTLSeconds:     body.MaxTTLSeconds,
 		CreatedBy:         userCtx.Username,
 	})
 	if err != nil {
@@ -192,6 +194,35 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 	sendSuccess(w, map[string]interface{}{"lease_id": leaseID, "status": "revoked"}, "Lease revoked.")
 }
 
+// RenewLease handles POST /api/v1/dynamic-secrets/leases/{leaseID}/renew
+func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	leaseID := chi.URLParam(r, "leaseID")
+	lease, err := h.coreService.GetDynamicSecretLease(r.Context(), leaseID)
+	if err != nil {
+		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
+		return
+	}
+	if ok, mfaBlocked := h.authorize(r, "secrets.write", core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
+		h.denyAuthz(w, mfaBlocked)
+		return
+	}
+	var body struct {
+		TTLSeconds int `json:"ttl_seconds"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // body optional; default TTL on absence
+	newExpiry, err := h.coreService.RenewLease(r.Context(), leaseID, body.TTLSeconds, userCtx.UserID)
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusBadGateway, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"lease_id": leaseID, "expires_at": newExpiry}, "Lease renewed.")
+}
+
 // loadAuthorizedConfig loads the {id} config and authorizes the caller against
 // its scope. It writes the error response and returns ok=false on failure.
 func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *http.Request, perm string) (*models.DynamicSecretConfig, bool) {
@@ -224,6 +255,7 @@ func sanitizeConfig(c *models.DynamicSecretConfig) map[string]interface{} {
 		"backend_type":        c.BackendType,
 		"creation_template":   c.CreationTemplate,
 		"default_ttl_seconds": c.DefaultTTLSeconds,
+		"max_ttl_seconds":     c.MaxTTLSeconds,
 		"created_by":          c.CreatedBy,
 		"created_at":          c.CreatedAt,
 	}
