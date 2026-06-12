@@ -25,6 +25,7 @@ var (
 	flagProjectID int
 	flagEnvID     int
 	flagTTL       int
+	flagYes       bool
 )
 
 func init() {
@@ -32,8 +33,9 @@ func init() {
 	listCmd.Flags().IntVar(&flagEnvID, "environment-id", 0, "Filter by environment ID")
 	issueCmd.Flags().IntVar(&flagTTL, "ttl", 0, "Lease TTL in seconds (0 = the config default)")
 	renewCmd.Flags().IntVar(&flagTTL, "ttl", 0, "Renewal TTL in seconds (0 = the config default)")
+	revokeAllCmd.Flags().BoolVar(&flagYes, "yes", false, "Skip the confirmation prompt")
 
-	DynamicSecretCmd.AddCommand(listCmd, issueCmd, leasesCmd, renewCmd, revokeCmd)
+	DynamicSecretCmd.AddCommand(listCmd, issueCmd, leasesCmd, renewCmd, revokeCmd, revokeAllCmd)
 }
 
 func client() (*common.RemoteClient, error) {
@@ -197,6 +199,41 @@ var revokeCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Lease %s %s.\n", out.LeaseID, out.Status)
+		return nil
+	},
+}
+
+var revokeAllCmd = &cobra.Command{
+	Use:   "revoke-all <config-id>",
+	Short: "Revoke ALL active leases from a config (incident kill switch)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid config id: %s", args[0])
+		}
+		if !flagYes {
+			fmt.Printf("Revoke ALL active leases from config %d? This invalidates every outstanding\ncredential it issued. Type 'yes' to confirm: ", id)
+			var answer string
+			_, _ = fmt.Fscanln(cmd.InOrStdin(), &answer)
+			if answer != "yes" {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
+		c, err := client()
+		if err != nil {
+			return err
+		}
+		var out struct {
+			ConfigID uint `json:"config_id"`
+			Revoked  int  `json:"revoked"`
+			Failed   int  `json:"failed"`
+		}
+		if err := c.Post(context.Background(), fmt.Sprintf("/api/v1/dynamic-secrets/configs/%d/revoke-all", id), map[string]any{}, &out); err != nil {
+			return err
+		}
+		fmt.Printf("Config %d: revoked %d lease(s), %d failed.\n", out.ConfigID, out.Revoked, out.Failed)
 		return nil
 	},
 }

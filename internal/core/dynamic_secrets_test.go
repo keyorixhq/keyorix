@@ -199,6 +199,32 @@ func TestDynamicSecrets_RenewExtendsAndRespectsMaxTTL(t *testing.T) {
 	require.Error(t, err, "renewal beyond the max-TTL ceiling is rejected")
 }
 
+func TestDynamicSecrets_RevokeLeasesForConfig(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	i1, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	i2, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	revoked, failed, err := c.RevokeLeasesForConfig(ctx, cfg.ID, 7, "incident")
+	require.NoError(t, err)
+	assert.Equal(t, 2, revoked)
+	assert.Equal(t, 0, failed)
+	assert.ElementsMatch(t, []string{i1.Username, i2.Username}, fake.Revoked)
+
+	// Both leases are now revoked; a second bulk-revoke finds nothing active.
+	for _, lid := range []string{i1.LeaseID, i2.LeaseID} {
+		l, _ := c.storage.GetDynamicSecretLease(ctx, lid)
+		assert.Equal(t, "revoked", l.Status)
+	}
+	revoked2, _, err := c.RevokeLeasesForConfig(ctx, cfg.ID, 7, "incident")
+	require.NoError(t, err)
+	assert.Equal(t, 0, revoked2)
+}
+
 func TestDynamicSecrets_RenewRejectsInactiveLease(t *testing.T) {
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()

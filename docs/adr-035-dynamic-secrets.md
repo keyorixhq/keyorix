@@ -116,3 +116,8 @@ Two of the originally-deferred items shipped together:
   max-TTL — a renewal that wouldn't extend (cap reached) is rejected. Audited as
   `dynamic_lease.renewed`. Renewal reduces credential churn vs. re-issuing while
   the max-TTL keeps the hard bound on exposure.
+- **Incident kill switch** — `POST …/configs/{id}/revoke-all` (and
+  `keyorix dynamic-secret revoke-all <config-id>`) revokes **every** active lease
+  from a config at once, for when a target DB or config is compromised. Same
+  `secrets.write` + per-project-MFA authorization as a single revoke; best-effort
+  per lease; audited `dynamic_secret.bulk_revoke` with revoked/failed counts.
