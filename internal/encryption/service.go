@@ -14,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/crypto/awskms"
+	"github.com/keyorixhq/keyorix/internal/crypto/azurekms"
 	"github.com/keyorixhq/keyorix/internal/crypto/gcpkms"
 )
 
@@ -95,8 +96,14 @@ func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error
 			return nil, err
 		}
 		return crypto.NewKMSKeyProvider(kmsClient, "gcp-kms", s.keyManager.baseDir, kp.WrappedKeyPath), nil
+	case "azure-kms":
+		kmsClient, err := azurekms.New(context.Background(), kp.KMSKeyID)
+		if err != nil {
+			return nil, err
+		}
+		return crypto.NewKMSKeyProvider(kmsClient, "azure-kms", s.keyManager.baseDir, kp.WrappedKeyPath), nil
 	default:
-		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, aws-kms, gcp-kms)", kp.Type)
+		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, aws-kms, gcp-kms, azure-kms)", kp.Type)
 	}
 }
 

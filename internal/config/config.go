@@ -238,20 +238,22 @@ type EncryptionConfig struct {
 
 // KeyProviderConfig selects the KEK source. type: "password" (default) derives the
 // KEK from KEYORIX_MASTER_PASSWORD; "file" reads raw key material from FilePath;
-// "env" reads it from the EnvVar's value (hex or base64); "aws-kms" / "gcp-kms"
-// envelope-wrap the KEK with a cloud KMS key (ADR-041) and store the wrapped blob
-// at WrappedKeyPath. file/env suit a KEK injected by a sealed/SOPS secret or CSI
-// driver; the KMS providers keep the wrapping key in the cloud HSM.
+// "env" reads it from the EnvVar's value (hex or base64); "aws-kms" / "gcp-kms" /
+// "azure-kms" envelope-wrap the KEK with a cloud KMS/HSM key (ADR-041) and store
+// the wrapped blob at WrappedKeyPath. file/env suit a KEK injected by a sealed/SOPS
+// secret or CSI driver; the KMS providers keep the wrapping key in the cloud HSM.
 type KeyProviderConfig struct {
 	Type     string `yaml:"type"`
 	FilePath string `yaml:"file_path"`
 	EnvVar   string `yaml:"env_var"`
-	// KMSKeyID is the cloud KMS key for type aws-kms / gcp-kms: an AWS key ID, ARN,
-	// or alias; or a GCP crypto-key resource name
-	// (projects/P/locations/L/keyRings/R/cryptoKeys/K). Region/credentials come from
-	// the standard cloud environment, not from here.
+	// KMSKeyID is the cloud KMS key for type aws-kms / gcp-kms / azure-kms: an AWS
+	// key ID, ARN, or alias; a GCP crypto-key resource name
+	// (projects/P/locations/L/keyRings/R/cryptoKeys/K); or an Azure Key Vault key
+	// identifier URL (https://{vault}.vault.azure.net/keys/{name}[/{version}]).
+	// Region/credentials come from the standard cloud environment, not from here.
 	KMSKeyID string `yaml:"kms_key_id"`
-	// WrappedKeyPath is where the KMS-wrapped KEK blob lives (aws-kms / gcp-kms).
+	// WrappedKeyPath is where the KMS-wrapped KEK blob lives (aws-kms / gcp-kms /
+	// azure-kms).
 	WrappedKeyPath string `yaml:"wrapped_key_path"`
 }
 
