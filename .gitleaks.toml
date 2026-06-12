@@ -14,7 +14,7 @@ useDefault = true
 description = "Demo / docs / scripts / test fixtures — non-real sample credentials"
 paths = [
   '''demo/.*''',
-  '''docs/.*''',
+  '''.*\.md''',
   '''scripts/.*''',
   '''.*_test\.go''',
   '''internal/cli/secret/import\.go''',
