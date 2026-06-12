@@ -276,10 +276,22 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
-	// Create personal_access_tokens if missing (ADR-027, additive, safe on existing DBs).
+	// Create personal_access_tokens if missing (ADR-027, additive, safe on existing DBs);
+	// otherwise add only the ADR-042 per-token scoping columns via the Migrator (same
+	// pgx hazard as the notifications/invitations blocks — never full-AutoMigrate an
+	// existing table here). Defaults leave existing tokens unrestricted (back-compat).
 	if !patExists {
 		if err := db.AutoMigrate(&models.PersonalAccessToken{}); err != nil {
 			return fmt.Errorf("failed to migrate personal_access_tokens table: %w", err)
+		}
+	} else {
+		m := db.Migrator()
+		for _, col := range []string{"Scopes", "ProjectScope"} {
+			if !m.HasColumn(&models.PersonalAccessToken{}, col) {
+				if err := m.AddColumn(&models.PersonalAccessToken{}, col); err != nil {
+					return fmt.Errorf("failed to add personal_access_tokens.%s column: %w", col, err)
+				}
+			}
 		}
 	}
 

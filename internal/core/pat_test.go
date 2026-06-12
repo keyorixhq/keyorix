@@ -23,19 +23,42 @@ func TestCreateOwnPAT(t *testing.T) {
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*models.PersonalAccessToken) }).
 			Return(&models.PersonalAccessToken{ID: 1}, nil)
 
-		res, err := c.CreateOwnPAT(ctx, 1, "ci-token", nil)
+		res, err := c.CreateOwnPAT(ctx, 1, "ci-token", nil, nil, 0)
 		require.NoError(t, err)
 		assert.True(t, strings.HasPrefix(res.PlainToken, patPrefix), "raw token carries the kx_pat_ prefix")
 		require.NotNil(t, captured)
 		assert.Equal(t, sha256Hex(res.PlainToken), captured.TokenHash, "stored value is the hash of the plaintext")
 		assert.NotEqual(t, res.PlainToken, captured.TokenHash, "plaintext is never stored")
 		assert.True(t, strings.HasPrefix(captured.TokenPrefix, patPrefix))
+		assert.Empty(t, captured.Scopes, "an unscoped token stores no allowlist (inherits owner)")
+		assert.Zero(t, captured.ProjectScope)
+	})
+
+	t.Run("persists a least-privilege scope restriction (ADR-042)", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		var captured *models.PersonalAccessToken
+		ms.On("CreatePersonalAccessToken", ctx, mock.AnythingOfType("*models.PersonalAccessToken")).
+			Run(func(args mock.Arguments) { captured = args.Get(1).(*models.PersonalAccessToken) }).
+			Return(&models.PersonalAccessToken{ID: 1}, nil)
+
+		_, err := c.CreateOwnPAT(ctx, 1, "ci-read-only", nil, []string{"secrets.read", "  ", "secrets.read"}, 7)
+		require.NoError(t, err)
+		require.NotNil(t, captured)
+		// Blanks dropped, duplicates removed, encoded as JSON.
+		assert.Equal(t, `["secrets.read"]`, captured.Scopes)
+		assert.Equal(t, uint(7), captured.ProjectScope)
+		// Round-trips back into a restriction.
+		r := patRestrictionFrom(captured)
+		require.NotNil(t, r)
+		assert.Equal(t, []string{"secrets.read"}, r.Permissions)
+		assert.Equal(t, uint(7), r.ProjectID)
 	})
 
 	t.Run("rejects an empty name", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		_, err := c.CreateOwnPAT(ctx, 1, "   ", nil)
+		_, err := c.CreateOwnPAT(ctx, 1, "   ", nil, nil, 0)
 		require.Error(t, err)
 		ms.AssertNotCalled(t, "CreatePersonalAccessToken", mock.Anything, mock.Anything)
 	})
@@ -55,17 +78,35 @@ func TestValidatePATToken(t *testing.T) {
 		role := "system_viewer"
 		ms.On("GetUserRoles", ctx, uint(1)).Return([]*models.Role{{Name: role}}, nil)
 
-		user, roles, err := c.ValidatePATToken(ctx, raw)
+		user, roles, restriction, err := c.ValidatePATToken(ctx, raw)
 		require.NoError(t, err)
 		assert.Equal(t, uint(1), user.ID)
 		assert.Equal(t, []string{role}, roles)
+		assert.Nil(t, restriction, "an unscoped token resolves to no restriction (full inheritance)")
+	})
+
+	t.Run("surfaces the least-privilege restriction for a scoped token (ADR-042)", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{
+			ID: 9, UserID: 1, Scopes: `["secrets.read"]`, ProjectScope: 4,
+		}, nil)
+		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, Username: acctTestUser, IsActive: true}, nil)
+		ms.On("TouchPersonalAccessToken", ctx, uint(9), mock.AnythingOfType("time.Time"), patTouchInterval).Return(nil)
+		ms.On("GetUserRoles", ctx, uint(1)).Return([]*models.Role{{Name: "system_viewer"}}, nil)
+
+		_, _, restriction, err := c.ValidatePATToken(ctx, raw)
+		require.NoError(t, err)
+		require.NotNil(t, restriction)
+		assert.Equal(t, []string{"secrets.read"}, restriction.Permissions)
+		assert.Equal(t, uint(4), restriction.ProjectID)
 	})
 
 	t.Run("rejects a revoked token", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
 		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1, Revoked: true}, nil)
-		_, _, err := c.ValidatePATToken(ctx, raw)
+		_, _, _, err := c.ValidatePATToken(ctx, raw)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "revoked")
 	})
@@ -75,7 +116,7 @@ func TestValidatePATToken(t *testing.T) {
 		c := NewKeyorixCore(ms)
 		past := time.Now().Add(-time.Hour)
 		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1, ExpiresAt: &past}, nil)
-		_, _, err := c.ValidatePATToken(ctx, raw)
+		_, _, _, err := c.ValidatePATToken(ctx, raw)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expired")
 	})
@@ -85,7 +126,7 @@ func TestValidatePATToken(t *testing.T) {
 		c := NewKeyorixCore(ms)
 		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1}, nil)
 		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, IsActive: false}, nil)
-		_, _, err := c.ValidatePATToken(ctx, raw)
+		_, _, _, err := c.ValidatePATToken(ctx, raw)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "inactive")
 	})
@@ -94,14 +135,14 @@ func TestValidatePATToken(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
 		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(nil, assert.AnError)
-		_, _, err := c.ValidatePATToken(ctx, raw)
+		_, _, _, err := c.ValidatePATToken(ctx, raw)
 		require.Error(t, err)
 	})
 
 	t.Run("rejects a non-PAT token before any storage lookup", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		_, _, err := c.ValidatePATToken(ctx, "some-session-token")
+		_, _, _, err := c.ValidatePATToken(ctx, "some-session-token")
 		require.Error(t, err)
 		ms.AssertNotCalled(t, "GetPersonalAccessTokenByHash", mock.Anything, mock.Anything)
 	})

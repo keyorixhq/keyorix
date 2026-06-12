@@ -372,10 +372,20 @@ type PersonalAccessToken struct {
 	Name        string `gorm:"not null"`             // user-facing label
 	TokenHash   string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
 	TokenPrefix string `gorm:"index"`                // leading chars of the raw token, for display ("kx_pat_ab12…")
-	LastUsedAt  *time.Time
-	ExpiresAt   *time.Time // nil = never expires
-	Revoked     bool       `gorm:"default:false"`
-	CreatedAt   time.Time
+	// Scopes is a JSON-encoded []string permission allowlist (ADR-042). Empty/null =
+	// the token inherits the owner's full permission set (legacy v1 behaviour, the
+	// default for existing rows). When non-empty, the token may exercise ONLY the
+	// listed permissions — and even then never more than the owner actually holds at
+	// request time (it is a filter that narrows, never an escalation).
+	Scopes string `gorm:"type:text"`
+	// ProjectScope, when non-zero, restricts the token to acting within that single
+	// project's scope (and denies global/system-wide actions). 0 = any scope the
+	// owner can reach. Mirrors the 0 = global sentinel used throughout RBAC.
+	ProjectScope uint `gorm:"default:0"`
+	LastUsedAt   *time.Time
+	ExpiresAt    *time.Time // nil = never expires
+	Revoked      bool       `gorm:"default:false"`
+	CreatedAt    time.Time
 }
 
 // SetupToken is the single-use, hashed-at-rest bearer string that lets a brand-new

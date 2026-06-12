@@ -79,9 +79,12 @@ throttling applies to session `last_seen_at`.
   shared result shape — low complexity.
 - The full-permission-inheritance limitation must be communicated clearly until scoping
   lands; a leaked PAT is as powerful as the owner's session.
+  **Update (ADR-042):** optional per-token least-privilege scoping has now landed — a
+  PAT may carry a permission allowlist and/or a single-project confinement that narrows
+  it below its owner. Full inheritance remains the default for back-compat.
 
 ## What this is not
 
 - Not service accounts (those remain admin-managed, see `service_accounts_handler.go`).
-- Not scoped/least-privilege tokens (deferred).
+- ~~Not scoped/least-privilege tokens (deferred).~~ **Scoped tokens shipped in ADR-042.**
 - Not OAuth/OIDC tokens (separate M2 work).

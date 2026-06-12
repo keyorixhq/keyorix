@@ -27,7 +27,7 @@ import (
 // downstream per-scope authorization work unchanged.
 type sessionValidator interface {
 	ValidateSessionToken(ctx context.Context, token string) (*models.User, []string, error)
-	ValidatePATToken(ctx context.Context, token string) (*models.User, []string, error)
+	ValidatePATToken(ctx context.Context, token string) (*models.User, []string, *core.PATRestriction, error)
 	ValidateMachineToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error)
 	ValidateOIDCToken(ctx context.Context, token string) (*models.MachineIdentity, []string, error)
 	OIDCEnabled() bool
@@ -64,6 +64,11 @@ type UserContext struct {
 	// confine non-interactive automation.
 	MFAEnabled  bool `json:"-"`
 	SessionAuth bool `json:"-"`
+	// PATRestriction is the least-privilege filter a personal access token imposes
+	// (ADR-042), or nil for sessions / unrestricted PATs. Cached with the rest of
+	// the identity and tagged onto the request context by buildRequestContext so
+	// core.Authorize enforces it at the single authorization chokepoint.
+	PATRestriction *core.PATRestriction `json:"-"`
 }
 
 // ActorKind returns the principal's actor type ("user" or "machine_identity"),
@@ -532,6 +537,11 @@ func buildRequestContext(parent context.Context, userCtx *UserContext, coreServi
 	if userCtx != nil && userCtx.MachineIdentityID != nil {
 		ctx = core.WithActorType(ctx, core.ActorTypeMachine)
 	}
+	// Carry a PAT's least-privilege restriction (ADR-042) so core.Authorize
+	// enforces it on every authorization check this request makes.
+	if userCtx != nil && userCtx.PATRestriction != nil {
+		ctx = core.WithPATRestriction(ctx, userCtx.PATRestriction)
+	}
 	return ctx
 }
 
@@ -597,13 +607,14 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	// Route by prefix: PATs authenticate AS their owning user, resolving to the same
 	// UserContext shape as a session — so authorization downstream is identical.
 	var (
-		user       *models.User
-		roleNames  []string
-		err        error
-		viaSession bool
+		user        *models.User
+		roleNames   []string
+		restriction *core.PATRestriction
+		err         error
+		viaSession  bool
 	)
 	if strings.HasPrefix(token, patTokenPrefix) {
-		user, roleNames, err = validator.ValidatePATToken(ctx, token)
+		user, roleNames, restriction, err = validator.ValidatePATToken(ctx, token)
 	} else {
 		user, roleNames, err = validator.ValidateSessionToken(ctx, token)
 		viaSession = true
@@ -612,15 +623,16 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		return nil, err
 	}
 	return &UserContext{
-		UserID:       user.ID,
-		Username:     user.Username,
-		Email:        user.Email,
-		Roles:        roleNames,
-		ActorType:    core.ActorTypeUser,
-		AccountState: core.NormalizeAccountState(user.AccountState),
-		Restricted:   core.AccountRestricted(user.AccountState),
-		MFAEnabled:   user.MFAEnabled || user.WebAuthnEnabled,
-		SessionAuth:  viaSession,
+		UserID:         user.ID,
+		Username:       user.Username,
+		Email:          user.Email,
+		Roles:          roleNames,
+		ActorType:      core.ActorTypeUser,
+		AccountState:   core.NormalizeAccountState(user.AccountState),
+		Restricted:     core.AccountRestricted(user.AccountState),
+		MFAEnabled:     user.MFAEnabled || user.WebAuthnEnabled,
+		SessionAuth:    viaSession,
+		PATRestriction: restriction,
 	}, nil
 }
 

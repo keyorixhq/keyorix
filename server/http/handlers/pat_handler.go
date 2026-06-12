@@ -30,23 +30,29 @@ func NewPATHandler(coreService *core.KeyorixCore) *PATHandler {
 }
 
 // patResponse is the safe DTO — omits TokenHash; carries only the display prefix.
+// scopes/project_scope surface the ADR-042 least-privilege restriction (read-only;
+// a token's scope is fixed at creation).
 type patResponse struct {
-	ID          uint    `json:"id"`
-	Name        string  `json:"name"`
-	TokenPrefix string  `json:"token_prefix"`
-	Revoked     bool    `json:"revoked"`
-	CreatedAt   string  `json:"created_at"`
-	ExpiresAt   *string `json:"expires_at"`
-	LastUsedAt  *string `json:"last_used_at"`
+	ID           uint     `json:"id"`
+	Name         string   `json:"name"`
+	TokenPrefix  string   `json:"token_prefix"`
+	Revoked      bool     `json:"revoked"`
+	CreatedAt    string   `json:"created_at"`
+	ExpiresAt    *string  `json:"expires_at"`
+	LastUsedAt   *string  `json:"last_used_at"`
+	Scopes       []string `json:"scopes"`        // empty = inherits the owner's full permissions
+	ProjectScope uint     `json:"project_scope"` // 0 = any project the owner can reach
 }
 
 func toPATResponse(t *models.PersonalAccessToken) patResponse {
 	resp := patResponse{
-		ID:          t.ID,
-		Name:        t.Name,
-		TokenPrefix: t.TokenPrefix,
-		Revoked:     t.Revoked,
-		CreatedAt:   t.CreatedAt.UTC().Format(time.RFC3339),
+		ID:           t.ID,
+		Name:         t.Name,
+		TokenPrefix:  t.TokenPrefix,
+		Revoked:      t.Revoked,
+		CreatedAt:    t.CreatedAt.UTC().Format(time.RFC3339),
+		Scopes:       core.DecodePATScopes(t.Scopes),
+		ProjectScope: t.ProjectScope,
 	}
 	if t.ExpiresAt != nil {
 		v := t.ExpiresAt.UTC().Format(time.RFC3339)
@@ -81,6 +87,11 @@ func (h *PATHandler) ListPATs(w http.ResponseWriter, r *http.Request) {
 type createPATRequestBody struct {
 	Name      string  `json:"name"`
 	ExpiresAt *string `json:"expires_at"` // RFC3339; omit/null for a non-expiring token
+	// Scopes is an optional least-privilege permission allowlist (ADR-042). Omit or
+	// leave empty to inherit the owner's full permission set (the default).
+	Scopes []string `json:"scopes"`
+	// ProjectScope optionally confines the token to a single project (0/omit = any).
+	ProjectScope uint `json:"project_scope"`
 }
 
 // CreatePAT handles POST /auth/tokens. The raw token is returned exactly once.
@@ -106,7 +117,7 @@ func (h *PATHandler) CreatePAT(w http.ResponseWriter, r *http.Request) {
 		expiresAt = &t
 	}
 
-	result, err := h.coreService.CreateOwnPAT(r.Context(), userCtx.UserID, body.Name, expiresAt)
+	result, err := h.coreService.CreateOwnPAT(r.Context(), userCtx.UserID, body.Name, expiresAt, body.Scopes, body.ProjectScope)
 	if err != nil {
 		sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 		return
