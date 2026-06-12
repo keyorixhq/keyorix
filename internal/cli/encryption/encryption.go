@@ -13,9 +13,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// masterPassphrase reads the master passphrase from KEYORIX_MASTER_PASSWORD.
-// Returns an error if the variable is unset or empty.
-func masterPassphrase() (string, error) {
+// masterPassphrase reads the master passphrase from KEYORIX_MASTER_PASSWORD. It is
+// required only for the default "password" key provider; with the file/env
+// providers (ADR-038) the KEK comes from key material elsewhere, so it returns ""
+// without error and Service.Initialize sources the KEK from the provider.
+func masterPassphrase(cfg *config.Config) (string, error) {
+	if t := cfg.Storage.Encryption.KeyProvider.Type; t != "" && t != "password" {
+		return "", nil
+	}
 	p := os.Getenv("KEYORIX_MASTER_PASSWORD")
 	if p == "" {
 		return "", fmt.Errorf("KEYORIX_MASTER_PASSWORD environment variable is not set")
@@ -104,7 +109,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	baseDir, _ := os.Getwd()
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
-	passphrase, err := masterPassphrase()
+	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		return err
 	}
@@ -138,7 +143,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	baseDir, _ := os.Getwd()
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
-	passphrase, err := masterPassphrase()
+	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		fmt.Printf("⚠️  %v\n", err)
 		return nil
@@ -184,7 +189,7 @@ func rotateWithConfig(cfg *config.Config, confirm bool) error {
 	baseDir, _ := os.Getwd()
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
-	passphrase, err := masterPassphrase()
+	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		return err
 	}
@@ -282,7 +287,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("🔍 Validating encryption setup...")
 
-	passphrase, err := masterPassphrase()
+	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		return err
 	}
@@ -314,7 +319,7 @@ func runFixPerms(cmd *cobra.Command, args []string) error {
 	baseDir, _ := os.Getwd()
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 
-	passphrase, err := masterPassphrase()
+	passphrase, err := masterPassphrase(cfg)
 	if err != nil {
 		return err
 	}

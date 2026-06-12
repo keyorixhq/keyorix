@@ -29,18 +29,14 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	if passphrase == "" {
-		return fmt.Errorf("master passphrase must not be empty")
-	}
 	if km.currentDEK == nil {
 		return fmt.Errorf("key manager not initialized — cannot rotate")
 	}
 
-	salt, err := securefiles.SafeReadFile(km.baseDir, km.saltPath)
+	kek, err := km.deriveKEK(passphrase)
 	if err != nil {
-		return fmt.Errorf("failed to read salt for DEK rotation: %w", err)
+		return fmt.Errorf("failed to derive KEK for DEK rotation: %w", err)
 	}
-	kek := GenerateKEK(passphrase, salt, 600000)
 	defer wipeBytes(kek)
 
 	newDEK, err := GenerateRandomKey(32)
@@ -132,15 +128,10 @@ func (km *KeyManager) RotateDEK(passphrase string) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	if passphrase == "" {
-		return fmt.Errorf("master passphrase must not be empty")
-	}
-
-	salt, err := securefiles.SafeReadFile(km.baseDir, km.saltPath)
+	kek, err := km.deriveKEK(passphrase)
 	if err != nil {
-		return fmt.Errorf("failed to read salt for DEK rotation: %w", err)
+		return fmt.Errorf("failed to derive KEK for DEK rotation: %w", err)
 	}
-	kek := GenerateKEK(passphrase, salt, 600000)
 	defer wipeBytes(kek)
 
 	newDEK, err := GenerateRandomKey(32)

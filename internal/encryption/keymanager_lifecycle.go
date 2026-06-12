@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -39,7 +40,37 @@ type KeyManager struct {
 	baseDir    string
 	currentDEK []byte
 	keyVersion string
-	mu         sync.RWMutex
+	// keyProvider sources the KEK (ADR-038). nil = the legacy passphrase+salt
+	// derivation below; set to a crypto.KeyProvider (password/file/env) by the
+	// Service to obtain the KEK from elsewhere. Either way the KEK still wraps the
+	// same on-disk DEK, so the data path is unchanged.
+	keyProvider crypto.KeyProvider
+	mu          sync.RWMutex
+}
+
+// SetKeyProvider configures where the KEK comes from. Must be called before
+// Initialize / rotation. nil restores the legacy passphrase+salt derivation.
+func (km *KeyManager) SetKeyProvider(p crypto.KeyProvider) {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+	km.keyProvider = p
+}
+
+// deriveKEK returns the KEK from the configured provider, or — when none is set —
+// the legacy passphrase + on-disk salt PBKDF2 derivation (byte-identical to the
+// pre-ADR-038 behaviour). The caller wipes the returned key.
+func (km *KeyManager) deriveKEK(passphrase string) ([]byte, error) {
+	if km.keyProvider != nil {
+		return km.keyProvider.KEK()
+	}
+	if passphrase == "" {
+		return nil, fmt.Errorf("master passphrase must not be empty")
+	}
+	salt, err := km.ensureSaltExists()
+	if err != nil {
+		return nil, fmt.Errorf("failed to ensure salt exists: %w", err)
+	}
+	return GenerateKEK(passphrase, salt, 600000), nil
 }
 
 // KeyInfo contains metadata about encryption keys.
@@ -67,16 +98,10 @@ func (km *KeyManager) Initialize(passphrase string) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	if passphrase == "" {
-		return fmt.Errorf("master passphrase must not be empty")
-	}
-
-	salt, err := km.ensureSaltExists()
+	kek, err := km.deriveKEK(passphrase)
 	if err != nil {
-		return fmt.Errorf("failed to ensure salt exists: %w", err)
+		return err
 	}
-
-	kek := GenerateKEK(passphrase, salt, 600000)
 	defer wipeBytes(kek)
 
 	if err := km.ensureWrappedDEKExists(kek); err != nil {
