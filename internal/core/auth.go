@@ -53,6 +53,11 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	if AccountLoginBlocked(user.AccountState) {
 		return nil, nil, fmt.Errorf("account suspended")
 	}
+	// MFA-enabled accounts get no session from the password step — the caller must
+	// complete the second factor (CreateMFAChallenge → VerifyMFALogin).
+	if user.MFAEnabled {
+		return nil, user, ErrMFARequired
+	}
 	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)
 	if err != nil {
 		return nil, nil, err

@@ -171,12 +171,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		return nil, nil, fmt.Errorf("failed to initialize encryption: %w", err)
 	}
 
-	var coreService *core.KeyorixCore
+	coreService := core.NewKeyorixCore(store)
 	if encSvc != nil {
-		// Encryption enabled: pass the service to core (used for future SecretEncryption wiring)
-		coreService = core.NewKeyorixCore(store)
-	} else {
-		coreService = core.NewKeyorixCore(store)
+		// Wire the initialised encryption service for reversibly-encrypted auth
+		// secrets (the TOTP MFA secret, which cannot be hashed).
+		coreService.SetAuthEncryptor(encSvc)
 	}
 
 	// Apply a configured password policy, if any. An absent block leaves the

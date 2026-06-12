@@ -25,6 +25,11 @@ import (
 type KeyorixCore struct {
 	storage        storage.Storage
 	encryption     *encryption.SecretEncryption
+	// authEncryptor reversibly encrypts auth secrets that cannot be hashed (the
+	// TOTP MFA shared secret). nil or disabled = passthrough (store plaintext),
+	// consistent with the rest of the product when encryption is off. Wired from
+	// the initialised encryption.Service at server startup via SetAuthEncryptor.
+	authEncryptor  *encryption.Service
 	now            func() time.Time // For testability
 	passwordPolicy PasswordPolicy
 	auditForwarder AuditForwarder
@@ -92,6 +97,33 @@ func NewKeyorixCoreWithEncryption(storage storage.Storage, enc *encryption.Secre
 		now:            time.Now,
 		passwordPolicy: DefaultPasswordPolicy(),
 	}
+}
+
+// SetAuthEncryptor wires the encryption service used to protect reversibly-
+// encrypted auth secrets (the TOTP MFA secret). The server calls this at startup
+// when encryption is enabled. nil/disabled = passthrough.
+func (c *KeyorixCore) SetAuthEncryptor(s *encryption.Service) {
+	c.authEncryptor = s
+}
+
+// encryptAuthSecret reversibly encrypts plain; passthrough when encryption is off.
+func (c *KeyorixCore) encryptAuthSecret(plain string) (ct, meta []byte, err error) {
+	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
+		return []byte(plain), nil, nil
+	}
+	return c.authEncryptor.EncryptSecret([]byte(plain))
+}
+
+// decryptAuthSecret reverses encryptAuthSecret; passthrough when encryption is off.
+func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte) (string, error) {
+	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
+		return string(ct), nil
+	}
+	plain, err := c.authEncryptor.DecryptSecret(ct)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
 }
 
 // SetPasswordPolicy overrides the password policy (which defaults to

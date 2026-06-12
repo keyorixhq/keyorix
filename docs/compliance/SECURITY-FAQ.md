@@ -66,9 +66,11 @@ separate from human users, with their own lifecycle. (OIDC service-account auth 
 e.g. Kubernetes projected tokens — is a roadmap item.)
 
 **Do you support MFA?**
-TOTP/MFA is on the roadmap and is positioned in-product as "coming soon"; it is
-not yet shipped. Password policy, short-lived sessions with an absolute lifetime
-ceiling, and first-login password-change enforcement are shipped today.
+Yes — per-user opt-in **TOTP** (RFC 6238) second factor with a two-step login,
+single-use recovery codes, and the TOTP secret encrypted at rest (ADR-034).
+WebAuthn/passkeys and admin-enforced MFA policy are on the roadmap. Password
+policy, short-lived sessions with an absolute lifetime ceiling, and first-login
+password-change enforcement are also shipped.
 
 **Can an admin act as another user, and is that visible?**
 Yes — impersonation issues a separate short-lived session (the admin's own session
@@ -131,8 +133,7 @@ issues. See [`../SECURITY.md`](../SECURITY.md) for details.
 
 We would rather tell you these up front than have you find them:
 
-- **MFA/TOTP** — roadmap, not shipped.
-- **OIDC service-account auth** (e.g. Kubernetes) — roadmap.
+- **WebAuthn / passkeys** and admin-enforced MFA policy — roadmap (TOTP MFA itself is shipped, ADR-034).
 - **Audit-log tamper-evidence** (cryptographic chaining / WORM) — roadmap;
   integrity today relies on operator-controlled PostgreSQL.
 - **Automated purge schedulers** for soft-deleted records — config-present, not

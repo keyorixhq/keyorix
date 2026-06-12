@@ -163,6 +163,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE users ADD COLUMN account_state TEXT NOT NULL DEFAULT 'active'")
 	}
 
+	// MFA/TOTP opt-in flag. Existing rows default to false (MFA off).
+	if tableExists(db, "users") && !columnExists(db, "users", "mfa_enabled") {
+		db.Exec("ALTER TABLE users ADD COLUMN mfa_enabled BOOLEAN NOT NULL DEFAULT false")
+	}
+
 	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
 	if tableExists(db, "sessions") {
 		if !columnExists(db, "sessions", "user_agent") {
@@ -255,6 +260,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	membershipExists := tableExists(db, "project_memberships")
 	setupTokenExists := tableExists(db, "setup_tokens")
 	notificationsExists := tableExists(db, "notifications")
+	mfaSecretExists := tableExists(db, "mfa_secrets")
+	mfaRecoveryExists := tableExists(db, "mfa_recovery_codes")
+	mfaChallengeExists := tableExists(db, "mfa_challenges")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -267,6 +275,23 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !patExists {
 		if err := db.AutoMigrate(&models.PersonalAccessToken{}); err != nil {
 			return fmt.Errorf("failed to migrate personal_access_tokens table: %w", err)
+		}
+	}
+
+	// Create the MFA tables if missing (TOTP MFA, additive, safe on existing DBs).
+	if !mfaSecretExists {
+		if err := db.AutoMigrate(&models.MFASecret{}); err != nil {
+			return fmt.Errorf("failed to migrate mfa_secrets table: %w", err)
+		}
+	}
+	if !mfaRecoveryExists {
+		if err := db.AutoMigrate(&models.MFARecoveryCode{}); err != nil {
+			return fmt.Errorf("failed to migrate mfa_recovery_codes table: %w", err)
+		}
+	}
+	if !mfaChallengeExists {
+		if err := db.AutoMigrate(&models.MFAChallenge{}); err != nil {
+			return fmt.Errorf("failed to migrate mfa_challenges table: %w", err)
 		}
 	}
 

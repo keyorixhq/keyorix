@@ -127,10 +127,12 @@ authentication).
 - **Credential delivery** — single-use, hashed-at-rest setup links (24h TTL) or a
   one-time generated password for out-of-band relay; no reusable credential is
   ever emailed.
-- **MFA / TOTP** — **Roadmap** (positioned honestly as "coming soon" in-product;
-  not yet built).
+- **MFA / TOTP** — **Shipped** (ADR-034): per-user opt-in TOTP second factor with
+  a two-step login (a short-lived single-use challenge gates session issuance),
+  single-use recovery codes, and the TOTP secret encrypted at rest. WebAuthn /
+  passkeys and admin-enforced MFA policy remain Roadmap.
 
-**Status:** Shipped, except MFA/TOTP (Roadmap).
+**Status:** Shipped.
 
 ---
 
@@ -180,7 +182,7 @@ config-present but not yet wired — Roadmap.)
 | Access control & authorisation | 21(2)(i) | ICT protection | A.5.15–5.18 | Shipped |
 | Cryptography | 21(2)(h) | data protection | A.8.24 | Shipped |
 | Logging & audit | 21(2) | detection/records | A.8.15–8.16 | Shipped |
-| Authentication & sessions | 21(2)(j) | — | A.5.17, 8.5 | Shipped (MFA roadmap) |
+| Authentication & sessions | 21(2)(j) | — | A.5.17, 8.5 | Shipped (incl. TOTP MFA) |
 | ICT third-party / continuity | 21(2)(d) | third-party risk | A.5.19–5.23 | Shipped |
 | Retention & disposal | 21(2) | record-keeping | A.8.10, 5.33 | Shipped (purge roadmap) |
 

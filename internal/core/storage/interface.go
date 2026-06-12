@@ -270,6 +270,20 @@ type Storage interface {
 	TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error
 	CleanupExpiredSessions(ctx context.Context) error
 
+	// MFA / TOTP (per-user two-factor authentication).
+	UpsertMFASecret(ctx context.Context, s *models.MFASecret) error
+	GetMFASecret(ctx context.Context, userID uint) (*models.MFASecret, error)
+	ActivateMFASecret(ctx context.Context, userID uint) error
+	DeleteMFAForUser(ctx context.Context, userID uint) error // clears secret + recovery codes
+	SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error
+	CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error
+	// ConsumeMFARecoveryCode marks a matching unused code used and reports whether one was consumed.
+	ConsumeMFARecoveryCode(ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error)
+	CreateMFAChallenge(ctx context.Context, c *models.MFAChallenge) error
+	// ConsumeMFAChallenge atomically finds an unused, unexpired challenge by token
+	// hash, marks it used, and returns it (or an error if none).
+	ConsumeMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error)
+
 	// Personal Access Token Management (ADR-027) — user-owned bearer credentials.
 	CreatePersonalAccessToken(ctx context.Context, t *models.PersonalAccessToken) (*models.PersonalAccessToken, error)
 	ListPersonalAccessTokensByUser(ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error)
