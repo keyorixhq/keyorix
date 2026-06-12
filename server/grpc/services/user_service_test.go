@@ -18,6 +18,9 @@ func newUserService(t *testing.T) *UserGRPCService {
 	t.Helper()
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
+	// Grant the admin-context user (id 1) super_admin globally so core.Authorize
+	// admits the admin tests; denied tests use an ungranted user id.
+	h.AssignUserRole(t, 1, 1, nil)
 	return NewUserService(h.CoreService)
 }
 
@@ -55,7 +58,7 @@ func TestUserService_CreateUser_Unauthenticated(t *testing.T) {
 
 func TestUserService_CreateUser_PermissionDenied(t *testing.T) {
 	svc := newUserService(t)
-	ctx := authCtx(1, "reader", "users.read") // no write
+	ctx := authCtx(7, "reader") // ungranted user → denied
 	_, err := svc.CreateUser(ctx, &pb.CreateUserRequest{
 		Username: "x", Email: "x@example.com", Password: strPtr("password123"),
 	})

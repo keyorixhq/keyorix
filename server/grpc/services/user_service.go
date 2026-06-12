@@ -38,8 +38,8 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "users.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create users")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.write"); err != nil {
+		return nil, err
 	}
 	if req.GetUsername() == "" || req.GetEmail() == "" {
 		return nil, status.Error(codes.InvalidArgument, "username and email are required")
@@ -106,8 +106,8 @@ func (s *UserGRPCService) GetUser(ctx context.Context, req *pb.GetUserRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "users.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read users")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.read"); err != nil {
+		return nil, err
 	}
 	u, err := s.core.GetUser(ctx, uint(req.GetId()))
 	if err != nil {
@@ -122,8 +122,8 @@ func (s *UserGRPCService) UpdateUser(ctx context.Context, req *pb.UpdateUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "users.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to update users")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.write"); err != nil {
+		return nil, err
 	}
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
@@ -147,8 +147,8 @@ func (s *UserGRPCService) DeleteUser(ctx context.Context, req *pb.DeleteUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "users.delete") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to delete users")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.delete"); err != nil {
+		return nil, err
 	}
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
@@ -165,8 +165,8 @@ func (s *UserGRPCService) ListUsers(ctx context.Context, req *pb.ListUsersReques
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "users.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list users")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.read"); err != nil {
+		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
 

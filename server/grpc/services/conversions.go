@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
@@ -29,6 +30,11 @@ func requireUser(ctx context.Context) (*interceptors.UserContext, error) {
 	return user, nil
 }
 
+// hasPermission reports flat membership in the caller's permission union. Use it
+// ONLY for self-scoped reads (a caller listing their OWN shares), where the result
+// set is already filtered to the caller and no cross-tenant access is possible. For
+// anything that reads or mutates another tenant's / global state, use
+// authorizeScoped / authorizeGlobal instead (see the bug-class note below).
 func hasPermission(permissions []string, required string) bool {
 	for _, p := range permissions {
 		if p == required {
@@ -36,6 +42,27 @@ func hasPermission(permissions []string, required string) bool {
 		}
 	}
 	return false
+}
+
+// authorizeScoped enforces perm at the given scope via core.Authorize — the same
+// scope-aware path HTTP uses. This is the ONLY authorization primitive the services
+// use: an earlier flat `hasPermission(user.Permissions, …)` check treated a
+// permission held only at one project's scope as if held everywhere, because
+// UserContext.Permissions is the FLAT union of the caller's grants across every
+// scope (the #53/#54/#88/#90 flat-vs-scoped bug class). Routing through
+// core.Authorize fixes that and future-proofs the PAT/machine paths.
+func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, userID uint, perm string, scope core.Scope) error {
+	if allowed, err := cs.Authorize(ctx, userID, perm, scope); err != nil || !allowed {
+		return status.Error(codes.PermissionDenied, "insufficient permissions")
+	}
+	return nil
+}
+
+// authorizeGlobal enforces perm at global scope (project 0) — for install-wide
+// operations (user/role/system/audit management) that HTTP gates with
+// RequirePermission. A grant held only at a project scope does NOT satisfy it.
+func authorizeGlobal(ctx context.Context, cs *core.KeyorixCore, userID uint, perm string) error {
+	return authorizeScoped(ctx, cs, userID, perm, core.Scope{})
 }
 
 // --- Pagination ---

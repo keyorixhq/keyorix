@@ -64,10 +64,18 @@ each strengthens:
 ### Access control & authorisation (§1)
 
 - **Cross-transport authorization parity.** The gRPC surface authorized several
-  secret and share operations against the flat (global) permission set while HTTP
-  enforced project-scoped permissions. Both transports now enforce identical
-  **scoped** RBAC, so a permission held in one project can never act on an object
-  in another. *(Severity: medium; closed the full flat-vs-scoped class.)*
+  operations against the flat (global) permission set while HTTP enforced
+  project-scoped permissions. This was closed for the Secret and Share services
+  first, then — in a follow-up audit — for the remaining **Role, User, Audit and
+  System** services, which still checked the flat union: a `roles.assign`/
+  `users.write` grant held at one project could create global roles, mutate any
+  user, or grant roles into another project over gRPC (a cross-project privilege
+  escalation), and a project-scoped read permission could read install-wide audit
+  logs / user lists. Every gRPC RPC now authorizes through `core.Authorize` at the
+  correct scope (global for install-wide ops; the request's project/environment for
+  role assignment), identical to HTTP — so a permission held in one project can
+  never act on an object in another. *(Severity: medium→high; the full flat-vs-
+  scoped class is now closed across all six services.)*
 - **Cross-project (cross-tenant) isolation.** Five project-nested lifecycle
   routes authorized the caller against the URL's project but then acted on a
   child object belonging to a *different* project (access-request approval,

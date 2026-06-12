@@ -96,8 +96,10 @@ func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *pb.ListUserS
 	if err != nil {
 		return nil, err
 	}
+	// Self-scoped: returns only the caller's own shares, so a flat secrets.read
+	// check is sufficient (no cross-tenant access — see hasPermission's note).
 	if !hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to view shares")
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions")
 	}
 
 	shares, err := s.core.ListSharesByUser(ctx, user.UserID)
@@ -114,8 +116,9 @@ func (s *ShareGRPCService) ListSharedSecrets(ctx context.Context, req *pb.ListSh
 	if err != nil {
 		return nil, err
 	}
+	// Self-scoped (caller's own shared-with-me secrets) — flat check is sufficient.
 	if !hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to view shared secrets")
+		return nil, status.Error(codes.PermissionDenied, "insufficient permissions")
 	}
 
 	secrets, err := s.core.ListSharedSecrets(ctx, user.UserID)

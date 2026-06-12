@@ -34,8 +34,8 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "roles.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create roles")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.write"); err != nil {
+		return nil, err
 	}
 	if req.GetName() == "" || req.GetDescription() == "" || len(req.GetPermissions()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "name, description and at least one permission are required")
@@ -64,8 +64,8 @@ func (s *RoleGRPCService) GetRole(ctx context.Context, req *pb.GetRoleRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "roles.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read roles")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.read"); err != nil {
+		return nil, err
 	}
 	return s.roleByID(ctx, uint(req.GetId()))
 }
@@ -76,8 +76,8 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "roles.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to update roles")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.write"); err != nil {
+		return nil, err
 	}
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
@@ -122,8 +122,8 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "roles.write") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to delete roles")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.write"); err != nil {
+		return nil, err
 	}
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
@@ -140,8 +140,8 @@ func (s *RoleGRPCService) ListRoles(ctx context.Context, req *pb.ListRolesReques
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "roles.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list roles")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.read"); err != nil {
+		return nil, err
 	}
 
 	all, err := s.core.ListRolesWithPermissions(ctx)
@@ -179,13 +179,15 @@ func (s *RoleGRPCService) AssignRole(ctx context.Context, req *pb.AssignRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "roles.assign") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to assign roles")
-	}
 	if req.GetUserId() == 0 || req.GetRoleId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "user_id and role_id are required")
 	}
+	// Authorize roles.assign AT THE TARGET scope, not the flat global union — else a
+	// project-A admin could grant roles into any project B (cross-project privesc).
 	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
+	if err := authorizeScoped(ctx, s.core, actor.UserID, "roles.assign", scope); err != nil {
+		return nil, err
+	}
 	if err := s.core.AssignUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
 		return nil, mapRoleError(err)
 	}
@@ -203,13 +205,14 @@ func (s *RoleGRPCService) RemoveRole(ctx context.Context, req *pb.RemoveRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "roles.assign") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to remove role assignments")
-	}
 	if req.GetUserId() == 0 || req.GetRoleId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "user_id and role_id are required")
 	}
+	// Authorize roles.assign at the target scope (see AssignRole) — not the flat union.
 	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
+	if err := authorizeScoped(ctx, s.core, actor.UserID, "roles.assign", scope); err != nil {
+		return nil, err
+	}
 	if err := s.core.RemoveUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
 		return nil, mapRoleError(err)
 	}
@@ -222,8 +225,8 @@ func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRoles
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "roles.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read role assignments")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.read"); err != nil {
+		return nil, err
 	}
 	assignment, err := s.core.GetUserRoleAssignment(ctx, uint(req.GetUserId()))
 	if err != nil {

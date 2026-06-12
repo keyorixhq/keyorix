@@ -12,8 +12,6 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -55,8 +53,8 @@ func (s *SystemGRPCService) GetSystemInfo(ctx context.Context, _ *emptypb.Empty)
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "system.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read system info")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "system.read"); err != nil {
+		return nil, err
 	}
 
 	info := &pb.SystemInfo{
@@ -95,8 +93,8 @@ func (s *SystemGRPCService) GetMetrics(ctx context.Context, _ *emptypb.Empty) (*
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "system.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read metrics")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "system.read"); err != nil {
+		return nil, err
 	}
 
 	// Request/performance metrics from the gRPC metrics interceptor.
