@@ -3,6 +3,52 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.4.0 — 2026-06-12
+
+The security-hardening release: a new second factor, four subsystem security
+audits with the findings fixed, and an auditor-ready evidence package.
+
+### Added
+- **Multi-factor authentication (TOTP)** — per-user opt-in second factor with a
+  two-step login (a short-lived single-use challenge gates session issuance),
+  single-use recovery codes, and the TOTP secret encrypted at rest. ([#99], ADR-034)
+- **"Leave Vault in 5 minutes" demo** — a one-command, self-contained demo that
+  stands up Keyorix + a throwaway Vault and migrates live secrets. ([#86])
+- **Security verification & ENS evidence docs** — `SECURITY-VERIFICATION.md`
+  (audits, fixes, CI gates) and `ENS-CONTROLS.md` (Spain's Esquema Nacional de
+  Seguridad mapping), alongside the existing NIS2/DORA/ISO statement. ([#95], [#96])
+
+### Security
+Found by four subsystem security audits (auth/crypto/RBAC, HTTP, token/OIDC,
+storage/remote-client), each fix regression-tested:
+- **Cross-project privilege escalation / IDOR** — project-nested lifecycle routes
+  (access-request approval, membership/machine-identity transitions, environment
+  restore, invitation revoke/resend) acted on objects in a different project than
+  the one the caller was authorised for. Now reconciled and rejected. ([#92], [#93])
+- **Suspend/deactivate now revokes active sessions** — previously a suspended user
+  kept access until their token expired. ([#87])
+- **gRPC scoped RBAC** — secret and share operations over gRPC now enforce the same
+  project-scoped permissions as HTTP (was the flat global set). ([#88], [#90])
+- **Remote-client TLS secure-by-default** — an omitted `tls_verify` no longer
+  disables certificate verification on the API channel. ([#97])
+- **OIDC `jwks_uri` requires https** — signing keys are no longer fetched over
+  plaintext. ([#94])
+- **DEK-rotation completeness** — the re-encryption sweep is now ordered so a
+  rotation can't skip rows and leave secrets under the old key. ([#89])
+
+[#86]: https://github.com/keyorixhq/keyorix/pull/86
+[#87]: https://github.com/keyorixhq/keyorix/pull/87
+[#88]: https://github.com/keyorixhq/keyorix/pull/88
+[#89]: https://github.com/keyorixhq/keyorix/pull/89
+[#90]: https://github.com/keyorixhq/keyorix/pull/90
+[#92]: https://github.com/keyorixhq/keyorix/pull/92
+[#93]: https://github.com/keyorixhq/keyorix/pull/93
+[#94]: https://github.com/keyorixhq/keyorix/pull/94
+[#95]: https://github.com/keyorixhq/keyorix/pull/95
+[#96]: https://github.com/keyorixhq/keyorix/pull/96
+[#97]: https://github.com/keyorixhq/keyorix/pull/97
+[#99]: https://github.com/keyorixhq/keyorix/pull/99
+
 ## v0.3.0 — 2026-06-11
 
 The "adopt Keyorix" release: a complete path to bring your secrets in, install
