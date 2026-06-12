@@ -4,6 +4,7 @@
 package encryption
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/crypto/awskms"
 )
 
 // Service provides high-level encryption operations for the application.
@@ -80,8 +82,14 @@ func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error
 		return crypto.NewFileKeyProvider(kp.FilePath), nil
 	case "env":
 		return crypto.NewEnvKeyProvider(kp.EnvVar), nil
+	case "aws-kms":
+		kmsClient, err := awskms.New(context.Background(), kp.KMSKeyID)
+		if err != nil {
+			return nil, err
+		}
+		return crypto.NewKMSKeyProvider(kmsClient, "aws-kms", s.keyManager.baseDir, kp.WrappedKeyPath), nil
 	default:
-		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env)", kp.Type)
+		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, aws-kms)", kp.Type)
 	}
 }
 

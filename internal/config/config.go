@@ -238,12 +238,19 @@ type EncryptionConfig struct {
 
 // KeyProviderConfig selects the KEK source. type: "password" (default) derives the
 // KEK from KEYORIX_MASTER_PASSWORD; "file" reads raw key material from FilePath;
-// "env" reads it from the EnvVar's value (hex or base64). file/env suit a KEK
-// injected by a KMS, sealed/SOPS secret, or CSI driver.
+// "env" reads it from the EnvVar's value (hex or base64); "aws-kms" envelope-wraps
+// the KEK with an AWS KMS key (ADR-041) and stores the wrapped blob at
+// WrappedKeyPath. file/env suit a KEK injected by a sealed/SOPS secret or CSI
+// driver; aws-kms keeps the wrapping key in the cloud HSM.
 type KeyProviderConfig struct {
 	Type     string `yaml:"type"`
 	FilePath string `yaml:"file_path"`
 	EnvVar   string `yaml:"env_var"`
+	// KMSKeyID is the AWS KMS key (ID, ARN, or alias) for type "aws-kms". Region and
+	// credentials come from the standard AWS environment, not from here.
+	KMSKeyID string `yaml:"kms_key_id"`
+	// WrappedKeyPath is where the KMS-wrapped KEK blob lives (type "aws-kms").
+	WrappedKeyPath string `yaml:"wrapped_key_path"`
 }
 
 type SecretsConfig struct {
