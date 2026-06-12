@@ -263,6 +263,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	mfaSecretExists := tableExists(db, "mfa_secrets")
 	mfaRecoveryExists := tableExists(db, "mfa_recovery_codes")
 	mfaChallengeExists := tableExists(db, "mfa_challenges")
+	dynConfigExists := tableExists(db, "dynamic_secret_configs")
+	dynLeaseExists := tableExists(db, "dynamic_secret_leases")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -292,6 +294,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !mfaChallengeExists {
 		if err := db.AutoMigrate(&models.MFAChallenge{}); err != nil {
 			return fmt.Errorf("failed to migrate mfa_challenges table: %w", err)
+		}
+	}
+
+	// Create the dynamic-secrets tables if missing (ADR-035, additive).
+	if !dynConfigExists {
+		if err := db.AutoMigrate(&models.DynamicSecretConfig{}); err != nil {
+			return fmt.Errorf("failed to migrate dynamic_secret_configs table: %w", err)
+		}
+	}
+	if !dynLeaseExists {
+		if err := db.AutoMigrate(&models.DynamicSecretLease{}); err != nil {
+			return fmt.Errorf("failed to migrate dynamic_secret_leases table: %w", err)
 		}
 	}
 

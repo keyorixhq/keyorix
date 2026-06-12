@@ -325,6 +325,33 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		}()
 	}
 
+	// Start the dynamic-secrets auto-revoke sweeper (ADR-035) — opt-in. Revokes
+	// every active lease past its expiry so credentials don't outlive their TTL.
+	if cfg.DynamicSecrets.SweepEnabled {
+		interval := cfg.DynamicSecrets.GetSweepInterval()
+		log.Printf("Dynamic-secrets auto-revoke sweeper enabled: every %s", interval)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runSweep := func() {
+				if n, err := coreService.RevokeExpiredLeases(ctx, time.Now()); err != nil {
+					log.Printf("Dynamic-secrets sweep error: %v", err)
+				} else if n > 0 {
+					log.Printf("Dynamic-secrets sweep revoked %d expired lease(s)", n)
+				}
+			}
+			runSweep() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runSweep()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
 	// Create HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%s", cfg.Server.HTTP.Port),

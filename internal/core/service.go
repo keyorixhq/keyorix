@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -30,7 +31,10 @@ type KeyorixCore struct {
 	// consistent with the rest of the product when encryption is off. Wired from
 	// the initialised encryption.Service at server startup via SetAuthEncryptor.
 	authEncryptor  *encryption.Service
-	now            func() time.Time // For testability
+	// dynamicEngineFactory resolves a dynamic-secrets credential engine by backend
+	// type (ADR-035). nil = the real dynamic.New; overridable in tests with a fake.
+	dynamicEngineFactory func(string) (dynamic.CredentialEngine, error)
+	now                  func() time.Time // For testability
 	passwordPolicy PasswordPolicy
 	auditForwarder AuditForwarder
 	// oidcVerifier verifies federated machine-identity JWTs (ADR-031); nil = OIDC
@@ -124,6 +128,21 @@ func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte) (string, error) {
 		return "", err
 	}
 	return string(plain), nil
+}
+
+// SetDynamicEngineFactory overrides the dynamic-secrets engine factory (tests
+// inject a fake engine).
+func (c *KeyorixCore) SetDynamicEngineFactory(f func(string) (dynamic.CredentialEngine, error)) {
+	c.dynamicEngineFactory = f
+}
+
+// dynamicEngine resolves an engine for a backend type via the factory (or the
+// real dynamic.New when none is set).
+func (c *KeyorixCore) dynamicEngine(backendType string) (dynamic.CredentialEngine, error) {
+	if c.dynamicEngineFactory != nil {
+		return c.dynamicEngineFactory(backendType)
+	}
+	return dynamic.New(backendType)
 }
 
 // SetPasswordPolicy overrides the password policy (which defaults to
