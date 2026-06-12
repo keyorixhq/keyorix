@@ -138,6 +138,26 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Atomic provisioning must not let the caller hand out access they could not
+	// assign directly (defense-in-depth beyond the users.write route gate, and the
+	// principled fix for the cross-project privesc class): a system-role override
+	// requires roles.assign at global scope; each project assignment requires
+	// roles.assign at that project. A global admin passes both via admin-bypass.
+	if hasAssignments {
+		if body.Role != "" {
+			if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
+				sendError(w, "Forbidden", "You may not assign a system role", http.StatusForbidden, nil)
+				return
+			}
+		}
+		for _, a := range body.ProjectAssignments {
+			if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
+				sendError(w, "Forbidden", "You may not assign roles in the target project", http.StatusForbidden, nil)
+				return
+			}
+		}
+	}
+
 	var created *models.User
 	var err error
 	if hasAssignments {

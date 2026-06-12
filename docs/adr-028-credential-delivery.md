@@ -187,6 +187,27 @@ In out-of-band mode every one of these returns the link as CLI/JSON output for t
 - **Inbound email (reply-to-approve).** Out of scope. Revisit only with a concrete customer workflow.
 - **Per-user email notification preferences.** This ADR delivers *credentials* (always sent — you cannot opt out of getting your own setup link). General *notifications* (ADR-024's inviter/access-request notifications) carry their own opt-out and are a separate track.
 
+## Security hardening (audit follow-up, 2026-06-13)
+
+Two fixes from an internal audit of this subsystem:
+
+- **`POST /users` privilege escalation closed.** The atomic-provisioning route
+  (which can grant a system role + project assignments) was gated only by the
+  group-level `users.read`, so a global read-only persona (`system_auditor` holds
+  `users.read`) could create a user with `role: "system_admin"` and escalate to
+  global admin. It is now gated by `users.write` (matching the sibling
+  `POST /invitations`), and the handler additionally authorizes the caller for
+  `roles.assign` at each grant's scope (global for a system role, per-project for a
+  project assignment) so atomic provisioning can never hand out more access than
+  the caller could assign directly — closing the cross-project/privesc class on
+  this newer route.
+- **Password-set consume now evicts other sessions.** `completePasswordSetup`
+  (account_setup / password_reset_link) minted a new session but left the subject's
+  existing sessions untouched, so a self-service password reset failed to lock out
+  an attacker holding a stolen session. It now drops all of the subject's other
+  sessions (keeping the freshly minted one), matching `ChangePassword`'s
+  invalidate-other-devices invariant.
+
 ## Related ADRs
 
 - **ADR-024** — Invitation and access-request flows (the invitation producer; this ADR provides the link/consume mechanism 024 deferred).
