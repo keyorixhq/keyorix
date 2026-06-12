@@ -130,6 +130,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		IPAddress: ip,
 	})
 	if err != nil {
+		// MFA-enabled account: the password was correct but a second factor is
+		// required. Issue a short-lived challenge instead of a session.
+		if errors.Is(err, core.ErrMFARequired) {
+			challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), user.ID)
+			if cerr != nil {
+				sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
+				return
+			}
+			sendSuccess(w, map[string]interface{}{"mfa_required": true, "mfa_challenge": challenge}, "MFA required")
+			return
+		}
 		recordLoginAttempt(ip)
 		go h.coreService.LogAuthFailure(context.Background(), body.Username, ip) // #nosec G118
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)

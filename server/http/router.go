@@ -74,6 +74,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Post("/auth/logout", authHandler.Logout)
 	r.Post("/auth/refresh", authHandler.RefreshToken)
 	r.Post("/auth/password-reset", authHandler.PasswordReset)
+	// MFA second-step: unauthenticated — the bearer is the single-use challenge
+	// issued by /auth/login, not a session.
+	r.Post("/auth/mfa/verify", authHandler.VerifyMFA)
 	r.Post("/system/init", authHandler.InitSystem)
 
 	// Credential-delivery setup links (ADR-028) — unauthenticated: the bearer is the
@@ -140,6 +143,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Get("/auth/profile", authHandler.Profile)
 		r.Put("/auth/profile", authHandler.UpdateProfile)
 		r.Post("/auth/change-password", authHandler.ChangePassword)
+		// MFA self-service (acts on the authenticated caller's own account).
+		r.Post("/auth/mfa/enroll", authHandler.EnrollMFA)
+		r.Post("/auth/mfa/activate", authHandler.ActivateMFA)
+		r.Post("/auth/mfa/disable", authHandler.DisableMFA)
 		r.Get("/auth/sessions", authHandler.ListSessions)
 		r.Delete("/auth/sessions/{id}", authHandler.RevokeSession)
 		r.Get("/auth/tokens", patHandler.ListPATs)

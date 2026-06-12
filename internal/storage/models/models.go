@@ -79,9 +79,45 @@ type User struct {
 	// AccountState is the ADR-025 lifecycle state: active | pending_first_login |
 	// password_reset_required | suspended. Empty (legacy rows) is treated as active.
 	AccountState string `gorm:"default:'active'"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
+	// MFAEnabled is true once the user has activated TOTP MFA; login then requires
+	// a one-time code (see MFASecret / MFAChallenge).
+	MFAEnabled bool `gorm:"default:false"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
+}
+
+// MFASecret holds a user's TOTP shared secret, encrypted at rest. One row per
+// user (UserID unique). Activated flips true on the first valid code at
+// enrolment; a row with Activated=false is a pending enrolment not yet confirmed.
+type MFASecret struct {
+	ID         uint   `gorm:"primaryKey"`
+	UserID     uint   `gorm:"uniqueIndex"`
+	SecretEnc  []byte // encrypted TOTP secret (passthrough plaintext when encryption is disabled)
+	SecretMeta []byte // encryption metadata (key version etc.)
+	Activated  bool   `gorm:"default:false"`
+	CreatedAt  time.Time
+}
+
+// MFARecoveryCode is a single-use backup code (SHA-256 hashed). UsedAt is stamped
+// when consumed so a code cannot be replayed.
+type MFARecoveryCode struct {
+	ID       uint   `gorm:"primaryKey"`
+	UserID   uint   `gorm:"index"`
+	CodeHash string `gorm:"index"`
+	UsedAt   *time.Time
+}
+
+// MFAChallenge is a short-lived, single-use pre-auth token issued when an
+// MFA-enabled user passes the password step; the verify step consumes it. The
+// raw token is never stored — only its SHA-256 hash.
+type MFAChallenge struct {
+	ID        uint   `gorm:"primaryKey"`
+	UserID    uint   `gorm:"index"`
+	TokenHash string `gorm:"uniqueIndex"`
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
 }
 
 // PasswordHistory records prior password hashes per user so the policy can
