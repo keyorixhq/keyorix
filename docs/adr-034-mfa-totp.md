@@ -53,5 +53,5 @@ Add **TOTP** (RFC 6238, `github.com/pquerna/otp`) as an opt-in second factor.
 
 ## Deferred
 
-Admin-enforced "MFA required" org/project policy; WebAuthn / passkeys;
+WebAuthn / passkeys; per-project (vs deployment-wide) MFA policy;
 trusted-device "remember this device"; multi-attempt-per-challenge UX.

@@ -136,6 +136,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Confine restricted (must-change-password) sessions to the password-change
 		// allowlist (ADR-025).
 		r.Use(customMiddleware.EnforceAccountRestriction)
+		// When the deployment mandates MFA, confine interactive sessions without
+		// MFA to the enrolment endpoints (security.require_mfa). No-op when off.
+		r.Use(customMiddleware.EnforceMFAEnrollment(cfg.Security.RequireMFA))
 
 		// Self-service account endpoints (My Account). Authenticated but not
 		// permission-gated — every user manages their own profile, password,
