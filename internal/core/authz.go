@@ -11,9 +11,72 @@ package core
 
 import (
 	"context"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
+
+// PATRestriction bounds what a request authenticated by a personal access token
+// (ADR-042) may do, independent of — and intersected with — the owning user's own
+// permissions. It is a least-privilege FILTER: it can only narrow a token below
+// its owner, never grant the owner anything extra. The owner's live role
+// resolution still runs after this check, so a restriction listing a permission
+// the owner has since lost grants nothing.
+type PATRestriction struct {
+	// Permissions, when non-empty, is the exhaustive allowlist of permission
+	// strings the token may exercise. Empty = inherit the owner's full set. An
+	// entry may be an exact permission ("secrets.read"), the catch-all "*", or a
+	// prefix wildcard ("secrets.*").
+	Permissions []string
+	// ProjectID, when non-zero, restricts the token to that project's scope;
+	// any check at a different project — or at global/system scope (project 0) —
+	// is denied. Zero = any scope the owner can reach.
+	ProjectID uint
+}
+
+// Allows reports whether this restriction permits exercising permission at scope.
+// A nil restriction (no PAT, or an unrestricted PAT) is handled by the caller.
+func (r *PATRestriction) Allows(permission string, scope Scope) bool {
+	if r == nil {
+		return true
+	}
+	// A project-scoped token may act ONLY within its project. A check at global
+	// scope (ProjectID 0 — system-wide actions like users.read) is therefore
+	// denied for a project-scoped token: it is not a system credential.
+	if r.ProjectID != 0 && scope.ProjectID != r.ProjectID {
+		return false
+	}
+	if len(r.Permissions) == 0 {
+		return true
+	}
+	for _, p := range r.Permissions {
+		if p == "*" || p == permission {
+			return true
+		}
+		if strings.HasSuffix(p, ".*") && strings.HasPrefix(permission, strings.TrimSuffix(p, "*")) {
+			return true
+		}
+	}
+	return false
+}
+
+// patRestrictionCtxKey is the unexported context key carrying a *PATRestriction.
+type patRestrictionCtxKey struct{}
+
+// WithPATRestriction tags ctx with the restriction a personal access token
+// imposes on the request. The auth middleware sets it for PAT-authenticated
+// requests only; session, machine and OIDC requests never carry one. Authorize
+// and AuthorizePrincipal read it back so the restriction is enforced uniformly at
+// the single authorization chokepoint — every present and future authz path.
+func WithPATRestriction(ctx context.Context, r *PATRestriction) context.Context {
+	return context.WithValue(ctx, patRestrictionCtxKey{}, r)
+}
+
+// patRestrictionFromContext returns the PAT restriction on ctx, or nil if none.
+func patRestrictionFromContext(ctx context.Context) *PATRestriction {
+	r, _ := ctx.Value(patRestrictionCtxKey{}).(*PATRestriction)
+	return r
+}
 
 // Scope identifies the project/environment an authorization check or a role
 // assignment applies to. It aliases storage.Scope so the same 0 = global
@@ -38,6 +101,14 @@ var adminRoleNames = []string{"super_admin", "admin", "system_admin", "project_a
 // machine is never a global super-user, so a leaked machine token is bounded to
 // the permissions of its explicit grants. Fails closed.
 func (c *KeyorixCore) AuthorizePrincipal(ctx context.Context, actorType string, principalID uint, permission string, scope Scope) (bool, error) {
+	// A personal access token may carry a least-privilege restriction (ADR-042)
+	// that narrows it below its owner. Enforce it first, before any role
+	// resolution or admin bypass, so even a global-admin's token is bounded. Only
+	// PAT-authenticated (user-actored) requests ever carry one, but the check is
+	// safe on every path. Fails closed (deny) when the restriction disallows.
+	if !patRestrictionFromContext(ctx).Allows(permission, scope) {
+		return false, nil
+	}
 	if actorType == ActorTypeMachine {
 		roleIDs, err := c.storage.GetMachineRoleIDsAt(ctx, principalID, scope)
 		if err != nil {
@@ -55,6 +126,13 @@ func (c *KeyorixCore) AuthorizePrincipal(ctx context.Context, actorType string, 
 // against the target scope. Fails closed: any resolution error returns
 // (false, err).
 func (c *KeyorixCore) Authorize(ctx context.Context, userID uint, permission string, scope Scope) (bool, error) {
+	// PAT least-privilege filter (ADR-042) — narrows even an admin owner. Applied
+	// here too (not only in AuthorizePrincipal) so direct Authorize callers and the
+	// admin bypass below are equally bounded. Idempotent on the AuthorizePrincipal
+	// path, which already checked it.
+	if !patRestrictionFromContext(ctx).Allows(permission, scope) {
+		return false, nil
+	}
 	roleIDs, err := c.scopedRoleIDs(ctx, userID, scope)
 	if err != nil {
 		return false, err

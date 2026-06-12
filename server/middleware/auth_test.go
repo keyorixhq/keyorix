@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,15 +47,22 @@ func (fakeValidator) ValidateSessionToken(_ context.Context, token string) (*mod
 // ValidatePATToken accepts a single fixed PAT and resolves it to a user, mirroring
 // the shape of ValidateSessionToken so the prefix-routing in validateToken can be
 // exercised. Anything else is rejected.
-func (fakeValidator) ValidatePATToken(_ context.Context, token string) (*models.User, []string, error) {
+func (fakeValidator) ValidatePATToken(_ context.Context, token string) (*models.User, []string, *core.PATRestriction, error) {
 	if token == "kx_pat_validtoken" {
 		return &models.User{
 			ID:       3,
 			Username: "patuser",
 			Email:    "pat@example.com",
-		}, []string{"system_viewer"}, nil
+		}, []string{"system_viewer"}, nil, nil
 	}
-	return nil, nil, fmt.Errorf("invalid token")
+	if token == "kx_pat_scopedtoken" {
+		// A least-privilege token confined to secrets.read in project 5 (ADR-042).
+		return &models.User{ID: 3, Username: "patuser", Email: "pat@example.com"},
+			[]string{"system_viewer"},
+			&core.PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: 5},
+			nil
+	}
+	return nil, nil, nil, fmt.Errorf("invalid token")
 }
 
 func (fakeValidator) ValidateMachineToken(_ context.Context, token string) (*models.MachineIdentity, []string, error) {
@@ -400,6 +408,46 @@ func TestValidateToken(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidateToken_PATRestriction asserts the ADR-042 least-privilege wiring:
+// a scoped PAT surfaces its restriction on the UserContext, an unrestricted PAT
+// and a session carry none, and buildRequestContext propagates the restriction so
+// core.Authorize can enforce it downstream.
+func TestValidateToken_PATRestriction(t *testing.T) {
+	t.Run("scoped PAT carries its restriction and propagates to context", func(t *testing.T) {
+		userCtx, err := validateToken(context.Background(), fakeValidator{}, "kx_pat_scopedtoken")
+		require.NoError(t, err)
+		require.NotNil(t, userCtx.PATRestriction)
+		assert.Equal(t, []string{"secrets.read"}, userCtx.PATRestriction.Permissions)
+		assert.Equal(t, uint(5), userCtx.PATRestriction.ProjectID)
+		assert.False(t, userCtx.SessionAuth, "a PAT is not an interactive session")
+
+		// The restriction filters as expected: the listed permission within the
+		// token's project passes; a different permission or project is denied.
+		assert.True(t, userCtx.PATRestriction.Allows("secrets.read", core.Scope{ProjectID: 5}))
+		assert.False(t, userCtx.PATRestriction.Allows("secrets.write", core.Scope{ProjectID: 5}))
+		assert.False(t, userCtx.PATRestriction.Allows("secrets.read", core.Scope{ProjectID: 6}))
+
+		// buildRequestContext must not panic and must return a context carrying the
+		// identity, so downstream core.Authorize reads the restriction off ctx.
+		ctx := buildRequestContext(context.Background(), userCtx, nil)
+		require.NotNil(t, ctx)
+		assert.Equal(t, userCtx, GetUserFromContext(ctx))
+	})
+
+	t.Run("unrestricted PAT carries no restriction", func(t *testing.T) {
+		userCtx, err := validateToken(context.Background(), fakeValidator{}, "kx_pat_validtoken")
+		require.NoError(t, err)
+		assert.Nil(t, userCtx.PATRestriction)
+	})
+
+	t.Run("session token carries no restriction", func(t *testing.T) {
+		userCtx, err := validateToken(context.Background(), fakeValidator{}, "valid-token")
+		require.NoError(t, err)
+		assert.Nil(t, userCtx.PATRestriction)
+		assert.True(t, userCtx.SessionAuth)
+	})
 }
 
 // Benchmark tests
