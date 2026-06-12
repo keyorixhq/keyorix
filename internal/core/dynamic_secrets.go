@@ -108,7 +108,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	if err != nil {
 		return nil, fmt.Errorf("failed to issue credential: %w", err)
 	}
-	credJSON, _ := json.Marshal(cred)
+	credJSON, _ := json.Marshal(cred) // #nosec G117 -- intentional: serialized only to be immediately encrypted at rest below, never persisted or logged in cleartext
 	credEnc, credMeta, err := c.encryptAuthSecret(string(credJSON))
 	if err != nil {
 		// The role exists on the target — revoke it so we don't leak it.
