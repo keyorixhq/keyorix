@@ -78,9 +78,9 @@ full suite + `go vet` green.
 
 ## Deferred
 
-Other backends (Mongo, cloud IAM); renewable leases (extend TTL in place);
-per-config max-TTL ceilings; a CLI surface; returning leases a caller can
-enumerate across configs.
+Other backends (Mongo, cloud IAM); returning leases a caller can enumerate across
+configs; a gRPC surface. (Renewable leases, per-config max-TTL ceilings, and a
+`keyorix dynamic-secret` CLI have since shipped — see the addenda.)
 
 ## Addendum (2026-06-12): MySQL target engine
 

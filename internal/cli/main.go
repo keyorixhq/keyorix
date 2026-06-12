@@ -8,6 +8,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/auth"
 	"github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
+	"github.com/keyorixhq/keyorix/internal/cli/dynamic"
 	"github.com/keyorixhq/keyorix/internal/cli/encryption"
 	"github.com/keyorixhq/keyorix/internal/cli/group"
 	"github.com/keyorixhq/keyorix/internal/cli/invite"
@@ -55,6 +56,7 @@ func init() {
 	rootCmd.AddCommand(status.StatusCmd)
 	rootCmd.AddCommand(system.SystemCmd)
 	rootCmd.AddCommand(anomalies.AnomaliesCmd)
+	rootCmd.AddCommand(dynamic.DynamicSecretCmd)
 }
 
 // Execute runs the root command

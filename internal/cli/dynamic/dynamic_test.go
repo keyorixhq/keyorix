@@ -1,0 +1,73 @@
+package dynamic
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestCommandWiring guards the cobra wiring: subcommands, aliases, and flags.
+func TestCommandWiring(t *testing.T) {
+	names := map[string]bool{}
+	for _, sub := range DynamicSecretCmd.Commands() {
+		names[sub.Name()] = true
+	}
+	for _, want := range []string{"list", "issue", "leases", "renew", "revoke"} {
+		assert.True(t, names[want], "missing subcommand %q", want)
+	}
+	assert.Contains(t, DynamicSecretCmd.Aliases, "dyn")
+	assert.NotNil(t, issueCmd.Flags().Lookup("ttl"))
+	assert.NotNil(t, listCmd.Flags().Lookup("project-id"))
+}
+
+// captureStdout runs fn with os.Stdout redirected and returns what it printed.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	fn()
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
+
+// TestIssueAgainstMockServer drives `issue` against a stub API and checks it posts
+// to the right path and prints the once-shown credential.
+func TestIssueAgainstMockServer(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"lease_id":"lease-abc","username":"kx_dyn_x9","password":"s3cr3t-pw","expires_at":"2026-06-12T11:00:00Z"}}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	flagTTL = 0
+
+	out := captureStdout(t, func() {
+		require.NoError(t, issueCmd.RunE(issueCmd, []string{"7"}))
+	})
+
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/api/v1/dynamic-secrets/configs/7/issue", gotPath)
+	assert.Contains(t, out, "lease-abc")
+	assert.Contains(t, out, "kx_dyn_x9")
+	assert.Contains(t, out, "s3cr3t-pw")
+}
+
+func TestIssueRejectsBadConfigID(t *testing.T) {
+	t.Setenv("KEYORIX_SERVER", "http://127.0.0.1:0")
+	t.Setenv("KEYORIX_TOKEN", "t")
+	err := issueCmd.RunE(issueCmd, []string{"not-a-number"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid config id")
+}
