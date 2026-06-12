@@ -40,8 +40,8 @@ func (s *AuditGRPCService) GetAuditLogs(ctx context.Context, req *pb.GetAuditLog
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "audit.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read audit logs")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "audit.read"); err != nil {
+		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
 
@@ -81,8 +81,8 @@ func (s *AuditGRPCService) GetRBACAuditLogs(ctx context.Context, req *pb.GetRBAC
 	if err != nil {
 		return nil, err
 	}
-	if !hasPermission(actor.Permissions, "audit.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to read audit logs")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "audit.read"); err != nil {
+		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
 
@@ -144,8 +144,8 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 	if actor == nil {
 		return status.Error(codes.Unauthenticated, "user not authenticated")
 	}
-	if !hasPermission(actor.Permissions, "audit.read") {
-		return status.Error(codes.PermissionDenied, "insufficient permissions to read audit logs")
+	if err := authorizeGlobal(ctx, s.core, actor.UserID, "audit.read"); err != nil {
+		return err
 	}
 
 	// Start at the current head so we tail new events, not the backlog.

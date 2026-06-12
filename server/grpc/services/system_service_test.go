@@ -17,6 +17,9 @@ func newSystemService(t *testing.T) *SystemGRPCService {
 	t.Helper()
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
+	// Admin-context user (id 1) = super_admin (global); denied tests use an
+	// ungranted user id so core.Authorize refuses them.
+	h.AssignUserRole(t, 1, 1, nil)
 	cfg := &config.Config{Environment: "test"}
 	cfg.Storage.Type = "local"
 	return NewSystemService(h.CoreService, cfg)
@@ -55,7 +58,7 @@ func TestSystemService_GetSystemInfo_Unauthenticated(t *testing.T) {
 
 func TestSystemService_GetSystemInfo_PermissionDenied(t *testing.T) {
 	svc := newSystemService(t)
-	ctx := authCtx(1, "nobody") // no system.read
+	ctx := authCtx(7, "nobody") // ungranted user → denied
 	_, err := svc.GetSystemInfo(ctx, &emptypb.Empty{})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))

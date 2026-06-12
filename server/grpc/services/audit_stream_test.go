@@ -61,14 +61,20 @@ func newStreamCore(t *testing.T) (*AuditGRPCService, *gorm.DB) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin"}).Error)
+	// User 1 = super_admin (global) so the audit.read check passes (stream tests
+	// authenticate as user 1); the denied test uses an ungranted user id.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
 	return NewAuditService(core.NewKeyorixCore(store.NewLocalStorage(db))), db
 }
 
 func TestAuditService_StreamAuditLogs_PermissionDenied(t *testing.T) {
 	svc, _ := newStreamCore(t)
-	stream := &fakeAuditStream{ctx: authCtx(1, "nobody")} // no audit.read
+	stream := &fakeAuditStream{ctx: authCtx(7, "nobody")} // ungranted user → denied
 	err := svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream)
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))

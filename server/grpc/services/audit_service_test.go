@@ -28,8 +28,14 @@ func newAuditService(t *testing.T) *AuditGRPCService {
 	}))
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "alice@example.com"}).Error)
+	// User 1 = super_admin (global) so core.Authorize admits the admin-context
+	// tests; the denied test uses an ungranted user id.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
 	uid := uint(1)
 	require.NoError(t, db.Create(&models.AuditEvent{
 		EventType: "secret.read", UserID: &uid, Description: "read a secret",
@@ -64,7 +70,7 @@ func TestAuditService_GetAuditLogs_Unauthenticated(t *testing.T) {
 
 func TestAuditService_GetAuditLogs_PermissionDenied(t *testing.T) {
 	svc := newAuditService(t)
-	ctx := authCtx(1, "nobody") // no audit.read
+	ctx := authCtx(7, "nobody") // ungranted user → denied
 	_, err := svc.GetAuditLogs(ctx, &pb.GetAuditLogsRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -78,9 +84,17 @@ func TestAuditService_GetRBACAuditLogs_EmptyButOK(t *testing.T) {
 }
 
 func TestAuditService_GetRBACAuditLogs_ReturnsRoleChanges(t *testing.T) {
+	require.NoError(t, i18n.Initialize(&config.Config{
+		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+	}))
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.UserRole{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.UserRole{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+	// auditCtx() is user 1 — grant it super_admin (global) so the audit.read check passes.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "super_admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	require.NoError(t, c.AssignUserRole(context.Background(), 5, 10, 2, core.Scope{ProjectID: 3}))
 

@@ -16,6 +16,9 @@ func newRoleService(t *testing.T) (*RoleGRPCService, *testhelper.RBACTestHelper)
 	t.Helper()
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
+	// Admin-context user (id 1) = super_admin (global); denied tests use an
+	// ungranted user id so core.Authorize refuses them.
+	h.AssignUserRole(t, 1, 1, nil)
 	return NewRoleService(h.CoreService), h
 }
 
@@ -57,7 +60,7 @@ func TestRoleService_CreateRole_Unauthenticated(t *testing.T) {
 
 func TestRoleService_CreateRole_PermissionDenied(t *testing.T) {
 	svc, _ := newRoleService(t)
-	ctx := authCtx(1, "reader", "roles.read")
+	ctx := authCtx(7, "reader") // ungranted user → denied
 	_, err := svc.CreateRole(ctx, &pb.CreateRoleRequest{
 		Name: "x", Description: "y", Permissions: []string{"secrets.read"},
 	})
@@ -148,6 +151,35 @@ func TestRoleService_AssignAndGetUserRoles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "assignee", got.GetUsername())
 	assert.GreaterOrEqual(t, len(got.GetRoles()), 1)
+}
+
+// Regression for the flat-vs-scoped gRPC bug: a caller holding admin/roles.assign
+// ONLY at project 1 may assign within project 1 but NOT cross-project into project
+// 2. Before the fix, AssignRole checked the flat global permission union, so a
+// project-1 admin could grant roles into any project.
+func TestRoleService_AssignRole_ScopedCrossProjectDenied(t *testing.T) {
+	svc, h := newRoleService(t)
+	proj1 := uint(1)
+	h.AssignUserRole(t, 50, 2, &proj1) // user 50 = admin (role 2) at project 1 only
+	target := h.CreateTestUser(t, "xtarget", 600)
+	roles, err := svc.ListRoles(roleAdminCtx(), &pb.ListRolesRequest{})
+	require.NoError(t, err)
+	roleID := roles.GetRoles()[0].GetId()
+	ctx := authCtx(50, "projadmin") // perms slice is ignored — authz is scope-resolved
+	p1, p2 := uint32(1), uint32(2)
+
+	// Within the caller's project: allowed (project-scoped admin bypass).
+	_, err = svc.AssignRole(ctx, &pb.AssignRoleRequest{
+		UserId: intToU32(int(target.ID)), RoleId: roleID, ProjectId: &p1,
+	})
+	require.NoError(t, err)
+
+	// Into a different project: denied — the grant doesn't apply there.
+	_, err = svc.AssignRole(ctx, &pb.AssignRoleRequest{
+		UserId: intToU32(int(target.ID)), RoleId: roleID, ProjectId: &p2,
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestRoleService_RemoveRole(t *testing.T) {
