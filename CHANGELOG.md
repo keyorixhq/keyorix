@@ -3,6 +3,39 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.6.0 — 2026-06-12
+
+Key-management flexibility and a more complete dynamic-secrets engine: bring your
+own KEK source (file/KMS/env), mint on-demand MySQL credentials, and cap or renew
+leases — plus a full configuration reference.
+
+### Added
+- **Pluggable KEK providers** — the key-encryption key can now be sourced from a
+  passphrase (default, unchanged), a **file** (a mounted CSI/sealed secret or KMS
+  sidecar output), or an **environment variable** (KMS/secret-manager injection),
+  via `storage.encryption.key_provider`. The default `password` provider is
+  byte-identical to prior releases, so existing keys keep working with no
+  migration. ([#106], ADR-038)
+- **Dynamic secrets for MySQL** — on-demand MySQL accounts alongside the existing
+  PostgreSQL engine, behind the same API (`backend_type: mysql`). ([#107], ADR-035)
+- **Dynamic-secret lease lifecycle** — a per-config **max-TTL ceiling** that caps
+  a credential's lifetime regardless of the TTL a caller requests, and **lease
+  renewal** (`POST /dynamic-secrets/leases/{id}/renew`) to extend an active lease
+  up to that ceiling instead of re-issuing. ([#109], ADR-035)
+- **Configuration reference** — `docs/CONFIGURATION.md` documents every
+  `keyorix.yaml` block (encryption/KEK providers, MFA, WebAuthn, dynamic secrets,
+  OIDC, sessions, …) with examples, defaults, and environment variables. ([#108])
+
+### Fixed
+- The shipped `production.yaml` example used cron syntax for `purge.schedule`,
+  which is parsed as a Go duration and silently fell back to the 24h default;
+  corrected to a duration with a clarifying comment. ([#108])
+
+[#106]: https://github.com/keyorixhq/keyorix/pull/106
+[#107]: https://github.com/keyorixhq/keyorix/pull/107
+[#108]: https://github.com/keyorixhq/keyorix/pull/108
+[#109]: https://github.com/keyorixhq/keyorix/pull/109
+
 ## v0.5.0 — 2026-06-12
 
 The authentication & dynamic-secrets release: phishing-resistant passkeys, MFA
