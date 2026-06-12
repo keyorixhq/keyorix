@@ -50,7 +50,7 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		wipeBytes(newDEK)
 		return fmt.Errorf("failed to wrap new DEK: %w", err)
 	}
-	if err := securefiles.SecureWriteFile(km.baseDir, pendingDEKPath, wrapped, 0600); err != nil {
+	if err := securefiles.SecureWriteFileSync(km.baseDir, pendingDEKPath, wrapped, 0600); err != nil {
 		wipeBytes(newDEK)
 		return fmt.Errorf("failed to write pending DEK: %w", err)
 	}
@@ -81,6 +81,12 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		wipeBytes(newDEK)
 		_ = os.Remove(pendingPath)
 		return fmt.Errorf("failed to promote pending DEK to active: %w", err)
+	}
+	// Make the rename durable before deleting the old-DEK backups below — else a
+	// crash could lose the new DEK while the backups are already gone.
+	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
+		wipeBytes(newDEK)
+		return fmt.Errorf("failed to fsync key directory after promote: %w", err)
 	}
 
 	wipeBytes(km.currentDEK)
@@ -144,7 +150,9 @@ func (km *KeyManager) RotateDEK(passphrase string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read old DEK for backup: %w", err)
 	}
-	if err := securefiles.SecureWriteFile(km.baseDir, oldDEKPath, oldWrapped, 0600); err != nil {
+	// Durable backup BEFORE overwriting the active DEK below, so a crash always
+	// leaves at least one recoverable wrapped DEK on disk.
+	if err := securefiles.SecureWriteFileSync(km.baseDir, oldDEKPath, oldWrapped, 0600); err != nil {
 		return fmt.Errorf("failed to backup old DEK: %w", err)
 	}
 
@@ -152,7 +160,7 @@ func (km *KeyManager) RotateDEK(passphrase string) error {
 	if err != nil {
 		return fmt.Errorf("failed to wrap new DEK: %w", err)
 	}
-	if err := securefiles.SecureWriteFile(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
+	if err := securefiles.SecureWriteFileSync(km.baseDir, km.dekPath, wrapped, 0600); err != nil {
 		return fmt.Errorf("failed to write new wrapped DEK: %w", err)
 	}
 

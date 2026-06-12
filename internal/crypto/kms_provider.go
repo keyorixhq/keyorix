@@ -81,7 +81,10 @@ func (p *KMSKeyProvider) generateAndWrap(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s key provider: KMS encrypt failed: %w", p.name, err)
 	}
-	if err := securefiles.SecureWriteFile(p.baseDir, p.wrappedKeyPath, wrapped, 0600); err != nil {
+	// Durably persist the wrapped KEK before returning it: the caller will wrap
+	// the DEK under this KEK, and the wrapped-KEK blob is the only way to recover
+	// it on restart. A non-durable write lost to a crash would orphan the DEK.
+	if err := securefiles.SecureWriteFileSync(p.baseDir, p.wrappedKeyPath, wrapped, 0600); err != nil {
 		return nil, fmt.Errorf("%s key provider: persist wrapped KEK: %w", p.name, err)
 	}
 	return kek, nil

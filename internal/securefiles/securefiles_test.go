@@ -47,6 +47,52 @@ func TestSecureWriteAndReadRoundTrip(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+func TestSecureWriteFileSyncRoundTripAndPerms(t *testing.T) {
+	base := t.TempDir()
+	want := []byte("durable-key-bytes")
+	require.NoError(t, SecureWriteFileSync(base, "dek.key", want, 0600))
+
+	info, err := os.Stat(filepath.Join(base, "dek.key"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+
+	got, err := SafeReadFile(base, "dek.key")
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+}
+
+func TestSecureWriteFileSyncEnforcesPermsOnExistingFile(t *testing.T) {
+	base := t.TempDir()
+	// A pre-existing file with looser perms must be tightened to the requested mode
+	// (O_TRUNC alone keeps the old mode; the explicit Chmod fixes it).
+	require.NoError(t, os.WriteFile(filepath.Join(base, "dek.key"), []byte("old"), 0644))
+	require.NoError(t, SecureWriteFileSync(base, "dek.key", []byte("new"), 0600))
+
+	info, err := os.Stat(filepath.Join(base, "dek.key"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	got, err := SafeReadFile(base, "dek.key")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("new"), got)
+}
+
+func TestSecureWriteFileSyncRejectsTraversal(t *testing.T) {
+	base := t.TempDir()
+	err := SecureWriteFileSync(base, "../escape.key", []byte("x"), 0600)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "access denied")
+	_, statErr := os.Stat(filepath.Join(filepath.Dir(base), "escape.key"))
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestSyncDir(t *testing.T) {
+	base := t.TempDir()
+	// A real directory syncs without error.
+	require.NoError(t, SyncDir(base))
+	// A missing directory surfaces the open error rather than silently passing.
+	require.Error(t, SyncDir(filepath.Join(base, "does-not-exist")))
+}
+
 func TestSafeReadFileRejectsTraversal(t *testing.T) {
 	base := t.TempDir()
 	// Plant a file outside the base to make the test meaningful.
