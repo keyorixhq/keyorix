@@ -14,6 +14,11 @@ type MockStorage struct {
 	mock.Mock
 }
 
+// WithSchedulerLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() error) (bool, error) {
+	return true, fn()
+}
+
 // Permission Management
 
 func (m *MockStorage) CreatePermission(_ context.Context, permission *models.Permission) (*models.Permission, error) {
