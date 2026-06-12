@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { accountApi } from '../../services/account';
-import { personalTokensApi } from '../../services/personalTokens';
+import { personalTokensApi, type CreatePersonalTokenBody } from '../../services/personalTokens';
 
 const SESSIONS_KEY = 'account-sessions';
 const TOKENS_KEY = 'account-tokens';
@@ -48,8 +48,7 @@ export const usePersonalTokens = () =>
 export const useCreatePersonalToken = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (body: { name: string; expires_at?: string }) =>
-            personalTokensApi.createToken(body),
+        mutationFn: (body: CreatePersonalTokenBody) => personalTokensApi.createToken(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [TOKENS_KEY] }),
     });
 };

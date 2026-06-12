@@ -26,7 +26,16 @@ import {
     useRevokePersonalToken,
 } from '../../features/account';
 import type { AccountSession } from '../../services/account';
-import type { PersonalAccessToken } from '../../services/personalTokens';
+import { buildCreateTokenBody, type PersonalAccessToken } from '../../services/personalTokens';
+import { useProjects } from '../../features/projects/api';
+
+// Common preset permissions offered when scoping a token (ADR-042). The advanced
+// free-text field covers anything beyond these.
+const PRESET_PERMISSIONS: { value: string; label: string }[] = [
+    { value: 'secrets.read', label: 'Read secrets' },
+    { value: 'secrets.write', label: 'Write secrets' },
+    { value: 'secrets.delete', label: 'Delete secrets' },
+];
 
 const TABS = [
     { id: 'profile', label: 'Basic Info', icon: UserIcon },
@@ -325,8 +334,25 @@ const SessionsTab: React.FC = () => {
 
 // ── API Tokens ────────────────────────────────────────────────────────────────
 
+// ScopeChip renders a token's least-privilege restriction (ADR-042): a project
+// confinement or an allowed permission.
+const ScopeChip: React.FC<{ label: string; kind: 'project' | 'perm' }> = ({ label, kind }) => (
+    <span
+        className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium"
+        style={{
+            fontFamily: kind === 'perm' ? 'var(--font-mono)' : undefined,
+            backgroundColor: kind === 'project' ? 'var(--bg-app)' : 'var(--bg-subtle)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border)',
+        }}
+    >
+        {kind === 'project' ? `▣ ${label}` : label}
+    </span>
+);
+
 const TokensTab: React.FC = () => {
     const { data: tokens, isLoading, isError } = usePersonalTokens();
+    const { data: projects } = useProjects();
     const createToken = useCreatePersonalToken();
     const revoke = useRevokePersonalToken();
 
@@ -336,22 +362,50 @@ const TokensTab: React.FC = () => {
     const [newToken, setNewToken] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
 
+    // ADR-042 least-privilege scoping state.
+    const [limited, setLimited] = useState(false);
+    const [permissions, setPermissions] = useState<string[]>([]);
+    const [extraPermissions, setExtraPermissions] = useState('');
+    const [projectScope, setProjectScope] = useState(0);
+
+    const togglePermission = (value: string) =>
+        setPermissions((prev) =>
+            prev.includes(value) ? prev.filter((p) => p !== value) : [...prev, value]
+        );
+
+    // A "limited" token with no permission and no project chosen would silently be
+    // unrestricted — guide the user to pick at least one constraint.
+    const noConstraintChosen =
+        limited && permissions.length === 0 && !extraPermissions.trim() && projectScope === 0;
+
     const openCreate = () => {
         setName('');
         setExpiresAt('');
         setNewToken(null);
         setCopied(false);
+        setLimited(false);
+        setPermissions([]);
+        setExtraPermissions('');
+        setProjectScope(0);
         createToken.reset();
         setShowCreate(true);
     };
 
     const handleCreate = (e: React.FormEvent) => {
         e.preventDefault();
-        const body = expiresAt
-            ? { name, expires_at: new Date(expiresAt).toISOString() }
-            : { name };
+        const body = buildCreateTokenBody({
+            name,
+            expiresAt,
+            limited,
+            permissions,
+            extraPermissions,
+            projectScope,
+        });
         createToken.mutate(body, { onSuccess: (res) => setNewToken(res.token) });
     };
+
+    const projectName = (id: number) =>
+        projects?.find((p) => p.id === id)?.name ?? `project #${id}`;
 
     const copy = async () => {
         if (!newToken) return;
@@ -367,7 +421,8 @@ const TokensTab: React.FC = () => {
                         Personal Access Tokens
                     </h3>
                     <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-                        Tokens authenticate API and CLI requests as you, with all of your permissions.
+                        Tokens authenticate API and CLI requests as you. By default they carry all of
+                        your permissions — restrict a token to least privilege when you create it.
                     </p>
                 </div>
                 <Button size="sm" onClick={openCreate}>
@@ -408,6 +463,20 @@ const TokensTab: React.FC = () => {
                                     created {formatDate(t.created_at)} · last used {formatDate(t.last_used_at)} ·{' '}
                                     {t.expires_at ? `expires ${formatDate(t.expires_at)}` : 'never expires'}
                                 </p>
+                                {(t.scopes.length > 0 || t.project_scope > 0) ? (
+                                    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                        {t.project_scope > 0 && (
+                                            <ScopeChip label={projectName(t.project_scope)} kind="project" />
+                                        )}
+                                        {t.scopes.map((s) => (
+                                            <ScopeChip key={s} label={s} kind="perm" />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                                        full access (all your permissions)
+                                    </p>
+                                )}
                             </div>
                             {!t.revoked && (
                                 <Button
@@ -476,11 +545,115 @@ const TokensTab: React.FC = () => {
                             value={expiresAt}
                             onChange={(e) => setExpiresAt(e.target.value)}
                         />
+
+                        {/* ADR-042 least-privilege scoping */}
+                        <fieldset className="space-y-2">
+                            <legend className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                Access
+                            </legend>
+                            <label className="flex items-start gap-2 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="pat-access"
+                                    checked={!limited}
+                                    onChange={() => setLimited(false)}
+                                    className="mt-0.5"
+                                />
+                                <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                    <span style={{ color: 'var(--text-primary)' }}>Full access</span> — all of
+                                    your current permissions
+                                </span>
+                            </label>
+                            <label className="flex items-start gap-2 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="pat-access"
+                                    checked={limited}
+                                    onChange={() => setLimited(true)}
+                                    className="mt-0.5"
+                                />
+                                <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                    <span style={{ color: 'var(--text-primary)' }}>Limited access</span> —
+                                    restrict to specific permissions and/or one project
+                                </span>
+                            </label>
+                        </fieldset>
+
+                        {limited && (
+                            <div
+                                className="space-y-3 rounded-md p-3"
+                                style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)' }}
+                            >
+                                <div>
+                                    <p className="text-xs font-medium mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                                        Permissions
+                                    </p>
+                                    <div className="flex flex-wrap gap-3">
+                                        {PRESET_PERMISSIONS.map((perm) => (
+                                            <label key={perm.value} className="flex items-center gap-1.5 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={permissions.includes(perm.value)}
+                                                    onChange={() => togglePermission(perm.value)}
+                                                />
+                                                <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                                                    {perm.label}{' '}
+                                                    <code className="text-xs" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                                                        {perm.value}
+                                                    </code>
+                                                </span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                <Input
+                                    label="Additional permissions (optional, comma-separated)"
+                                    type="text"
+                                    placeholder="e.g. rotation.write, secrets.*"
+                                    value={extraPermissions}
+                                    onChange={(e) => setExtraPermissions(e.target.value)}
+                                />
+                                <div>
+                                    <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                                        Project
+                                    </label>
+                                    <select
+                                        value={projectScope}
+                                        onChange={(e) => setProjectScope(Number(e.target.value))}
+                                        className="w-full rounded-md px-3 py-2 text-sm"
+                                        style={{
+                                            backgroundColor: 'var(--bg-surface)',
+                                            border: '1px solid var(--border)',
+                                            color: 'var(--text-primary)',
+                                        }}
+                                    >
+                                        <option value={0}>Any project</option>
+                                        {(projects ?? []).map((p) => (
+                                            <option key={p.id} value={p.id}>
+                                                {p.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                    A token can never do more than you can — these only narrow it.
+                                </p>
+                                {noConstraintChosen && (
+                                    <p className="text-xs" style={{ color: 'var(--color-warning, #b45309)' }}>
+                                        Pick at least one permission or a project, or choose Full access.
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
                         <div className="flex justify-end gap-2">
                             <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>
                                 Cancel
                             </Button>
-                            <Button type="submit" disabled={createToken.isPending || !name.trim()}>
+                            <Button
+                                type="submit"
+                                disabled={createToken.isPending || !name.trim() || noConstraintChosen}
+                            >
                                 {createToken.isPending && <Spinner size="sm" className="mr-2" />}
                                 Create Token
                             </Button>
