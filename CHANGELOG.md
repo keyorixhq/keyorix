@@ -3,6 +3,38 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.13.2 — 2026-06-13
+
+Authorization-hardening fixes from a systematic adversarial audit of the access
+control across HTTP, gRPC, and account provisioning. No new features; no config or
+schema changes. Recommended for any deployment that enables gRPC or exposes the
+admin API to non-super-admin personas.
+
+### Fixed
+- **Account-provisioning privilege escalation** (ADR-028). `POST /api/v1/users`
+  (atomic provisioning, which can grant a system role + project assignments) was
+  gated only by `users.read`, so a global read-only persona could create a
+  `system_admin` and escalate to full admin. It now requires `users.write` and
+  authorizes each grant at its scope. The password-reset / account-setup link now
+  also evicts the subject's other sessions, so a self-service reset locks out a
+  stolen session (matching change-password). ([#134])
+- **`/users` and `/groups` route privilege escalation.** `PUT`/`DELETE`/`restore`
+  on `/users/{id}` and all `/groups` CRUD + membership routes inherited only the
+  group-level `users.read`; a read-only persona could edit/delete users and — via
+  group membership, which confers the group's roles — escalate. User mutations now
+  require `users.write`; group CRUD `users.write`; group membership `roles.assign`.
+  ([#135])
+- **gRPC cross-project privilege escalation & install-wide reads.** The Role,
+  User, Audit and System gRPC services authorized against the flat (global)
+  permission union, so a permission held at one project counted everywhere — a
+  project admin could assign roles into any project, and project-scoped read
+  permissions could read install-wide data. Every gRPC RPC now authorizes through
+  scoped RBAC, identical to HTTP. (Affects deployments with gRPC enabled.) ([#136])
+
+[#134]: https://github.com/keyorixhq/keyorix/pull/134
+[#135]: https://github.com/keyorixhq/keyorix/pull/135
+[#136]: https://github.com/keyorixhq/keyorix/pull/136
+
 ## v0.13.1 — 2026-06-12
 
 Security/correctness fixes from an internal audit of the credential & crypto
