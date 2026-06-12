@@ -72,14 +72,23 @@ func (s *Service) Initialize(passphrase string) error {
 	return nil
 }
 
-// buildKeyProvider selects the KEK source from config (ADR-038). The default and
-// the absent/zero value is the passphrase provider, byte-identical to the
-// historical derivation; file/env supply externally-managed raw key material.
+// buildKeyProvider selects the KEK source for this service from its own config.
 func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error) {
-	kp := s.config.KeyProvider
+	return NewKeyProviderFromConfig(s.config, s.keyManager.baseDir, passphrase)
+}
+
+// NewKeyProviderFromConfig builds the KEK source described by an EncryptionConfig
+// (ADR-038/ADR-041). The default and the absent/zero value is the passphrase
+// provider, byte-identical to the historical derivation; file/env supply
+// externally-managed raw key material; the *-kms providers envelope-wrap the KEK
+// with a cloud KMS key. baseDir resolves provider-relative paths (salt /
+// wrapped_key_path). Exported so the KEK-provider migration tool can build a
+// *target* provider from a different config than the running service's.
+func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase string) (crypto.KeyProvider, error) {
+	kp := cfg.KeyProvider
 	switch kp.Type {
 	case "", "password":
-		return crypto.NewPasswordKeyProvider(passphrase, s.keyManager.baseDir, s.config.SaltPath), nil
+		return crypto.NewPasswordKeyProvider(passphrase, baseDir, cfg.SaltPath), nil
 	case "file":
 		return crypto.NewFileKeyProvider(kp.FilePath), nil
 	case "env":
@@ -89,19 +98,19 @@ func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error
 		if err != nil {
 			return nil, err
 		}
-		return crypto.NewKMSKeyProvider(kmsClient, "aws-kms", s.keyManager.baseDir, kp.WrappedKeyPath), nil
+		return crypto.NewKMSKeyProvider(kmsClient, "aws-kms", baseDir, kp.WrappedKeyPath), nil
 	case "gcp-kms":
 		kmsClient, err := gcpkms.New(context.Background(), kp.KMSKeyID)
 		if err != nil {
 			return nil, err
 		}
-		return crypto.NewKMSKeyProvider(kmsClient, "gcp-kms", s.keyManager.baseDir, kp.WrappedKeyPath), nil
+		return crypto.NewKMSKeyProvider(kmsClient, "gcp-kms", baseDir, kp.WrappedKeyPath), nil
 	case "azure-kms":
 		kmsClient, err := azurekms.New(context.Background(), kp.KMSKeyID)
 		if err != nil {
 			return nil, err
 		}
-		return crypto.NewKMSKeyProvider(kmsClient, "azure-kms", s.keyManager.baseDir, kp.WrappedKeyPath), nil
+		return crypto.NewKMSKeyProvider(kmsClient, "azure-kms", baseDir, kp.WrappedKeyPath), nil
 	default:
 		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, aws-kms, gcp-kms, azure-kms)", kp.Type)
 	}

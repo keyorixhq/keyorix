@@ -106,8 +106,36 @@ managed identity, workload identity). Like GCP, the operation names the key, so 
 key is inherently pinned — the ciphertext cannot select a different key. Keyorix now
 offers AWS, GCP, **or** Azure for the wrapping key.
 
+## Addendum (2026-06-12): KEK-provider migration tool
+
+Switching providers used to be a manual DEK re-encryption (see Consequences). It is
+now a single command: **`keyorix encryption migrate-provider --to-type … --confirm`**
+**re-wraps the DEK under a KEK from the target provider without re-encrypting any
+data.** Because the DEK is unchanged — only the key that *wraps* it on disk changes —
+the operation is fast and takes no database lock, unlike `encryption rotate`
+(ADR-010), which generates a new DEK and re-encrypts every row.
+
+Flow: open the on-disk DEK with the **current** provider (from config); build the
+**target** provider from the `--to-*` flags; back up the current wrapped DEK; re-wrap
+the DEK under the target KEK and atomically replace it (write-pending-then-rename);
+then **verify** a fresh service on the target config round-trips a probe value and, on
+any mismatch, **restore the backup** and abort. The target provider's own key
+material (a fresh salt for `password`, the KMS-wrapped KEK blob for the `*-kms`
+providers) is persisted before the DEK file is touched, so a failure leaves the
+active DEK intact. After success the operator updates
+`storage.encryption.key_provider` to the target before the next restart (the command
+prints the exact block). Migrating *to* `password` reads the new passphrase from
+`KEYORIX_NEW_MASTER_PASSWORD`; this also doubles as a master-passphrase rotation
+(same salt, new passphrase) with no data re-encryption.
+
+The re-wrap core (`KeyManager.RewrapDEK`) and the provider builder
+(`encryption.NewKeyProviderFromConfig`, shared with service startup) carry no cloud
+dependency. Verified by unit tests (DEK preserved across re-wrap; the new provider
+unwraps it; the old provider no longer does; a failing provider leaves the active DEK
+intact) and an end-to-end CLI test (password → env migration round-trips a secret and
+keeps a backup).
+
 ## Deferred
 
-AWS `GenerateDataKey` as an optimisation; KMS-key rotation runbook; a re-wrap
-("migrate KEK provider") tool so an existing install can move to KMS without a
-manual DEK re-encryption.
+AWS `GenerateDataKey` as an optimisation; KMS-key rotation runbook (rotating the CMK
+itself within the cloud KMS).
