@@ -130,6 +130,15 @@ func main() {
 	}
 }
 
+// Scheduler advisory-lock keys (ADR-039) — arbitrary distinct constants,
+// namespaced to each background job, so on PostgreSQL only one replica runs a
+// given scheduler per tick. Distinct from the audit-chain key (0x4B455941_55444954).
+const (
+	schedLockAnomaly      int64 = 0x4B455953_414E4F4D // "KEYSANOM"
+	schedLockPurge        int64 = 0x4B455953_50555247 // "KEYSPURG"
+	schedLockDynamicSweep int64 = 0x4B455953_44594E53 // "KEYSDYNS"
+)
+
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
 // and returns an initialized encryption.Service. If encryption is disabled in
 // config, it returns nil without error. For the default "password" provider it
@@ -309,17 +318,22 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("failed to create HTTP router: %w", err)
 	}
 
-	// Start anomaly detection scheduler (runs every hour)
+	// Start anomaly detection scheduler (runs every hour). Single-replica-gated
+	// (ADR-039) so N replicas don't emit N copies of each alert.
 	go func() {
 		detector := core.NewAnomalyDetector(coreService.Storage())
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
-		// Run once immediately on startup
-		_ = detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx))
+		runDetect := func() {
+			_, _ = coreService.Storage().WithSchedulerLock(ctx, schedLockAnomaly, func() error {
+				return detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx))
+			})
+		}
+		runDetect() // run once immediately on startup
 		for {
 			select {
 			case <-ticker.C:
-				_ = detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx))
+				runDetect()
 			case <-ctx.Done():
 				return
 			}
@@ -336,13 +350,20 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			runPurge := func() {
-				cutoff := time.Now().AddDate(0, 0, -retentionDays)
-				if res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff); err != nil {
-					log.Printf("Retention purge error: %v", err)
-				} else if res.Total() > 0 {
-					log.Printf("Retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d, secrets=%d)",
-						res.Total(), res.Users, res.Projects, res.Environments, res.Secrets)
-				}
+				// Single-replica-gated (ADR-039): only one replica runs the purge.
+				_, _ = coreService.Storage().WithSchedulerLock(ctx, schedLockPurge, func() error {
+					cutoff := time.Now().AddDate(0, 0, -retentionDays)
+					res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff)
+					if err != nil {
+						log.Printf("Retention purge error: %v", err)
+						return err
+					}
+					if res.Total() > 0 {
+						log.Printf("Retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d, secrets=%d)",
+							res.Total(), res.Users, res.Projects, res.Environments, res.Secrets)
+					}
+					return nil
+				})
 			}
 			runPurge() // run once on startup
 			for {
@@ -365,11 +386,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			runSweep := func() {
-				if n, err := coreService.RevokeExpiredLeases(ctx, time.Now()); err != nil {
-					log.Printf("Dynamic-secrets sweep error: %v", err)
-				} else if n > 0 {
-					log.Printf("Dynamic-secrets sweep revoked %d expired lease(s)", n)
-				}
+				// Single-replica-gated (ADR-039): one replica revokes per tick, so
+				// replicas don't storm the target DBs revoking the same leases.
+				_, _ = coreService.Storage().WithSchedulerLock(ctx, schedLockDynamicSweep, func() error {
+					n, err := coreService.RevokeExpiredLeases(ctx, time.Now())
+					if err != nil {
+						log.Printf("Dynamic-secrets sweep error: %v", err)
+						return err
+					}
+					if n > 0 {
+						log.Printf("Dynamic-secrets sweep revoked %d expired lease(s)", n)
+					}
+					return nil
+				})
 			}
 			runSweep() // run once on startup
 			for {

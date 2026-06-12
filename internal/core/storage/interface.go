@@ -11,6 +11,13 @@ import (
 // This interface abstracts away the underlying storage implementation,
 // allowing for both local database access and remote API calls
 type Storage interface {
+	// WithSchedulerLock runs fn only if this process can take the named scheduler
+	// lock, so a background job runs on a single replica at a time (HA, ADR-039).
+	// On PostgreSQL it uses a session advisory lock (pg_try_advisory_lock); on
+	// SQLite (single instance) fn always runs. Returns ran=false (and nil error)
+	// when another replica holds the lock — the caller should simply skip this tick.
+	WithSchedulerLock(ctx context.Context, key int64, fn func() error) (ran bool, err error)
+
 	// Project / Environment management
 	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
