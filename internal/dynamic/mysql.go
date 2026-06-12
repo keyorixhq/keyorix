@@ -32,9 +32,26 @@ const mysqlHost = "%"
 
 // mysqlAccountRef renders the quoted account reference 'user'@'%' used in CREATE
 // USER / GRANT / DROP USER. user is crypto/rand from a quote-free alphabet, so it
-// cannot break out of the quotes.
+// cannot break out of the quotes. assertSafeUsername is a fail-closed second layer
+// (MySQL has no pgx.Identifier.Sanitize equivalent): even if the alphabet were
+// ever widened, an unexpected character aborts before any SQL is built.
 func mysqlAccountRef(user string) string {
 	return fmt.Sprintf("'%s'@'%s'", user, mysqlHost)
+}
+
+// assertSafeUsername rejects any username containing a character outside the
+// generated alphabet ([a-z0-9_]), so the fmt.Sprintf'd account name can never be
+// an injection vector regardless of where the name came from.
+func assertSafeUsername(user string) error {
+	if user == "" {
+		return fmt.Errorf("empty mysql username")
+	}
+	for _, r := range user {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+			return fmt.Errorf("refusing unsafe mysql username %q", user)
+		}
+	}
+	return nil
 }
 
 func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate string, ttl time.Duration) (Credential, string, error) {
@@ -49,6 +66,9 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 		return Credential{}, "", err
 	}
 	user := "kx_dyn_" + suffix // 7+16 = 23 chars, within MySQL's 32-char limit
+	if err := assertSafeUsername(user); err != nil {
+		return Credential{}, "", err
+	}
 	password, err := randString(32)
 	if err != nil {
 		return Credential{}, "", err
@@ -75,6 +95,9 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 // Revoke kills the account's live sessions (best-effort), then drops it. DROP USER
 // removes the account and all its privileges. roleName is the bare username.
 func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) error {
+	if err := assertSafeUsername(roleName); err != nil {
+		return err
+	}
 	db, err := openMySQL(ctx, adminDSN)
 	if err != nil {
 		return err

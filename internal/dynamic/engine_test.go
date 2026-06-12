@@ -32,6 +32,21 @@ func TestMySQLAccountRef(t *testing.T) {
 	assert.Equal(t, "GRANT SELECT ON app.* TO 'kx_dyn_abc123'@'%';", grant)
 }
 
+func TestAssertSafeUsername(t *testing.T) {
+	require.NoError(t, assertSafeUsername("kx_dyn_abc123"))
+	for _, bad := range []string{"", "kx'dyn", "kx`dyn", "kx dyn", "kx-dyn", "KXDYN", "kx\\dyn"} {
+		assert.Error(t, assertSafeUsername(bad), "must reject %q", bad)
+	}
+}
+
+func TestMySQLEngine_RevokeRejectsUnsafeRole(t *testing.T) {
+	// Defense-in-depth: a tampered/unsafe role name from storage is rejected before
+	// any SQL is constructed or any connection is opened.
+	err := (&MySQLEngine{}).Revoke(context.Background(), "admin:p@tcp(h:3306)/", "evil'; DROP")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsafe mysql username")
+}
+
 func TestMySQLEngine_InvalidDSNRejected(t *testing.T) {
 	e := &MySQLEngine{}
 	// A malformed DSN is rejected by ParseDSN before any connection attempt.
