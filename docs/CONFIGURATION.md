@@ -124,7 +124,7 @@ storage:
 
     # key_provider — default is "password" when omitted.
     key_provider:
-      type: password              # password | file | env
+      type: password              # password | file | env | aws-kms
 
       # type: file — read raw key material from a path (mounted CSI/sealed
       # secret, KMS sidecar output). Accepts 32 raw bytes, hex, or base64.
@@ -132,14 +132,23 @@ storage:
 
       # type: env — read the KEK (hex or base64) from the named env var's value.
       # env_var: KEYORIX_KEK
+
+      # type: aws-kms — envelope-wrap the KEK with an AWS KMS key (ADR-041); the
+      # wrapping key (CMK) stays in the KMS/HSM. Region + credentials come from the
+      # standard AWS environment (env / instance profile / IRSA), not from here.
+      # kms_key_id: arn:aws:kms:eu-west-1:123456789012:key/abcd-…
+      # wrapped_key_path: keys/kek.kms
 ```
 
 - **`password`** (default): KEK = PBKDF2-SHA256(`KEYORIX_MASTER_PASSWORD`, salt,
   600 000). Requires `KEYORIX_MASTER_PASSWORD`. This is byte-identical to all
   prior releases — existing `dek.key` files keep working.
 - **`file`** / **`env`**: the KEK is externally managed (e.g. injected by a KMS,
-  CSI driver, or sealed/SOPS secret). `KEYORIX_MASTER_PASSWORD` is **not** required
-  in these modes.
+  CSI driver, or sealed/SOPS secret). `KEYORIX_MASTER_PASSWORD` is **not** required.
+- **`aws-kms`** (ADR-041): the KEK is a random key **wrapped by an AWS KMS key**;
+  only the wrapped blob is on disk (`wrapped_key_path`), unwrapped via KMS at
+  startup. The CMK never leaves the KMS. `KEYORIX_MASTER_PASSWORD` is **not**
+  required. Startup needs KMS reachable (fail-closed).
 
 > Rotating the **DEK** (`keyorix encryption rotate`) re-encrypts all rows under a
 > new DEK and is independent of the provider. Rotating the **KEK** itself for

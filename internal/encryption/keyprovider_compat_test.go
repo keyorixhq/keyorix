@@ -2,6 +2,7 @@ package encryption
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -14,6 +15,16 @@ import (
 )
 
 const compatPass = "correct horse battery staple"
+
+// fakeKMS is an in-memory envelope cipher for the KMS-provider round-trip test.
+type fakeKMS struct{}
+
+func (fakeKMS) Encrypt(_ context.Context, pt []byte) ([]byte, error) {
+	return append([]byte("wrapped|"), pt...), nil
+}
+func (fakeKMS) Decrypt(_ context.Context, ct []byte) ([]byte, error) {
+	return ct[len("wrapped|"):], nil
+}
 
 // TestKeyProvider_PasswordIsBackwardCompatible is the load-bearing guarantee of
 // ADR-038: a KeyManager using the new PasswordKeyProvider must unwrap a DEK that
@@ -73,6 +84,16 @@ func TestKeyProvider_EnvRoundTrip(t *testing.T) {
 	raw := bytes.Repeat([]byte{0x5C}, 32)
 	t.Setenv("KX_COMPAT_KEK", base64.StdEncoding.EncodeToString(raw))
 	roundTrip(t, dir, func() crypto.KeyProvider { return crypto.NewEnvKeyProvider("KX_COMPAT_KEK") })
+}
+
+// TestKeyProvider_KMSRoundTrip proves a KMS-envelope KEK wraps/unwraps the DEK
+// end-to-end: the KEK is generated and KMS-wrapped on first init, and a fresh
+// KeyManager over the same wrapped-blob + KMS unwraps the identical DEK.
+func TestKeyProvider_KMSRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	roundTrip(t, dir, func() crypto.KeyProvider {
+		return crypto.NewKMSKeyProvider(fakeKMS{}, "aws-kms", dir, "kek.kms")
+	})
 }
 
 // TestKeyProvider_DEKRotationUnderProvider verifies that rotating the DEK while a

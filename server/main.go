@@ -155,7 +155,7 @@ func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 	if (providerType == "" || providerType == "password") && passphrase == "" {
 		return nil, fmt.Errorf(
 			"encryption is enabled with the password key provider but KEYORIX_MASTER_PASSWORD " +
-				"is not set; set it, or configure storage.encryption.key_provider (file/env)")
+				"is not set; set it, or configure storage.encryption.key_provider (file/env/aws-kms)")
 	}
 
 	baseDir := ""
