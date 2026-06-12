@@ -3,6 +3,21 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.12.0 — 2026-06-12
+
+### Added
+- **MongoDB dynamic-secrets engine** (`backend_type: mongodb`) — the third dynamic-
+  secrets target after PostgreSQL and MySQL, behind the same `CredentialEngine`
+  interface. It mints `kx_dyn_<random>` users in the target's `admin` database
+  (`createUser`) and drops them on revoke (`dropUser`, idempotent). The admin DSN is
+  a MongoDB connection URI and the creation template is a JSON role spec
+  (`{"roles": [{"role": "readWrite", "db": "app"}]}`); the username/password are
+  passed as typed BSON values, so credential injection is structurally impossible.
+  Like MySQL, MongoDB users carry no native expiry, so enable the auto-revoke
+  sweeper for MongoDB targets. ([#127], ADR-035)
+
+[#127]: https://github.com/keyorixhq/keyorix/pull/127
+
 ## v0.11.0 — 2026-06-12
 
 KMS follow-ups: a third cloud backend for the wrapping key, plus zero-downtime
