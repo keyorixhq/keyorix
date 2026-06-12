@@ -81,3 +81,18 @@ audit actoring are identical and already tested.
   enforced — the standard OIDC verification guarantees.
 - A revoked/suspended machine identity disables its federated access too
   (validation re-checks machine state every request, same as opaque tokens).
+
+### Bounded stale-JWKS fallback (hardening, 2026-06-13)
+
+An adversarial audit of this path confirmed the headline attacks are closed (alg
+pinned to asymmetric so `alg:none`/HMAC-with-public-key are rejected; signature
+verified before any claim is trusted; `iss` checked against the allowlist *before*
+the JWKS fetch and the fetch uses the operator-configured `jwks_uri`, not a
+token-derived URL — no SSRF; `aud`/`exp` required; the machine is resolved strictly
+from the verified `(iss,sub)`; no admin bypass). It found one weakness, now fixed:
+the JWKS resolver fell back to a **stale cached key with no age bound** when a
+refetch failed transiently, so a key the issuer rotated out (e.g. because it was
+compromised) could keep verifying tokens indefinitely while the issuer's JWKS
+endpoint was unreachable — defeating rotation-as-revocation. The fallback is now
+bounded to a short grace window past the cache TTL (`jwksStaleGrace`); beyond it a
+failed refetch fails closed.
