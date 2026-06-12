@@ -279,6 +279,16 @@ type Storage interface {
 	CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error
 	// ConsumeMFARecoveryCode marks a matching unused code used and reports whether one was consumed.
 	ConsumeMFARecoveryCode(ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error)
+	// Dynamic secrets (ADR-035).
+	CreateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error)
+	GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
+	ListDynamicSecretConfigs(ctx context.Context, projectID, environmentID uint) ([]*models.DynamicSecretConfig, error)
+	CreateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error)
+	GetDynamicSecretLease(ctx context.Context, leaseID string) (*models.DynamicSecretLease, error)
+	ListDynamicSecretLeases(ctx context.Context, configID uint) ([]*models.DynamicSecretLease, error)
+	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
+	ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error)
+
 	CreateMFAChallenge(ctx context.Context, c *models.MFAChallenge) error
 	// ConsumeMFAChallenge atomically finds an unused, unexpired challenge by token
 	// hash, marks it used, and returns it (or an error if none).

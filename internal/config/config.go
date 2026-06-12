@@ -21,6 +21,10 @@ type Config struct {
 	Security    SecurityConfig   `yaml:"security"`
 	SoftDelete  SoftDeleteConfig `yaml:"soft_delete"`
 	Purge       PurgeConfig      `yaml:"purge"`
+	// DynamicSecrets configures the on-demand database-credentials engine and its
+	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
+	// but no background sweeper runs; enable to auto-revoke leases at expiry.
+	DynamicSecrets DynamicSecretsConfig `yaml:"dynamic_secrets"`
 	// OIDC configures machine-identity federation (ADR-031): trusted issuers
 	// whose JWTs (e.g. Kubernetes projected service-account tokens) Keyorix
 	// verifies and maps to a machine identity. Empty/disabled = OIDC auth off.
@@ -407,6 +411,25 @@ func (c *CredentialDeliveryConfig) DeliveryConfig() delivery.Config {
 type PurgeConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
+}
+
+// DynamicSecretsConfig configures the dynamic-secrets auto-revoke sweep (ADR-035).
+type DynamicSecretsConfig struct {
+	// SweepEnabled turns on the background sweeper that revokes leases past expiry.
+	SweepEnabled bool `yaml:"sweep_enabled"`
+	// SweepInterval is the sweep cadence as a Go duration (e.g. "1m", "5m").
+	SweepInterval string `yaml:"sweep_interval"`
+}
+
+// GetSweepInterval returns the auto-revoke sweep cadence, parsing SweepInterval
+// as a Go duration; defaults to 1m when unset or unparseable (ADR-035).
+func (c DynamicSecretsConfig) GetSweepInterval() time.Duration {
+	if c.SweepInterval != "" {
+		if d, err := time.ParseDuration(c.SweepInterval); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 1 * time.Minute
 }
 
 // GetInterval returns the purge run interval, parsing Schedule as a Go duration

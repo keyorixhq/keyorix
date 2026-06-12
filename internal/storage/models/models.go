@@ -218,6 +218,48 @@ type SecretVersion struct {
 	CreatedAt          time.Time
 }
 
+// DynamicSecretConfig (ADR-035) defines an on-demand database-credential source:
+// Keyorix connects to the target with the (encrypted) admin DSN and runs the
+// creation template to mint a short-lived role per lease. One per (project, env,
+// name).
+type DynamicSecretConfig struct {
+	ID            uint   `gorm:"primaryKey"`
+	Name          string `gorm:"not null"`
+	ProjectID     uint   `gorm:"index"`
+	EnvironmentID uint
+	BackendType   string // "postgres"
+	AdminDSNEnc   []byte // encrypted admin connection string (never returned in API responses)
+	AdminDSNMeta  []byte
+	// CreationTemplate is operator-authored SQL run after the role is created,
+	// with {{name}} substituted by the generated (sanitized) role name. e.g.
+	// "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};"
+	CreationTemplate string
+	DefaultTTLSeconds int
+	CreatedBy         string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// DynamicSecretLease is one issued credential: a short-lived role on the target
+// database. The issued credential is stored encrypted; status drives the
+// auto-revoke sweep (active → revoked/expired/revoke_failed).
+type DynamicSecretLease struct {
+	ID             uint   `gorm:"primaryKey"`
+	ConfigID       uint   `gorm:"index"`
+	LeaseID        string `gorm:"uniqueIndex"` // opaque public identifier
+	ProjectID      uint   // denormalized so the scope resolver/sweep avoid a join
+	EnvironmentID  uint
+	RoleName       string // the generated role/username on the target DB
+	CredentialEnc  []byte // encrypted issued credential (username/password JSON)
+	CredentialMeta []byte
+	Status         string `gorm:"index:idx_lease_status_expiry"` // active | revoked | expired | revoke_failed
+	RevokeReason   string
+	RevokeError    string
+	IssuedAt       time.Time
+	ExpiresAt      time.Time `gorm:"index:idx_lease_status_expiry"`
+	RevokedAt      *time.Time
+}
+
 type SecretAccessLog struct {
 	ID              uint `gorm:"primaryKey"`
 	SecretNodeID    uint

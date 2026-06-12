@@ -1235,3 +1235,30 @@ func (m *MockStorage) CreateMFAChallenge(_ context.Context, _ *models.MFAChallen
 func (m *MockStorage) ConsumeMFAChallenge(_ context.Context, _ string, _ time.Time) (*models.MFAChallenge, error) {
 	return nil, nil
 }
+
+// Dynamic-secrets stubs (the dynamic-secrets core logic is tested against real
+// SQLite + a fake engine, not this mock).
+func (m *MockStorage) CreateDynamicSecretConfig(_ context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error) {
+	return c, nil
+}
+func (m *MockStorage) GetDynamicSecretConfig(_ context.Context, _ uint) (*models.DynamicSecretConfig, error) {
+	return nil, nil
+}
+func (m *MockStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
+	return nil, nil
+}
+func (m *MockStorage) CreateDynamicSecretLease(_ context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error) {
+	return l, nil
+}
+func (m *MockStorage) GetDynamicSecretLease(_ context.Context, _ string) (*models.DynamicSecretLease, error) {
+	return nil, nil
+}
+func (m *MockStorage) ListDynamicSecretLeases(_ context.Context, _ uint) ([]*models.DynamicSecretLease, error) {
+	return nil, nil
+}
+func (m *MockStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) error {
+	return nil
+}
+func (m *MockStorage) ListExpiredActiveLeases(_ context.Context, _ time.Time) ([]*models.DynamicSecretLease, error) {
+	return nil, nil
+}

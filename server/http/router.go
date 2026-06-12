@@ -65,6 +65,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	dashboardHandler := handlers.NewDashboardHandler(coreService)
 	auditHandler := handlers.NewAuditHandler(coreService)
 	rotationPolicyHandler := handlers.NewRotationPolicyHandler(coreService)
+	dynamicSecretHandler := handlers.NewDynamicSecretHandler(coreService)
 	rbacHandler := handlers.NewRBACHandler(coreService)
 	usersRolesHandler := handlers.NewUsersRolesHandler(coreService)
 	notificationHandler := handlers.NewNotificationHandler(coreService)
@@ -280,6 +281,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Post("/", rotationPolicyHandler.Create)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", policyScope)).Put("/{id}", rotationPolicyHandler.Update)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", policyScope)).Delete("/{id}", rotationPolicyHandler.Delete)
+		})
+
+		// Dynamic secrets (ADR-035). Authorization is in-handler against each
+		// config/lease's project/environment scope (reusing secrets.read/write),
+		// so these routes carry no scoped-permission middleware.
+		r.Route("/dynamic-secrets", func(r chi.Router) {
+			r.Post("/configs", dynamicSecretHandler.CreateConfig)
+			r.Get("/configs", dynamicSecretHandler.ListConfigs)
+			r.Get("/configs/{id}", dynamicSecretHandler.GetConfig)
+			r.Post("/configs/{id}/issue", dynamicSecretHandler.IssueLease)
+			r.Get("/configs/{id}/leases", dynamicSecretHandler.ListLeases)
+			r.Post("/leases/{leaseID}/revoke", dynamicSecretHandler.RevokeLease)
 		})
 
 		// Users endpoints (RBAC)
