@@ -245,7 +245,7 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
 
-	for _, backend := range []string{"postgres", "mysql"} {
+	for _, backend := range []string{"postgres", "mysql", "mongodb"} {
 		_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
 			Name: backend + "-cfg", ProjectID: 1, BackendType: backend, AdminDSN: "admin:p@tcp(h:3306)/",
 		})

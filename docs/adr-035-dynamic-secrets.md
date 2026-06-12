@@ -121,3 +121,30 @@ Two of the originally-deferred items shipped together:
   from a config at once, for when a target DB or config is compromised. Same
   `secrets.write` + per-project-MFA authorization as a single revoke; best-effort
   per lease; audited `dynamic_secret.bulk_revoke` with revoked/failed counts.
+
+## Addendum (2026-06-12): MongoDB target engine
+
+A `mongodb` backend now implements the same `CredentialEngine` interface
+(`internal/dynamic/mongodb.go`), selected via the config's `backend_type`. It mints
+`kx_dyn_<random>` users in the target's `admin` database (`createUser`) and drops
+them on revoke (`dropUser`, idempotent — `UserNotFound` is treated as already gone).
+The admin DSN is a MongoDB connection URI; the creation template is an
+operator-authored **JSON role spec**
+(`{"roles": [{"role": "readWrite", "db": "app"}, "clusterMonitor"]}`) rather than an
+SQL grant — the only interface difference from the SQL engines. Username and
+password are `crypto/rand` and are sent as **typed BSON values** to `createUser`, so
+a generated credential can never be interpreted as a command — credential injection
+is structurally impossible; the role spec is the trust boundary.
+
+**Like MySQL**, MongoDB users carry no `VALID UNTIL`, so a lease's TTL is enforced
+**only** by the auto-revoke sweeper (`dynamic_secrets.sweep_enabled`) — enable it
+for MongoDB targets; `Renew` is therefore a no-op (the sweep enforces the new
+expiry). The MongoDB driver (`go.mongodb.org/mongo-driver`, pure Go) links into the
+server; no cloud SDK is added. Keyorix now mints dynamic credentials for
+PostgreSQL, MySQL, **or** MongoDB.
+
+## Deferred (updated)
+
+Cloud-IAM backends (AWS STS / GCP / Azure), which need a non-DSN credential shape
+beyond the current `CredentialEngine` interface; per-config connection pooling for
+the admin connection; gRPC/UI surfaces for lease management.
