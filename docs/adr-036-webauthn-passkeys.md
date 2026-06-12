@@ -82,7 +82,32 @@ itself is covered by the go-webauthn library's own test suite.)
 
 ## Deferred
 
-Discoverable-credential / usernameless passkey login (passwordless first factor);
-"remember this device" trusted-device skip; per-credential UV policy and
-attestation-format allowlists; WebAuthn for the CLI. WebAuthn here is a second
-factor for interactive human login, not for PAT/machine/OIDC paths.
+"Remember this device" trusted-device skip; per-credential UV policy and
+attestation-format allowlists; WebAuthn for the CLI. WebAuthn (second factor or
+passwordless) is for interactive human login, not PAT/machine/OIDC paths.
+
+## Addendum (2026-06-12): passwordless (usernameless) login
+
+The originally-deferred discoverable-credential flow shipped: a registered passkey
+alone can mint a session, no password.
+
+- **Registration** now requests a **discoverable (resident) credential**
+  (`ResidentKeyRequirement: preferred` — backward-compatible; authenticators that
+  can't store a resident key still register for the second-factor flow), so the
+  passkey can later be found usernamelessly.
+- **`POST /auth/webauthn/passwordless/begin`** (public, no body) →
+  `BeginDiscoverableLogin` with **user verification REQUIRED**, so the single
+  passkey gesture proves *possession + user* (MFA-grade) — a complete login, not
+  just a possession check. Returns assertion options + an opaque ceremony session.
+- **`POST /auth/webauthn/passwordless/finish`** `{webauthn_session, credential}` →
+  consumes the single-use session, and a `DiscoverableUserHandler` resolves the
+  user from the assertion's **user handle** (our 8-byte `WebAuthnID`).
+  `ValidatePasskeyLogin` then verifies the assertion **against that user's own
+  stored credentials** — so a forged user handle can't be paired with someone
+  else's credential. The account-state gate (`AccountLoginBlocked`) is enforced
+  here, since there is no password step to gate a suspended account. Audited
+  `webauthn.passwordless_login`.
+
+Because the resulting session belongs to a `WebAuthnEnabled` user, it satisfies
+the `require_mfa` mandate inherently. Still deferred: trusted-device skip,
+per-credential UV/attestation policy, CLI WebAuthn.

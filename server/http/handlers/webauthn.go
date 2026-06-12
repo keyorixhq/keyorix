@@ -179,6 +179,58 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	sendSuccess(w, resp, "Login successful")
 }
 
+// BeginWebAuthnPasswordlessLogin starts a usernameless passkey login. Public, no
+// body — the authenticator reveals which resident passkey/user to use.
+func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if checkLoginRateLimit(ip) {
+		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
+		return
+	}
+	assertion, sessionToken, err := h.coreService.BeginWebAuthnPasswordlessLogin(r.Context())
+	if err != nil {
+		h.writeWebAuthnErr(w, err)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"publicKey":        assertion.Response,
+		"webauthn_session": sessionToken,
+	}, "Complete the passkey assertion to sign in.")
+}
+
+// FinishWebAuthnPasswordlessLogin verifies a discoverable assertion and returns a
+// session. Body: { webauthn_session, credential: <PublicKeyCredential> }.
+func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if checkLoginRateLimit(ip) {
+		sendError(w, "TooManyRequests", "Too many attempts. Try again later.", http.StatusTooManyRequests, nil)
+		return
+	}
+	var body struct {
+		WebAuthnSession string          `json:"webauthn_session"`
+		Credential      json.RawMessage `json:"credential"`
+	}
+	if err := decodeJSON(r, &body); err != nil || len(body.Credential) == 0 {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	parsed, err := protocol.ParseCredentialRequestResponseBytes(body.Credential)
+	if err != nil {
+		sendError(w, "BadRequest", "Invalid assertion", http.StatusBadRequest, nil)
+		return
+	}
+	session, user, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get("User-Agent"), ip, parsed)
+	if err != nil {
+		recordLoginAttempt(ip)
+		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
+		return
+	}
+	resp := h.buildLoginResponse(r.Context(), session, user)
+	go h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get("User-Agent")) // #nosec G118
+	go func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }()                                // #nosec G118
+	sendSuccess(w, resp, "Login successful")
+}
+
 // writeWebAuthnErr maps a core error to an HTTP status: disabled → 501, else 400.
 func (h *AuthHandler) writeWebAuthnErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, core.ErrWebAuthnDisabled) {

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -137,6 +138,50 @@ func TestWebAuthn_DeleteClearsFlagOnLastAndIsUserScoped(t *testing.T) {
 	var user models.User
 	require.NoError(t, db.First(&user, 1).Error)
 	assert.False(t, user.WebAuthnEnabled, "removing the last passkey disables WebAuthn")
+}
+
+func TestWebAuthn_PasswordlessBeginIssuesSession(t *testing.T) {
+	c, _ := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+
+	assertion, token, err := c.BeginWebAuthnPasswordlessLogin(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, token)
+	require.NotEmpty(t, assertion.Response.Challenge)
+	// Usernameless: no specific credential is pre-listed (the authenticator picks).
+	assert.Empty(t, assertion.Response.AllowedCredentials)
+	// User verification is required so the single gesture is MFA-grade.
+	assert.Equal(t, protocol.VerificationRequired, assertion.Response.UserVerification)
+
+	// The ceremony session is stored single-use with the passwordless purpose.
+	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(token), c.now())
+	require.NoError(t, err)
+	assert.Equal(t, "passwordless", sess.Purpose)
+}
+
+func TestWebAuthn_PasswordlessDisabledServerRejects(t *testing.T) {
+	c, _ := newWebAuthnTestCore(t, false)
+	ctx := context.Background()
+	_, _, err := c.BeginWebAuthnPasswordlessLogin(ctx)
+	require.ErrorIs(t, err, ErrWebAuthnDisabled)
+	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, "tok", "ua", "1.2.3.4", nil)
+	require.ErrorIs(t, err, ErrWebAuthnDisabled)
+}
+
+func TestWebAuthn_PasswordlessFinishRejectsWrongPurposeSession(t *testing.T) {
+	c, _ := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	// A session minted for the second-factor flow must not complete a passwordless
+	// login (purpose check runs before any assertion validation).
+	sd := &webauthn.SessionData{Challenge: "x"}
+	tok, err := c.storeWebAuthnSession(ctx, 1, "login", sd)
+	require.NoError(t, err)
+	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, tok, "ua", "1.2.3.4", nil)
+	require.Error(t, err)
+
+	// An unknown/expired session token is rejected too.
+	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, "nope", "ua", "1.2.3.4", nil)
+	require.Error(t, err)
 }
 
 func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {

@@ -82,6 +82,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// single-use challenge from /auth/login plus the ceremony's webauthn_session.
 	r.Post("/auth/webauthn/login/begin", authHandler.BeginWebAuthnLogin)
 	r.Post("/auth/webauthn/login/finish", authHandler.FinishWebAuthnLogin)
+	// Passwordless (usernameless) passkey login — public; a single resident-passkey
+	// gesture with user verification mints a session, no password (ADR-036 addendum).
+	r.Post("/auth/webauthn/passwordless/begin", authHandler.BeginWebAuthnPasswordlessLogin)
+	r.Post("/auth/webauthn/passwordless/finish", authHandler.FinishWebAuthnPasswordlessLogin)
 	r.Post("/system/init", authHandler.InitSystem)
 
 	// Credential-delivery setup links (ADR-028) — unauthenticated: the bearer is the

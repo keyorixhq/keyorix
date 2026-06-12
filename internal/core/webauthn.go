@@ -102,7 +102,14 @@ func (c *KeyorixCore) BeginWebAuthnRegistration(ctx context.Context, userID uint
 	for i := range wu.creds {
 		exclusions = append(exclusions, wu.creds[i].Descriptor())
 	}
-	creation, sd, err := c.webauthnRP.BeginRegistration(wu, webauthn.WithExclusions(exclusions))
+	// Request a discoverable (resident) credential so the passkey can also be used
+	// for passwordless login (ADR-036 addendum). "preferred" is backward-compatible:
+	// authenticators that can't store a resident key still register for the
+	// second-factor flow.
+	creation, sd, err := c.webauthnRP.BeginRegistration(wu,
+		webauthn.WithExclusions(exclusions),
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
+	)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to begin registration: %w", err)
 	}
@@ -271,6 +278,90 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	c.writeAuditEventFull(ctx, "webauthn.login_verified", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s passed WebAuthn", wu.user.Username))
 	return session, wu.user, nil
+}
+
+// BeginWebAuthnPasswordlessLogin starts a discoverable (usernameless) login. No
+// user is identified yet — the authenticator reveals which resident passkey (and
+// thus which user) to use. User verification is REQUIRED, so the single passkey
+// gesture proves both possession and the user (MFA-grade), making this a complete
+// passwordless login. Returns the assertion options + an opaque session token.
+func (c *KeyorixCore) BeginWebAuthnPasswordlessLogin(ctx context.Context) (*protocol.CredentialAssertion, string, error) {
+	if c.webauthnRP == nil {
+		return nil, "", ErrWebAuthnDisabled
+	}
+	assertion, sd, err := c.webauthnRP.BeginDiscoverableLogin(
+		webauthn.WithUserVerification(protocol.VerificationRequired),
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to begin passwordless login: %w", err)
+	}
+	// userID is unknown until finish resolves it from the credential's user handle.
+	token, err := c.storeWebAuthnSession(ctx, 0, "passwordless", sd)
+	if err != nil {
+		return nil, "", err
+	}
+	return assertion, token, nil
+}
+
+// FinishWebAuthnPasswordlessLogin verifies a discoverable assertion, resolves the
+// user from the credential's user handle, enforces account state, and mints a
+// session — a full login from a single passkey, no password.
+func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, error) {
+	if c.webauthnRP == nil {
+		return nil, nil, ErrWebAuthnDisabled
+	}
+	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(sessionToken), c.now())
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid or expired webauthn session")
+	}
+	if sess.Purpose != "passwordless" {
+		return nil, nil, fmt.Errorf("webauthn session mismatch")
+	}
+	var sd webauthn.SessionData
+	if err := json.Unmarshal(sess.Data, &sd); err != nil {
+		return nil, nil, err
+	}
+
+	// The discoverable handler resolves the user from the 8-byte user handle that
+	// the authenticator returns (our WebAuthnID encoding). ValidatePasskeyLogin then
+	// verifies the assertion against that user's stored credentials.
+	var resolved *models.User
+	handler := func(_, userHandle []byte) (webauthn.User, error) {
+		if len(userHandle) != 8 {
+			return nil, fmt.Errorf("unexpected user handle")
+		}
+		uid := uint(binary.BigEndian.Uint64(userHandle))
+		wu, err := c.loadWebAuthnUser(ctx, uid)
+		if err != nil {
+			return nil, err
+		}
+		resolved = wu.user
+		return wu, nil
+	}
+	_, cred, err := c.webauthnRP.ValidatePasskeyLogin(handler, sd, parsed)
+	if err != nil || resolved == nil {
+		c.writeAuditEventFull(ctx, "webauthn.failed", nil, nil, nil, ip, "failed passwordless WebAuthn login")
+		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
+	}
+	// A passwordless login is still a login: a suspended/blocked account is refused
+	// (the password path's AccountLoginBlocked gate has no equivalent here).
+	if AccountLoginBlocked(resolved.AccountState) {
+		return nil, nil, fmt.Errorf("account suspended")
+	}
+	c.persistUpdatedCredential(ctx, resolved.ID, cred)
+
+	session, err := c.mintSession(ctx, resolved.ID, userAgent, ip)
+	if err != nil {
+		return nil, nil, err
+	}
+	uid := resolved.ID
+	if cred.Authenticator.CloneWarning {
+		c.writeAuditEventFull(ctx, "webauthn.clone_warning", &uid, nil, nil, ip,
+			fmt.Sprintf("possible cloned authenticator for user %s (signature counter did not advance)", resolved.Username))
+	}
+	c.writeAuditEventFull(ctx, "webauthn.passwordless_login", &uid, nil, nil, ip,
+		fmt.Sprintf("user %s logged in passwordlessly via WebAuthn", resolved.Username))
+	return session, resolved, nil
 }
 
 // persistUpdatedCredential writes back the credential's advanced signature counter
