@@ -78,6 +78,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// MFA second-step: unauthenticated — the bearer is the single-use challenge
 	// issued by /auth/login, not a session.
 	r.Post("/auth/mfa/verify", authHandler.VerifyMFA)
+	// WebAuthn second-step assertion — also unauthenticated; the bearer is the same
+	// single-use challenge from /auth/login plus the ceremony's webauthn_session.
+	r.Post("/auth/webauthn/login/begin", authHandler.BeginWebAuthnLogin)
+	r.Post("/auth/webauthn/login/finish", authHandler.FinishWebAuthnLogin)
 	r.Post("/system/init", authHandler.InitSystem)
 
 	// Credential-delivery setup links (ADR-028) — unauthenticated: the bearer is the
@@ -151,6 +155,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Post("/auth/mfa/enroll", authHandler.EnrollMFA)
 		r.Post("/auth/mfa/activate", authHandler.ActivateMFA)
 		r.Post("/auth/mfa/disable", authHandler.DisableMFA)
+		// WebAuthn / passkey self-service (acts on the authenticated caller's account).
+		r.Post("/auth/webauthn/register/begin", authHandler.BeginWebAuthnRegistration)
+		r.Post("/auth/webauthn/register/finish", authHandler.FinishWebAuthnRegistration)
+		r.Get("/auth/webauthn/credentials", authHandler.ListWebAuthnCredentials)
+		r.Delete("/auth/webauthn/credentials/{id}", authHandler.DeleteWebAuthnCredential)
 		r.Get("/auth/sessions", authHandler.ListSessions)
 		r.Delete("/auth/sessions/{id}", authHandler.RevokeSession)
 		r.Get("/auth/tokens", patHandler.ListPATs)

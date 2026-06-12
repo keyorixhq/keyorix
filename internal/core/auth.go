@@ -53,9 +53,10 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	if AccountLoginBlocked(user.AccountState) {
 		return nil, nil, fmt.Errorf("account suspended")
 	}
-	// MFA-enabled accounts get no session from the password step — the caller must
-	// complete the second factor (CreateMFAChallenge → VerifyMFALogin).
-	if user.MFAEnabled {
+	// Accounts with any second factor (TOTP or a passkey) get no session from the
+	// password step — the caller must complete it (CreateMFAChallenge →
+	// VerifyMFALogin for TOTP, or the WebAuthn assertion ceremony for a passkey).
+	if user.MFAEnabled || user.WebAuthnEnabled {
 		return nil, user, ErrMFARequired
 	}
 	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)

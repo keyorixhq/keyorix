@@ -58,9 +58,10 @@ type UserContext struct {
 	// requests and "user" otherwise.
 	MachineIdentityID *uint  `json:"machine_identity_id,omitempty"`
 	ActorType         string `json:"actor_type,omitempty"`
-	// MFAEnabled mirrors the user's TOTP-MFA flag; SessionAuth is true only for an
-	// interactive session token (false for PAT / machine / OIDC). Together they
-	// drive EnforceMFAEnrollment, which must not confine non-interactive automation.
+	// MFAEnabled is true when the user has any second factor enabled (TOTP or a
+	// passkey); SessionAuth is true only for an interactive session token (false for
+	// PAT / machine / OIDC). Together they drive EnforceMFAEnrollment, which must not
+	// confine non-interactive automation.
 	MFAEnabled  bool `json:"-"`
 	SessionAuth bool `json:"-"`
 }
@@ -317,6 +318,9 @@ func EnforceAccountRestriction(next http.Handler) http.Handler {
 var mfaEnrollAllowedSuffixes = []string{
 	"/auth/mfa/enroll",
 	"/auth/mfa/activate",
+	"/auth/webauthn/register/begin",
+	"/auth/webauthn/register/finish",
+	"/auth/webauthn/credentials",
 	"/auth/profile",
 }
 
@@ -609,7 +613,7 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		ActorType:    core.ActorTypeUser,
 		AccountState: core.NormalizeAccountState(user.AccountState),
 		Restricted:   core.AccountRestricted(user.AccountState),
-		MFAEnabled:   user.MFAEnabled,
+		MFAEnabled:   user.MFAEnabled || user.WebAuthnEnabled,
 		SessionAuth:  viaSession,
 	}, nil
 }

@@ -138,7 +138,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
 				return
 			}
-			sendSuccess(w, map[string]interface{}{"mfa_required": true, "mfa_challenge": challenge}, "MFA required")
+			// Tell the client which second factors this account can complete, so it
+			// can offer the right step (TOTP code entry vs. a passkey prompt).
+			sendSuccess(w, map[string]interface{}{
+				"mfa_required":      true,
+				"mfa_challenge":     challenge,
+				"totp_available":    user.MFAEnabled,
+				"webauthn_available": user.WebAuthnEnabled,
+			}, "MFA required")
 			return
 		}
 		recordLoginAttempt(ip)

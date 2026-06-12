@@ -293,6 +293,23 @@ type Storage interface {
 	// ConsumeMFAChallenge atomically finds an unused, unexpired challenge by token
 	// hash, marks it used, and returns it (or an error if none).
 	ConsumeMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error)
+	// GetActiveMFAChallenge finds an unused, unexpired challenge by token hash
+	// WITHOUT consuming it (used to resolve the user at WebAuthn login-begin; the
+	// challenge is consumed later, atomically, at login-finish).
+	GetActiveMFAChallenge(ctx context.Context, tokenHash string, now time.Time) (*models.MFAChallenge, error)
+
+	// WebAuthn / passkeys (ADR-036).
+	CreateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
+	ListWebAuthnCredentials(ctx context.Context, userID uint) ([]*models.WebAuthnCredential, error)
+	GetWebAuthnCredentialByCredID(ctx context.Context, credentialID []byte) (*models.WebAuthnCredential, error)
+	UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
+	DeleteWebAuthnCredential(ctx context.Context, userID, id uint) error
+	CountWebAuthnCredentials(ctx context.Context, userID uint) (int64, error)
+	SetUserWebAuthnEnabled(ctx context.Context, userID uint, enabled bool) error
+	CreateWebAuthnSession(ctx context.Context, s *models.WebAuthnSession) error
+	// ConsumeWebAuthnSession atomically finds an unused, unexpired ceremony session
+	// by token hash, marks it used, and returns it (or an error if none).
+	ConsumeWebAuthnSession(ctx context.Context, tokenHash string, now time.Time) (*models.WebAuthnSession, error)
 
 	// Personal Access Token Management (ADR-027) — user-owned bearer credentials.
 	CreatePersonalAccessToken(ctx context.Context, t *models.PersonalAccessToken) (*models.PersonalAccessToken, error)

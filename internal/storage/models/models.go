@@ -82,7 +82,11 @@ type User struct {
 	// MFAEnabled is true once the user has activated TOTP MFA; login then requires
 	// a one-time code (see MFASecret / MFAChallenge).
 	MFAEnabled bool `gorm:"default:false"`
-	CreatedAt  time.Time
+	// WebAuthnEnabled is true once the user has registered at least one passkey /
+	// security key (ADR-036); like MFAEnabled it makes login a two-step flow, with
+	// a WebAuthn assertion as the second factor (see WebAuthnCredential).
+	WebAuthnEnabled bool `gorm:"default:false"`
+	CreatedAt       time.Time
 	UpdatedAt  time.Time
 	DeletedAt  gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
 }
@@ -115,6 +119,37 @@ type MFAChallenge struct {
 	ID        uint   `gorm:"primaryKey"`
 	UserID    uint   `gorm:"index"`
 	TokenHash string `gorm:"uniqueIndex"`
+	ExpiresAt time.Time
+	UsedAt    *time.Time
+	CreatedAt time.Time
+}
+
+// WebAuthnCredential is a registered passkey / FIDO2 authenticator (ADR-036).
+// CredentialBlob is the JSON-serialized go-webauthn Credential (public key,
+// attestation, sign count, transports) — the library's canonical record, updated
+// on each login to track the signature counter for clone detection. CredentialID
+// is the raw credential ID (indexed) used to look the row up at assertion time.
+type WebAuthnCredential struct {
+	ID             uint   `gorm:"primaryKey"`
+	UserID         uint   `gorm:"index"`
+	CredentialID   []byte `gorm:"uniqueIndex"`
+	Name           string // user-supplied label, e.g. "YubiKey 5C" or "MacBook Touch ID"
+	CredentialBlob []byte // JSON of webauthn.Credential
+	CreatedAt      time.Time
+	LastUsedAt     *time.Time
+}
+
+// WebAuthnSession persists the in-flight ceremony state (the go-webauthn
+// SessionData: challenge, allowed credentials, UV requirement) between the begin
+// and finish steps of a registration or login. Single-use and short-lived, keyed
+// by the SHA-256 hash of an opaque token (the raw token is never stored) — the
+// same hash-at-rest pattern as MFAChallenge. Purpose is "register" or "login".
+type WebAuthnSession struct {
+	ID        uint   `gorm:"primaryKey"`
+	UserID    uint   `gorm:"index"`
+	TokenHash string `gorm:"uniqueIndex"`
+	Purpose   string
+	Data      []byte // JSON of webauthn.SessionData
 	ExpiresAt time.Time
 	UsedAt    *time.Time
 	CreatedAt time.Time
