@@ -47,7 +47,7 @@ func (v *Validator) Validate(s interface{}) error {
 	v.errors = make(map[string][]string)
 
 	val := reflect.ValueOf(s)
-	if val.Kind() == reflect.Ptr {
+	if val.Kind() == reflect.Pointer {
 		val = val.Elem()
 	}
 
@@ -167,7 +167,7 @@ func (v *Validator) isEmpty(field reflect.Value) bool {
 		return field.String() == ""
 	case reflect.Slice, reflect.Map, reflect.Array:
 		return field.Len() == 0
-	case reflect.Ptr, reflect.Interface:
+	case reflect.Pointer, reflect.Interface:
 		return field.IsNil()
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return field.Int() == 0

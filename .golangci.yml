@@ -10,9 +10,28 @@ linters:
     - errcheck
     - staticcheck
     - unused
-    - goconst
     - ineffassign
-    - gosec 
+  # goconst (500+ repeated-string-literal hits, never adopted) and gosec (run
+  # separately by the dedicated gosec job in CI, with the repo's own config) are
+  # intentionally not enabled here — keeping the linters that catch real bugs.
+  settings:
+    staticcheck:
+      # Keep the SA (bug) and S (simplification) checks. Mirror golangci-lint's
+      # default ST* exclusions (the repo uses per-file `// name.go — …` comments,
+      # not `// Package x …`), and additionally drop the QFxxxx "quickfix"
+      # refactoring suggestions, which are stylistic, not bugs.
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1001
+        - -QF1003
+        - -QF1008
+
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0

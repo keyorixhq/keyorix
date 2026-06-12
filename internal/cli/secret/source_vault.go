@@ -83,7 +83,7 @@ func (c *vaultClient) walk(ctx context.Context, prefix string, out *[]secretEntr
 		return c.readLeaf(ctx, prefix, out)
 	}
 	for _, k := range keys {
-		child := k
+		var child string
 		if prefix != "" {
 			child = prefix + "/" + strings.TrimSuffix(k, "/")
 		} else {

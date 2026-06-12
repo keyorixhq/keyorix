@@ -59,7 +59,7 @@ func (e *MySQLEngine) Issue(ctx context.Context, adminDSN, creationTemplate stri
 	if err != nil {
 		return Credential{}, "", err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	suffix, err := randString(16)
 	if err != nil {
@@ -102,7 +102,7 @@ func (e *MySQLEngine) Revoke(ctx context.Context, adminDSN, roleName string) err
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	killUserConnections(ctx, db, roleName)
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS %s", mysqlAccountRef(roleName))); err != nil {
@@ -141,7 +141,7 @@ func killUserConnections(ctx context.Context, db *sql.DB, user string) {
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
