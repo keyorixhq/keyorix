@@ -25,6 +25,10 @@ type Config struct {
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
 	DynamicSecrets DynamicSecretsConfig `yaml:"dynamic_secrets"`
+	// WebAuthn configures passkey / FIDO2 second-factor auth (ADR-036). Disabled
+	// (zero value) = passkey endpoints return "not enabled"; enable + set the RP ID
+	// and origins to allow registration and assertion.
+	WebAuthn WebAuthnConfig `yaml:"webauthn"`
 	// OIDC configures machine-identity federation (ADR-031): trusted issuers
 	// whose JWTs (e.g. Kubernetes projected service-account tokens) Keyorix
 	// verifies and maps to a machine identity. Empty/disabled = OIDC auth off.
@@ -411,6 +415,16 @@ func (c *CredentialDeliveryConfig) DeliveryConfig() delivery.Config {
 type PurgeConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
+}
+
+// WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the
+// effective domain (e.g. "keyorix.example.com", no scheme/port); RPOrigins are the
+// full origins permitted to authenticate (e.g. "https://keyorix.example.com").
+type WebAuthnConfig struct {
+	Enabled       bool     `yaml:"enabled"`
+	RPID          string   `yaml:"rp_id"`
+	RPDisplayName string   `yaml:"rp_display_name"`
+	RPOrigins     []string `yaml:"rp_origins"`
 }
 
 // DynamicSecretsConfig configures the dynamic-secrets auto-revoke sweep (ADR-035).

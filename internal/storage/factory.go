@@ -265,6 +265,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	mfaChallengeExists := tableExists(db, "mfa_challenges")
 	dynConfigExists := tableExists(db, "dynamic_secret_configs")
 	dynLeaseExists := tableExists(db, "dynamic_secret_leases")
+	webauthnCredExists := tableExists(db, "web_authn_credentials")
+	webauthnSessExists := tableExists(db, "web_authn_sessions")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -306,6 +308,18 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !dynLeaseExists {
 		if err := db.AutoMigrate(&models.DynamicSecretLease{}); err != nil {
 			return fmt.Errorf("failed to migrate dynamic_secret_leases table: %w", err)
+		}
+	}
+
+	// Create the WebAuthn tables if missing (ADR-036, additive, safe on existing DBs).
+	if !webauthnCredExists {
+		if err := db.AutoMigrate(&models.WebAuthnCredential{}); err != nil {
+			return fmt.Errorf("failed to migrate web_authn_credentials table: %w", err)
+		}
+	}
+	if !webauthnSessExists {
+		if err := db.AutoMigrate(&models.WebAuthnSession{}); err != nil {
+			return fmt.Errorf("failed to migrate web_authn_sessions table: %w", err)
 		}
 	}
 

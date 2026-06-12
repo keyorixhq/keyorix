@@ -1262,3 +1262,31 @@ func (m *MockStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.Dyna
 func (m *MockStorage) ListExpiredActiveLeases(_ context.Context, _ time.Time) ([]*models.DynamicSecretLease, error) {
 	return nil, nil
 }
+
+// WebAuthn stubs (the WebAuthn core logic is tested against real SQLite, not this mock).
+func (m *MockStorage) GetActiveMFAChallenge(_ context.Context, _ string, _ time.Time) (*models.MFAChallenge, error) {
+	return nil, nil
+}
+func (m *MockStorage) CreateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
+	return nil
+}
+func (m *MockStorage) ListWebAuthnCredentials(_ context.Context, _ uint) ([]*models.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte) (*models.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
+	return nil
+}
+func (m *MockStorage) DeleteWebAuthnCredential(_ context.Context, _, _ uint) error { return nil }
+func (m *MockStorage) CountWebAuthnCredentials(_ context.Context, _ uint) (int64, error) {
+	return 0, nil
+}
+func (m *MockStorage) SetUserWebAuthnEnabled(_ context.Context, _ uint, _ bool) error { return nil }
+func (m *MockStorage) CreateWebAuthnSession(_ context.Context, _ *models.WebAuthnSession) error {
+	return nil
+}
+func (m *MockStorage) ConsumeWebAuthnSession(_ context.Context, _ string, _ time.Time) (*models.WebAuthnSession, error) {
+	return nil, nil
+}

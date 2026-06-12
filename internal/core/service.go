@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
@@ -34,6 +35,9 @@ type KeyorixCore struct {
 	// dynamicEngineFactory resolves a dynamic-secrets credential engine by backend
 	// type (ADR-035). nil = the real dynamic.New; overridable in tests with a fake.
 	dynamicEngineFactory func(string) (dynamic.CredentialEngine, error)
+	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
+	// Set from config at startup via SetWebAuthn.
+	webauthnRP *webauthn.WebAuthn
 	now                  func() time.Time // For testability
 	passwordPolicy PasswordPolicy
 	auditForwarder AuditForwarder
@@ -144,6 +148,15 @@ func (c *KeyorixCore) dynamicEngine(backendType string) (dynamic.CredentialEngin
 	}
 	return dynamic.New(backendType)
 }
+
+// SetWebAuthn wires the WebAuthn relying party (ADR-036). The server calls this
+// at startup when the install configures a webauthn block. nil disables passkeys.
+func (c *KeyorixCore) SetWebAuthn(rp *webauthn.WebAuthn) {
+	c.webauthnRP = rp
+}
+
+// WebAuthnEnabled reports whether passkey support is configured on this server.
+func (c *KeyorixCore) WebAuthnEnabled() bool { return c.webauthnRP != nil }
 
 // SetPasswordPolicy overrides the password policy (which defaults to
 // DefaultPasswordPolicy). The server calls this at startup when the install

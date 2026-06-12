@@ -51,7 +51,7 @@ for the secrets it manages:
   tokens with a hard absolute-lifetime ceiling; a configurable password policy
   (length, complexity, common-password denylist, history, max-age); federated
   authentication for machine identities via **OIDC / Kubernetes-JWT** (signed,
-  audience- and issuer-validated). **TOTP MFA (ADR-034) is shipped** — per-user opt-in second factor with two-step login + recovery codes; WebAuthn/passkeys remain Roadmap.
+  audience- and issuer-validated). **TOTP MFA (ADR-034) and phishing-resistant WebAuthn/passkeys (ADR-036) are shipped** — per-user opt-in second factors with two-step login + recovery codes; either satisfies a deployment-wide `security.require_mfa` mandate.
 
 **Status:** Shipped.
 
@@ -126,7 +126,7 @@ audit trail that evidences that the operator's procedures are followed.
 
 | ENS measure family | Dimension(s) | Keyorix capability | Status |
 |--------------------|--------------|--------------------|--------|
-| `op.acc` — Control de acceso | C, A | Scoped RBAC, machine identities, membership lifecycle, password policy, OIDC, TOTP MFA | Shipped |
+| `op.acc` — Control de acceso | C, A | Scoped RBAC, machine identities, membership lifecycle, password policy, OIDC, TOTP MFA, WebAuthn/passkeys | Shipped |
 | `op.exp.8` — Registro de actividad | T, I | Full audit trail + tamper-evident hash chain + SIEM | Shipped |
 | Protección de claves criptográficas | C, I | Envelope encryption, KEK/DEK, rotation sweep, key backup | Shipped |
 | `op.mon` — Monitorización | T | Anomaly detection | Shipped |

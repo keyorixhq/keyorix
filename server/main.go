@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/audit/siem"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -257,7 +258,30 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("OIDC federation enabled for %d issuer(s)", len(oidc.Issuers))
 	}
 
+	// Wire WebAuthn / passkeys (ADR-036) when configured. A bad RP config (no
+	// origins / invalid RP ID) fails loud rather than silently disabling passkeys.
+	if wa := cfg.WebAuthn; wa.Enabled {
+		rp, werr := webauthn.New(&webauthn.Config{
+			RPID:          wa.RPID,
+			RPDisplayName: cmpOr(wa.RPDisplayName, "Keyorix"),
+			RPOrigins:     wa.RPOrigins,
+		})
+		if werr != nil {
+			return nil, nil, fmt.Errorf("failed to init WebAuthn: %w", werr)
+		}
+		coreService.SetWebAuthn(rp)
+		log.Printf("WebAuthn enabled (RP ID %q, %d origin(s))", wa.RPID, len(wa.RPOrigins))
+	}
+
 	return coreService, encSvc, nil
+}
+
+// cmpOr returns a if non-empty, else b (a tiny local helper to avoid a new import).
+func cmpOr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 func startHTTPServer(ctx context.Context, cfg *config.Config) error {
