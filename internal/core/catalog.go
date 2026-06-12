@@ -25,8 +25,10 @@ func (c *KeyorixCore) GetProject(ctx context.Context, id uint) (*models.Project,
 	return c.storage.GetProject(ctx, id)
 }
 
-// UpdateProject updates an existing project's name and description.
-func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, description string) (*models.Project, error) {
+// UpdateProject updates an existing project's name and description, and — when
+// requireMFA is non-nil — its per-project MFA requirement (ADR-037). A nil
+// requireMFA leaves the flag unchanged (backward-compatible).
+func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, description string, requireMFA *bool) (*models.Project, error) {
 	if name == "" {
 		return nil, fmt.Errorf("project name is required")
 	}
@@ -34,9 +36,36 @@ func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, descript
 	if err != nil {
 		return nil, err
 	}
+	mfaChanged := requireMFA != nil && *requireMFA != project.RequireMFA
 	project.Name = name
 	project.Description = description
-	return c.storage.UpdateProject(ctx, project)
+	if requireMFA != nil {
+		project.RequireMFA = *requireMFA
+	}
+	updated, err := c.storage.UpdateProject(ctx, project)
+	if err != nil {
+		return nil, err
+	}
+	if mfaChanged {
+		pid := id
+		state := "disabled"
+		if *requireMFA {
+			state = "enabled"
+		}
+		c.writeAuditEventFull(ctx, "project.mfa_requirement_"+state, nil, nil, &pid, "",
+			fmt.Sprintf("per-project MFA requirement %s for project %q", state, updated.Name))
+	}
+	return updated, nil
+}
+
+// ProjectRequiresMFA reports whether the project enforces a per-project MFA
+// requirement (ADR-037). A missing project is treated as not requiring MFA.
+func (c *KeyorixCore) ProjectRequiresMFA(ctx context.Context, projectID uint) (bool, error) {
+	project, err := c.storage.GetProject(ctx, projectID)
+	if err != nil {
+		return false, err
+	}
+	return project.RequireMFA, nil
 }
 
 // DeleteProject deletes a project by ID.

@@ -133,7 +133,10 @@ authentication).
   rest), and **phishing-resistant WebAuthn / passkeys** (origin-bound public-key
   assertions, no exportable shared secret, FIDO clone detection). Either factor
   satisfies a `security.require_mfa` mandate (interactive sessions without a second
-  factor are confined to enrolment; PAT / machine / OIDC are exempt).
+  factor are confined to enrolment; PAT / machine / OIDC are exempt). The mandate
+  is enforceable **deployment-wide or per-project** (ADR-037: a sensitive project
+  can require MFA even when the global policy is off), giving risk-proportionate
+  step-up.
 
 **Status:** Shipped.
 
