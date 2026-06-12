@@ -26,13 +26,31 @@ func NewDynamicSecretHandler(coreService *core.KeyorixCore) *DynamicSecretHandle
 	return &DynamicSecretHandler{coreService: coreService}
 }
 
-func (h *DynamicSecretHandler) authorize(r *http.Request, perm string, scope core.Scope) bool {
+// authorize checks both RBAC and the per-project MFA policy (ADR-037). It returns
+// the failure mode so the caller can send the right response: permission denied
+// vs. MFA required.
+func (h *DynamicSecretHandler) authorize(r *http.Request, perm string, scope core.Scope) (ok bool, mfaBlocked bool) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
-		return false
+		return false, false
 	}
 	allowed, err := h.coreService.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), perm, scope)
-	return err == nil && allowed
+	if err != nil || !allowed {
+		return false, false
+	}
+	if middleware.ProjectMFABlocked(r, h.coreService, scope.ProjectID) {
+		return false, true
+	}
+	return true, false
+}
+
+// denyAuthz writes the appropriate response for a failed authorize().
+func (h *DynamicSecretHandler) denyAuthz(w http.ResponseWriter, mfaBlocked bool) {
+	if mfaBlocked {
+		middleware.WriteProjectMFARequired(w)
+		return
+	}
+	sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
 }
 
 // CreateConfig handles POST /api/v1/dynamic-secrets/configs
@@ -56,8 +74,8 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	scope := core.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if !h.authorize(r, "secrets.write", scope) {
-		sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	if ok, mfaBlocked := h.authorize(r, "secrets.write", scope); !ok {
+		h.denyAuthz(w, mfaBlocked)
 		return
 	}
 	cfg, err := h.coreService.CreateDynamicSecretConfig(r.Context(), &core.CreateDynamicSecretConfigRequest{
@@ -84,8 +102,8 @@ func (h *DynamicSecretHandler) ListConfigs(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if !h.authorize(r, "secrets.read", core.Scope{ProjectID: projectID, EnvironmentID: environmentID}) {
-		sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	if ok, mfaBlocked := h.authorize(r, "secrets.read", core.Scope{ProjectID: projectID, EnvironmentID: environmentID}); !ok {
+		h.denyAuthz(w, mfaBlocked)
 		return
 	}
 	cfgs, err := h.coreService.ListDynamicSecretConfigs(r.Context(), projectID, environmentID)
@@ -163,8 +181,8 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 		sendError(w, "NotFound", "Lease not found", http.StatusNotFound, nil)
 		return
 	}
-	if !h.authorize(r, "secrets.write", core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}) {
-		sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	if ok, mfaBlocked := h.authorize(r, "secrets.write", core.Scope{ProjectID: lease.ProjectID, EnvironmentID: lease.EnvironmentID}); !ok {
+		h.denyAuthz(w, mfaBlocked)
 		return
 	}
 	if err := h.coreService.RevokeLease(r.Context(), leaseID, userCtx.UserID, "manual"); err != nil {
@@ -188,8 +206,8 @@ func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *ht
 		sendError(w, "NotFound", "Config not found", http.StatusNotFound, nil)
 		return nil, false
 	}
-	if !h.authorize(r, perm, core.Scope{ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID}) {
-		sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+	if ok, mfaBlocked := h.authorize(r, perm, core.Scope{ProjectID: cfg.ProjectID, EnvironmentID: cfg.EnvironmentID}); !ok {
+		h.denyAuthz(w, mfaBlocked)
 		return nil, false
 	}
 	return cfg, true

@@ -10,9 +10,14 @@ type Project struct {
 	ID          uint   `gorm:"primaryKey"`
 	Name        string `gorm:"uniqueIndex;not null"`
 	Description string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeletedAt   gorm.DeletedAt `gorm:"index"` // soft delete
+	// RequireMFA, when true, denies interactive (session-authenticated) callers
+	// without a second factor access to this project's scoped resources, even when
+	// the deployment-wide security.require_mfa policy is off (ADR-037). Non-
+	// interactive credentials (PAT / machine / OIDC) are exempt, like the global policy.
+	RequireMFA bool `gorm:"default:false"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  gorm.DeletedAt `gorm:"index"` // soft delete
 }
 
 type Environment struct {

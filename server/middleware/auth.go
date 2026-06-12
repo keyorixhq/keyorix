@@ -266,6 +266,12 @@ func RequireScopedPermission(permission string, resolve ScopeResolver) func(http
 				forbiddenResponse(w, "Insufficient permissions")
 				return
 			}
+			// Per-project MFA policy (ADR-037): deny an interactive session without a
+			// second factor access to a project that requires MFA.
+			if ProjectMFABlocked(r, cs, scope.ProjectID) {
+				projectMFARequiredResponse(w)
+				return
+			}
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -633,6 +639,42 @@ func forbiddenResponse(w http.ResponseWriter, message string) {
 	w.WriteHeader(http.StatusForbidden)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error": "Forbidden", "message": message, "code": http.StatusForbidden,
+	})
+}
+
+// ProjectMFABlocked reports whether the request must be denied by a project's
+// per-project MFA policy (ADR-037): true only when the caller is an interactive
+// session WITHOUT a second factor and the scoped project requires MFA. The
+// project lookup is skipped unless the caller could actually be subject to the
+// policy, so MFA-backed and non-interactive (PAT / machine / OIDC) callers pay no
+// cost and stay exempt — consistent with EnforceMFAEnrollment. Handlers that
+// authorize in-handler (not via RequireScopedPermission) call this too, so the
+// policy is enforced uniformly across every project-scoped path.
+func ProjectMFABlocked(r *http.Request, cs *core.KeyorixCore, projectID uint) bool {
+	if projectID == 0 || cs == nil {
+		return false
+	}
+	userCtx := GetUserFromContext(r.Context())
+	if userCtx == nil || !userCtx.SessionAuth || userCtx.MFAEnabled {
+		return false
+	}
+	req, err := cs.ProjectRequiresMFA(r.Context(), projectID)
+	return err == nil && req
+}
+
+// WriteProjectMFARequired writes the 403 ProjectMFARequired response (exported so
+// in-handler authorizers can emit the same body as the scoped-permission path).
+func WriteProjectMFARequired(w http.ResponseWriter) { projectMFARequiredResponse(w) }
+
+// projectMFARequiredResponse sends a 403 with a distinct code so the client can
+// prompt the user to enrol a second factor (ADR-037 per-project MFA policy).
+func projectMFARequiredResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":   "ProjectMFARequired",
+		"message": "This project requires multi-factor authentication. Enrol a second factor to access it.",
+		"code":    http.StatusForbidden,
 	})
 }
 

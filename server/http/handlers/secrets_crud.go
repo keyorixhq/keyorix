@@ -55,6 +55,13 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
 		return
 	}
+	// Per-project MFA policy (ADR-037): create carries no path scope for the
+	// scoped-permission middleware, so enforce it here too (same as the other
+	// in-handler-authorized mutations).
+	if middleware.ProjectMFABlocked(r, h.coreService, scope.ProjectID) {
+		middleware.WriteProjectMFARequired(w)
+		return
+	}
 
 	req := &core.CreateSecretRequest{
 		Name:          reqBody.Name,

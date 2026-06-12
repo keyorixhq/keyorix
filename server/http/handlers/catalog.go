@@ -127,12 +127,13 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		RequireMFA  *bool  `json:"require_mfa"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
 		return
 	}
-	project, err := h.coreService.UpdateProject(r.Context(), uint(id), body.Name, body.Description)
+	project, err := h.coreService.UpdateProject(r.Context(), uint(id), body.Name, body.Description, body.RequireMFA)
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
 		return

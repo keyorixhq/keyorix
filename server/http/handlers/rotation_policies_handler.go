@@ -141,6 +141,11 @@ func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
 		return
 	}
+	// Per-project MFA policy (ADR-037), same as the scoped-permission middleware.
+	if middleware.ProjectMFABlocked(r, h.coreService, scope.ProjectID) {
+		middleware.WriteProjectMFARequired(w)
+		return
+	}
 
 	req := &core.CreateRotationPolicyRequest{
 		Name:            reqBody.Name,
