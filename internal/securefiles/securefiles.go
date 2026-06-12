@@ -91,7 +91,7 @@ func SecureWriteFileSync(baseDir, path string, data []byte, perm os.FileMode) er
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside
 	if err != nil {
 		return err
 	}
