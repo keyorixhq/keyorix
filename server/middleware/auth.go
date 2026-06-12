@@ -58,6 +58,11 @@ type UserContext struct {
 	// requests and "user" otherwise.
 	MachineIdentityID *uint  `json:"machine_identity_id,omitempty"`
 	ActorType         string `json:"actor_type,omitempty"`
+	// MFAEnabled mirrors the user's TOTP-MFA flag; SessionAuth is true only for an
+	// interactive session token (false for PAT / machine / OIDC). Together they
+	// drive EnforceMFAEnrollment, which must not confine non-interactive automation.
+	MFAEnabled  bool `json:"-"`
+	SessionAuth bool `json:"-"`
 }
 
 // ActorKind returns the principal's actor type ("user" or "machine_identity"),
@@ -307,6 +312,45 @@ func EnforceAccountRestriction(next http.Handler) http.Handler {
 	})
 }
 
+// mfaEnrollAllowedSuffixes are the only endpoints an interactive user who must
+// still enrol MFA (the security.require_mfa policy is on) may reach, beyond logout.
+var mfaEnrollAllowedSuffixes = []string{
+	"/auth/mfa/enroll",
+	"/auth/mfa/activate",
+	"/auth/profile",
+}
+
+// EnforceMFAEnrollment confines an interactive (session-authenticated) human user
+// who has not enabled MFA to the MFA-enrolment endpoints when the deployment
+// requires MFA (security.require_mfa). Non-interactive credentials — personal
+// access tokens, machine tokens, OIDC — are deliberately exempt so automation is
+// not broken; password-restricted sessions are handled first by
+// EnforceAccountRestriction. Applied after Authentication in the authed group.
+func EnforceMFAEnrollment(requireMFA bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			userCtx := GetUserFromContext(r.Context())
+			if !requireMFA || userCtx == nil || !userCtx.SessionAuth || userCtx.MFAEnabled {
+				next.ServeHTTP(w, r)
+				return
+			}
+			for _, suffix := range mfaEnrollAllowedSuffixes {
+				if strings.HasSuffix(r.URL.Path, suffix) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":   "MFAEnrollmentRequired",
+				"message": "This deployment requires multi-factor authentication. Enrol MFA to continue.",
+				"code":    http.StatusForbidden,
+			})
+		})
+	}
+}
+
 // ScopeGlobal always resolves to the global scope.
 func ScopeGlobal(_ *http.Request, _ *core.KeyorixCore) (core.Scope, error) {
 	return core.Scope{}, nil
@@ -543,14 +587,16 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 	// Route by prefix: PATs authenticate AS their owning user, resolving to the same
 	// UserContext shape as a session — so authorization downstream is identical.
 	var (
-		user      *models.User
-		roleNames []string
-		err       error
+		user       *models.User
+		roleNames  []string
+		err        error
+		viaSession bool
 	)
 	if strings.HasPrefix(token, patTokenPrefix) {
 		user, roleNames, err = validator.ValidatePATToken(ctx, token)
 	} else {
 		user, roleNames, err = validator.ValidateSessionToken(ctx, token)
+		viaSession = true
 	}
 	if err != nil {
 		return nil, err
@@ -563,6 +609,8 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		ActorType:    core.ActorTypeUser,
 		AccountState: core.NormalizeAccountState(user.AccountState),
 		Restricted:   core.AccountRestricted(user.AccountState),
+		MFAEnabled:   user.MFAEnabled,
+		SessionAuth:  viaSession,
 	}, nil
 }
 

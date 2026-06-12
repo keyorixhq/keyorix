@@ -68,7 +68,7 @@ e.g. Kubernetes projected tokens — is a roadmap item.)
 **Do you support MFA?**
 Yes — per-user opt-in **TOTP** (RFC 6238) second factor with a two-step login,
 single-use recovery codes, and the TOTP secret encrypted at rest (ADR-034).
-WebAuthn/passkeys and admin-enforced MFA policy are on the roadmap. Password
+A deployment can mandate MFA for interactive login (`security.require_mfa`); WebAuthn/passkeys are on the roadmap. Password
 policy, short-lived sessions with an absolute lifetime ceiling, and first-login
 password-change enforcement are also shipped.
 
@@ -133,7 +133,7 @@ issues. See [`../SECURITY.md`](../SECURITY.md) for details.
 
 We would rather tell you these up front than have you find them:
 
-- **WebAuthn / passkeys** and admin-enforced MFA policy — roadmap (TOTP MFA itself is shipped, ADR-034).
+- **WebAuthn / passkeys** — roadmap. (TOTP MFA is shipped and can be mandated deployment-wide via `security.require_mfa`, ADR-034.)
 - **Audit-log tamper-evidence** (cryptographic chaining / WORM) — roadmap;
   integrity today relies on operator-controlled PostgreSQL.
 - **Automated purge schedulers** for soft-deleted records — config-present, not

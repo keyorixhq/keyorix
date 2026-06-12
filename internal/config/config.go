@@ -243,6 +243,10 @@ type SecurityConfig struct {
 	EnableFilePermissionCheck  bool `yaml:"enable_file_permission_check"`
 	AutoFixFilePermissions     bool `yaml:"auto_fix_file_permissions"`
 	AllowUnsafeFilePermissions bool `yaml:"allow_unsafe_file_permissions"`
+	// RequireMFA mandates TOTP MFA for interactive login: a session-authenticated
+	// user without MFA enabled is confined to the MFA-enrolment endpoints until
+	// they enrol. Non-interactive credentials (PAT/machine/OIDC) are exempt.
+	RequireMFA bool `yaml:"require_mfa"`
 }
 
 type SoftDeleteConfig struct {

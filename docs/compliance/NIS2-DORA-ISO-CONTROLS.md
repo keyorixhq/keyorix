@@ -130,7 +130,7 @@ authentication).
 - **MFA / TOTP** — **Shipped** (ADR-034): per-user opt-in TOTP second factor with
   a two-step login (a short-lived single-use challenge gates session issuance),
   single-use recovery codes, and the TOTP secret encrypted at rest. WebAuthn /
-  passkeys and admin-enforced MFA policy remain Roadmap.
+  passkeys remain Roadmap; a deployment can mandate MFA via `security.require_mfa` (interactive sessions without MFA are confined to enrolment).
 
 **Status:** Shipped.
 
