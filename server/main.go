@@ -137,6 +137,7 @@ const (
 	schedLockAnomaly      int64 = 0x4B455953_414E4F4D // "KEYSANOM"
 	schedLockPurge        int64 = 0x4B455953_50555247 // "KEYSPURG"
 	schedLockDynamicSweep int64 = 0x4B455953_44594E53 // "KEYSDYNS"
+	schedLockLoginPrune   int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -417,6 +418,31 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			}
 		}()
 	}
+
+	// Prune expired login-attempt records hourly (ADR-040). Single-replica-gated;
+	// always on (the limiter table needs bounded growth regardless of the purge
+	// scheduler). Rows past the rate-limit window are never read again.
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		runPrune := func() {
+			if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockLoginPrune, func() error {
+				_, perr := coreService.PruneLoginAttempts(ctx)
+				return perr
+			}); err != nil {
+				log.Printf("Login-attempt prune error: %v", err)
+			}
+		}
+		runPrune() // run once on startup
+		for {
+			select {
+			case <-ticker.C:
+				runPrune()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Create HTTP server
 	server := &http.Server{

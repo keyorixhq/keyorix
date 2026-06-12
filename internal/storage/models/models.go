@@ -129,6 +129,17 @@ type MFAChallenge struct {
 	CreatedAt time.Time
 }
 
+// LoginAttempt records one failed authentication attempt from a client IP, for
+// cluster-wide brute-force rate limiting (ADR-040). Counting rows within the
+// window across all replicas replaces the old per-process in-memory limiter, so
+// the limit holds in HA. Rows past the window are pruned by a maintenance sweep
+// and are never read after that. The composite index serves the windowed count.
+type LoginAttempt struct {
+	ID          uint      `gorm:"primaryKey"`
+	IP          string    `gorm:"index:idx_login_attempt_ip_time,priority:1"`
+	AttemptedAt time.Time `gorm:"index:idx_login_attempt_ip_time,priority:2"`
+}
+
 // WebAuthnCredential is a registered passkey / FIDO2 authenticator (ADR-036).
 // CredentialBlob is the JSON-serialized go-webauthn Credential (public key,
 // attestation, sign count, transports) — the library's canonical record, updated

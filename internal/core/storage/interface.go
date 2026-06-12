@@ -11,6 +11,12 @@ import (
 // This interface abstracts away the underlying storage implementation,
 // allowing for both local database access and remote API calls
 type Storage interface {
+	// Login rate limiting (ADR-040) — cluster-wide brute-force protection. Replaces
+	// the per-process in-memory limiter so the limit holds across HA replicas.
+	RecordLoginAttempt(ctx context.Context, ip string, at time.Time) error
+	CountRecentLoginAttempts(ctx context.Context, ip string, since time.Time) (int64, error)
+	PruneLoginAttempts(ctx context.Context, before time.Time) (int64, error)
+
 	// WithSchedulerLock runs fn only if this process can take the named scheduler
 	// lock, so a background job runs on a single replica at a time (HA, ADR-039).
 	// On PostgreSQL it uses a session advisory lock (pg_try_advisory_lock); on
