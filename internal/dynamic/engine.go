@@ -31,6 +31,11 @@ type CredentialEngine interface {
 	// DB-level expiry (PostgreSQL VALID UNTIL). Backends without one (MySQL) make it
 	// a no-op — the lease's new expiry is enforced by the auto-revoke sweep.
 	Renew(ctx context.Context, adminDSN, roleName string, expiresAt time.Time) error
+	// SupportsNativeExpiry reports whether the backend enforces the lease TTL at the
+	// database level (PostgreSQL VALID UNTIL). A backend that returns false relies
+	// ENTIRELY on the auto-revoke sweeper to enforce expiry, so issuing from it with
+	// the sweeper disabled would mint a credential whose TTL is never enforced.
+	SupportsNativeExpiry() bool
 	BackendType() string
 }
 
@@ -70,16 +75,18 @@ func randString(n int) (string, error) {
 // FakeEngine is an in-memory engine for tests: it records issued and revoked
 // roles without touching any real database.
 type FakeEngine struct {
-	mu         sync.Mutex
-	Issued     []string
-	Revoked    []string
-	Renewed    []string
-	FailIssue  bool
-	FailRevoke bool
-	FailRenew  bool
+	mu           sync.Mutex
+	Issued       []string
+	Revoked      []string
+	Renewed      []string
+	FailIssue    bool
+	FailRevoke   bool
+	FailRenew    bool
+	NativeExpiry bool // when true, mimics a backend with DB-level TTL (e.g. Postgres)
 }
 
-func (f *FakeEngine) BackendType() string { return "fake" }
+func (f *FakeEngine) BackendType() string        { return "fake" }
+func (f *FakeEngine) SupportsNativeExpiry() bool { return f.NativeExpiry }
 
 func (f *FakeEngine) Issue(_ context.Context, _, _ string, _ time.Duration) (Credential, string, error) {
 	f.mu.Lock()

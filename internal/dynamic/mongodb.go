@@ -34,6 +34,10 @@ type MongoEngine struct{}
 
 func (e *MongoEngine) BackendType() string { return "mongodb" }
 
+// SupportsNativeExpiry is false: MongoDB users have no native expiry, so lease
+// expiry is enforced only by the auto-revoke sweeper (which must be enabled).
+func (e *MongoEngine) SupportsNativeExpiry() bool { return false }
+
 // mongoAuthDB is the database new users are created in (their authentication db).
 // Roles within the template may still target any database.
 const mongoAuthDB = "admin"

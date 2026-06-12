@@ -243,6 +243,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// an install without a session block behaves exactly as before.
 	coreService.SetSessionTTLs(cfg.Session.GetAccessTTL(), cfg.Session.GetAbsoluteTTL())
 
+	// Tell core whether the auto-revoke sweeper runs (started below), so IssueLease
+	// refuses to mint from backends whose lease TTL only the sweeper enforces
+	// (MySQL/MongoDB) when it is disabled — otherwise the credential never expires.
+	coreService.SetDynamicSweepEnabled(cfg.DynamicSecrets.SweepEnabled)
+
 	// Wire the credential-delivery channel (ADR-028). New selects out-of-band/SMTP/
 	// log from the configured mode and fails loud on a bad mode (e.g. smtp with no
 	// host), so a misconfigured install does not silently drop setup links.

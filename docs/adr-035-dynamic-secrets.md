@@ -143,6 +143,23 @@ expiry). The MongoDB driver (`go.mongodb.org/mongo-driver`, pure Go) links into 
 server; no cloud SDK is added. Keyorix now mints dynamic credentials for
 PostgreSQL, MySQL, **or** MongoDB.
 
+### Lease-lifecycle fail-open fixes (hardening, 2026-06-12)
+
+An internal audit surfaced two fail-opens, both fixed:
+
+- **TTL enforced or refuse to issue.** Backends without a DB-level expiry
+  (`SupportsNativeExpiry() == false`: MySQL, MongoDB) rely entirely on the
+  auto-revoke sweeper. `IssueLease` now refuses to mint from such a backend when
+  `dynamic_secrets.sweep_enabled` is off — otherwise the credential's advertised
+  TTL would never be enforced (it would live forever on the target). PostgreSQL
+  (`VALID UNTIL`) is unaffected and issues regardless.
+- **No invisible orphans.** If a post-mint step fails (encryption / token-gen /
+  lease persistence), the just-minted role is dropped; if that drop *also* fails,
+  a `revoke_failed` lease row is now recorded (capturing the role name) and
+  audited, so the orphaned live credential is visible to an operator instead of
+  being permanent and untrackable (every list/sweep/revoke path keys off the lease
+  table).
+
 ## Deferred (updated)
 
 Cloud-IAM backends (AWS STS / GCP / Azure), which need a non-DSN credential shape

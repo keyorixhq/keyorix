@@ -26,6 +26,10 @@ type MySQLEngine struct{}
 
 func (e *MySQLEngine) BackendType() string { return "mysql" }
 
+// SupportsNativeExpiry is false: MySQL users have no VALID UNTIL, so lease expiry
+// is enforced only by the auto-revoke sweeper (which must be enabled).
+func (e *MySQLEngine) SupportsNativeExpiry() bool { return false }
+
 // mysqlHost is the host part of the created account ('user'@'%'). Restricting it
 // further is a deployment concern best expressed via the creation template/grants.
 const mysqlHost = "%"
