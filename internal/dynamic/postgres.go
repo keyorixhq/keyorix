@@ -26,7 +26,7 @@ func (e *PostgresEngine) Issue(ctx context.Context, adminDSN, creationTemplate s
 	if err != nil {
 		return Credential{}, "", fmt.Errorf("connect to target: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	suffix, err := randString(16)
 	if err != nil {
@@ -65,7 +65,7 @@ func (e *PostgresEngine) Revoke(ctx context.Context, adminDSN, roleName string) 
 	if err != nil {
 		return fmt.Errorf("connect to target: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	ident := pgx.Identifier{roleName}.Sanitize()
 	_, _ = conn.Exec(ctx, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = $1", roleName)
@@ -84,7 +84,7 @@ func (e *PostgresEngine) Renew(ctx context.Context, adminDSN, roleName string, e
 	if err != nil {
 		return fmt.Errorf("connect to target: %w", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	ident := pgx.Identifier{roleName}.Sanitize()
 	validUntil := expiresAt.UTC().Format(time.RFC3339)

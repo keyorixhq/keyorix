@@ -1,0 +1,24 @@
+# Keyorix gitleaks configuration.
+#
+# The default rules are extended (not replaced). The allowlist below covers paths
+# that legitimately contain SAMPLE/FAKE credentials — the "leave Vault" demo, docs
+# and API examples, test scripts, test files, and the import CLI's doc-comment
+# examples — so the scanner stays a MEANINGFUL gate over real source/config rather
+# than being permanently red on known fixtures (which would mask a real leak).
+title = "Keyorix"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Demo / docs / scripts / test fixtures — non-real sample credentials"
+paths = [
+  '''demo/.*''',
+  '''docs/.*''',
+  '''scripts/.*''',
+  '''.*_test\.go''',
+  '''internal/cli/secret/import\.go''',
+  '''internal/cli/secret/import_parsers\.go''',
+  '''internal/cli/secret/source_vault\.go''',
+  '''internal/core/setup_consume\.go''',
+]

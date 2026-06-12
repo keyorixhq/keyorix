@@ -104,9 +104,7 @@ func containsPersonalInfo(pw string, user *models.User) bool {
 	if at := strings.IndexByte(user.Email, '@'); at > 0 {
 		candidates = append(candidates, strings.ToLower(user.Email[:at]))
 	}
-	for _, word := range strings.Fields(strings.ToLower(user.DisplayName)) {
-		candidates = append(candidates, word)
-	}
+	candidates = append(candidates, strings.Fields(strings.ToLower(user.DisplayName))...)
 
 	for _, c := range candidates {
 		if len(c) >= 3 && strings.Contains(lpw, c) {

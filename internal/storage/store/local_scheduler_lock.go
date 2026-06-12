@@ -43,7 +43,7 @@ func (ls *LocalStorage) WithSchedulerLock(ctx context.Context, key int64, fn fun
 	if err != nil {
 		return false, err
 	}
-	defer conn.Close() // returns the conn to the pool (after the unlock below)
+	defer func() { _ = conn.Close() }() // returns the conn to the pool (after the unlock below)
 
 	var locked bool
 	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&locked); err != nil {
