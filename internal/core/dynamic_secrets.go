@@ -214,6 +214,43 @@ func (c *KeyorixCore) RevokeExpiredLeases(ctx context.Context, before time.Time)
 	return revoked, nil
 }
 
+// RevokeLeasesForConfig revokes every active lease issued from a config — an
+// incident-response kill switch for a config's outstanding dynamic credentials
+// (e.g. a compromised target DB or config). Returns the counts revoked and failed
+// (each revoke is audited per-lease as well). Best-effort: one lease's revoke
+// failure does not stop the others.
+func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userID uint, reason string) (revoked, failed int, err error) {
+	leases, err := c.storage.ListDynamicSecretLeases(ctx, configID)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, l := range leases {
+		if l.Status != "active" {
+			continue
+		}
+		if rerr := c.RevokeLease(ctx, l.LeaseID, userID, reason); rerr != nil {
+			failed++
+		} else {
+			revoked++
+		}
+	}
+	var uidPtr *uint
+	if userID != 0 {
+		uidPtr = &userID
+	}
+	pid := uint(0)
+	if cfg, gerr := c.storage.GetDynamicSecretConfig(ctx, configID); gerr == nil {
+		pid = cfg.ProjectID
+	}
+	var pidPtr *uint
+	if pid != 0 {
+		pidPtr = &pid
+	}
+	c.writeAuditEventFull(ctx, "dynamic_secret.bulk_revoke", uidPtr, nil, pidPtr, "",
+		fmt.Sprintf("bulk-revoked dynamic leases for config %d (revoked=%d, failed=%d, reason=%s)", configID, revoked, failed, reason))
+	return revoked, failed, nil
+}
+
 // dynamicTTL resolves the requested TTL (override, else config default, else 1h)
 // and clamps it to the config's MaxTTLSeconds ceiling when one is set.
 func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) time.Duration {

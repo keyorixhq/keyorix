@@ -17,7 +17,7 @@ func TestCommandWiring(t *testing.T) {
 	for _, sub := range DynamicSecretCmd.Commands() {
 		names[sub.Name()] = true
 	}
-	for _, want := range []string{"list", "issue", "leases", "renew", "revoke"} {
+	for _, want := range []string{"list", "issue", "leases", "renew", "revoke", "revoke-all"} {
 		assert.True(t, names[want], "missing subcommand %q", want)
 	}
 	assert.Contains(t, DynamicSecretCmd.Aliases, "dyn")
@@ -62,6 +62,27 @@ func TestIssueAgainstMockServer(t *testing.T) {
 	assert.Contains(t, out, "lease-abc")
 	assert.Contains(t, out, "kx_dyn_x9")
 	assert.Contains(t, out, "s3cr3t-pw")
+}
+
+func TestRevokeAllAgainstMockServer(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"config_id":7,"revoked":3,"failed":0}}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	flagYes = true // skip the interactive confirmation
+	t.Cleanup(func() { flagYes = false })
+
+	out := captureStdout(t, func() {
+		require.NoError(t, revokeAllCmd.RunE(revokeAllCmd, []string{"7"}))
+	})
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/api/v1/dynamic-secrets/configs/7/revoke-all", gotPath)
+	assert.Contains(t, out, "revoked 3")
 }
 
 func TestIssueRejectsBadConfigID(t *testing.T) {

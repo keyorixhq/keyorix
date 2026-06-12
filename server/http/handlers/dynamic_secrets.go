@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -221,6 +222,24 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"lease_id": leaseID, "expires_at": newExpiry}, "Lease renewed.")
+}
+
+// RevokeAllLeases handles POST /api/v1/dynamic-secrets/configs/{id}/revoke-all —
+// the incident kill switch: revoke every active lease from a config at once.
+func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.write")
+	if !ok {
+		return
+	}
+	revoked, failed, err := h.coreService.RevokeLeasesForConfig(r.Context(), cfg.ID, userCtx.UserID, "bulk")
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusBadGateway, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"config_id": cfg.ID, "revoked": revoked, "failed": failed,
+	}, fmt.Sprintf("Revoked %d active lease(s); %d failed.", revoked, failed))
 }
 
 // loadAuthorizedConfig loads the {id} config and authorizes the caller against
