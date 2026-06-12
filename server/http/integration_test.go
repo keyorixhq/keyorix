@@ -721,3 +721,57 @@ func TestHTTPServerPerformance(t *testing.T) {
 		assert.Less(t, duration, 100*time.Millisecond) // Should respond within 100ms
 	})
 }
+
+// TestPrivescRoutesRequireWrite is a regression test for the route-authorization
+// audit: mutating /users and /groups routes must NOT be reachable with only the
+// group-level users.read (held by the read-only system_auditor / system_viewer
+// personas). Before the fix these inherited users.read and let a read-only caller
+// edit/delete users and manage group membership (which confers the group's roles).
+// The middleware gate runs before the handler, so a non-existent target still 403s.
+func TestPrivescRoutesRequireWrite(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	createTestToken(t, testCore) // bootstrap admin + seed roles
+	// Create a uniquely-named read-only user (the shared-cache in-memory DB means a
+	// fixed username from createLimitedToken can collide with other tests). New
+	// users get system_viewer, which holds users.read but not users.write.
+	ctx := context.Background()
+	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "privesc_ro", Email: "privesc_ro@example.com", Password: "LimitedPass123!",
+	})
+	require.NoError(t, err)
+	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "privesc_ro", Password: "LimitedPass123!"})
+	require.NoError(t, err)
+	limited := sess.SessionToken
+
+	cases := []struct{ method, path string }{
+		{http.MethodPut, "/api/v1/users/1"},
+		{http.MethodDelete, "/api/v1/users/1"},
+		{http.MethodPost, "/api/v1/users/1/restore"},
+		{http.MethodPost, "/api/v1/groups"},
+		{http.MethodPut, "/api/v1/groups/1"},
+		{http.MethodDelete, "/api/v1/groups/1"},
+		{http.MethodPost, "/api/v1/groups/1/members"},
+		{http.MethodDelete, "/api/v1/groups/1/members/2"},
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	for _, tc := range cases {
+		req, err := http.NewRequest(tc.method, server.URL+tc.path, bytes.NewReader([]byte("{}")))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+limited)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equalf(t, http.StatusForbidden, resp.StatusCode,
+			"%s %s must be 403 for a users.read-only caller (privesc gate)", tc.method, tc.path)
+	}
+}

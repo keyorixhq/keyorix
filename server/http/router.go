@@ -323,9 +323,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Stale-account warnings (ADR-025): static path before /{id}.
 			r.Get("/stale", handlers.StaleAccounts)
 			r.Get("/{id}", handlers.GetUser)
-			r.Put("/{id}", handlers.UpdateUser)
-			r.Delete("/{id}", handlers.DeleteUser)
-			r.Post("/{id}/restore", handlers.RestoreUser)
+			// Mutations need users.write, not the group-wide users.read (which the
+			// read-only system_auditor persona holds) — these were the missed
+			// siblings of the suspend/reactivate transitions gated below.
+			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", handlers.UpdateUser)
+			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", handlers.DeleteUser)
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/restore", handlers.RestoreUser)
 			// Account state transitions (ADR-025).
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/suspend", handlers.SuspendUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/reactivate", handlers.ReactivateUser)
@@ -349,13 +352,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Route("/groups", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("users.read"))
 			r.Get("/", groupHandler.ListGroups)
-			r.Post("/", groupHandler.CreateGroup)
+			// Group CRUD mutates identity/membership state — gate on users.write,
+			// not the group-wide users.read (held by the read-only system_auditor).
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/", groupHandler.CreateGroup)
 			r.Get("/{id}", groupHandler.GetGroup)
-			r.Put("/{id}", groupHandler.UpdateGroup)
-			r.Delete("/{id}", groupHandler.DeleteGroup)
+			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", groupHandler.UpdateGroup)
+			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", groupHandler.DeleteGroup)
 			r.Get("/{id}/members", groupHandler.GetGroupMembers)
-			r.Post("/{id}/members", groupHandler.AddGroupMember)
-			r.Delete("/{id}/members/{userId}", groupHandler.RemoveGroupMember)
+			// Adding/removing a group member confers (or revokes) every role the group
+			// holds — the same blast radius as a role grant, so gate on roles.assign
+			// (matching the group's role-grant routes below), not users.read.
+			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/members", groupHandler.AddGroupMember)
+			r.With(customMiddleware.RequirePermission("roles.assign")).Delete("/{id}/members/{userId}", groupHandler.RemoveGroupMember)
 			r.Get("/{id}/roles", rbacHandler.GetGroupRoles)
 			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/roles", rbacHandler.AssignRoleToGroup)
 			r.With(customMiddleware.RequirePermission("roles.assign")).Delete("/{id}/roles/{roleId}", rbacHandler.RemoveRoleFromGroup)
