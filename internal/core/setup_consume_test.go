@@ -87,6 +87,9 @@ func TestCompleteSetup(t *testing.T) {
 		ms.On("PrunePasswordHistory", ctx, uid, 5).Return(nil)
 		ms.On("CreateSession", ctx, mock.AnythingOfType("*models.Session")).
 			Return(&models.Session{ID: 1, UserID: uid, SessionToken: "sess-abc"}, nil)
+		// Completing setup must evict the subject's other sessions (keeping the new
+		// one) so a stolen session can't survive a self-service password reset.
+		ms.On("DeleteSessionsForUserExcept", ctx, uid, uint(1)).Return(nil)
 
 		res, err := c.CompleteSetup(ctx, raw, strongPw, "ua", "1.2.3.4")
 		require.NoError(t, err)
@@ -95,6 +98,7 @@ func TestCompleteSetup(t *testing.T) {
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(strongPw)))
 		ms.AssertCalled(t, "MarkSetupTokenConsumed", ctx, uint(2), mock.AnythingOfType("time.Time"))
 		ms.AssertCalled(t, "CreateSession", ctx, mock.AnythingOfType("*models.Session"))
+		ms.AssertCalled(t, "DeleteSessionsForUserExcept", ctx, uid, uint(1))
 	})
 
 	t.Run("a weak password is rejected WITHOUT consuming the token", func(t *testing.T) {

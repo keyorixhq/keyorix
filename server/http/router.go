@@ -314,7 +314,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Route("/users", func(r chi.Router) {
 			r.Use(customMiddleware.RequirePermission("users.read"))
 			r.Get("/", handlers.ListUsers)
-			r.Post("/", handlers.CreateUser)
+			// CreateUser mutates (and can grant roles via ADR-028 atomic provisioning),
+			// so it needs users.write — not just the group-level users.read. Without
+			// this gate a global read-only persona (system_auditor holds users.read)
+			// could POST a user with role:"system_admin" and escalate to global admin.
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/", handlers.CreateUser)
 			r.Get("/search", handlers.SearchUsers)
 			// Stale-account warnings (ADR-025): static path before /{id}.
 			r.Get("/stale", handlers.StaleAccounts)
