@@ -3,6 +3,31 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.13.1 — 2026-06-12
+
+Security/correctness fixes from an internal audit of the credential & crypto
+subsystems. No new features; no config or schema changes.
+
+### Fixed
+- **Crash-durable key-material writes** (ADR-041) — every write of unrecoverable
+  key material (the wrapped DEK on first run / rotation / KEK-provider migration,
+  the KMS-wrapped KEK blob, and the KEK salt) is now `fsync`'d before returning,
+  and each promote-`rename` is followed by a directory `fsync`. Previously these
+  used `os.WriteFile`, leaving the bytes in the page cache; a power failure after
+  `migrate-provider` reported success — and after the operator retired the old KEK
+  — could lose the new wrapped DEK and orphan all ciphertext irreversibly. The
+  data path and on-disk formats are unchanged. ([#131])
+- **Dynamic-secrets lease fail-opens** (ADR-035) — (1) issuing from a backend with
+  no database-level expiry (MySQL, MongoDB) is now refused while the auto-revoke
+  sweeper is disabled, so a lease's advertised TTL is always enforced rather than
+  silently never expiring; (2) if cleaning up a just-minted role after an aborted
+  issue fails, a `revoke_failed` lease is recorded and audited so the orphaned
+  credential is visible to an operator instead of being permanent and
+  untrackable. ([#132])
+
+[#131]: https://github.com/keyorixhq/keyorix/pull/131
+[#132]: https://github.com/keyorixhq/keyorix/pull/132
+
 ## v0.13.0 — 2026-06-12
 
 ### Added
