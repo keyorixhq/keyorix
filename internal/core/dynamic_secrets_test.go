@@ -149,3 +149,25 @@ func TestDynamicSecrets_IssueRejectsUnknownConfig(t *testing.T) {
 	_, err := c.IssueLease(ctx, 999, 0, 7)
 	require.Error(t, err)
 }
+
+// TestDynamicSecrets_RealFactoryValidatesBackend checks the real engine factory
+// (no fake): config creation accepts the supported backends and rejects others.
+func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.DynamicSecretConfig{}, &models.AuditEvent{}))
+	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
+
+	for _, backend := range []string{"postgres", "mysql"} {
+		_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
+			Name: backend + "-cfg", ProjectID: 1, BackendType: backend, AdminDSN: "admin:p@tcp(h:3306)/",
+		})
+		require.NoError(t, err, "backend %s must be accepted", backend)
+	}
+
+	_, err = c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
+		Name: "bad", ProjectID: 1, BackendType: "redis", AdminDSN: "x",
+	})
+	require.Error(t, err, "an unsupported backend must be rejected at config creation")
+}
