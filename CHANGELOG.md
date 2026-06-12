@@ -3,6 +3,24 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.13.0 — 2026-06-12
+
+### Added
+- **Personal access token least-privilege scoping** (ADR-042) — a PAT can now be
+  minted **weaker than its owner**. At creation it may carry an optional permission
+  allowlist (exact like `secrets.read`, the catch-all `*`, or a prefix like
+  `secrets.*`) and/or a single-project confinement (`project_scope`). The
+  restriction is a **filter that only ever narrows** the token below its owner —
+  never an escalation, since the owner's live RBAC still runs after it. It is
+  enforced at the single authorization chokepoint (before role resolution and the
+  admin bypass), so it bounds even a global admin's own token across every
+  authorization path. `POST /api/v1/auth/tokens` accepts `scopes` and
+  `project_scope`; existing and unrestricted tokens are unaffected (full
+  inheritance remains the default). Closes the last over-privileged-credential gap
+  after machine identities (ADR-030). ([#129], ADR-042)
+
+[#129]: https://github.com/keyorixhq/keyorix/pull/129
+
 ## v0.12.0 — 2026-06-12
 
 ### Added
