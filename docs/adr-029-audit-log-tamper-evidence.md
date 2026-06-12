@@ -85,8 +85,25 @@ double-migration hazard).
 - **Detectable**, not **prevented**: an attacker with DB write access can still
   modify rows, but cannot do so *undetectably* without recomputing the entire
   forward chain — and cannot at all if a verified `entry_hash` has been exported
-  off-box (SIEM push already forwards every event). Re-anchoring the head to an
-  external notary/SIEM is a future enhancement.
+  off-box. Re-anchoring the head to an external notary is a future enhancement.
+- **On-box re-verification cannot, by itself, detect tail-truncation or a
+  genesis re-seed** (clarified 2026-06-13 after an internal audit). Because the
+  genesis hash is a fixed public constant and nothing on-box records how long the
+  chain *should* be, deleting the most recent N events — or wiping the chain and
+  re-seeding from genesis — leaves a shorter-but-self-consistent chain that
+  `VerifyAuditChain` accepts. Reorder, insert and middle-deletion remain
+  detectable (they break the linkage). Truncation/re-seed detection requires an
+  **off-box anchor**, now actually delivered:
+  - the verification API returns the chain **`head_hash` + `head_id` +
+    `chained_events`**; an external monitor recording these sees the count drop or
+    the head move for a known prefix — the truncation signal; and
+  - the audit **export** (`GET /audit/export`, SIEM pull) now carries each event's
+    `prev_hash`/`entry_hash`, so the off-box observer holds the chain links and can
+    prove a later on-box head diverges. (Previously the export omitted the hashes,
+    so the "exported `entry_hash` anchors the head" claim was aspirational; it is
+    now real.)
+  - A **signed/notarised in-DB checkpoint** (count + head hash, signed with a key
+    the DBA lacks) would make truncation detectable on-box too — deferred.
 - Audit writes now take a lock + transaction. Audit emission is already
   asynchronous/best-effort and off the request hot path, so the added latency is
   not user-visible.

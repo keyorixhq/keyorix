@@ -566,6 +566,15 @@ type AuditChainVerification struct {
 	// Reason is a human-readable description of the first failure, empty when
 	// Valid.
 	Reason string
+	// HeadHash is the entry_hash of the last chained event (the chain head),
+	// genesis when there are no chained events. HeadID is its id. Surfaced so an
+	// external monitor can record (ChainedEvents, HeadHash) and detect tail-
+	// truncation or a genesis re-seed — which an unanchored on-box re-walk cannot
+	// catch on its own (ADR-029): a shorter-but-self-consistent chain still
+	// verifies, so the count dropping or the head changing for a known prefix is
+	// the off-box tamper signal.
+	HeadHash string
+	HeadID   uint
 }
 
 // UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when

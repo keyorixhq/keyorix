@@ -56,6 +56,34 @@ func TestLogAuditEvent_BuildsChain(t *testing.T) {
 	assert.Nil(t, v.FirstBrokenID)
 }
 
+// The verifier exposes the chain head so an external monitor can anchor on it. A
+// tail-truncation leaves a self-consistent shorter chain that on-box verify still
+// accepts (the documented ADR-029 limitation) — but the head hash and count change,
+// which is the off-box tamper signal.
+func TestVerifyAuditChain_HeadAnchorDetectsTruncation(t *testing.T) {
+	ls := newAuditChainTestStore(t)
+	base := time.Now().UTC()
+	appendEvent(t, ls, "auth.login", "first", base)
+	appendEvent(t, ls, "secret.read", "second", base.Add(time.Second))
+	e3 := appendEvent(t, ls, "secret.updated", "third", base.Add(2*time.Second))
+
+	v, err := ls.VerifyAuditChain(context.Background())
+	require.NoError(t, err)
+	require.True(t, v.Valid)
+	assert.Equal(t, int64(3), v.ChainedEvents)
+	assert.Equal(t, e3.EntryHash, v.HeadHash, "head anchors on the last chained event")
+	assert.Equal(t, e3.ID, v.HeadID)
+
+	// A DB-writer truncates the tail. On-box verify still passes…
+	require.NoError(t, ls.db.Where("id = ?", e3.ID).Delete(&models.AuditEvent{}).Error)
+	v2, err := ls.VerifyAuditChain(context.Background())
+	require.NoError(t, err)
+	assert.True(t, v2.Valid, "truncated chain stays internally consistent (the documented limitation)")
+	// …but the recorded anchor moved — the count dropped and the head changed.
+	assert.Equal(t, int64(2), v2.ChainedEvents)
+	assert.NotEqual(t, v.HeadHash, v2.HeadHash)
+}
+
 func TestVerifyAuditChain_DetectsModification(t *testing.T) {
 	ls := newAuditChainTestStore(t)
 	base := time.Now().UTC()

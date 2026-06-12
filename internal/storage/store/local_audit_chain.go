@@ -124,6 +124,7 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditCha
 	prevHash := auditGenesisHash
 	started := false
 	var lastID uint
+	var headID uint
 
 	for {
 		var batch []*models.AuditEvent
@@ -161,6 +162,7 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditCha
 			}
 
 			prevHash = e.EntryHash
+			headID = e.ID
 			result.ChainedEvents++
 		}
 
@@ -169,6 +171,11 @@ func (ls *LocalStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditCha
 		}
 	}
 
+	// Record the verified head so an external monitor can anchor on it and detect
+	// tail-truncation / re-seed (which a self-consistent shorter chain otherwise
+	// passes). prevHash holds the last chained entry_hash, or genesis if none.
+	result.HeadHash = prevHash
+	result.HeadID = headID
 	return result, nil
 }
 
