@@ -3,6 +3,45 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.5.0 — 2026-06-12
+
+The authentication & dynamic-secrets release: phishing-resistant passkeys, MFA
+you can mandate (deployment-wide or per-project), and on-demand database
+credentials that expire on their own.
+
+### Added
+- **Dynamic secrets (PostgreSQL)** — on-demand, short-lived database credentials
+  in the HashiCorp Vault database-secrets-engine model. Register a target with an
+  admin DSN and an optional creation template; callers issue a lease that mints a
+  fresh role on the target, returned once, and an opt-in sweeper auto-revokes
+  every lease at expiry. The admin DSN and each issued credential are encrypted
+  at rest and never returned by the API. ([#102], ADR-035)
+- **WebAuthn / passkeys** — opt-in, phishing-resistant second factor alongside
+  TOTP: origin-bound public-key assertions with no exportable shared secret and
+  FIDO clone detection. Self-service registration of security keys / platform
+  authenticators, and a two-step login that reuses the existing single-use
+  challenge (no half-authenticated session is ever created). ([#103], ADR-036)
+- **Deployment-mandated MFA** — `security.require_mfa` confines an interactive
+  session without a second factor to the enrolment endpoints until the user
+  enrols. Non-interactive credentials (personal access tokens, machine tokens,
+  OIDC) are exempt so automation is never broken. ([#101], ADR-034)
+- **Per-project MFA policy** — a project can require MFA for access to its scoped
+  resources even when the deployment-wide policy is off, giving risk-proportionate
+  step-up on a single install. A passkey or TOTP satisfies either mandate. ([#104], ADR-037)
+
+### Security
+- **Per-project MFA covers every project-scoped path** — a pre-merge security
+  review found that secret *creation* authorised in-handler (the create route
+  carries no path scope) and initially bypassed the per-project MFA gate; all
+  in-handler-authorised mutations (secret create, dynamic-secret lease
+  issue/revoke, rotation-policy create) now enforce it uniformly, with a
+  regression test. ([#104])
+
+[#101]: https://github.com/keyorixhq/keyorix/pull/101
+[#102]: https://github.com/keyorixhq/keyorix/pull/102
+[#103]: https://github.com/keyorixhq/keyorix/pull/103
+[#104]: https://github.com/keyorixhq/keyorix/pull/104
+
 ## v0.4.0 — 2026-06-12
 
 The security-hardening release: a new second factor, four subsystem security
