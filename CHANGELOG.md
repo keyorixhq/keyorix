@@ -3,6 +3,29 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.11.0 — 2026-06-12
+
+KMS follow-ups: a third cloud backend for the wrapping key, plus zero-downtime
+provider migration.
+
+### Added
+- **Azure Key Vault KEK provider** (`type: azure-kms`) — the third KMS backend for
+  the KEK wrapping key, after AWS and GCP, behind the same `KMSClient` interface. It
+  envelopes the KEK with the vault key's `wrapKey`/`unwrapKey` operations
+  (RSA-OAEP-256); credentials come from `DefaultAzureCredential` (env / managed
+  identity / workload identity) and the key is inherently pinned by name.
+  ([#123], ADR-041)
+- **`keyorix encryption migrate-provider`** — move an existing install between KEK
+  providers (e.g. password → a cloud KMS) by **re-wrapping the DEK under the target
+  provider's KEK without re-encrypting any data** — fast and with no database lock,
+  unlike a DEK rotation. It backs up the previous wrapped DEK, verifies the target
+  provider round-trips a probe before keeping the change, and prints the config block
+  to apply. Migrating `--to-type password` also rotates the master passphrase.
+  ([#125], ADR-041)
+
+[#123]: https://github.com/keyorixhq/keyorix/pull/123
+[#125]: https://github.com/keyorixhq/keyorix/pull/125
+
 ## v0.10.0 — 2026-06-12
 
 The bring-your-own-KMS release.
