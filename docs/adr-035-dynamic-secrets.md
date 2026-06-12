@@ -78,5 +78,24 @@ full suite + `go vet` green.
 
 ## Deferred
 
-MySQL/other backends; renewable leases (extend TTL in place); per-config max-TTL
-ceilings; a CLI surface; returning leases a caller can enumerate across configs.
+Other backends (Mongo, cloud IAM); renewable leases (extend TTL in place);
+per-config max-TTL ceilings; a CLI surface; returning leases a caller can
+enumerate across configs.
+
+## Addendum (2026-06-12): MySQL target engine
+
+A `mysql` backend now implements the same `CredentialEngine` interface
+(`internal/dynamic/mysql.go`); `key_provider`-style selection is via the config's
+`backend_type`. It mints `kx_dyn_<random>'@'%` accounts (`CREATE USER … IDENTIFIED
+BY …`), runs the creation template with `{{name}}` → the quoted account reference,
+and on revoke kills the account's live sessions then `DROP USER`. Username and
+password come from the same quote-free `crypto/rand` alphabet, so the documented
+SQL-injection trust boundary is unchanged.
+
+**One difference from PostgreSQL:** MySQL accounts have no `VALID UNTIL`
+equivalent that disables them at a timestamp, so a MySQL lease's TTL is enforced
+**only** by the auto-revoke sweeper (`dynamic_secrets.sweep_enabled`) — the
+sweeper should be enabled when using MySQL targets, otherwise a credential lives
+until an explicit revoke. The Postgres engine remains belt-and-suspenders (role
+expiry **and** sweep). The MySQL driver (`go-sql-driver/mysql`, pure Go) links
+into the server; no cloud SDK is added.
