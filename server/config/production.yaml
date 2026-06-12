@@ -73,4 +73,4 @@ soft_delete:
 
 purge:
   enabled: true
-  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+  schedule: "168h"  # Go duration between runs (NOT cron); 168h = weekly. Default 24h.

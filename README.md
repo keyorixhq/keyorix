@@ -46,7 +46,9 @@ docker compose up -d   # open http://localhost:8088
 ```
 
 See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for production setup (TLS,
-backups, upgrades, and the all-important encryption-key handling).
+backups, upgrades, and the all-important encryption-key handling), and
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full `keyorix.yaml`
+reference (encryption/KEK providers, MFA, WebAuthn, dynamic secrets, OIDC, …).
 
 **Or start just the server binary:**
 
