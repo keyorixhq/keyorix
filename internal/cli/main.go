@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/keyorixhq/keyorix/internal/cli/accessreview"
 	"github.com/keyorixhq/keyorix/internal/cli/anomalies"
 	"github.com/keyorixhq/keyorix/internal/cli/audit"
 	"github.com/keyorixhq/keyorix/internal/cli/auth"
@@ -63,6 +64,7 @@ func init() {
 	rootCmd.AddCommand(pat.PATCmd)
 	rootCmd.AddCommand(audit.AuditCmd)
 	rootCmd.AddCommand(rotation.RotationCmd)
+	rootCmd.AddCommand(accessreview.AccessReviewCmd)
 }
 
 // Execute runs the root command

@@ -42,6 +42,11 @@ type Storage interface {
 	ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error)
 	ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error)
 	ListProjectMembers(ctx context.Context, projectID uint) ([]ProjectMember, error)
+	// ListProjectRoleAssignments returns every direct (user) and group role grant
+	// scoped to the project (project_id = projectID, any environment) — the raw
+	// rows for a project access review. Global (project 0) grants are excluded:
+	// those are install-level, reviewed separately.
+	ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
 
 	// Project invitations (ADR-024).
 	CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error)
@@ -618,4 +623,16 @@ type ProjectMember struct {
 	Email       string `json:"email"`
 	RoleID      uint   `json:"role_id"`
 	RoleName    string `json:"role_name"`
+}
+
+// RoleAssignment is one principal↔role grant at a scope — the raw rows behind an
+// access review (ISO 27001 A.5.18). Unlike ProjectMember it does NOT collapse a
+// principal to a single role: a user/group with several roles at a scope yields
+// several RoleAssignments. PrincipalType is "user" or "group".
+type RoleAssignment struct {
+	PrincipalType string `json:"principal_type"`
+	PrincipalID   uint   `json:"principal_id"`
+	RoleID        uint   `json:"role_id"`
+	ProjectID     uint   `json:"project_id"`
+	EnvironmentID uint   `json:"environment_id"`
 }

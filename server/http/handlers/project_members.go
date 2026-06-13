@@ -24,6 +24,23 @@ func (h *CatalogHandler) ListProjectMembers(w http.ResponseWriter, r *http.Reque
 	sendSuccess(w, map[string]interface{}{"members": members}, "")
 }
 
+// GetProjectAccessReview handles GET /api/v1/projects/{id}/access-review — the
+// role-based access recertification report (ISO 27001 A.5.18): every project-scoped
+// role grant whose role confers a secrets.* permission, with the highest action.
+func (h *CatalogHandler) GetProjectAccessReview(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	entries, err := h.coreService.GenerateProjectAccessReview(r.Context(), uint(id))
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"entries": entries, "count": len(entries)}, "")
+}
+
 // AddProjectMember handles POST /api/v1/projects/{id}/members
 func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)

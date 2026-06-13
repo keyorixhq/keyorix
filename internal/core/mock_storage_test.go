@@ -100,6 +100,14 @@ func (m *MockStorage) ListProjectMembers(_ context.Context, _ uint) ([]storage.P
 	return nil, nil
 }
 
+func (m *MockStorage) ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+}
+
 func (m *MockStorage) CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error) {
 	args := m.Called(ctx, inv)
 	if args.Get(0) == nil {
@@ -1254,9 +1262,9 @@ func (m *MockStorage) UpsertMFASecret(_ context.Context, _ *models.MFASecret) er
 func (m *MockStorage) GetMFASecret(_ context.Context, _ uint) (*models.MFASecret, error) {
 	return nil, nil
 }
-func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint) error          { return nil }
-func (m *MockStorage) DeleteMFAForUser(_ context.Context, _ uint) error            { return nil }
-func (m *MockStorage) SetUserMFAEnabled(_ context.Context, _ uint, _ bool) error   { return nil }
+func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint) error         { return nil }
+func (m *MockStorage) DeleteMFAForUser(_ context.Context, _ uint) error          { return nil }
+func (m *MockStorage) SetUserMFAEnabled(_ context.Context, _ uint, _ bool) error { return nil }
 func (m *MockStorage) CreateMFARecoveryCodes(_ context.Context, _ uint, _ []string) error {
 	return nil
 }

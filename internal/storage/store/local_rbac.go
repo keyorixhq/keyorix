@@ -162,6 +162,38 @@ func (ls *LocalStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope
 	return ids, nil
 }
 
+// ListProjectRoleAssignments returns every role assignment scoped to the project
+// (project_id = projectID, any environment) for both users (user_roles) and groups
+// (group_roles) — the raw grant rows behind a project access review. Global
+// (project 0) assignments are deliberately excluded (install-level, reviewed
+// separately). A principal with several roles at the project yields several rows.
+func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	var out []storage.RoleAssignment
+
+	var userRows []models.UserRole
+	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&userRows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range userRows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "user", PrincipalID: r.UserID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+
+	var groupRows []models.GroupRole
+	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&groupRows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range groupRows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "group", PrincipalID: r.GroupID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
+}
+
 // GetUserRoleIDsExact returns the IDs of roles directly assigned to userID at
 // exactly the given scope (no global/inherited matching). Used for full
 // replacement of a user's roles at one scope.
