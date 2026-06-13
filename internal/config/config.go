@@ -21,6 +21,9 @@ type Config struct {
 	Security    SecurityConfig   `yaml:"security"`
 	SoftDelete  SoftDeleteConfig `yaml:"soft_delete"`
 	Purge       PurgeConfig      `yaml:"purge"`
+	// RotationReminders configures the opt-in background scheduler that notifies
+	// project admins of secrets overdue / approaching their rotation deadline.
+	RotationReminders RotationRemindersConfig `yaml:"rotation_reminders"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -440,6 +443,25 @@ func (c *CredentialDeliveryConfig) DeliveryConfig() delivery.Config {
 type PurgeConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
+}
+
+// RotationRemindersConfig configures the rotation-reminder scheduler: a background
+// job that notifies project admins of secrets overdue/approaching their rotation
+// deadline under an active rotation policy. Opt-in (default off).
+type RotationRemindersConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+}
+
+// GetInterval returns the rotation-reminder run interval (Go duration, e.g. "24h");
+// defaults to 24h when unset or unparseable.
+func (c RotationRemindersConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the

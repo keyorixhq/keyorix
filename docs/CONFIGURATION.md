@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [rotation_reminders](#rotation_reminders) · [audit.siem](#auditsiem)
 - [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -317,6 +317,20 @@ soft_delete:
 purge:
   enabled: true
   schedule: "24h"         # Go duration between purge runs (default 24h)
+```
+
+## rotation_reminders
+
+An opt-in background scheduler that notifies project admins (in-app) of secrets
+**overdue or approaching** their rotation deadline under an active rotation policy —
+proactive rotation hygiene (a NIS2/ISO control). One standing reminder per project
+per admin; once read, a still-overdue secret nudges again on the next run.
+Single-replica-gated (ADR-039) so admins aren't notified N times in HA.
+
+```yaml
+rotation_reminders:
+  enabled: true
+  schedule: "24h"         # Go duration between reminder runs (default 24h)
 ```
 
 ## audit.siem

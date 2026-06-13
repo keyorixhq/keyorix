@@ -36,6 +36,7 @@ type RotationPolicyEvaluation struct {
 	PolicyName    string     `json:"policy_name"`
 	SecretID      uint       `json:"secret_id"`
 	SecretName    string     `json:"secret_name"`
+	ProjectID     uint       `json:"project_id"`
 	LastRotatedAt *time.Time `json:"last_rotated_at"`
 	DaysOverdue   int        `json:"days_overdue"` // positive = overdue, negative = days remaining
 	IsOverdue     bool       `json:"is_overdue"`
@@ -256,6 +257,7 @@ func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID *u
 					PolicyName:    policy.Name,
 					SecretID:      secret.ID,
 					SecretName:    secret.Name,
+					ProjectID:     secret.ProjectID,
 					LastRotatedAt: secret.LastRotatedAt,
 					DaysOverdue:   daysOverdue,
 					IsOverdue:     isOverdue,

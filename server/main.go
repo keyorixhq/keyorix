@@ -138,6 +138,7 @@ const (
 	schedLockPurge        int64 = 0x4B455953_50555247 // "KEYSPURG"
 	schedLockDynamicSweep int64 = 0x4B455953_44594E53 // "KEYSDYNS"
 	schedLockLoginPrune   int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
+	schedLockRotationRmdr int64 = 0x4B455953_524F5452 // "KEYSROTR"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -380,6 +381,43 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				select {
 				case <-ticker.C:
 					runPurge()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Start the rotation-reminder scheduler — opt-in. Notifies project admins of
+	// secrets overdue/approaching their rotation deadline (proactive rotation
+	// hygiene; a NIS2/ISO control). Single-replica-gated (ADR-039) so admins aren't
+	// notified N times in an HA deployment.
+	if cfg.RotationReminders.Enabled {
+		interval := cfg.RotationReminders.GetInterval()
+		log.Printf("Rotation-reminder scheduler enabled: every %s", interval)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runReminders := func() {
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockRotationRmdr, func() error {
+					n, rerr := coreService.SendRotationReminders(ctx)
+					if rerr != nil {
+						log.Printf("Rotation-reminder error: %v", rerr)
+						return rerr
+					}
+					if n > 0 {
+						log.Printf("Rotation reminders: sent %d notification(s)", n)
+					}
+					return nil
+				}); err != nil {
+					log.Printf("Rotation-reminder scheduler error: %v", err)
+				}
+			}
+			runReminders() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runReminders()
 				case <-ctx.Done():
 					return
 				}
