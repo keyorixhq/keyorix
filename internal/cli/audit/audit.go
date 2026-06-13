@@ -44,7 +44,7 @@ func init() {
 	exportCmd.Flags().IntVar(&flagLimit, "limit", 100, "Events per page (1–1000)")
 	exportCmd.Flags().BoolVar(&flagAll, "all", false, "Follow the cursor to the end, emitting every event")
 
-	AuditCmd.AddCommand(verifyCmd, exportCmd)
+	AuditCmd.AddCommand(verifyCmd, exportCmd, checkpointCmd)
 }
 
 func client() (*common.RemoteClient, error) {
@@ -187,6 +187,46 @@ since a point in time with --since --all.`,
 		} else {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "exported %d event(s); caught up\n", total)
 		}
+		return nil
+	},
+}
+
+// checkpointResult mirrors the /audit/checkpoint payload (ADR-029).
+type checkpointResult struct {
+	ID            uint   `json:"id"`
+	ChainedEvents int64  `json:"chained_events"`
+	HeadID        uint   `json:"head_id"`
+	HeadHash      string `json:"head_hash"`
+	KeyVersion    string `json:"key_version"`
+}
+
+var checkpointCmd = &cobra.Command{
+	Use:   "checkpoint",
+	Short: "Write a signed checkpoint of the current audit-chain head (ADR-029)",
+	Long: `Sign a checkpoint of the current verified audit-chain head on demand, so
+tail-truncation / genesis re-seed is detectable on-box. Checkpoints are normally
+written by the server's background scheduler; run this to re-baseline immediately
+— most often right after a DEK rotation, when 'audit verify' fails closed until a
+fresh checkpoint is written under the new key.
+
+Requires the server to have encryption enabled (the signing key is DEK-derived)
+and the caller to hold system.write. The server refuses if the chain does not
+verify (broken, or a prior signed checkpoint proves a truncation).`,
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		c, err := client()
+		if err != nil {
+			return err
+		}
+		var out checkpointResult
+		if err := c.Post(context.Background(), "/api/v1/audit/checkpoint", nil, &out); err != nil {
+			return err
+		}
+		fmt.Println("Audit checkpoint written:")
+		fmt.Printf("  id:             %d\n", out.ID)
+		fmt.Printf("  chained events: %d\n", out.ChainedEvents)
+		fmt.Printf("  head id:        %d\n", out.HeadID)
+		fmt.Printf("  head hash:      %s\n", out.HeadHash)
 		return nil
 	},
 }

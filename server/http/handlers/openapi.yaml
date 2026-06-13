@@ -2411,6 +2411,28 @@ paths:
             divergent event.
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/audit/checkpoint:
+    post:
+      tags: [Audit]
+      summary: Write a signed audit-chain checkpoint on demand (ADR-029)
+      description: >-
+        Signs a checkpoint of the current verified chain head for on-box truncation
+        detection. Requires system.write (above the audit group's audit.read) and
+        server-side encryption (the signing key is DEK-derived). Use to re-baseline
+        immediately after a DEK rotation.
+      operationId: writeAuditCheckpoint
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: {id, chained_events, head_id, head_hash,
+            key_version} of the new checkpoint.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '409':
+          description: The chain does not verify (broken, or a signed checkpoint proves a truncation); refused.
+        '412':
+          description: Signed checkpoints require encryption to be enabled.
   /api/v1/audit/anomalies:
     get:
       tags: [Audit]
