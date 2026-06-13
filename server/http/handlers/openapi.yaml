@@ -506,12 +506,12 @@ paths:
   /api/v1/projects/{id}/access-review:
     get:
       tags: [Projects]
-      summary: Role-based access recertification report (ISO 27001 A.5.18)
+      summary: Access recertification report (ISO 27001 A.5.18)
       description: >-
-        Every project-scoped role grant (user or group) whose role confers a
-        secrets.* permission, with the highest action it grants — the role-based
-        standing-access surface for periodic access reviews. Requires roles.read at
-        the project scope.
+        Who can reach the project's secrets and how: role-based standing access
+        (project-scoped role grants conferring a secrets.* permission) plus the
+        per-secret grants (ownership and direct/group shares). Requires roles.read
+        at the project scope.
       operationId: getProjectAccessReview
       security: [{bearerAuth: []}]
       parameters:
@@ -521,7 +521,8 @@ paths:
           description: >-
             Envelope {data, message}. data: {entries[], count}; each entry is
             {principal_type (user|group), principal_id, principal_name, email,
-            role_name, access_level (read|write|delete|admin), environment_id}.
+            source (role|owner|direct_share|group_share), role_name, access_level,
+            environment_id, secret_id, secret_name}.
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
