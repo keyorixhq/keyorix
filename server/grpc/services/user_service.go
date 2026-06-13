@@ -38,7 +38,7 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
 		return nil, err
 	}
 	if req.GetUsername() == "" || req.GetEmail() == "" {
@@ -106,7 +106,7 @@ func (s *UserGRPCService) GetUser(ctx context.Context, req *pb.GetUserRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "users.read"); err != nil {
 		return nil, err
 	}
 	u, err := s.core.GetUser(ctx, uint(req.GetId()))
@@ -122,7 +122,7 @@ func (s *UserGRPCService) UpdateUser(ctx context.Context, req *pb.UpdateUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -147,7 +147,7 @@ func (s *UserGRPCService) DeleteUser(ctx context.Context, req *pb.DeleteUserRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.delete"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "users.delete"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -165,7 +165,7 @@ func (s *UserGRPCService) ListUsers(ctx context.Context, req *pb.ListUsersReques
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "users.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "users.read"); err != nil {
 		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())

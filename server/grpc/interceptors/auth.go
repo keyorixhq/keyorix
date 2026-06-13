@@ -12,17 +12,44 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// patTokenPrefix marks a personal access token (ADR-027/042); anything else is
-// treated as a session token. Matches the HTTP middleware's routing.
-const patTokenPrefix = "kx_pat_"
+// Token-kind prefixes — match the HTTP middleware's routing. kx_pat_ is a personal
+// access token (ADR-027/042); kx_machine_ a machine-identity token (ADR-030);
+// anything else is a session token.
+const (
+	patTokenPrefix     = "kx_pat_"
+	machineTokenPrefix = "kx_machine_"
+)
 
-// UserContext represents the authenticated user context for gRPC
+// UserContext represents the authenticated principal for gRPC — a human user, or
+// a machine identity (ADR-030) when MachineIdentityID is set and UserID is 0.
 type UserContext struct {
 	UserID      uint     `json:"user_id"`
 	Username    string   `json:"username"`
 	Email       string   `json:"email"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
+	// ActorType is "machine_identity" for a machine principal, otherwise empty
+	// (treated as a user). MachineIdentityID is the machine's id for that case.
+	ActorType         string `json:"actor_type,omitempty"`
+	MachineIdentityID uint   `json:"machine_identity_id,omitempty"`
+}
+
+// ActorKind returns the principal's actor type ("user" or "machine_identity"),
+// defaulting to user for empty contexts.
+func (u *UserContext) ActorKind() string {
+	if u.ActorType == core.ActorTypeMachine {
+		return core.ActorTypeMachine
+	}
+	return core.ActorTypeUser
+}
+
+// PrincipalID returns the id to authorize against: the machine identity id for a
+// machine request, otherwise the user id.
+func (u *UserContext) PrincipalID() uint {
+	if u.ActorType == core.ActorTypeMachine {
+		return u.MachineIdentityID
+	}
+	return u.UserID
 }
 
 // contextKey is used for context keys to avoid collisions
@@ -129,6 +156,22 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*U
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token == "" {
 		return nil, nil, status.Errorf(codes.Unauthenticated, "Missing token")
+	}
+
+	// A machine-identity token (ADR-030) authenticates as a machine principal — no
+	// owning user, no admin bypass downstream (AuthorizePrincipal resolves machine
+	// roles). Routed by prefix, fails closed.
+	if strings.HasPrefix(token, machineTokenPrefix) {
+		machine, roles, err := coreService.ValidateMachineToken(ctx, token)
+		if err != nil {
+			return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
+		}
+		return &UserContext{
+			Username:          machine.Name,
+			Roles:             roles,
+			ActorType:         core.ActorTypeMachine,
+			MachineIdentityID: machine.ID,
+		}, nil, nil
 	}
 
 	// Validate the token (existence + expiry/revocation) and resolve the user. A

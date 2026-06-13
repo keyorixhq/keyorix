@@ -51,8 +51,12 @@ func hasPermission(permissions []string, required string) bool {
 // UserContext.Permissions is the FLAT union of the caller's grants across every
 // scope (the #53/#54/#88/#90 flat-vs-scoped bug class). Routing through
 // core.Authorize fixes that and future-proofs the PAT/machine paths.
-func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, userID uint, perm string, scope core.Scope) error {
-	if allowed, err := cs.Authorize(ctx, userID, perm, scope); err != nil || !allowed {
+func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, perm string, scope core.Scope) error {
+	// AuthorizePrincipal is actor-aware: for a user it is identical to Authorize
+	// (PAT restriction + roles + admin bypass); for a machine identity it resolves
+	// machine roles with NO admin bypass. This is what makes machine tokens work
+	// over gRPC (ADR-030) with the same primitive HTTP uses.
+	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions")
 	}
 	return nil
@@ -61,8 +65,8 @@ func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, userID uint, per
 // authorizeGlobal enforces perm at global scope (project 0) — for install-wide
 // operations (user/role/system/audit management) that HTTP gates with
 // RequirePermission. A grant held only at a project scope does NOT satisfy it.
-func authorizeGlobal(ctx context.Context, cs *core.KeyorixCore, userID uint, perm string) error {
-	return authorizeScoped(ctx, cs, userID, perm, core.Scope{})
+func authorizeGlobal(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, perm string) error {
+	return authorizeScoped(ctx, cs, actor, perm, core.Scope{})
 }
 
 // --- Pagination ---

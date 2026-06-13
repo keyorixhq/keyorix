@@ -6,6 +6,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -42,7 +43,7 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	// global permission set — a project-scoped writer must not create in another
 	// project. Mirrors the HTTP CreateSecret handler (scope from the body).
 	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
-	if allowed, err := s.core.Authorize(ctx, user.UserID, "secrets.write", scope); err != nil || !allowed {
+	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), "secrets.write", scope); err != nil || !allowed {
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets in this project")
 	}
 
@@ -71,7 +72,7 @@ func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
 		return nil, err
 	}
 	secret, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
@@ -89,7 +90,7 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
 		return nil, err
 	}
 	// Resolve the name first (metadata read, no read-count side effect).
@@ -117,7 +118,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.write"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.write"); err != nil {
 		return nil, err
 	}
 
@@ -150,7 +151,7 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.delete"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.delete"); err != nil {
 		return nil, err
 	}
 	if err := s.core.DeleteSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); err != nil {
@@ -169,7 +170,7 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecrets
 	// route's ScopeFromQuery); 0/0 means global. ListSecretsWithSharingInfo then
 	// filters the results to what the caller may actually see.
 	listScope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
-	if allowed, err := s.core.Authorize(ctx, user.UserID, "secrets.read", listScope); err != nil || !allowed {
+	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), "secrets.read", listScope); err != nil || !allowed {
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list secrets")
 	}
 
@@ -220,7 +221,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
 		return nil, err
 	}
 	versions, err := s.core.GetSecretVersionsWithPermissionCheck(ctx, uint(req.GetId()), user.UserID)
@@ -251,13 +252,13 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 // permission set. A missing secret yields NotFound (not PermissionDenied) to
 // avoid leaking existence; the downstream *WithPermissionCheck core calls still
 // enforce ownership/share on top of this.
-func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, userID, secretID uint, perm string) error {
+func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string) error {
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
 		return status.Error(codes.NotFound, "secret not found")
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	if allowed, err := cs.Authorize(ctx, userID, perm, scope); err != nil || !allowed {
+	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions for this secret")
 	}
 	return nil

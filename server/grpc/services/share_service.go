@@ -6,6 +6,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -43,7 +44,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretR
 	}
 	// Scope secrets.write to the shared secret's project (mirrors the HTTP
 	// /secrets/{id}/share route), not the flat global permission set.
-	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetSecretId()), "secrets.write"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), "secrets.write"); err != nil {
 		return nil, err
 	}
 
@@ -79,7 +80,7 @@ func (s *ShareGRPCService) ListSecretShares(ctx context.Context, req *pb.ListSec
 	if req.GetSecretId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "secret_id is required")
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user.UserID, uint(req.GetSecretId()), "secrets.read"); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), "secrets.read"); err != nil {
 		return nil, err
 	}
 
@@ -152,7 +153,7 @@ func (s *ShareGRPCService) UpdateSharePermission(ctx context.Context, req *pb.Up
 	if req.GetPermission() != "read" && req.GetPermission() != "write" {
 		return nil, status.Error(codes.InvalidArgument, "permission must be 'read' or 'write'")
 	}
-	if err := s.authorizeShareScoped(ctx, user.UserID, uint(req.GetShareId()), "secrets.write"); err != nil {
+	if err := s.authorizeShareScoped(ctx, user, uint(req.GetShareId()), "secrets.write"); err != nil {
 		return nil, err
 	}
 
@@ -176,7 +177,7 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 	if req.GetShareId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "share_id is required")
 	}
-	if err := s.authorizeShareScoped(ctx, user.UserID, uint(req.GetShareId()), "secrets.write"); err != nil {
+	if err := s.authorizeShareScoped(ctx, user, uint(req.GetShareId()), "secrets.write"); err != nil {
 		return nil, err
 	}
 	if err := s.core.RevokeShare(ctx, uint(req.GetShareId()), user.UserID); err != nil {
@@ -194,7 +195,7 @@ func (s *ShareGRPCService) RevokeShare(ctx context.Context, req *pb.RevokeShareR
 // ScopeFromShareParam, so mutating a specific share enforces the same scoped
 // RBAC as HTTP rather than the flat global set. A missing share/secret yields
 // NotFound; the downstream core call still enforces ownership.
-func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, userID, shareID uint, perm string) error {
+func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, actor *interceptors.UserContext, shareID uint, perm string) error {
 	share, err := s.core.Storage().GetShareRecord(ctx, shareID)
 	if err != nil {
 		return status.Error(codes.NotFound, "share not found")
@@ -204,7 +205,7 @@ func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, userID, sha
 		return status.Error(codes.NotFound, "share not found")
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	if allowed, err := s.core.Authorize(ctx, userID, perm, scope); err != nil || !allowed {
+	if allowed, err := s.core.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions for this share")
 	}
 	return nil
