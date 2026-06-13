@@ -34,6 +34,14 @@ var (
 	flagAfterID uint
 	flagLimit   int
 	flagAll     bool
+
+	// logs filters
+	logEventType string
+	logUserID    uint
+	logProjectID uint
+	logActorType string
+	logUntil     string
+	logLimit     int
 )
 
 func init() {
@@ -44,7 +52,15 @@ func init() {
 	exportCmd.Flags().IntVar(&flagLimit, "limit", 100, "Events per page (1–1000)")
 	exportCmd.Flags().BoolVar(&flagAll, "all", false, "Follow the cursor to the end, emitting every event")
 
-	AuditCmd.AddCommand(verifyCmd, exportCmd, checkpointCmd)
+	logsCmd.Flags().StringVar(&logEventType, "event-type", "", "Filter by event type (e.g. secret.read, secret.deleted)")
+	logsCmd.Flags().UintVar(&logUserID, "user-id", 0, "Filter by actor user id")
+	logsCmd.Flags().UintVar(&logProjectID, "project-id", 0, "Filter by project id")
+	logsCmd.Flags().StringVar(&logActorType, "actor-type", "", "Filter by actor kind: user | machine_identity | system")
+	logsCmd.Flags().StringVar(&flagSince, "since", "", "Only events at/after this time (RFC3339)")
+	logsCmd.Flags().StringVar(&logUntil, "until", "", "Only events at/before this time (RFC3339)")
+	logsCmd.Flags().IntVar(&logLimit, "limit", 50, "Max events to show (1–100)")
+
+	AuditCmd.AddCommand(verifyCmd, exportCmd, checkpointCmd, logsCmd)
 }
 
 func client() (*common.RemoteClient, error) {
@@ -229,4 +245,109 @@ verify (broken, or a prior signed checkpoint proves a truncation).`,
 		fmt.Printf("  head hash:      %s\n", out.HeadHash)
 		return nil
 	},
+}
+
+// logEntry mirrors one row of the /audit/logs payload.
+type logEntry struct {
+	ID             uint   `json:"id"`
+	EventType      string `json:"event_type"`
+	Actor          string `json:"actor"`
+	ActorType      string `json:"actor_type"`
+	Description    string `json:"description"`
+	Timestamp      string `json:"timestamp"`
+	Impersonation  bool   `json:"impersonation"`
+	ImpersonatedBy string `json:"impersonated_by"`
+}
+
+type logsPage struct {
+	Logs  []logEntry `json:"logs"`
+	Total int64      `json:"total"`
+}
+
+var logsCmd = &cobra.Command{
+	Use:   "logs",
+	Short: "Query the audit trail with filters (human-readable table)",
+	Long: `Show audit events as a filtered table — for interactive investigation and
+compliance spot-checks (e.g. who deleted secrets last week). For bulk/machine
+consumption use 'keyorix audit export' (NDJSON) instead. Requires audit.read.`,
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if logLimit < 1 || logLimit > 100 {
+			return fmt.Errorf("--limit must be between 1 and 100")
+		}
+		for label, v := range map[string]string{"--since": flagSince, "--until": logUntil} {
+			if v != "" {
+				if _, err := time.Parse(time.RFC3339, v); err != nil {
+					return fmt.Errorf("invalid %s %q (want RFC3339, e.g. 2026-06-01T00:00:00Z): %w", label, v, err)
+				}
+			}
+		}
+		if logActorType != "" && logActorType != "user" && logActorType != "machine_identity" && logActorType != "system" {
+			return fmt.Errorf("--actor-type must be user, machine_identity, or system")
+		}
+
+		q := url.Values{}
+		q.Set("page_size", strconv.Itoa(logLimit))
+		if logEventType != "" {
+			q.Set("action", logEventType)
+		}
+		if logUserID > 0 {
+			q.Set("user_id", strconv.FormatUint(uint64(logUserID), 10))
+		}
+		if logProjectID > 0 {
+			q.Set("project_id", strconv.FormatUint(uint64(logProjectID), 10))
+		}
+		if logActorType != "" {
+			q.Set("actor_type", logActorType)
+		}
+		if flagSince != "" {
+			q.Set("start_time", flagSince)
+		}
+		if logUntil != "" {
+			q.Set("end_time", logUntil)
+		}
+
+		c, err := client()
+		if err != nil {
+			return err
+		}
+		var page logsPage
+		if err := c.Get(context.Background(), "/api/v1/audit/logs?"+q.Encode(), &page); err != nil {
+			return err
+		}
+		if len(page.Logs) == 0 {
+			fmt.Println("No audit events match.")
+			return nil
+		}
+		fmt.Printf("%-6s %-20s %-16s %-9s %-22s %s\n", "ID", "TIME", "ACTOR", "KIND", "EVENT", "DESCRIPTION")
+		for _, e := range page.Logs {
+			actor := e.Actor
+			if e.Impersonation && e.ImpersonatedBy != "" {
+				actor = e.ImpersonatedBy + "→" + e.Actor
+			}
+			fmt.Printf("%-6d %-20s %-16s %-9s %-22s %s\n",
+				e.ID, shortTime(e.Timestamp), truncate(actor, 16), e.ActorType, truncate(e.EventType, 22), e.Description)
+		}
+		fmt.Printf("\nShowing %d of %d total event(s).\n", len(page.Logs), page.Total)
+		return nil
+	},
+}
+
+// shortTime renders an RFC3339 timestamp as "2006-01-02 15:04:05" (UTC), or the
+// raw string if it does not parse.
+func shortTime(s string) string {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC().Format("2006-01-02 15:04:05")
+	}
+	return s
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n <= 1 {
+		return s[:n]
+	}
+	return s[:n-1] + "…"
 }

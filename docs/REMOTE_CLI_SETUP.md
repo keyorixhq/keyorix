@@ -130,6 +130,11 @@ The audit trail is hash-chained and tamper-evident (ADR-029). `verify` and
   signed-checkpoint scheduler (`audit_checkpoints`, ADR-029), verify also enforces
   the chain against the latest in-DB checkpoint — detecting that truncation
   **on-box** — and reports `checkpointed`.
+- `keyorix audit logs` - Query the trail as a human-readable table for interactive
+  investigation / compliance spot-checks. Filters: `--event-type` (e.g.
+  `secret.deleted`), `--user-id`, `--project-id`, `--actor-type`
+  (user|machine_identity|system), `--since`/`--until` (RFC3339), `--limit` (1–100).
+  For bulk/machine consumption use `export` instead.
 - `keyorix audit export` - Stream the full-fidelity audit feed as NDJSON (one
   event per line) on stdout for SIEM pull; the per-run summary and resume cursor
   go to stderr. Pull incrementally with `--after-id <cursor>`, or grab everything
@@ -149,6 +154,9 @@ keyorix audit verify --json >> audit-anchors.ndjson || notify "audit chain broke
 
 # Incremental SIEM pull from the last cursor:
 keyorix audit export --after-id "$LAST_ID" --all > batch.ndjson
+
+# Who deleted secrets in project 5 since the start of the month?
+keyorix audit logs --event-type secret.deleted --project-id 5 --since 2026-06-01T00:00:00Z
 
 # Re-baseline on-box detection right after a DEK rotation:
 keyorix audit checkpoint
