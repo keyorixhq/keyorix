@@ -305,6 +305,28 @@ keyorix compliance report
 keyorix compliance export --output evidence-2026Q4.json
 ```
 
+### Separation-of-Duties Commands
+
+Separation of duties (ISO 27001 A.5.3 / SOX): define **toxic combinations** — two
+permissions one principal must not hold together — and find who violates them.
+Listing needs `system.read`; creating/deleting policies needs `system.write`.
+
+- `keyorix sod policy list` — the defined policies.
+- `keyorix sod policy create --name <n> --permission-a <perm> --permission-b <perm>
+  [--description …]` — define a conflicting pair (the two permissions must differ).
+- `keyorix sod policy delete --id N` — retire a policy.
+- `keyorix sod violations` — principals whose effective permissions include both
+  sides of a policy.
+
+```bash
+# Approving access and administering secrets shouldn't be the same person:
+keyorix sod policy create --name "approve-vs-admin" \
+  --permission-a roles.assign --permission-b secrets.delete
+
+# Who currently violates a policy?
+keyorix sod violations
+```
+
 ## Deployment Scenarios
 
 ### Development Environment

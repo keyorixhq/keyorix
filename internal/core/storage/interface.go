@@ -77,6 +77,12 @@ type Storage interface {
 	GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error)
 	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error
 
+	// Separation-of-duties policies (ISO 27001 A.5.3 / SOX) — toxic permission pairs.
+	CreateSoDPolicy(ctx context.Context, p *models.SoDPolicy) (*models.SoDPolicy, error)
+	GetSoDPolicy(ctx context.Context, id uint) (*models.SoDPolicy, error)
+	ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy, error)
+	DeleteSoDPolicy(ctx context.Context, id uint) error
+
 	// Break-glass emergency-access activations (NIS2/DORA incident response).
 	CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error)
 	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)

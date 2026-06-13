@@ -70,6 +70,23 @@ type AccessRequest struct {
 	ResolvedAt    *time.Time
 }
 
+// SoDPolicy is a separation-of-duties rule (ISO 27001 A.5.3 / SOX): two permissions
+// that one principal must not hold together (a "toxic combination"). A user whose
+// effective permissions include BOTH PermissionA and PermissionB violates it. The
+// policy existing = active; delete it to retire the rule.
+type SoDPolicy struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	PermissionA string    `json:"permission_a"` // e.g. "roles.assign"
+	PermissionB string    `json:"permission_b"` // e.g. "secrets.delete"
+	CreatedBy   uint      `json:"created_by,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// TableName pins the table name (GORM would otherwise derive "so_d_policies").
+func (SoDPolicy) TableName() string { return "sod_policies" }
+
 // BreakGlassActivation records a self-service emergency-access elevation: a user
 // immediately self-granted a time-bound emergency role (no approval), with a
 // written justification, for incident response (NIS2/DORA). The grant itself is a

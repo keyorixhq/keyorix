@@ -458,6 +458,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
 		// Compliance evidence pack — posture + supporting records, for archival.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
+
+		// Separation of duties (ISO A.5.3): list policies/violations (system.read);
+		// create/delete policies (system.write).
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/sod/policies", catalogHandler.ListSoDPolicies)
+		r.With(customMiddleware.RequirePermission("system.write")).Post("/sod/policies", catalogHandler.CreateSoDPolicy)
+		r.With(customMiddleware.RequirePermission("system.write")).Delete("/sod/policies/{id}", catalogHandler.DeleteSoDPolicy)
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/sod/violations", catalogHandler.ListSoDViolations)
 	})
 
 	// Swagger UI (optional, based on config)

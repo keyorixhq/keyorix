@@ -26,6 +26,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/run"
 	"github.com/keyorixhq/keyorix/internal/cli/secret"
 	"github.com/keyorixhq/keyorix/internal/cli/share"
+	sodcli "github.com/keyorixhq/keyorix/internal/cli/sod"
 	"github.com/keyorixhq/keyorix/internal/cli/status"
 	"github.com/keyorixhq/keyorix/internal/cli/system"
 	"github.com/keyorixhq/keyorix/internal/cli/user"
@@ -69,6 +70,7 @@ func init() {
 	rootCmd.AddCommand(accessreview.AccessReviewCmd)
 	rootCmd.AddCommand(breakglass.BreakGlassCmd)
 	rootCmd.AddCommand(compliance.ComplianceCmd)
+	rootCmd.AddCommand(sodcli.SoDCmd)
 }
 
 // Execute runs the root command
