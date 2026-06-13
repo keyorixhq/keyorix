@@ -198,6 +198,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// a project_admin can manage their own project's members.
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/members", catalogHandler.ListProjectMembers)
 		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/access-review", catalogHandler.GetProjectAccessReview)
+		// Recertification decisions (ISO 27001 A.5.18): attest is a reviewer action
+		// (roles.read); revoke removes the grant and needs roles.assign.
+		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Post("/projects/{id}/access-review/attest", catalogHandler.AttestProjectAccessReview)
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/access-review/revoke", catalogHandler.RevokeProjectAccessReview)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/members", catalogHandler.AddProjectMember)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/members/{userId}", catalogHandler.UpdateProjectMember)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/members/{userId}", catalogHandler.RemoveProjectMember)

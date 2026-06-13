@@ -1,0 +1,154 @@
+// access_review_revoke.go — closing the access-recertification loop (ISO 27001
+// A.5.18 / SOC 2 CC6.2-6.3). GenerateProjectAccessReview (access_review.go) lists
+// who can reach a project's secrets; this file lets a reviewer act on each entry:
+//
+//   - Revoke  — remove the underlying grant (a role assignment or a share) so the
+//     access no longer exists. Audited as access_review.revoked.
+//   - Attest  — certify the grant was reviewed and kept. No state change; recorded
+//     as access_review.attested so the review itself is evidence of the control.
+//
+// Both decisions are authoritative recertification actions: the API gates revoke
+// behind roles.assign and attest behind roles.read at the project scope. The share
+// path deletes the ShareRecord directly (rather than RevokeShare, which requires
+// the caller to be the secret owner) because the reviewer acts on the scope's
+// authority, not ownership.
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/keyorixhq/keyorix/internal/i18n"
+)
+
+// Access-review decision audit event types.
+const (
+	EventAccessReviewRevoked  = "access_review.revoked"  // #nosec G101 -- audit event type, not a credential
+	EventAccessReviewAttested = "access_review.attested" // #nosec G101 -- audit event type, not a credential
+)
+
+// AccessReviewDecision identifies a single access-review entry (a grant of access
+// to a project's secrets) for a recertification decision. The fields mirror an
+// AccessReviewEntry: Source says which mechanism conferred the grant, and the
+// remaining fields point at the specific assignment or share to act on.
+//   - Source "role"         → PrincipalType + PrincipalID + RoleID (+ EnvironmentID)
+//   - Source "direct_share" → PrincipalID (the user) + SecretID
+//   - Source "group_share"  → PrincipalID (the group) + SecretID
+type AccessReviewDecision struct {
+	Source        string `json:"source"`         // role | direct_share | group_share
+	PrincipalType string `json:"principal_type"` // user | group (for role grants)
+	PrincipalID   uint   `json:"principal_id"`
+	RoleID        uint   `json:"role_id,omitempty"`
+	EnvironmentID uint   `json:"environment_id,omitempty"`
+	SecretID      uint   `json:"secret_id,omitempty"`
+}
+
+// accessReviewAuditDetail is the structured payload stored in a recertification
+// event's Diff field, capturing exactly which grant was acted on.
+type accessReviewAuditDetail struct {
+	Source        string `json:"source"`
+	PrincipalType string `json:"principal_type,omitempty"`
+	PrincipalID   uint   `json:"principal_id,omitempty"`
+	RoleID        uint   `json:"role_id,omitempty"`
+	EnvironmentID uint   `json:"environment_id,omitempty"`
+	SecretID      uint   `json:"secret_id,omitempty"`
+}
+
+// RevokeAccessReviewGrant removes the grant identified by the decision: a project-
+// scoped role assignment (user or group) or a secret share (direct or group). The
+// underlying removal is itself audited (role.removed / role.group_removed for
+// roles), and a recertification-specific access_review.revoked event records the
+// decision with the acting reviewer. actorID is the reviewer performing the revoke.
+func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
+	if projectID == 0 {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+	}
+	switch d.Source {
+	case "role":
+		if d.PrincipalID == 0 || d.RoleID == 0 {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to revoke a role grant")
+		}
+		scope := Scope{ProjectID: projectID, EnvironmentID: d.EnvironmentID}
+		if d.PrincipalType == "group" {
+			if err := c.RemoveRoleFromGroup(ctx, actorID, d.PrincipalID, d.RoleID, scope); err != nil {
+				return err
+			}
+		} else {
+			if err := c.RemoveUserRole(ctx, actorID, d.PrincipalID, d.RoleID, scope); err != nil {
+				return err
+			}
+		}
+	case "direct_share", "group_share":
+		if d.PrincipalID == 0 || d.SecretID == 0 {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to revoke a share")
+		}
+		if err := c.revokeReviewShare(ctx, d); err != nil {
+			return err
+		}
+	case "owner":
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "ownership cannot be revoked via access review; reassign or delete the secret instead")
+	default:
+		return fmt.Errorf("%s: unknown access-review source %q", i18n.T("ErrorValidation", nil), d.Source)
+	}
+	c.logAccessReviewDecision(ctx, EventAccessReviewRevoked, "revoked", actorID, projectID, d)
+	return nil
+}
+
+// revokeReviewShare deletes the ShareRecord matching the decision's secret +
+// recipient. It deletes the record directly (not via RevokeShare, which is owner-
+// gated) because access recertification acts on the project scope's authority.
+func (c *KeyorixCore) revokeReviewShare(ctx context.Context, d AccessReviewDecision) error {
+	isGroup := d.Source == "group_share"
+	shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, sh := range shares {
+		if sh.RecipientID == d.PrincipalID && sh.IsGroup == isGroup {
+			if err := c.storage.DeleteShareRecord(ctx, sh.ID); err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: no matching share to revoke", i18n.T("ErrorNotFound", nil))
+}
+
+// AttestAccessReviewGrant records that the reviewer examined the grant and chose to
+// keep it. It changes no state — the access_review.attested event is the evidence
+// that the recertification was performed. actorID is the reviewer.
+func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
+	if projectID == 0 {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+	}
+	if d.Source == "" {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source is required")
+	}
+	c.logAccessReviewDecision(ctx, EventAccessReviewAttested, "attested", actorID, projectID, d)
+	return nil
+}
+
+// logAccessReviewDecision writes the recertification audit event (actor as UserID,
+// the secret as SecretNodeID when the grant is per-secret, project as ProjectID,
+// and the full decision in the structured diff).
+func (c *KeyorixCore) logAccessReviewDecision(ctx context.Context, eventType, verb string, actorID, projectID uint, d AccessReviewDecision) {
+	encoded, _ := json.Marshal(accessReviewAuditDetail(d))
+	var actor *uint
+	if actorID != 0 {
+		a := actorID
+		actor = &a
+	}
+	var secretID *uint
+	if d.SecretID != 0 {
+		s := d.SecretID
+		secretID = &s
+	}
+	pid := projectID
+	principal := d.PrincipalType
+	if principal == "" {
+		principal = "principal"
+	}
+	desc := fmt.Sprintf("access review: %s %s grant for %s %d", verb, d.Source, principal, d.PrincipalID)
+	c.writeAuditEventDiff(ctx, eventType, actor, secretID, &pid, "", desc, string(encoded))
+}

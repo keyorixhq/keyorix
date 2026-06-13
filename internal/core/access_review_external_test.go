@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
@@ -82,5 +83,106 @@ func TestGenerateProjectAccessReview_RequiresProject(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
 	_, err := h.CoreService.GenerateProjectAccessReview(context.Background(), 0)
+	require.Error(t, err)
+}
+
+// Revoking a role grant removes the underlying role assignment, so it no longer
+// appears in a subsequent review.
+func TestRevokeAccessReviewGrant_Role(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor → write
+
+	ctx := context.Background()
+	before, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, before, 1, "alice's editor grant is present before revoke")
+
+	err = h.CoreService.RevokeAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+	})
+	require.NoError(t, err)
+
+	after, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	require.NoError(t, err)
+	assert.Empty(t, after, "alice's role grant is gone after revoke")
+}
+
+// Revoking a group share removes that ShareRecord; revoking ownership is refused.
+func TestRevokeAccessReviewGrant_ShareAndOwner(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}))
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10) // owner
+	h.CreateTestGroup(t, "devs", "", 100)
+	require.NoError(t, h.DB.Create(&models.Environment{ID: 20, ProjectID: proj, Name: "prod"}).Error)
+	require.NoError(t, h.DB.Create(&models.SecretNode{
+		ID: 500, ProjectID: proj, EnvironmentID: 20, OwnerID: 10, Name: "db-pw", Type: "password", Status: "active", IsSecret: true,
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 500, RecipientID: 100, IsGroup: true, Permission: "write"}).Error)
+
+	ctx := context.Background()
+	// Revoke the group share.
+	err := h.CoreService.RevokeAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "group_share", PrincipalID: 100, SecretID: 500,
+	})
+	require.NoError(t, err)
+
+	review, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	require.NoError(t, err)
+	for _, e := range review {
+		assert.NotEqual(t, "group_share", e.Source, "the group share is gone after revoke")
+	}
+
+	// Ownership cannot be revoked through the review.
+	err = h.CoreService.RevokeAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "owner", PrincipalID: 10, SecretID: 500,
+	})
+	require.Error(t, err)
+
+	// A share that doesn't exist is a not-found error, not a silent success.
+	err = h.CoreService.RevokeAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "direct_share", PrincipalID: 999, SecretID: 500,
+	})
+	require.Error(t, err)
+}
+
+// Attesting a grant changes no access but records an access_review.attested audit
+// event as the evidence of recertification.
+func TestAttestAccessReviewGrant_AuditsDecision(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj))
+
+	ctx := context.Background()
+	err := h.CoreService.AttestAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+	})
+	require.NoError(t, err)
+
+	// The grant is untouched — still in the review.
+	review, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	require.NoError(t, err)
+	assert.Len(t, review, 1, "attest does not change access")
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ?", core.EventAccessReviewAttested).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "an access_review.attested event was recorded")
+}
+
+func TestRevokeAccessReviewGrant_RequiresProject(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 1, 0, core.AccessReviewDecision{Source: "role"})
 	require.Error(t, err)
 }
