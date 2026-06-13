@@ -46,13 +46,17 @@ func mysqlAccountRef(user string) string {
 // assertSafeUsername rejects any username containing a character outside the
 // generated alphabet ([a-z0-9_]), so the fmt.Sprintf'd account name can never be
 // an injection vector regardless of where the name came from.
+// assertSafeUsername is a shared defense-in-depth guard for every engine: a
+// dynamic username must be the quote-free [a-z0-9_] alphabet the generator
+// produces, so a tampered stored role name can never carry injection metacharacters
+// into a target command. Backend-agnostic (used by MySQL, MongoDB, Redis).
 func assertSafeUsername(user string) error {
 	if user == "" {
-		return fmt.Errorf("empty mysql username")
+		return fmt.Errorf("empty dynamic-secret username")
 	}
 	for _, r := range user {
 		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
-			return fmt.Errorf("refusing unsafe mysql username %q", user)
+			return fmt.Errorf("refusing unsafe dynamic-secret username %q", user)
 		}
 	}
 	return nil

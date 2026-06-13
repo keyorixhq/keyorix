@@ -22,7 +22,11 @@ func TestNew_Backends(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "mongodb", mg.BackendType())
 
-	_, err = New("redis")
+	rd, err := New("redis")
+	require.NoError(t, err)
+	assert.Equal(t, "redis", rd.BackendType())
+
+	_, err = New("cassandra")
 	require.Error(t, err, "an unsupported backend is rejected")
 }
 
@@ -53,7 +57,7 @@ func TestMongoEngine_RevokeRejectsUnsafeRole(t *testing.T) {
 	// Defense-in-depth: a tampered role name is rejected before any connection.
 	err := (&MongoEngine{}).Revoke(context.Background(), "mongodb://admin:p@h:27017/", "evil'; drop")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsafe mysql username")
+	assert.Contains(t, err.Error(), "unsafe dynamic-secret username")
 }
 
 func TestMongoEngine_InvalidURIRejected(t *testing.T) {
@@ -84,7 +88,7 @@ func TestMySQLEngine_RevokeRejectsUnsafeRole(t *testing.T) {
 	// any SQL is constructed or any connection is opened.
 	err := (&MySQLEngine{}).Revoke(context.Background(), "admin:p@tcp(h:3306)/", "evil'; DROP")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsafe mysql username")
+	assert.Contains(t, err.Error(), "unsafe dynamic-secret username")
 }
 
 func TestMySQLEngine_InvalidDSNRejected(t *testing.T) {
@@ -93,6 +97,37 @@ func TestMySQLEngine_InvalidDSNRejected(t *testing.T) {
 	_, _, err := e.Issue(context.Background(), "not a valid dsn at all", "", 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mysql admin DSN")
+}
+
+func TestParseRedisACLRules(t *testing.T) {
+	// Empty template → no rules (a user that can auth but has no permissions).
+	assert.Empty(t, parseRedisACLRules(""))
+	assert.Empty(t, parseRedisACLRules("   \n\t "))
+
+	// Whitespace-separated tokens are split into discrete ACL args.
+	assert.Equal(t, []string{"~app:*", "+@read", "+@write"}, parseRedisACLRules("~app:* +@read +@write"))
+	// Extra/odd whitespace collapses.
+	assert.Equal(t, []string{"allkeys", "+@all"}, parseRedisACLRules("  allkeys   +@all  "))
+}
+
+func TestRedisEngine_Metadata(t *testing.T) {
+	e := &RedisEngine{}
+	assert.Equal(t, "redis", e.BackendType())
+	assert.False(t, e.SupportsNativeExpiry(), "Redis ACL users have no native expiry — sweeper enforces TTL")
+}
+
+func TestRedisEngine_RevokeRejectsUnsafeRole(t *testing.T) {
+	// Defense-in-depth: a tampered role name is rejected before any connection.
+	err := (&RedisEngine{}).Revoke(context.Background(), "redis://:p@h:6379/0", "evil-user'")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsafe dynamic-secret username")
+}
+
+func TestRedisEngine_InvalidURIRejected(t *testing.T) {
+	// A malformed URI is rejected at connect time, before any user is created.
+	_, _, err := (&RedisEngine{}).Issue(context.Background(), "http://not-a-redis-uri", "+@read", 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "redis admin URI")
 }
 
 func TestRandString_QuoteFreeAlphabet(t *testing.T) {

@@ -248,7 +248,7 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
 
-	for _, backend := range []string{"postgres", "mysql", "mongodb"} {
+	for _, backend := range []string{"postgres", "mysql", "mongodb", "redis"} {
 		_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
 			Name: backend + "-cfg", ProjectID: 1, BackendType: backend, AdminDSN: "admin:p@tcp(h:3306)/",
 		})
@@ -256,7 +256,7 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 	}
 
 	_, err = c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
-		Name: "bad", ProjectID: 1, BackendType: "redis", AdminDSN: "x",
+		Name: "bad", ProjectID: 1, BackendType: "cassandra", AdminDSN: "x",
 	})
 	require.Error(t, err, "an unsupported backend must be rejected at config creation")
 }
