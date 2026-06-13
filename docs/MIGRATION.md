@@ -7,7 +7,8 @@
 
 `keyorix secret import` pulls existing secrets into Keyorix — either from a file
 or **directly from a running secrets manager** (HashiCorp Vault, AWS Secrets
-Manager, Azure Key Vault). It runs in remote mode against your Keyorix server, so
+Manager, Azure Key Vault, Google Cloud Secret Manager). It runs in remote mode
+against your Keyorix server, so
 first connect:
 
 ```sh
@@ -83,6 +84,23 @@ keyorix secret import --source azure \
 JSON-object values explode per field as above; plain strings import as a single
 secret.
 
+### Google Cloud Secret Manager
+
+Uses Application Default Credentials (`GOOGLE_APPLICATION_CREDENTIALS`, `gcloud
+auth application-default login`, or workload identity / the metadata server).
+
+```sh
+gcloud auth application-default login   # or set GOOGLE_APPLICATION_CREDENTIALS
+
+keyorix secret import --source gcp \
+  --gcp-project my-gcp-project \
+  --gcp-prefix prod- --project payments --env production
+```
+
+Each secret's **latest enabled version** is read; one with no accessible version
+is skipped with a notice. JSON-object values explode per field as above; plain
+strings import as a single secret. Filter by name with `--gcp-prefix`.
+
 ## File sources
 
 ```sh
@@ -107,6 +125,6 @@ export file) are supported.
 ## Not yet supported
 
 Values are imported; **version history, tags/metadata, and TTLs are not**. Also
-out of scope for now: GCP Secret Manager, Vault Enterprise namespaces, AWS
-binary secrets, and auto-detecting the Vault KV version (use
-`--vault-kv-version`). These are tracked follow-ups.
+out of scope for now: Vault Enterprise namespaces, AWS/GCP binary secrets, and
+auto-detecting the Vault KV version (use `--vault-kv-version`). These are tracked
+follow-ups.

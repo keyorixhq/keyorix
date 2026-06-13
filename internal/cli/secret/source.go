@@ -34,6 +34,10 @@ var (
 
 	// Azure Key Vault
 	azureVaultURL string
+
+	// GCP Secret Manager
+	gcpProject string
+	gcpPrefix  string
 )
 
 // fetchFromSource dispatches to the live provider named by --source and returns
@@ -51,8 +55,10 @@ func fetchFromSource(ctx context.Context, source string) ([]secretEntry, error) 
 		entries, err = fetchFromAWS(ctx)
 	case "azure":
 		entries, err = fetchFromAzure(ctx)
+	case "gcp":
+		entries, err = fetchFromGCP(ctx)
 	default:
-		return nil, fmt.Errorf("unknown source %q (supported: vault, aws, azure)", source)
+		return nil, fmt.Errorf("unknown source %q (supported: vault, aws, azure, gcp)", source)
 	}
 	if err != nil {
 		return nil, err

@@ -40,6 +40,7 @@ local credentials and never sends them to the Keyorix server:
   keyorix secret import --source vault --vault-path prod --env production
   keyorix secret import --source aws   --aws-region eu-west-1 --env production
   keyorix secret import --source azure --azure-vault-url https://kv.vault.azure.net --env production
+  keyorix secret import --source gcp   --gcp-project my-gcp-project --env production
 
 Supported file formats (--format):
   dotenv  .env files (KEY=VALUE, comments and blank lines ignored)
@@ -50,6 +51,7 @@ Live sources (--source):
   vault   HashiCorp Vault KV engine (VAULT_ADDR / VAULT_TOKEN or --vault-* flags)
   aws     AWS Secrets Manager (standard AWS credential chain)
   azure   Azure Key Vault (DefaultAzureCredential)
+  gcp     Google Cloud Secret Manager (Application Default Credentials)
 
 Multi-field secrets (Vault KV paths, AWS/Azure JSON values) explode into one
 Keyorix secret per field ("<name>-<field>") unless --no-explode is set.`,
@@ -65,7 +67,7 @@ func init() {
 	importCmd.Flags().BoolVar(&importSkipExisting, "skip-existing", true, "Skip secrets that already exist instead of failing")
 
 	// Live-source flags (mutually exclusive with --file).
-	importCmd.Flags().StringVar(&importSource, "source", "", "Live source: vault, aws, azure (instead of --file)")
+	importCmd.Flags().StringVar(&importSource, "source", "", "Live source: vault, aws, azure, gcp (instead of --file)")
 	importCmd.Flags().StringVar(&importPrefix, "prefix", "", "Prepend this prefix to every imported secret name")
 	importCmd.Flags().BoolVar(&importNoExplode, "no-explode", false, "Store JSON-object values as a single secret instead of one per field")
 	// Vault
@@ -79,6 +81,9 @@ func init() {
 	importCmd.Flags().StringVar(&awsPrefix, "aws-prefix", "", "Only import AWS secrets whose name starts with this prefix")
 	// Azure
 	importCmd.Flags().StringVar(&azureVaultURL, "azure-vault-url", "", "Azure Key Vault URL (https://<vault>.vault.azure.net)")
+	// GCP
+	importCmd.Flags().StringVar(&gcpProject, "gcp-project", "", "GCP project ID to import Secret Manager secrets from")
+	importCmd.Flags().StringVar(&gcpPrefix, "gcp-prefix", "", "Only import GCP secrets whose name starts with this prefix")
 }
 
 // secretEntry is a parsed key/value pair ready to be created.
