@@ -159,13 +159,17 @@ func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uin
 func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) ([]*models.SecretWithSharingInfo, error) {
 	storageFilter := c.convertToStorageFilter(filter)
 
-	// created_by stores the username string, not the numeric ID.
-	// Look up the user to get the correct username for filtering.
+	// Resolve the user first — fail closed for an unknown/zero principal (e.g. a
+	// machine identity has no owning user, so it owns no secrets).
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil || user == nil {
 		return nil, fmt.Errorf("failed to resolve user for secret listing: %w", err)
 	}
-	storageFilter.CreatedBy = &user.Username
+	// "Owned" means owner_id == userID — the canonical ownership the permission
+	// model uses (CheckSecretPermission), not the created_by username string. The
+	// username proxy missed CLI-created secrets (created_by "cli-user") and could
+	// mis-attribute ownership across a deleted-then-reused username.
+	storageFilter.OwnerID = &userID
 
 	secrets, _, err := c.storage.ListSecrets(ctx, storageFilter)
 	if err != nil {

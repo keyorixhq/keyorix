@@ -389,6 +389,10 @@ type SecretFilter struct {
 	Type          *string
 	Tags          []string
 	CreatedBy     *string
+	// OwnerID, when set, restricts to secrets owned by that user (owner_id) — the
+	// canonical ownership the permission model uses (CheckSecretPermission), as
+	// opposed to the mutable created_by username string.
+	OwnerID       *uint
 	CreatedAfter  *time.Time
 	CreatedBefore *time.Time
 	Page          int

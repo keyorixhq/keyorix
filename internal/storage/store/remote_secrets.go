@@ -158,6 +158,7 @@ func buildSecretFilterPath(filter *storage.SecretFilter) string {
 	params.addUint("environment_id", filter.EnvironmentID)
 	params.addString("type", filter.Type)
 	params.addString("created_by", filter.CreatedBy)
+	params.addUint("owner_id", filter.OwnerID)
 	params.addTime("created_after", filter.CreatedAfter)
 	params.addTime("created_before", filter.CreatedBefore)
 	params.addTags("tags", filter.Tags)

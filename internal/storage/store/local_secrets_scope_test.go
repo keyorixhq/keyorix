@@ -117,3 +117,30 @@ func TestListSecrets_Pagination(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, got2, 1, "last page returns the remainder")
 }
+
+// The OwnerID filter selects by owner_id (the canonical ownership), not the
+// created_by username — so it includes a secret whose created_by differs from the
+// owner's username (e.g. a CLI-created "cli-user" secret) that a created_by filter
+// would miss, and excludes another user's secrets.
+func TestListSecrets_OwnerFilter(t *testing.T) {
+	ls := newSecretScopeTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Create(&models.Environment{ID: 1, ProjectID: 5, Name: "dev"}).Error)
+	for _, s := range []models.SecretNode{
+		{ProjectID: 5, EnvironmentID: 1, OwnerID: 7, CreatedBy: "alice", Name: "alice-secret", IsSecret: true, Type: "api_key", Status: "active"},
+		{ProjectID: 5, EnvironmentID: 1, OwnerID: 7, CreatedBy: "cli-user", Name: "cli-secret", IsSecret: true, Type: "api_key", Status: "active"},
+		{ProjectID: 5, EnvironmentID: 1, OwnerID: 8, CreatedBy: "bob", Name: "bob-secret", IsSecret: true, Type: "api_key", Status: "active"},
+	} {
+		require.NoError(t, ls.db.Create(&s).Error)
+	}
+
+	got, total, err := ls.ListSecrets(ctx, &storage.SecretFilter{OwnerID: uptr(7), Page: 1, PageSize: 100})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
+	assert.ElementsMatch(t, []string{"alice-secret", "cli-secret"}, secretNames(got),
+		"owner 7 owns both, including the CLI secret whose created_by != the owner's username")
+
+	got, _, err = ls.ListSecrets(ctx, &storage.SecretFilter{OwnerID: uptr(8), Page: 1, PageSize: 100})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"bob-secret"}, secretNames(got), "owner 8 sees only its own")
+}
