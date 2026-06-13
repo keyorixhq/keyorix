@@ -151,6 +151,36 @@ type RotationStatusEntry struct {
 // active rotation policy (optionally scoped to a project), classified as
 // overdue / due_soon / ok. Secrets never rotated fall back to their creation
 // time, mirroring EvaluateRotationPolicies.
+// scopedPolicySecrets returns every secret in a rotation policy's scope, paging
+// through all of them. Rotation evaluation must NOT silently cap: a project (or
+// environment) with more than one page of secrets would otherwise have the
+// secrets past the cap never checked for rotation — so overdue ones would be
+// missed by both the reminder scheduler and the status/evaluate views.
+func (c *KeyorixCore) scopedPolicySecrets(ctx context.Context, policy *models.RotationPolicy) ([]*models.SecretNode, error) {
+	const pageSize = 500
+	var projectID, environmentID *uint
+	if policy.Scope == "project" {
+		projectID = policy.ProjectID
+	} else {
+		environmentID = policy.EnvironmentID
+	}
+
+	var all []*models.SecretNode
+	for page := 1; ; page++ {
+		secrets, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
+			Page: page, PageSize: pageSize, ProjectID: projectID, EnvironmentID: environmentID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, secrets...)
+		if len(secrets) < pageSize || int64(len(all)) >= total {
+			break
+		}
+	}
+	return all, nil
+}
+
 func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID *uint) ([]*RotationStatusEntry, error) {
 	policies, err := c.storage.ListRotationPolicies(ctx, projectID, nil)
 	if err != nil {
@@ -165,14 +195,7 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID *uint) ([
 			continue
 		}
 
-		filter := &storage.SecretFilter{Page: 1, PageSize: 1000}
-		if policy.Scope == "project" {
-			filter.ProjectID = policy.ProjectID
-		} else {
-			filter.EnvironmentID = policy.EnvironmentID
-		}
-
-		secrets, _, err := c.storage.ListSecrets(ctx, filter)
+		secrets, err := c.scopedPolicySecrets(ctx, policy)
 		if err != nil {
 			continue
 		}
@@ -226,14 +249,7 @@ func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID *u
 			continue
 		}
 
-		filter := &storage.SecretFilter{Page: 1, PageSize: 1000}
-		if policy.Scope == "project" {
-			filter.ProjectID = policy.ProjectID
-		} else {
-			filter.EnvironmentID = policy.EnvironmentID
-		}
-
-		secrets, _, err := c.storage.ListSecrets(ctx, filter)
+		secrets, err := c.scopedPolicySecrets(ctx, policy)
 		if err != nil {
 			continue
 		}
