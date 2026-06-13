@@ -3,6 +3,29 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.15.0 — 2026-06-13
+
+Migration reach and least-privilege completion. No config or schema changes
+(the PAT scoping column is an additive, default-off migration).
+
+### Added
+- **Import from Google Cloud Secret Manager** — `keyorix secret import --source gcp
+  --gcp-project <id>` is the fourth live migration source after Vault, AWS Secrets
+  Manager and Azure Key Vault, completing big-3 cloud coverage. Authenticates with
+  Application Default Credentials, reads each secret's latest enabled version, and
+  explodes JSON values per field. Credentials stay CLI-side; the GCP SDK links into
+  the CLI binary only. ([#145])
+- **Per-environment PAT confinement** — a personal access token can now be confined
+  to a single environment (`environment_scope` on `POST /auth/tokens`), the third
+  and final least-privilege scoping axis alongside the permission allowlist and
+  project confinement (ADR-042). A token scoped to an environment may act only on
+  that environment's secrets — e.g. a staging-only CI credential. Enforced before
+  the admin bypass, so it bounds even an admin's own token. Existing tokens are
+  unaffected. ([#146])
+
+[#145]: https://github.com/keyorixhq/keyorix/pull/145
+[#146]: https://github.com/keyorixhq/keyorix/pull/146
+
 ## v0.14.0 — 2026-06-13
 
 Dynamic-secrets expansion: a fourth backend and full CLI lifecycle coverage.
