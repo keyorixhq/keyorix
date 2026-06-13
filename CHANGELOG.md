@@ -3,6 +3,18 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.16.0 — 2026-06-13
+
+### Added
+- **`keyorix pat` CLI** — create, list, and revoke personal access tokens from the
+  terminal (previously web-UI/API only). `pat create` surfaces the full ADR-042
+  least-privilege model via flags: `--scope` (repeatable permission allowlist),
+  `--project-id`, and `--environment-id` (which requires `--project-id`); the raw
+  token is printed exactly once. Completes the PAT least-privilege story across
+  backend, web UI, and CLI. ([#148])
+
+[#148]: https://github.com/keyorixhq/keyorix/pull/148
+
 ## v0.15.0 — 2026-06-13
 
 Migration reach and least-privilege completion. No config or schema changes
