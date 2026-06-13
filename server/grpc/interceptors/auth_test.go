@@ -2,9 +2,11 @@ package interceptors
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
@@ -143,4 +145,59 @@ func TestAuthInterceptor_PublicMethodBypassesAuth(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ok", resp)
 	assert.Nil(t, GetUserFromGRPCContext(captured), "public method must not set a user context")
+}
+
+// A personal access token authenticates over gRPC (previously rejected outright)
+// AND its ADR-042 least-privilege restriction rides the handler context, so
+// core.Authorize enforces scoping over gRPC exactly as it does over HTTP.
+func TestAuthInterceptor_PATAuthenticatesAndEnforcesScope(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.PersonalAccessToken{}))
+
+	h.CreateTestUser(t, "grpc-ci", 9100)
+	proj2 := uint(2)
+	h.AssignUserRole(t, 9100, 3, &proj2) // editor (secrets.read + secrets.write) in project 2
+
+	// A token confined to secrets.read in project 2 only.
+	res, err := h.CoreService.CreateOwnPAT(context.Background(), 9100, "ci", nil, []string{"secrets.read"}, 2, 0)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(res.PlainToken, "kx_pat_"))
+
+	var captured context.Context
+	interceptor := AuthInterceptor(h.CoreService)
+	resp, err := interceptor(bearerCtx(res.PlainToken), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
+	require.NoError(t, err, "a kx_pat_ token must now authenticate over gRPC")
+	assert.Equal(t, "ok", resp)
+
+	user := GetUserFromGRPCContext(captured)
+	require.NotNil(t, user)
+	assert.Equal(t, uint(9100), user.UserID, "authenticated as the PAT's owner")
+
+	// Restriction is on the handler context → core.Authorize enforces it.
+	readP2, err := h.CoreService.Authorize(captured, 9100, "secrets.read", core.Scope{ProjectID: 2})
+	require.NoError(t, err)
+	assert.True(t, readP2, "in-scope read allowed (restriction permits + owner's role grants)")
+
+	writeP2, err := h.CoreService.Authorize(captured, 9100, "secrets.write", core.Scope{ProjectID: 2})
+	require.NoError(t, err)
+	assert.False(t, writeP2, "permission outside the token's allowlist is denied")
+
+	readP3, err := h.CoreService.Authorize(captured, 9100, "secrets.read", core.Scope{ProjectID: 3})
+	require.NoError(t, err)
+	assert.False(t, readP3, "scope outside the token's project is denied")
+}
+
+// An invalid PAT fails closed with Unauthenticated, same as a bad session token.
+func TestAuthInterceptor_InvalidPATRejected(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.PersonalAccessToken{}))
+
+	interceptor := AuthInterceptor(h.CoreService)
+	_, err := interceptor(bearerCtx("kx_pat_bogus"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
