@@ -17,6 +17,7 @@ export interface PersonalAccessToken {
     last_used_at: string | null;
     scopes: string[]; // empty = inherits the owner's full permissions
     project_scope: number; // 0 = any project the owner can reach
+    environment_scope: number; // 0 = any environment
 }
 
 export interface CreatePersonalTokenBody {
@@ -24,6 +25,7 @@ export interface CreatePersonalTokenBody {
     expires_at?: string;
     scopes?: string[];
     project_scope?: number;
+    environment_scope?: number;
 }
 
 function toArray<T>(data: unknown): T[] {
@@ -42,6 +44,7 @@ export function buildCreateTokenBody(input: {
     permissions: string[];
     extraPermissions?: string;
     projectScope?: number;
+    environmentScope?: number;
 }): CreatePersonalTokenBody {
     const body: CreatePersonalTokenBody = { name: input.name.trim() };
     if (input.expiresAt) {
@@ -66,6 +69,11 @@ export function buildCreateTokenBody(input: {
     }
     if (input.projectScope && input.projectScope > 0) {
         body.project_scope = input.projectScope;
+        // An environment confinement only makes sense within a chosen project
+        // (env ids belong to a project), so it's omitted unless a project is set.
+        if (input.environmentScope && input.environmentScope > 0) {
+            body.environment_scope = input.environmentScope;
+        }
     }
     return body;
 }

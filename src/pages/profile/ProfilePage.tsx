@@ -27,7 +27,7 @@ import {
 } from '../../features/account';
 import type { AccountSession } from '../../services/account';
 import { buildCreateTokenBody, type PersonalAccessToken } from '../../services/personalTokens';
-import { useProjects } from '../../features/projects/api';
+import { useProjects, useProjectEnvironments } from '../../features/projects/api';
 
 // Common preset permissions offered when scoping a token (ADR-042). The advanced
 // free-text field covers anything beyond these.
@@ -334,19 +334,19 @@ const SessionsTab: React.FC = () => {
 
 // ── API Tokens ────────────────────────────────────────────────────────────────
 
-// ScopeChip renders a token's least-privilege restriction (ADR-042): a project
-// confinement or an allowed permission.
-const ScopeChip: React.FC<{ label: string; kind: 'project' | 'perm' }> = ({ label, kind }) => (
+// ScopeChip renders a token's least-privilege restriction (ADR-042): a project or
+// environment confinement, or an allowed permission.
+const ScopeChip: React.FC<{ label: string; kind: 'project' | 'env' | 'perm' }> = ({ label, kind }) => (
     <span
         className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[11px] font-medium"
         style={{
             fontFamily: kind === 'perm' ? 'var(--font-mono)' : undefined,
-            backgroundColor: kind === 'project' ? 'var(--bg-app)' : 'var(--bg-subtle)',
+            backgroundColor: kind === 'perm' ? 'var(--bg-subtle)' : 'var(--bg-app)',
             color: 'var(--text-secondary)',
             border: '1px solid var(--border)',
         }}
     >
-        {kind === 'project' ? `▣ ${label}` : label}
+        {kind === 'project' ? `▣ ${label}` : kind === 'env' ? `⬢ ${label}` : label}
     </span>
 );
 
@@ -367,6 +367,10 @@ const TokensTab: React.FC = () => {
     const [permissions, setPermissions] = useState<string[]>([]);
     const [extraPermissions, setExtraPermissions] = useState('');
     const [projectScope, setProjectScope] = useState(0);
+    const [environmentScope, setEnvironmentScope] = useState(0);
+    // Environments to choose from once a project is selected (env confinement is
+    // only meaningful within a project, ADR-042).
+    const { data: scopeEnvironments } = useProjectEnvironments(projectScope);
 
     const togglePermission = (value: string) =>
         setPermissions((prev) =>
@@ -387,6 +391,7 @@ const TokensTab: React.FC = () => {
         setPermissions([]);
         setExtraPermissions('');
         setProjectScope(0);
+        setEnvironmentScope(0);
         createToken.reset();
         setShowCreate(true);
     };
@@ -400,6 +405,7 @@ const TokensTab: React.FC = () => {
             permissions,
             extraPermissions,
             projectScope,
+            environmentScope,
         });
         createToken.mutate(body, { onSuccess: (res) => setNewToken(res.token) });
     };
@@ -463,10 +469,13 @@ const TokensTab: React.FC = () => {
                                     created {formatDate(t.created_at)} · last used {formatDate(t.last_used_at)} ·{' '}
                                     {t.expires_at ? `expires ${formatDate(t.expires_at)}` : 'never expires'}
                                 </p>
-                                {(t.scopes.length > 0 || t.project_scope > 0) ? (
+                                {(t.scopes.length > 0 || t.project_scope > 0 || t.environment_scope > 0) ? (
                                     <div className="mt-1.5 flex flex-wrap items-center gap-1">
                                         {t.project_scope > 0 && (
                                             <ScopeChip label={projectName(t.project_scope)} kind="project" />
+                                        )}
+                                        {t.environment_scope > 0 && (
+                                            <ScopeChip label={`env #${t.environment_scope}`} kind="env" />
                                         )}
                                         {t.scopes.map((s) => (
                                             <ScopeChip key={s} label={s} kind="perm" />
@@ -619,7 +628,10 @@ const TokensTab: React.FC = () => {
                                     </label>
                                     <select
                                         value={projectScope}
-                                        onChange={(e) => setProjectScope(Number(e.target.value))}
+                                        onChange={(e) => {
+                                            setProjectScope(Number(e.target.value));
+                                            setEnvironmentScope(0); // env belongs to a project — reset on change
+                                        }}
                                         className="w-full rounded-md px-3 py-2 text-sm"
                                         style={{
                                             backgroundColor: 'var(--bg-surface)',
@@ -635,6 +647,30 @@ const TokensTab: React.FC = () => {
                                         ))}
                                     </select>
                                 </div>
+                                {projectScope > 0 && (
+                                    <div>
+                                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
+                                            Environment
+                                        </label>
+                                        <select
+                                            value={environmentScope}
+                                            onChange={(e) => setEnvironmentScope(Number(e.target.value))}
+                                            className="w-full rounded-md px-3 py-2 text-sm"
+                                            style={{
+                                                backgroundColor: 'var(--bg-surface)',
+                                                border: '1px solid var(--border)',
+                                                color: 'var(--text-primary)',
+                                            }}
+                                        >
+                                            <option value={0}>Any environment</option>
+                                            {(scopeEnvironments ?? []).map((env) => (
+                                                <option key={env.id} value={env.id}>
+                                                    {env.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
                                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                                     A token can never do more than you can — these only narrow it.
                                 </p>

@@ -57,6 +57,21 @@ describe('buildCreateTokenBody', () => {
         ).toBeUndefined();
     });
 
+    it('includes an environment confinement only alongside a project', () => {
+        // env scope only travels with a project (env ids belong to a project).
+        const withEnv = buildCreateTokenBody({
+            name: 't', limited: true, permissions: ['secrets.read'], projectScope: 7, environmentScope: 3,
+        });
+        expect(withEnv.project_scope).toBe(7);
+        expect(withEnv.environment_scope).toBe(3);
+
+        // An environment with no project is dropped.
+        const envNoProject = buildCreateTokenBody({
+            name: 't', limited: true, permissions: ['secrets.read'], projectScope: 0, environmentScope: 3,
+        });
+        expect(envNoProject.environment_scope).toBeUndefined();
+    });
+
     it('omits the scopes key entirely when limited but nothing chosen (stays unrestricted)', () => {
         const body = buildCreateTokenBody({
             name: 't',
