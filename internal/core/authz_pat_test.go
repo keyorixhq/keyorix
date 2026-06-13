@@ -36,6 +36,12 @@ func TestPATRestriction_Allows(t *testing.T) {
 		{"both axes must pass — wrong project", &PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: 5}, "secrets.read", Scope{ProjectID: 6}, false},
 		{"both axes must pass — wrong perm", &PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: 5}, "secrets.write", proj5, false},
 		{"both axes pass", &PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: 5}, "secrets.read", proj5, true},
+		// Environment axis (ADR-042 env confinement).
+		{"env-scoped token allowed within its env", &PATRestriction{EnvironmentID: 9}, "secrets.read", Scope{ProjectID: 5, EnvironmentID: 9}, true},
+		{"env-scoped token denied in other env", &PATRestriction{EnvironmentID: 9}, "secrets.read", Scope{ProjectID: 5, EnvironmentID: 8}, false},
+		{"env-scoped token denied at project-level scope (env 0)", &PATRestriction{EnvironmentID: 9}, "secrets.read", proj5, false},
+		{"project+env both pass", &PATRestriction{ProjectID: 5, EnvironmentID: 9}, "secrets.read", Scope{ProjectID: 5, EnvironmentID: 9}, true},
+		{"project+env — wrong env denied", &PATRestriction{ProjectID: 5, EnvironmentID: 9}, "secrets.read", Scope{ProjectID: 5, EnvironmentID: 8}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

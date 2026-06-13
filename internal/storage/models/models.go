@@ -382,10 +382,14 @@ type PersonalAccessToken struct {
 	// project's scope (and denies global/system-wide actions). 0 = any scope the
 	// owner can reach. Mirrors the 0 = global sentinel used throughout RBAC.
 	ProjectScope uint `gorm:"default:0"`
-	LastUsedAt   *time.Time
-	ExpiresAt    *time.Time // nil = never expires
-	Revoked      bool       `gorm:"default:false"`
-	CreatedAt    time.Time
+	// EnvironmentScope, when non-zero, further confines the token to a single
+	// environment (ADR-042). 0 = any environment. Environment ids are globally
+	// unique, so this also pins the project.
+	EnvironmentScope uint `gorm:"default:0"`
+	LastUsedAt       *time.Time
+	ExpiresAt        *time.Time // nil = never expires
+	Revoked          bool       `gorm:"default:false"`
+	CreatedAt        time.Time
 }
 
 // SetupToken is the single-use, hashed-at-rest bearer string that lets a brand-new

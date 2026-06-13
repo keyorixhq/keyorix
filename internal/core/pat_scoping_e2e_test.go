@@ -55,7 +55,7 @@ func TestPATScoping_EndToEnd_RealRBAC(t *testing.T) {
 	})
 
 	t.Run("permission-scoped PAT bounds the admin to read-only", func(t *testing.T) {
-		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-read", nil, []string{"secrets.read"}, 0)
+		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-read", nil, []string{"secrets.read"}, 0, 0)
 		require.NoError(t, err)
 
 		user, _, restriction, err := c.ValidatePATToken(ctx, res.PlainToken)
@@ -74,7 +74,7 @@ func TestPATScoping_EndToEnd_RealRBAC(t *testing.T) {
 	})
 
 	t.Run("project-scoped PAT is confined to its project", func(t *testing.T) {
-		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-proj3", nil, nil, 3)
+		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-proj3", nil, nil, 3, 0)
 		require.NoError(t, err)
 		_, _, restriction, err := c.ValidatePATToken(ctx, res.PlainToken)
 		require.NoError(t, err)
@@ -94,8 +94,30 @@ func TestPATScoping_EndToEnd_RealRBAC(t *testing.T) {
 		assert.False(t, globalScope, "a project-scoped token is not a system-wide credential")
 	})
 
+	t.Run("environment-scoped PAT is confined to its environment", func(t *testing.T) {
+		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-env7", nil, nil, 0, 7) // env 7 only
+		require.NoError(t, err)
+		_, _, restriction, err := c.ValidatePATToken(ctx, res.PlainToken)
+		require.NoError(t, err)
+		require.NotNil(t, restriction)
+		require.Equal(t, uint(7), restriction.EnvironmentID)
+		rctx := WithPATRestriction(ctx, restriction)
+
+		inEnv, err := c.AuthorizePrincipal(rctx, ActorTypeUser, admin.ID, "secrets.write", Scope{ProjectID: 3, EnvironmentID: 7})
+		require.NoError(t, err)
+		assert.True(t, inEnv, "writes within the token's environment flow through the admin bypass")
+
+		otherEnv, err := c.AuthorizePrincipal(rctx, ActorTypeUser, admin.ID, "secrets.write", Scope{ProjectID: 3, EnvironmentID: 8})
+		require.NoError(t, err)
+		assert.False(t, otherEnv, "an env-7 token cannot touch env 8")
+
+		projectLevel, err := c.AuthorizePrincipal(rctx, ActorTypeUser, admin.ID, "secrets.write", Scope{ProjectID: 3})
+		require.NoError(t, err)
+		assert.False(t, projectLevel, "an env-scoped token cannot do project-level (env 0) operations")
+	})
+
 	t.Run("unrestricted PAT resolves to no restriction and keeps full inheritance", func(t *testing.T) {
-		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-full", nil, nil, 0)
+		res, err := c.CreateOwnPAT(ctx, admin.ID, "ci-full", nil, nil, 0, 0)
 		require.NoError(t, err)
 		_, _, restriction, err := c.ValidatePATToken(ctx, res.PlainToken)
 		require.NoError(t, err)

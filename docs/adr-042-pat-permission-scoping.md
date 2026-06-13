@@ -96,12 +96,25 @@ runs. An existing token, or one created without a restriction, is unaffected
   already serve the "first-class non-human principal" need; this is the lighter
   "narrow a token I already trust myself to hold" case.
 
+## Addendum (2026-06-13): per-environment confinement
+
+The scoping axes are now complete: a PAT may also be confined to a single
+**environment** via `environment_scope` (a third optional dimension alongside the
+permission allowlist and `project_scope`). `PATRestriction.EnvironmentID` denies
+any check whose resolved scope is a different environment — or a project-level /
+global scope (`environment 0`). Secret-level checks carry the secret's
+environment, so this confines a token to that env's secrets (e.g. a staging-only
+CI credential); broader project-level operations resolve `environment 0` and are
+therefore denied for an environment-scoped token — correct least privilege.
+Environment ids are globally unique, so confining to an environment also pins its
+project. Additive `environment_scope` column (default 0 = any), enforced via the
+same ctx-carried filter at the `Authorize`/`AuthorizePrincipal` chokepoint;
+existing tokens are unaffected.
+
 ## Deferred
 
-- **Per-environment confinement** (a token bound to `prod` only) — `Scope` already
-  carries an environment axis; the model/filter can extend to it when needed.
-- **Frontend (My Account) UI** to pick scopes/project when creating a token — the
-  API and storage are complete; the keyorix-web token-creation dialog is the
-  remaining surface.
+- **Frontend env dropdown** — the My Account scope picker (keyorix-web) offers the
+  permission allowlist + project; an environment selector (cascading from the
+  chosen project) is the remaining UI surface for `environment_scope`.
 - **Scope presets** (e.g. a "read-only" macro expanding to the read permissions).
-- **CLI `--scope` / `--project` flags** on token creation.
+- **CLI `--scope` / `--project` / `--environment` flags** on token creation.

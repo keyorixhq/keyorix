@@ -330,6 +330,7 @@ paths:
                 expires_at: {type: string, format: date-time, nullable: true, description: 'RFC3339; omit/null for non-expiring'}
                 scopes: {type: array, items: {type: string}, description: 'ADR-042 least-privilege allowlist (e.g. ["secrets.read"], supports "*" and "secrets.*"). Omit/empty = inherit the owner''s full permissions. Only ever narrows below the owner.'}
                 project_scope: {type: integer, description: 'ADR-042: confine the token to a single project id; 0/omit = any project the owner can reach.'}
+                environment_scope: {type: integer, description: 'ADR-042: confine the token to a single environment id; 0/omit = any environment. Env ids are globally unique, so this also pins the project.'}
       responses:
         '201': {description: 'Token created; plaintext token in data.token shown once'}
         '400': {$ref: '#/components/responses/Error'}

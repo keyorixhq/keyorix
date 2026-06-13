@@ -3,8 +3,9 @@
 // A PAT is a long-lived bearer credential a user creates from the My Account page.
 // It authenticates API requests AS that user. By default it inherits the owner's
 // full permission set; optionally (ADR-042) it carries a least-privilege
-// restriction — a permission allowlist and/or a single-project scope — that
-// narrows it below the owner (never above). The raw token is returned once on
+// restriction — a permission allowlist and/or a single-project or single-
+// environment scope — that narrows it below the owner (never above). The raw
+// token is returned once on
 // creation; only its SHA-256 hash is stored. Raw tokens carry the patPrefix so the
 // auth middleware can route them to ValidatePATToken and secret scanners can detect
 // leaks.
@@ -39,11 +40,12 @@ type CreatePATResult struct {
 
 // CreateOwnPAT generates a new personal access token for the caller. expiresAt may
 // be nil for a non-expiring token. scopes, when non-empty, is a least-privilege
-// permission allowlist (ADR-042); projectScope, when non-zero, confines the token
-// to a single project. Both only ever NARROW the token below its owner — they are
-// enforced at request time as a filter intersected with the owner's live
-// permissions, so a token can never grant more than its owner currently holds.
-func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time, scopes []string, projectScope uint) (*CreatePATResult, error) {
+// permission allowlist (ADR-042); projectScope/environmentScope, when non-zero,
+// confine the token to a single project / environment. All only ever NARROW the
+// token below its owner — they are enforced at request time as a filter
+// intersected with the owner's live permissions, so a token can never grant more
+// than its owner currently holds.
+func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time, scopes []string, projectScope, environmentScope uint) (*CreatePATResult, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
@@ -63,14 +65,15 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 	raw := patPrefix + base64.RawURLEncoding.EncodeToString(b)
 
 	pat := &models.PersonalAccessToken{
-		UserID:       userID,
-		Name:         strings.TrimSpace(name),
-		TokenHash:    sha256Hex(raw),
-		TokenPrefix:  raw[:len(patPrefix)+6], // e.g. "kx_pat_ab12cd" for display
-		Scopes:       scopesJSON,
-		ProjectScope: projectScope,
-		ExpiresAt:    expiresAt,
-		CreatedAt:    c.now(),
+		UserID:           userID,
+		Name:             strings.TrimSpace(name),
+		TokenHash:        sha256Hex(raw),
+		TokenPrefix:      raw[:len(patPrefix)+6], // e.g. "kx_pat_ab12cd" for display
+		Scopes:           scopesJSON,
+		ProjectScope:     projectScope,
+		EnvironmentScope: environmentScope,
+		ExpiresAt:        expiresAt,
+		CreatedAt:        c.now(),
 	}
 	created, err := c.storage.CreatePersonalAccessToken(ctx, pat)
 	if err != nil {
@@ -191,8 +194,8 @@ func DecodePATScopes(raw string) []string {
 // the token is unrestricted (no scopes and no project confinement).
 func patRestrictionFrom(pat *models.PersonalAccessToken) *PATRestriction {
 	scopes := DecodePATScopes(pat.Scopes)
-	if len(scopes) == 0 && pat.ProjectScope == 0 {
+	if len(scopes) == 0 && pat.ProjectScope == 0 && pat.EnvironmentScope == 0 {
 		return nil
 	}
-	return &PATRestriction{Permissions: scopes, ProjectID: pat.ProjectScope}
+	return &PATRestriction{Permissions: scopes, ProjectID: pat.ProjectScope, EnvironmentID: pat.EnvironmentScope}
 }
