@@ -4,8 +4,11 @@
 package compliance
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
@@ -99,6 +102,43 @@ var reportCmd = &cobra.Command{
 	},
 }
 
+var exportOutput string
+
+var exportCmd = &cobra.Command{
+	Use:   "export",
+	Short: "Export the auditor evidence pack (posture + supporting records) as JSON",
+	Long: `Export a timestamped evidence pack — the posture plus the records that
+substantiate it (the audit-chain anchor, access-review campaigns, the break-glass
+register, and overdue rotations) — as JSON, for an auditor to archive. Writes to
+stdout by default, or to --output FILE.`,
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		c, ok := common.NewRemoteClient()
+		if !ok {
+			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+		}
+		var raw json.RawMessage
+		if err := c.Get(context.Background(), "/api/v1/compliance/evidence", &raw); err != nil {
+			return err
+		}
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, raw, "", "  "); err != nil {
+			pretty.Write(raw) // fall back to the raw bytes if indent fails
+		}
+		pretty.WriteByte('\n')
+		if exportOutput != "" {
+			if err := os.WriteFile(exportOutput, pretty.Bytes(), 0o600); err != nil {
+				return fmt.Errorf("failed to write %s: %w", exportOutput, err)
+			}
+			fmt.Printf("Evidence pack written to %s.\n", exportOutput)
+			return nil
+		}
+		_, _ = os.Stdout.Write(pretty.Bytes())
+		return nil
+	},
+}
+
 func init() {
-	ComplianceCmd.AddCommand(reportCmd)
+	exportCmd.Flags().StringVar(&exportOutput, "output", "", "Write the evidence pack to a file instead of stdout")
+	ComplianceCmd.AddCommand(reportCmd, exportCmd)
 }

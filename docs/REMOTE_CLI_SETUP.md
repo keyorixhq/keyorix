@@ -292,9 +292,17 @@ NIS2 / DORA) — it rolls up the state of the controls Keyorix enforces. Require
   (overdue / due-soon), second-factor coverage (% of active users with MFA or a
   passkey), and break-glass usage (active / total activations).
 
+- `keyorix compliance export [--output FILE]` — export a timestamped **evidence
+  pack** (the posture plus the records that substantiate it: the audit-chain anchor,
+  the access-review campaigns, the break-glass register, and overdue rotations) as
+  JSON, to stdout or a file — the artifact an auditor archives.
+
 ```bash
 # Quarterly controls-posture snapshot:
 keyorix compliance report
+
+# Archive the evidence pack for an audit period:
+keyorix compliance export --output evidence-2026Q4.json
 ```
 
 ## Deployment Scenarios

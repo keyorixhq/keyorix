@@ -2795,6 +2795,25 @@ paths:
             rotation, identity, emergency_access} — see the description for each group's fields.
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/compliance/evidence:
+    get:
+      tags: [Dashboard]
+      summary: Auditor evidence pack (posture + supporting records)
+      description: >-
+        A timestamped, archivable evidence bundle: the posture plus the records that
+        substantiate it — the audit-chain anchor {valid, chained_events, head_id,
+        head_hash, checkpointed}, the access-review campaigns (per project, with
+        tallies), the break-glass register, and the overdue rotations. Requires
+        system.read.
+      operationId: getComplianceEvidence
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data}. data: {generated_at, posture, audit_anchor, campaigns[],
+            break_glass[], rotation_overdue[]}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/dashboard/activity:
     get:
       tags: [Dashboard]
