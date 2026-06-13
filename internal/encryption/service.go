@@ -5,11 +5,15 @@ package encryption
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"sync"
+
+	"golang.org/x/crypto/hkdf"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
@@ -126,6 +130,37 @@ func (s *Service) IsInitialized() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.initialized
+}
+
+// auditCheckpointKeyInfo domain-separates the audit-checkpoint signing key from
+// the DEK's other uses (HKDF info parameter). Bump the suffix only if the
+// derivation scheme changes.
+const auditCheckpointKeyInfo = "keyorix-audit-checkpoint-v1"
+
+// AuditCheckpointKey derives a 32-byte HMAC key for signing audit-chain
+// checkpoints (ADR-029) from the current DEK via HKDF-SHA256, alongside the
+// current key version. The key is bound to the DEK but domain-separated from
+// secret encryption, so it is held only in application memory and never written
+// to the database — a checkpoint therefore cannot be forged from database access
+// alone. Returns ok=false when encryption is disabled or uninitialised (no DEK),
+// in which case signed checkpoints are unavailable.
+func (s *Service) AuditCheckpointKey() (key []byte, keyVersion string, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.config.Enabled || !s.initialized {
+		return nil, "", false
+	}
+	dek := s.keyManager.GetDEK()
+	defer wipeBytes(dek)
+	if len(dek) == 0 {
+		return nil, "", false
+	}
+	r := hkdf.New(sha256.New, dek, nil, []byte(auditCheckpointKeyInfo))
+	out := make([]byte, 32)
+	if _, err := io.ReadFull(r, out); err != nil {
+		return nil, "", false
+	}
+	return out, s.keyManager.GetKeyVersion(), true
 }
 
 // EncryptSecret encrypts plaintext and returns (encryptedBytes, metadataBytes, error).

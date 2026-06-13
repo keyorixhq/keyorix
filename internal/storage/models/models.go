@@ -508,6 +508,24 @@ type AuditEvent struct {
 	EntryHash string `gorm:"index"`
 }
 
+// AuditCheckpoint is a signed notarisation of the audit hash-chain head
+// (ADR-029). Signature is an HMAC over (ChainedEvents, HeadID, HeadHash,
+// KeyVersion) keyed by a DEK-derived key the database/DBA does not hold, so a
+// checkpoint cannot be forged from database access alone. Re-verifying the live
+// chain against the latest signed checkpoint detects on-box tail-truncation or a
+// genesis re-seed — which an unanchored re-walk of a self-consistent (shorter)
+// chain cannot catch. Append-only: a new checkpoint is added each cycle, never
+// updated.
+type AuditCheckpoint struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	ChainedEvents int64     `json:"chained_events"`
+	HeadID        uint      `json:"head_id"`
+	HeadHash      string    `json:"head_hash"`
+	KeyVersion    string    `json:"key_version"`
+	Signature     string    `gorm:"not null" json:"signature"` // hex HMAC-SHA256
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type Setting struct {
 	ID     uint `gorm:"primaryKey"`
 	UserID *uint

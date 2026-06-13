@@ -139,6 +139,7 @@ const (
 	schedLockDynamicSweep int64 = 0x4B455953_44594E53 // "KEYSDYNS"
 	schedLockLoginPrune   int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
 	schedLockRotationRmdr int64 = 0x4B455953_524F5452 // "KEYSROTR"
+	schedLockAuditCkpt    int64 = 0x4B455953_41434B50 // "KEYSACKP"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -195,6 +196,12 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		// Wire the initialised encryption service for reversibly-encrypted auth
 		// secrets (the TOTP MFA secret, which cannot be hashed).
 		coreService.SetAuthEncryptor(encSvc)
+		// Derive the audit-checkpoint signing key from the DEK (ADR-029) so signed
+		// checkpoints — and on-box truncation detection — are available. Unavailable
+		// when encryption is off (no DEK).
+		if key, keyVer, ok := encSvc.AuditCheckpointKey(); ok {
+			coreService.SetAuditCheckpointKey(key, keyVer)
+		}
 	}
 
 	// Apply a configured password policy, if any. An absent block leaves the
@@ -423,6 +430,47 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				}
 			}
 		}()
+	}
+
+	// Start the audit-checkpoint scheduler (ADR-029) — opt-in. Periodically signs
+	// the verified audit-chain head so tail-truncation / genesis re-seed becomes
+	// detectable on-box. HA-gated so one replica writes per tick. Requires
+	// encryption (the signing key is DEK-derived); skipped with a warning if not.
+	if cfg.AuditCheckpoints.Enabled {
+		if !coreService.AuditCheckpointsAvailable() {
+			log.Printf("Audit-checkpoint scheduler requested but encryption is disabled (no signing key); skipping")
+		} else {
+			interval := cfg.AuditCheckpoints.GetInterval()
+			log.Printf("Audit-checkpoint scheduler enabled: every %s", interval)
+			go func() {
+				ticker := time.NewTicker(interval)
+				defer ticker.Stop()
+				writeCheckpoint := func() {
+					if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockAuditCkpt, func() error {
+						cp, written, werr := coreService.WriteAuditCheckpoint(ctx)
+						if werr != nil {
+							log.Printf("Audit-checkpoint error: %v", werr)
+							return werr
+						}
+						if written {
+							log.Printf("Audit checkpoint written: #%d head=%d events=%d", cp.ID, cp.HeadID, cp.ChainedEvents)
+						}
+						return nil
+					}); err != nil {
+						log.Printf("Audit-checkpoint scheduler error: %v", err)
+					}
+				}
+				writeCheckpoint() // run once on startup
+				for {
+					select {
+					case <-ticker.C:
+						writeCheckpoint()
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+		}
 	}
 
 	// Start the dynamic-secrets auto-revoke sweeper (ADR-035) — opt-in. Revokes

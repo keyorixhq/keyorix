@@ -365,10 +365,16 @@ func (h *AuditHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request) 
 		// detect tail-truncation / re-seed that an on-box re-walk can't catch alone.
 		"head_hash": v.HeadHash,
 		"head_id":   v.HeadID,
+		// checkpointed=true when the chain was also verified against a signed in-DB
+		// checkpoint (ADR-029) — on-box truncation detection a DBA cannot forge.
+		"checkpointed": v.Checkpointed,
 	}
 	if !v.Valid {
 		resp["first_broken_id"] = v.FirstBrokenID
 		resp["reason"] = v.Reason
+	}
+	if v.CheckpointReason != "" {
+		resp["checkpoint_reason"] = v.CheckpointReason
 	}
 	sendSuccess(w, resp, "")
 }

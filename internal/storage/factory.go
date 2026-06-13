@@ -268,6 +268,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	webauthnCredExists := tableExists(db, "web_authn_credentials")
 	webauthnSessExists := tableExists(db, "web_authn_sessions")
 	loginAttemptExists := tableExists(db, "login_attempts")
+	auditCkptExists := tableExists(db, "audit_checkpoints")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -349,6 +350,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !loginAttemptExists {
 		if err := db.AutoMigrate(&models.LoginAttempt{}); err != nil {
 			return fmt.Errorf("failed to migrate login_attempts table: %w", err)
+		}
+	}
+
+	// Create the audit_checkpoints table if missing (ADR-029 signed checkpoints,
+	// additive, safe on existing DBs).
+	if !auditCkptExists {
+		if err := db.AutoMigrate(&models.AuditCheckpoint{}); err != nil {
+			return fmt.Errorf("failed to migrate audit_checkpoints table: %w", err)
 		}
 	}
 
@@ -470,6 +479,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		// it again re-inspects the just-created table and trips the pgx "insufficient
 		// arguments" bug on a fresh Postgres first boot (same hazard as RotationPolicy).
 		&models.AuditEvent{},
+		&models.AuditCheckpoint{},
 		&models.Setting{},
 		&models.SystemMetadata{},
 		&models.APIClient{},
