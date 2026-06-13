@@ -453,6 +453,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/info", handlers.MakeSystemInfoHandler(cfg))
 			r.Get("/metrics", handlers.GetMetrics)
 		})
+
+		// Compliance posture — deployment-wide controls snapshot for auditors.
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
 	})
 
 	// Swagger UI (optional, based on config)

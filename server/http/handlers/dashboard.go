@@ -35,6 +35,17 @@ func (h *DashboardHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, stats, "")
 }
 
+// GetCompliancePosture handles GET /api/v1/compliance/posture — the deployment-wide
+// controls-posture snapshot for auditors (gated by system.read in the router).
+func (h *DashboardHandler) GetCompliancePosture(w http.ResponseWriter, r *http.Request) {
+	posture, err := h.coreService.GetCompliancePosture(r.Context())
+	if err != nil {
+		sendError(w, "InternalServerError", "Failed to compute compliance posture", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, posture, "")
+}
+
 // GetActivity handles GET /api/v1/dashboard/activity
 func (h *DashboardHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
