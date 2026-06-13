@@ -456,6 +456,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// Compliance posture — deployment-wide controls snapshot for auditors.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
+		// Compliance evidence pack — posture + supporting records, for archival.
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
 	})
 
 	// Swagger UI (optional, based on config)

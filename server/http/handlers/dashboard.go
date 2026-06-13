@@ -46,6 +46,17 @@ func (h *DashboardHandler) GetCompliancePosture(w http.ResponseWriter, r *http.R
 	sendSuccess(w, posture, "")
 }
 
+// GetComplianceEvidence handles GET /api/v1/compliance/evidence — the auditor
+// evidence pack (posture + supporting records); gated by system.read in the router.
+func (h *DashboardHandler) GetComplianceEvidence(w http.ResponseWriter, r *http.Request) {
+	evidence, err := h.coreService.GenerateComplianceEvidence(r.Context())
+	if err != nil {
+		sendError(w, "InternalServerError", "Failed to assemble compliance evidence", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, evidence, "")
+}
+
 // GetActivity handles GET /api/v1/dashboard/activity
 func (h *DashboardHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
