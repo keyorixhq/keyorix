@@ -502,13 +502,23 @@ func derefUint(p *uint) uint {
 	return *p
 }
 
-// RequireRole returns a middleware that checks if the user has a specific role
+// RequireRole returns a middleware that checks if the user has a specific role.
+//
+// A request authenticated by a PAT carrying a least-privilege restriction
+// (ADR-042) is denied outright: a role gate confers the role's full breadth,
+// which a deliberately-scoped token must not satisfy. This keeps PAT scoping
+// honoured on this role-based gate, which does not funnel through core.Authorize
+// (where the restriction is otherwise enforced). Fail-closed.
 func RequireRole(role string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userCtx := GetUserFromContext(r.Context())
 			if userCtx == nil {
 				unauthorizedResponse(w, "User context not found")
+				return
+			}
+			if userCtx.PATRestriction != nil {
+				forbiddenResponse(w, "A scoped personal access token cannot satisfy a role requirement")
 				return
 			}
 			for _, userRole := range userCtx.Roles {
