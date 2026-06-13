@@ -3,6 +3,7 @@ package request
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ var (
 	reviewRole   string
 	reviewReason string
 	reviewBy     string
+	reviewTTL    string
 )
 
 var reviewCmd = &cobra.Command{
@@ -30,6 +32,7 @@ func init() {
 	reviewCmd.Flags().StringVar(&reviewAction, "action", "", "approve | reject (required)")
 	reviewCmd.Flags().StringVar(&reviewRole, "role", "", "Role to grant on approve (defaults to the suggested role)")
 	reviewCmd.Flags().StringVar(&reviewReason, "reason", "", "Reason on reject")
+	reviewCmd.Flags().StringVar(&reviewTTL, "ttl", "", "Time-bound the granted role on approve (Go duration, e.g. 4h); empty = permanent")
 	reviewCmd.Flags().StringVar(&reviewBy, "by", "", "Reviewer email address (required, for audit)")
 	_ = reviewCmd.MarkFlagRequired("id")
 	_ = reviewCmd.MarkFlagRequired("action")
@@ -64,12 +67,23 @@ func runReview(cmd *cobra.Command, args []string) error {
 
 	switch reviewAction {
 	case "approve":
-		req, err := service.ApproveAccessRequest(ctx, projectID, reviewID, approverID, reviewRole)
+		var ttl time.Duration
+		if reviewTTL != "" {
+			ttl, err = time.ParseDuration(reviewTTL)
+			if err != nil || ttl < 0 {
+				return fmt.Errorf("--ttl must be a non-negative Go duration (e.g. 4h)")
+			}
+		}
+		req, err := service.ApproveAccessRequestWithExpiry(ctx, projectID, reviewID, approverID, reviewRole, ttl)
 		if err != nil {
 			return fmt.Errorf("failed to approve access request: %w", err)
 		}
-		fmt.Printf("Access request %d approved: granted role %q to %s.\n",
-			req.ID, req.GrantedRole, userLabel(ctx, service, req.UserID))
+		grantNote := "permanently"
+		if ttl > 0 {
+			grantNote = fmt.Sprintf("for %s (time-bound)", ttl)
+		}
+		fmt.Printf("Access request %d approved: granted role %q to %s %s.\n",
+			req.ID, req.GrantedRole, userLabel(ctx, service, req.UserID), grantNote)
 	case "reject":
 		req, err := service.RejectAccessRequest(ctx, projectID, reviewID, approverID, reviewReason)
 		if err != nil {

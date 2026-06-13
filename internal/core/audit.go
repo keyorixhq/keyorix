@@ -14,6 +14,7 @@ import (
 const (
 	EventRoleAssigned      = "role.assigned"
 	EventRoleRemoved       = "role.removed"
+	EventRoleExpired       = "role.expired"        // #nosec G101 -- audit event type, not a credential
 	EventRoleGroupAssigned = "role.group_assigned" // #nosec G101 -- audit event type, not a credential
 	EventRoleGroupRemoved  = "role.group_removed"  // #nosec G101 -- audit event type, not a credential
 	EventPermissionAdded   = "permission.assigned" // #nosec G101 -- audit event type, not a credential
@@ -22,7 +23,7 @@ const (
 
 // rbacAuditEventTypes is the set of event types that make up the RBAC audit log.
 var rbacAuditEventTypes = []string{
-	EventRoleAssigned, EventRoleRemoved,
+	EventRoleAssigned, EventRoleRemoved, EventRoleExpired,
 	EventRoleGroupAssigned, EventRoleGroupRemoved,
 	EventPermissionAdded, EventPermissionRemoved,
 }

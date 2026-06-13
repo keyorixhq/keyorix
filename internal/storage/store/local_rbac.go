@@ -12,6 +12,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -95,8 +96,19 @@ func (ls *LocalStorage) ListRoles(ctx context.Context) ([]*models.Role, error) {
 
 // --- RBAC assignment ---
 
-// AssignRole assigns a role to a user at scope; errors if already assigned there.
+// AssignRole assigns a permanent role to a user at scope; errors if already
+// assigned there.
 func (ls *LocalStorage) AssignRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
+	return ls.assignUserRole(ctx, userID, roleID, scope, nil)
+}
+
+// AssignRoleWithExpiry assigns a time-bound role to a user at scope: the grant
+// stops authorizing once expiresAt passes and is later swept by the JIT scheduler.
+func (ls *LocalStorage) AssignRoleWithExpiry(ctx context.Context, userID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
+	return ls.assignUserRole(ctx, userID, roleID, scope, &expiresAt)
+}
+
+func (ls *LocalStorage) assignUserRole(ctx context.Context, userID, roleID uint, scope storage.Scope, expiresAt *time.Time) error {
 	var existing models.UserRole
 	err := ls.db.WithContext(ctx).
 		Where("user_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
@@ -112,6 +124,7 @@ func (ls *LocalStorage) AssignRole(ctx context.Context, userID, roleID uint, sco
 		RoleID:        roleID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
+		ExpiresAt:     expiresAt,
 	}
 	if err := ls.db.WithContext(ctx).Create(&userRole).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -139,6 +152,7 @@ func (ls *LocalStorage) GetUserRoles(ctx context.Context, userID uint) ([]*model
 	err := ls.db.WithContext(ctx).Table("roles").
 		Joins("JOIN user_roles ON roles.id = user_roles.role_id").
 		Where("user_roles.user_id = ?", userID).
+		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", time.Now()).
 		Find(&roles).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -155,6 +169,7 @@ func (ls *LocalStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope
 		Where("user_id = ?", userID).
 		Where("project_id = 0 OR project_id = ?", scope.ProjectID).
 		Where("environment_id = 0 OR environment_id = ?", scope.EnvironmentID).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
 		Distinct().Pluck("role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -238,6 +253,7 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 		Where("user_groups.user_id = ?", userID).
 		Where("group_roles.project_id = 0 OR group_roles.project_id = ?", scope.ProjectID).
 		Where("group_roles.environment_id = 0 OR group_roles.environment_id = ?", scope.EnvironmentID).
+		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", time.Now()).
 		Distinct().Pluck("group_roles.role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -271,6 +287,7 @@ func (ls *LocalStorage) CheckPermission(ctx context.Context, userID uint, resour
 		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
 		Joins("JOIN user_roles ON role_permissions.role_id = user_roles.role_id").
 		Where("user_roles.user_id = ? AND permissions.resource = ? AND permissions.action = ?", userID, resource, action).
+		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", time.Now()).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
@@ -339,8 +356,18 @@ func (ls *LocalStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mod
 	return roles, nil
 }
 
-// AssignRoleToGroup assigns a role to a group at scope; errors if already assigned there.
+// AssignRoleToGroup assigns a permanent role to a group at scope; errors if
+// already assigned there.
 func (ls *LocalStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
+	return ls.assignGroupRole(ctx, groupID, roleID, scope, nil)
+}
+
+// AssignRoleToGroupWithExpiry assigns a time-bound role to a group at scope.
+func (ls *LocalStorage) AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
+	return ls.assignGroupRole(ctx, groupID, roleID, scope, &expiresAt)
+}
+
+func (ls *LocalStorage) assignGroupRole(ctx context.Context, groupID, roleID uint, scope storage.Scope, expiresAt *time.Time) error {
 	var existing models.GroupRole
 	err := ls.db.WithContext(ctx).
 		Where("group_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
@@ -356,11 +383,57 @@ func (ls *LocalStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID u
 		RoleID:        roleID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
+		ExpiresAt:     expiresAt,
 	}
 	if err := ls.db.WithContext(ctx).Create(&groupRole).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
+}
+
+// DeleteExpiredRoleGrants removes user_roles and group_roles whose ExpiresAt is
+// non-NULL and at or before the cutoff, returning the removed grants so the caller
+// can audit each expiry. Runs in a transaction so the rows it reports are exactly
+// the rows it deleted.
+func (ls *LocalStorage) DeleteExpiredRoleGrants(ctx context.Context, before time.Time) ([]storage.RoleAssignment, error) {
+	var removed []storage.RoleAssignment
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var userRows []models.UserRole
+		if err := tx.Where("expires_at IS NOT NULL AND expires_at <= ?", before).Find(&userRows).Error; err != nil {
+			return err
+		}
+		var groupRows []models.GroupRole
+		if err := tx.Where("expires_at IS NOT NULL AND expires_at <= ?", before).Find(&groupRows).Error; err != nil {
+			return err
+		}
+		if len(userRows) > 0 {
+			if err := tx.Where("expires_at IS NOT NULL AND expires_at <= ?", before).Delete(&models.UserRole{}).Error; err != nil {
+				return err
+			}
+		}
+		if len(groupRows) > 0 {
+			if err := tx.Where("expires_at IS NOT NULL AND expires_at <= ?", before).Delete(&models.GroupRole{}).Error; err != nil {
+				return err
+			}
+		}
+		for _, r := range userRows {
+			removed = append(removed, storage.RoleAssignment{
+				PrincipalType: "user", PrincipalID: r.UserID, RoleID: r.RoleID,
+				ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+			})
+		}
+		for _, r := range groupRows {
+			removed = append(removed, storage.RoleAssignment{
+				PrincipalType: "group", PrincipalID: r.GroupID, RoleID: r.RoleID,
+				ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return removed, nil
 }
 
 // RemoveRoleFromGroup removes a role from a group at scope.
@@ -386,6 +459,7 @@ func (ls *LocalStorage) GetUserPermissions(ctx context.Context, userID uint) ([]
 		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
 		Joins("JOIN user_roles ON role_permissions.role_id = user_roles.role_id").
 		Where("user_roles.user_id = ?", userID).
+		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", time.Now()).
 		Group("permissions.id").
 		Find(&permissions).Error
 	if err != nil {

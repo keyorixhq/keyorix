@@ -92,8 +92,8 @@ type User struct {
 	// a WebAuthn assertion as the second factor (see WebAuthnCredential).
 	WebAuthnEnabled bool `gorm:"default:false"`
 	CreatedAt       time.Time
-	UpdatedAt  time.Time
-	DeletedAt  gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
+	UpdatedAt       time.Time
+	DeletedAt       gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
 }
 
 // MFASecret holds a user's TOTP shared secret, encrypted at rest. One row per
@@ -212,6 +212,11 @@ type UserRole struct {
 	RoleID        uint `gorm:"primaryKey"`
 	ProjectID     uint `gorm:"primaryKey;not null;default:0"`
 	EnvironmentID uint `gorm:"primaryKey;not null;default:0"`
+	// ExpiresAt makes a grant time-bound (just-in-time access): nil = permanent;
+	// otherwise the grant stops authorizing the moment it passes and is swept by
+	// the JIT expiry scheduler. Authorization queries filter on it directly so an
+	// expired grant is denied immediately, before the sweep removes the row.
+	ExpiresAt *time.Time `gorm:"index"`
 }
 
 type Group struct {
@@ -232,6 +237,8 @@ type GroupRole struct {
 	RoleID        uint `gorm:"primaryKey"`
 	ProjectID     uint `gorm:"primaryKey;not null;default:0"`
 	EnvironmentID uint `gorm:"primaryKey;not null;default:0"`
+	// ExpiresAt makes a group grant time-bound; see UserRole.ExpiresAt.
+	ExpiresAt *time.Time `gorm:"index"`
 }
 
 type SecretNode struct {
@@ -284,7 +291,7 @@ type DynamicSecretConfig struct {
 	// CreationTemplate is operator-authored SQL run after the role is created,
 	// with {{name}} substituted by the generated (sanitized) role name. e.g.
 	// "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};"
-	CreationTemplate string
+	CreationTemplate  string
 	DefaultTTLSeconds int
 	// MaxTTLSeconds caps the lifetime of any lease from this config (issue + all
 	// renewals), regardless of the TTL a caller requests. 0 = no ceiling.

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -273,6 +274,9 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		Action      string `json:"action"`
 		GrantedRole string `json:"granted_role"`
 		Reason      string `json:"reason"`
+		// GrantTTL (optional) makes an approval time-bound (just-in-time access):
+		// a Go duration string (e.g. "4h", "30m"). Empty/absent = permanent grant.
+		GrantTTL string `json:"grant_ttl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
@@ -281,7 +285,15 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 	var resolveErr error
 	switch body.Action {
 	case "approve":
-		_, resolveErr = h.coreService.ApproveAccessRequest(r.Context(), uint(projectID), uint(reqID), actor.UserID, body.GrantedRole)
+		var ttl time.Duration
+		if body.GrantTTL != "" {
+			ttl, err = time.ParseDuration(body.GrantTTL)
+			if err != nil || ttl < 0 {
+				sendError(w, "ValidationError", "grant_ttl must be a non-negative Go duration (e.g. 4h)", http.StatusBadRequest, nil)
+				return
+			}
+		}
+		_, resolveErr = h.coreService.ApproveAccessRequestWithExpiry(r.Context(), uint(projectID), uint(reqID), actor.UserID, body.GrantedRole, ttl)
 	case "reject":
 		_, resolveErr = h.coreService.RejectAccessRequest(r.Context(), uint(projectID), uint(reqID), actor.UserID, body.Reason)
 	default:

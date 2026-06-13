@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -134,6 +135,22 @@ func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint, sc
 		return fmt.Errorf("assign role failed: %s", resp.Error.Error())
 	}
 	return nil
+}
+
+// AssignRoleWithExpiry is server-side only (the JIT grant happens during access-
+// request approval on the server); not driven over the remote client.
+func (rs *RemoteStorage) AssignRoleWithExpiry(_ context.Context, _, _ uint, _ storage.Scope, _ time.Time) error {
+	return remoteUnsupported("AssignRoleWithExpiry")
+}
+
+// AssignRoleToGroupWithExpiry is server-side only; see AssignRoleWithExpiry.
+func (rs *RemoteStorage) AssignRoleToGroupWithExpiry(_ context.Context, _, _ uint, _ storage.Scope, _ time.Time) error {
+	return remoteUnsupported("AssignRoleToGroupWithExpiry")
+}
+
+// DeleteExpiredRoleGrants is server-side only (run by the expiry scheduler).
+func (rs *RemoteStorage) DeleteExpiredRoleGrants(_ context.Context, _ time.Time) ([]storage.RoleAssignment, error) {
+	return nil, remoteUnsupported("DeleteExpiredRoleGrants")
 }
 
 // RemoveRole removes a role from a user at scope via remote API.
