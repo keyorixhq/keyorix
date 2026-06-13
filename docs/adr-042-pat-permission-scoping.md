@@ -117,4 +117,4 @@ existing tokens are unaffected.
   permission allowlist + project; an environment selector (cascading from the
   chosen project) is the remaining UI surface for `environment_scope`.
 - **Scope presets** (e.g. a "read-only" macro expanding to the read permissions).
-- **CLI `--scope` / `--project` / `--environment` flags** on token creation.
+- ~~CLI flags on token creation~~ — **shipped**: `keyorix pat create --scope … --project-id … --environment-id …` (plus `pat list` / `pat revoke`).

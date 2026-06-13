@@ -14,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/invite"
 	"github.com/keyorixhq/keyorix/internal/cli/machine"
 	"github.com/keyorixhq/keyorix/internal/cli/migrate"
+	"github.com/keyorixhq/keyorix/internal/cli/pat"
 	"github.com/keyorixhq/keyorix/internal/cli/project"
 	"github.com/keyorixhq/keyorix/internal/cli/rbac"
 	"github.com/keyorixhq/keyorix/internal/cli/request"
@@ -57,6 +58,7 @@ func init() {
 	rootCmd.AddCommand(system.SystemCmd)
 	rootCmd.AddCommand(anomalies.AnomaliesCmd)
 	rootCmd.AddCommand(dynamic.DynamicSecretCmd)
+	rootCmd.AddCommand(pat.PATCmd)
 }
 
 // Execute runs the root command
