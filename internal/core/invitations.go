@@ -366,9 +366,17 @@ func (c *KeyorixCore) ListAccessRequests(ctx context.Context, projectID uint) ([
 }
 
 // ApproveAccessRequest approves a pending request, granting grantedRole (falling
-// back to the suggested role) at the project scope. No auto-approval — an admin
-// performs this explicitly.
+// back to the suggested role) at the project scope, permanently. No auto-approval —
+// an admin performs this explicitly.
 func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, requestID, approverID uint, grantedRole string) (*models.AccessRequest, error) {
+	return c.ApproveAccessRequestWithExpiry(ctx, projectID, requestID, approverID, grantedRole, 0)
+}
+
+// ApproveAccessRequestWithExpiry approves a pending request like ApproveAccessRequest
+// but, when grantTTL > 0, grants the role TIME-BOUND (just-in-time access): the
+// grant stops authorizing once the TTL elapses and is later swept by the JIT
+// expiry scheduler. grantTTL == 0 grants permanently.
+func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projectID, requestID, approverID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
 		return nil, fmt.Errorf("access request not found")
@@ -382,6 +390,9 @@ func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, reque
 	if req.State != AccessRequestPending {
 		return nil, fmt.Errorf("only a pending request can be approved (state is %s)", req.State)
 	}
+	if grantTTL < 0 {
+		return nil, fmt.Errorf("grant TTL must not be negative")
+	}
 	role := grantedRole
 	if role == "" {
 		role = req.SuggestedRole
@@ -393,11 +404,21 @@ func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, reque
 	if err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
-	// Grant the role at the project scope.
-	if err := c.storage.AssignRole(ctx, req.UserID, roleModel.ID, storage.Scope{ProjectID: req.ProjectID}); err != nil {
-		return nil, fmt.Errorf("failed to grant role: %w", err)
-	}
 	now := c.now()
+	// Grant the role at the project scope — time-bound when a TTL is given.
+	scope := storage.Scope{ProjectID: req.ProjectID}
+	grantDesc := role
+	if grantTTL > 0 {
+		expiresAt := now.Add(grantTTL)
+		if err := c.storage.AssignRoleWithExpiry(ctx, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
+			return nil, fmt.Errorf("failed to grant role: %w", err)
+		}
+		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", role, expiresAt.UTC().Format(time.RFC3339), grantTTL)
+	} else {
+		if err := c.storage.AssignRole(ctx, req.UserID, roleModel.ID, scope); err != nil {
+			return nil, fmt.Errorf("failed to grant role: %w", err)
+		}
+	}
 	req.State = AccessRequestApproved
 	req.GrantedRole = role
 	req.ResolvedBy = approverID
@@ -406,7 +427,7 @@ func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, reque
 		return nil, fmt.Errorf("failed to update access request: %w", err)
 	}
 	c.auditProjectScoped(ctx, "access_request.approved", approverID, req.ProjectID,
-		fmt.Sprintf("approved access request %d for user %d as %s", req.ID, req.UserID, role))
+		fmt.Sprintf("approved access request %d for user %d as %s", req.ID, req.UserID, grantDesc))
 	c.notifyAccessResolved(ctx, req, true)
 	return req, nil
 }

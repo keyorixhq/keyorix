@@ -213,6 +213,10 @@ type Storage interface {
 	// and RoleSetHasPermission reports whether any of those roles grants a
 	// permission. Together they back core.Authorize.
 	AssignRole(ctx context.Context, userID, roleID uint, scope Scope) error
+	// AssignRoleWithExpiry binds a time-bound role to a user (just-in-time access):
+	// the grant stops authorizing the moment expiresAt passes (the auth queries
+	// filter on it) and is later swept by DeleteExpiredRoleGrants.
+	AssignRoleWithExpiry(ctx context.Context, userID, roleID uint, scope Scope, expiresAt time.Time) error
 	RemoveRole(ctx context.Context, userID, roleID uint, scope Scope) error
 	GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error)
 	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
@@ -232,7 +236,14 @@ type Storage interface {
 	// Scope (zero Scope = global).
 	GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error)
 	AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
+	// AssignRoleToGroupWithExpiry binds a time-bound role to a group; see
+	// AssignRoleWithExpiry.
+	AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope Scope, expiresAt time.Time) error
 	RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
+	// DeleteExpiredRoleGrants removes user/group role grants whose ExpiresAt is at
+	// or before `before`, returning the removed grants so the caller can audit each
+	// expiry. Backs the JIT access-expiry scheduler.
+	DeleteExpiredRoleGrants(ctx context.Context, before time.Time) ([]RoleAssignment, error)
 
 	// Stats Snapshots
 	SaveStatsSnapshot(ctx context.Context, snapshot *models.StatsSnapshot) error

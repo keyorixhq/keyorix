@@ -587,9 +587,27 @@ func (m *MockStorage) AssignRole(ctx context.Context, userID, roleID uint, scope
 	return args.Error(0)
 }
 
+func (m *MockStorage) AssignRoleWithExpiry(ctx context.Context, userID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
+	args := m.Called(ctx, userID, roleID, scope, expiresAt)
+	return args.Error(0)
+}
+
 func (m *MockStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
 	args := m.Called(ctx, userID, roleID, scope)
 	return args.Error(0)
+}
+
+func (m *MockStorage) AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
+	args := m.Called(ctx, groupID, roleID, scope, expiresAt)
+	return args.Error(0)
+}
+
+func (m *MockStorage) DeleteExpiredRoleGrants(ctx context.Context, before time.Time) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, before)
+	if v := args.Get(0); v != nil {
+		return v.([]storage.RoleAssignment), args.Error(1)
+	}
+	return nil, args.Error(1)
 }
 
 func (m *MockStorage) GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error) {

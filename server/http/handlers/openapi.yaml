@@ -1008,6 +1008,7 @@ paths:
               properties:
                 action: {type: string, enum: [approve, reject]}
                 granted_role: {type: string, description: Role to grant on approve}
+                grant_ttl: {type: string, description: "Optional on approve — time-bound (just-in-time) the granted role; a Go duration (e.g. 4h, 30m). Empty/absent = permanent. The grant stops authorizing once the TTL elapses and is swept by the JIT expiry scheduler."}
                 reason: {type: string, description: Reason on reject}
       responses:
         '200':

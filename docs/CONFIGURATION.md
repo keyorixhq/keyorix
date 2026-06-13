@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [audit.siem](#auditsiem)
 - [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -349,6 +349,26 @@ encryption off the scheduler logs a warning and does nothing.
 audit_checkpoints:
   enabled: true
   schedule: "12h"         # Go duration between checkpoint writes (default 24h)
+```
+
+## jit_access_expiry
+
+An opt-in background sweeper for **just-in-time / time-bound access**. A role grant
+can carry an expiry — set it by approving an access request with a TTL (`keyorix
+request review --action approve --ttl 4h …`, or `grant_ttl` on the resolve API).
+An expired grant **stops authorizing immediately** (the authorization queries
+filter on expiry, so access is denied the moment the TTL passes — independent of
+this sweep); the sweeper then reclaims the rows and writes a `role.expired` audit
+event for each. Single-replica-gated (ADR-039).
+
+Leaving this disabled does not weaken enforcement — expired grants are still
+denied at authorization time — it only means the expired rows linger until a
+sweeper (anywhere) runs.
+
+```yaml
+jit_access_expiry:
+  enabled: true
+  schedule: "1h"          # Go duration between expiry sweeps (default 1h)
 ```
 
 ## audit.siem

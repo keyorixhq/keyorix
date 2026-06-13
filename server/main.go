@@ -140,6 +140,7 @@ const (
 	schedLockLoginPrune   int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
 	schedLockRotationRmdr int64 = 0x4B455953_524F5452 // "KEYSROTR"
 	schedLockAuditCkpt    int64 = 0x4B455953_41434B50 // "KEYSACKP"
+	schedLockJITExpiry    int64 = 0x4B455953_4A495445 // "KEYSJITE"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -471,6 +472,44 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				}
 			}()
 		}
+	}
+
+	// Start the JIT access-expiry sweeper — opt-in. Removes time-bound role grants
+	// whose expiry has passed (auditing each as role.expired) and reclaims the rows.
+	// Expired grants already stop authorizing immediately (the auth queries filter
+	// on expiry); this just keeps the tables clean and writes the expiry audit trail.
+	if cfg.JITAccessExpiry.Enabled {
+		interval := cfg.JITAccessExpiry.GetInterval()
+		log.Printf("JIT access-expiry sweeper enabled: every %s", interval)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runSweep := func() {
+				// Single-replica-gated (ADR-039): one replica sweeps per tick.
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockJITExpiry, func() error {
+					n, rerr := coreService.RemoveExpiredRoleGrants(ctx, time.Now())
+					if rerr != nil {
+						log.Printf("JIT access-expiry sweep error: %v", rerr)
+						return rerr
+					}
+					if n > 0 {
+						log.Printf("JIT access-expiry sweep removed %d expired grant(s)", n)
+					}
+					return nil
+				}); err != nil {
+					log.Printf("JIT access-expiry scheduler error: %v", err)
+				}
+			}
+			runSweep() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runSweep()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
 	}
 
 	// Start the dynamic-secrets auto-revoke sweeper (ADR-035) — opt-in. Revokes

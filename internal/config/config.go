@@ -28,6 +28,9 @@ type Config struct {
 	// signed checkpoints of the audit hash chain (ADR-029) for on-box truncation
 	// detection. Requires encryption enabled (the signing key is DEK-derived).
 	AuditCheckpoints AuditCheckpointsConfig `yaml:"audit_checkpoints"`
+	// JITAccessExpiry configures the opt-in background sweeper that removes
+	// time-bound role grants whose expiry has passed (just-in-time access).
+	JITAccessExpiry JITAccessExpiryConfig `yaml:"jit_access_expiry"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -485,6 +488,27 @@ func (c AuditCheckpointsConfig) GetInterval() time.Duration {
 		}
 	}
 	return 24 * time.Hour
+}
+
+// JITAccessExpiryConfig configures the just-in-time access-expiry sweeper: a
+// background job that removes time-bound role grants whose expiry has passed and
+// audits each as role.expired. Expired grants stop authorizing immediately (the
+// authorization queries filter on expiry); this sweep reclaims the rows. Opt-in
+// (default off).
+type JITAccessExpiryConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+}
+
+// GetInterval returns the expiry-sweep interval (Go duration, e.g. "1h"); defaults
+// to 1h when unset or unparseable.
+func (c JITAccessExpiryConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return time.Hour
 }
 
 // WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the
