@@ -191,8 +191,10 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 
 	var permissions []*models.UserSecretPermission
 
+	// Owned == owner_id (the canonical ownership), not created_by (a username
+	// string). Page 1 with an explicit size; a zero PageSize would emit LIMIT 0.
 	ownedSecrets, _, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
-		CreatedBy: &[]string{fmt.Sprintf("%d", userID)}[0],
+		OwnerID: &userID, Page: 1, PageSize: 10000,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

@@ -337,6 +337,9 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	if filter.CreatedBy != nil {
 		query = query.Where("secret_nodes.created_by = ?", *filter.CreatedBy)
 	}
+	if filter.OwnerID != nil {
+		query = query.Where("secret_nodes.owner_id = ?", *filter.OwnerID)
+	}
 	if filter.CreatedAfter != nil {
 		query = query.Where("secret_nodes.created_at > ?", *filter.CreatedAfter)
 	}
