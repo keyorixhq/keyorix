@@ -3,6 +3,63 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.19.0 — 2026-06-14
+
+The access-recertification / least-privilege / incident-response release (ISO 27001
+A.5.18, SOC 2 CC6.2–6.3, NIS2/DORA): review who can reach a project's secrets, act
+on it, time-bound it, run it on a schedule, spot stale access, and break the glass
+in an emergency.
+
+### Added
+- **Project access review (ISO 27001 A.5.18)** — `GET /api/v1/projects/{id}/access-review`
+  and `keyorix access-review` enumerate every grant of access to a project's secrets:
+  role-based standing access (the role + the highest secrets action it confers) plus
+  the per-secret grants — ownership and direct/group shares. The `source` of each
+  grant is reported. Gated by `roles.read` at the project scope. ([#169], [#170])
+- **Attest / revoke recertification (A.5.18)** — close the review loop: `POST
+  …/access-review/{attest,revoke}` and the `keyorix access-review attest|revoke`
+  subcommands certify a grant as reviewed-and-kept, or remove it (the underlying
+  role assignment or share). Both are audited (`access_review.attested`/`.revoked`);
+  attest needs `roles.read`, revoke `roles.assign`. ([#171])
+- **Just-in-time / time-bound role grants** — role grants can carry an expiry and
+  stop authorizing **the instant they pass** (the authorization queries filter on
+  expiry — not sweep-dependent). Access-request approval can grant time-bound
+  (`grant_ttl` on the resolve API, `keyorix request review --ttl`), and an opt-in
+  HA-gated `jit_access_expiry` sweeper reclaims expired rows, auditing each as
+  `role.expired`. ([#172])
+- **Periodic access-review campaigns (A.5.18 "review at planned intervals")** —
+  turn the point-in-time review into a tracked cycle: open a campaign (snapshots
+  current access into per-grant items), attest/revoke each, then close it as the
+  evidence record. `…/access-review/campaigns[/…]` endpoints +
+  `keyorix access-review campaign open|list|show|decide|close`. ([#173])
+- **Dormant / unused-access detection** — the review annotates each user grant with
+  the principal's last secret access in the project (from the audit trail); a grant
+  never used (or stale ≥90 days) is flagged as dormant standing access to prune. New
+  `last_used_at` on review entries + a `LAST-USED` CLI column. ([#174])
+- **Break-glass emergency access (NIS2/DORA incident response)** — opt-in,
+  self-service `POST …/break-glass` + `keyorix break-glass`: immediately self-grant
+  a configured emergency role, time-bound and auto-expiring, with a mandatory
+  justification, a loud audit event (`break_glass.activated`), and an admin alert —
+  recorded as a queryable activation for post-hoc review, with admin early-revoke.
+  Configured via the `break_glass` block (off by default). ([#175])
+
+### Notes
+- New config blocks: `jit_access_expiry` (expiry sweeper) and `break_glass`
+  (emergency access) — both opt-in, documented in CONFIGURATION.md.
+- Additive schema only (new tables: `access_review_campaigns`,
+  `access_review_items`, `break_glass_activations`; nullable `expires_at` on role
+  grants) — safe on existing databases.
+- The Keyorix web console gains a project **Access Review** tab surfacing the
+  review, attest/revoke, dormancy, and the campaign cycle (keyorix-web).
+
+[#169]: https://github.com/keyorixhq/keyorix/pull/169
+[#170]: https://github.com/keyorixhq/keyorix/pull/170
+[#171]: https://github.com/keyorixhq/keyorix/pull/171
+[#172]: https://github.com/keyorixhq/keyorix/pull/172
+[#173]: https://github.com/keyorixhq/keyorix/pull/173
+[#174]: https://github.com/keyorixhq/keyorix/pull/174
+[#175]: https://github.com/keyorixhq/keyorix/pull/175
+
 ## v0.18.0 — 2026-06-13
 
 ### Added
