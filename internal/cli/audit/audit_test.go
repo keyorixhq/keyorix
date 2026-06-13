@@ -16,13 +16,59 @@ func TestCommandWiring(t *testing.T) {
 	for _, sub := range AuditCmd.Commands() {
 		names[sub.Name()] = true
 	}
-	for _, want := range []string{"verify", "export", "checkpoint"} {
+	for _, want := range []string{"verify", "export", "checkpoint", "logs"} {
 		assert.True(t, names[want], "missing subcommand %q", want)
 	}
 	assert.NotNil(t, verifyCmd.Flags().Lookup("json"), "verify missing --json")
 	for _, f := range []string{"since", "after-id", "limit", "all"} {
 		assert.NotNilf(t, exportCmd.Flags().Lookup(f), "export missing --%s flag", f)
 	}
+	for _, f := range []string{"event-type", "user-id", "project-id", "actor-type", "since", "until", "limit"} {
+		assert.NotNilf(t, logsCmd.Flags().Lookup(f), "logs missing --%s flag", f)
+	}
+}
+
+func TestLogs_FiltersAndRenders(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"data":{"logs":[{"id":12,"event_type":"secret.deleted","actor":"ada","actor_type":"user","description":"deleted db-pw","timestamp":"2026-06-13T10:00:00Z"}],"total":1}}`))
+	}))
+	defer srv.Close()
+	setRemote(t, srv.URL)
+
+	logEventType, logUserID, logProjectID, logActorType, flagSince, logUntil, logLimit =
+		"secret.deleted", 5, 0, "user", "", "", 50
+	require.NoError(t, logsCmd.RunE(logsCmd, nil))
+
+	assert.Equal(t, "/api/v1/audit/logs", gotPath)
+	assert.Contains(t, gotQuery, "action=secret.deleted")
+	assert.Contains(t, gotQuery, "user_id=5")
+	assert.Contains(t, gotQuery, "actor_type=user")
+	assert.Contains(t, gotQuery, "page_size=50")
+}
+
+func TestLogs_Validation(t *testing.T) {
+	logEventType, logUserID, logProjectID, logActorType, flagSince, logUntil = "", 0, 0, "", "", ""
+	t.Run("limit range", func(t *testing.T) {
+		logLimit = 500
+		require.ErrorContains(t, logsCmd.RunE(logsCmd, nil), "--limit must be between 1 and 100")
+	})
+	t.Run("bad since", func(t *testing.T) {
+		logLimit, flagSince = 50, "last week"
+		require.ErrorContains(t, logsCmd.RunE(logsCmd, nil), "invalid --since")
+	})
+	t.Run("bad actor-type", func(t *testing.T) {
+		logLimit, flagSince, logActorType = 50, "", "robot"
+		require.ErrorContains(t, logsCmd.RunE(logsCmd, nil), "--actor-type must be")
+	})
+}
+
+func TestTruncateAndShortTime(t *testing.T) {
+	assert.Equal(t, "short", truncate("short", 16))
+	assert.Equal(t, "abcd…", truncate("abcdefgh", 5))
+	assert.Equal(t, "2026-06-13 10:00:00", shortTime("2026-06-13T10:00:00Z"))
+	assert.Equal(t, "not-a-time", shortTime("not-a-time"))
 }
 
 // setRemote points the RemoteClient at a mock server.
