@@ -112,3 +112,32 @@ func TestMachineRoleGrantScopeResolution(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []uint{100}, ids)
 }
+
+// Environment-axis isolation: GetMachineRoleIDsAt uses the same
+// "(env = 0 OR env = ?)" structure as the user query, so an env-scoped grant must
+// not leak across projects at the same environment. This is the parenthesisation
+// guard for machines (cf. the user-RBAC scope-boundary tests).
+func TestMachineRoleGrantScopeResolution_EnvCrossLeak(t *testing.T) {
+	ls := newMachineCredTestStore(t)
+	ctx := context.Background()
+	const machineID = uint(1)
+
+	// role 300 granted at exactly project 2 / env 9.
+	require.NoError(t, ls.AssignMachineRole(ctx, machineID, 300, storage.Scope{ProjectID: 2, EnvironmentID: 9}))
+
+	ids, err := ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 2, EnvironmentID: 9})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{300}, ids, "applies at its exact project/env")
+
+	ids, err = ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 3, EnvironmentID: 9})
+	require.NoError(t, err)
+	assert.Empty(t, ids, "env-9 grant in project 2 must NOT leak to project 3 at env 9")
+
+	ids, err = ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 2, EnvironmentID: 8})
+	require.NoError(t, err)
+	assert.Empty(t, ids, "does not apply at a different environment")
+
+	ids, err = ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 2})
+	require.NoError(t, err)
+	assert.Empty(t, ids, "an env-scoped grant does not apply at project-level env 0")
+}
