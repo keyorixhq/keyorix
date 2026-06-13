@@ -237,9 +237,12 @@ dynamic_secrets:
   sweep_interval: "1m"           # cadence (Go duration); default 1m
 ```
 
-Targets are registered via the API with an admin DSN, a backend type
-(`postgres`, `mysql`, `mongodb`, or `redis`), an optional creation template, and a
-default TTL. The creation template form depends on the backend:
+Targets are registered via the API — or from the terminal with
+`keyorix dynamic-secret create` (the admin DSN is read from the
+`KEYORIX_DYNAMIC_ADMIN_DSN` env var or a hidden prompt, never a flag) — with an
+admin DSN, a backend type (`postgres`, `mysql`, `mongodb`, or `redis`), an optional
+creation template, and a default TTL. The creation template form depends on the
+backend:
 - SQL backends (`postgres`, `mysql`) — an SQL grant template using `{{name}}`.
 - `mongodb` — a JSON role spec (`{"roles": [{"role": "readWrite", "db": "app"}]}`);
   the admin DSN is a MongoDB connection URI.

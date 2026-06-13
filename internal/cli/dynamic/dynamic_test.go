@@ -1,6 +1,7 @@
 package dynamic
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,12 +18,16 @@ func TestCommandWiring(t *testing.T) {
 	for _, sub := range DynamicSecretCmd.Commands() {
 		names[sub.Name()] = true
 	}
-	for _, want := range []string{"list", "issue", "leases", "renew", "revoke", "revoke-all"} {
+	for _, want := range []string{"list", "issue", "leases", "renew", "revoke", "revoke-all", "create"} {
 		assert.True(t, names[want], "missing subcommand %q", want)
 	}
 	assert.Contains(t, DynamicSecretCmd.Aliases, "dyn")
 	assert.NotNil(t, issueCmd.Flags().Lookup("ttl"))
 	assert.NotNil(t, listCmd.Flags().Lookup("project-id"))
+	for _, want := range []string{"name", "project-id", "backend", "creation-template", "default-ttl", "max-ttl"} {
+		assert.NotNilf(t, createConfigCmd.Flags().Lookup(want), "create missing --%s flag", want)
+	}
+	assert.Nil(t, createConfigCmd.Flags().Lookup("admin-dsn"), "admin DSN must NOT be a flag (shell-history leak)")
 }
 
 // captureStdout runs fn with os.Stdout redirected and returns what it printed.
@@ -62,6 +67,45 @@ func TestIssueAgainstMockServer(t *testing.T) {
 	assert.Contains(t, out, "lease-abc")
 	assert.Contains(t, out, "kx_dyn_x9")
 	assert.Contains(t, out, "s3cr3t-pw")
+}
+
+// TestCreateConfigAgainstMockServer drives `create` against a stub API and checks
+// it POSTs to /configs with the admin DSN sourced from the env var (never a flag).
+func TestCreateConfigAgainstMockServer(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"data":{"id":42,"name":"app-db","backend_type":"postgres"}}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	t.Setenv(adminDSNEnv, "postgres://admin:p@db:5432/app")
+	cfgName, cfgProjectID, cfgEnvID, cfgBackend = "app-db", 1, 0, "postgres"
+	cfgTemplate, cfgDefaultTTL, cfgMaxTTL = "GRANT SELECT TO {{name}};", 3600, 0
+
+	out := captureStdout(t, func() {
+		require.NoError(t, createConfigCmd.RunE(createConfigCmd, nil))
+	})
+
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/api/v1/dynamic-secrets/configs", gotPath)
+	// The admin DSN is read from the env var (never a flag) and posted to the server.
+	assert.Equal(t, "postgres://admin:p@db:5432/app", gotBody["admin_dsn"])
+	assert.Equal(t, "app-db", gotBody["name"])
+	assert.Equal(t, "postgres", gotBody["backend_type"])
+	assert.Contains(t, out, "config #42")
+}
+
+// Required flags are validated before any network/credential I/O.
+func TestCreateConfig_RequiresFlags(t *testing.T) {
+	cfgName, cfgProjectID, cfgBackend = "", 0, ""
+	err := createConfigCmd.RunE(createConfigCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "required")
 }
 
 func TestRevokeAllAgainstMockServer(t *testing.T) {
