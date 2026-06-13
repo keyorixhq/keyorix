@@ -3,6 +3,36 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.13.3 — 2026-06-13
+
+Further security/correctness fixes from the access-control & integrity audit. No
+new features; no config or schema changes.
+
+### Fixed
+- **OIDC/JWKS: bounded stale-key fallback** (ADR-031). On a transient JWKS refetch
+  failure the resolver fell back to a cached signing key with no age bound, so a
+  key the issuer rotated out (e.g. because it was compromised) could keep verifying
+  federation tokens indefinitely while the issuer's JWKS endpoint was unreachable.
+  The fallback is now bounded to a short grace window past the cache TTL; beyond it
+  a failed refetch fails closed. (Affects deployments using OIDC/Kubernetes-JWT
+  federation.) ([#138])
+- **Audit log: tamper-evidence anchor** (ADR-029). On-box chain re-verification
+  could not detect tail-truncation or a genesis re-seed (a shorter, self-consistent
+  chain still verifies), and the documented "SIEM export anchors the head"
+  mitigation was not actually wired — the export omitted the chain hashes.
+  `GET /audit/verify` now returns the chain `head_hash`/`head_id`, and
+  `GET /audit/export` now carries each event's `prev_hash`/`entry_hash`, so an
+  off-box observer can detect truncation. ([#139])
+
+### Internal
+- Added a router-wide regression guard asserting a read-only persona cannot succeed
+  at any mutating route — preventing the access-control privilege-escalation class
+  fixed in v0.13.2 from recurring. ([#140])
+
+[#138]: https://github.com/keyorixhq/keyorix/pull/138
+[#139]: https://github.com/keyorixhq/keyorix/pull/139
+[#140]: https://github.com/keyorixhq/keyorix/pull/140
+
 ## v0.13.2 — 2026-06-13
 
 Authorization-hardening fixes from a systematic adversarial audit of the access
