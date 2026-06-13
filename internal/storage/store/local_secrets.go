@@ -340,6 +340,9 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	if filter.OwnerID != nil {
 		query = query.Where("secret_nodes.owner_id = ?", *filter.OwnerID)
 	}
+	if filter.ExpiresBefore != nil {
+		query = query.Where("secret_nodes.expiration IS NOT NULL AND secret_nodes.expiration < ?", *filter.ExpiresBefore)
+	}
 	if filter.CreatedAfter != nil {
 		query = query.Where("secret_nodes.created_at > ?", *filter.CreatedAfter)
 	}
