@@ -254,6 +254,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	accessReqExists := tableExists(db, "access_requests")
 	campaignExists := tableExists(db, "access_review_campaigns")
 	breakGlassExists := tableExists(db, "break_glass_activations")
+	sodExists := tableExists(db, "sod_policies")
 	pwHistExists := tableExists(db, "password_histories")
 	machineExists := tableExists(db, "machine_identities")
 	machineCredExists := tableExists(db, "machine_identity_credentials")
@@ -397,6 +398,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !breakGlassExists {
 		if err := db.AutoMigrate(&models.BreakGlassActivation{}); err != nil {
 			return fmt.Errorf("failed to migrate break_glass_activations table: %w", err)
+		}
+	}
+
+	// Create the separation-of-duties policy table if missing (additive).
+	if !sodExists {
+		if err := db.AutoMigrate(&models.SoDPolicy{}); err != nil {
+			return fmt.Errorf("failed to migrate sod_policies table: %w", err)
 		}
 	}
 

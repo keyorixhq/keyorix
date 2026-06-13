@@ -229,6 +229,35 @@ func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint
 	return args.Get(0).(map[uint]time.Time), args.Error(1)
 }
 
+func (m *MockStorage) CreateSoDPolicy(ctx context.Context, p *models.SoDPolicy) (*models.SoDPolicy, error) {
+	args := m.Called(ctx, p)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SoDPolicy), args.Error(1)
+}
+
+func (m *MockStorage) GetSoDPolicy(ctx context.Context, id uint) (*models.SoDPolicy, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SoDPolicy), args.Error(1)
+}
+
+func (m *MockStorage) ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.SoDPolicy), args.Error(1)
+}
+
+func (m *MockStorage) DeleteSoDPolicy(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 func (m *MockStorage) CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
 	args := m.Called(ctx, a)
 	if args.Get(0) == nil {

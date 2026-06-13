@@ -2814,6 +2814,66 @@ paths:
             break_glass[], rotation_overdue[]}.
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/sod/policies:
+    get:
+      tags: [Dashboard]
+      summary: List separation-of-duties policies (ISO 27001 A.5.3)
+      description: "Toxic permission combinations one principal must not hold together. Requires system.read."
+      operationId: listSoDPolicies
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data}. data: {policies[] of {id, name, description, permission_a, permission_b, created_at}, count}."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Dashboard]
+      summary: Create a separation-of-duties policy
+      description: "Define two permissions that must not be held together. Requires system.write."
+      operationId: createSoDPolicy
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, permission_a, permission_b]
+              properties:
+                name: {type: string}
+                description: {type: string}
+                permission_a: {type: string, description: "e.g. roles.assign"}
+                permission_b: {type: string, description: "e.g. secrets.delete (must differ from permission_a)"}
+      responses:
+        '201': {description: "Envelope {data}. data: {policy}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/sod/policies/{id}:
+    delete:
+      tags: [Dashboard]
+      summary: Delete a separation-of-duties policy
+      operationId: deleteSoDPolicy
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200': {description: "Envelope {data, message}. Policy deleted."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/sod/violations:
+    get:
+      tags: [Dashboard]
+      summary: List separation-of-duties violations
+      description: >-
+        Principals whose effective permissions include both sides of a policy.
+        Requires system.read.
+      operationId: listSoDViolations
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data}. data: {violations[] of {policy_id, policy_name, user_id, username, email, permission_a, permission_b}, count}."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/dashboard/activity:
     get:
       tags: [Dashboard]
