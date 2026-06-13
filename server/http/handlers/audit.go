@@ -378,3 +378,39 @@ func (h *AuditHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request) 
 	}
 	sendSuccess(w, resp, "")
 }
+
+// WriteAuditCheckpoint handles POST /api/v1/audit/checkpoint — signs a checkpoint
+// of the current verified audit-chain head (ADR-029) on demand. The usual source
+// of checkpoints is the background scheduler; this lets an operator re-baseline
+// immediately — e.g. right after a DEK rotation, when verify fails closed until a
+// fresh checkpoint is written under the new key. Privileged (system.write, on top
+// of the audit group's audit.read).
+func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	cp, written, err := h.coreService.WriteAuditCheckpoint(r.Context())
+	if err != nil {
+		// The chain did not verify (broken, or a prior signed checkpoint proves a
+		// truncation) — the server refuses to notarise it. Surface the reason so the
+		// operator can investigate; it is a precondition failure, not a server error.
+		sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
+		return
+	}
+	if !written {
+		sendError(w, "PreconditionFailed",
+			"signed audit checkpoints require encryption to be enabled (the signing key is derived from the DEK)",
+			http.StatusPreconditionFailed, nil)
+		return
+	}
+
+	sendSuccess(w, map[string]interface{}{
+		"id":             cp.ID,
+		"chained_events": cp.ChainedEvents,
+		"head_id":        cp.HeadID,
+		"head_hash":      cp.HeadHash,
+		"key_version":    cp.KeyVersion,
+	}, "audit checkpoint written")
+}

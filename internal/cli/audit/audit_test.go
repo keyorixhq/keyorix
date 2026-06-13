@@ -16,7 +16,7 @@ func TestCommandWiring(t *testing.T) {
 	for _, sub := range AuditCmd.Commands() {
 		names[sub.Name()] = true
 	}
-	for _, want := range []string{"verify", "export"} {
+	for _, want := range []string{"verify", "export", "checkpoint"} {
 		assert.True(t, names[want], "missing subcommand %q", want)
 	}
 	assert.NotNil(t, verifyCmd.Flags().Lookup("json"), "verify missing --json")
@@ -90,6 +90,34 @@ func TestVerify_JSON(t *testing.T) {
 	flagJSON = true
 	defer func() { flagJSON = false }()
 	require.NoError(t, verifyCmd.RunE(verifyCmd, nil))
+}
+
+func TestCheckpoint_PostsAndReportsError(t *testing.T) {
+	t.Run("success posts to the checkpoint endpoint", func(t *testing.T) {
+		var gotMethod, gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotMethod, gotPath = r.Method, r.URL.Path
+			_, _ = w.Write([]byte(`{"data":{"id":7,"chained_events":42,"head_id":42,"head_hash":"abc","key_version":"v1"}}`))
+		}))
+		defer srv.Close()
+		setRemote(t, srv.URL)
+
+		require.NoError(t, checkpointCmd.RunE(checkpointCmd, nil))
+		assert.Equal(t, http.MethodPost, gotMethod)
+		assert.Equal(t, "/api/v1/audit/checkpoint", gotPath)
+	})
+
+	t.Run("server refusal surfaces as an error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"refusing to checkpoint"}`))
+		}))
+		defer srv.Close()
+		setRemote(t, srv.URL)
+
+		err := checkpointCmd.RunE(checkpointCmd, nil)
+		require.Error(t, err)
+	})
 }
 
 func TestExport_NDJSONAndCursorFollow(t *testing.T) {

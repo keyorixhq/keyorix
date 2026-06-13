@@ -117,8 +117,9 @@ storage:
 
 ### Audit Commands
 
-The audit trail is hash-chained and tamper-evident (ADR-029). These read-only
-commands require the `audit.read` permission.
+The audit trail is hash-chained and tamper-evident (ADR-029). `verify` and
+`export` are read-only and require `audit.read`; `checkpoint` writes and requires
+`system.write` (admin-level).
 
 - `keyorix audit verify` - Re-walk the hash chain and report integrity. **Exits
   non-zero if the chain does not verify**, so it can run unattended (cron/CI) to
@@ -134,6 +135,13 @@ commands require the `audit.read` permission.
   go to stderr. Pull incrementally with `--after-id <cursor>`, or grab everything
   since a point in time with `--since <RFC3339> --all`. `--limit` sets page size
   (1–1000).
+- `keyorix audit checkpoint` - Write a signed checkpoint of the current verified
+  chain head on demand (ADR-029) so truncation is detectable **on-box**. Normally
+  the server's `audit_checkpoints` scheduler writes these; run this to re-baseline
+  immediately — most often right after a **DEK rotation**, when `verify` fails
+  closed until a fresh checkpoint is written under the new key. Requires server
+  encryption (the signing key is DEK-derived); the server refuses if the chain
+  does not verify.
 
 ```bash
 # Nightly tamper check (exit 1 → alert), capturing the anchor:
@@ -141,6 +149,9 @@ keyorix audit verify --json >> audit-anchors.ndjson || notify "audit chain broke
 
 # Incremental SIEM pull from the last cursor:
 keyorix audit export --after-id "$LAST_ID" --all > batch.ndjson
+
+# Re-baseline on-box detection right after a DEK rotation:
+keyorix audit checkpoint
 ```
 
 ## Deployment Scenarios

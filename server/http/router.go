@@ -422,6 +422,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
 			r.Get("/retention", auditHandler.GetAuditRetention)
 			r.Get("/verify", auditHandler.VerifyAuditChain)
+			// Writing a checkpoint is a privileged integrity-control action — gate it
+			// above the group's audit.read with system.write (admin-level).
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/checkpoint", auditHandler.WriteAuditCheckpoint)
 			r.Get("/anomalies", handlers.ListAnomalyAlerts)
 			r.Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})

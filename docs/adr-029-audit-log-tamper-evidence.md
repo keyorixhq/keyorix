@@ -125,11 +125,12 @@ double-migration hazard).
   - **DEK rotation:** a checkpoint signed under a superseded DEK cannot be
     re-verified on-box, so after a rotation `verify` fails closed (reports invalid)
     until the next checkpoint write re-baselines under the new key — the scheduler
-    does this on its next tick / at startup (`WriteAuditCheckpoint` re-baselines
-    over an *unverifiable* prior checkpoint but still refuses over an *authenticated*
-    truncation). Trusting the unauthenticated `key_version` to suppress that alarm
-    was rejected — it would let an attacker forge the rotation case to mask a
-    truncation.
+    does this on its next tick / at startup, and an operator can force it
+    immediately with `keyorix audit checkpoint` (`POST /api/v1/audit/checkpoint`,
+    system.write). `WriteAuditCheckpoint` re-baselines over an *unverifiable* prior
+    checkpoint but still refuses over an *authenticated* truncation. Trusting the
+    unauthenticated `key_version` to suppress that alarm was rejected — it would let
+    an attacker forge the rotation case to mask a truncation.
   - **Residual (honest scope):** enforcement consults the latest checkpoint row.
     A DB-level actor who can write `audit_checkpoints` can therefore *neutralise*
     on-box enforcement — delete every row, or overwrite the latest slot with an
