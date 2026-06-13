@@ -521,11 +521,60 @@ paths:
           description: >-
             Envelope {data, message}. data: {entries[], count}; each entry is
             {principal_type (user|group), principal_id, principal_name, email,
-            source (role|owner|direct_share|group_share), role_name, access_level,
-            environment_id, secret_id, secret_name}.
+            source (role|owner|direct_share|group_share), role_id, role_name,
+            access_level, environment_id, secret_id, secret_name}.
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/access-review/attest:
+    post:
+      tags: [Projects]
+      summary: Attest an access-review grant (certify reviewed & kept)
+      description: >-
+        Record that the grant in the body was reviewed and intentionally kept —
+        the audit evidence of recertification (access_review.attested). Changes no
+        access. Requires roles.read at the project scope.
+      operationId: attestProjectAccessReview
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccessReviewDecision'}
+      responses:
+        '200': {description: "Envelope {data, message}. Attested."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/access-review/revoke:
+    post:
+      tags: [Projects]
+      summary: Revoke an access-review grant (remove the role or share)
+      description: >-
+        Close the recertification loop by removing the grant in the body — a
+        project-scoped role assignment (source=role, role_id set) or a secret share
+        (source=direct_share|group_share, secret_id set). Audited as
+        access_review.revoked. Ownership (source=owner) cannot be revoked here.
+        Requires roles.assign at the project scope.
+      operationId: revokeProjectAccessReview
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AccessReviewDecision'}
+      responses:
+        '200': {description: "Envelope {data, message}. Access revoked."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
 
   /api/v1/projects/{id}/members:
     get:
@@ -2580,3 +2629,35 @@ components:
                   code: {type: integer}
                   message: {type: string}
                   type: {type: string}
+  schemas:
+    AccessReviewDecision:
+      type: object
+      description: >-
+        Identifies one access-review entry for a recertification decision
+        (attest or revoke). Mirrors an entry from GET .../access-review.
+      required: [source]
+      properties:
+        source:
+          type: string
+          enum: [role, direct_share, group_share]
+          description: Which mechanism conferred the grant.
+        principal_type:
+          type: string
+          enum: [user, group]
+          description: For a role grant, whether the principal is a user or a group.
+        principal_id:
+          type: integer
+          format: uint32
+          description: The user or group ID the grant is for.
+        role_id:
+          type: integer
+          format: uint32
+          description: Required when source=role.
+        environment_id:
+          type: integer
+          format: uint32
+          description: Environment scope of a role grant (0 = whole project).
+        secret_id:
+          type: integer
+          format: uint32
+          description: Required when source=direct_share or group_share.

@@ -28,6 +28,7 @@ type AccessReviewEntry struct {
 	PrincipalName string `json:"principal_name"` // username or group name
 	Email         string `json:"email,omitempty"`
 	Source        string `json:"source"` // role | owner | direct_share | group_share
+	RoleID        uint   `json:"role_id,omitempty"`
 	RoleName      string `json:"role_name,omitempty"`
 	AccessLevel   string `json:"access_level"`   // read|write|delete|admin (role) or read|write|owner (share)
 	EnvironmentID uint   `json:"environment_id"` // 0 = the whole project (role grants)
@@ -127,6 +128,7 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 			PrincipalType: a.PrincipalType,
 			PrincipalID:   a.PrincipalID,
 			Source:        "role",
+			RoleID:        a.RoleID,
 			RoleName:      ri.name,
 			AccessLevel:   ri.action,
 			EnvironmentID: a.EnvironmentID,

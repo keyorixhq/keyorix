@@ -198,9 +198,33 @@ project scope.
   the highest secrets action) and per-secret grants (ownership and direct/group
   shares). The `SOURCE` column says which mechanism conferred each grant.
 
+Close the recertification loop by acting on each grant — every decision is audited
+(`access_review.attested` / `access_review.revoked`):
+
+- `keyorix access-review attest --project-id N --source <role|direct_share|group_share>
+  --principal-id P [--role-id R | --secret-id S]` — certify a grant was reviewed and
+  intentionally kept (audit-only, the evidence of recertification; changes no
+  access). Requires `roles.read`.
+- `keyorix access-review revoke --project-id N --source <role|direct_share|group_share>
+  --principal-id P [--role-id R | --secret-id S] [--environment-id E]
+  [--principal-type user|group]` — remove the grant: a project-scoped role
+  assignment (`--source role --role-id R`) or a secret share (`--source
+  direct_share|group_share --secret-id S`). Ownership cannot be revoked here.
+  Requires `roles.assign`.
+
 ```bash
 # Quarterly access review for project 5:
 keyorix access-review --project-id 5
+
+# Keep alice's editor role (role 3) — record the attestation:
+keyorix access-review attest --project-id 5 --source role --principal-id 42 --role-id 3
+
+# Revoke the devs group's (group 100) editor role at project 5:
+keyorix access-review revoke --project-id 5 --source role --principal-type group \
+  --principal-id 100 --role-id 3
+
+# Revoke a direct share of secret 500 from user 42:
+keyorix access-review revoke --project-id 5 --source direct_share --principal-id 42 --secret-id 500
 ```
 
 ## Deployment Scenarios

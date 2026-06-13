@@ -7,6 +7,9 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // ListProjectMembers handles GET /api/v1/projects/{id}/members
@@ -39,6 +42,89 @@ func (h *CatalogHandler) GetProjectAccessReview(w http.ResponseWriter, r *http.R
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"entries": entries, "count": len(entries)}, "")
+}
+
+// accessReviewDecisionBody is the request body for a recertification decision on
+// one access-review entry (revoke or attest). It mirrors the AccessReviewEntry the
+// review returned, identifying the grant to act on.
+type accessReviewDecisionBody struct {
+	Source        string `json:"source"`
+	PrincipalType string `json:"principal_type"`
+	PrincipalID   uint   `json:"principal_id"`
+	RoleID        uint   `json:"role_id"`
+	EnvironmentID uint   `json:"environment_id"`
+	SecretID      uint   `json:"secret_id"`
+}
+
+// decodeAccessReviewDecision parses the project ID, acting reviewer and decision
+// body shared by the revoke and attest handlers. It writes the error response and
+// returns ok=false on any failure.
+func (h *CatalogHandler) decodeAccessReviewDecision(w http.ResponseWriter, r *http.Request) (uint, uint, core.AccessReviewDecision, bool) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return 0, 0, core.AccessReviewDecision{}, false
+	}
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return 0, 0, core.AccessReviewDecision{}, false
+	}
+	var body accessReviewDecisionBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return 0, 0, core.AccessReviewDecision{}, false
+	}
+	if body.Source == "" {
+		sendError(w, "ValidationError", "source is required", http.StatusBadRequest, nil)
+		return 0, 0, core.AccessReviewDecision{}, false
+	}
+	return uint(id), userCtx.UserID, core.AccessReviewDecision{
+		Source:        body.Source,
+		PrincipalType: body.PrincipalType,
+		PrincipalID:   body.PrincipalID,
+		RoleID:        body.RoleID,
+		EnvironmentID: body.EnvironmentID,
+		SecretID:      body.SecretID,
+	}, true
+}
+
+// RevokeProjectAccessReview handles POST /api/v1/projects/{id}/access-review/revoke
+// — close the recertification loop by removing the grant identified in the body (a
+// role assignment or a share). Gated by roles.assign at the project scope.
+func (h *CatalogHandler) RevokeProjectAccessReview(w http.ResponseWriter, r *http.Request) {
+	projectID, actorID, decision, ok := h.decodeAccessReviewDecision(w, r)
+	if !ok {
+		return
+	}
+	if err := h.coreService.RevokeAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "required") || strings.Contains(msg, "unknown access-review source") || strings.Contains(msg, "ownership cannot be revoked"):
+			status = http.StatusBadRequest
+		case strings.Contains(msg, "no matching share") || strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", msg, status, nil)
+		return
+	}
+	sendSuccess(w, nil, "Access revoked")
+}
+
+// AttestProjectAccessReview handles POST /api/v1/projects/{id}/access-review/attest
+// — certify the grant in the body was reviewed and kept (audit-only, the evidence
+// of recertification). Gated by roles.read at the project scope.
+func (h *CatalogHandler) AttestProjectAccessReview(w http.ResponseWriter, r *http.Request) {
+	projectID, actorID, decision, ok := h.decodeAccessReviewDecision(w, r)
+	if !ok {
+		return
+	}
+	if err := h.coreService.AttestAccessReviewGrant(r.Context(), actorID, projectID, decision); err != nil {
+		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		return
+	}
+	sendSuccess(w, nil, "Access attested")
 }
 
 // AddProjectMember handles POST /api/v1/projects/{id}/members
