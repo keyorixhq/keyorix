@@ -34,7 +34,7 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
 		return nil, err
 	}
 	if req.GetName() == "" || req.GetDescription() == "" || len(req.GetPermissions()) == 0 {
@@ -64,7 +64,7 @@ func (s *RoleGRPCService) GetRole(ctx context.Context, req *pb.GetRoleRequest) (
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "roles.read"); err != nil {
 		return nil, err
 	}
 	return s.roleByID(ctx, uint(req.GetId()))
@@ -76,7 +76,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -122,7 +122,7 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.write"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
 		return nil, err
 	}
 	if req.GetId() == 0 {
@@ -140,7 +140,7 @@ func (s *RoleGRPCService) ListRoles(ctx context.Context, req *pb.ListRolesReques
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "roles.read"); err != nil {
 		return nil, err
 	}
 
@@ -185,7 +185,7 @@ func (s *RoleGRPCService) AssignRole(ctx context.Context, req *pb.AssignRoleRequ
 	// Authorize roles.assign AT THE TARGET scope, not the flat global union — else a
 	// project-A admin could grant roles into any project B (cross-project privesc).
 	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
-	if err := authorizeScoped(ctx, s.core, actor.UserID, "roles.assign", scope); err != nil {
+	if err := authorizeScoped(ctx, s.core, actor, "roles.assign", scope); err != nil {
 		return nil, err
 	}
 	if err := s.core.AssignUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
@@ -210,7 +210,7 @@ func (s *RoleGRPCService) RemoveRole(ctx context.Context, req *pb.RemoveRoleRequ
 	}
 	// Authorize roles.assign at the target scope (see AssignRole) — not the flat union.
 	scope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
-	if err := authorizeScoped(ctx, s.core, actor.UserID, "roles.assign", scope); err != nil {
+	if err := authorizeScoped(ctx, s.core, actor, "roles.assign", scope); err != nil {
 		return nil, err
 	}
 	if err := s.core.RemoveUserRole(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetRoleId()), scope); err != nil {
@@ -225,7 +225,7 @@ func (s *RoleGRPCService) GetUserRoles(ctx context.Context, req *pb.GetUserRoles
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "roles.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "roles.read"); err != nil {
 		return nil, err
 	}
 	assignment, err := s.core.GetUserRoleAssignment(ctx, uint(req.GetUserId()))

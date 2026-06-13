@@ -53,7 +53,7 @@ func (s *SystemGRPCService) GetSystemInfo(ctx context.Context, _ *emptypb.Empty)
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "system.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "system.read"); err != nil {
 		return nil, err
 	}
 
@@ -93,7 +93,7 @@ func (s *SystemGRPCService) GetMetrics(ctx context.Context, _ *emptypb.Empty) (*
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "system.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "system.read"); err != nil {
 		return nil, err
 	}
 

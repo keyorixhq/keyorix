@@ -189,6 +189,51 @@ func TestAuthInterceptor_PATAuthenticatesAndEnforcesScope(t *testing.T) {
 	assert.False(t, readP3, "scope outside the token's project is denied")
 }
 
+// A machine-identity token (ADR-030) authenticates over gRPC (previously rejected)
+// as a machine principal, and authorization uses machine RBAC with NO admin bypass.
+func TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}))
+
+	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", 1)
+	require.NoError(t, err)
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, "tok", nil, 1)
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(tok.PlainToken, "kx_machine_"))
+	// Grant the machine viewer (secrets.read) in project 2 only.
+	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1))
+
+	var captured context.Context
+	interceptor := AuthInterceptor(h.CoreService)
+	_, err = interceptor(bearerCtx(tok.PlainToken), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
+	require.NoError(t, err, "a kx_machine_ token must authenticate over gRPC")
+
+	user := GetUserFromGRPCContext(captured)
+	require.NotNil(t, user)
+	assert.Equal(t, core.ActorTypeMachine, user.ActorType)
+	assert.Equal(t, m.ID, user.MachineIdentityID)
+	assert.Equal(t, uint(0), user.UserID, "a machine has no owning user")
+	assert.Equal(t, core.ActorTypeMachine, user.ActorKind())
+	assert.Equal(t, m.ID, user.PrincipalID())
+
+	// Machine RBAC via AuthorizePrincipal: granted read allowed, ungranted write
+	// denied — and no admin bypass (a machine is never a super-user).
+	readP2, err := h.CoreService.AuthorizePrincipal(captured, user.ActorKind(), user.PrincipalID(), "secrets.read", core.Scope{ProjectID: 2})
+	require.NoError(t, err)
+	assert.True(t, readP2, "granted machine role permits the scoped read")
+
+	writeP2, err := h.CoreService.AuthorizePrincipal(captured, user.ActorKind(), user.PrincipalID(), "secrets.write", core.Scope{ProjectID: 2})
+	require.NoError(t, err)
+	assert.False(t, writeP2, "machine holds only viewer — write denied, no admin bypass")
+
+	readP3, err := h.CoreService.AuthorizePrincipal(captured, user.ActorKind(), user.PrincipalID(), "secrets.read", core.Scope{ProjectID: 3})
+	require.NoError(t, err)
+	assert.False(t, readP3, "machine role is scoped to project 2 — denied in project 3")
+}
+
 // An invalid PAT fails closed with Unauthenticated, same as a bad session token.
 func TestAuthInterceptor_InvalidPATRejected(t *testing.T) {
 	h := setupAuthHelper(t)

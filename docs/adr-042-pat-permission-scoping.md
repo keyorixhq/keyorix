@@ -131,9 +131,15 @@ outright (fail-closed, but an HTTP/gRPC parity gap — #136 had already made gRP
 the `kx_pat_` prefix to `ValidatePATToken` and, critically, carry the returned
 restriction onto the handler context via `core.WithPATRestriction` — so the
 least-privilege filter is enforced at the same `core.Authorize` chokepoint the
-gRPC RPCs already funnel through, exactly as over HTTP. (Machine-identity tokens
-over gRPC remain a separate item — they authenticate as a machine principal and
-use `AuthorizePrincipal`/actor-type plumbing the gRPC layer does not yet carry.)
+gRPC RPCs already funnel through, exactly as over HTTP. **Machine-identity tokens
+over gRPC (ADR-030) shipped immediately after**: the interceptor routes the
+`kx_machine_` prefix to `ValidateMachineToken`, builds a machine principal
+(actor_type `machine_identity`, no owning user), and the gRPC service authz
+helpers now call `AuthorizePrincipal(actorKind, principalID, …)` instead of
+`Authorize(userID, …)` — identical to `Authorize` for users (so PAT and session
+paths are unchanged) but resolving machine roles with **no admin bypass** for
+machines. gRPC authentication now has full parity with HTTP: session, PAT, and
+machine.
 
 ## Deferred
 

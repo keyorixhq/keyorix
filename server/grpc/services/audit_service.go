@@ -40,7 +40,7 @@ func (s *AuditGRPCService) GetAuditLogs(ctx context.Context, req *pb.GetAuditLog
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
 		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
@@ -81,7 +81,7 @@ func (s *AuditGRPCService) GetRBACAuditLogs(ctx context.Context, req *pb.GetRBAC
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
 		return nil, err
 	}
 	page, pageSize := normalizePage(req.GetPage(), req.GetPageSize())
@@ -144,7 +144,7 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 	if actor == nil {
 		return status.Error(codes.Unauthenticated, "user not authenticated")
 	}
-	if err := authorizeGlobal(ctx, s.core, actor.UserID, "audit.read"); err != nil {
+	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
 		return err
 	}
 
