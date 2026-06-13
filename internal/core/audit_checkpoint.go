@@ -48,37 +48,59 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	if !c.AuditCheckpointsAvailable() {
 		return nil, false, nil
 	}
-	v, err := c.VerifyAuditChain(ctx)
+	// Verify the raw chain (walk only, no checkpoint enforcement) so we never sign
+	// a head over a broken chain.
+	raw, err := c.storage.VerifyAuditChain(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to verify audit chain: %w", err)
+	}
+	if !raw.Valid {
+		return nil, false, fmt.Errorf("refusing to checkpoint a chain that does not verify: %s", raw.Reason)
+	}
+	// Refuse to re-baseline over a truncation that an AUTHENTICATED prior checkpoint
+	// proves — otherwise a scheduled write would silently bless a shortened chain and
+	// erase the evidence. An unverifiable prior checkpoint (a stale one after a DEK
+	// rotation) does not block re-baselining; that is how the system recovers from a
+	// key rotation.
+	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
 		return nil, false, err
 	}
-	if !v.Valid {
-		reason := v.Reason
-		if reason == "" {
-			reason = v.CheckpointReason
+	if cp != nil && c.checkpointSignatureValid(cp) {
+		if reason, tampered, err := c.checkpointTruncation(ctx, raw.ChainedEvents, cp); err != nil {
+			return nil, false, err
+		} else if tampered {
+			return nil, false, fmt.Errorf("refusing to checkpoint: %s", reason)
 		}
-		return nil, false, fmt.Errorf("refusing to checkpoint a chain that does not verify: %s", reason)
 	}
-	cp := &models.AuditCheckpoint{
-		ChainedEvents: v.ChainedEvents,
-		HeadID:        v.HeadID,
-		HeadHash:      v.HeadHash,
+	newCP := &models.AuditCheckpoint{
+		ChainedEvents: raw.ChainedEvents,
+		HeadID:        raw.HeadID,
+		HeadHash:      raw.HeadHash,
 		KeyVersion:    c.auditCkptKeyVersion,
 	}
-	cp.Signature = c.signCheckpoint(cp)
-	if err := c.storage.CreateAuditCheckpoint(ctx, cp); err != nil {
+	newCP.Signature = c.signCheckpoint(newCP)
+	if err := c.storage.CreateAuditCheckpoint(ctx, newCP); err != nil {
 		return nil, false, fmt.Errorf("failed to write audit checkpoint: %w", err)
 	}
-	return cp, true, nil
+	return newCP, true, nil
 }
 
 // enforceAuditCheckpoint augments a chain-walk verdict with on-box checkpoint
-// verification: it loads the latest signed checkpoint and, if its signature is
-// authentic and current, requires the live chain to still be at least as long as
-// the checkpoint certified, with the certified head row unchanged. Any shortfall
-// or head rewrite flips Valid to false. A checkpoint signed under a superseded
-// DEK version is recorded but not enforced (it cannot be re-verified after a key
-// rotation). A signature that does not recompute is itself a tamper signal.
+// verification. It loads the latest checkpoint and authenticates it with the
+// current signing key FIRST: the HMAC covers every field (including key_version),
+// so nothing the checkpoint claims is trusted until the signature verifies. A row
+// altered without the key fails here — there is no field a DB-level actor can set
+// to skip enforcement. Once authenticated, the live chain must still be at least
+// as long as the checkpoint certified, with the certified head row unchanged; any
+// shortfall or head rewrite flips Valid to false.
+//
+// A signature that does not verify is treated as a tamper signal (Valid=false). It
+// also fires for a stale checkpoint signed under a superseded DEK version after a
+// key rotation — by design: we cannot re-verify an old-key signature on-box, and
+// silently trusting the unauthenticated key_version field would reopen the bypass.
+// WriteAuditCheckpoint re-baselines under the new key (it does not block on an
+// unverifiable checkpoint), clearing the state on the next checkpoint write.
 func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.AuditChainVerification) error {
 	if !c.AuditCheckpointsAvailable() {
 		return nil
@@ -90,42 +112,55 @@ func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.Aud
 	if cp == nil {
 		return nil // none written yet
 	}
-	if cp.KeyVersion != c.auditCkptKeyVersion {
-		v.CheckpointReason = fmt.Sprintf(
-			"latest audit checkpoint #%d was signed under key version %q (current %q); not enforced after a key rotation",
-			cp.ID, cp.KeyVersion, c.auditCkptKeyVersion)
-		return nil
-	}
 
 	v.Checkpointed = true
 
 	if !c.checkpointSignatureValid(cp) {
 		c.failCheckpoint(v, nil,
-			fmt.Sprintf("audit checkpoint #%d signature is invalid — the checkpoint row was tampered (forged without the signing key)", cp.ID))
+			fmt.Sprintf("audit checkpoint #%d does not verify under the current signing key — the checkpoint was tampered, or a DEK rotation occurred and no fresh checkpoint has been written yet", cp.ID))
 		return nil
 	}
-	if v.ChainedEvents < cp.ChainedEvents {
-		c.failCheckpoint(v, nil,
-			fmt.Sprintf("audit trail truncated below signed checkpoint #%d: it certified %d chained events, only %d remain",
-				cp.ID, cp.ChainedEvents, v.ChainedEvents))
-		return nil
-	}
-	hash, found, err := c.storage.AuditEntryHashByID(ctx, cp.HeadID)
+	reason, tampered, err := c.checkpointTruncation(ctx, v.ChainedEvents, cp)
 	if err != nil {
 		return err
 	}
-	headID := cp.HeadID
-	if !found {
-		c.failCheckpoint(v, &headID,
-			fmt.Sprintf("audit event #%d certified by checkpoint #%d is missing (tail-truncation or genesis re-seed)", cp.HeadID, cp.ID))
-		return nil
-	}
-	if hash != cp.HeadHash {
-		c.failCheckpoint(v, &headID,
-			fmt.Sprintf("audit event #%d hash differs from signed checkpoint #%d (certified head was rewritten)", cp.HeadID, cp.ID))
-		return nil
+	if tampered {
+		var brokenID *uint
+		if cp.HeadID != 0 {
+			id := cp.HeadID
+			brokenID = &id
+		}
+		c.failCheckpoint(v, brokenID, reason)
 	}
 	return nil
+}
+
+// checkpointTruncation compares the live chain length and certified head against an
+// already-authenticated checkpoint, returning (reason, true) when the chain has
+// been truncated below it or its certified head row was removed/rewritten. The
+// caller MUST have validated cp's signature first.
+func (c *KeyorixCore) checkpointTruncation(ctx context.Context, chainedEvents int64, cp *models.AuditCheckpoint) (string, bool, error) {
+	if chainedEvents < cp.ChainedEvents {
+		return fmt.Sprintf("audit trail truncated below signed checkpoint #%d: it certified %d chained events, only %d remain",
+			cp.ID, cp.ChainedEvents, chainedEvents), true, nil
+	}
+	if cp.HeadID == 0 {
+		// The checkpoint certified the empty/genesis chain (no chained events yet);
+		// there is no head row to compare. The count check above is the only
+		// invariant — the chain only ever grows — so this is not a truncation.
+		return "", false, nil
+	}
+	hash, found, err := c.storage.AuditEntryHashByID(ctx, cp.HeadID)
+	if err != nil {
+		return "", false, err
+	}
+	if !found {
+		return fmt.Sprintf("audit event #%d certified by checkpoint #%d is missing (tail-truncation or genesis re-seed)", cp.HeadID, cp.ID), true, nil
+	}
+	if hash != cp.HeadHash {
+		return fmt.Sprintf("audit event #%d hash differs from signed checkpoint #%d (certified head was rewritten)", cp.HeadID, cp.ID), true, nil
+	}
+	return "", false, nil
 }
 
 // failCheckpoint records a checkpoint-detected tamper on the verdict without

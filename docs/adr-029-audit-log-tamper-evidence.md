@@ -110,15 +110,38 @@ double-migration hazard).
     is HKDF-derived from the DEK (`encryption.Service.AuditCheckpointKey`, info
     `keyorix-audit-checkpoint-v1`), so signed checkpoints require encryption
     enabled. `VerifyAuditChain` then verifies the live chain against the latest
-    checkpoint: a chain shorter than the certified length, or a rewritten certified
-    head, flips `valid` to false with a `checkpoint_reason` — catching the
-    tail-truncation / genesis re-seed the bare re-walk cannot. A checkpoint row
-    altered without the key fails its signature check (itself a tamper signal); a
-    new checkpoint is refused over a chain that no longer verifies, so a truncation
-    is never silently re-baselined away. A checkpoint signed under a superseded DEK
-    version (after a key rotation) is recorded but not enforced, avoiding false
-    positives. Surfaced as `checkpointed`/`checkpoint_reason` on `/audit/verify` and
-    in `keyorix audit verify`.
+    checkpoint. The checkpoint is **authenticated first** (the HMAC covers every
+    field, so nothing it claims — including `key_version` — is trusted until the
+    signature verifies under the current key); then a chain shorter than the
+    certified length, or a rewritten certified head, flips `valid` to false with a
+    `checkpoint_reason` — catching the tail-truncation / genesis re-seed the bare
+    re-walk cannot. A checkpoint row altered in **any** field without the key fails
+    the signature check and is reported as a tamper signal — there is deliberately
+    no unauthenticated field (e.g. `key_version`) a DB-level actor can edit to skip
+    enforcement. A new checkpoint is refused over a chain shorter than an
+    authenticated prior checkpoint, so a truncation is never silently re-baselined
+    away. Surfaced as `checkpointed`/`checkpoint_reason` on `/audit/verify` and in
+    `keyorix audit verify`.
+  - **DEK rotation:** a checkpoint signed under a superseded DEK cannot be
+    re-verified on-box, so after a rotation `verify` fails closed (reports invalid)
+    until the next checkpoint write re-baselines under the new key — the scheduler
+    does this on its next tick / at startup (`WriteAuditCheckpoint` re-baselines
+    over an *unverifiable* prior checkpoint but still refuses over an *authenticated*
+    truncation). Trusting the unauthenticated `key_version` to suppress that alarm
+    was rejected — it would let an attacker forge the rotation case to mask a
+    truncation.
+  - **Residual (honest scope):** enforcement consults the latest checkpoint row.
+    A DB-level actor who can write `audit_checkpoints` can therefore *neutralise*
+    on-box enforcement — delete every row, or overwrite the latest slot with an
+    unverifiable row — which makes `verify` **fail closed** (reports invalid) until
+    the next scheduler write re-baselines; if they truncate within that window the
+    fresh checkpoint blesses the shortened chain. In all such cases detection
+    reverts to the off-box external anchor above (#139): an external monitor that
+    recorded `(ChainedEvents, HeadHash)` sees the count drop. What a DB-level actor
+    can **never** do is *forge* a checkpoint that makes `verify` return valid over a
+    truncated chain — the HMAC key is never in the database. (Enforcing the latest
+    *signature-valid* checkpoint rather than the latest row would shrink this window
+    further; deferred as hardening.)
   - The anchor is **operator-accessible from the CLI**: `keyorix audit verify`
     (exit non-zero if the chain breaks; `--json` emits `head_hash`/`head_id`/
     `chained_events` for recording) and `keyorix audit export` (NDJSON SIEM pull

@@ -101,7 +101,7 @@ var verifyCmd = &cobra.Command{
 			fmt.Printf("  head id:          %d\n", v.HeadID)
 			fmt.Printf("  head hash:        %s\n", v.HeadHash)
 			if v.Checkpointed {
-				fmt.Println("  checkpoint:       verified against a signed in-DB checkpoint (on-box truncation detection)")
+				fmt.Println("  checkpoint:       checked against a signed in-DB checkpoint (on-box truncation detection)")
 			} else {
 				fmt.Println("  checkpoint:       none enforced (record (chained events, head hash) externally to anchor)")
 			}

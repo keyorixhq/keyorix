@@ -101,7 +101,59 @@ func TestAuditCheckpoint_DetectsForgedCheckpoint(t *testing.T) {
 	v, err := c.VerifyAuditChain(ctx)
 	require.NoError(t, err)
 	assert.False(t, v.Valid)
-	assert.Contains(t, v.CheckpointReason, "signature is invalid")
+	assert.Contains(t, v.CheckpointReason, "does not verify under the current signing key")
+}
+
+// A DB-level actor must not be able to disable enforcement by editing the
+// unauthenticated key_version column — the HMAC binds key_version, so the edit
+// fails the signature check (regression guard for the pre-merge security finding).
+func TestAuditCheckpoint_TamperedKeyVersionDetected(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+	logEvents(t, c, 5)
+	_, _, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+
+	// Attacker flips key_version to force the (old) "not enforced" branch, then
+	// truncates. The signature now fails, so enforcement is NOT skipped.
+	require.NoError(t, db.Exec("UPDATE audit_checkpoints SET key_version = 'forged'").Error)
+	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id >= 4").Error)
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "a tampered key_version must not disable enforcement")
+	assert.Contains(t, v.CheckpointReason, "does not verify under the current signing key")
+}
+
+// After a genuine DEK rotation the prior checkpoint cannot be re-verified, so
+// verify reports invalid until the next checkpoint write re-baselines under the
+// new key — and that write must succeed (no deadlock).
+func TestAuditCheckpoint_RotationRebaselines(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 5)
+	_, _, err := c.WriteAuditCheckpoint(ctx) // signed under "v1"
+	require.NoError(t, err)
+
+	// Rotate the DEK → a new signing key + version.
+	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x9}, 32), "v2")
+
+	// The stale "v1" checkpoint no longer verifies → flagged (fail closed).
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "a stale checkpoint after rotation is not silently trusted")
+	assert.Contains(t, v.CheckpointReason, "does not verify under the current signing key")
+
+	// A fresh checkpoint re-baselines under the new key (no deadlock).
+	cp, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+	assert.Equal(t, "v2", cp.KeyVersion)
+
+	v, err = c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.True(t, v.Valid, "recovered after re-baseline")
+	assert.True(t, v.Checkpointed)
 }
 
 func TestAuditCheckpoint_NoKeyIsNoOp(t *testing.T) {
@@ -121,22 +173,24 @@ func TestAuditCheckpoint_NoKeyIsNoOp(t *testing.T) {
 	assert.False(t, v.Checkpointed, "no key → no on-box checkpoint enforcement")
 }
 
-func TestAuditCheckpoint_KeyVersionMismatchNotEnforced(t *testing.T) {
+// A checkpoint written over an empty chain (HeadID=0) must not later false-alarm
+// once events accumulate — there is no head row 0 to "go missing".
+func TestAuditCheckpoint_GenesisCheckpointNoFalsePositive(t *testing.T) {
 	ctx := context.Background()
-	c, db := newCheckpointCore(t)
-	logEvents(t, c, 5)
-	_, _, err := c.WriteAuditCheckpoint(ctx) // signed under "v1"
-	require.NoError(t, err)
+	c, _ := newCheckpointCore(t)
 
-	// Simulate a DEK rotation: the in-memory key version moves on.
-	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v2")
-	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id >= 4").Error)
+	cp, written, err := c.WriteAuditCheckpoint(ctx) // empty chain → certifies 0
+	require.NoError(t, err)
+	require.True(t, written)
+	assert.Equal(t, int64(0), cp.ChainedEvents)
+	assert.Equal(t, uint(0), cp.HeadID)
+
+	logEvents(t, c, 4) // chain grows past the genesis checkpoint
 
 	v, err := c.VerifyAuditChain(ctx)
 	require.NoError(t, err)
-	assert.True(t, v.Valid, "a checkpoint signed under a superseded key version is not enforced")
-	assert.False(t, v.Checkpointed)
-	assert.Contains(t, v.CheckpointReason, "not enforced")
+	assert.True(t, v.Valid, "a growing chain is not a truncation of the genesis checkpoint")
+	assert.True(t, v.Checkpointed)
 }
 
 func TestAuditCheckpoint_RefusesBrokenChain(t *testing.T) {
@@ -167,7 +221,7 @@ func TestAuditCheckpoint_NoRebaselineOverTruncation(t *testing.T) {
 	_, written, err := c.WriteAuditCheckpoint(ctx)
 	require.Error(t, err)
 	assert.False(t, written)
-	assert.Contains(t, err.Error(), "does not verify")
+	assert.Contains(t, err.Error(), "truncated below signed checkpoint")
 
 	var n int64
 	require.NoError(t, db.Model(&models.AuditCheckpoint{}).Count(&n).Error)
