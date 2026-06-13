@@ -3,6 +3,72 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.18.0 — 2026-06-13
+
+### Added
+- **`keyorix audit` CLI** — operate the tamper-evident audit trail (ADR-029) from
+  the terminal: `verify` (re-walk the hash chain; non-zero exit on tampering;
+  `--json` emits the external anchor), `logs` (interactive filtered query for
+  investigation/spot-checks), `export` (NDJSON SIEM pull), and `checkpoint` (write
+  a signed checkpoint on demand). ([#152], [#155], [#157])
+- **Signed in-DB audit checkpoints (ADR-029)** — an opt-in, HA-gated scheduler
+  (`audit_checkpoints.enabled`) signs the verified audit-chain head with an HMAC
+  keyed by a DEK-derived key the database/DBA does not hold, so tail-truncation /
+  genesis re-seed becomes detectable **on-box** (not just via the off-box anchor).
+  Surfaced as `checkpointed` on `GET /audit/verify`. Requires encryption. ([#153])
+- **`keyorix rotation` CLI** — manage rotation policies (NIS2/ISO A.5.15) from the
+  terminal: `list` / `create` / `show` / `delete` and `status` (overdue / approaching
+  covered secrets). ([#156])
+- **Personal access tokens & machine identities over gRPC** — gRPC authentication
+  now has full parity with HTTP (session + PAT + machine): `kx_pat_` carries its
+  ADR-042 least-privilege restriction onto the gRPC context, and `kx_machine_`
+  authenticates a machine principal with machine RBAC and no admin bypass. ([#158], [#159])
+- **`expires_before` filter on `GET /api/v1/secrets`** — list secrets already
+  expired or expiring before a given RFC3339 time (for "expiring secrets" views and
+  scripts). ([#167])
+
+### Fixed
+- **Owned-secrets listing** used `created_by == username` (a fragile string proxy)
+  instead of `owner_id`, the canonical ownership the permission model enforces —
+  CLI-created secrets were invisible to their owner and a deleted-then-reused
+  username could mis-attribute ownership. Now filters by `owner_id`. ([#163])
+- **Rotation evaluation** silently capped at 1000 secrets per policy, so overdue
+  secrets in projects with more than 1000 went unreported by the reminder scheduler
+  and the status/evaluate views — now pages through all of them. ([#164])
+- **Dashboard "expiring secrets" warning** capped at 100, silently dropping
+  expiring secrets for users with more than 100 — now uses an expiration filter and
+  pages through all. ([#165])
+- **`keyorix run`** injected only the first 1000 secrets as env vars (subprocess
+  silently misconfigured), and **`keyorix secret get --name`** could not find a
+  secret beyond the first 1000 — both now page through all. ([#166])
+
+### Security / Hardening
+- **PAT non-funnelled authz guards (ADR-042)** — `core.IsGlobalAdmin` and
+  `middleware.RequireRole` now fail closed for a PAT-restricted request, so
+  least-privilege scoping holds even on the two authz paths that do not funnel
+  through `core.Authorize`. ([#154])
+- **Tenant-isolation scope-boundary tests** — SQL-level tests pinning user-RBAC
+  role resolution, machine-RBAC resolution, and secret-listing project/environment
+  isolation, including the cross-project/cross-environment leak guards (so a
+  regression of the `AND`/`OR` SQL precedence fails CI). ([#160], [#161], [#162])
+
+[#152]: https://github.com/keyorixhq/keyorix/pull/152
+[#153]: https://github.com/keyorixhq/keyorix/pull/153
+[#154]: https://github.com/keyorixhq/keyorix/pull/154
+[#155]: https://github.com/keyorixhq/keyorix/pull/155
+[#156]: https://github.com/keyorixhq/keyorix/pull/156
+[#157]: https://github.com/keyorixhq/keyorix/pull/157
+[#158]: https://github.com/keyorixhq/keyorix/pull/158
+[#159]: https://github.com/keyorixhq/keyorix/pull/159
+[#160]: https://github.com/keyorixhq/keyorix/pull/160
+[#161]: https://github.com/keyorixhq/keyorix/pull/161
+[#162]: https://github.com/keyorixhq/keyorix/pull/162
+[#163]: https://github.com/keyorixhq/keyorix/pull/163
+[#164]: https://github.com/keyorixhq/keyorix/pull/164
+[#165]: https://github.com/keyorixhq/keyorix/pull/165
+[#166]: https://github.com/keyorixhq/keyorix/pull/166
+[#167]: https://github.com/keyorixhq/keyorix/pull/167
+
 ## v0.17.0 — 2026-06-13
 
 ### Added
