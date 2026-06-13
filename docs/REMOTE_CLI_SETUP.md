@@ -196,7 +196,10 @@ project scope.
 - `keyorix access-review --project-id N` (aliases `recert`) — lists every grant of
   access to project N's secrets: role-based standing access (the role granting it +
   the highest secrets action) and per-secret grants (ownership and direct/group
-  shares). The `SOURCE` column says which mechanism conferred each grant.
+  shares). The `SOURCE` column says which mechanism conferred each grant. The
+  `LAST-USED` column shows how long ago each **user** last accessed a secret in the
+  project (from the audit trail) — `never` or a value marked `stale` (≥90 days)
+  flags dormant standing access to prune; groups show `—` (not aggregated).
 
 Close the recertification loop by acting on each grant — every decision is audited
 (`access_review.attested` / `access_review.revoked`):

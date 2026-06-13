@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
@@ -46,7 +47,7 @@ at the project scope.`,
 			return nil
 		}
 		fmt.Printf("Access review — project %d (%d grant(s)):\n\n", flagProject, len(out.Entries))
-		fmt.Printf("%-13s %-6s %-26s %-7s %s\n", "SOURCE", "TYPE", "PRINCIPAL", "ACCESS", "DETAIL")
+		fmt.Printf("%-13s %-6s %-24s %-7s %-11s %s\n", "SOURCE", "TYPE", "PRINCIPAL", "ACCESS", "LAST-USED", "DETAIL")
 		for _, e := range out.Entries {
 			principal := e.PrincipalName
 			if e.PrincipalType == "user" && e.Email != "" {
@@ -63,24 +64,43 @@ at the project scope.`,
 			default: // owner / direct_share / group_share
 				detail = "secret=" + e.SecretName
 			}
-			fmt.Printf("%-13s %-6s %-26s %-7s %s\n", e.Source, e.PrincipalType, truncate(principal, 26), e.AccessLevel, detail)
+			fmt.Printf("%-13s %-6s %-24s %-7s %-11s %s\n", e.Source, e.PrincipalType, truncate(principal, 24), e.AccessLevel, lastUsedLabel(e.PrincipalType, e.LastUsedAt), detail)
 		}
 		return nil
 	},
 }
 
 type entryView struct {
-	PrincipalType string `json:"principal_type"`
-	PrincipalID   uint   `json:"principal_id"`
-	PrincipalName string `json:"principal_name"`
-	Email         string `json:"email"`
-	Source        string `json:"source"`
-	RoleID        uint   `json:"role_id"`
-	RoleName      string `json:"role_name"`
-	AccessLevel   string `json:"access_level"`
-	EnvironmentID uint   `json:"environment_id"`
-	SecretID      uint   `json:"secret_id"`
-	SecretName    string `json:"secret_name"`
+	PrincipalType string     `json:"principal_type"`
+	PrincipalID   uint       `json:"principal_id"`
+	PrincipalName string     `json:"principal_name"`
+	Email         string     `json:"email"`
+	Source        string     `json:"source"`
+	RoleID        uint       `json:"role_id"`
+	RoleName      string     `json:"role_name"`
+	AccessLevel   string     `json:"access_level"`
+	EnvironmentID uint       `json:"environment_id"`
+	SecretID      uint       `json:"secret_id"`
+	SecretName    string     `json:"secret_name"`
+	LastUsedAt    *time.Time `json:"last_used_at"`
+}
+
+// lastUsedLabel renders a principal's recency for the LAST-USED column: a short
+// age for user principals ("12d", "94d stale" past 90 days), "never" for a user
+// with no recorded secret access (the strongest dormant-access signal), and "—"
+// for groups (whose last-use is not aggregated).
+func lastUsedLabel(principalType string, t *time.Time) string {
+	if principalType != "user" {
+		return "—"
+	}
+	if t == nil || t.IsZero() {
+		return "never"
+	}
+	days := int(time.Since(*t).Hours() / 24)
+	if days >= 90 {
+		return fmt.Sprintf("%dd stale", days)
+	}
+	return fmt.Sprintf("%dd", days)
 }
 
 // decisionFlags are shared by the revoke and attest subcommands to identify one

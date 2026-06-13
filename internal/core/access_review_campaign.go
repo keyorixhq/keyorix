@@ -106,6 +106,7 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, pro
 			EnvironmentID: e.EnvironmentID,
 			SecretID:      e.SecretID,
 			SecretName:    e.SecretName,
+			LastUsedAt:    e.LastUsedAt,
 			Decision:      ReviewItemPending,
 		})
 	}

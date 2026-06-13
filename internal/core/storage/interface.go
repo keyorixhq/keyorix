@@ -47,6 +47,12 @@ type Storage interface {
 	// rows for a project access review. Global (project 0) grants are excluded:
 	// those are install-level, reviewed separately.
 	ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
+	// LastUserSecretActivity returns, per user, the most recent secret-access time
+	// in the project (from the audit trail). Backs dormant-access detection in the
+	// access review — a grant whose principal has no recent activity is stale
+	// standing access to prune. Users with no recorded activity are absent from the
+	// map.
+	LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error)
 
 	// Project invitations (ADR-024).
 	CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error)
