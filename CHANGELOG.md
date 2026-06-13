@@ -3,6 +3,19 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.17.0 — 2026-06-13
+
+### Added
+- **Rotation-reminder scheduler** — an opt-in background job
+  (`rotation_reminders.enabled`) that proactively notifies project admins (in-app)
+  of secrets overdue or approaching their rotation deadline under an active
+  rotation policy, turning the reactive rotation-health views into proactive
+  nudges (a NIS2/ISO credential-rotation-hygiene control). One standing reminder
+  per project per admin, de-duplicated while unread; single-replica-gated in HA.
+  Default off; `schedule` (Go duration) controls the cadence (default 24h). ([#150])
+
+[#150]: https://github.com/keyorixhq/keyorix/pull/150
+
 ## v0.16.0 — 2026-06-13
 
 ### Added
