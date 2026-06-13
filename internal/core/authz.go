@@ -162,7 +162,17 @@ func (c *KeyorixCore) Authorize(ctx context.Context, userID uint, permission str
 
 // IsGlobalAdmin reports whether userID holds an admin role assigned globally
 // (project 0, environment 0). Used to short-circuit scope-filtered listing.
+//
+// A request carrying a PAT least-privilege restriction (ADR-042) is never treated
+// as an unrestricted global admin: the token was deliberately scoped below its
+// owner, so a caller that uses this to return unfiltered data must instead fall
+// back to the scope-filtered path. Returning false here is fail-closed — the
+// filtered path can only ever return a subset — and keeps the restriction honoured
+// on this otherwise un-funnelled authz path (it does not flow through Authorize).
 func (c *KeyorixCore) IsGlobalAdmin(ctx context.Context, userID uint) (bool, error) {
+	if patRestrictionFromContext(ctx) != nil {
+		return false, nil
+	}
 	roleIDs, err := c.scopedRoleIDs(ctx, userID, Scope{})
 	if err != nil {
 		return false, err

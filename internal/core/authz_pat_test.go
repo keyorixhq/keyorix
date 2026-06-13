@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -117,5 +118,37 @@ func TestAuthorize_PATRestriction(t *testing.T) {
 		allowed, err := c.Authorize(ctx, 1, "secrets.write", Scope{ProjectID: 5})
 		require.NoError(t, err)
 		assert.True(t, allowed)
+	})
+}
+
+// IsGlobalAdmin must not treat a PAT-restricted request as an unrestricted global
+// admin (ADR-042) — it is an un-funnelled authz path, so the restriction is
+// enforced here directly (fail-closed) rather than via Authorize.
+func TestIsGlobalAdmin_PATRestrictionDeniesShortCircuit(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a scoped token is never a global admin — without touching storage", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		// Even though the owner (user 1) may be a global admin, a scoped token must
+		// not get the unfiltered-listing short-circuit.
+		rctx := WithPATRestriction(ctx, &PATRestriction{Permissions: []string{"secrets.read"}})
+
+		isAdmin, err := c.IsGlobalAdmin(rctx, 1)
+		require.NoError(t, err)
+		assert.False(t, isAdmin)
+		ms.AssertNotCalled(t, "GetUserRoleIDsAt")
+	})
+
+	t.Run("no restriction resolves admin normally", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		ms.On("GetUserRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{10}, nil)
+		ms.On("GetUserGroupRoleIDsAt", ctx, uint(1), Scope{}).Return([]uint{}, nil)
+		ms.On("GetRoleByName", ctx, "super_admin").Return(&models.Role{ID: 10, Name: "super_admin"}, nil)
+
+		isAdmin, err := c.IsGlobalAdmin(ctx, 1)
+		require.NoError(t, err)
+		assert.True(t, isAdmin)
 	})
 }

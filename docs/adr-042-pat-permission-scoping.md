@@ -57,6 +57,17 @@ runs. An existing token, or one created without a restriction, is unaffected
   automatically — there is no route to forget to wire (the failure mode ADR-037's
   pre-merge review caught for per-project MFA).
 
+- **The two authz paths that do _not_ funnel through `Authorize` are guarded
+  directly.** `core.IsGlobalAdmin` (used to short-circuit scope-filtered listing)
+  and the role-based `middleware.RequireRole` gate resolve authorization without
+  calling `Authorize`, so a PAT restriction would not reach them. Both now fail
+  closed for a PAT-restricted request: `IsGlobalAdmin` returns false (a scoped
+  token is never treated as an unrestricted global admin — callers fall back to the
+  filtered path, which can only return a subset), and `RequireRole` denies outright
+  (a deliberately-scoped token must not satisfy a role gate's full breadth). Neither
+  is wired to a live route today; the guards close the gap pre-emptively so that
+  enforcement genuinely holds at *every* path, as claimed above.
+
 - **It is a filter, never an escalation.** `Authorize` still resolves the owner's
   live roles after the restriction passes. A token listing `secrets.write` whose
   owner has since lost that permission grants nothing. This is why creation does

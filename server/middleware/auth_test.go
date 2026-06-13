@@ -284,6 +284,39 @@ func TestRequireRole(t *testing.T) {
 	}
 }
 
+// A PAT carrying a least-privilege restriction (ADR-042) must not satisfy a role
+// gate, even when its owner holds the role — RequireRole does not funnel through
+// core.Authorize, so the restriction is enforced here directly (fail-closed).
+func TestRequireRole_DeniesScopedPAT(t *testing.T) {
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := RequireRole("admin")(testHandler)
+
+	t.Run("scoped PAT on an admin owner is forbidden", func(t *testing.T) {
+		userCtx := &UserContext{
+			UserID:         1,
+			Username:       "admin",
+			Roles:          []string{"admin", "user"},
+			PATRestriction: &core.PATRestriction{Permissions: []string{"secrets.read"}},
+		}
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req = req.WithContext(context.WithValue(req.Context(), userContextKey, userCtx))
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("same owner via a full session still passes", func(t *testing.T) {
+		userCtx := &UserContext{UserID: 1, Username: "admin", Roles: []string{"admin", "user"}}
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req = req.WithContext(context.WithValue(req.Context(), userContextKey, userCtx))
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
 func TestGetUserFromContext(t *testing.T) {
 	tests := []struct {
 		name         string
