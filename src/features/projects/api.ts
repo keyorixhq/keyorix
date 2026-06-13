@@ -146,3 +146,50 @@ export function useRevokeAccessReview(projectId: number) {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.accessReview(projectId) }),
     });
 }
+
+export function useAccessReviewCampaigns(projectId: number) {
+    return useQuery({
+        queryKey: [...PROJECT_KEYS.accessReview(projectId), 'campaigns'],
+        queryFn: () => projectsApi.listCampaigns(projectId),
+        enabled: !!projectId,
+        staleTime: 30_000,
+    });
+}
+
+export function useAccessReviewCampaign(projectId: number, campaignId: number | null) {
+    return useQuery({
+        queryKey: [...PROJECT_KEYS.accessReview(projectId), 'campaign', campaignId],
+        queryFn: () => projectsApi.getCampaign(projectId, campaignId as number),
+        enabled: !!projectId && !!campaignId,
+        staleTime: 15_000,
+    });
+}
+
+function invalidateCampaigns(queryClient: ReturnType<typeof useQueryClient>, projectId: number) {
+    queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.accessReview(projectId) });
+}
+
+export function useOpenCampaign(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (name: string) => projectsApi.openCampaign(projectId, name),
+        onSuccess: () => invalidateCampaigns(queryClient, projectId),
+    });
+}
+
+export function useDecideCampaignItem(projectId: number, campaignId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (v: { itemId: number; action: 'attest' | 'revoke'; reason?: string }) =>
+            projectsApi.decideCampaignItem(projectId, campaignId, v.itemId, v.action, v.reason),
+        onSuccess: () => invalidateCampaigns(queryClient, projectId),
+    });
+}
+
+export function useCloseCampaign(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (v: { campaignId: number; force: boolean }) => projectsApi.closeCampaign(projectId, v.campaignId, v.force),
+        onSuccess: () => invalidateCampaigns(queryClient, projectId),
+    });
+}

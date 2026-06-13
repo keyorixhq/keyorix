@@ -10,6 +10,12 @@ vi.mock('../../../features/projects/api', () => ({
     useAccessReview: (projectId: number) => mockUseAccessReview(projectId),
     useAttestAccessReview: () => ({ mutate: mockAttestMutate, isPending: false }),
     useRevokeAccessReview: () => ({ mutate: mockRevokeMutate, isPending: false }),
+    // The tab mounts the campaigns section; stub its hooks so it renders its empty state.
+    useAccessReviewCampaigns: () => ({ data: [], isLoading: false }),
+    useAccessReviewCampaign: () => ({ data: null, isLoading: false }),
+    useOpenCampaign: () => ({ mutate: vi.fn(), isPending: false }),
+    useDecideCampaignItem: () => ({ mutate: vi.fn(), isPending: false }),
+    useCloseCampaign: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 const entries = [

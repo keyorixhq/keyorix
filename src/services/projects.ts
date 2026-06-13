@@ -47,6 +47,9 @@ export interface AccessReviewEntry {
     environmentId: number;
     secretId: number;
     secretName: string;
+    // The user principal's most recent secret access in the project; absent = no
+    // recorded activity (dormant standing access). Groups never carry it.
+    lastUsedAt?: string;
 }
 
 // A recertification decision identifying one entry to attest (keep) or revoke.
@@ -71,6 +74,79 @@ const normalizeAccessReviewEntry = (e: any): AccessReviewEntry => ({
     environmentId: e.environment_id ?? e.environmentId ?? 0,
     secretId: e.secret_id ?? e.secretId ?? 0,
     secretName: e.secret_name ?? e.secretName ?? '',
+    lastUsedAt: e.last_used_at ?? e.lastUsedAt ?? undefined,
+});
+
+// Access-review campaigns (periodic recertification cycles, A.5.18).
+export interface AccessReviewCampaign {
+    id: number;
+    projectId: number;
+    name: string;
+    state: 'open' | 'closed';
+    createdAt: string;
+    closedAt?: string;
+}
+
+export interface CampaignProgress {
+    total: number;
+    pending: number;
+    attested: number;
+    revoked: number;
+}
+
+export interface CampaignSummary {
+    campaign: AccessReviewCampaign;
+    progress: CampaignProgress;
+}
+
+export interface AccessReviewItem {
+    id: number;
+    principalType: 'user' | 'group';
+    principalId: number;
+    principalName: string;
+    email: string;
+    source: string;
+    roleName: string;
+    accessLevel: string;
+    secretName: string;
+    lastUsedAt?: string;
+    decision: 'pending' | 'attested' | 'revoked';
+}
+
+export interface CampaignDetail {
+    campaign: AccessReviewCampaign;
+    items: AccessReviewItem[];
+    progress: CampaignProgress;
+}
+
+const normalizeCampaign = (c: any): AccessReviewCampaign => ({
+    id: c.id ?? c.ID ?? 0,
+    projectId: c.project_id ?? c.projectId ?? 0,
+    name: c.name ?? c.Name ?? '',
+    state: c.state ?? c.State ?? 'open',
+    createdAt: c.created_at ?? c.createdAt ?? '',
+    closedAt: c.closed_at ?? c.closedAt ?? undefined,
+});
+
+const normalizeProgress = (p: any): CampaignProgress => ({
+    total: p?.total ?? 0,
+    pending: p?.pending ?? 0,
+    attested: p?.attested ?? 0,
+    revoked: p?.revoked ?? 0,
+});
+
+const normalizeItem = (i: any): AccessReviewItem => ({
+    id: i.id ?? i.ID ?? 0,
+    principalType: i.principal_type ?? i.principalType,
+    principalId: i.principal_id ?? i.principalId ?? 0,
+    principalName: i.principal_name ?? i.principalName ?? '',
+    email: i.email ?? '',
+    source: i.source,
+    roleName: i.role_name ?? i.roleName ?? '',
+    accessLevel: i.access_level ?? i.accessLevel ?? '',
+    secretName: i.secret_name ?? i.secretName ?? '',
+    lastUsedAt: i.last_used_at ?? i.lastUsedAt ?? undefined,
+    decision: i.decision ?? 'pending',
 });
 
 const toDecisionBody = (d: AccessReviewDecision) => ({
@@ -240,5 +316,41 @@ export const projectsApi = {
 
     async revokeAccessReview(projectId: number, decision: AccessReviewDecision): Promise<void> {
         await apiClient.post(`/api/v1/projects/${projectId}/access-review/revoke`, toDecisionBody(decision));
+    },
+
+    async listCampaigns(projectId: number): Promise<CampaignSummary[]> {
+        const response = await apiClient.get(`/api/v1/projects/${projectId}/access-review/campaigns`);
+        const campaigns = response.data.data?.campaigns ?? response.data.campaigns ?? [];
+        return campaigns.map((c: any) => ({
+            campaign: normalizeCampaign(c.campaign ?? c),
+            progress: normalizeProgress(c.progress),
+        }));
+    },
+
+    async openCampaign(projectId: number, name: string): Promise<CampaignSummary> {
+        const response = await apiClient.post(`/api/v1/projects/${projectId}/access-review/campaigns`, { name });
+        const d = response.data.data ?? response.data;
+        return { campaign: normalizeCampaign(d.campaign), progress: normalizeProgress(d.progress) };
+    },
+
+    async getCampaign(projectId: number, campaignId: number): Promise<CampaignDetail> {
+        const response = await apiClient.get(`/api/v1/projects/${projectId}/access-review/campaigns/${campaignId}`);
+        const d = response.data.data ?? response.data;
+        return {
+            campaign: normalizeCampaign(d.campaign),
+            items: (d.items ?? []).map(normalizeItem),
+            progress: normalizeProgress(d.progress),
+        };
+    },
+
+    async decideCampaignItem(projectId: number, campaignId: number, itemId: number, action: 'attest' | 'revoke', reason?: string): Promise<void> {
+        await apiClient.post(
+            `/api/v1/projects/${projectId}/access-review/campaigns/${campaignId}/items/${itemId}/decide`,
+            { action, reason: reason ?? '' }
+        );
+    },
+
+    async closeCampaign(projectId: number, campaignId: number, force: boolean): Promise<void> {
+        await apiClient.post(`/api/v1/projects/${projectId}/access-review/campaigns/${campaignId}/close`, { force });
     },
 };

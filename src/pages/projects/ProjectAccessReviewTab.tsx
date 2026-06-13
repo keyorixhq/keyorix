@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ShieldCheckIcon, CheckIcon, NoSymbolIcon } from '@heroicons/react/24/outline';
 import { useAccessReview, useAttestAccessReview, useRevokeAccessReview } from '../../features/projects/api';
 import { AccessReviewEntry, AccessReviewDecision } from '../../services/projects';
+import { ProjectAccessReviewCampaigns, lastUsedInfo } from './ProjectAccessReviewCampaigns';
 
 interface ProjectAccessReviewTabProps {
     projectId: number;
@@ -134,6 +135,19 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                                             {sourceDetail(e)}
                                         </p>
                                     </div>
+                                    {e.principalType === 'user' && (() => {
+                                        const { label, dormant } = lastUsedInfo(e);
+                                        return (
+                                            <span className="text-xs shrink-0 px-2 py-1 rounded-md hidden sm:inline"
+                                                style={{
+                                                    backgroundColor: dormant ? 'var(--warning-subtle)' : 'var(--bg-muted)',
+                                                    color: dormant ? 'var(--warning)' : 'var(--text-muted)',
+                                                }}
+                                                title={dormant ? 'Dormant — review whether this standing access is still needed' : 'Last secret access in this project'}>
+                                                {label}
+                                            </span>
+                                        );
+                                    })()}
                                     <span className="text-xs shrink-0 px-2 py-1 rounded-md"
                                         style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}
                                         title="Access level">
@@ -194,6 +208,8 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                     </ul>
                 )}
             </div>
+
+            <ProjectAccessReviewCampaigns projectId={projectId} />
         </div>
     );
 };
