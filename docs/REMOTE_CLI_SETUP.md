@@ -154,6 +154,31 @@ keyorix audit export --after-id "$LAST_ID" --all > batch.ndjson
 keyorix audit checkpoint
 ```
 
+### Rotation Commands
+
+Manage secret-rotation policies (credential-rotation hygiene — a NIS2 / ISO
+A.5.15 control) from the terminal. Reads need `secrets.read`, writes `secrets.write`,
+at the policy's project/environment scope.
+
+- `keyorix rotation list [--project-id N] [--environment-id N]` - List policies.
+- `keyorix rotation create --name <n> --scope project|environment --interval-days <d>
+  [--project-id N | --environment-id N] [--alert-days-before N] [--description …]` -
+  Create a policy. A `project`-scoped policy needs `--project-id`; an
+  `environment`-scoped one needs `--environment-id`.
+- `keyorix rotation show <id>` / `keyorix rotation delete <id>` - Inspect / remove.
+- `keyorix rotation status [--project-id N]` - List policy-covered secrets that are
+  **overdue or approaching** their rotation deadline (the actionable posture view);
+  prints a clean "all within window" when nothing is due.
+
+```bash
+# A 30-day rotation policy for project 5, warning 7 days out:
+keyorix rotation create --name db-creds-30d --scope project --project-id 5 \
+  --interval-days 30 --alert-days-before 7
+
+# What needs rotating now?
+keyorix rotation status
+```
+
 ## Deployment Scenarios
 
 ### Development Environment

@@ -19,6 +19,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/project"
 	"github.com/keyorixhq/keyorix/internal/cli/rbac"
 	"github.com/keyorixhq/keyorix/internal/cli/request"
+	"github.com/keyorixhq/keyorix/internal/cli/rotation"
 	"github.com/keyorixhq/keyorix/internal/cli/run"
 	"github.com/keyorixhq/keyorix/internal/cli/secret"
 	"github.com/keyorixhq/keyorix/internal/cli/share"
@@ -61,6 +62,7 @@ func init() {
 	rootCmd.AddCommand(dynamic.DynamicSecretCmd)
 	rootCmd.AddCommand(pat.PATCmd)
 	rootCmd.AddCommand(audit.AuditCmd)
+	rootCmd.AddCommand(rotation.RotationCmd)
 }
 
 // Execute runs the root command
