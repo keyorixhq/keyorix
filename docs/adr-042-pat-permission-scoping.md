@@ -122,6 +122,19 @@ project. Additive `environment_scope` column (default 0 = any), enforced via the
 same ctx-carried filter at the `Authorize`/`AuthorizePrincipal` chokepoint;
 existing tokens are unaffected.
 
+## Addendum (2026-06-13): PAT authentication over gRPC
+
+PATs now authenticate over **gRPC**, not just HTTP. Previously the gRPC auth
+interceptor validated only session tokens, so a `kx_pat_` token was rejected
+outright (fail-closed, but an HTTP/gRPC parity gap — #136 had already made gRPC
+*authorization* identical to HTTP). The unary and stream interceptors now route
+the `kx_pat_` prefix to `ValidatePATToken` and, critically, carry the returned
+restriction onto the handler context via `core.WithPATRestriction` — so the
+least-privilege filter is enforced at the same `core.Authorize` chokepoint the
+gRPC RPCs already funnel through, exactly as over HTTP. (Machine-identity tokens
+over gRPC remain a separate item — they authenticate as a machine principal and
+use `AuthorizePrincipal`/actor-type plumbing the gRPC layer does not yet carry.)
+
 ## Deferred
 
 - **Frontend env dropdown** — the My Account scope picker (keyorix-web) offers the

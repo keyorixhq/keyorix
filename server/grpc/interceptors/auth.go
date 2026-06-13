@@ -5,11 +5,16 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+// patTokenPrefix marks a personal access token (ADR-027/042); anything else is
+// treated as a session token. Matches the HTTP middleware's routing.
+const patTokenPrefix = "kx_pat_"
 
 // UserContext represents the authenticated user context for gRPC
 type UserContext struct {
@@ -37,13 +42,18 @@ func AuthInterceptor(coreService *core.KeyorixCore) grpc.UnaryServerInterceptor 
 		}
 
 		// Extract and validate token
-		userCtx, err := authenticateRequest(ctx, coreService)
+		userCtx, restriction, err := authenticateRequest(ctx, coreService)
 		if err != nil {
 			return nil, err
 		}
 
 		// Add user context to request context
 		newCtx := context.WithValue(ctx, userContextKey, userCtx)
+		// Carry a PAT's least-privilege restriction (ADR-042) so core.Authorize
+		// enforces it on every authorization check this RPC makes.
+		if restriction != nil {
+			newCtx = core.WithPATRestriction(newCtx, restriction)
+		}
 		return handler(newCtx, req)
 	}
 }
@@ -58,15 +68,19 @@ func StreamAuthInterceptor(coreService *core.KeyorixCore) grpc.StreamServerInter
 		}
 
 		// Extract and validate token
-		userCtx, err := authenticateRequest(stream.Context(), coreService)
+		userCtx, restriction, err := authenticateRequest(stream.Context(), coreService)
 		if err != nil {
 			return err
 		}
 
-		// Create a new stream with user context
+		// Create a new stream with user context (+ PAT restriction when present).
+		streamCtx := context.WithValue(stream.Context(), userContextKey, userCtx)
+		if restriction != nil {
+			streamCtx = core.WithPATRestriction(streamCtx, restriction)
+		}
 		wrappedStream := &wrappedServerStream{
 			ServerStream: stream,
-			ctx:          context.WithValue(stream.Context(), userContextKey, userCtx),
+			ctx:          streamCtx,
 		}
 
 		return handler(srv, wrappedStream)
@@ -83,47 +97,60 @@ func (w *wrappedServerStream) Context() context.Context {
 	return w.ctx
 }
 
-// authenticateRequest extracts the bearer session token from the request
-// metadata and validates it against the core service — the same session-token
-// path the HTTP API uses. On success it returns the authenticated user's
-// context (id, identity, roles, permissions) for downstream authorization.
-func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*UserContext, error) {
+// authenticateRequest extracts the bearer token from the request metadata and
+// validates it against the core service — the same paths the HTTP API uses. A
+// kx_pat_ token authenticates as its owning user via ValidatePATToken and may
+// carry a least-privilege restriction (ADR-042); anything else is a session
+// token. On success it returns the authenticated user's context (id, identity,
+// roles, permissions) and the PAT restriction (nil for sessions) for downstream
+// authorization.
+func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*UserContext, *core.PATRestriction, error) {
 	if coreService == nil {
 		// Fail closed: a server wired without a core service must not authenticate.
-		return nil, status.Errorf(codes.Internal, "authentication unavailable")
+		return nil, nil, status.Errorf(codes.Internal, "authentication unavailable")
 	}
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return nil, status.Errorf(codes.Unauthenticated, "Missing metadata")
+		return nil, nil, status.Errorf(codes.Unauthenticated, "Missing metadata")
 	}
 
 	// Extract authorization header
 	authHeaders := md.Get("authorization")
 	if len(authHeaders) == 0 {
-		return nil, status.Errorf(codes.Unauthenticated, "Missing authorization header")
+		return nil, nil, status.Errorf(codes.Unauthenticated, "Missing authorization header")
 	}
 
 	authHeader := authHeaders[0]
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return nil, status.Errorf(codes.Unauthenticated, "Invalid authorization header format")
+		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid authorization header format")
 	}
 
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	if token == "" {
-		return nil, status.Errorf(codes.Unauthenticated, "Missing token")
+		return nil, nil, status.Errorf(codes.Unauthenticated, "Missing token")
 	}
 
-	// Validate the session token (existence + expiry) and resolve the user.
-	user, _, err := coreService.ValidateSessionToken(ctx, token)
+	// Validate the token (existence + expiry/revocation) and resolve the user. A
+	// PAT resolves to its owner plus an optional restriction; both fail closed.
+	var (
+		user        *models.User
+		restriction *core.PATRestriction
+		err         error
+	)
+	if strings.HasPrefix(token, patTokenPrefix) {
+		user, _, restriction, err = coreService.ValidatePATToken(ctx, token)
+	} else {
+		user, _, err = coreService.ValidateSessionToken(ctx, token)
+	}
 	if err != nil {
-		return nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
+		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
 	}
 
 	// Resolve roles + permissions for downstream per-method authorization.
 	identity, err := coreService.GetUserIdentity(ctx, user.ID)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to resolve user identity")
+		return nil, nil, status.Errorf(codes.Internal, "failed to resolve user identity")
 	}
 
 	return &UserContext{
@@ -132,7 +159,7 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*U
 		Email:       user.Email,
 		Roles:       identity.Roles,
 		Permissions: identity.Permissions,
-	}, nil
+	}, restriction, nil
 }
 
 // isPublicMethod checks if a gRPC method is public (doesn't require authentication)
