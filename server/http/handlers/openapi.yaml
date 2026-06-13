@@ -503,6 +503,29 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
 
+  /api/v1/projects/{id}/access-review:
+    get:
+      tags: [Projects]
+      summary: Role-based access recertification report (ISO 27001 A.5.18)
+      description: >-
+        Every project-scoped role grant (user or group) whose role confers a
+        secrets.* permission, with the highest action it grants — the role-based
+        standing-access surface for periodic access reviews. Requires roles.read at
+        the project scope.
+      operationId: getProjectAccessReview
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200':
+          description: >-
+            Envelope {data, message}. data: {entries[], count}; each entry is
+            {principal_type (user|group), principal_id, principal_name, email,
+            role_name, access_level (read|write|delete|admin), environment_id}.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
   /api/v1/projects/{id}/members:
     get:
       tags: [Members]

@@ -187,6 +187,22 @@ keyorix rotation create --name db-creds-30d --scope project --project-id 5 \
 keyorix rotation status
 ```
 
+### Access Review Commands
+
+Periodic access recertification (ISO 27001 A.5.18 / SOC 2 CC6.2–6.3): review who
+can reach a project's secrets via an assigned role. Requires `roles.read` at the
+project scope.
+
+- `keyorix access-review --project-id N` (aliases `recert`) — lists every principal
+  (user or group) with role-based access to project N's secrets, the role granting
+  it, and the highest secrets action (read/write/delete/admin). Share-based grants
+  (per-secret) are a separate review surface (planned).
+
+```bash
+# Quarterly access review for project 5:
+keyorix access-review --project-id 5
+```
+
 ## Deployment Scenarios
 
 ### Development Environment

@@ -197,6 +197,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// view the roster; mutations require roles.assign at the project scope, so
 		// a project_admin can manage their own project's members.
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/members", catalogHandler.ListProjectMembers)
+		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/access-review", catalogHandler.GetProjectAccessReview)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/members", catalogHandler.AddProjectMember)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/members/{userId}", catalogHandler.UpdateProjectMember)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/members/{userId}", catalogHandler.RemoveProjectMember)

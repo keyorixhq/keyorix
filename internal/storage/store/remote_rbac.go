@@ -365,6 +365,10 @@ func (rs *RemoteStorage) ListProjectMembers(_ context.Context, _ uint) ([]storag
 	return nil, remoteUnsupported("ListProjectMembers")
 }
 
+func (rs *RemoteStorage) ListProjectRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
+	return nil, remoteUnsupported("ListProjectRoleAssignments")
+}
+
 func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {
 	return nil, remoteUnsupported("GetEnvironment")
 }
