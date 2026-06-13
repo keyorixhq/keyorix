@@ -132,26 +132,32 @@ func fetchSecretsEmbedded(ctx context.Context, project, env string) (map[string]
 		return nil, fmt.Errorf("environment %q not found", env)
 	}
 
-	// List all secrets in the project + environment
-	filter := &coreStorage.SecretFilter{
-		ProjectID:     &projectID,
-		EnvironmentID: &envID,
-		Page:          1,
-		PageSize:      1000,
-	}
-	secrets, _, err := svc.ListSecrets(ctx, filter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list secrets: %w", err)
-	}
-
-	result := make(map[string]string, len(secrets))
-	for _, s := range secrets {
-		val, err := svc.GetSecretValue(ctx, s.ID)
+	// Inject EVERY secret in the project + environment — page through all of them
+	// so a project with more than one page doesn't start the subprocess with
+	// silently missing environment variables.
+	const pageSize = 500
+	result := make(map[string]string)
+	for page := 1; ; page++ {
+		secrets, _, err := svc.ListSecrets(ctx, &coreStorage.SecretFilter{
+			ProjectID:     &projectID,
+			EnvironmentID: &envID,
+			Page:          page,
+			PageSize:      pageSize,
+		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
-			continue
+			return nil, fmt.Errorf("failed to list secrets: %w", err)
 		}
-		result[toEnvKey(s.Name)] = string(val)
+		for _, s := range secrets {
+			val, err := svc.GetSecretValue(ctx, s.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
+				continue
+			}
+			result[toEnvKey(s.Name)] = string(val)
+		}
+		if len(secrets) < pageSize {
+			break
+		}
 	}
 	return result, nil
 }
@@ -240,33 +246,38 @@ func fetchSecretsRemote(ctx context.Context, endpoint, token, project, env strin
 		return nil, fmt.Errorf("environment %q not found on server", env)
 	}
 
-	// ── 3. List secrets ────────────────────────────────────────────────────────
-	listPath := fmt.Sprintf(
-		"/api/v1/secrets?project_id=%d&environment_id=%d&page_size=1000&page=1",
-		nsID, envID,
-	)
-	var secretsBody struct {
-		Secrets []struct {
-			ID   uint   `json:"id"`
-			Name string `json:"name"`
-		} `json:"secrets"`
-	}
-	if err := api.get(ctx, listPath, &secretsBody); err != nil {
-		return nil, fmt.Errorf("list secrets: %w", err)
-	}
-
-	// ── 4. Fetch each secret's decrypted value ─────────────────────────────────
-	result := make(map[string]string, len(secretsBody.Secrets))
-	for _, s := range secretsBody.Secrets {
-		var secretBody struct {
-			Value string `json:"value"`
+	// ── 3+4. Page through ALL secrets and fetch each value ─────────────────────
+	// (a single capped page would inject only the first page's env vars).
+	const pageSize = 500
+	result := make(map[string]string)
+	for page := 1; ; page++ {
+		listPath := fmt.Sprintf(
+			"/api/v1/secrets?project_id=%d&environment_id=%d&page_size=%d&page=%d",
+			nsID, envID, pageSize, page,
+		)
+		var secretsBody struct {
+			Secrets []struct {
+				ID   uint   `json:"id"`
+				Name string `json:"name"`
+			} `json:"secrets"`
 		}
-		path := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", s.ID)
-		if err := api.get(ctx, path, &secretBody); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
-			continue
+		if err := api.get(ctx, listPath, &secretsBody); err != nil {
+			return nil, fmt.Errorf("list secrets: %w", err)
 		}
-		result[toEnvKey(s.Name)] = secretBody.Value
+		for _, s := range secretsBody.Secrets {
+			var secretBody struct {
+				Value string `json:"value"`
+			}
+			path := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", s.ID)
+			if err := api.get(ctx, path, &secretBody); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: skipping secret %q (id=%d): %v\n", s.Name, s.ID, err)
+				continue
+			}
+			result[toEnvKey(s.Name)] = secretBody.Value
+		}
+		if len(secretsBody.Secrets) < pageSize {
+			break
+		}
 	}
 	return result, nil
 }
