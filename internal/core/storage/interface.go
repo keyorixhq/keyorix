@@ -395,6 +395,9 @@ type SecretFilter struct {
 	OwnerID       *uint
 	CreatedAfter  *time.Time
 	CreatedBefore *time.Time
+	// ExpiresBefore, when set, restricts to secrets with a non-null expiration
+	// earlier than the given time (i.e. already expired or expiring before it).
+	ExpiresBefore *time.Time
 	Page          int
 	PageSize      int
 	// IncludeDeleted, when true, also returns soft-deleted secrets (ADR-033) —

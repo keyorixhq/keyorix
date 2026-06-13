@@ -216,15 +216,6 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) [
 	now := time.Now().UTC()
 	cutoff := now.Add(30 * 24 * time.Hour)
 
-	secrets, _, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
-		CreatedBy: &username,
-		Page:      1,
-		PageSize:  100,
-	})
-	if err != nil {
-		return nil
-	}
-
 	// Build environment name lookup once
 	envNames := map[uint]string{}
 	if envs, err := c.storage.ListEnvironments(ctx); err == nil {
@@ -233,34 +224,43 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) [
 		}
 	}
 
+	// Page through every matching secret — a user with many secrets must not have
+	// an expiring one silently dropped from the dashboard warning. The expiration
+	// filter (expiration < cutoff) keeps the matched set small and does the
+	// expired/expiring selection in the query.
+	const pageSize = 200
 	var result []ExpiringSecret
-	for _, s := range secrets {
-		if s.Expiration == nil {
-			continue
-		}
-		exp := s.Expiration.UTC()
-		expired := exp.Before(now)
-		expiring := exp.Before(cutoff) // within 30 days from now
-
-		if !expired && !expiring {
-			continue // more than 30 days away, skip
-		}
-
-		daysLeft := int(exp.Sub(now).Hours() / 24) // negative when expired
-
-		envName := envNames[s.EnvironmentID]
-		if envName == "" {
-			envName = "unknown"
-		}
-
-		result = append(result, ExpiringSecret{
-			ID:          s.ID,
-			Name:        s.Name,
-			Environment: envName,
-			ExpiresAt:   exp,
-			DaysLeft:    daysLeft,
-			Expired:     expired,
+	for page := 1; ; page++ {
+		secrets, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
+			CreatedBy:     &username,
+			ExpiresBefore: &cutoff,
+			Page:          page,
+			PageSize:      pageSize,
 		})
+		if err != nil {
+			break
+		}
+		for _, s := range secrets {
+			if s.Expiration == nil {
+				continue // defensive; the filter already excludes nulls
+			}
+			exp := s.Expiration.UTC()
+			envName := envNames[s.EnvironmentID]
+			if envName == "" {
+				envName = "unknown"
+			}
+			result = append(result, ExpiringSecret{
+				ID:          s.ID,
+				Name:        s.Name,
+				Environment: envName,
+				ExpiresAt:   exp,
+				DaysLeft:    int(exp.Sub(now).Hours() / 24), // negative when expired
+				Expired:     exp.Before(now),
+			})
+		}
+		if len(secrets) < pageSize || int64(len(result)) >= total {
+			break
+		}
 	}
 
 	// Sort: expired first (most overdue first), then soonest-expiring
