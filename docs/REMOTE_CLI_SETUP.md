@@ -193,10 +193,10 @@ Periodic access recertification (ISO 27001 A.5.18 / SOC 2 CC6.2–6.3): review w
 can reach a project's secrets via an assigned role. Requires `roles.read` at the
 project scope.
 
-- `keyorix access-review --project-id N` (aliases `recert`) — lists every principal
-  (user or group) with role-based access to project N's secrets, the role granting
-  it, and the highest secrets action (read/write/delete/admin). Share-based grants
-  (per-secret) are a separate review surface (planned).
+- `keyorix access-review --project-id N` (aliases `recert`) — lists every grant of
+  access to project N's secrets: role-based standing access (the role granting it +
+  the highest secrets action) and per-secret grants (ownership and direct/group
+  shares). The `SOURCE` column says which mechanism conferred each grant.
 
 ```bash
 # Quarterly access review for project 5:

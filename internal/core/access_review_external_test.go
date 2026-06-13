@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,6 +45,37 @@ func TestGenerateProjectAccessReview(t *testing.T) {
 		{"user", "alice", "write"},
 		{"group", "devs", "read"},
 	}, rows, "alice (editor→write) and the devs group (viewer→read); bob (auditor, no secrets) and carol (other project) excluded")
+}
+
+// The review also reports per-secret grants: ownership and direct/group shares.
+func TestGenerateProjectAccessReview_SharesAndOwnership(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}))
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10) // owner
+	h.CreateTestUser(t, "bob", 11)   // direct-share recipient
+	h.CreateTestGroup(t, "devs", "", 100)
+
+	require.NoError(t, h.DB.Create(&models.Environment{ID: 20, ProjectID: proj, Name: "prod"}).Error)
+	require.NoError(t, h.DB.Create(&models.SecretNode{
+		ID: 500, ProjectID: proj, EnvironmentID: 20, OwnerID: 10, Name: "db-pw", Type: "password", Status: "active", IsSecret: true,
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 500, RecipientID: 11, IsGroup: false, Permission: "read"}).Error)
+	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 500, RecipientID: 100, IsGroup: true, Permission: "write"}).Error)
+
+	review, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
+	require.NoError(t, err)
+
+	type got struct{ source, typ, name, level, secret string }
+	var rows []got
+	for _, e := range review {
+		rows = append(rows, got{e.Source, e.PrincipalType, e.PrincipalName, e.AccessLevel, e.SecretName})
+	}
+	assert.Contains(t, rows, got{"owner", "user", "alice", "owner", "db-pw"})
+	assert.Contains(t, rows, got{"direct_share", "user", "bob", "read", "db-pw"})
+	assert.Contains(t, rows, got{"group_share", "group", "devs", "write", "db-pw"})
 }
 
 func TestGenerateProjectAccessReview_RequiresProject(t *testing.T) {

@@ -42,21 +42,28 @@ at the project scope.`,
 			return err
 		}
 		if len(out.Entries) == 0 {
-			fmt.Printf("No role-based access to project %d's secrets.\n", flagProject)
+			fmt.Printf("No access to project %d's secrets.\n", flagProject)
 			return nil
 		}
-		fmt.Printf("Role-based access review — project %d (%d principal grant(s)):\n\n", flagProject, len(out.Entries))
-		fmt.Printf("%-7s %-24s %-16s %-8s %s\n", "TYPE", "PRINCIPAL", "ROLE", "ACCESS", "SCOPE")
+		fmt.Printf("Access review — project %d (%d grant(s)):\n\n", flagProject, len(out.Entries))
+		fmt.Printf("%-13s %-6s %-26s %-7s %s\n", "SOURCE", "TYPE", "PRINCIPAL", "ACCESS", "DETAIL")
 		for _, e := range out.Entries {
-			scope := "project"
-			if e.EnvironmentID > 0 {
-				scope = fmt.Sprintf("env=%d", e.EnvironmentID)
-			}
 			principal := e.PrincipalName
 			if e.PrincipalType == "user" && e.Email != "" {
 				principal = fmt.Sprintf("%s <%s>", e.PrincipalName, e.Email)
 			}
-			fmt.Printf("%-7s %-24s %-16s %-8s %s\n", e.PrincipalType, truncate(principal, 24), e.RoleName, e.AccessLevel, scope)
+			detail := ""
+			switch e.Source {
+			case "role":
+				scope := "project"
+				if e.EnvironmentID > 0 {
+					scope = fmt.Sprintf("env=%d", e.EnvironmentID)
+				}
+				detail = fmt.Sprintf("role=%s (%s)", e.RoleName, scope)
+			default: // owner / direct_share / group_share
+				detail = "secret=" + e.SecretName
+			}
+			fmt.Printf("%-13s %-6s %-26s %-7s %s\n", e.Source, e.PrincipalType, truncate(principal, 26), e.AccessLevel, detail)
 		}
 		return nil
 	},
@@ -66,9 +73,11 @@ type entryView struct {
 	PrincipalType string `json:"principal_type"`
 	PrincipalName string `json:"principal_name"`
 	Email         string `json:"email"`
+	Source        string `json:"source"`
 	RoleName      string `json:"role_name"`
 	AccessLevel   string `json:"access_level"`
 	EnvironmentID uint   `json:"environment_id"`
+	SecretName    string `json:"secret_name"`
 }
 
 func init() {
