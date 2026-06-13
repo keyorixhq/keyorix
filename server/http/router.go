@@ -233,6 +233,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Post("/projects/{id}/access-requests", catalogHandler.CreateAccessRequest)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/access-requests/{requestId}", catalogHandler.ResolveAccessRequest)
 		r.Post("/projects/{id}/access-requests/{requestId}/withdraw", catalogHandler.WithdrawAccessRequest)
+		// Break-glass emergency access: activation is self-service (un-gated — the
+		// point is access the caller lacks; controlled by config + justification +
+		// audit + auto-expiry). Listing/revoking are review actions (roles.read/assign).
+		r.Post("/projects/{id}/break-glass", catalogHandler.ActivateBreakGlass)
+		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
 		// Machine identities (ADR-023): non-human members, segmented from humans.
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities", catalogHandler.ListMachineIdentities)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities", catalogHandler.CreateMachineIdentity)

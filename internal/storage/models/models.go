@@ -70,6 +70,25 @@ type AccessRequest struct {
 	ResolvedAt    *time.Time
 }
 
+// BreakGlassActivation records a self-service emergency-access elevation: a user
+// immediately self-granted a time-bound emergency role (no approval), with a
+// written justification, for incident response (NIS2/DORA). The grant itself is a
+// JIT time-bound role assignment that auto-expires; this record is the queryable,
+// auditable evidence for post-hoc review. State: active → expired | revoked.
+type BreakGlassActivation struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	ProjectID     uint       `gorm:"index" json:"project_id"`
+	UserID        uint       `gorm:"index" json:"user_id"` // who activated it
+	RoleID        uint       `json:"role_id"`
+	RoleName      string     `json:"role_name"`
+	Justification string     `json:"justification"`
+	State         string     `json:"state"` // active | expired | revoked
+	ExpiresAt     *time.Time `gorm:"index" json:"expires_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	RevokedBy     uint       `json:"revoked_by,omitempty"` // set on early revoke
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+}
+
 // AccessReviewCampaign is a periodic access-recertification cycle for a project
 // (ISO 27001 A.5.18 — review at planned intervals). Opening a campaign snapshots
 // the project's current access-review entries into AccessReviewItem rows; reviewers

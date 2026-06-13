@@ -31,6 +31,8 @@ type Config struct {
 	// JITAccessExpiry configures the opt-in background sweeper that removes
 	// time-bound role grants whose expiry has passed (just-in-time access).
 	JITAccessExpiry JITAccessExpiryConfig `yaml:"jit_access_expiry"`
+	// BreakGlass configures opt-in self-service emergency access (incident response).
+	BreakGlass BreakGlassConfig `yaml:"break_glass"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -509,6 +511,37 @@ func (c JITAccessExpiryConfig) GetInterval() time.Duration {
 		}
 	}
 	return time.Hour
+}
+
+// BreakGlassConfig configures self-service emergency access (break-glass): a user
+// can immediately self-grant a time-bound emergency role with a written
+// justification, loudly audited, for incident response (NIS2/DORA). Opt-in
+// (default off — disabled means the endpoint refuses).
+type BreakGlassConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	EmergencyRole string `yaml:"emergency_role"` // role granted on activation (e.g. "project_admin")
+	DefaultTTL    string `yaml:"default_ttl"`    // grant lifetime when none requested (e.g. "4h")
+	MaxTTL        string `yaml:"max_ttl"`        // ceiling on a requested TTL (e.g. "24h")
+}
+
+// GetDefaultTTL returns the default emergency-grant lifetime; defaults to 4h.
+func (c BreakGlassConfig) GetDefaultTTL() time.Duration {
+	if c.DefaultTTL != "" {
+		if d, err := time.ParseDuration(c.DefaultTTL); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 4 * time.Hour
+}
+
+// GetMaxTTL returns the ceiling on a requested emergency-grant TTL; defaults to 24h.
+func (c BreakGlassConfig) GetMaxTTL() time.Duration {
+	if c.MaxTTL != "" {
+		if d, err := time.ParseDuration(c.MaxTTL); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the

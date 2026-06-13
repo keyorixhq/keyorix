@@ -257,6 +257,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// (MySQL/MongoDB) when it is disabled — otherwise the credential never expires.
 	coreService.SetDynamicSweepEnabled(cfg.DynamicSecrets.SweepEnabled)
 
+	// Wire self-service emergency access (break-glass); zero value = disabled.
+	coreService.SetBreakGlassPolicy(core.BreakGlassPolicy{
+		Enabled:       cfg.BreakGlass.Enabled,
+		EmergencyRole: cfg.BreakGlass.EmergencyRole,
+		DefaultTTL:    cfg.BreakGlass.GetDefaultTTL(),
+		MaxTTL:        cfg.BreakGlass.GetMaxTTL(),
+	})
+
 	// Wire the credential-delivery channel (ADR-028). New selects out-of-band/SMTP/
 	// log from the configured mode and fails loud on a bad mode (e.g. smtp with no
 	// host), so a misconfigured install does not silently drop setup links.
