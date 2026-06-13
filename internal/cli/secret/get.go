@@ -135,20 +135,29 @@ func runGetEmbedded(ctx context.Context) error {
 			return fmt.Errorf("failed to get secret: %w", err)
 		}
 	} else {
-		filter := &coreStorage.SecretFilter{Page: 1, PageSize: 1000}
-		if getProject != 0 {
-			filter.ProjectID = &getProject
-		}
-		if getEnv != 0 {
-			filter.EnvironmentID = &getEnv
-		}
-		secrets, _, err := service.ListSecrets(ctx, filter)
-		if err != nil {
-			return fmt.Errorf("failed to list secrets: %w", err)
-		}
-		for _, s := range secrets {
-			if strings.EqualFold(s.Name, getName) {
-				secret = s
+		// Page through the matching secrets to find the named one — a single capped
+		// page would fail to find a secret that sorts beyond it ("not found" for a
+		// secret that exists).
+		const pageSize = 500
+		for page := 1; secret == nil; page++ {
+			filter := &coreStorage.SecretFilter{Page: page, PageSize: pageSize}
+			if getProject != 0 {
+				filter.ProjectID = &getProject
+			}
+			if getEnv != 0 {
+				filter.EnvironmentID = &getEnv
+			}
+			secrets, _, err := service.ListSecrets(ctx, filter)
+			if err != nil {
+				return fmt.Errorf("failed to list secrets: %w", err)
+			}
+			for _, s := range secrets {
+				if strings.EqualFold(s.Name, getName) {
+					secret = s
+					break
+				}
+			}
+			if len(secrets) < pageSize {
 				break
 			}
 		}
