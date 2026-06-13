@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -774,4 +777,84 @@ func TestPrivescRoutesRequireWrite(t *testing.T) {
 		assert.Equalf(t, http.StatusForbidden, resp.StatusCode,
 			"%s %s must be 403 for a users.read-only caller (privesc gate)", tc.method, tc.path)
 	}
+}
+
+var routeParamRe = regexp.MustCompile(`\{[^}]+\}`)
+
+// TestEveryMutatingRouteDeniesReadOnly is a preventive guard for the route-
+// authorization privesc class (the root cause of #134/#135/#136): it walks the
+// entire router and asserts that a read-only persona (system_viewer:
+// users.read/secrets.read) cannot SUCCEED at any mutating route (POST/PUT/PATCH/
+// DELETE) — the gate must deny it (non-2xx). Self-service and public routes a
+// read-only/unauthenticated caller may legitimately reach are allowlisted. A new
+// mutating route added without a write/scoped gate fails this test.
+func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	handler, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	routes, ok := handler.(chi.Routes)
+	require.True(t, ok, "router must expose chi.Routes for walking")
+
+	createTestToken(t, testCore) // bootstrap admin + seed roles
+	// A default new user gets system_viewer (users.read + secrets.read) — a
+	// read-only persona that must not be able to mutate anything.
+	ctx := context.Background()
+	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "ro_guard", Email: "ro_guard@example.com", Password: "LimitedPass123!",
+	})
+	require.NoError(t, err)
+	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "ro_guard", Password: "LimitedPass123!"})
+	require.NoError(t, err)
+	roToken := sess.SessionToken
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	mutating := map[string]bool{
+		http.MethodPost: true, http.MethodPut: true, http.MethodPatch: true, http.MethodDelete: true,
+	}
+	// Self-service (own account) and public routes a read-only/unauthenticated
+	// caller may legitimately reach; everything else mutating must be denied.
+	allowExact := map[string]bool{"/system/init": true, "/health": true, "/metrics": true}
+	allowPrefix := []string{"/auth/", "/api/v1/auth/", "/notifications", "/api/v1/notifications"}
+	allowed := func(route string) bool {
+		if allowExact[route] {
+			return true
+		}
+		for _, p := range allowPrefix {
+			if strings.HasPrefix(route, p) {
+				return true
+			}
+		}
+		return false
+	}
+
+	var checked int
+	walkErr := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if !mutating[method] || allowed(route) {
+			return nil
+		}
+		path := routeParamRe.ReplaceAllString(route, "1") // {id} -> 1
+		req, rerr := http.NewRequest(method, server.URL+path, bytes.NewReader([]byte("{}")))
+		require.NoError(t, rerr)
+		req.Header.Set("Authorization", "Bearer "+roToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, derr := client.Do(req)
+		require.NoError(t, derr)
+		code := resp.StatusCode
+		_ = resp.Body.Close()
+		// A read-only persona must never SUCCEED at a mutation. 2xx = the gate let
+		// it through (missing users.write / roles.assign / scoped check).
+		assert.NotContainsf(t, []int{200, 201, 202, 204}, code,
+			"read-only persona succeeded at %s %s (HTTP %d) — missing write/scoped authorization gate", method, route, code)
+		checked++
+		return nil
+	})
+	require.NoError(t, walkErr)
+	assert.Greater(t, checked, 25, "sanity: the walk should cover many mutating routes")
 }
