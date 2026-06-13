@@ -576,6 +576,120 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
+  /api/v1/projects/{id}/access-review/campaigns:
+    get:
+      tags: [Projects]
+      summary: List access-review campaigns (periodic recertification, A.5.18)
+      description: >-
+        The project's recertification campaigns, newest first, each with its
+        decision tally {total, pending, attested, revoked}. Requires roles.read.
+      operationId: listAccessReviewCampaigns
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200': {description: "Envelope {data}. data: {campaigns[] of {campaign, progress}, count}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Projects]
+      summary: Open an access-review campaign (snapshot current access)
+      description: >-
+        Snapshot the project's current access review into per-grant campaign items
+        (each pending) for a tracked recertification cycle. Requires roles.assign.
+      operationId: openAccessReviewCampaign
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, description: "Campaign label, e.g. \"Q4 2026 access recertification\""}
+      responses:
+        '201': {description: "Envelope {data}. data: {campaign, progress}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/access-review/campaigns/{campaignId}:
+    get:
+      tags: [Projects]
+      summary: Get a campaign with its items and progress
+      operationId: getAccessReviewCampaign
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+        - {name: campaignId, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200': {description: "Envelope {data}. data: {campaign, items[] (snapshot + decision), progress}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide:
+    post:
+      tags: [Projects]
+      summary: Decide one campaign item (attest or revoke)
+      description: >-
+        Record a recertification decision on one item of an open campaign: attest
+        keeps the grant (evidence only); revoke removes the underlying grant. Both
+        audited. Requires roles.assign.
+      operationId: decideAccessReviewCampaignItem
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+        - {name: campaignId, in: path, required: true, schema: {type: integer, format: uint32}}
+        - {name: itemId, in: path, required: true, schema: {type: integer, format: uint32}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: {type: string, enum: [attest, revoke]}
+                reason: {type: string, description: "Optional reviewer note"}
+      responses:
+        '200': {description: "Envelope {data, message}. Decision recorded."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close:
+    post:
+      tags: [Projects]
+      summary: Close a campaign (freeze as evidence)
+      description: >-
+        Freeze the campaign as the recertification evidence record. Refuses while
+        items remain pending unless force=true. Requires roles.assign.
+      operationId: closeAccessReviewCampaign
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+        - {name: campaignId, in: path, required: true, schema: {type: integer, format: uint32}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force: {type: boolean, description: "Close even if items remain pending"}
+      responses:
+        '200': {description: "Envelope {data}. data: {campaign, progress}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/projects/{id}/members:
     get:
       tags: [Members]

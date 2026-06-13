@@ -59,6 +59,17 @@ type Storage interface {
 	GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error)
 	UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) error
 	ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error)
+
+	// Access-review campaigns (ISO 27001 A.5.18) — periodic recertification cycles
+	// and the per-grant items captured within them.
+	CreateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (*models.AccessReviewCampaign, error)
+	GetAccessReviewCampaign(ctx context.Context, id uint) (*models.AccessReviewCampaign, error)
+	ListAccessReviewCampaigns(ctx context.Context, projectID uint) ([]*models.AccessReviewCampaign, error)
+	UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) error
+	CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error
+	ListAccessReviewItems(ctx context.Context, campaignID uint) ([]*models.AccessReviewItem, error)
+	GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error)
+	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)

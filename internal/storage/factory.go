@@ -252,6 +252,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	patExists := tableExists(db, "personal_access_tokens")
 	invitationsExists := tableExists(db, "project_invitations")
 	accessReqExists := tableExists(db, "access_requests")
+	campaignExists := tableExists(db, "access_review_campaigns")
 	pwHistExists := tableExists(db, "password_histories")
 	machineExists := tableExists(db, "machine_identities")
 	machineCredExists := tableExists(db, "machine_identity_credentials")
@@ -381,6 +382,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !accessReqExists {
 		if err := db.AutoMigrate(&models.AccessRequest{}); err != nil {
 			return fmt.Errorf("failed to migrate access_requests table: %w", err)
+		}
+	}
+
+	// Create the access-review campaign tables if missing (A.5.18, additive).
+	if !campaignExists {
+		if err := db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}); err != nil {
+			return fmt.Errorf("failed to migrate access_review_campaign tables: %w", err)
 		}
 	}
 
