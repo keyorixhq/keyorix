@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [rotation_reminders](#rotation_reminders) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [audit.siem](#auditsiem)
 - [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -331,6 +331,24 @@ Single-replica-gated (ADR-039) so admins aren't notified N times in HA.
 rotation_reminders:
   enabled: true
   schedule: "24h"         # Go duration between reminder runs (default 24h)
+```
+
+## audit_checkpoints
+
+An opt-in background scheduler that signs the audit hash-chain head (ADR-029) so
+**tail-truncation and genesis re-seed are detectable on-box**, not just via an
+off-box anchor. Each run records a `(chained_events, head_id, head_hash)`
+checkpoint with an HMAC keyed by a DEK-derived key the database/DBA does not hold;
+`keyorix audit verify` (and `GET /audit/verify`) then enforce the live chain
+against the latest checkpoint. Single-replica-gated (ADR-039).
+
+**Requires encryption enabled** — the signing key is derived from the DEK, so with
+encryption off the scheduler logs a warning and does nothing.
+
+```yaml
+audit_checkpoints:
+  enabled: true
+  schedule: "12h"         # Go duration between checkpoint writes (default 24h)
 ```
 
 ## audit.siem

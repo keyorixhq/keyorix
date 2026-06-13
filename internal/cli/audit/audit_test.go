@@ -48,6 +48,21 @@ func TestVerify_Valid(t *testing.T) {
 	assert.Equal(t, "/api/v1/audit/verify", gotPath)
 }
 
+func TestVerify_CheckpointTruncationExitsNonZero(t *testing.T) {
+	// A self-consistent chain walk (valid=false here) flagged by the signed
+	// checkpoint must still surface as a non-zero exit with the checkpoint reason.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"valid":false,"chained_events":3,"unchained_events":0,"head_hash":"h","head_id":3,"checkpointed":true,"reason":"audit trail truncated below signed checkpoint #1: it certified 5 chained events, only 3 remain","checkpoint_reason":"audit trail truncated below signed checkpoint #1: it certified 5 chained events, only 3 remain"}}`))
+	}))
+	defer srv.Close()
+	setRemote(t, srv.URL)
+
+	flagJSON = false
+	err := verifyCmd.RunE(verifyCmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "truncated below signed checkpoint")
+}
+
 func TestVerify_BrokenExitsNonZero(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"valid":false,"chained_events":10,"unchained_events":0,"head_hash":"h","head_id":10,"first_broken_id":7,"reason":"hash mismatch at id 7"}}`))

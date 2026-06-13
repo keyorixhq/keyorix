@@ -143,6 +143,21 @@ func (rs *RemoteStorage) VerifyAuditChain(_ context.Context) (*storage.AuditChai
 	return nil, fmt.Errorf("VerifyAuditChain not available in remote mode")
 }
 
+// CreateAuditCheckpoint is not available in remote mode; checkpointing is server-side.
+func (rs *RemoteStorage) CreateAuditCheckpoint(_ context.Context, _ *models.AuditCheckpoint) error {
+	return fmt.Errorf("CreateAuditCheckpoint not available in remote mode")
+}
+
+// LatestAuditCheckpoint is not available in remote mode; checkpointing is server-side.
+func (rs *RemoteStorage) LatestAuditCheckpoint(_ context.Context) (*models.AuditCheckpoint, error) {
+	return nil, fmt.Errorf("LatestAuditCheckpoint not available in remote mode")
+}
+
+// AuditEntryHashByID is not available in remote mode; chain verification runs server-side.
+func (rs *RemoteStorage) AuditEntryHashByID(_ context.Context, _ uint) (string, bool, error) {
+	return "", false, fmt.Errorf("AuditEntryHashByID not available in remote mode")
+}
+
 // CreateAnomalyAlert is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAlert) error {
 	return fmt.Errorf("CreateAnomalyAlert not available in remote mode")

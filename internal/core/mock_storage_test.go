@@ -678,6 +678,24 @@ func (m *MockStorage) VerifyAuditChain(ctx context.Context) (*storage.AuditChain
 	return args.Get(0).(*storage.AuditChainVerification), args.Error(1)
 }
 
+func (m *MockStorage) CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error {
+	args := m.Called(ctx, cp)
+	return args.Error(0)
+}
+
+func (m *MockStorage) LatestAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.AuditCheckpoint), args.Error(1)
+}
+
+func (m *MockStorage) AuditEntryHashByID(ctx context.Context, id uint) (string, bool, error) {
+	args := m.Called(ctx, id)
+	return args.String(0), args.Bool(1), args.Error(2)
+}
+
 func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
 	args := m.Called(ctx, projectID, notReadSince)
 	if args.Get(0) == nil {

@@ -67,12 +67,18 @@ func (c *KeyorixCore) AuditRetentionCoverage(ctx context.Context) (*AuditRetenti
 }
 
 // VerifyAuditChain re-walks the tamper-evidence hash chain (ADR-029) and reports
-// whether the audit trail is intact. Backs GET /api/v1/audit/verify — see
+// whether the audit trail is intact. When a signing key is configured, it also
+// verifies the live chain against the latest signed checkpoint — adding on-box
+// detection of tail-truncation / genesis re-seed that the bare re-walk cannot
+// catch. Backs GET /api/v1/audit/verify — see
 // docs/adr-029-audit-log-tamper-evidence.md.
 func (c *KeyorixCore) VerifyAuditChain(ctx context.Context) (*storage.AuditChainVerification, error) {
 	v, err := c.storage.VerifyAuditChain(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
+	}
+	if err := c.enforceAuditCheckpoint(ctx, v); err != nil {
+		return nil, fmt.Errorf("failed to verify audit checkpoint: %w", err)
 	}
 	return v, nil
 }

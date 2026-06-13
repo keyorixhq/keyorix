@@ -24,6 +24,10 @@ type Config struct {
 	// RotationReminders configures the opt-in background scheduler that notifies
 	// project admins of secrets overdue / approaching their rotation deadline.
 	RotationReminders RotationRemindersConfig `yaml:"rotation_reminders"`
+	// AuditCheckpoints configures the opt-in background scheduler that writes
+	// signed checkpoints of the audit hash chain (ADR-029) for on-box truncation
+	// detection. Requires encryption enabled (the signing key is DEK-derived).
+	AuditCheckpoints AuditCheckpointsConfig `yaml:"audit_checkpoints"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -456,6 +460,25 @@ type RotationRemindersConfig struct {
 // GetInterval returns the rotation-reminder run interval (Go duration, e.g. "24h");
 // defaults to 24h when unset or unparseable.
 func (c RotationRemindersConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
+}
+
+// AuditCheckpointsConfig configures the audit-checkpoint scheduler: a background
+// job that signs the audit hash-chain head (ADR-029) so tail-truncation / re-seed
+// is detectable on-box. Opt-in (default off); requires encryption enabled.
+type AuditCheckpointsConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+}
+
+// GetInterval returns the checkpoint write interval (Go duration, e.g. "12h");
+// defaults to 24h when unset or unparseable.
+func (c AuditCheckpointsConfig) GetInterval() time.Duration {
 	if c.Schedule != "" {
 		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
 			return d

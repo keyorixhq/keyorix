@@ -262,6 +262,14 @@ type Storage interface {
 	// with the offending event id. A leading run of pre-ADR-029 rows with empty
 	// hashes is counted as an unchained legacy prefix, not a failure.
 	VerifyAuditChain(ctx context.Context) (*AuditChainVerification, error)
+	// CreateAuditCheckpoint appends a signed checkpoint of the chain head (ADR-029).
+	CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error
+	// LatestAuditCheckpoint returns the most recently written checkpoint, or
+	// (nil, nil) when none exists yet.
+	LatestAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, error)
+	// AuditEntryHashByID returns the entry_hash of the audit row with the given
+	// id; found is false when no such row exists (e.g. it was truncated away).
+	AuditEntryHashByID(ctx context.Context, id uint) (hash string, found bool, err error)
 	GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error)
 	// CountImpersonatedActions returns the number of impersonated audit events
 	// recorded for actingAs by impersonator since `since`, excluding the
@@ -575,6 +583,15 @@ type AuditChainVerification struct {
 	// the off-box tamper signal.
 	HeadHash string
 	HeadID   uint
+
+	// Checkpointed is true when the live chain was additionally verified against
+	// a signed in-DB checkpoint (ADR-029) — an on-box anchor a DBA cannot forge.
+	// When a valid checkpoint exists and the chain has dropped below it (or the
+	// checkpointed head changed), Valid is false and CheckpointReason explains it.
+	// CheckpointReason also carries non-fatal notes (e.g. a checkpoint signed
+	// under a superseded key version, which is recorded but not enforced).
+	Checkpointed     bool
+	CheckpointReason string
 }
 
 // UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when

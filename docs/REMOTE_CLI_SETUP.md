@@ -125,7 +125,10 @@ commands require the `audit.read` permission.
   flag tampering. Prints the chain head (`head id` + `head hash`); record
   `(chained events, head hash)` externally each run to anchor against the
   tail-truncation / genesis re-seed an on-box re-walk cannot catch alone. Add
-  `--json` to emit the raw result for machine capture.
+  `--json` to emit the raw result for machine capture. When the server runs the
+  signed-checkpoint scheduler (`audit_checkpoints`, ADR-029), verify also enforces
+  the chain against the latest in-DB checkpoint — detecting that truncation
+  **on-box** — and reports `checkpointed`.
 - `keyorix audit export` - Stream the full-fidelity audit feed as NDJSON (one
   event per line) on stdout for SIEM pull; the per-run summary and resume cursor
   go to stderr. Pull incrementally with `--after-id <cursor>`, or grab everything

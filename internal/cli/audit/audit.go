@@ -57,13 +57,15 @@ func client() (*common.RemoteClient, error) {
 
 // verifyResult mirrors the /audit/verify payload (ADR-029).
 type verifyResult struct {
-	Valid           bool   `json:"valid"`
-	ChainedEvents   int    `json:"chained_events"`
-	UnchainedEvents int    `json:"unchained_events"`
-	HeadHash        string `json:"head_hash"`
-	HeadID          uint   `json:"head_id"`
-	FirstBrokenID   uint   `json:"first_broken_id"`
-	Reason          string `json:"reason"`
+	Valid            bool   `json:"valid"`
+	ChainedEvents    int    `json:"chained_events"`
+	UnchainedEvents  int    `json:"unchained_events"`
+	HeadHash         string `json:"head_hash"`
+	HeadID           uint   `json:"head_id"`
+	FirstBrokenID    uint   `json:"first_broken_id"`
+	Reason           string `json:"reason"`
+	Checkpointed     bool   `json:"checkpointed"`
+	CheckpointReason string `json:"checkpoint_reason"`
 }
 
 var verifyCmd = &cobra.Command{
@@ -98,10 +100,16 @@ var verifyCmd = &cobra.Command{
 			fmt.Printf("  unchained events: %d\n", v.UnchainedEvents)
 			fmt.Printf("  head id:          %d\n", v.HeadID)
 			fmt.Printf("  head hash:        %s\n", v.HeadHash)
-			fmt.Println("  ↑ record (chained events, head hash) externally to anchor against truncation/re-seed")
+			if v.Checkpointed {
+				fmt.Println("  checkpoint:       verified against a signed in-DB checkpoint (on-box truncation detection)")
+			} else {
+				fmt.Println("  checkpoint:       none enforced (record (chained events, head hash) externally to anchor)")
+			}
 			if !v.Valid {
 				fmt.Printf("  first broken id:  %d\n", v.FirstBrokenID)
 				fmt.Printf("  reason:           %s\n", v.Reason)
+			} else if v.CheckpointReason != "" {
+				fmt.Printf("  note:             %s\n", v.CheckpointReason)
 			}
 		}
 

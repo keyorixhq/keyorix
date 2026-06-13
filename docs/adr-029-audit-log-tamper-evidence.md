@@ -102,8 +102,23 @@ double-migration hazard).
     prove a later on-box head diverges. (Previously the export omitted the hashes,
     so the "exported `entry_hash` anchors the head" claim was aspirational; it is
     now real.)
-  - A **signed/notarised in-DB checkpoint** (count + head hash, signed with a key
-    the DBA lacks) would make truncation detectable on-box too — deferred.
+  - A **signed/notarised in-DB checkpoint** makes truncation detectable **on-box**
+    too — **delivered.** An opt-in scheduler (`audit_checkpoints.enabled`, HA-gated)
+    periodically writes an `audit_checkpoints` row recording the verified
+    `(chained_events, head_id, head_hash)` plus an **HMAC-SHA256 signature** keyed
+    by a key the running server holds in memory but the database/DBA does not — it
+    is HKDF-derived from the DEK (`encryption.Service.AuditCheckpointKey`, info
+    `keyorix-audit-checkpoint-v1`), so signed checkpoints require encryption
+    enabled. `VerifyAuditChain` then verifies the live chain against the latest
+    checkpoint: a chain shorter than the certified length, or a rewritten certified
+    head, flips `valid` to false with a `checkpoint_reason` — catching the
+    tail-truncation / genesis re-seed the bare re-walk cannot. A checkpoint row
+    altered without the key fails its signature check (itself a tamper signal); a
+    new checkpoint is refused over a chain that no longer verifies, so a truncation
+    is never silently re-baselined away. A checkpoint signed under a superseded DEK
+    version (after a key rotation) is recorded but not enforced, avoiding false
+    positives. Surfaced as `checkpointed`/`checkpoint_reason` on `/audit/verify` and
+    in `keyorix audit verify`.
   - The anchor is **operator-accessible from the CLI**: `keyorix audit verify`
     (exit non-zero if the chain breaks; `--json` emits `head_hash`/`head_id`/
     `chained_events` for recording) and `keyorix audit export` (NDJSON SIEM pull
