@@ -70,6 +70,48 @@ type AccessRequest struct {
 	ResolvedAt    *time.Time
 }
 
+// AccessReviewCampaign is a periodic access-recertification cycle for a project
+// (ISO 27001 A.5.18 — review at planned intervals). Opening a campaign snapshots
+// the project's current access-review entries into AccessReviewItem rows; reviewers
+// then decide each (attest/revoke); closing it freezes the record as evidence the
+// review was performed. State machine: open → closed.
+type AccessReviewCampaign struct {
+	ID        uint       `gorm:"primaryKey" json:"id"`
+	ProjectID uint       `gorm:"index" json:"project_id"`
+	Name      string     `json:"name"`  // human label, e.g. "Q4 2026 access recertification"
+	State     string     `json:"state"` // open | closed
+	CreatedBy uint       `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	ClosedBy  uint       `json:"closed_by,omitempty"`
+	ClosedAt  *time.Time `json:"closed_at,omitempty"`
+}
+
+// AccessReviewItem is one access grant captured in a campaign at open time, plus
+// the reviewer's recertification decision. The grant fields mirror an
+// AccessReviewEntry (a frozen snapshot — the live grant may change or be revoked
+// after capture). Decision: pending → attested | revoked.
+type AccessReviewItem struct {
+	ID         uint `gorm:"primaryKey" json:"id"`
+	CampaignID uint `gorm:"index" json:"campaign_id"`
+	// Snapshot of the AccessReviewEntry at open time.
+	PrincipalType string `json:"principal_type"`
+	PrincipalID   uint   `json:"principal_id"`
+	PrincipalName string `json:"principal_name"`
+	Email         string `json:"email,omitempty"`
+	Source        string `json:"source"` // role | owner | direct_share | group_share
+	RoleID        uint   `json:"role_id,omitempty"`
+	RoleName      string `json:"role_name,omitempty"`
+	AccessLevel   string `json:"access_level"`
+	EnvironmentID uint   `json:"environment_id"`
+	SecretID      uint   `json:"secret_id,omitempty"`
+	SecretName    string `json:"secret_name,omitempty"`
+	// Recertification decision.
+	Decision  string     `json:"decision"`         // pending | attested | revoked
+	Reason    string     `json:"reason,omitempty"` // optional reviewer note
+	DecidedBy uint       `json:"decided_by,omitempty"`
+	DecidedAt *time.Time `json:"decided_at,omitempty"`
+}
+
 type User struct {
 	ID           uint   `gorm:"primaryKey"`
 	Username     string `gorm:"uniqueIndex;not null"`

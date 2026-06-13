@@ -227,6 +227,33 @@ keyorix access-review revoke --project-id 5 --source role --principal-type group
 keyorix access-review revoke --project-id 5 --source direct_share --principal-id 42 --secret-id 500
 ```
 
+For a **tracked, periodic** recertification (ISO 27001 A.5.18 — review "at planned
+intervals"), run a **campaign**: open it to snapshot the current access into
+reviewable items, decide each, then close it to freeze the cycle as audit evidence.
+Reads need `roles.read`, mutations `roles.assign`.
+
+- `keyorix access-review campaign open --project-id N [--name "…"]` — open a campaign
+  (snapshots current access into pending items).
+- `keyorix access-review campaign list --project-id N` — campaigns + progress
+  (total / pending / attested / revoked).
+- `keyorix access-review campaign show --project-id N --campaign-id C` — the campaign
+  and each item (snapshot + decision); note the `ITEM` ids for `decide`.
+- `keyorix access-review campaign decide --project-id N --campaign-id C --item-id I
+  --action attest|revoke [--reason "…"]` — decide one item (revoke removes the grant).
+- `keyorix access-review campaign close --project-id N --campaign-id C [--force]` —
+  close the campaign (refuses while items are pending unless `--force`).
+
+```bash
+# Open the quarterly campaign and list items to review:
+keyorix access-review campaign open --project-id 5 --name "Q4 2026 access recertification"
+keyorix access-review campaign show --project-id 5 --campaign-id 1
+
+# Keep item 7, revoke item 9, then close once every item is decided:
+keyorix access-review campaign decide --project-id 5 --campaign-id 1 --item-id 7 --action attest
+keyorix access-review campaign decide --project-id 5 --campaign-id 1 --item-id 9 --action revoke --reason "left team"
+keyorix access-review campaign close --project-id 5 --campaign-id 1
+```
+
 ## Deployment Scenarios
 
 ### Development Environment

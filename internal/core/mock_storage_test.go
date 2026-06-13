@@ -166,6 +166,61 @@ func (m *MockStorage) ListAccessRequests(ctx context.Context, projectID uint) ([
 	return args.Get(0).([]*models.AccessRequest), args.Error(1)
 }
 
+func (m *MockStorage) CreateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (*models.AccessReviewCampaign, error) {
+	args := m.Called(ctx, c)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.AccessReviewCampaign), args.Error(1)
+}
+
+func (m *MockStorage) GetAccessReviewCampaign(ctx context.Context, id uint) (*models.AccessReviewCampaign, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.AccessReviewCampaign), args.Error(1)
+}
+
+func (m *MockStorage) ListAccessReviewCampaigns(ctx context.Context, projectID uint) ([]*models.AccessReviewCampaign, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.AccessReviewCampaign), args.Error(1)
+}
+
+func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) error {
+	args := m.Called(ctx, c)
+	return args.Error(0)
+}
+
+func (m *MockStorage) CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error {
+	args := m.Called(ctx, items)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListAccessReviewItems(ctx context.Context, campaignID uint) ([]*models.AccessReviewItem, error) {
+	args := m.Called(ctx, campaignID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.AccessReviewItem), args.Error(1)
+}
+
+func (m *MockStorage) GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.AccessReviewItem), args.Error(1)
+}
+
+func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error {
+	args := m.Called(ctx, item)
+	return args.Error(0)
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }
