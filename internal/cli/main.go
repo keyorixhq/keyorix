@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/keyorixhq/keyorix/internal/cli/anomalies"
+	"github.com/keyorixhq/keyorix/internal/cli/audit"
 	"github.com/keyorixhq/keyorix/internal/cli/auth"
 	"github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
@@ -59,6 +60,7 @@ func init() {
 	rootCmd.AddCommand(anomalies.AnomaliesCmd)
 	rootCmd.AddCommand(dynamic.DynamicSecretCmd)
 	rootCmd.AddCommand(pat.PATCmd)
+	rootCmd.AddCommand(audit.AuditCmd)
 }
 
 // Execute runs the root command

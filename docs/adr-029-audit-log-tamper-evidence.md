@@ -104,6 +104,11 @@ double-migration hazard).
     now real.)
   - A **signed/notarised in-DB checkpoint** (count + head hash, signed with a key
     the DBA lacks) would make truncation detectable on-box too — deferred.
+  - The anchor is **operator-accessible from the CLI**: `keyorix audit verify`
+    (exit non-zero if the chain breaks; `--json` emits `head_hash`/`head_id`/
+    `chained_events` for recording) and `keyorix audit export` (NDJSON SIEM pull
+    carrying the per-event hashes). A nightly `keyorix audit verify --json` appended
+    to an off-box log is the intended way to operationalise the external anchor.
 - Audit writes now take a lock + transaction. Audit emission is already
   asynchronous/best-effort and off the request hot path, so the added latency is
   not user-visible.

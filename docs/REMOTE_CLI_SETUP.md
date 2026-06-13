@@ -115,6 +115,31 @@ storage:
 - `keyorix status` - Check system health and connection
 - `keyorix ping` - Test remote server connectivity
 
+### Audit Commands
+
+The audit trail is hash-chained and tamper-evident (ADR-029). These read-only
+commands require the `audit.read` permission.
+
+- `keyorix audit verify` - Re-walk the hash chain and report integrity. **Exits
+  non-zero if the chain does not verify**, so it can run unattended (cron/CI) to
+  flag tampering. Prints the chain head (`head id` + `head hash`); record
+  `(chained events, head hash)` externally each run to anchor against the
+  tail-truncation / genesis re-seed an on-box re-walk cannot catch alone. Add
+  `--json` to emit the raw result for machine capture.
+- `keyorix audit export` - Stream the full-fidelity audit feed as NDJSON (one
+  event per line) on stdout for SIEM pull; the per-run summary and resume cursor
+  go to stderr. Pull incrementally with `--after-id <cursor>`, or grab everything
+  since a point in time with `--since <RFC3339> --all`. `--limit` sets page size
+  (1–1000).
+
+```bash
+# Nightly tamper check (exit 1 → alert), capturing the anchor:
+keyorix audit verify --json >> audit-anchors.ndjson || notify "audit chain broken"
+
+# Incremental SIEM pull from the last cursor:
+keyorix audit export --after-id "$LAST_ID" --all > batch.ndjson
+```
+
 ## Deployment Scenarios
 
 ### Development Environment
