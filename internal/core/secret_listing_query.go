@@ -239,6 +239,11 @@ func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo
 		if filter.Type != nil && *filter.Type != "" && s.Type != *filter.Type {
 			continue
 		}
+		if filter.ExpiresBefore != nil {
+			if s.Expiration == nil || !s.Expiration.Before(*filter.ExpiresBefore) {
+				continue // no expiration, or expires at/after the cutoff
+			}
+		}
 		out = append(out, s)
 	}
 	return out
