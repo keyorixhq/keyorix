@@ -38,6 +38,9 @@ type SecretListFilter struct {
 	CreatedBy     *string
 	CreatedAfter  *time.Time
 	CreatedBefore *time.Time
+	// ExpiresBefore, when set, returns only secrets with a non-null expiration
+	// before this time (already expired or expiring within the window).
+	ExpiresBefore *time.Time
 
 	// Sharing filters
 	ShowOwnedOnly  bool   // Show only secrets owned by the user

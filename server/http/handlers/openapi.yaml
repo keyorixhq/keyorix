@@ -1141,6 +1141,7 @@ paths:
         - {name: environment_id, in: query, schema: {type: integer}}
         - {name: search, in: query, schema: {type: string}}
         - {name: type, in: query, schema: {type: string}}
+        - {name: expires_before, in: query, schema: {type: string, format: date-time}, description: "RFC3339 — return only secrets with a non-null expiration before this time (expired or expiring soon)."}
         - {name: page, in: query, schema: {type: integer, default: 1}}
         - {name: page_size, in: query, schema: {type: integer, default: 20, maximum: 100}}
         - {name: show_owned_only, in: query, schema: {type: boolean}}

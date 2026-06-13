@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -82,6 +83,11 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		if eID, err := strconv.ParseUint(envStr, 10, 32); err == nil {
 			eIDUint := uint(eID)
 			filter.EnvironmentID = &eIDUint
+		}
+	}
+	if eb := r.URL.Query().Get("expires_before"); eb != "" {
+		if t, err := time.Parse(time.RFC3339, eb); err == nil {
+			filter.ExpiresBefore = &t
 		}
 	}
 
