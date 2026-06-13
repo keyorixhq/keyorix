@@ -286,7 +286,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	} else {
 		m := db.Migrator()
-		for _, col := range []string{"Scopes", "ProjectScope"} {
+		for _, col := range []string{"Scopes", "ProjectScope", "EnvironmentScope"} {
 			if !m.HasColumn(&models.PersonalAccessToken{}, col) {
 				if err := m.AddColumn(&models.PersonalAccessToken{}, col); err != nil {
 					return fmt.Errorf("failed to add personal_access_tokens.%s column: %w", col, err)
