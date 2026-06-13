@@ -280,6 +280,23 @@ keyorix break-glass list --project-id 5
 keyorix break-glass revoke --project-id 5 --activation-id 7
 ```
 
+### Compliance Commands
+
+A single deployment-wide controls-posture report for auditors (ISO 27001 / SOC 2 /
+NIS2 / DORA) — it rolls up the state of the controls Keyorix enforces. Requires
+`system.read`.
+
+- `keyorix compliance report` — print the posture: audit-trail integrity (chain
+  verified + checkpointed), access-governance coverage (projects reviewed / never
+  reviewed, open campaigns + pending items, dormant role grants), rotation hygiene
+  (overdue / due-soon), second-factor coverage (% of active users with MFA or a
+  passkey), and break-glass usage (active / total activations).
+
+```bash
+# Quarterly controls-posture snapshot:
+keyorix compliance report
+```
+
 ## Deployment Scenarios
 
 ### Development Environment

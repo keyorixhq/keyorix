@@ -9,6 +9,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/audit"
 	"github.com/keyorixhq/keyorix/internal/cli/auth"
 	"github.com/keyorixhq/keyorix/internal/cli/breakglass"
+	"github.com/keyorixhq/keyorix/internal/cli/compliance"
 	"github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
 	"github.com/keyorixhq/keyorix/internal/cli/dynamic"
@@ -67,6 +68,7 @@ func init() {
 	rootCmd.AddCommand(rotation.RotationCmd)
 	rootCmd.AddCommand(accessreview.AccessReviewCmd)
 	rootCmd.AddCommand(breakglass.BreakGlassCmd)
+	rootCmd.AddCommand(compliance.ComplianceCmd)
 }
 
 // Execute runs the root command
