@@ -6,6 +6,7 @@ import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ProjectMembersTab } from './ProjectMembersTab';
 import { ProjectDriftTab } from './ProjectDriftTab';
 import { ProjectActivityTab } from './ProjectActivityTab';
+import { ProjectAccessReviewTab } from './ProjectAccessReviewTab';
 import { ProjectSettingsTab } from './ProjectSettingsTab';
 import { ROUTES } from '../../constants';
 import { useProjectMruStore } from '../../store';
@@ -19,6 +20,7 @@ const TABS: Tab[] = [
     { id: 'members',  label: 'Members',  path: '/members' },
     { id: 'drift',    label: 'Drift',    path: '/drift' },
     { id: 'activity', label: 'Activity', path: '/activity' },
+    { id: 'access-review', label: 'Access Review', path: '/access-review' },
     { id: 'settings', label: 'Settings', path: '/settings' },
 ];
 
@@ -126,6 +128,7 @@ export const ProjectDetailPage: React.FC = () => {
                 <Route path="members" element={<ProjectMembersTab projectId={projectId} />} />
                 <Route path="drift" element={<ProjectDriftTab projectId={projectId} />} />
                 <Route path="activity" element={<ProjectActivityTab projectId={projectId} />} />
+                <Route path="access-review" element={<ProjectAccessReviewTab projectId={projectId} />} />
                 <Route path="settings" element={<ProjectSettingsTab projectId={projectId} />} />
                 <Route path="*" element={<Navigate to={`/projects/${projectId}`} replace />} />
             </Routes>

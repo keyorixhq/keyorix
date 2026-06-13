@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { projectsApi, CreateProjectPayload } from '../../services/projects';
+import { projectsApi, CreateProjectPayload, AccessReviewDecision } from '../../services/projects';
 
 export const PROJECT_KEYS = {
     all: ['projects'] as const,
@@ -9,6 +9,7 @@ export const PROJECT_KEYS = {
         [...PROJECT_KEYS.all, 'environments', id, { includeDeleted }] as const,
     members: (id: number) => [...PROJECT_KEYS.all, 'members', id] as const,
     drift: (id: number) => [...PROJECT_KEYS.all, 'drift', id] as const,
+    accessReview: (id: number) => [...PROJECT_KEYS.all, 'access-review', id] as const,
 };
 
 export function useProjectDrift(projectId: number) {
@@ -118,5 +119,30 @@ export function useRemoveProjectMember(projectId: number) {
     return useMutation({
         mutationFn: (userId: number) => projectsApi.removeMember(projectId, userId),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.members(projectId) }),
+    });
+}
+
+export function useAccessReview(projectId: number) {
+    return useQuery({
+        queryKey: PROJECT_KEYS.accessReview(projectId),
+        queryFn: () => projectsApi.accessReview(projectId),
+        enabled: !!projectId,
+        staleTime: 30_000,
+    });
+}
+
+export function useAttestAccessReview(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (decision: AccessReviewDecision) => projectsApi.attestAccessReview(projectId, decision),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.accessReview(projectId) }),
+    });
+}
+
+export function useRevokeAccessReview(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (decision: AccessReviewDecision) => projectsApi.revokeAccessReview(projectId, decision),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.accessReview(projectId) }),
     });
 }

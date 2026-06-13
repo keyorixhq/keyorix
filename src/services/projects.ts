@@ -33,6 +33,55 @@ export interface ProjectMember {
     roleName: string;
 }
 
+// Access review / recertification (ISO 27001 A.5.18). One grant of access to a
+// project's secrets; `source` says which mechanism conferred it.
+export interface AccessReviewEntry {
+    principalType: 'user' | 'group';
+    principalId: number;
+    principalName: string;
+    email: string;
+    source: 'role' | 'owner' | 'direct_share' | 'group_share';
+    roleId: number;
+    roleName: string;
+    accessLevel: string;
+    environmentId: number;
+    secretId: number;
+    secretName: string;
+}
+
+// A recertification decision identifying one entry to attest (keep) or revoke.
+export interface AccessReviewDecision {
+    source: string;
+    principalType?: string;
+    principalId: number;
+    roleId?: number;
+    environmentId?: number;
+    secretId?: number;
+}
+
+const normalizeAccessReviewEntry = (e: any): AccessReviewEntry => ({
+    principalType: e.principal_type ?? e.principalType,
+    principalId: e.principal_id ?? e.principalId ?? 0,
+    principalName: e.principal_name ?? e.principalName ?? '',
+    email: e.email ?? '',
+    source: e.source,
+    roleId: e.role_id ?? e.roleId ?? 0,
+    roleName: e.role_name ?? e.roleName ?? '',
+    accessLevel: e.access_level ?? e.accessLevel ?? '',
+    environmentId: e.environment_id ?? e.environmentId ?? 0,
+    secretId: e.secret_id ?? e.secretId ?? 0,
+    secretName: e.secret_name ?? e.secretName ?? '',
+});
+
+const toDecisionBody = (d: AccessReviewDecision) => ({
+    source: d.source,
+    principal_type: d.principalType,
+    principal_id: d.principalId,
+    role_id: d.roleId,
+    environment_id: d.environmentId,
+    secret_id: d.secretId,
+});
+
 // Cross-environment drift detection (M2). A key is consistent, present in some
 // environments but not others, or present everywhere with diverging settings.
 export type DriftStatus = 'missing_in_some' | 'metadata_drift';
@@ -177,5 +226,19 @@ export const projectsApi = {
     async drift(projectId: number): Promise<ProjectDrift> {
         const response = await apiClient.get(`/api/v1/projects/${projectId}/drift`);
         return normalizeDrift(response.data.data ?? response.data);
+    },
+
+    async accessReview(projectId: number): Promise<AccessReviewEntry[]> {
+        const response = await apiClient.get(`/api/v1/projects/${projectId}/access-review`);
+        const entries = response.data.data?.entries ?? response.data.entries ?? [];
+        return entries.map(normalizeAccessReviewEntry);
+    },
+
+    async attestAccessReview(projectId: number, decision: AccessReviewDecision): Promise<void> {
+        await apiClient.post(`/api/v1/projects/${projectId}/access-review/attest`, toDecisionBody(decision));
+    },
+
+    async revokeAccessReview(projectId: number, decision: AccessReviewDecision): Promise<void> {
+        await apiClient.post(`/api/v1/projects/${projectId}/access-review/revoke`, toDecisionBody(decision));
     },
 };
