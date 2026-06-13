@@ -3,6 +3,29 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.14.0 — 2026-06-13
+
+Dynamic-secrets expansion: a fourth backend and full CLI lifecycle coverage.
+
+### Added
+- **Redis dynamic-secrets engine** (`backend_type: redis`) — the fourth dynamic-
+  secrets target after PostgreSQL, MySQL and MongoDB. It mints a short-lived Redis
+  **ACL user** (`ACL SETUSER kx_dyn_<random> on >password <rules>`) and drops it on
+  revoke (`ACL DELUSER`). The admin DSN is a Redis URI (`redis://…` / `rediss://…`)
+  for a user holding the `+acl` command; the creation template is whitespace-
+  separated ACL rule tokens (`~app:* +@read +@write`). Username/password are passed
+  as discrete RESP arguments, so credential injection is structurally impossible.
+  Like MySQL/MongoDB, Redis ACL users have no native expiry — enable the auto-revoke
+  sweeper. ([#142], ADR-035)
+- **`keyorix dynamic-secret create`** — register a dynamic-secrets target config
+  from the CLI (previously API/UI-only). The privileged admin DSN is read from
+  `KEYORIX_DYNAMIC_ADMIN_DSN` or a hidden prompt — never a flag, so it can't leak
+  into shell history. The CLI now covers the full lifecycle: create → issue →
+  leases → renew → revoke → revoke-all, across all four backends. ([#143])
+
+[#142]: https://github.com/keyorixhq/keyorix/pull/142
+[#143]: https://github.com/keyorixhq/keyorix/pull/143
+
 ## v0.13.3 — 2026-06-13
 
 Further security/correctness fixes from the access-control & integrity audit. No
