@@ -522,7 +522,9 @@ paths:
             Envelope {data, message}. data: {entries[], count}; each entry is
             {principal_type (user|group), principal_id, principal_name, email,
             source (role|owner|direct_share|group_share), role_id, role_name,
-            access_level, environment_id, secret_id, secret_name}.
+            access_level, environment_id, secret_id, secret_name, last_used_at
+            (the user principal's most recent secret access in the project — absent
+            = no recorded activity, i.e. dormant standing access)}.
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}

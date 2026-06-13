@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -34,6 +35,10 @@ type AccessReviewEntry struct {
 	EnvironmentID uint   `json:"environment_id"` // 0 = the whole project (role grants)
 	SecretID      uint   `json:"secret_id,omitempty"`
 	SecretName    string `json:"secret_name,omitempty"`
+	// LastUsedAt is the principal's most recent secret access in the project (from
+	// the audit trail) — nil = no recorded activity, the signal for dormant standing
+	// access. Set for user principals only; group last-use is not aggregated.
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
 // secretsActionRank orders secrets.* actions so a review reports the strongest
@@ -172,6 +177,19 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 				e.PrincipalName, e.Email = resolveUser(sh.RecipientID)
 			}
 			entries = append(entries, e)
+		}
+	}
+
+	// Annotate user principals with their last secret-access time (dormant-access
+	// detection). Best-effort: a lookup failure simply leaves LastUsedAt nil.
+	if activity, err := c.storage.LastUserSecretActivity(ctx, projectID); err == nil {
+		for _, e := range entries {
+			if e.PrincipalType == "user" {
+				if t, ok := activity[e.PrincipalID]; ok {
+					tt := t
+					e.LastUsedAt = &tt
+				}
+			}
 		}
 	}
 	return entries, nil

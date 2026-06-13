@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
@@ -29,15 +30,16 @@ type progressView struct {
 }
 
 type itemView struct {
-	ID            uint   `json:"id"`
-	PrincipalType string `json:"principal_type"`
-	PrincipalName string `json:"principal_name"`
-	Email         string `json:"email"`
-	Source        string `json:"source"`
-	RoleName      string `json:"role_name"`
-	AccessLevel   string `json:"access_level"`
-	SecretName    string `json:"secret_name"`
-	Decision      string `json:"decision"`
+	ID            uint       `json:"id"`
+	PrincipalType string     `json:"principal_type"`
+	PrincipalName string     `json:"principal_name"`
+	Email         string     `json:"email"`
+	Source        string     `json:"source"`
+	RoleName      string     `json:"role_name"`
+	AccessLevel   string     `json:"access_level"`
+	SecretName    string     `json:"secret_name"`
+	LastUsedAt    *time.Time `json:"last_used_at"`
+	Decision      string     `json:"decision"`
 }
 
 var (
@@ -151,7 +153,7 @@ var campaignShowCmd = &cobra.Command{
 			fmt.Println("No items.")
 			return nil
 		}
-		fmt.Printf("%-6s %-10s %-13s %-24s %-7s %s\n", "ITEM", "DECISION", "SOURCE", "PRINCIPAL", "ACCESS", "DETAIL")
+		fmt.Printf("%-6s %-10s %-13s %-22s %-7s %-11s %s\n", "ITEM", "DECISION", "SOURCE", "PRINCIPAL", "ACCESS", "LAST-USED", "DETAIL")
 		for _, it := range out.Items {
 			principal := it.PrincipalName
 			if it.PrincipalType == "user" && it.Email != "" {
@@ -161,7 +163,7 @@ var campaignShowCmd = &cobra.Command{
 			if it.Source == "role" {
 				detail = "role=" + it.RoleName
 			}
-			fmt.Printf("%-6d %-10s %-13s %-24s %-7s %s\n", it.ID, it.Decision, it.Source, truncate(principal, 24), it.AccessLevel, detail)
+			fmt.Printf("%-6d %-10s %-13s %-22s %-7s %-11s %s\n", it.ID, it.Decision, it.Source, truncate(principal, 22), it.AccessLevel, lastUsedLabel(it.PrincipalType, it.LastUsedAt), detail)
 		}
 		return nil
 	},

@@ -105,6 +105,9 @@ type AccessReviewItem struct {
 	EnvironmentID uint   `json:"environment_id"`
 	SecretID      uint   `json:"secret_id,omitempty"`
 	SecretName    string `json:"secret_name,omitempty"`
+	// LastUsedAt captures the principal's last secret-access time at open (dormant-
+	// access signal frozen into the evidence record); nil = no recorded activity.
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	// Recertification decision.
 	Decision  string     `json:"decision"`         // pending | attested | revoked
 	Reason    string     `json:"reason,omitempty"` // optional reviewer note

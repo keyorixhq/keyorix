@@ -221,6 +221,14 @@ func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.A
 	return args.Error(0)
 }
 
+func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]time.Time), args.Error(1)
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }
