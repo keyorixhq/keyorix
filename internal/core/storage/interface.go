@@ -76,6 +76,12 @@ type Storage interface {
 	ListAccessReviewItems(ctx context.Context, campaignID uint) ([]*models.AccessReviewItem, error)
 	GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error)
 	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error
+
+	// Break-glass emergency-access activations (NIS2/DORA incident response).
+	CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error)
+	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)
+	ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error)
+	UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)

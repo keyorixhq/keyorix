@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
 - [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -369,6 +369,29 @@ sweeper (anywhere) runs.
 jit_access_expiry:
   enabled: true
   schedule: "1h"          # Go duration between expiry sweeps (default 1h)
+```
+
+## break_glass
+
+Opt-in **self-service emergency access** (incident response — NIS2/DORA). When
+enabled, any authenticated user can `POST /api/v1/projects/{id}/break-glass` (or run
+`keyorix break-glass activate`) to **immediately** self-grant the configured
+emergency role at that project — no approval. The activation is **time-bound** (it
+auto-expires via the JIT mechanism, so it stops authorizing on its own), requires a
+**written justification**, is **loudly audited** (`break_glass.activated`), and
+**alerts the project's admins**. Each activation is a queryable record for post-hoc
+review (`GET …/break-glass`, `keyorix break-glass list`).
+
+Deliberately not RBAC-gated — the point is access the caller does *not* have — so
+the controls are: it must be enabled here, every use is justified + audited +
+alerted, the grant expires, and an admin can revoke it early.
+
+```yaml
+break_glass:
+  enabled: true
+  emergency_role: "project_admin"   # role granted on activation
+  default_ttl: "4h"                 # grant lifetime when none is requested
+  max_ttl: "24h"                    # ceiling on a requested TTL
 ```
 
 ## audit.siem

@@ -257,6 +257,29 @@ keyorix access-review campaign decide --project-id 5 --campaign-id 1 --item-id 9
 keyorix access-review campaign close --project-id 5 --campaign-id 1
 ```
 
+### Break-Glass Commands
+
+Self-service emergency access (incident response — NIS2/DORA). Must be enabled
+server-side (`break_glass` config). Activation is **not** permission-gated — the
+controls are the mandatory justification, a loud audit event, an admin alert, and
+auto-expiry. `list`/`revoke` are review actions (`roles.read` / `roles.assign`).
+
+- `keyorix break-glass activate --project-id N --justification "…" [--ttl 2h]` —
+  immediately self-grant the configured emergency role at project N, time-bound.
+- `keyorix break-glass list --project-id N` — the project's activations (an active
+  grant past its expiry shows as `expired`).
+- `keyorix break-glass revoke --project-id N --activation-id A` — end an active
+  grant early.
+
+```bash
+# On-call engineer elevates during a production incident:
+keyorix break-glass activate --project-id 5 --justification "PROD outage INC-4821" --ttl 2h
+
+# Security reviews emergency access after the incident:
+keyorix break-glass list --project-id 5
+keyorix break-glass revoke --project-id 5 --activation-id 7
+```
+
 ## Deployment Scenarios
 
 ### Development Environment

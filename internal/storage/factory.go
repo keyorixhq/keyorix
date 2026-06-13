@@ -253,6 +253,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	invitationsExists := tableExists(db, "project_invitations")
 	accessReqExists := tableExists(db, "access_requests")
 	campaignExists := tableExists(db, "access_review_campaigns")
+	breakGlassExists := tableExists(db, "break_glass_activations")
 	pwHistExists := tableExists(db, "password_histories")
 	machineExists := tableExists(db, "machine_identities")
 	machineCredExists := tableExists(db, "machine_identity_credentials")
@@ -389,6 +390,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !campaignExists {
 		if err := db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}); err != nil {
 			return fmt.Errorf("failed to migrate access_review_campaign tables: %w", err)
+		}
+	}
+
+	// Create the break-glass activations table if missing (additive).
+	if !breakGlassExists {
+		if err := db.AutoMigrate(&models.BreakGlassActivation{}); err != nil {
+			return fmt.Errorf("failed to migrate break_glass_activations table: %w", err)
 		}
 	}
 

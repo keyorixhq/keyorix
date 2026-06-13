@@ -46,6 +46,9 @@ type KeyorixCore struct {
 	now            func() time.Time // For testability
 	passwordPolicy PasswordPolicy
 	auditForwarder AuditForwarder
+	// breakGlassPolicy configures self-service emergency access; zero value =
+	// disabled. Set from config at startup via SetBreakGlassPolicy.
+	breakGlassPolicy BreakGlassPolicy
 	// oidcVerifier verifies federated machine-identity JWTs (ADR-031); nil = OIDC
 	// auth disabled. Set from config via SetOIDCVerifier.
 	oidcVerifier *OIDCVerifier

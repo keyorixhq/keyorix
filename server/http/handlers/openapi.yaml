@@ -692,6 +692,70 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
+  /api/v1/projects/{id}/break-glass:
+    post:
+      tags: [Projects]
+      summary: Activate break-glass emergency access (self-service)
+      description: >-
+        Immediately self-grant the configured emergency role at the project scope,
+        time-bound (default + capped by server config), with a required written
+        justification. NOT RBAC-gated — the controls are config-enablement, the
+        justification, a loud audit (break_glass.activated) + admin alert, and
+        auto-expiry. Returns 403 when break-glass is disabled.
+      operationId: activateBreakGlass
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [justification]
+              properties:
+                justification: {type: string, description: "Written reason (required)"}
+                ttl: {type: string, description: "Optional grant-lifetime override, a Go duration (e.g. 2h); capped at the server max"}
+      responses:
+        '201': {description: "Envelope {data}. data: {activation}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    get:
+      tags: [Projects]
+      summary: List break-glass activations (for review)
+      description: >-
+        The project's emergency-access activations, newest first (an active grant
+        past its expiry reads as expired). Requires roles.read.
+      operationId: listBreakGlassActivations
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200': {description: "Envelope {data}. data: {activations[] of {id, user_id, role_name, justification, state, expires_at, created_at}, count}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+
+  /api/v1/projects/{id}/break-glass/{activationId}/revoke:
+    post:
+      tags: [Projects]
+      summary: Revoke an active break-glass grant early
+      description: >-
+        End an active emergency grant before its TTL — removes the role assignment
+        and marks the activation revoked. Requires roles.assign.
+      operationId: revokeBreakGlass
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+        - {name: activationId, in: path, required: true, schema: {type: integer, format: uint32}}
+      responses:
+        '200': {description: "Envelope {data, message}. Emergency access revoked."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+
   /api/v1/projects/{id}/members:
     get:
       tags: [Members]

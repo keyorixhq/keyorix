@@ -229,6 +229,35 @@ func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint
 	return args.Get(0).(map[uint]time.Time), args.Error(1)
 }
 
+func (m *MockStorage) CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
+	args := m.Called(ctx, a)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.BreakGlassActivation), args.Error(1)
+}
+
+func (m *MockStorage) GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.BreakGlassActivation), args.Error(1)
+}
+
+func (m *MockStorage) ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.BreakGlassActivation), args.Error(1)
+}
+
+func (m *MockStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
+	args := m.Called(ctx, a)
+	return args.Error(0)
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }
