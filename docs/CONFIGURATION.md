@@ -238,15 +238,19 @@ dynamic_secrets:
 ```
 
 Targets are registered via the API with an admin DSN, a backend type
-(`postgres`, `mysql`, or `mongodb`), an optional creation template, and a default
-TTL. For `mongodb` the creation template is a JSON role spec
-(`{"roles": [{"role": "readWrite", "db": "app"}]}`) and the admin DSN is a MongoDB
-connection URI; for the SQL backends it is an SQL grant template using `{{name}}`.
+(`postgres`, `mysql`, `mongodb`, or `redis`), an optional creation template, and a
+default TTL. The creation template form depends on the backend:
+- SQL backends (`postgres`, `mysql`) — an SQL grant template using `{{name}}`.
+- `mongodb` — a JSON role spec (`{"roles": [{"role": "readWrite", "db": "app"}]}`);
+  the admin DSN is a MongoDB connection URI.
+- `redis` — whitespace-separated ACL rule tokens (`~app:* +@read +@write`); the
+  admin DSN is a Redis URI (`redis://:pass@host:6379/0`, or `rediss://…` for TLS)
+  for a user that holds the `+acl` command.
 
-> **Enable the sweeper for MySQL and MongoDB targets.** MySQL and MongoDB accounts
-> have no `VALID UNTIL` equivalent, so their lease TTL is enforced *only* by the
-> sweeper. PostgreSQL roles additionally carry a DB-level expiry (belt-and-
-> suspenders).
+> **Enable the sweeper for MySQL, MongoDB and Redis targets.** Their accounts have
+> no `VALID UNTIL` equivalent, so a lease TTL is enforced *only* by the sweeper —
+> issuing is refused while it is disabled. PostgreSQL roles additionally carry a
+> DB-level expiry (belt-and-suspenders).
 
 ---
 

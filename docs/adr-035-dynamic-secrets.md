@@ -160,6 +160,29 @@ An internal audit surfaced two fail-opens, both fixed:
   being permanent and untrackable (every list/sweep/revoke path keys off the lease
   table).
 
+## Addendum (2026-06-13): Redis target engine
+
+A `redis` backend now implements the same `CredentialEngine` interface
+(`internal/dynamic/redis.go`), selected via the config's `backend_type`. It mints a
+short-lived Redis **ACL user** (`ACL SETUSER kx_dyn_<random> on >password <rules>`)
+and drops it on revoke (`ACL DELUSER`, idempotent — returns the count removed).
+
+The admin DSN is a Redis URI (`redis://:pass@host:6379/0`, or `rediss://…` for TLS)
+for a user holding the `+acl` command; the creation template is operator-authored,
+whitespace-separated **ACL rule tokens** (`~app:* +@read +@write`). The generated
+username and password are passed to `ACL SETUSER` as **discrete command arguments**
+(RESP bulk strings), never string-interpolated, so the credential can never be
+parsed as an ACL token — credential injection is structurally impossible (the same
+guarantee MongoDB gets via typed BSON); the ACL rule tokens are the operator-
+authored trust boundary. The pure-Go `redis/go-redis/v9` client links into the
+server; no cloud SDK is added.
+
+**Like MySQL and MongoDB**, Redis ACL users carry no native expiry, so a lease's TTL
+is enforced **only** by the auto-revoke sweeper (`SupportsNativeExpiry() == false`)
+— issuing is refused while the sweeper is disabled (the lease-lifecycle hardening
+above), and `Renew` is a no-op. Keyorix now mints dynamic credentials for
+PostgreSQL, MySQL, MongoDB, **or** Redis.
+
 ## Deferred (updated)
 
 Cloud-IAM backends (AWS STS / GCP / Azure), which need a non-DSN credential shape
