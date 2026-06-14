@@ -380,9 +380,11 @@ notification is still written to the in-app bell; when a channel is enabled it i
 **also** fanned out, best-effort and asynchronously (a slow or down endpoint drops
 rather than stalling the triggering action).
 
-The **webhook** channel POSTs each notification as a JSON body
+Two channels are available; enable either or both (both → each notification is
+delivered to all). The **webhook** channel POSTs each notification as a JSON body
 (`{user_id, email, type, title, message, project_id, link}`) to `endpoint`,
-optionally bearer-authenticated.
+optionally bearer-authenticated. The **email** channel sends a plaintext message to
+the recipient via the operator's SMTP relay (same settings as `credential_delivery`).
 
 ```yaml
 notifications:
@@ -391,10 +393,18 @@ notifications:
     endpoint: "https://hooks.example.com/keyorix"
     token: ""                    # prefer the KEYORIX_NOTIFY_WEBHOOK_TOKEN env var
     insecure_skip_verify: false  # TLS verification off — self-signed endpoints only
+  email:
+    enabled: true
+    host: "smtp.example.com"
+    port: 587
+    username: "keyorix"
+    password: ""                 # prefer the KEYORIX_NOTIFY_SMTP_PASSWORD env var
+    from: "keyorix@example.com"
+    tls: "starttls"              # starttls | implicit | none(dev-only)
 ```
 
-> The webhook token is read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` when set, falling
-> back to the YAML value — keep secrets out of the config file.
+> Secrets are read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` / `KEYORIX_NOTIFY_SMTP_PASSWORD`
+> when set, falling back to the YAML value — keep secrets out of the config file.
 
 ## evidence_delivery
 

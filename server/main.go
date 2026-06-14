@@ -243,8 +243,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 
 	// Wire external notification channels if configured. Each in-app notification is
-	// fanned out to the channel (best-effort, async); with none enabled it stays
-	// in-app only.
+	// fanned out to every enabled channel (best-effort, async); with none enabled it
+	// stays in-app only.
+	var notifySinks []core.NotificationSink
 	if wc := cfg.Notifications.Webhook; wc.Enabled {
 		sink, werr := notifychan.NewWebhook(notifychan.WebhookConfig{
 			Endpoint:           wc.Endpoint,
@@ -254,8 +255,26 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if werr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification webhook channel: %w", werr)
 		}
-		coreService.SetNotificationSink(sink)
+		notifySinks = append(notifySinks, sink)
 		log.Printf("Notification webhook channel enabled (endpoint=%s)", wc.Endpoint)
+	}
+	if ec := cfg.Notifications.Email; ec.Enabled {
+		sink, eerr := notifychan.NewEmail(notifychan.EmailConfig{
+			Host:     ec.Host,
+			Port:     ec.Port,
+			Username: ec.Username,
+			Password: ec.GetPassword(),
+			From:     ec.From,
+			TLS:      ec.TLS,
+		})
+		if eerr != nil {
+			return nil, nil, fmt.Errorf("failed to init notification email channel: %w", eerr)
+		}
+		notifySinks = append(notifySinks, sink)
+		log.Printf("Notification email channel enabled (host=%s)", ec.Host)
+	}
+	if sink := notifychan.NewMulti(notifySinks...); sink != nil {
+		coreService.SetNotificationSink(sink)
 	}
 
 	// Apply the project membership validation mode (ADR-022). Empty = allowlist.

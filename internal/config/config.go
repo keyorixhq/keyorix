@@ -564,9 +564,29 @@ func (c RecertificationConfig) GetInterval() time.Duration {
 
 // NotificationsConfig configures external delivery channels for in-app
 // notifications (ISO 27001 A.5.5 / SOC 2 operational alerting). Each channel is
-// opt-in; with none enabled, notifications remain in-app only.
+// opt-in; with none enabled, notifications remain in-app only. When more than one
+// is enabled, each notification is fanned out to all of them.
 type NotificationsConfig struct {
 	Webhook NotificationWebhookConfig `yaml:"webhook"`
+	Email   NotificationEmailConfig   `yaml:"email"`
+}
+
+// NotificationEmailConfig configures the SMTP notification channel: each
+// notification is emailed (plaintext) to the recipient via the operator's relay.
+// Mirrors the credential-delivery SMTP settings (ADR-028).
+type NotificationEmailConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"` // use KEYORIX_NOTIFY_SMTP_PASSWORD env var instead
+	From     string `yaml:"from"`
+	TLS      string `yaml:"tls"` // starttls | implicit | none(dev-only)
+}
+
+// GetPassword returns the resolved SMTP password, preferring the environment variable.
+func (c *NotificationEmailConfig) GetPassword() string {
+	return resolveSecret("KEYORIX_NOTIFY_SMTP_PASSWORD", c.Password)
 }
 
 // NotificationWebhookConfig configures the webhook notification channel: each
