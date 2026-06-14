@@ -63,6 +63,10 @@ type posture struct {
 		Unacknowledged   int `json:"unacknowledged"`
 		HighSeverityOpen int `json:"high_severity_open"`
 	} `json:"anomalies"`
+	LegalHold struct {
+		Active bool   `json:"active"`
+		Reason string `json:"reason"`
+	} `json:"legal_hold"`
 }
 
 func yesNo(b bool) string {
@@ -121,6 +125,13 @@ var reportCmd = &cobra.Command{
 
 		fmt.Println("\nAccess anomalies (NIS2 detection)")
 		fmt.Printf("  open / high-severity : %d / %d\n", p.Anomalies.Unacknowledged, p.Anomalies.HighSeverityOpen)
+
+		fmt.Println("\nLegal hold (ISO A.5.34)")
+		if p.LegalHold.Active {
+			fmt.Printf("  ACTIVE — purges blocked (%s)\n", p.LegalHold.Reason)
+		} else {
+			fmt.Println("  none — purges run normally")
+		}
 		return nil
 	},
 }

@@ -58,6 +58,14 @@ type EmergencyAccessPosture struct {
 	TotalActivations  int `json:"total_activations"`
 }
 
+// LegalHoldPosture reports whether a litigation/investigation hold is in effect
+// (ISO 27001 A.5.34) — while active the purge jobs preserve all records.
+type LegalHoldPosture struct {
+	Active   bool       `json:"active"`
+	PlacedAt *time.Time `json:"placed_at,omitempty"`
+	Reason   string     `json:"reason,omitempty"`
+}
+
 // AnomaliesPosture summarises detected access anomalies (NIS2 detection).
 type AnomaliesPosture struct {
 	Unacknowledged   int `json:"unacknowledged"`     // open alerts awaiting review
@@ -84,6 +92,7 @@ type CompliancePosture struct {
 	EmergencyAccess  EmergencyAccessPosture  `json:"emergency_access"`
 	Classification   ClassificationPosture   `json:"classification"`
 	Anomalies        AnomaliesPosture        `json:"anomalies"`
+	LegalHold        LegalHoldPosture        `json:"legal_hold"`
 }
 
 // GetCompliancePosture aggregates the deployment's control posture. It is an
@@ -148,6 +157,12 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 				p.Anomalies.HighSeverityOpen++
 			}
 		}
+	}
+
+	// Legal hold (A.5.34).
+	if hold, err := c.storage.GetActiveLegalHold(ctx); err == nil && hold != nil {
+		at := hold.PlacedAt
+		p.LegalHold = LegalHoldPosture{Active: true, PlacedAt: &at, Reason: hold.Reason}
 	}
 	return p, nil
 }

@@ -2823,8 +2823,9 @@ paths:
         overdue, due-soon), identity
         (active users, with-second-factor + percent), emergency access
         (active/total break-glass activations), data classification (secret
-        counts per sensitivity level + unclassified), and anomalies (open /
-        high-severity access-anomaly alerts). Requires system.read.
+        counts per sensitivity level + unclassified), anomalies (open /
+        high-severity access-anomaly alerts), and legal hold (active + reason).
+        Requires system.read.
       operationId: getCompliancePosture
       security: [{bearerAuth: []}]
       responses:
@@ -2851,6 +2852,50 @@ paths:
           description: >-
             Envelope {data}. data: {generated_at, posture, audit_anchor, campaigns[],
             break_glass[], rotation_overdue[], sod_violations[]}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/legal-hold:
+    get:
+      tags: [Dashboard]
+      summary: Legal-hold status (ISO 27001 A.5.34 / eDiscovery)
+      description: >-
+        Whether a deployment-wide litigation/investigation hold is active. While
+        active, the background purge jobs are blocked from hard-deleting records.
+        Requires system.read.
+      operationId: getLegalHold
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data}. data: {active} or {active:true, hold:{id, reason, placed_by, placed_at}}."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Dashboard]
+      summary: Place a legal hold (block all purges)
+      description: "Activate a hold with a reason; refuses if one is already active. Requires system.write."
+      operationId: placeLegalHold
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string, description: "Why the hold is placed (recorded for audit)"}
+      responses:
+        '201': {description: "Envelope {data}. data: {hold}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    delete:
+      tags: [Dashboard]
+      summary: Lift the active legal hold (resume purges)
+      operationId: liftLegalHold
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data, message}. Legal hold lifted."}
+        '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
   /api/v1/sod/policies:

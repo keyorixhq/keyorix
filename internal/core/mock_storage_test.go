@@ -271,6 +271,27 @@ func (m *MockStorage) DeleteSoDPolicy(ctx context.Context, id uint) error {
 	return args.Error(0)
 }
 
+func (m *MockStorage) CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error) {
+	args := m.Called(ctx, h)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.LegalHold), args.Error(1)
+}
+
+func (m *MockStorage) GetActiveLegalHold(ctx context.Context) (*models.LegalHold, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.LegalHold), args.Error(1)
+}
+
+func (m *MockStorage) UpdateLegalHold(ctx context.Context, h *models.LegalHold) error {
+	args := m.Called(ctx, h)
+	return args.Error(0)
+}
+
 func (m *MockStorage) CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
 	args := m.Called(ctx, a)
 	if args.Get(0) == nil {

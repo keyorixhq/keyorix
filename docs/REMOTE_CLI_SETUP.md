@@ -305,6 +305,26 @@ keyorix compliance report
 keyorix compliance export --output evidence-2026Q4.json
 ```
 
+### Legal Hold
+
+A deployment-wide **litigation / investigation hold** (ISO 27001 A.5.34 /
+eDiscovery / DORA record-keeping). While a hold is active, the background purge jobs
+(retention purge, JIT-expiry sweep, login-attempt prune) are **blocked from
+hard-deleting any records**, so data subject to the hold is preserved. Status reads
+need `system.read`; placing/lifting needs `system.write`. Placing and lifting are
+audited.
+
+- `keyorix legal-hold status` — whether a hold is active (and since when / why).
+- `keyorix legal-hold place --reason "…"` — place a hold (blocks all purges).
+- `keyorix legal-hold lift` — release the hold (purges resume next tick).
+
+```bash
+# Freeze all deletion for an investigation, then release when cleared:
+keyorix legal-hold place --reason "litigation hold — case INC-7"
+keyorix legal-hold status
+keyorix legal-hold lift
+```
+
 ### Separation-of-Duties Commands
 
 Separation of duties (ISO 27001 A.5.3 / SOX): define **toxic combinations** — two

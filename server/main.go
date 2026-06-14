@@ -388,6 +388,23 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		}
 	}()
 
+	// legalHoldBlocks reports whether a deployment-wide legal hold (ISO A.5.34)
+	// should block a hard-delete purge job this tick. Fails SAFE: if the hold status
+	// can't be read it returns true (skip the purge), so records that may be under
+	// hold are never destroyed on a transient lookup error.
+	legalHoldBlocks := func(job string) bool {
+		active, err := coreService.IsLegalHoldActive(ctx)
+		if err != nil {
+			log.Printf("%s skipped: could not check legal-hold status: %v", job, err)
+			return true
+		}
+		if active {
+			log.Printf("%s skipped: a legal hold is active", job)
+			return true
+		}
+		return false
+	}
+
 	// Start the retention purge scheduler (ADR-032) — opt-in. Hard-deletes
 	// soft-deleted users/projects/environments older than the retention window.
 	if cfg.Purge.Enabled {
@@ -398,6 +415,9 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			runPurge := func() {
+				if legalHoldBlocks("Retention purge") {
+					return
+				}
 				// Single-replica-gated (ADR-039): only one replica runs the purge.
 				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockPurge, func() error {
 					cutoff := time.Now().AddDate(0, 0, -retentionDays)
@@ -516,6 +536,11 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			runSweep := func() {
+				// A legal hold preserves the grant rows (the auth queries still deny
+				// expired grants immediately, so blocking the sweep loses no security).
+				if legalHoldBlocks("JIT access-expiry sweep") {
+					return
+				}
 				// Single-replica-gated (ADR-039): one replica sweeps per tick.
 				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockJITExpiry, func() error {
 					n, rerr := coreService.RemoveExpiredRoleGrants(ctx, time.Now())
@@ -587,6 +612,9 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 		runPrune := func() {
+			if legalHoldBlocks("Login-attempt prune") {
+				return
+			}
 			if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockLoginPrune, func() error {
 				_, perr := coreService.PruneLoginAttempts(ctx)
 				return perr
