@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,4 +69,68 @@ func TestExportComplianceEvidence_EmptyOutputDirErrors(t *testing.T) {
 	_, err := c.ExportComplianceEvidence(context.Background(), "")
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "output_dir"), "error names the misconfig")
+}
+
+type fakeEvidenceForwarder struct {
+	calls int
+	data  []byte
+	err   error
+}
+
+func (f *fakeEvidenceForwarder) ForwardEvidence(_ context.Context, data []byte) error {
+	f.calls++
+	f.data = data
+	return f.err
+}
+
+func TestExportComplianceEvidence_WebhookOnly(t *testing.T) {
+	ctx := context.Background()
+	c, db, _ := newEvidenceExportCore(t)
+	fwd := &fakeEvidenceForwarder{}
+	c.SetEvidenceForwarder(fwd)
+
+	res, err := c.ExportComplianceEvidence(ctx, "") // no dir → webhook is the only target
+	require.NoError(t, err)
+	assert.Equal(t, 1, fwd.calls)
+	assert.Greater(t, len(fwd.data), 0)
+	assert.Empty(t, res.Path)
+	assert.Equal(t, []string{"webhook"}, res.Targets)
+
+	var n int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).
+		Where("event_type = ?", "compliance.evidence_exported").Count(&n).Error)
+	assert.Equal(t, int64(1), n)
+}
+
+func TestExportComplianceEvidence_FileAndWebhook(t *testing.T) {
+	ctx := context.Background()
+	c, _, _ := newEvidenceExportCore(t)
+	fwd := &fakeEvidenceForwarder{}
+	c.SetEvidenceForwarder(fwd)
+
+	res, err := c.ExportComplianceEvidence(ctx, t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, 1, fwd.calls)
+	assert.NotEmpty(t, res.Path)
+	assert.Len(t, res.Targets, 2, "delivered to both file and webhook")
+}
+
+func TestExportComplianceEvidence_WebhookFailureWithFileSucceeds(t *testing.T) {
+	ctx := context.Background()
+	c, _, _ := newEvidenceExportCore(t)
+	c.SetEvidenceForwarder(&fakeEvidenceForwarder{err: errors.New("boom")})
+
+	res, err := c.ExportComplianceEvidence(ctx, t.TempDir())
+	require.NoError(t, err, "a file was written, so a webhook failure is non-fatal")
+	assert.NotEmpty(t, res.Path)
+	assert.Equal(t, []string{"file:" + res.Path}, res.Targets, "the failed webhook is not listed as a target")
+}
+
+func TestExportComplianceEvidence_WebhookOnlyFailureErrors(t *testing.T) {
+	ctx := context.Background()
+	c, _, _ := newEvidenceExportCore(t)
+	c.SetEvidenceForwarder(&fakeEvidenceForwarder{err: errors.New("boom")})
+
+	_, err := c.ExportComplianceEvidence(ctx, "") // webhook-only and it fails → fatal
+	require.Error(t, err)
 }
