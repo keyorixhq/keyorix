@@ -3,6 +3,37 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.22.0 — 2026-06-14
+
+The detection-and-preservation release: proactive alerting on access anomalies and
+a legal hold that preserves records under investigation.
+
+### Added
+- **Proactive anomaly alerting (NIS2 detection & response)** — detected access
+  anomalies (off-hours / new-IP / new-user access to secrets) are now pushed out
+  rather than just persisted: an in-app alert to the project's admins **and** a
+  `security.anomaly_detected` audit event that the SIEM forwarder picks up (so
+  anomalies reach the SOC). Each anomaly is announced once. Opt-in via the
+  `anomaly_alerts` config (which also makes the existing scan schedule
+  configurable); the open-anomaly count joins the compliance posture. ([#186])
+- **Legal hold (ISO 27001 A.5.34 / eDiscovery / DORA)** — a deployment-wide
+  litigation/investigation hold that, while active, **blocks every background
+  hard-delete job** (the retention purge, the JIT role-grant-expiry sweep, the
+  login-attempt prune) so records subject to hold are preserved. Storage-backed and
+  runtime-toggleable (place it now, no restart); the guard fails safe (skips a purge
+  if hold status can't be read). `GET/POST/DELETE /api/v1/legal-hold` and `keyorix
+  legal-hold status|place|lift` (status `system.read`; place/lift `system.write`);
+  placing/lifting is audited and the hold status joins the compliance posture. ([#187])
+
+### Notes
+- Additive schema only (new `legal_holds` table; an `alerted` column on
+  `anomaly_alerts`) — safe on existing databases.
+- The Keyorix web console gains an open-anomalies tile and a legal-hold banner with
+  a place/lift control on the Compliance page (keyorix-web).
+
+[#186]: https://github.com/keyorixhq/keyorix/pull/186
+[#187]: https://github.com/keyorixhq/keyorix/pull/187
+
 ## v0.21.0 — 2026-06-14
 
 ### Added
