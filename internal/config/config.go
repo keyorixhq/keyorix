@@ -37,6 +37,11 @@ type Config struct {
 	DualControl DualControlConfig `yaml:"dual_control"`
 	// AnomalyAlerts configures proactive alerting for detected access anomalies.
 	AnomalyAlerts AnomalyAlertsConfig `yaml:"anomaly_alerts"`
+	// DataRetention configures the opt-in scheduler that hard-deletes compliance
+	// records past their per-record-type retention window (ISO 27001 A.5.33 /
+	// GDPR storage-limitation / DORA). Respects legal hold; audit events are never
+	// purged (append-only, ADR-029).
+	DataRetention DataRetentionConfig `yaml:"data_retention"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -456,6 +461,42 @@ func (c *CredentialDeliveryConfig) DeliveryConfig() delivery.Config {
 type PurgeConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
+}
+
+// DataRetentionConfig configures the data-retention scheduler (ISO 27001 A.5.33 /
+// GDPR storage-limitation / DORA): a background job that hard-deletes compliance
+// records past their per-record-type retention window. Each *_days window is a
+// number of days; 0 (the zero value) disables retention for that type — those
+// records are kept indefinitely. Opt-in (Enabled, default off). Respects legal
+// hold: while a hold is active nothing is purged. Audit events are NEVER purged
+// (append-only tamper-evidence, ADR-029) and soft-deleted rows are handled by the
+// separate ADR-032 purge — this scheduler covers the compliance records that would
+// otherwise accumulate forever.
+type DataRetentionConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+	// AnomalyAlertsDays ages out resolved/old access-anomaly alerts on detected_at.
+	AnomalyAlertsDays int `yaml:"anomaly_alerts_days"`
+	// ClosedAccessReviewsDays ages out closed recertification campaigns (and their
+	// snapshot items) on closed_at. Open campaigns are never purged.
+	ClosedAccessReviewsDays int `yaml:"closed_access_reviews_days"`
+	// BreakGlassDays ages out non-active emergency-access activations on created_at.
+	// Active activations are never purged.
+	BreakGlassDays int `yaml:"break_glass_days"`
+	// ResolvedAccessRequestsDays ages out terminal-state access requests (and their
+	// approval records) on resolved_at. Pending requests are never purged.
+	ResolvedAccessRequestsDays int `yaml:"resolved_access_requests_days"`
+}
+
+// GetInterval returns the data-retention run interval, parsing Schedule as a Go
+// duration (e.g. "24h", "6h"); defaults to 24h when unset or unparseable.
+func (c DataRetentionConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // RotationRemindersConfig configures the rotation-reminder scheduler: a background

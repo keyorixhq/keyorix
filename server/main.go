@@ -141,6 +141,7 @@ const (
 	schedLockRotationRmdr int64 = 0x4B455953_524F5452 // "KEYSROTR"
 	schedLockAuditCkpt    int64 = 0x4B455953_41434B50 // "KEYSACKP"
 	schedLockJITExpiry    int64 = 0x4B455953_4A495445 // "KEYSJITE"
+	schedLockRetention    int64 = 0x4B455953_52455445 // "KEYSRETE"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -270,6 +271,15 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	if n := cfg.DualControl.GetRequiredApprovals(); n > 1 {
 		log.Printf("Dual-control approval enabled: %d approvals required per access request", n)
 	}
+
+	// Wire the configured data-retention windows (A.5.33) so the compliance posture
+	// reports them; the scheduler below drives the actual purge.
+	coreService.SetRetentionPolicy(core.RetentionPolicy{
+		AnomalyAlertsDays:          cfg.DataRetention.AnomalyAlertsDays,
+		ClosedAccessReviewsDays:    cfg.DataRetention.ClosedAccessReviewsDays,
+		BreakGlassDays:             cfg.DataRetention.BreakGlassDays,
+		ResolvedAccessRequestsDays: cfg.DataRetention.ResolvedAccessRequestsDays,
+	})
 
 	// Wire the credential-delivery channel (ADR-028). New selects out-of-band/SMTP/
 	// log from the configured mode and fails loud on a bad mode (e.g. smtp with no
@@ -445,6 +455,60 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				}
 			}
 		}()
+	}
+
+	// Start the data-retention scheduler (ISO A.5.33 / GDPR / DORA) — opt-in.
+	// Hard-deletes compliance records (anomaly alerts, closed campaigns, the
+	// break-glass register, resolved access requests) past their per-type window.
+	// Legal-hold-gated and single-replica-gated (ADR-039); audit events are never
+	// touched (append-only). Runs only when at least one window is configured.
+	if cfg.DataRetention.Enabled {
+		policy := core.RetentionPolicy{
+			AnomalyAlertsDays:          cfg.DataRetention.AnomalyAlertsDays,
+			ClosedAccessReviewsDays:    cfg.DataRetention.ClosedAccessReviewsDays,
+			BreakGlassDays:             cfg.DataRetention.BreakGlassDays,
+			ResolvedAccessRequestsDays: cfg.DataRetention.ResolvedAccessRequestsDays,
+		}
+		if !policy.Configured() {
+			log.Printf("Data-retention scheduler enabled but no retention windows are set; nothing to purge")
+		} else {
+			interval := cfg.DataRetention.GetInterval()
+			log.Printf("Data-retention scheduler enabled: every %s (anomaly_alerts=%dd, closed_reviews=%dd, break_glass=%dd, access_requests=%dd; 0=keep)",
+				interval, policy.AnomalyAlertsDays, policy.ClosedAccessReviewsDays, policy.BreakGlassDays, policy.ResolvedAccessRequestsDays)
+			go func() {
+				ticker := time.NewTicker(interval)
+				defer ticker.Stop()
+				runRetention := func() {
+					if legalHoldBlocks("Data-retention purge") {
+						return
+					}
+					if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockRetention, func() error {
+						res, err := coreService.PurgeExpiredComplianceRecords(ctx, time.Now(), policy)
+						if err != nil {
+							log.Printf("Data-retention purge error: %v", err)
+							return err
+						}
+						if res.Total() > 0 {
+							log.Printf("Data-retention purge removed %d records (anomaly_alerts=%d, closed_campaigns=%d, review_items=%d, break_glass=%d, access_requests=%d, approvals=%d)",
+								res.Total(), res.AnomalyAlerts, res.ClosedAccessReviews, res.AccessReviewItems,
+								res.BreakGlass, res.ResolvedAccessRequests, res.AccessRequestApprovals)
+						}
+						return nil
+					}); err != nil {
+						log.Printf("Data-retention scheduler error: %v", err)
+					}
+				}
+				runRetention() // run once on startup
+				for {
+					select {
+					case <-ticker.C:
+						runRetention()
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+		}
 	}
 
 	// Start the rotation-reminder scheduler — opt-in. Notifies project admins of

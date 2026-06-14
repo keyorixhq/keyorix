@@ -67,6 +67,21 @@ type posture struct {
 		Active bool   `json:"active"`
 		Reason string `json:"reason"`
 	} `json:"legal_hold"`
+	Retention struct {
+		Enabled                    bool `json:"enabled"`
+		AnomalyAlertsDays          int  `json:"anomaly_alerts_days"`
+		ClosedAccessReviewsDays    int  `json:"closed_access_reviews_days"`
+		BreakGlassDays             int  `json:"break_glass_days"`
+		ResolvedAccessRequestsDays int  `json:"resolved_access_requests_days"`
+	} `json:"retention"`
+}
+
+// retDays renders a retention window: a day count, or "keep" when 0 (disabled).
+func retDays(d int) string {
+	if d <= 0 {
+		return "keep"
+	}
+	return fmt.Sprintf("%dd", d)
 }
 
 func yesNo(b bool) string {
@@ -131,6 +146,16 @@ var reportCmd = &cobra.Command{
 			fmt.Printf("  ACTIVE — purges blocked (%s)\n", p.LegalHold.Reason)
 		} else {
 			fmt.Println("  none — purges run normally")
+		}
+
+		fmt.Println("\nData retention (ISO A.5.33 / GDPR)")
+		if p.Retention.Enabled {
+			fmt.Printf("  anomaly alerts          : %s\n", retDays(p.Retention.AnomalyAlertsDays))
+			fmt.Printf("  closed access reviews   : %s\n", retDays(p.Retention.ClosedAccessReviewsDays))
+			fmt.Printf("  break-glass register    : %s\n", retDays(p.Retention.BreakGlassDays))
+			fmt.Printf("  resolved access requests: %s\n", retDays(p.Retention.ResolvedAccessRequestsDays))
+		} else {
+			fmt.Println("  not configured — compliance records kept indefinitely")
 		}
 		return nil
 	},

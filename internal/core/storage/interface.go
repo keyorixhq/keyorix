@@ -208,6 +208,19 @@ type Storage interface {
 	PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error)
 	PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error)
 	PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error)
+	// Delete*Before hard-delete compliance records past their retention window
+	// (ISO A.5.33 / GDPR), returning the number removed. Unlike the soft-delete
+	// purge these age out live records by a time column, never touch active rows,
+	// and cascade to dependent rows where noted. Irreversible.
+	DeleteAnomalyAlertsBefore(ctx context.Context, before time.Time) (int64, error)
+	// DeleteClosedAccessReviewsBefore removes closed campaigns (closed_at < before)
+	// and their snapshot items, returning (campaigns, items) removed.
+	DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (campaigns int64, items int64, err error)
+	// DeleteExpiredBreakGlassBefore removes non-active activations (created_at < before).
+	DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error)
+	// DeleteResolvedAccessRequestsBefore removes terminal-state requests (resolved_at
+	// < before) and their approval records, returning (requests, approvals) removed.
+	DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (requests int64, approvals int64, err error)
 	ListUsers(ctx context.Context, filter *UserFilter) ([]*models.User, int64, error)
 	// ListUsersInStateBefore returns users whose account_state equals state and
 	// who were created before the cutoff (ADR-025 stale-account warnings).
