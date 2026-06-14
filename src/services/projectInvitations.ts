@@ -31,6 +31,9 @@ export interface AccessRequest {
     resolvedBy: number;
     expiresAt?: string;
     createdAt?: string;
+    // Dual-control (N-of-M) progress for a pending request: M of K approvals.
+    approvalsReceived: number;
+    requiredApprovals: number;
 }
 
 const normalizeInvitation = (i: any): ProjectInvitation => ({
@@ -55,6 +58,8 @@ const normalizeAccessRequest = (r: any): AccessRequest => ({
     resolvedBy: r.ResolvedBy ?? r.resolved_by ?? r.resolvedBy ?? 0,
     expiresAt: r.ExpiresAt ?? r.expires_at ?? r.expiresAt ?? undefined,
     createdAt: r.CreatedAt ?? r.created_at ?? r.createdAt ?? undefined,
+    approvalsReceived: r.ApprovalsReceived ?? r.approvals_received ?? 0,
+    requiredApprovals: r.RequiredApprovals ?? r.required_approvals ?? 1,
 });
 
 // GlobalInviteResult is the POST /invitations response: the created invitation plus

@@ -7,8 +7,8 @@ const mutate = vi.fn();
 vi.mock('../api', () => ({
     useProjectAccessRequests: () => ({
         data: [
-            { id: 1, projectId: 3, userId: 42, suggestedRole: 'project_developer', grantedRole: '', state: 'pending', reason: 'need write' },
-            { id: 2, projectId: 3, userId: 99, suggestedRole: 'project_viewer', grantedRole: 'project_viewer', state: 'approved', reason: '' },
+            { id: 1, projectId: 3, userId: 42, suggestedRole: 'project_developer', grantedRole: '', state: 'pending', reason: 'need write', approvalsReceived: 1, requiredApprovals: 2 },
+            { id: 2, projectId: 3, userId: 99, suggestedRole: 'project_viewer', grantedRole: 'project_viewer', state: 'approved', reason: '', approvalsReceived: 0, requiredApprovals: 1 },
         ],
     }),
     useResolveAccessRequest: () => ({ mutate, isPending: false }),
@@ -28,6 +28,11 @@ describe('PendingAccessRequestsSection', () => {
         expect(screen.getByText('1')).toBeInTheDocument(); // count badge: 1 pending, not 2
         expect(screen.getByText('Alice A')).toBeInTheDocument(); // resolved from users
         expect(screen.getByText('“need write”')).toBeInTheDocument();
+    });
+
+    it('shows the dual-control approval progress when more than one approval is required', () => {
+        render(<PendingAccessRequestsSection projectId={3} users={users} />);
+        expect(screen.getByText('1 of 2 approvals')).toBeInTheDocument();
     });
 
     it('approves with the suggested role pre-selected', () => {

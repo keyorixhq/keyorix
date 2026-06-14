@@ -138,6 +138,16 @@ const AccessRequestRow: React.FC<AccessRequestRowProps> = ({ projectId, request,
                     )}
                 </div>
 
+                {request.requiredApprovals > 1 && (
+                    <span
+                        className="text-xs px-2 py-1 rounded-md shrink-0"
+                        style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}
+                        title="Dual control: distinct approvers required before the role is granted"
+                    >
+                        {request.approvalsReceived} of {request.requiredApprovals} approvals
+                    </span>
+                )}
+
                 {!rejecting && (
                     <>
                         <select
