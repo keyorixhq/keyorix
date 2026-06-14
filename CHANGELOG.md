@@ -3,6 +3,50 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.20.0 — 2026-06-14
+
+The compliance-reporting & data-classification release: turn the controls Keyorix
+enforces into the artifacts an auditor (ISO 27001 / SOC 2 / NIS2 / DORA) consumes —
+a single posture, an evidence pack, separation-of-duties detection, and secret
+data classification.
+
+### Added
+- **Controls-posture report** — `GET /api/v1/compliance/posture` and `keyorix
+  compliance report` roll up the deployment's control posture into one structured
+  object: audit-trail integrity (chain verified, checkpointed), access governance
+  (review-campaign coverage, dormant role grants, SoD violations), rotation hygiene
+  (overdue / due-soon), identity (second-factor coverage), emergency access
+  (break-glass usage), and data classification (secrets per sensitivity level).
+  Gated by `system.read`. ([#177], [#180], [#182])
+- **Auditor evidence pack** — `GET /api/v1/compliance/evidence` and `keyorix
+  compliance export [--output FILE]` bundle the posture with the records that
+  substantiate it (the audit-chain anchor, the access-review campaigns, the
+  break-glass register, the overdue rotations, and the SoD violations) as a
+  timestamped, archivable JSON. ([#178], [#180])
+- **Separation of duties (ISO 27001 A.5.3 / SOX)** — define toxic permission
+  combinations (two permissions one principal must not hold together) and detect
+  every user who effectively holds both sides. `GET/POST/DELETE /api/v1/sod/policies`
+  + `GET /api/v1/sod/violations`; `keyorix sod policy …` and `keyorix sod
+  violations`. ([#179])
+- **Secret data classification (ISO 27001 A.5.12 / A.5.13)** — label a secret with
+  its sensitivity (`public` / `internal` / `confidential` / `restricted`), at
+  creation or via `PATCH /api/v1/secrets/{id}/classification` and `keyorix secret
+  classify`. The label is audited, filterable, and counted in the classification
+  posture. ([#181])
+
+### Notes
+- Additive schema only (new tables `sod_policies`; a nullable `classification`
+  column on `secret_nodes`) — safe on existing databases.
+- The Keyorix web console gains a live **Compliance** posture dashboard surfacing
+  the controls posture, SoD violations, and classification coverage (keyorix-web).
+
+[#177]: https://github.com/keyorixhq/keyorix/pull/177
+[#178]: https://github.com/keyorixhq/keyorix/pull/178
+[#179]: https://github.com/keyorixhq/keyorix/pull/179
+[#180]: https://github.com/keyorixhq/keyorix/pull/180
+[#181]: https://github.com/keyorixhq/keyorix/pull/181
+[#182]: https://github.com/keyorixhq/keyorix/pull/182
+
 ## v0.19.0 — 2026-06-14
 
 The access-recertification / least-privilege / incident-response release (ISO 27001
