@@ -33,6 +33,14 @@ export interface CompliancePosture {
         activeActivations: number;
         totalActivations: number;
     };
+    classification: {
+        totalSecrets: number;
+        public: number;
+        internal: number;
+        confidential: number;
+        restricted: number;
+        unclassified: number;
+    };
 }
 
 const num = (v: any): number => (typeof v === 'number' ? v : 0);
@@ -67,6 +75,14 @@ const normalize = (d: any): CompliancePosture => ({
     emergencyAccess: {
         activeActivations: num(d.emergency_access?.active_activations),
         totalActivations: num(d.emergency_access?.total_activations),
+    },
+    classification: {
+        totalSecrets: num(d.classification?.total_secrets),
+        public: num(d.classification?.public),
+        internal: num(d.classification?.internal),
+        confidential: num(d.classification?.confidential),
+        restricted: num(d.classification?.restricted),
+        unclassified: num(d.classification?.unclassified),
     },
 });
 
