@@ -35,6 +35,7 @@ type AccessGovernancePosture struct {
 	OpenCampaigns            int `json:"open_campaigns"`
 	PendingItems             int `json:"pending_items"`       // undecided items across open campaigns
 	DormantRoleGrants        int `json:"dormant_role_grants"` // user role grants with no/old secret access
+	SoDViolations            int `json:"sod_violations"`      // principals holding a forbidden permission pair (A.5.3)
 }
 
 // RotationPosture summarises secret-rotation hygiene (ISO A.5.15 / NIS2).
@@ -110,6 +111,11 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	// Access governance + emergency access — per project.
 	if err := c.accessGovernancePosture(ctx, p); err != nil {
 		return nil, err
+	}
+
+	// Separation-of-duties violations (A.5.3).
+	if violations, err := c.DetectSoDViolations(ctx); err == nil {
+		p.AccessGovernance.SoDViolations = len(violations)
 	}
 	return p, nil
 }

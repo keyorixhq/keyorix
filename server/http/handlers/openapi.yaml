@@ -2782,8 +2782,9 @@ paths:
         A deployment-wide, on-demand snapshot of the control posture for auditors,
         rolling up: audit-trail integrity (chain verified, chained events,
         checkpointed), access governance (projects, with-open-campaign,
-        never-reviewed, open campaigns + pending items, dormant role grants),
-        rotation hygiene (covered secrets, overdue, due-soon), identity
+        never-reviewed, open campaigns + pending items, dormant role grants,
+        separation-of-duties violations), rotation hygiene (covered secrets,
+        overdue, due-soon), identity
         (active users, with-second-factor + percent), and emergency access
         (active/total break-glass activations). Requires system.read.
       operationId: getCompliancePosture
@@ -2811,7 +2812,7 @@ paths:
         '200':
           description: >-
             Envelope {data}. data: {generated_at, posture, audit_anchor, campaigns[],
-            break_glass[], rotation_overdue[]}.
+            break_glass[], rotation_overdue[], sod_violations[]}.
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
   /api/v1/sod/policies:

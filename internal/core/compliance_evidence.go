@@ -57,6 +57,7 @@ type ComplianceEvidence struct {
 	Campaigns       []EvidenceCampaign             `json:"campaigns"`
 	BreakGlass      []*models.BreakGlassActivation `json:"break_glass"`
 	RotationOverdue []EvidenceRotation             `json:"rotation_overdue"`
+	SoDViolations   []SoDViolation                 `json:"sod_violations"`
 }
 
 // GenerateComplianceEvidence assembles the evidence pack. Like the posture, it is an
@@ -72,6 +73,12 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 		Campaigns:       []EvidenceCampaign{},
 		BreakGlass:      []*models.BreakGlassActivation{},
 		RotationOverdue: []EvidenceRotation{},
+		SoDViolations:   []SoDViolation{},
+	}
+
+	// Separation-of-duties violations (the toxic-combination register).
+	if violations, err := c.DetectSoDViolations(ctx); err == nil {
+		ev.SoDViolations = violations
 	}
 
 	// Audit anchor.
