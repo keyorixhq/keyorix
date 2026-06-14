@@ -239,6 +239,15 @@ func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo
 		if filter.Type != nil && *filter.Type != "" && s.Type != *filter.Type {
 			continue
 		}
+		if filter.Classification != nil && *filter.Classification != "" {
+			if *filter.Classification == "unclassified" {
+				if s.Classification != "" {
+					continue
+				}
+			} else if s.Classification != *filter.Classification {
+				continue
+			}
+		}
 		if filter.ExpiresBefore != nil {
 			if s.Expiration == nil || !s.Expiration.Before(*filter.ExpiresBefore) {
 				continue // no expiration, or expires at/after the cutoff
@@ -293,6 +302,7 @@ func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *s
 		Page:           filter.Page,
 		PageSize:       filter.PageSize,
 		Type:           filter.Type,
+		Classification: filter.Classification,
 		CreatedBy:      filter.CreatedBy,
 		ProjectID:      filter.ProjectID,
 		EnvironmentID:  filter.EnvironmentID,
