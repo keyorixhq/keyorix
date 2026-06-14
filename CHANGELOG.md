@@ -3,6 +3,20 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.21.0 — 2026-06-14
+
+### Added
+- **Dual-control (N-of-M) approval for access requests (ISO 27001 A.5.3 / SOX)** —
+  an access request can now require multiple **distinct** approvers before the role
+  is granted, so no single admin can unilaterally grant access. Configure the
+  threshold with `dual_control.required_approvals` (default 1 = single approval).
+  Below the threshold the request stays pending; the listing shows the M-of-K
+  progress, remaining approvers are notified, and each sign-off is audited. A
+  requester can never approve their own request (maker ≠ checker). The web console
+  shows the approval progress on the pending-requests view. ([#184])
+
+[#184]: https://github.com/keyorixhq/keyorix/pull/184
+
 ## v0.20.0 — 2026-06-14
 
 The compliance-reporting & data-classification release: turn the controls Keyorix
