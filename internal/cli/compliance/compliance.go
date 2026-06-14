@@ -199,7 +199,82 @@ stdout by default, or to --output FILE.`,
 	},
 }
 
+// controlMatrix mirrors GET /api/v1/compliance/controls.
+type controlMatrix struct {
+	GeneratedAt string `json:"generated_at"`
+	Summary     struct {
+		Total         int `json:"total"`
+		Pass          int `json:"pass"`
+		Gap           int `json:"gap"`
+		NotConfigured int `json:"not_configured"`
+	} `json:"summary"`
+	Controls []struct {
+		Name       string `json:"name"`
+		Area       string `json:"area"`
+		Status     string `json:"status"`
+		Detail     string `json:"detail"`
+		Frameworks struct {
+			ISO27001 []string `json:"iso_27001"`
+			SOC2     []string `json:"soc2"`
+			NIS2     []string `json:"nis2"`
+			DORA     []string `json:"dora"`
+		} `json:"frameworks"`
+	} `json:"controls"`
+}
+
+func statusMark(s string) string {
+	switch s {
+	case "pass":
+		return "PASS"
+	case "gap":
+		return "GAP "
+	default:
+		return "n/a "
+	}
+}
+
+func joinRefs(refs ...[]string) string {
+	var all []string
+	for _, r := range refs {
+		all = append(all, r...)
+	}
+	if len(all) == 0 {
+		return "—"
+	}
+	out := all[0]
+	for _, r := range all[1:] {
+		out += ", " + r
+	}
+	return out
+}
+
+var controlsCmd = &cobra.Command{
+	Use:          "controls",
+	Short:        "Control matrix — controls mapped to ISO 27001 / SOC 2 / NIS2 / DORA with status",
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		c, ok := common.NewRemoteClient()
+		if !ok {
+			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+		}
+		var m controlMatrix
+		if err := c.Get(context.Background(), "/api/v1/compliance/controls", &m); err != nil {
+			return err
+		}
+		fmt.Printf("Control matrix — %s\n", m.GeneratedAt)
+		fmt.Printf("  %d controls: %d pass, %d gap, %d not-configured\n\n", m.Summary.Total, m.Summary.Pass, m.Summary.Gap, m.Summary.NotConfigured)
+		for _, ctrl := range m.Controls {
+			fmt.Printf("[%s] %s (%s)\n", statusMark(ctrl.Status), ctrl.Name, ctrl.Area)
+			fmt.Printf("        %s\n", ctrl.Detail)
+			fmt.Printf("        ISO: %s | SOC2: %s | NIS2: %s | DORA: %s\n",
+				joinRefs(ctrl.Frameworks.ISO27001), joinRefs(ctrl.Frameworks.SOC2),
+				joinRefs(ctrl.Frameworks.NIS2), joinRefs(ctrl.Frameworks.DORA))
+		}
+		return nil
+	},
+}
+
 func init() {
 	exportCmd.Flags().StringVar(&exportOutput, "output", "", "Write the evidence pack to a file instead of stdout")
-	ComplianceCmd.AddCommand(reportCmd, exportCmd)
+	ComplianceCmd.AddCommand(reportCmd, controlsCmd, exportCmd)
 }

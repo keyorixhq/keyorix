@@ -53,6 +53,7 @@ type EvidenceRotation struct {
 type ComplianceEvidence struct {
 	GeneratedAt     time.Time                      `json:"generated_at"`
 	Posture         *CompliancePosture             `json:"posture"`
+	Controls        []ControlState                 `json:"controls"` // framework matrix (ISO/SOC2/NIS2/DORA)
 	AuditAnchor     AuditAnchor                    `json:"audit_anchor"`
 	Campaigns       []EvidenceCampaign             `json:"campaigns"`
 	BreakGlass      []*models.BreakGlassActivation `json:"break_glass"`
@@ -70,6 +71,7 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 	ev := &ComplianceEvidence{
 		GeneratedAt:     c.now(),
 		Posture:         posture,
+		Controls:        EvaluateControls(posture),
 		Campaigns:       []EvidenceCampaign{},
 		BreakGlass:      []*models.BreakGlassActivation{},
 		RotationOverdue: []EvidenceRotation{},
