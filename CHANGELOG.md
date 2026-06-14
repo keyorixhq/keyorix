@@ -3,6 +3,39 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.23.0 — 2026-06-14
+
+The retention release: data is kept exactly as long as policy requires, and the
+evidence that proves it is delivered automatically.
+
+### Added
+- **Per-record-type data-retention policies (ISO 27001 A.5.33 / GDPR
+  storage-limitation / DORA)** — configurable retention windows for the compliance
+  records that previously accumulated forever: anomaly alerts, closed
+  recertification campaigns (and their items), the break-glass register, and
+  resolved access requests (and their approvals). An opt-in scheduler hard-deletes
+  records past their window — never touching active/open/pending rows, cascading to
+  dependent rows, and **respecting legal hold** (an active hold preserves
+  everything). The audit trail (append-only) and soft-deleted rows (the separate
+  ADR-032 purge) are deliberately never touched. Each `*_days` window defaults to
+  `0` = keep forever; the configured windows join the compliance posture and
+  `keyorix compliance report` as A.5.33 evidence. ([#189])
+- **Scheduled compliance-evidence delivery (ISO 27001 / SOC 2 continuous
+  evidence)** — an opt-in scheduler that periodically generates the auditor evidence
+  pack and writes it as a timestamped JSON file to a configured directory for
+  off-box archival, emitting a `compliance.evidence_exported` audit event each run
+  (so the export is itself in the tamper-evident trail and is SIEM-forwarded).
+  Configure via `evidence_delivery`. ([#190])
+
+### Notes
+- No schema changes — both features build on existing tables.
+- The Keyorix web console gains a per-secret data-classification badge and inline
+  level picker on the secret-detail view (keyorix-web), closing the A.5.12
+  classification loop the compliance posture already reported on.
+
+[#189]: https://github.com/keyorixhq/keyorix/pull/189
+[#190]: https://github.com/keyorixhq/keyorix/pull/190
+
 ## v0.22.0 — 2026-06-14
 
 The detection-and-preservation release: proactive alerting on access anomalies and
