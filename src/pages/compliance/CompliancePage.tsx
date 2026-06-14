@@ -62,9 +62,46 @@ const PosturePanel: React.FC = () => {
                 <Tile label="Projects reviewed (A.5.18)" value={`${reviewed}/${ag.projects}`} tone={ag.projectsNeverReviewed > 0 ? 'warn' : 'good'} />
                 <Tile label="Open campaigns / pending" value={`${ag.openCampaigns} / ${ag.pendingItems}`} />
                 <Tile label="Dormant role grants" value={ag.dormantRoleGrants} tone={ag.dormantRoleGrants > 0 ? 'warn' : 'good'} />
+                <Tile label="SoD violations (A.5.3)" value={ag.sodViolations} tone={ag.sodViolations > 0 ? 'bad' : 'good'} />
                 <Tile label="Rotation overdue / due-soon (A.5.15)" value={`${p.rotation.overdue} / ${p.rotation.dueSoon}`} tone={p.rotation.overdue > 0 ? 'warn' : 'good'} />
                 <Tile label="Break-glass active / total" value={`${p.emergencyAccess.activeActivations} / ${p.emergencyAccess.totalActivations}`} tone={p.emergencyAccess.activeActivations > 0 ? 'warn' : undefined} />
             </div>
+        </div>
+    );
+};
+
+// SoDViolationsSection lists the separation-of-duties violations (principals
+// holding a forbidden permission pair). Needs system.read; hidden on 403/empty.
+const SoDViolationsSection: React.FC = () => {
+    const { data: violations = [], isError } = useQuery({
+        queryKey: ['sod', 'violations'],
+        queryFn: () => complianceApi.getSoDViolations(),
+        staleTime: 60_000,
+        retry: false,
+    });
+    if (isError || violations.length === 0) return null;
+    return (
+        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+                <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--error)' }}>
+                    Separation-of-duties violations ({violations.length})
+                </h2>
+            </div>
+            <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {violations.map((v, i) => (
+                    <li key={i} className="px-6 py-3 flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                {v.email ? `${v.username} (${v.email})` : v.username}
+                            </p>
+                            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{v.policyName}</p>
+                        </div>
+                        <span className="text-xs px-2 py-1 rounded-md shrink-0" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                            {v.permissionA} + {v.permissionB}
+                        </span>
+                    </li>
+                ))}
+            </ul>
         </div>
     );
 };
@@ -98,6 +135,7 @@ export const CompliancePage: React.FC = () => (
         </div>
 
         <PosturePanel />
+        <SoDViolationsSection />
 
         <SectionCard title="NIS2 Directive">
             Keyorix supports NIS2 Article 21 technical requirements — access controls, encryption
