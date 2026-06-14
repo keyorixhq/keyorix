@@ -78,6 +78,12 @@ func runReview(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to approve access request: %w", err)
 		}
+		// Under dual control the request may still be pending more approvals.
+		if req.State != "approved" {
+			fmt.Printf("Approval recorded for access request %d (%d of %d) — more approvals needed before the role is granted.\n",
+				req.ID, req.ApprovalsReceived, req.RequiredApprovals)
+			return nil
+		}
 		grantNote := "permanently"
 		if ttl > 0 {
 			grantNote = fmt.Sprintf("for %s (time-bound)", ttl)

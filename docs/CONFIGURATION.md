@@ -394,6 +394,20 @@ break_glass:
   max_ttl: "24h"                    # ceiling on a requested TTL
 ```
 
+## dual_control
+
+**N-of-M approval (dual control)** for access-request grants (ISO 27001 A.5.3 /
+SOX): instead of one admin's approval granting the role immediately, a request
+requires `required_approvals` **distinct** approvers — and never the requester
+(maker ≠ checker) — before the role is granted. Each sign-off is audited; the
+request listing shows the M-of-K progress and remaining approvers are notified. A
+value of `1` (the default) keeps the single-approval behaviour.
+
+```yaml
+dual_control:
+  required_approvals: 2   # distinct approvers needed per access request (default 1)
+```
+
 ## audit.siem
 
 Native push of audit events to a SIEM. The token is read from `KEYORIX_SIEM_TOKEN`

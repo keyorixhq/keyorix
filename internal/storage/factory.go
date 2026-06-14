@@ -256,6 +256,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	patExists := tableExists(db, "personal_access_tokens")
 	invitationsExists := tableExists(db, "project_invitations")
 	accessReqExists := tableExists(db, "access_requests")
+	accessReqApprovalsExists := tableExists(db, "access_request_approvals")
 	campaignExists := tableExists(db, "access_review_campaigns")
 	breakGlassExists := tableExists(db, "break_glass_activations")
 	sodExists := tableExists(db, "sod_policies")
@@ -388,6 +389,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !accessReqExists {
 		if err := db.AutoMigrate(&models.AccessRequest{}); err != nil {
 			return fmt.Errorf("failed to migrate access_requests table: %w", err)
+		}
+	}
+
+	// Create the access-request approvals table if missing (N-of-M dual control).
+	if !accessReqApprovalsExists {
+		if err := db.AutoMigrate(&models.AccessRequestApproval{}); err != nil {
+			return fmt.Errorf("failed to migrate access_request_approvals table: %w", err)
 		}
 	}
 

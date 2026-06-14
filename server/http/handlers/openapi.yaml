@@ -1144,7 +1144,10 @@ paths:
         - {name: id, in: path, required: true, schema: {type: integer}}
       responses:
         '200':
-          description: Envelope with `data.access_requests` (array of access-request objects).
+          description: >-
+            Envelope with `data.access_requests` (array of access-request objects).
+            Under dual control a pending request carries `ApprovalsReceived` /
+            `RequiredApprovals` (the M-of-K progress).
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -1173,6 +1176,11 @@ paths:
     put:
       tags: [AccessRequests]
       summary: Approve or reject an access request
+      description: >-
+        Approve records the caller's sign-off. Under dual control
+        (`dual_control.required_approvals` > 1) the role is granted only once that
+        many distinct approvers — none of them the requester — have approved;
+        before then the request stays pending.
       operationId: resolveAccessRequest
       security: [{bearerAuth: []}]
       parameters:

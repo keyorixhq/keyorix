@@ -49,6 +49,9 @@ type KeyorixCore struct {
 	// breakGlassPolicy configures self-service emergency access; zero value =
 	// disabled. Set from config at startup via SetBreakGlassPolicy.
 	breakGlassPolicy BreakGlassPolicy
+	// dualControlRequiredApprovals is the N-of-M approval threshold for access
+	// requests (A.5.3); 0/1 = single approval (disabled). Set via SetDualControlPolicy.
+	dualControlRequiredApprovals int
 	// oidcVerifier verifies federated machine-identity JWTs (ADR-031); nil = OIDC
 	// auth disabled. Set from config via SetOIDCVerifier.
 	oidcVerifier *OIDCVerifier

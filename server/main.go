@@ -265,6 +265,12 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		MaxTTL:        cfg.BreakGlass.GetMaxTTL(),
 	})
 
+	// Wire N-of-M dual-control approval for access requests (1 = disabled).
+	coreService.SetDualControlPolicy(cfg.DualControl.GetRequiredApprovals())
+	if n := cfg.DualControl.GetRequiredApprovals(); n > 1 {
+		log.Printf("Dual-control approval enabled: %d approvals required per access request", n)
+	}
+
 	// Wire the credential-delivery channel (ADR-028). New selects out-of-band/SMTP/
 	// log from the configured mode and fails loud on a bad mode (e.g. smtp with no
 	// host), so a misconfigured install does not silently drop setup links.

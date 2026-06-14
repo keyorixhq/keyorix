@@ -41,3 +41,11 @@ func (rs *RemoteStorage) UpdateAccessRequest(_ context.Context, _ *models.Access
 func (rs *RemoteStorage) ListAccessRequests(_ context.Context, _ uint) ([]*models.AccessRequest, error) {
 	return nil, remoteUnsupported("ListAccessRequests")
 }
+
+func (rs *RemoteStorage) CreateAccessRequestApproval(_ context.Context, _ *models.AccessRequestApproval) error {
+	return remoteUnsupported("CreateAccessRequestApproval")
+}
+
+func (rs *RemoteStorage) ListAccessRequestApprovals(_ context.Context, _ uint) ([]*models.AccessRequestApproval, error) {
+	return nil, remoteUnsupported("ListAccessRequestApprovals")
+}

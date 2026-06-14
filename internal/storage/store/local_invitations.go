@@ -82,3 +82,22 @@ func (ls *LocalStorage) ListAccessRequests(ctx context.Context, projectID uint) 
 	}
 	return rows, nil
 }
+
+func (ls *LocalStorage) CreateAccessRequestApproval(ctx context.Context, a *models.AccessRequestApproval) error {
+	if err := ls.db.WithContext(ctx).Create(a).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+func (ls *LocalStorage) ListAccessRequestApprovals(ctx context.Context, requestID uint) ([]*models.AccessRequestApproval, error) {
+	var rows []*models.AccessRequestApproval
+	err := ls.db.WithContext(ctx).
+		Where("request_id = ?", requestID).
+		Order("id ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
+}

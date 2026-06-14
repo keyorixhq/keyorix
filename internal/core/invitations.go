@@ -356,10 +356,18 @@ func (c *KeyorixCore) ListAccessRequests(ctx context.Context, projectID uint) ([
 		return nil, err
 	}
 	now := c.now()
+	required := c.requiredApprovals()
 	for _, req := range rows {
 		if req.State == AccessRequestPending && req.ExpiresAt != nil && now.After(*req.ExpiresAt) {
 			req.State = AccessRequestExpired
 			_ = c.storage.UpdateAccessRequest(ctx, req)
+		}
+		// Annotate the dual-control progress for a pending request.
+		if req.State == AccessRequestPending {
+			req.RequiredApprovals = required
+			if approvals, err := c.storage.ListAccessRequestApprovals(ctx, req.ID); err == nil {
+				req.ApprovalsReceived = len(approvals)
+			}
 		}
 	}
 	return rows, nil
@@ -372,10 +380,25 @@ func (c *KeyorixCore) ApproveAccessRequest(ctx context.Context, projectID, reque
 	return c.ApproveAccessRequestWithExpiry(ctx, projectID, requestID, approverID, grantedRole, 0)
 }
 
-// ApproveAccessRequestWithExpiry approves a pending request like ApproveAccessRequest
-// but, when grantTTL > 0, grants the role TIME-BOUND (just-in-time access): the
-// grant stops authorizing once the TTL elapses and is later swept by the JIT
-// expiry scheduler. grantTTL == 0 grants permanently.
+// SetDualControlPolicy sets the N-of-M approval threshold for access requests
+// (A.5.3). <=1 = single approval (the default).
+func (c *KeyorixCore) SetDualControlPolicy(requiredApprovals int) {
+	c.dualControlRequiredApprovals = requiredApprovals
+}
+
+// requiredApprovals returns the dual-control threshold (minimum 1).
+func (c *KeyorixCore) requiredApprovals() int {
+	if c.dualControlRequiredApprovals > 1 {
+		return c.dualControlRequiredApprovals
+	}
+	return 1
+}
+
+// ApproveAccessRequestWithExpiry records an approver's sign-off on a pending request
+// and, once the dual-control threshold of K distinct approvers (none the requester)
+// is reached, grants the role — TIME-BOUND when grantTTL > 0 (JIT). Below the
+// threshold the request stays pending and the returned request carries the M-of-K
+// progress. When K is 1 (the default) the first approval grants immediately.
 func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projectID, requestID, approverID uint, grantedRole string, grantTTL time.Duration) (*models.AccessRequest, error) {
 	req, err := c.storage.GetAccessRequest(ctx, requestID)
 	if err != nil {
@@ -393,6 +416,10 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	if grantTTL < 0 {
 		return nil, fmt.Errorf("grant TTL must not be negative")
 	}
+	// Maker ≠ checker: a requester cannot approve their own request.
+	if approverID == req.UserID {
+		return nil, fmt.Errorf("a requester cannot approve their own access request")
+	}
 	role := grantedRole
 	if role == "" {
 		role = req.SuggestedRole
@@ -404,8 +431,39 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	if err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
+
+	// One sign-off per distinct approver.
+	approvals, err := c.storage.ListAccessRequestApprovals(ctx, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read approvals: %w", err)
+	}
+	for _, a := range approvals {
+		if a.ApproverID == approverID {
+			return nil, fmt.Errorf("you have already approved this request")
+		}
+	}
+
 	now := c.now()
-	// Grant the role at the project scope — time-bound when a TTL is given.
+	received := len(approvals) + 1
+	required := c.requiredApprovals()
+
+	// Below the threshold: record the approval, stay pending, notify, return progress.
+	if received < required {
+		if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
+			RequestID: requestID, ApproverID: approverID, CreatedAt: now,
+		}); err != nil {
+			return nil, fmt.Errorf("failed to record approval: %w", err)
+		}
+		c.auditProjectScoped(ctx, "access_request.approval_recorded", approverID, req.ProjectID,
+			fmt.Sprintf("approval %d of %d recorded for access request %d", received, required, req.ID))
+		c.notifyApprovalProgress(ctx, req, received, required)
+		req.ApprovalsReceived = received
+		req.RequiredApprovals = required
+		return req, nil
+	}
+
+	// Threshold reached. Grant the role FIRST so that a grant failure leaves the
+	// approval unrecorded (retryable) rather than stuck above-threshold-but-ungranted.
 	scope := storage.Scope{ProjectID: req.ProjectID}
 	grantDesc := role
 	if grantTTL > 0 {
@@ -419,6 +477,11 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 	}
+	if err := c.storage.CreateAccessRequestApproval(ctx, &models.AccessRequestApproval{
+		RequestID: requestID, ApproverID: approverID, CreatedAt: now,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to record approval: %w", err)
+	}
 	req.State = AccessRequestApproved
 	req.GrantedRole = role
 	req.ResolvedBy = approverID
@@ -427,9 +490,30 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 		return nil, fmt.Errorf("failed to update access request: %w", err)
 	}
 	c.auditProjectScoped(ctx, "access_request.approved", approverID, req.ProjectID,
-		fmt.Sprintf("approved access request %d for user %d as %s", req.ID, req.UserID, grantDesc))
+		fmt.Sprintf("approved access request %d for user %d as %s (%d approval(s))", req.ID, req.UserID, grantDesc, received))
 	c.notifyAccessResolved(ctx, req, true)
+	req.ApprovalsReceived = received
+	req.RequiredApprovals = required
 	return req, nil
+}
+
+// notifyApprovalProgress alerts the project's approvers that a request needs more
+// sign-offs (best-effort).
+func (c *KeyorixCore) notifyApprovalProgress(ctx context.Context, req *models.AccessRequest, received, required int) {
+	members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
+	if err != nil {
+		return
+	}
+	pid := req.ProjectID
+	label := c.projectLabel(ctx, req.ProjectID)
+	link := fmt.Sprintf("/projects/%d", req.ProjectID)
+	msg := fmt.Sprintf("Access request %d for %s has %d of %d approvals — another approver is needed.", req.ID, label, received, required)
+	for _, mbr := range members {
+		if mbr.UserID == req.UserID || !isApproverRole(mbr.RoleName) {
+			continue
+		}
+		c.notify(ctx, mbr.UserID, NotificationAccessRequested, "Access request needs another approval", msg, &pid, link)
+	}
 }
 
 // RejectAccessRequest rejects a pending request with a reason.
