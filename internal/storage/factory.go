@@ -147,6 +147,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "deleted_at") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE")
 	}
+	// Data classification (ISO A.5.12). Additive classification ("" = unclassified).
+	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "classification") {
+		db.Exec("ALTER TABLE secret_nodes ADD COLUMN classification TEXT DEFAULT ''")
+	}
 
 	// Track last successful login per user (nil = never logged in).
 	if tableExists(db, "users") && !columnExists(db, "users", "last_login_at") {

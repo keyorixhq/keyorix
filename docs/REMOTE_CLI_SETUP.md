@@ -327,6 +327,22 @@ keyorix sod policy create --name "approve-vs-admin" \
 keyorix sod violations
 ```
 
+### Data Classification
+
+Label secrets with their data sensitivity (ISO 27001 A.5.12 / A.5.13) — `public`,
+`internal`, `confidential`, or `restricted` (empty = unclassified). The label drives
+the compliance classification posture (`keyorix compliance report`). Requires
+`secrets.write` at the secret's scope.
+
+- `keyorix secret classify --id N --level confidential` — set (or clear, with an
+  empty `--level`) a secret's classification. The label is also accepted as
+  `classification` at create time.
+
+```bash
+# Mark a production database password as restricted:
+keyorix secret classify --id 42 --level restricted
+```
+
 ## Deployment Scenarios
 
 ### Development Environment

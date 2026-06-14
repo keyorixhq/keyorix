@@ -29,6 +29,9 @@ type CreateSecretRequest struct {
 	Tags          []string          `json:"tags,omitempty"`
 	CreatedBy     string            `json:"created_by" validate:"required"`
 	OwnerID       uint              `json:"owner_id,omitempty"`
+	// Classification is an optional data-sensitivity label (A.5.12): "" or one of
+	// public|internal|confidential|restricted.
+	Classification string `json:"classification,omitempty"`
 }
 
 // UpdateSecretRequest represents a request to update an existing secret.
@@ -67,19 +70,24 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretAlreadyExists", nil))
 	}
 
+	if !IsValidClassification(req.Classification) {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "invalid classification")
+	}
+
 	secret := &models.SecretNode{
-		Name:          req.Name,
-		ProjectID:     req.ProjectID,
-		EnvironmentID: req.EnvironmentID,
-		Type:          req.Type,
-		MaxReads:      req.MaxReads,
-		Expiration:    req.Expiration,
-		IsSecret:      true,
-		Status:        "active",
-		CreatedBy:     req.CreatedBy,
-		OwnerID:       req.OwnerID,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		Name:           req.Name,
+		ProjectID:      req.ProjectID,
+		EnvironmentID:  req.EnvironmentID,
+		Type:           req.Type,
+		MaxReads:       req.MaxReads,
+		Expiration:     req.Expiration,
+		Classification: req.Classification,
+		IsSecret:       true,
+		Status:         "active",
+		CreatedBy:      req.CreatedBy,
+		OwnerID:        req.OwnerID,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 
 	createdSecret, err := c.storage.CreateSecret(ctx, secret)
