@@ -176,6 +176,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE users ADD COLUMN mfa_enabled BOOLEAN NOT NULL DEFAULT false")
 	}
 
+	// SCIM external ID (RFC 7644). Additive; empty for locally-created users.
+	if tableExists(db, "users") && !columnExists(db, "users", "external_id") {
+		db.Exec("ALTER TABLE users ADD COLUMN external_id TEXT NOT NULL DEFAULT ''")
+	}
+
 	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
 	if tableExists(db, "sessions") {
 		if !columnExists(db, "sessions", "user_agent") {

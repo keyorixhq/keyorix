@@ -53,6 +53,9 @@ type Config struct {
 	// Notifications configures external delivery (email/webhook) of the in-app
 	// notifications Keyorix creates (approvals, anomalies, reminders, break-glass).
 	Notifications NotificationsConfig `yaml:"notifications"`
+	// SCIM configures the SCIM 2.0 provisioning endpoints (RFC 7644) used by an IdP
+	// to provision/deprovision users. Disabled (zero value) = /scim/v2 is not served.
+	SCIM SCIMConfig `yaml:"scim"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -623,6 +626,19 @@ type NotificationWebhookConfig struct {
 // GetToken returns the resolved webhook token, preferring the environment variable.
 func (c *NotificationWebhookConfig) GetToken() string {
 	return resolveSecret("KEYORIX_NOTIFY_WEBHOOK_TOKEN", c.Token)
+}
+
+// SCIMConfig configures SCIM 2.0 provisioning (RFC 7644). When Enabled, the
+// /scim/v2 endpoints are served, authenticated by a static bearer token an IdP
+// presents. Opt-in (default off).
+type SCIMConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Token   string `yaml:"token"` // use KEYORIX_SCIM_TOKEN env var instead
+}
+
+// GetToken returns the resolved SCIM bearer token, preferring the env var.
+func (s *SCIMConfig) GetToken() string {
+	return resolveSecret("KEYORIX_SCIM_TOKEN", s.Token)
 }
 
 // RotationRemindersConfig configures the rotation-reminder scheduler: a background

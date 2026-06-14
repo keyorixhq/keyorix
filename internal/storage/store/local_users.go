@@ -94,6 +94,17 @@ func (ls *LocalStorage) GetUserByUsername(ctx context.Context, username string) 
 	return &user, nil
 }
 
+func (ls *LocalStorage) GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error) {
+	var user models.User
+	if err := ls.db.WithContext(ctx).Where("external_id = ?", externalID).First(&user).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &user, nil
+}
+
 func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
 	if err := ls.db.WithContext(ctx).Save(user).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

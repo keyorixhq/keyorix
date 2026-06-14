@@ -77,6 +77,10 @@ func (rs *RemoteStorage) GetUserByUsername(_ context.Context, _ string) (*models
 	return nil, remoteUnsupported("GetUserByUsername")
 }
 
+func (rs *RemoteStorage) GetUserByExternalID(_ context.Context, _ string) (*models.User, error) {
+	return nil, remoteUnsupported("GetUserByExternalID")
+}
+
 // UpdateUser updates an existing user via remote API.
 func (rs *RemoteStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
 	path := fmt.Sprintf("/api/v1/users/%d", user.ID)

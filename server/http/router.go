@@ -139,6 +139,22 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	})
 
 	// API v1 routes
+	// SCIM 2.0 provisioning (RFC 7644) — opt-in, authenticated by a static bearer
+	// token (NOT the session/PAT auth) so an IdP can provision/deprovision users.
+	if cfg.SCIM.Enabled {
+		scimHandler := handlers.NewSCIMHandler(coreService)
+		r.Route("/scim/v2", func(r chi.Router) {
+			r.Use(customMiddleware.SCIMToken(cfg.SCIM.GetToken()))
+			r.Get("/ServiceProviderConfig", scimHandler.GetServiceProviderConfig)
+			r.Get("/Users", scimHandler.ListUsers)
+			r.Post("/Users", scimHandler.CreateUser)
+			r.Get("/Users/{id}", scimHandler.GetUser)
+			r.Put("/Users/{id}", scimHandler.ReplaceUser)
+			r.Patch("/Users/{id}", scimHandler.PatchUser)
+			r.Delete("/Users/{id}", scimHandler.DeleteUser)
+		})
+	}
+
 	r.Route("/api/v1", func(r chi.Router) {
 		// Authentication middleware for API routes
 		r.Use(customMiddleware.Authentication(coreService))
