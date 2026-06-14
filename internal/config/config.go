@@ -42,6 +42,10 @@ type Config struct {
 	// GDPR storage-limitation / DORA). Respects legal hold; audit events are never
 	// purged (append-only, ADR-029).
 	DataRetention DataRetentionConfig `yaml:"data_retention"`
+	// EvidenceDelivery configures the opt-in scheduler that periodically generates
+	// the auditor evidence pack and writes it to an output directory for off-box
+	// archival (ISO 27001 / SOC 2 continuous evidence).
+	EvidenceDelivery EvidenceDeliveryConfig `yaml:"evidence_delivery"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -491,6 +495,30 @@ type DataRetentionConfig struct {
 // GetInterval returns the data-retention run interval, parsing Schedule as a Go
 // duration (e.g. "24h", "6h"); defaults to 24h when unset or unparseable.
 func (c DataRetentionConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
+}
+
+// EvidenceDeliveryConfig configures the scheduled compliance-evidence export
+// (ISO 27001 / SOC 2 continuous evidence): a background job that periodically
+// generates the auditor evidence pack (the posture plus the records that
+// substantiate it) and writes it as a timestamped JSON file under OutputDir, for
+// off-box archival/backup. Each run also emits a compliance.evidence_exported
+// audit event, so an installed SIEM forwarder receives the delivery signal too.
+// Opt-in (Enabled, default off); OutputDir is required when enabled.
+type EvidenceDeliveryConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Schedule  string `yaml:"schedule"`
+	OutputDir string `yaml:"output_dir"`
+}
+
+// GetInterval returns the evidence-export run interval, parsing Schedule as a Go
+// duration (e.g. "24h"); defaults to 24h when unset or unparseable.
+func (c EvidenceDeliveryConfig) GetInterval() time.Duration {
 	if c.Schedule != "" {
 		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
 			return d
