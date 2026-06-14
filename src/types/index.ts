@@ -191,6 +191,7 @@ export interface AppNotification {
 export interface SecretFilters {
     search: string;
     type: SecretType | 'all';
+    classification: SecretClassification | 'unclassified' | '';
     environment: string;
     tags: string[];
 }

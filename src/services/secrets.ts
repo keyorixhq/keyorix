@@ -8,6 +8,7 @@ export const secretsApi = {
         pageSize?: number;
         search?: string;
         type?: string;
+        classification?: string;
         namespace?: string;
         zone?: string;
         environment?: string;

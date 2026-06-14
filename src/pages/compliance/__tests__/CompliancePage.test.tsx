@@ -10,13 +10,14 @@ vi.mock('../../../services/compliance', () => ({
 const posture = {
     generatedAt: '2026-06-14T10:00:00Z',
     auditIntegrity: { chainVerified: true, chainedEvents: 12, checkpointed: true },
-    accessGovernance: { projects: 4, projectsWithOpenCampaign: 1, projectsNeverReviewed: 1, openCampaigns: 1, pendingItems: 3, dormantRoleGrants: 2, sodViolations: 1 },
+    accessGovernance: { projects: 4, projectsWithOpenCampaign: 1, projectsNeverReviewed: 1, openCampaigns: 1, pendingItems: 3, projectsOverdue: 7, dormantRoleGrants: 2, sodViolations: 1 },
     rotation: { coveredSecrets: 10, overdue: 1, dueSoon: 2 },
     identity: { activeUsers: 5, usersWithSecondFactor: 4, secondFactorPercent: 80 },
     emergencyAccess: { activeActivations: 0, totalActivations: 1 },
     classification: { totalSecrets: 12, public: 1, internal: 4, confidential: 1, restricted: 6, unclassified: 0 },
     anomalies: { unacknowledged: 3, highSeverityOpen: 1 },
     legalHold: { active: false, reason: '' },
+    retention: { enabled: true, anomalyAlertsDays: 90, closedAccessReviewsDays: 730, breakGlassDays: 365, resolvedAccessRequestsDays: 0 },
 };
 
 describe('CompliancePage posture panel', () => {
@@ -35,6 +36,11 @@ describe('CompliancePage posture panel', () => {
         expect(screen.getByText('2')).toBeInTheDocument();          // dormant role grants
         expect(screen.getByText('0 / 12')).toBeInTheDocument();     // unclassified / total secrets
         expect(screen.getByText('3 (1 high)')).toBeInTheDocument(); // open anomalies (1 high-severity)
+        expect(screen.getByText('7')).toBeInTheDocument();          // projects overdue for recert
+        // Data-retention section: configured windows, "Keep" for a 0 window.
+        expect(screen.getByText(/Data retention .* enforced/i)).toBeInTheDocument();
+        expect(screen.getByText('90d')).toBeInTheDocument();        // anomaly-alerts window
+        expect(screen.getByText('Keep')).toBeInTheDocument();       // resolved-requests window = 0
         // The static regulatory cards still render below.
         expect(screen.getByText('NIS2 Directive')).toBeInTheDocument();
     });

@@ -4,6 +4,7 @@ import {
     DocumentDuplicateIcon, CheckIcon, ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { Secret } from '../../types';
+import { classificationMeta } from './classification';
 
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
@@ -79,6 +80,11 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
         </td>
         <td className="px-6 py-4 whitespace-nowrap">
             <TypeBadge type={secret.type} />
+        </td>
+        <td className="px-6 py-4 whitespace-nowrap">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${classificationMeta(secret.classification ?? '').color}`}>
+                {classificationMeta(secret.classification ?? '').label}
+            </span>
         </td>
         <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted">
             <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium bg-subtle text-base-secondary capitalize">

@@ -11,7 +11,7 @@ import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
-import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow } from '../../features/secrets';
+import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow, useBulkClassifySecrets } from '../../features/secrets';
 import { ShareSecretModal } from '../../features/sharing';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
 
@@ -43,6 +43,7 @@ function generateSecret(): string {
 
 export const SecretsListPage: React.FC = () => {
     const list = useSecretsList();
+    const bulkClassify = useBulkClassifySecrets();
     const reveal = useSecretReveal();
     const [searchParams] = useSearchParams();
 
@@ -128,6 +129,28 @@ export const SecretsListPage: React.FC = () => {
                     {list.selectedItems.size > 0 && (
                         <div className="flex items-center space-x-2">
                             <span className="text-sm text-base-muted">{list.selectedItems.size} selected</span>
+                            <Select
+                                aria-label="Classify selected"
+                                value=""
+                                disabled={bulkClassify.isPending}
+                                onChange={(e) => {
+                                    const level = e.target.value;
+                                    if (!level) return;
+                                    const ids = Array.from(list.selectedItems);
+                                    bulkClassify.mutate(
+                                        { ids, classification: level === 'unclassified' ? '' : level },
+                                        { onSuccess: () => list.clearSelectedItems() },
+                                    );
+                                }}
+                                options={[
+                                    { value: '', label: 'Classify as…' },
+                                    { value: 'public', label: 'Public' },
+                                    { value: 'internal', label: 'Internal' },
+                                    { value: 'confidential', label: 'Confidential' },
+                                    { value: 'restricted', label: 'Restricted' },
+                                    { value: 'unclassified', label: 'Unclassified' },
+                                ]}
+                            />
                             <Button variant="outline" size="sm" disabled title="Share each secret individually — bulk sharing is not supported">
                                 <ShareIcon className="h-4 w-4 mr-1" />Share
                             </Button>
@@ -152,6 +175,18 @@ export const SecretsListPage: React.FC = () => {
                                 onChange={(e) => list.setSearchInput(e.target.value)} icon={MagnifyingGlassIcon} />
                         </div>
                         <Select value={list.filters.type} onChange={(e) => list.handleFilterChange('type', e.target.value)} options={SECRET_TYPES} />
+                        <Select
+                            value={list.filters.classification || 'all'}
+                            onChange={(e) => list.handleFilterChange('classification', e.target.value === 'all' ? '' : e.target.value)}
+                            options={[
+                                { value: 'all', label: 'All Classifications' },
+                                { value: 'unclassified', label: 'Unclassified' },
+                                { value: 'public', label: 'Public' },
+                                { value: 'internal', label: 'Internal' },
+                                { value: 'confidential', label: 'Confidential' },
+                                { value: 'restricted', label: 'Restricted' },
+                            ]}
+                        />
                         <Select
                             value={list.filters.environment || 'all'}
                             onChange={(e) => list.handleFilterChange('environment', e.target.value === 'all' ? '' : e.target.value)}
@@ -226,7 +261,7 @@ export const SecretsListPage: React.FC = () => {
                                             checked={displayedSecrets.length > 0 && displayedSecrets.every(s => list.selectedItems.has(s.id))}
                                             onChange={(e) => { if (e.target.checked) displayedSecrets.forEach(s => list.toggleSelectedItem(s.id)); else list.clearSelectedItems(); }} />
                                     </th>
-                                    {['Name', 'Type', 'Environment', 'Sharing', 'Modified'].map(h => (
+                                    {['Name', 'Type', 'Classification', 'Environment', 'Sharing', 'Modified'].map(h => (
                                         <th key={h} className="px-6 py-3 text-left text-xs font-medium text-base-muted  uppercase tracking-wider">{h}</th>
                                     ))}
                                     <th className="px-6 py-3 text-right text-xs font-medium text-base-muted  uppercase tracking-wider min-w-[180px]">Actions</th>

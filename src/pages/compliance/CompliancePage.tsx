@@ -138,15 +138,31 @@ const PosturePanel: React.FC = () => {
                 <Tile label="Open campaigns / pending" value={`${ag.openCampaigns} / ${ag.pendingItems}`} />
                 <Tile label="Dormant role grants" value={ag.dormantRoleGrants} tone={ag.dormantRoleGrants > 0 ? 'warn' : 'good'} />
                 <Tile label="SoD violations (A.5.3)" value={ag.sodViolations} tone={ag.sodViolations > 0 ? 'bad' : 'good'} />
+                <Tile label="Projects overdue for recert (A.5.18)" value={ag.projectsOverdue} tone={ag.projectsOverdue > 0 ? 'warn' : 'good'} />
                 <Tile label="Rotation overdue / due-soon (A.5.15)" value={`${p.rotation.overdue} / ${p.rotation.dueSoon}`} tone={p.rotation.overdue > 0 ? 'warn' : 'good'} />
                 <Tile label="Break-glass active / total" value={`${p.emergencyAccess.activeActivations} / ${p.emergencyAccess.totalActivations}`} tone={p.emergencyAccess.activeActivations > 0 ? 'warn' : undefined} />
                 <Tile label="Restricted secrets (A.5.12)" value={p.classification.restricted} tone={p.classification.restricted > 0 ? 'warn' : undefined} />
                 <Tile label="Unclassified secrets" value={`${p.classification.unclassified} / ${p.classification.totalSecrets}`} tone={p.classification.unclassified > 0 ? 'warn' : 'good'} />
                 <Tile label="Open anomalies (NIS2)" value={`${p.anomalies.unacknowledged}${p.anomalies.highSeverityOpen > 0 ? ` (${p.anomalies.highSeverityOpen} high)` : ''}`} tone={p.anomalies.highSeverityOpen > 0 ? 'bad' : p.anomalies.unacknowledged > 0 ? 'warn' : 'good'} />
             </div>
+            <div className="px-6 pb-5 pt-1">
+                <h3 className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: 'var(--text-muted)' }}>
+                    Data retention (A.5.33) — {p.retention.enabled ? 'enforced' : 'not configured'}
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <Tile label="Anomaly alerts" value={retentionWindow(p.retention.anomalyAlertsDays)} />
+                    <Tile label="Closed access reviews" value={retentionWindow(p.retention.closedAccessReviewsDays)} />
+                    <Tile label="Break-glass register" value={retentionWindow(p.retention.breakGlassDays)} />
+                    <Tile label="Resolved access requests" value={retentionWindow(p.retention.resolvedAccessRequestsDays)} />
+                </div>
+            </div>
         </div>
     );
 };
+
+// retentionWindow renders a retention window: a day count, or "Keep" when 0 (the
+// record type is retained indefinitely).
+const retentionWindow = (days: number): string => (days > 0 ? `${days}d` : 'Keep');
 
 // SoDViolationsSection lists the separation-of-duties violations (principals
 // holding a forbidden permission pair). Needs system.read; hidden on 403/empty.

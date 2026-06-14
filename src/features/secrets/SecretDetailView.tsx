@@ -16,6 +16,7 @@ import {
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
 import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret } from './api';
+import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
@@ -46,19 +47,6 @@ const RISK_BAND_STYLE: Record<RiskBand, { label: string; color: string }> = {
 };
 
 const factorColor = (score: number): string => (score >= 67 ? '#ef4444' : score >= 34 ? '#f59e0b' : '#10b981');
-
-// Data-classification levels (ISO 27001 A.5.12) and their badge styling. The empty
-// string is "unclassified" — the audit-relevant default.
-const UNCLASSIFIED_META = { label: 'Unclassified', color: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' };
-const CLASSIFICATION_META: Record<string, { label: string; color: string }> = {
-    '': UNCLASSIFIED_META,
-    public: { label: 'Public', color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' },
-    internal: { label: 'Internal', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
-    confidential: { label: 'Confidential', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' },
-    restricted: { label: 'Restricted', color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
-};
-const CLASSIFICATION_LEVELS = ['', 'public', 'internal', 'confidential', 'restricted'];
-const classificationMeta = (level: string) => CLASSIFICATION_META[level] ?? UNCLASSIFIED_META;
 
 interface SecretDetailViewProps {
     secret: Secret;

@@ -16,6 +16,7 @@ export interface CompliancePosture {
         projectsNeverReviewed: number;
         openCampaigns: number;
         pendingItems: number;
+        projectsOverdue: number;
         dormantRoleGrants: number;
         sodViolations: number;
     };
@@ -50,6 +51,13 @@ export interface CompliancePosture {
         reason: string;
         placedAt?: string;
     };
+    retention: {
+        enabled: boolean;
+        anomalyAlertsDays: number;
+        closedAccessReviewsDays: number;
+        breakGlassDays: number;
+        resolvedAccessRequestsDays: number;
+    };
 }
 
 const num = (v: any): number => (typeof v === 'number' ? v : 0);
@@ -68,6 +76,7 @@ const normalize = (d: any): CompliancePosture => ({
         projectsNeverReviewed: num(d.access_governance?.projects_never_reviewed),
         openCampaigns: num(d.access_governance?.open_campaigns),
         pendingItems: num(d.access_governance?.pending_items),
+        projectsOverdue: num(d.access_governance?.projects_overdue),
         dormantRoleGrants: num(d.access_governance?.dormant_role_grants),
         sodViolations: num(d.access_governance?.sod_violations),
     },
@@ -101,6 +110,13 @@ const normalize = (d: any): CompliancePosture => ({
         active: !!(d.legal_hold?.active),
         reason: d.legal_hold?.reason ?? '',
         placedAt: d.legal_hold?.placed_at ?? undefined,
+    },
+    retention: {
+        enabled: !!(d.retention?.enabled),
+        anomalyAlertsDays: num(d.retention?.anomaly_alerts_days),
+        closedAccessReviewsDays: num(d.retention?.closed_access_reviews_days),
+        breakGlassDays: num(d.retention?.break_glass_days),
+        resolvedAccessRequestsDays: num(d.retention?.resolved_access_requests_days),
     },
 });
 

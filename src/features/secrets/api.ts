@@ -107,6 +107,18 @@ export const useDeleteSecret = () => {
     });
 };
 
+// useBulkClassifySecrets applies one classification level to many secrets at once
+// (ISO A.5.12 bulk labelling), then refreshes the lists so the posture counts update.
+export const useBulkClassifySecrets = () => {
+    return useMutation({
+        mutationFn: ({ ids, classification }: { ids: number[]; classification: string }) =>
+            Promise.all(ids.map(id => secretsApi.classify(id, classification))),
+        onSuccess: () => {
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
 export const useBulkDeleteSecrets = () => {
     const queryClient = useQueryClient();
 
