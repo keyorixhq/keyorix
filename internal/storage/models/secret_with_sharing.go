@@ -34,10 +34,13 @@ type SecretListFilter struct {
 	ProjectID     *uint
 	EnvironmentID *uint
 	Type          *string
-	Tags          []string
-	CreatedBy     *string
-	CreatedAfter  *time.Time
-	CreatedBefore *time.Time
+	// Classification filters by data-sensitivity label (ISO A.5.12); "unclassified"
+	// matches secrets with no label.
+	Classification *string
+	Tags           []string
+	CreatedBy      *string
+	CreatedAfter   *time.Time
+	CreatedBefore  *time.Time
 	// ExpiresBefore, when set, returns only secrets with a non-null expiration
 	// before this time (already expired or expiring within the window).
 	ExpiresBefore *time.Time

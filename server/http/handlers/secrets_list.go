@@ -73,6 +73,11 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	if typeParam := strings.TrimSpace(r.URL.Query().Get("type")); typeParam != "" {
 		filter.Type = &typeParam
 	}
+	if cls := strings.TrimSpace(r.URL.Query().Get("classification")); cls != "" {
+		// Data-classification filter (ISO A.5.12); "unclassified" matches secrets
+		// with no label (handled in the storage layer).
+		filter.Classification = &cls
+	}
 	if projectStr := r.URL.Query().Get("project_id"); projectStr != "" {
 		if pID, err := strconv.ParseUint(projectStr, 10, 32); err == nil {
 			pIDUint := uint(pID)
