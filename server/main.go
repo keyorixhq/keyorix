@@ -143,6 +143,7 @@ const (
 	schedLockJITExpiry    int64 = 0x4B455953_4A495445 // "KEYSJITE"
 	schedLockRetention    int64 = 0x4B455953_52455445 // "KEYSRETE"
 	schedLockEvidence     int64 = 0x4B455953_45564944 // "KEYSEVID"
+	schedLockRecertify    int64 = 0x4B455953_52454354 // "KEYSRECT"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -281,6 +282,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		BreakGlassDays:             cfg.DataRetention.BreakGlassDays,
 		ResolvedAccessRequestsDays: cfg.DataRetention.ResolvedAccessRequestsDays,
 	})
+
+	// Wire the access-recertification cadence (A.5.18) so the posture flags overdue
+	// projects; the scheduler below acts on it when enabled.
+	coreService.SetRecertificationCadence(cfg.Recertification.CadenceDays)
 
 	// Wire the credential-delivery channel (ADR-028). New selects out-of-band/SMTP/
 	// log from the configured mode and fails loud on a bad mode (e.g. smtp with no
@@ -542,6 +547,47 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				select {
 				case <-ticker.C:
 					runReminders()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Start the scheduled access-recertification scheduler (ISO 27001 A.5.18) —
+	// opt-in. Finds projects overdue for review and either auto-opens a recert
+	// campaign (when auto_open) or reminds the project's admins to; also nudges
+	// admins of in-flight campaigns with pending items. A create/notify, not a
+	// delete, so NOT legal-hold-gated. Single-replica-gated (ADR-039) so a campaign
+	// is opened once per project per tick in HA.
+	if cfg.Recertification.Enabled {
+		interval := cfg.Recertification.GetInterval()
+		cadence := cfg.Recertification.CadenceDays
+		autoOpen := cfg.Recertification.AutoOpen
+		log.Printf("Recertification scheduler enabled: every %s (cadence %dd, auto_open=%t)", interval, cadence, autoOpen)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runRecert := func() {
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockRecertify, func() error {
+					res, rerr := coreService.RunScheduledRecertification(ctx, cadence, autoOpen)
+					if rerr != nil {
+						log.Printf("Recertification error: %v", rerr)
+						return rerr
+					}
+					if res.Opened > 0 || res.Reminded > 0 {
+						log.Printf("Recertification: opened %d campaign(s), sent %d reminder(s)", res.Opened, res.Reminded)
+					}
+					return nil
+				}); err != nil {
+					log.Printf("Recertification scheduler error: %v", err)
+				}
+			}
+			runRecert() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runRecert()
 				case <-ctx.Done():
 					return
 				}

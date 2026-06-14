@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
 - [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -345,6 +345,31 @@ data_retention:
 
 The configured windows surface in the compliance posture (`keyorix compliance report`
 → "Data retention") as evidence that storage-limitation is actively enforced.
+
+## recertification
+
+An opt-in background scheduler that enforces an **access-recertification cadence**
+(ISO 27001 A.5.18, "review access rights at planned intervals"). On each run it
+walks every project and finds those **due for review** — never reviewed, or whose
+most-recent review campaign closed more than `cadence_days` ago — that have no
+campaign currently open. For each due project: when `auto_open` is true it opens a
+fresh recertification campaign (system-actored, snapshotting current access);
+otherwise it sends the project's admins an in-app reminder to open one. It also
+nudges admins of an in-flight campaign that still has pending items. Reminders
+de-dupe against an unread one, so they don't pile up. Single-replica-gated (ADR-039);
+opening a campaign is a create, not a delete, so it runs even under a legal hold.
+
+The cadence also drives the compliance posture's **projects-overdue** count (and
+`keyorix compliance report` → Access governance → "overdue for recert"), so the
+overdue signal is visible to auditors even before you enable `auto_open`.
+
+```yaml
+recertification:
+  enabled: true
+  schedule: "24h"        # Go duration between runs (default 24h)
+  cadence_days: 90       # a project is due this many days after its last campaign closed (default 90)
+  auto_open: false       # true = auto-open a campaign for overdue projects; false = remind admins only
+```
 
 ## evidence_delivery
 
