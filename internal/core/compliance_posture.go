@@ -58,6 +58,12 @@ type EmergencyAccessPosture struct {
 	TotalActivations  int `json:"total_activations"`
 }
 
+// AnomaliesPosture summarises detected access anomalies (NIS2 detection).
+type AnomaliesPosture struct {
+	Unacknowledged   int `json:"unacknowledged"`     // open alerts awaiting review
+	HighSeverityOpen int `json:"high_severity_open"` // open alerts of high severity
+}
+
 // ClassificationPosture summarises secret data-classification coverage (A.5.12).
 type ClassificationPosture struct {
 	TotalSecrets int `json:"total_secrets"`
@@ -77,6 +83,7 @@ type CompliancePosture struct {
 	Identity         IdentityPosture         `json:"identity"`
 	EmergencyAccess  EmergencyAccessPosture  `json:"emergency_access"`
 	Classification   ClassificationPosture   `json:"classification"`
+	Anomalies        AnomaliesPosture        `json:"anomalies"`
 }
 
 // GetCompliancePosture aggregates the deployment's control posture. It is an
@@ -131,6 +138,17 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 
 	// Data-classification coverage (A.5.12).
 	p.Classification = c.classificationPosture(ctx)
+
+	// Open access anomalies (NIS2 detection).
+	unack := false
+	if alerts, err := c.storage.ListAnomalyAlerts(ctx, &unack); err == nil {
+		p.Anomalies.Unacknowledged = len(alerts)
+		for _, a := range alerts {
+			if a.Severity == "high" {
+				p.Anomalies.HighSeverityOpen++
+			}
+		}
+	}
 	return p, nil
 }
 

@@ -408,6 +408,23 @@ dual_control:
   required_approvals: 2   # distinct approvers needed per access request (default 1)
 ```
 
+## anomaly_alerts
+
+**Proactive alerting** for detected access anomalies (NIS2 detection & response).
+Anomaly detection (off-hours / new-IP / new-user access to secrets) always runs on
+the scan schedule; when this is enabled, each **newly detected** anomaly is also
+pushed out — an in-app alert to the project's admins **and** a
+`security.anomaly_detected` audit event (which the SIEM forwarder picks up, so
+anomalies reach your SOC). Each anomaly is announced once. Single-replica-gated
+(ADR-039). Opt-in (default off — detection still runs and alerts are visible via
+`keyorix anomalies list` / the API, just not pushed).
+
+```yaml
+anomaly_alerts:
+  enabled: true
+  schedule: "1h"          # Go duration between scan+alert passes (default 1h)
+```
+
 ## audit.siem
 
 Native push of audit events to a SIEM. The token is read from `KEYORIX_SIEM_TOKEN`
