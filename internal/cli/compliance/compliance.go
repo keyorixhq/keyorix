@@ -35,6 +35,7 @@ type posture struct {
 		OpenCampaigns            int `json:"open_campaigns"`
 		PendingItems             int `json:"pending_items"`
 		DormantRoleGrants        int `json:"dormant_role_grants"`
+		SoDViolations            int `json:"sod_violations"`
 	} `json:"access_governance"`
 	Rotation struct {
 		CoveredSecrets int `json:"covered_secrets"`
@@ -87,6 +88,7 @@ var reportCmd = &cobra.Command{
 		fmt.Printf("  never reviewed            : %d\n", p.AccessGovernance.ProjectsNeverReviewed)
 		fmt.Printf("  open campaigns / pending  : %d / %d\n", p.AccessGovernance.OpenCampaigns, p.AccessGovernance.PendingItems)
 		fmt.Printf("  dormant role grants       : %d\n", p.AccessGovernance.DormantRoleGrants)
+		fmt.Printf("  separation-of-duties viol.: %d\n", p.AccessGovernance.SoDViolations)
 
 		fmt.Println("\nRotation hygiene (ISO A.5.15)")
 		fmt.Printf("  covered secrets : %d\n", p.Rotation.CoveredSecrets)
