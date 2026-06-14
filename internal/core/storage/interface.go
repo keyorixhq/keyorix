@@ -92,6 +92,15 @@ type Storage interface {
 	GetActiveLegalHold(ctx context.Context) (*models.LegalHold, error)
 	UpdateLegalHold(ctx context.Context, h *models.LegalHold) error
 
+	// Risk exceptions (ISO 27001 A.5.8 risk treatment) — governed, time-bound
+	// acceptances of a known control gap. CreateRiskException records one;
+	// ListRiskExceptions returns all (activeOnly excludes revoked rows; expiry is
+	// computed in core); GetRiskException/UpdateRiskException support revoke.
+	CreateRiskException(ctx context.Context, e *models.RiskException) (*models.RiskException, error)
+	ListRiskExceptions(ctx context.Context, activeOnly bool) ([]*models.RiskException, error)
+	GetRiskException(ctx context.Context, id uint) (*models.RiskException, error)
+	UpdateRiskException(ctx context.Context, e *models.RiskException) error
+
 	// Break-glass emergency-access activations (NIS2/DORA incident response).
 	CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error)
 	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)

@@ -116,6 +116,26 @@ type LegalHold struct {
 	ReleasedAt *time.Time `json:"released_at,omitempty"`
 }
 
+// RiskException records a governed acceptance of a known control gap or policy
+// exception (ISO 27001 A.5.8 risk treatment / A.5.36 compliance-with-policies): a
+// named risk, accepted by an owner with a written justification, for a bounded time.
+// While active (not revoked and not past ExpiresAt) it is the auditable evidence that
+// a gap is *accepted with a sunset*, not silently ignored — so an auditor sees a
+// governed exception rather than a raw violation. Exceptions are always time-bound.
+type RiskException struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Title         string     `json:"title"`
+	Category      string     `json:"category"`            // sod | mfa | rotation | dormant_access | classification | other
+	Reference     string     `json:"reference,omitempty"` // what it applies to (a user, an SoD pair, a secret)
+	Justification string     `json:"justification"`
+	CreatedBy     uint       `json:"created_by"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     time.Time  `gorm:"index" json:"expires_at"` // required — exceptions sunset
+	Revoked       bool       `gorm:"index" json:"revoked"`    // true = withdrawn before expiry
+	RevokedBy     uint       `json:"revoked_by,omitempty"`
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+}
+
 // BreakGlassActivation records a self-service emergency-access elevation: a user
 // immediately self-granted a time-bound emergency role (no approval), with a
 // written justification, for incident response (NIS2/DORA). The grant itself is a

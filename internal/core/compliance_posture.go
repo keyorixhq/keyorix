@@ -95,6 +95,14 @@ type RetentionPosture struct {
 	ResolvedAccessRequestsDays int  `json:"resolved_access_requests_days"`
 }
 
+// RiskPosture summarises the risk register (ISO 27001 A.5.8 risk treatment): how
+// many governed, time-bound exceptions are currently active and how many expire soon
+// (so an auditor sees accepted-with-a-deadline risks rather than ungoverned gaps).
+type RiskPosture struct {
+	ActiveExceptions int `json:"active_exceptions"`
+	ExpiringSoon     int `json:"expiring_soon"` // active exceptions expiring within the soon window
+}
+
 // CompliancePosture is the deployment's control posture at a point in time.
 type CompliancePosture struct {
 	GeneratedAt      time.Time               `json:"generated_at"`
@@ -107,7 +115,12 @@ type CompliancePosture struct {
 	Anomalies        AnomaliesPosture        `json:"anomalies"`
 	LegalHold        LegalHoldPosture        `json:"legal_hold"`
 	Retention        RetentionPosture        `json:"retention"`
+	Risk             RiskPosture             `json:"risk"`
 }
+
+// riskExpiringSoonWindow is how far ahead an active exception counts as "expiring
+// soon" in the posture.
+const riskExpiringSoonWindow = 14 * 24 * time.Hour
 
 // GetCompliancePosture aggregates the deployment's control posture. It is an
 // on-demand admin report (it walks every project for the access-governance roll-up),
@@ -177,6 +190,11 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	if hold, err := c.storage.GetActiveLegalHold(ctx); err == nil && hold != nil {
 		at := hold.PlacedAt
 		p.LegalHold = LegalHoldPosture{Active: true, PlacedAt: &at, Reason: hold.Reason}
+	}
+
+	// Risk register — governed, time-bound exceptions (A.5.8).
+	if active, soon, err := c.CountActiveRiskExceptions(ctx, riskExpiringSoonWindow); err == nil {
+		p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon}
 	}
 
 	// Data-retention windows (A.5.33).
