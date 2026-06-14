@@ -419,15 +419,25 @@ Each export also emits a `compliance.evidence_exported` audit event, so an insta
 [`audit.siem`](#auditsiem) forwarder receives the delivery signal too. Read-only, so
 it runs even while a legal hold is active. Single-replica-gated (ADR-039).
 
+Deliver to a local directory, an off-box **webhook** (POST of the pack JSON), or
+both. At least one target must be configured when enabled.
+
 ```yaml
 evidence_delivery:
   enabled: true
   schedule: "24h"                           # Go duration between exports (default 24h)
-  output_dir: "/var/lib/keyorix/evidence"   # required when enabled; mount to durable storage
+  output_dir: "/var/lib/keyorix/evidence"   # local archive; omit to deliver by webhook only
+  webhook:
+    enabled: true
+    endpoint: "https://evidence.example.com/keyorix"
+    token: ""                               # prefer the KEYORIX_EVIDENCE_WEBHOOK_TOKEN env var
+    insecure_skip_verify: false             # TLS verification off — self-signed endpoints only
 ```
 
-> Point `output_dir` at a volume that is backed up off-box (or synced to object
-> storage) — the value of scheduled delivery is that the evidence survives the node.
+> The webhook lets evidence survive the node without a mounted volume. A file write
+> is the primary durable target (its failure is fatal); a webhook failure is recorded
+> in the audit note but does not fail the export when a file was also written. The
+> webhook token is read from `KEYORIX_EVIDENCE_WEBHOOK_TOKEN` when set.
 
 ## rotation_reminders
 

@@ -49,6 +49,9 @@ type KeyorixCore struct {
 	// notificationSink fans each in-app notification out to an external channel
 	// (email/webhook). nil = in-app only. Set from config via SetNotificationSink.
 	notificationSink NotificationSink
+	// evidenceForwarder ships the scheduled compliance-evidence pack to an off-box
+	// target (webhook). nil = local-file only. Set via SetEvidenceForwarder.
+	evidenceForwarder EvidenceForwarder
 	// breakGlassPolicy configures self-service emergency access; zero value =
 	// disabled. Set from config at startup via SetBreakGlassPolicy.
 	breakGlassPolicy BreakGlassPolicy

@@ -20,22 +20,39 @@ import (
 // lexicographically by time: keyorix-evidence-20060102T150405Z.json.
 const evidenceFileTimeLayout = "20060102T150405Z"
 
-// EvidenceExportResult reports the outcome of one scheduled evidence export.
-type EvidenceExportResult struct {
-	Path  string `json:"path"`
-	Bytes int    `json:"bytes"`
+// EvidenceForwarder ships a marshalled evidence pack to an off-box target (e.g. a
+// webhook / object store). Called only from the once-a-day evidence scheduler, so a
+// synchronous implementation is fine. Defined here (not in the sink package) so core
+// has no dependency on the forwarder implementation.
+type EvidenceForwarder interface {
+	ForwardEvidence(ctx context.Context, data []byte) error
 }
 
-// ExportComplianceEvidence generates the evidence pack and writes it as a
-// timestamped JSON file (0600) under outputDir, which is created (0700) if absent.
-// It returns the written path. The write is followed by a system-actored
-// compliance.evidence_exported audit event so the export is itself part of the
-// tamper-evident trail and is forwarded to a SIEM. An empty outputDir is a
-// misconfiguration error. Read-only with respect to the data it captures, so it
-// is NOT gated by legal hold.
+// SetEvidenceForwarder wires an off-box evidence target. The server calls this at
+// startup when evidence_delivery configures a webhook. nil = local-file only.
+func (c *KeyorixCore) SetEvidenceForwarder(f EvidenceForwarder) {
+	c.evidenceForwarder = f
+}
+
+// EvidenceExportResult reports the outcome of one scheduled evidence export.
+type EvidenceExportResult struct {
+	Path    string   `json:"path,omitempty"` // local file written, if a directory was configured
+	Bytes   int      `json:"bytes"`
+	Targets []string `json:"targets"` // where the pack was delivered (e.g. "file:/path", "webhook")
+}
+
+// ExportComplianceEvidence generates the evidence pack and delivers it to every
+// configured target: a timestamped JSON file (0600) under outputDir (created 0700
+// if absent) when outputDir is set, and/or an off-box forwarder (webhook) when one
+// is wired. At least one target must be configured. The delivery is followed by a
+// system-actored compliance.evidence_exported audit event, so the export is itself
+// part of the tamper-evident trail and is forwarded to a SIEM. A file-write failure
+// is fatal (the file is the primary durable target); a forwarder failure is logged
+// in the audit note but does not fail the export when a file was also written.
+// Read-only with respect to the data it captures, so it is NOT legal-hold-gated.
 func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir string) (*EvidenceExportResult, error) {
-	if outputDir == "" {
-		return nil, fmt.Errorf("evidence export: output_dir is not configured")
+	if outputDir == "" && c.evidenceForwarder == nil {
+		return nil, fmt.Errorf("evidence export: no delivery target configured (set output_dir or a webhook)")
 	}
 	ev, err := c.GenerateComplianceEvidence(ctx)
 	if err != nil {
@@ -45,19 +62,39 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 	if err != nil {
 		return nil, fmt.Errorf("evidence export: marshal: %w", err)
 	}
-	if err := os.MkdirAll(outputDir, 0o700); err != nil {
-		return nil, fmt.Errorf("evidence export: create output dir: %w", err)
+
+	res := &EvidenceExportResult{Bytes: len(data)}
+
+	if outputDir != "" {
+		if err := os.MkdirAll(outputDir, 0o700); err != nil {
+			return nil, fmt.Errorf("evidence export: create output dir: %w", err)
+		}
+		name := fmt.Sprintf("keyorix-evidence-%s.json", ev.GeneratedAt.UTC().Format(evidenceFileTimeLayout))
+		if err := securefiles.SecureWriteFile(outputDir, name, data, 0o600); err != nil {
+			return nil, fmt.Errorf("evidence export: write: %w", err)
+		}
+		res.Path = filepath.Join(outputDir, name)
+		res.Targets = append(res.Targets, "file:"+res.Path)
 	}
-	name := fmt.Sprintf("keyorix-evidence-%s.json", ev.GeneratedAt.UTC().Format(evidenceFileTimeLayout))
-	if err := securefiles.SecureWriteFile(outputDir, name, data, 0o600); err != nil {
-		return nil, fmt.Errorf("evidence export: write: %w", err)
+
+	forwardNote := ""
+	if c.evidenceForwarder != nil {
+		if err := c.evidenceForwarder.ForwardEvidence(ctx, data); err != nil {
+			// Best-effort secondary target: record the failure but don't drop the
+			// export when a durable file was also written.
+			forwardNote = fmt.Sprintf("; webhook delivery FAILED: %v", err)
+			if res.Path == "" {
+				return nil, fmt.Errorf("evidence export: webhook delivery failed: %w", err)
+			}
+		} else {
+			res.Targets = append(res.Targets, "webhook")
+		}
 	}
-	path := filepath.Join(outputDir, name)
 
 	sysCtx := WithActorType(ctx, ActorTypeSystem)
 	c.writeAuditEvent(sysCtx, "compliance.evidence_exported", nil, nil,
-		fmt.Sprintf("compliance evidence pack exported to %s (%d bytes; %d campaigns, %d break-glass activations, %d overdue rotations, %d SoD violations)",
-			path, len(data), len(ev.Campaigns), len(ev.BreakGlass), len(ev.RotationOverdue), len(ev.SoDViolations)))
+		fmt.Sprintf("compliance evidence pack exported to %v (%d bytes; %d campaigns, %d break-glass activations, %d overdue rotations, %d SoD violations)%s",
+			res.Targets, len(data), len(ev.Campaigns), len(ev.BreakGlass), len(ev.RotationOverdue), len(ev.SoDViolations), forwardNote))
 
-	return &EvidenceExportResult{Path: path, Bytes: len(data)}, nil
+	return res, nil
 }

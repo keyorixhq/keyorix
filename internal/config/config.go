@@ -513,14 +513,36 @@ func (c DataRetentionConfig) GetInterval() time.Duration {
 // EvidenceDeliveryConfig configures the scheduled compliance-evidence export
 // (ISO 27001 / SOC 2 continuous evidence): a background job that periodically
 // generates the auditor evidence pack (the posture plus the records that
-// substantiate it) and writes it as a timestamped JSON file under OutputDir, for
-// off-box archival/backup. Each run also emits a compliance.evidence_exported
-// audit event, so an installed SIEM forwarder receives the delivery signal too.
-// Opt-in (Enabled, default off); OutputDir is required when enabled.
+// substantiate it) and delivers it to the configured targets — a timestamped JSON
+// file under OutputDir, and/or a Webhook that POSTs the pack off-box (so evidence
+// survives the node without a mounted volume). Each run also emits a
+// compliance.evidence_exported audit event, so an installed SIEM forwarder receives
+// the delivery signal too. Opt-in (Enabled, default off); at least one target
+// (OutputDir or Webhook) must be configured.
 type EvidenceDeliveryConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Schedule  string `yaml:"schedule"`
-	OutputDir string `yaml:"output_dir"`
+	Enabled   bool                  `yaml:"enabled"`
+	Schedule  string                `yaml:"schedule"`
+	OutputDir string                `yaml:"output_dir"`
+	Webhook   EvidenceWebhookConfig `yaml:"webhook"`
+}
+
+// EvidenceWebhookConfig configures the off-box webhook target: each run POSTs the
+// evidence pack JSON to Endpoint, optionally bearer-authenticated.
+type EvidenceWebhookConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	Endpoint           string `yaml:"endpoint"`
+	Token              string `yaml:"token"` // use KEYORIX_EVIDENCE_WEBHOOK_TOKEN env var instead
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+}
+
+// GetToken returns the resolved webhook token, preferring the environment variable.
+func (c *EvidenceWebhookConfig) GetToken() string {
+	return resolveSecret("KEYORIX_EVIDENCE_WEBHOOK_TOKEN", c.Token)
+}
+
+// HasTarget reports whether at least one delivery target is configured.
+func (c EvidenceDeliveryConfig) HasTarget() bool {
+	return c.OutputDir != "" || c.Webhook.Enabled
 }
 
 // GetInterval returns the evidence-export run interval, parsing Schedule as a Go

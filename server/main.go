@@ -39,6 +39,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/evidencesink"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
@@ -275,6 +276,21 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 	if sink := notifychan.NewMulti(notifySinks...); sink != nil {
 		coreService.SetNotificationSink(sink)
+	}
+
+	// Wire an off-box evidence webhook target if configured, so the scheduled
+	// evidence pack is POSTed off-box in addition to (or instead of) a local dir.
+	if ew := cfg.EvidenceDelivery.Webhook; ew.Enabled {
+		fwd, ferr := evidencesink.NewWebhook(evidencesink.WebhookConfig{
+			Endpoint:           ew.Endpoint,
+			Token:              ew.GetToken(),
+			InsecureSkipVerify: ew.InsecureSkipVerify,
+		})
+		if ferr != nil {
+			return nil, nil, fmt.Errorf("failed to init evidence webhook target: %w", ferr)
+		}
+		coreService.SetEvidenceForwarder(fwd)
+		log.Printf("Evidence webhook target enabled (endpoint=%s)", ew.Endpoint)
 	}
 
 	// Apply the project membership validation mode (ADR-022). Empty = allowlist.
@@ -632,17 +648,17 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	}
 
 	// Start the scheduled compliance-evidence delivery (ISO 27001 / SOC 2) — opt-in.
-	// Periodically generates the auditor evidence pack and writes it to the output
-	// directory for off-box archival; each export emits an audit event (forwarded to
-	// a SIEM if configured). Single-replica-gated (ADR-039) so one timestamped pack
-	// is written per tick. Not legal-hold-gated (it only reads).
+	// Periodically generates the auditor evidence pack and delivers it to the
+	// configured targets (a local directory and/or a webhook); each export emits an
+	// audit event (forwarded to a SIEM if configured). Single-replica-gated (ADR-039)
+	// so one pack is delivered per tick. Not legal-hold-gated (it only reads).
 	if cfg.EvidenceDelivery.Enabled {
-		outputDir := cfg.EvidenceDelivery.OutputDir
-		if outputDir == "" {
-			log.Printf("Evidence-delivery scheduler enabled but output_dir is empty; skipping")
+		if !cfg.EvidenceDelivery.HasTarget() {
+			log.Printf("Evidence-delivery scheduler enabled but no target (output_dir or webhook) is configured; skipping")
 		} else {
+			outputDir := cfg.EvidenceDelivery.OutputDir
 			interval := cfg.EvidenceDelivery.GetInterval()
-			log.Printf("Evidence-delivery scheduler enabled: every %s → %s", interval, outputDir)
+			log.Printf("Evidence-delivery scheduler enabled: every %s (dir=%q, webhook=%t)", interval, outputDir, cfg.EvidenceDelivery.Webhook.Enabled)
 			go func() {
 				ticker := time.NewTicker(interval)
 				defer ticker.Stop()
@@ -653,7 +669,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 							log.Printf("Evidence-delivery error: %v", err)
 							return err
 						}
-						log.Printf("Evidence pack exported: %s (%d bytes)", res.Path, res.Bytes)
+						log.Printf("Evidence pack exported: %d bytes → %v", res.Bytes, res.Targets)
 						return nil
 					}); err != nil {
 						log.Printf("Evidence-delivery scheduler error: %v", err)
