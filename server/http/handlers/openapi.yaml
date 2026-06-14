@@ -1429,6 +1429,7 @@ paths:
                 max_reads: {type: integer, minimum: 1, nullable: true}
                 metadata: {type: object, additionalProperties: {type: string}}
                 tags: {type: array, items: {type: string}}
+                classification: {type: string, description: "Optional data-sensitivity label (A.5.12): public|internal|confidential|restricted."}
       responses:
         '201':
           description: >-
@@ -1495,6 +1496,33 @@ paths:
         - {name: id, in: path, required: true, schema: {type: integer}}
       responses:
         '204': {description: Secret deleted (no content).}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+  /api/v1/secrets/{id}/classification:
+    patch:
+      tags: [Secrets]
+      summary: Set a secret's data-classification label (ISO 27001 A.5.12)
+      description: >-
+        Label the secret with its data sensitivity (or empty to clear). Drives the
+        compliance classification posture. Requires secrets.write at the secret's scope.
+      operationId: classifySecret
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                classification:
+                  type: string
+                  description: "public|internal|confidential|restricted, or empty to clear."
+      responses:
+        '200': {description: "Envelope {data, message}. data is the updated secret node."}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}

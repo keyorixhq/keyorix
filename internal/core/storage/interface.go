@@ -443,8 +443,11 @@ type SecretFilter struct {
 	// ExpiresBefore, when set, restricts to secrets with a non-null expiration
 	// earlier than the given time (i.e. already expired or expiring before it).
 	ExpiresBefore *time.Time
-	Page          int
-	PageSize      int
+	// Classification, when set, restricts to secrets with that data-classification
+	// label (A.5.12). Use the sentinel "unclassified" to match the empty label.
+	Classification *string
+	Page           int
+	PageSize       int
 	// IncludeDeleted, when true, also returns soft-deleted secrets (ADR-033) —
 	// for a restore UI. Default false: GORM auto-scopes deleted_at IS NULL.
 	IncludeDeleted bool

@@ -29,14 +29,15 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqBody struct {
-		Name          string            `json:"name" validate:"required,min=1,max=255"`
-		Value         string            `json:"value" validate:"required"`
-		ProjectID     uint              `json:"project_id"`
-		EnvironmentID uint              `json:"environment_id" validate:"required"`
-		Type          string            `json:"type" validate:"required"`
-		MaxReads      *int              `json:"max_reads,omitempty" validate:"omitempty,min=1"`
-		Metadata      map[string]string `json:"metadata,omitempty"`
-		Tags          []string          `json:"tags,omitempty"`
+		Name           string            `json:"name" validate:"required,min=1,max=255"`
+		Value          string            `json:"value" validate:"required"`
+		ProjectID      uint              `json:"project_id"`
+		EnvironmentID  uint              `json:"environment_id" validate:"required"`
+		Type           string            `json:"type" validate:"required"`
+		MaxReads       *int              `json:"max_reads,omitempty" validate:"omitempty,min=1"`
+		Metadata       map[string]string `json:"metadata,omitempty"`
+		Tags           []string          `json:"tags,omitempty"`
+		Classification string            `json:"classification,omitempty"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -64,16 +65,17 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := &core.CreateSecretRequest{
-		Name:          reqBody.Name,
-		Value:         []byte(reqBody.Value),
-		ProjectID:     reqBody.ProjectID,
-		EnvironmentID: reqBody.EnvironmentID,
-		Type:          reqBody.Type,
-		MaxReads:      reqBody.MaxReads,
-		Metadata:      reqBody.Metadata,
-		Tags:          reqBody.Tags,
-		CreatedBy:     userCtx.Username,
-		OwnerID:       userCtx.UserID,
+		Name:           reqBody.Name,
+		Value:          []byte(reqBody.Value),
+		ProjectID:      reqBody.ProjectID,
+		EnvironmentID:  reqBody.EnvironmentID,
+		Type:           reqBody.Type,
+		MaxReads:       reqBody.MaxReads,
+		Metadata:       reqBody.Metadata,
+		Tags:           reqBody.Tags,
+		Classification: reqBody.Classification,
+		CreatedBy:      userCtx.Username,
+		OwnerID:        userCtx.UserID,
 	}
 
 	response, err := h.coreService.CreateSecret(r.Context(), req)
@@ -95,6 +97,43 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	h.sendSuccess(w, response, i18n.T("SuccessSecretCreated", nil))
+}
+
+// ClassifySecret handles PATCH /api/v1/secrets/{id}/classification — set or clear
+// the data-classification label (A.5.12). Gated by secrets.write at the secret's
+// scope (via the route middleware).
+func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	var reqBody struct {
+		Classification string `json:"classification"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	secret, err := h.coreService.ClassifySecret(r.Context(), userCtx.UserID, userCtx.Username, uint(id), reqBody.Classification)
+	if err != nil {
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "classification must be"):
+			status = http.StatusBadRequest
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		}
+		h.sendError(w, "Error", msg, status, nil)
+		return
+	}
+	h.sendSuccess(w, secret, "Classification updated")
 }
 
 // GetSecret handles GET /api/v1/secrets/{id}

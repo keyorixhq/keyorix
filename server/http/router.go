@@ -280,6 +280,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Create: authorized inside the handler (scope comes from the body).
 			r.Post("/", secretHandler.CreateSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}", secretHandler.UpdateSecret)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Patch("/{id}/classification", secretHandler.ClassifySecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/share", shareHandler.ShareSecret)
 

@@ -333,13 +333,17 @@ type SecretNode struct {
 	MaxReads      *int
 	Expiration    *time.Time
 	Metadata      JSON
-	Status        string `gorm:"default:'active'"`
-	CreatedBy     string
-	OwnerID       uint `gorm:"index"`
-	IsShared      bool `gorm:"default:false"`
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	LastRotatedAt *time.Time
+	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
+	// "" = unclassified, else one of public|internal|confidential|restricted. Drives
+	// the classification posture and lets a review find high-sensitivity secrets.
+	Classification string `gorm:"index"`
+	Status         string `gorm:"default:'active'"`
+	CreatedBy      string
+	OwnerID        uint `gorm:"index"`
+	IsShared       bool `gorm:"default:false"`
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastRotatedAt  *time.Time
 	// DeletedAt enables soft delete (ADR-033). DELETE stamps it; restore clears
 	// it; the purge scheduler hard-deletes rows past the retention window. GORM
 	// auto-scopes `deleted_at IS NULL` on model-based queries — raw/Table/Joins
