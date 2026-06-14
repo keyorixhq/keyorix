@@ -138,10 +138,57 @@ const normalizeViolation = (v: any): SoDViolation => ({
     permissionB: v.permission_b ?? v.permissionB ?? '',
 });
 
+// One control in the framework matrix (GET /compliance/controls), mapping a control
+// Keyorix enforces to its clause references with a live status.
+export interface ControlState {
+    id: string;
+    name: string;
+    area: string;
+    status: 'pass' | 'gap' | 'not_configured';
+    detail: string;
+    frameworks: { iso27001: string[]; soc2: string[]; nis2: string[]; dora: string[] };
+}
+
+export interface ControlMatrix {
+    generatedAt: string;
+    summary: { total: number; pass: number; gap: number; notConfigured: number };
+    controls: ControlState[];
+}
+
+const normalizeControl = (c: any): ControlState => ({
+    id: c.id ?? '',
+    name: c.name ?? '',
+    area: c.area ?? '',
+    status: c.status ?? 'not_configured',
+    detail: c.detail ?? '',
+    frameworks: {
+        iso27001: c.frameworks?.iso_27001 ?? [],
+        soc2: c.frameworks?.soc2 ?? [],
+        nis2: c.frameworks?.nis2 ?? [],
+        dora: c.frameworks?.dora ?? [],
+    },
+});
+
+const normalizeMatrix = (d: any): ControlMatrix => ({
+    generatedAt: d.generated_at ?? d.generatedAt ?? '',
+    summary: {
+        total: num(d.summary?.total),
+        pass: num(d.summary?.pass),
+        gap: num(d.summary?.gap),
+        notConfigured: num(d.summary?.not_configured),
+    },
+    controls: (d.controls ?? []).map(normalizeControl),
+});
+
 export const complianceApi = {
     async getPosture(): Promise<CompliancePosture> {
         const response = await apiClient.get('/api/v1/compliance/posture');
         return normalize(response.data.data ?? response.data);
+    },
+
+    async getControls(): Promise<ControlMatrix> {
+        const response = await apiClient.get('/api/v1/compliance/controls');
+        return normalizeMatrix(response.data.data ?? response.data);
     },
 
     async placeLegalHold(reason: string): Promise<void> {

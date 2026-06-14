@@ -4,8 +4,10 @@ import { CompliancePage } from '../CompliancePage';
 import { complianceApi } from '../../../services/compliance';
 
 vi.mock('../../../services/compliance', () => ({
-    complianceApi: { getPosture: vi.fn(), getSoDViolations: vi.fn(), placeLegalHold: vi.fn(), liftLegalHold: vi.fn() },
+    complianceApi: { getPosture: vi.fn(), getControls: vi.fn(), getSoDViolations: vi.fn(), placeLegalHold: vi.fn(), liftLegalHold: vi.fn() },
 }));
+
+const emptyMatrix = { generatedAt: '2026-06-14T10:00:00Z', summary: { total: 0, pass: 0, gap: 0, notConfigured: 0 }, controls: [] };
 
 const posture = {
     generatedAt: '2026-06-14T10:00:00Z',
@@ -24,6 +26,7 @@ describe('CompliancePage posture panel', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         (complianceApi.getSoDViolations as any).mockResolvedValue([]);
+        (complianceApi.getControls as any).mockResolvedValue(emptyMatrix);
     });
 
     it('renders the live posture tiles when the report loads', async () => {
@@ -68,5 +71,23 @@ describe('CompliancePage posture panel', () => {
         (complianceApi.getPosture as any).mockRejectedValue({ response: { status: 403 } });
         render(<CompliancePage />);
         expect(await screen.findByText(/available to administrators/i)).toBeInTheDocument();
+    });
+
+    it('renders the control matrix with status and framework refs', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue(posture);
+        (complianceApi.getControls as any).mockResolvedValue({
+            generatedAt: '2026-06-14T10:00:00Z',
+            summary: { total: 2, pass: 1, gap: 1, notConfigured: 0 },
+            controls: [
+                { id: 'sep', name: 'Separation of duties', area: 'Access governance', status: 'gap', detail: '1 SoD violation', frameworks: { iso27001: ['A.5.3'], soc2: ['CC5.1'], nis2: [], dora: ['Art.5'] } },
+                { id: 'mfa', name: 'Second-factor coverage', area: 'Identity', status: 'pass', detail: '100% covered', frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [] } },
+            ],
+        });
+        render(<CompliancePage />);
+
+        expect(await screen.findByText(/Control matrix/i)).toBeInTheDocument();
+        expect(screen.getByText('1 pass · 1 gap · 0 n/a')).toBeInTheDocument();
+        expect(screen.getByText(/Separation of duties/)).toBeInTheDocument();
+        expect(screen.getByText('ISO A.5.3 · SOC2 CC5.1 · DORA Art.5')).toBeInTheDocument();
     });
 });

@@ -217,6 +217,67 @@ const SectionCard: React.FC<SectionCardProps> = ({ title, children }) => (
     </div>
 );
 
+// ControlMatrixPanel renders the framework control matrix (GET /compliance/controls):
+// each enforced control with its live status and ISO/SOC2/NIS2/DORA references.
+const NA_META = { label: 'N/A', color: 'var(--text-muted)', bg: 'var(--bg-muted)' };
+const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
+    pass: { label: 'Pass', color: 'var(--success)', bg: 'var(--success-subtle)' },
+    gap: { label: 'Gap', color: 'var(--error)', bg: 'var(--error-subtle)' },
+    not_configured: NA_META,
+};
+
+const ControlMatrixPanel: React.FC = () => {
+    const { data: m, isError } = useQuery({
+        queryKey: ['compliance', 'controls'],
+        queryFn: () => complianceApi.getControls(),
+        staleTime: 60_000,
+        retry: false,
+    });
+    if (isError || !m) return null; // 403/unavailable — the posture panel already notes admin-only
+
+    const refLine = (c: typeof m.controls[number]): string => {
+        const parts: string[] = [];
+        if (c.frameworks.iso27001.length) parts.push(`ISO ${c.frameworks.iso27001.join(', ')}`);
+        if (c.frameworks.soc2.length) parts.push(`SOC2 ${c.frameworks.soc2.join(', ')}`);
+        if (c.frameworks.nis2.length) parts.push(`NIS2 ${c.frameworks.nis2.join(', ')}`);
+        if (c.frameworks.dora.length) parts.push(`DORA ${c.frameworks.dora.join(', ')}`);
+        return parts.join(' · ');
+    };
+
+    return (
+        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
+                <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                    Control matrix (ISO 27001 / SOC 2 / NIS2 / DORA)
+                </h2>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {m.summary.pass} pass · {m.summary.gap} gap · {m.summary.notConfigured} n/a
+                </span>
+            </div>
+            <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {m.controls.map(c => {
+                    const s = STATUS_META[c.status] ?? NA_META;
+                    return (
+                        <li key={c.id} className="px-6 py-3 flex items-start gap-3" style={{ borderColor: 'var(--border)' }}>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium shrink-0 mt-0.5"
+                                style={{ color: s.color, backgroundColor: s.bg }}>
+                                {s.label}
+                            </span>
+                            <div className="min-w-0">
+                                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                    {c.name} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>· {c.area}</span>
+                                </div>
+                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{c.detail}</div>
+                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{refLine(c)}</div>
+                            </div>
+                        </li>
+                    );
+                })}
+            </ul>
+        </div>
+    );
+};
+
 export const CompliancePage: React.FC = () => (
     <div className="max-w-4xl mx-auto px-6 py-8">
         <div className="mb-8">
@@ -230,6 +291,7 @@ export const CompliancePage: React.FC = () => (
 
         <LegalHoldBanner />
         <PosturePanel />
+        <ControlMatrixPanel />
         <SoDViolationsSection />
 
         <SectionCard title="NIS2 Directive">
