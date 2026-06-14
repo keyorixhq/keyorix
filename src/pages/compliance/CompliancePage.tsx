@@ -278,6 +278,108 @@ const ControlMatrixPanel: React.FC = () => {
     );
 };
 
+// RiskRegisterPanel lists governed risk exceptions (GET /risk-exceptions) and lets
+// an admin record or revoke one. List needs system.read; create/revoke need
+// system.write (a 403 surfaces as an inline error / hidden controls).
+const RISK_CATEGORIES = ['sod', 'mfa', 'rotation', 'dormant_access', 'classification', 'other'];
+
+const RiskRegisterPanel: React.FC = () => {
+    const queryClient = useQueryClient();
+    const { data: exceptions, isError } = useQuery({
+        queryKey: ['compliance', 'risk-exceptions'],
+        queryFn: () => complianceApi.getRiskExceptions(),
+        staleTime: 60_000,
+        retry: false,
+    });
+    const invalidate = () => {
+        queryClient.invalidateQueries({ queryKey: ['compliance', 'risk-exceptions'] });
+        queryClient.invalidateQueries({ queryKey: ['compliance', 'posture'] });
+    };
+    const create = useMutation({ mutationFn: complianceApi.createRiskException, onSuccess: invalidate });
+    const revoke = useMutation({ mutationFn: (id: number) => complianceApi.revokeRiskException(id), onSuccess: invalidate });
+
+    const [adding, setAdding] = useState(false);
+    const [form, setForm] = useState({ title: '', category: 'sod', reference: '', justification: '', expires: '' });
+    const [error, setError] = useState('');
+    const onErr = (e: any) => setError(e?.response?.data?.error ?? e?.response?.data?.message ?? 'Action failed.');
+
+    if (isError || !exceptions) return null; // 403/unavailable — posture panel already notes admin-only
+
+    const submit = () => {
+        if (!form.title.trim() || !form.justification.trim() || !form.expires) return;
+        setError('');
+        create.mutate(
+            { title: form.title.trim(), category: form.category, reference: form.reference.trim(), justification: form.justification.trim(), expiresAt: `${form.expires}T00:00:00Z` },
+            { onError: onErr, onSuccess: () => { invalidate(); setAdding(false); setForm({ title: '', category: 'sod', reference: '', justification: '', expires: '' }); } },
+        );
+    };
+
+    return (
+        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div className="px-6 py-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--border)' }}>
+                <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
+                    Risk register (A.5.8) — {exceptions.length} active exception{exceptions.length === 1 ? '' : 's'}
+                </h2>
+                {!adding && (
+                    <button onClick={() => { setError(''); setAdding(true); }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                        Add exception
+                    </button>
+                )}
+            </div>
+
+            {adding && (
+                <div className="px-6 py-4 border-b grid grid-cols-1 sm:grid-cols-2 gap-2" style={{ borderColor: 'var(--border)' }}>
+                    <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Title (e.g. accept SoD during cutover)"
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                    <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                        {RISK_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <input value={form.reference} onChange={e => setForm({ ...form, reference: e.target.value })} placeholder="Reference (a user, an SoD pair, a secret)"
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                    <input type="date" value={form.expires} onChange={e => setForm({ ...form, expires: e.target.value })} aria-label="Expires"
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                    <input value={form.justification} onChange={e => setForm({ ...form, justification: e.target.value })} placeholder="Justification (recorded for audit)"
+                        className="sm:col-span-2 rounded-lg px-3 py-1.5 text-sm outline-hidden" style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                    <div className="sm:col-span-2 flex items-center gap-2">
+                        <button onClick={submit} disabled={create.isPending || !form.title.trim() || !form.justification.trim() || !form.expires}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50" style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>
+                            Record exception
+                        </button>
+                        <button onClick={() => { setAdding(false); setError(''); }} className="px-2.5 py-1.5 rounded-lg text-xs" style={{ color: 'var(--text-muted)' }}>Cancel</button>
+                        {error && <span className="text-xs" style={{ color: 'var(--error)' }}>{error}</span>}
+                    </div>
+                </div>
+            )}
+
+            {exceptions.length === 0 ? (
+                <div className="px-6 py-4 text-sm" style={{ color: 'var(--text-muted)' }}>No active risk exceptions.</div>
+            ) : (
+                <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                    {exceptions.map(e => (
+                        <li key={e.id} className="px-6 py-3 flex items-start justify-between gap-3" style={{ borderColor: 'var(--border)' }}>
+                            <div className="min-w-0">
+                                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                                    {e.title} <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>· {e.category}{e.reference ? ` · ${e.reference}` : ''}</span>
+                                </div>
+                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{e.justification}</div>
+                                <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>Expires {e.expiresAt ? new Date(e.expiresAt).toLocaleDateString() : '—'}</div>
+                            </div>
+                            <button onClick={() => revoke.mutate(e.id)} disabled={revoke.isPending}
+                                className="px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 disabled:opacity-50"
+                                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                                Revoke
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+};
+
 export const CompliancePage: React.FC = () => (
     <div className="max-w-4xl mx-auto px-6 py-8">
         <div className="mb-8">
@@ -292,6 +394,7 @@ export const CompliancePage: React.FC = () => (
         <LegalHoldBanner />
         <PosturePanel />
         <ControlMatrixPanel />
+        <RiskRegisterPanel />
         <SoDViolationsSection />
 
         <SectionCard title="NIS2 Directive">

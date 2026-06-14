@@ -180,6 +180,37 @@ const normalizeMatrix = (d: any): ControlMatrix => ({
     controls: (d.controls ?? []).map(normalizeControl),
 });
 
+// One governed risk exception (GET /risk-exceptions), with a computed status.
+export interface RiskException {
+    id: number;
+    title: string;
+    category: string;
+    reference: string;
+    justification: string;
+    status: 'active' | 'expired' | 'revoked';
+    expiresAt: string;
+    createdBy: number;
+}
+
+const normalizeException = (e: any): RiskException => ({
+    id: e.id ?? 0,
+    title: e.title ?? '',
+    category: e.category ?? 'other',
+    reference: e.reference ?? '',
+    justification: e.justification ?? '',
+    status: e.status ?? 'active',
+    expiresAt: e.expires_at ?? e.expiresAt ?? '',
+    createdBy: e.created_by ?? e.createdBy ?? 0,
+});
+
+export interface RiskExceptionInput {
+    title: string;
+    category: string;
+    reference: string;
+    justification: string;
+    expiresAt: string; // RFC3339
+}
+
 export const complianceApi = {
     async getPosture(): Promise<CompliancePosture> {
         const response = await apiClient.get('/api/v1/compliance/posture');
@@ -189,6 +220,26 @@ export const complianceApi = {
     async getControls(): Promise<ControlMatrix> {
         const response = await apiClient.get('/api/v1/compliance/controls');
         return normalizeMatrix(response.data.data ?? response.data);
+    },
+
+    async getRiskExceptions(): Promise<RiskException[]> {
+        const response = await apiClient.get('/api/v1/risk-exceptions');
+        const list = response.data.data?.exceptions ?? response.data.exceptions ?? [];
+        return list.map(normalizeException);
+    },
+
+    async createRiskException(input: RiskExceptionInput): Promise<void> {
+        await apiClient.post('/api/v1/risk-exceptions', {
+            title: input.title,
+            category: input.category,
+            reference: input.reference,
+            justification: input.justification,
+            expires_at: input.expiresAt,
+        });
+    },
+
+    async revokeRiskException(id: number): Promise<void> {
+        await apiClient.delete(`/api/v1/risk-exceptions/${id}`);
     },
 
     async placeLegalHold(reason: string): Promise<void> {

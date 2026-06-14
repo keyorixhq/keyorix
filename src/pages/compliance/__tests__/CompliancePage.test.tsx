@@ -4,7 +4,11 @@ import { CompliancePage } from '../CompliancePage';
 import { complianceApi } from '../../../services/compliance';
 
 vi.mock('../../../services/compliance', () => ({
-    complianceApi: { getPosture: vi.fn(), getControls: vi.fn(), getSoDViolations: vi.fn(), placeLegalHold: vi.fn(), liftLegalHold: vi.fn() },
+    complianceApi: {
+        getPosture: vi.fn(), getControls: vi.fn(), getSoDViolations: vi.fn(),
+        placeLegalHold: vi.fn(), liftLegalHold: vi.fn(),
+        getRiskExceptions: vi.fn(), createRiskException: vi.fn(), revokeRiskException: vi.fn(),
+    },
 }));
 
 const emptyMatrix = { generatedAt: '2026-06-14T10:00:00Z', summary: { total: 0, pass: 0, gap: 0, notConfigured: 0 }, controls: [] };
@@ -27,6 +31,7 @@ describe('CompliancePage posture panel', () => {
         vi.clearAllMocks();
         (complianceApi.getSoDViolations as any).mockResolvedValue([]);
         (complianceApi.getControls as any).mockResolvedValue(emptyMatrix);
+        (complianceApi.getRiskExceptions as any).mockResolvedValue([]);
     });
 
     it('renders the live posture tiles when the report loads', async () => {
@@ -89,5 +94,17 @@ describe('CompliancePage posture panel', () => {
         expect(screen.getByText('1 pass · 1 gap · 0 n/a')).toBeInTheDocument();
         expect(screen.getByText(/Separation of duties/)).toBeInTheDocument();
         expect(screen.getByText('ISO A.5.3 · SOC2 CC5.1 · DORA Art.5')).toBeInTheDocument();
+    });
+
+    it('lists active risk exceptions in the register', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue(posture);
+        (complianceApi.getRiskExceptions as any).mockResolvedValue([
+            { id: 1, title: 'accept SoD during cutover', category: 'sod', reference: 'alice', justification: 'temporary', status: 'active', expiresAt: '2026-12-31T00:00:00Z', createdBy: 9 },
+        ]);
+        render(<CompliancePage />);
+
+        expect(await screen.findByText(/Risk register .* 1 active exception/i)).toBeInTheDocument();
+        expect(screen.getByText('accept SoD during cutover')).toBeInTheDocument();
+        expect(screen.getByText('temporary')).toBeInTheDocument();
     });
 });
