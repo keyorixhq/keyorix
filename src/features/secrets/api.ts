@@ -83,6 +83,18 @@ export const useRotateSecret = (id: number) => {
     });
 };
 
+export const useClassifySecret = (id: number) => {
+    return useMutation({
+        mutationFn: (classification: string) => secretsApi.classify(id, classification),
+        onSuccess: () => {
+            // Classification feeds the compliance posture's per-level counts and the
+            // secret lists, so refresh both; the detail badge updates from local state.
+            invalidateQueries.secrets.detail(id);
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
 export const useDeleteSecret = () => {
     const queryClient = useQueryClient();
 

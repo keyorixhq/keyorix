@@ -26,6 +26,7 @@ export const API_ENDPOINTS = {
         UPDATE: (id: number) => `/api/v1/secrets/${id}`,
         DELETE: (id: number) => `/api/v1/secrets/${id}`,
         VERSIONS: (id: number) => `/api/v1/secrets/${id}/versions`,
+        CLASSIFY: (id: number) => `/api/v1/secrets/${id}/classification`,
     },
     SHARING: {
         LIST: '/api/v1/shares',

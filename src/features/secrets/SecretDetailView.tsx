@@ -12,9 +12,10 @@ import {
     UserIcon,
     KeyIcon,
     ArrowPathIcon,
-    ShieldExclamationIcon
+    ShieldExclamationIcon,
+    ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret } from './api';
 import { RiskBand } from '../../types';
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
@@ -46,6 +47,19 @@ const RISK_BAND_STYLE: Record<RiskBand, { label: string; color: string }> = {
 
 const factorColor = (score: number): string => (score >= 67 ? '#ef4444' : score >= 34 ? '#f59e0b' : '#10b981');
 
+// Data-classification levels (ISO 27001 A.5.12) and their badge styling. The empty
+// string is "unclassified" — the audit-relevant default.
+const UNCLASSIFIED_META = { label: 'Unclassified', color: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' };
+const CLASSIFICATION_META: Record<string, { label: string; color: string }> = {
+    '': UNCLASSIFIED_META,
+    public: { label: 'Public', color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' },
+    internal: { label: 'Internal', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' },
+    confidential: { label: 'Confidential', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' },
+    restricted: { label: 'Restricted', color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' },
+};
+const CLASSIFICATION_LEVELS = ['', 'public', 'internal', 'confidential', 'restricted'];
+const classificationMeta = (level: string) => CLASSIFICATION_META[level] ?? UNCLASSIFIED_META;
+
 interface SecretDetailViewProps {
     secret: Secret;
     onEdit?: (secret: Secret) => void;
@@ -66,9 +80,22 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const [showRotate, setShowRotate] = useState(false);
     const [rotateValue, setRotateValue] = useState('');
 
+    const [classification, setClassification] = useState<string>(secret.classification ?? '');
+
     const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
     const rotateMutation = useRotateSecret(secret.id);
     const { data: risk } = useSecretRisk(secret.id);
+    const classifyMutation = useClassifySecret(secret.id);
+
+    // Optimistically reflect the new level; revert if the server rejects it.
+    const handleClassify = (level: string) => {
+        const previous = classification;
+        if (level === previous) return;
+        setClassification(level);
+        classifyMutation.mutate(level, {
+            onError: () => setClassification(previous),
+        });
+    };
 
     const closeRotate = () => {
         setShowRotate(false);
@@ -139,6 +166,14 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getTypeColor(secret.type)}`}>
                             {secret.type}
                         </span>
+                        <span
+                            data-testid="classification-badge"
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${classificationMeta(classification).color}`}
+                            title="Data classification (ISO 27001 A.5.12)"
+                        >
+                            <ShieldCheckIcon className="h-3.5 w-3.5 mr-1" />
+                            {classificationMeta(classification).label}
+                        </span>
                     </div>
 
                     <div className="mt-2 flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
@@ -160,6 +195,23 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                                 ? `Rotated ${relativeFromNow(secret.lastRotatedAt)}`
                                 : 'Never rotated'}
                         </div>
+                        <label className="flex items-center">
+                            <span className="sr-only">Classification</span>
+                            <ShieldCheckIcon className="h-4 w-4 mr-1" />
+                            <select
+                                aria-label="Classification"
+                                value={classification}
+                                disabled={classifyMutation.isPending}
+                                onChange={(e) => handleClassify(e.target.value)}
+                                className="bg-transparent text-sm text-gray-500 dark:text-gray-400 border-0 focus:ring-0 cursor-pointer disabled:opacity-50"
+                            >
+                                {CLASSIFICATION_LEVELS.map((level) => (
+                                    <option key={level || 'unclassified'} value={level}>
+                                        {classificationMeta(level).label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
                     </div>
                 </div>
 

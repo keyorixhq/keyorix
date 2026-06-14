@@ -45,9 +45,13 @@ export interface Secret {
     tags: string[];
     Expiration?: string | null;
     lastRotatedAt?: string | null;
+    // Data-sensitivity label (ISO 27001 A.5.12). '' / undefined = unclassified.
+    classification?: SecretClassification | '';
 }
 
 export type SecretType = 'text' | 'password' | 'api_key' | 'certificate' | 'json';
+
+export type SecretClassification = 'public' | 'internal' | 'confidential' | 'restricted';
 
 export interface SecretFormData {
     name: string;

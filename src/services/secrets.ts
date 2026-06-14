@@ -33,6 +33,7 @@ export const secretsApi = {
             metadata: {},
             Expiration: s.Expiration ?? null,
             lastRotatedAt: s.LastRotatedAt ?? null,
+            classification: s.Classification ?? s.classification ?? '',
         }));
         return {
             data: mappedSecrets,
@@ -92,5 +93,11 @@ export const secretsApi = {
     async risk(id: number): Promise<SecretRiskScore> {
         const response = await apiClient.get<ApiResponse<SecretRiskScore>>(`/api/v1/secrets/${id}/risk`);
         return response.data.data;
+    },
+
+    // classify sets (or clears, with '') the secret's data-classification label
+    // (ISO 27001 A.5.12) via PATCH /secrets/{id}/classification.
+    async classify(id: number, classification: string): Promise<void> {
+        await apiClient.patch(API_ENDPOINTS.SECRETS.CLASSIFY(id), { classification });
     },
 };
