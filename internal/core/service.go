@@ -56,6 +56,10 @@ type KeyorixCore struct {
 	// (ISO A.5.33) so the compliance posture can report them; zero value = no
 	// retention configured. Set from config at startup via SetRetentionPolicy.
 	retentionPolicy RetentionPolicy
+	// recertCadenceDays is the access-recertification review interval (ISO A.5.18),
+	// in days; 0 = the default cadence. Used by the posture to flag overdue projects.
+	// Set from config at startup via SetRecertificationCadence.
+	recertCadenceDays int
 	// oidcVerifier verifies federated machine-identity JWTs (ADR-031); nil = OIDC
 	// auth disabled. Set from config via SetOIDCVerifier.
 	oidcVerifier *OIDCVerifier

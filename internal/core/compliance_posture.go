@@ -34,6 +34,7 @@ type AccessGovernancePosture struct {
 	ProjectsNeverReviewed    int `json:"projects_never_reviewed"`
 	OpenCampaigns            int `json:"open_campaigns"`
 	PendingItems             int `json:"pending_items"`       // undecided items across open campaigns
+	ProjectsOverdue          int `json:"projects_overdue"`    // overdue for recertification (A.5.18 cadence)
 	DormantRoleGrants        int `json:"dormant_role_grants"` // user role grants with no/old secret access
 	SoDViolations            int `json:"sod_violations"`      // principals holding a forbidden permission pair (A.5.3)
 }
@@ -252,6 +253,7 @@ func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *Compliance
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	p.AccessGovernance.Projects = len(projects)
+	recertCutoff := c.now().AddDate(0, 0, -c.recertCadence())
 	for _, proj := range projects {
 		pid := proj.ID
 
@@ -260,16 +262,21 @@ func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *Compliance
 			if len(campaigns) == 0 {
 				p.AccessGovernance.ProjectsNeverReviewed++
 			}
-			hasOpen := false
-			for _, cw := range campaigns {
-				if cw.Campaign.State == CampaignStateOpen {
-					hasOpen = true
-					p.AccessGovernance.OpenCampaigns++
-					p.AccessGovernance.PendingItems += cw.Progress.Pending
-				}
-			}
-			if hasOpen {
+			open, lastClosed := splitCampaigns(campaigns)
+			if open != nil {
 				p.AccessGovernance.ProjectsWithOpenCampaign++
+				p.AccessGovernance.OpenCampaigns++
+				p.AccessGovernance.PendingItems += open.Progress.Pending
+			} else {
+				// No review in progress — overdue if never reviewed, or the last
+				// campaign closed longer ago than the recertification cadence (A.5.18).
+				overdue := lastClosed == nil
+				if lastClosed != nil && lastClosed.Campaign.ClosedAt != nil {
+					overdue = lastClosed.Campaign.ClosedAt.Before(recertCutoff)
+				}
+				if overdue {
+					p.AccessGovernance.ProjectsOverdue++
+				}
 			}
 		}
 

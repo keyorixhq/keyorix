@@ -2818,7 +2818,8 @@ paths:
         A deployment-wide, on-demand snapshot of the control posture for auditors,
         rolling up: audit-trail integrity (chain verified, chained events,
         checkpointed), access governance (projects, with-open-campaign,
-        never-reviewed, open campaigns + pending items, dormant role grants,
+        never-reviewed, projects overdue for recertification (A.5.18 cadence),
+        open campaigns + pending items, dormant role grants,
         separation-of-duties violations), rotation hygiene (covered secrets,
         overdue, due-soon), identity
         (active users, with-second-factor + percent), emergency access
