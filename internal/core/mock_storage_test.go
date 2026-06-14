@@ -292,6 +292,35 @@ func (m *MockStorage) UpdateLegalHold(ctx context.Context, h *models.LegalHold) 
 	return args.Error(0)
 }
 
+func (m *MockStorage) CreateRiskException(ctx context.Context, e *models.RiskException) (*models.RiskException, error) {
+	args := m.Called(ctx, e)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.RiskException), args.Error(1)
+}
+
+func (m *MockStorage) ListRiskExceptions(ctx context.Context, activeOnly bool) ([]*models.RiskException, error) {
+	args := m.Called(ctx, activeOnly)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.RiskException), args.Error(1)
+}
+
+func (m *MockStorage) GetRiskException(ctx context.Context, id uint) (*models.RiskException, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.RiskException), args.Error(1)
+}
+
+func (m *MockStorage) UpdateRiskException(ctx context.Context, e *models.RiskException) error {
+	args := m.Called(ctx, e)
+	return args.Error(0)
+}
+
 func (m *MockStorage) CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
 	args := m.Called(ctx, a)
 	if args.Get(0) == nil {

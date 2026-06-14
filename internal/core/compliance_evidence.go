@@ -59,6 +59,7 @@ type ComplianceEvidence struct {
 	BreakGlass      []*models.BreakGlassActivation `json:"break_glass"`
 	RotationOverdue []EvidenceRotation             `json:"rotation_overdue"`
 	SoDViolations   []SoDViolation                 `json:"sod_violations"`
+	RiskExceptions  []*RiskExceptionView           `json:"risk_exceptions"` // active governed exceptions (A.5.8)
 }
 
 // GenerateComplianceEvidence assembles the evidence pack. Like the posture, it is an
@@ -76,6 +77,12 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 		BreakGlass:      []*models.BreakGlassActivation{},
 		RotationOverdue: []EvidenceRotation{},
 		SoDViolations:   []SoDViolation{},
+		RiskExceptions:  []*RiskExceptionView{},
+	}
+
+	// Active risk exceptions (the governed-acceptance register).
+	if exceptions, err := c.ListRiskExceptions(ctx, true); err == nil {
+		ev.RiskExceptions = exceptions
 	}
 
 	// Separation-of-duties violations (the toxic-combination register).

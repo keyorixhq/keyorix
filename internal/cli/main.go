@@ -23,6 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/project"
 	"github.com/keyorixhq/keyorix/internal/cli/rbac"
 	"github.com/keyorixhq/keyorix/internal/cli/request"
+	"github.com/keyorixhq/keyorix/internal/cli/risk"
 	"github.com/keyorixhq/keyorix/internal/cli/rotation"
 	"github.com/keyorixhq/keyorix/internal/cli/run"
 	"github.com/keyorixhq/keyorix/internal/cli/secret"
@@ -55,6 +56,7 @@ func init() {
 	rootCmd.AddCommand(group.GroupCmd)
 	rootCmd.AddCommand(invite.InviteCmd)
 	rootCmd.AddCommand(legalhold.LegalHoldCmd)
+	rootCmd.AddCommand(risk.RiskCmd)
 	rootCmd.AddCommand(request.RequestCmd)
 	rootCmd.AddCommand(share.ShareCmd)
 	rootCmd.AddCommand(auth.AuthCmd)

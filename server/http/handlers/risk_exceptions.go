@@ -1,0 +1,92 @@
+// risk_exceptions.go — the risk register / exceptions endpoints (ISO 27001 A.5.8
+// risk treatment). Listing needs system.read; create/revoke need system.write
+// (wired in router.go).
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/keyorixhq/keyorix/server/middleware"
+)
+
+// ListRiskExceptions handles GET /api/v1/risk-exceptions — the register. ?all=true
+// includes expired exceptions (history); default is active only.
+func (h *DashboardHandler) ListRiskExceptions(w http.ResponseWriter, r *http.Request) {
+	activeOnly := r.URL.Query().Get("all") != "true"
+	exceptions, err := h.coreService.ListRiskExceptions(r.Context(), activeOnly)
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"exceptions": exceptions}, "")
+}
+
+// CreateRiskException handles POST /api/v1/risk-exceptions — accept a control gap for
+// a bounded time with a justification.
+func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body struct {
+		Title         string `json:"title"`
+		Category      string `json:"category"`
+		Reference     string `json:"reference"`
+		Justification string `json:"justification"`
+		ExpiresAt     string `json:"expires_at"` // RFC3339
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	expiresAt, err := time.Parse(time.RFC3339, body.ExpiresAt)
+	if err != nil {
+		sendError(w, "InvalidParameter", "expires_at must be an RFC3339 timestamp", http.StatusBadRequest, nil)
+		return
+	}
+	exc, err := h.coreService.CreateRiskException(r.Context(), actor.UserID, body.Title, body.Category, body.Reference, body.Justification, expiresAt)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") {
+			status = http.StatusBadRequest
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	sendSuccess(w, map[string]interface{}{"exception": exc}, "Risk exception recorded")
+}
+
+// RevokeRiskException handles DELETE /api/v1/risk-exceptions/{id} — withdraw early.
+func (h *DashboardHandler) RevokeRiskException(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid exception ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.RevokeRiskException(r.Context(), actor.UserID, uint(id)); err != nil {
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "already revoked"):
+			status = http.StatusBadRequest
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", msg, status, nil)
+		return
+	}
+	sendSuccess(w, nil, "Risk exception revoked")
+}

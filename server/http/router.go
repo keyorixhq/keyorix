@@ -465,6 +465,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/legal-hold", dashboardHandler.LiftLegalHold)
 		// Compliance evidence pack — posture + supporting records, for archival.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
+		// Risk register (ISO A.5.8): list reads system.read; create/revoke system.write.
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/risk-exceptions", dashboardHandler.ListRiskExceptions)
+		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskException)
+		r.With(customMiddleware.RequirePermission("system.write")).Delete("/risk-exceptions/{id}", dashboardHandler.RevokeRiskException)
 
 		// Separation of duties (ISO A.5.3): list policies/violations (system.read);
 		// create/delete policies (system.write).

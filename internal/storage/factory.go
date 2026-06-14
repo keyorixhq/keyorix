@@ -264,6 +264,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	campaignExists := tableExists(db, "access_review_campaigns")
 	breakGlassExists := tableExists(db, "break_glass_activations")
 	legalHoldExists := tableExists(db, "legal_holds")
+	riskExceptionExists := tableExists(db, "risk_exceptions")
 	sodExists := tableExists(db, "sod_policies")
 	pwHistExists := tableExists(db, "password_histories")
 	machineExists := tableExists(db, "machine_identities")
@@ -422,6 +423,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !legalHoldExists {
 		if err := db.AutoMigrate(&models.LegalHold{}); err != nil {
 			return fmt.Errorf("failed to migrate legal_holds table: %w", err)
+		}
+	}
+
+	// Create the risk-exceptions table if missing (A.5.8 risk treatment, additive).
+	if !riskExceptionExists {
+		if err := db.AutoMigrate(&models.RiskException{}); err != nil {
+			return fmt.Errorf("failed to migrate risk_exceptions table: %w", err)
 		}
 	}
 

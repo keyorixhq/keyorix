@@ -2921,6 +2921,61 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/risk-exceptions:
+    get:
+      tags: [Dashboard]
+      summary: Risk register — governed, time-bound exceptions (ISO 27001 A.5.8)
+      description: >-
+        The risk register: governed acceptances of a known control gap, each with an
+        owner, justification, and sunset date. Active only by default; ?all=true
+        includes expired exceptions (history). Each carries a computed status
+        (active | expired | revoked). Requires system.read.
+      operationId: listRiskExceptions
+      parameters:
+        - {name: all, in: query, schema: {type: boolean}, description: "Include expired exceptions."}
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data}. data: {exceptions[] {id, title, category, reference, justification, status, expires_at, created_by, created_at}}."}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Dashboard]
+      summary: Record a risk exception (accept a control gap for a bounded time)
+      description: "Accept a known gap with a justification and a required future expiry. Requires system.write."
+      operationId: createRiskException
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, justification, expires_at]
+              properties:
+                title: {type: string}
+                category: {type: string, enum: [sod, mfa, rotation, dormant_access, classification, other]}
+                reference: {type: string, description: "What it applies to (a user, an SoD pair, a secret)."}
+                justification: {type: string}
+                expires_at: {type: string, format: date-time, description: "RFC3339; must be in the future."}
+      responses:
+        '201': {description: "Envelope {data, message}. data: {exception}."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/risk-exceptions/{id}:
+    delete:
+      tags: [Dashboard]
+      summary: Revoke a risk exception before its expiry (ISO 27001 A.5.8)
+      operationId: revokeRiskException
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: "Envelope {data, message}. Risk exception revoked."}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /api/v1/sod/policies:
     get:
       tags: [Dashboard]
