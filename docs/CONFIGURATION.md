@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
 - [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -370,6 +370,31 @@ recertification:
   cadence_days: 90       # a project is due this many days after its last campaign closed (default 90)
   auto_open: false       # true = auto-open a campaign for overdue projects; false = remind admins only
 ```
+
+## notifications
+
+External delivery channels for the in-app notifications Keyorix already creates —
+access-request approvals, anomaly alerts, rotation and recertification reminders, and
+break-glass activations (ISO 27001 A.5.5 / SOC 2 operational alerting). Each
+notification is still written to the in-app bell; when a channel is enabled it is
+**also** fanned out, best-effort and asynchronously (a slow or down endpoint drops
+rather than stalling the triggering action).
+
+The **webhook** channel POSTs each notification as a JSON body
+(`{user_id, email, type, title, message, project_id, link}`) to `endpoint`,
+optionally bearer-authenticated.
+
+```yaml
+notifications:
+  webhook:
+    enabled: true
+    endpoint: "https://hooks.example.com/keyorix"
+    token: ""                    # prefer the KEYORIX_NOTIFY_WEBHOOK_TOKEN env var
+    insecure_skip_verify: false  # TLS verification off — self-signed endpoints only
+```
+
+> The webhook token is read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` when set, falling
+> back to the YAML value — keep secrets out of the config file.
 
 ## evidence_delivery
 

@@ -50,6 +50,9 @@ type Config struct {
 	// cadence (ISO 27001 A.5.18): reminding admins of (or auto-opening) recert
 	// campaigns for projects overdue for review.
 	Recertification RecertificationConfig `yaml:"recertification"`
+	// Notifications configures external delivery (email/webhook) of the in-app
+	// notifications Keyorix creates (approvals, anomalies, reminders, break-glass).
+	Notifications NotificationsConfig `yaml:"notifications"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -557,6 +560,27 @@ func (c RecertificationConfig) GetInterval() time.Duration {
 		}
 	}
 	return 24 * time.Hour
+}
+
+// NotificationsConfig configures external delivery channels for in-app
+// notifications (ISO 27001 A.5.5 / SOC 2 operational alerting). Each channel is
+// opt-in; with none enabled, notifications remain in-app only.
+type NotificationsConfig struct {
+	Webhook NotificationWebhookConfig `yaml:"webhook"`
+}
+
+// NotificationWebhookConfig configures the webhook notification channel: each
+// notification is POSTed as JSON to Endpoint, optionally bearer-authenticated.
+type NotificationWebhookConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	Endpoint           string `yaml:"endpoint"`
+	Token              string `yaml:"token"` // use KEYORIX_NOTIFY_WEBHOOK_TOKEN env var instead
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+}
+
+// GetToken returns the resolved webhook token, preferring the environment variable.
+func (c *NotificationWebhookConfig) GetToken() string {
+	return resolveSecret("KEYORIX_NOTIFY_WEBHOOK_TOKEN", c.Token)
 }
 
 // RotationRemindersConfig configures the rotation-reminder scheduler: a background
