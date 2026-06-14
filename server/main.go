@@ -40,6 +40,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/notifychan"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
@@ -239,6 +240,22 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 		coreService.SetAuditForwarder(forwarder)
 		log.Printf("SIEM audit forwarding enabled (provider=%s)", sc.Provider)
+	}
+
+	// Wire external notification channels if configured. Each in-app notification is
+	// fanned out to the channel (best-effort, async); with none enabled it stays
+	// in-app only.
+	if wc := cfg.Notifications.Webhook; wc.Enabled {
+		sink, werr := notifychan.NewWebhook(notifychan.WebhookConfig{
+			Endpoint:           wc.Endpoint,
+			Token:              wc.GetToken(),
+			InsecureSkipVerify: wc.InsecureSkipVerify,
+		})
+		if werr != nil {
+			return nil, nil, fmt.Errorf("failed to init notification webhook channel: %w", werr)
+		}
+		coreService.SetNotificationSink(sink)
+		log.Printf("Notification webhook channel enabled (endpoint=%s)", wc.Endpoint)
 	}
 
 	// Apply the project membership validation mode (ADR-022). Empty = allowlist.

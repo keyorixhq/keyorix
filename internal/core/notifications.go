@@ -2,8 +2,9 @@
 //
 // Notifications are addressed to a single user and surfaced via the header bell.
 // Emission is best-effort: a delivery failure never blocks the action that
-// triggered it (same contract as audit emission). Delivery is in-app only;
-// email/Slack/Teams fan-out is an M3+ follow-up.
+// triggered it (same contract as audit emission). In addition to the in-app row,
+// notify() fans each event out to a configured external channel (email/webhook)
+// when a NotificationSink is wired.
 package core
 
 import (
@@ -48,6 +49,28 @@ func (c *KeyorixCore) notify(ctx context.Context, userID uint, nType, title, mes
 		Link:      link,
 		CreatedAt: c.now(),
 	})
+	c.dispatchNotification(ctx, userID, nType, title, message, projectID, link)
+}
+
+// dispatchNotification fans a notification out to the configured external channel
+// (email/webhook), resolving the recipient's email best-effort. A no-op when no
+// sink is wired; the sink itself is non-blocking, so this never delays the caller.
+func (c *KeyorixCore) dispatchNotification(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string) {
+	if c.notificationSink == nil {
+		return
+	}
+	ev := NotificationEvent{
+		UserID:    userID,
+		Type:      nType,
+		Title:     title,
+		Message:   message,
+		ProjectID: projectID,
+		Link:      link,
+	}
+	if u, err := c.storage.GetUser(ctx, userID); err == nil && u != nil {
+		ev.Email = u.Email
+	}
+	c.notificationSink.Deliver(ev)
 }
 
 // projectLabel returns a human label for a project ("Payments" or "#3").

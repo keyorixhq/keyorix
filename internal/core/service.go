@@ -46,6 +46,9 @@ type KeyorixCore struct {
 	now            func() time.Time // For testability
 	passwordPolicy PasswordPolicy
 	auditForwarder AuditForwarder
+	// notificationSink fans each in-app notification out to an external channel
+	// (email/webhook). nil = in-app only. Set from config via SetNotificationSink.
+	notificationSink NotificationSink
 	// breakGlassPolicy configures self-service emergency access; zero value =
 	// disabled. Set from config at startup via SetBreakGlassPolicy.
 	breakGlassPolicy BreakGlassPolicy
@@ -113,6 +116,33 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 	if c.auditForwarder != nil {
 		c.auditForwarder.Forward(event)
 	}
+}
+
+// NotificationEvent is one user-facing notification handed to an external sink for
+// out-of-band delivery (email/webhook) alongside the persisted in-app row.
+type NotificationEvent struct {
+	UserID    uint   `json:"user_id"`
+	Email     string `json:"email,omitempty"` // recipient's address, resolved best-effort
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Message   string `json:"message"`
+	ProjectID *uint  `json:"project_id,omitempty"`
+	Link      string `json:"link,omitempty"`
+}
+
+// NotificationSink delivers a NotificationEvent to an external channel (email,
+// webhook, …). Like AuditForwarder, implementations MUST be non-blocking and
+// best-effort: Deliver runs on the notification path and must never block or fail
+// the triggering operation. Defined here (not in the channel package) so core has
+// no dependency on the channel implementations.
+type NotificationSink interface {
+	Deliver(ev NotificationEvent)
+}
+
+// SetNotificationSink wires an external notification sink. The server calls this at
+// startup when the install configures a notifications channel. nil = in-app only.
+func (c *KeyorixCore) SetNotificationSink(s NotificationSink) {
+	c.notificationSink = s
 }
 
 // NewKeyorixCore creates a new instance of the core business logic.
