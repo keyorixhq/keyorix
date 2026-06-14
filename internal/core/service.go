@@ -52,6 +52,10 @@ type KeyorixCore struct {
 	// dualControlRequiredApprovals is the N-of-M approval threshold for access
 	// requests (A.5.3); 0/1 = single approval (disabled). Set via SetDualControlPolicy.
 	dualControlRequiredApprovals int
+	// retentionPolicy holds the configured per-record-type data-retention windows
+	// (ISO A.5.33) so the compliance posture can report them; zero value = no
+	// retention configured. Set from config at startup via SetRetentionPolicy.
+	retentionPolicy RetentionPolicy
 	// oidcVerifier verifies federated machine-identity JWTs (ADR-031); nil = OIDC
 	// auth disabled. Set from config via SetOIDCVerifier.
 	oidcVerifier *OIDCVerifier

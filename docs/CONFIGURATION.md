@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
 - [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -318,6 +318,33 @@ purge:
   enabled: true
   schedule: "24h"         # Go duration between purge runs (default 24h)
 ```
+
+## data_retention
+
+An opt-in background scheduler that enforces **per-record-type retention windows**
+on the compliance records Keyorix would otherwise accumulate indefinitely (ISO 27001
+A.5.33 / GDPR storage-limitation / DORA record-keeping). Each `*_days` value is a
+retention window in days; **`0` (the default) keeps that record type forever**. The
+job hard-deletes records past their window, never touches active/open/pending rows,
+and cascades to dependent rows (campaign items, request approvals).
+
+It is **legal-hold-gated** — while a hold is active nothing is purged — and
+single-replica-gated (ADR-039). Two things it deliberately never deletes: the
+**audit trail** (append-only tamper-evidence, ADR-029) and **soft-deleted rows**
+(those are the separate ADR-032 `purge` above).
+
+```yaml
+data_retention:
+  enabled: true
+  schedule: "24h"                     # Go duration between runs (default 24h)
+  anomaly_alerts_days: 90             # access-anomaly alerts, on detected_at
+  closed_access_reviews_days: 730     # closed recertification campaigns + items, on closed_at
+  break_glass_days: 365               # non-active emergency-access activations, on created_at
+  resolved_access_requests_days: 365  # terminal-state access requests + approvals, on resolved_at
+```
+
+The configured windows surface in the compliance posture (`keyorix compliance report`
+→ "Data retention") as evidence that storage-limitation is actively enforced.
 
 ## rotation_reminders
 

@@ -2824,8 +2824,9 @@ paths:
         (active users, with-second-factor + percent), emergency access
         (active/total break-glass activations), data classification (secret
         counts per sensitivity level + unclassified), anomalies (open /
-        high-severity access-anomaly alerts), and legal hold (active + reason).
-        Requires system.read.
+        high-severity access-anomaly alerts), legal hold (active + reason), and
+        data retention (configured per-record-type windows in days; 0 = keep
+        forever — A.5.33 storage-limitation). Requires system.read.
       operationId: getCompliancePosture
       security: [{bearerAuth: []}]
       responses:

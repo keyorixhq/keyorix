@@ -390,6 +390,26 @@ func (m *MockStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockStorage) DeleteAnomalyAlertsBefore(ctx context.Context, before time.Time) (int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, before time.Time) (int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStorage) DeleteResolvedAccessRequestsBefore(ctx context.Context, before time.Time) (int64, int64, error) {
+	args := m.Called(ctx, before)
+	return args.Get(0).(int64), args.Get(1).(int64), args.Error(2)
+}
+
 func (m *MockStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	args := m.Called(ctx, filter)
 	if args.Get(0) == nil {

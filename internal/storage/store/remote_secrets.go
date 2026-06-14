@@ -122,6 +122,23 @@ func (rs *RemoteStorage) PurgeDeletedSecretsBefore(_ context.Context, _ time.Tim
 	return 0, remoteUnsupported("PurgeDeletedSecretsBefore")
 }
 
+// Data-retention purges run server-side (the scheduler); not available remotely.
+func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("DeleteAnomalyAlertsBefore")
+}
+
+func (rs *RemoteStorage) DeleteClosedAccessReviewsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
+	return 0, 0, remoteUnsupported("DeleteClosedAccessReviewsBefore")
+}
+
+func (rs *RemoteStorage) DeleteExpiredBreakGlassBefore(_ context.Context, _ time.Time) (int64, error) {
+	return 0, remoteUnsupported("DeleteExpiredBreakGlassBefore")
+}
+
+func (rs *RemoteStorage) DeleteResolvedAccessRequestsBefore(_ context.Context, _ time.Time) (int64, int64, error) {
+	return 0, 0, remoteUnsupported("DeleteResolvedAccessRequestsBefore")
+}
+
 // ListSecrets lists secrets with optional filtering via remote API.
 // Query parameters are built from the non-nil fields of filter.
 func (rs *RemoteStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {

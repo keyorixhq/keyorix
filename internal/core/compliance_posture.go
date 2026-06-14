@@ -82,6 +82,18 @@ type ClassificationPosture struct {
 	Unclassified int `json:"unclassified"`
 }
 
+// RetentionPosture reports the configured data-retention windows (ISO 27001 A.5.33
+// / GDPR storage-limitation). Each value is a number of days; 0 means that record
+// type is kept indefinitely. Enabled mirrors whether any window is set — evidence
+// that storage-limitation is actively enforced rather than left unbounded.
+type RetentionPosture struct {
+	Enabled                    bool `json:"enabled"`
+	AnomalyAlertsDays          int  `json:"anomaly_alerts_days"`
+	ClosedAccessReviewsDays    int  `json:"closed_access_reviews_days"`
+	BreakGlassDays             int  `json:"break_glass_days"`
+	ResolvedAccessRequestsDays int  `json:"resolved_access_requests_days"`
+}
+
 // CompliancePosture is the deployment's control posture at a point in time.
 type CompliancePosture struct {
 	GeneratedAt      time.Time               `json:"generated_at"`
@@ -93,6 +105,7 @@ type CompliancePosture struct {
 	Classification   ClassificationPosture   `json:"classification"`
 	Anomalies        AnomaliesPosture        `json:"anomalies"`
 	LegalHold        LegalHoldPosture        `json:"legal_hold"`
+	Retention        RetentionPosture        `json:"retention"`
 }
 
 // GetCompliancePosture aggregates the deployment's control posture. It is an
@@ -163,6 +176,16 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	if hold, err := c.storage.GetActiveLegalHold(ctx); err == nil && hold != nil {
 		at := hold.PlacedAt
 		p.LegalHold = LegalHoldPosture{Active: true, PlacedAt: &at, Reason: hold.Reason}
+	}
+
+	// Data-retention windows (A.5.33).
+	rp := c.retentionPolicy
+	p.Retention = RetentionPosture{
+		Enabled:                    rp.Configured(),
+		AnomalyAlertsDays:          rp.AnomalyAlertsDays,
+		ClosedAccessReviewsDays:    rp.ClosedAccessReviewsDays,
+		BreakGlassDays:             rp.BreakGlassDays,
+		ResolvedAccessRequestsDays: rp.ResolvedAccessRequestsDays,
 	}
 	return p, nil
 }
