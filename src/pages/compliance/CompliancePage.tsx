@@ -67,6 +67,7 @@ const PosturePanel: React.FC = () => {
                 <Tile label="Break-glass active / total" value={`${p.emergencyAccess.activeActivations} / ${p.emergencyAccess.totalActivations}`} tone={p.emergencyAccess.activeActivations > 0 ? 'warn' : undefined} />
                 <Tile label="Restricted secrets (A.5.12)" value={p.classification.restricted} tone={p.classification.restricted > 0 ? 'warn' : undefined} />
                 <Tile label="Unclassified secrets" value={`${p.classification.unclassified} / ${p.classification.totalSecrets}`} tone={p.classification.unclassified > 0 ? 'warn' : 'good'} />
+                <Tile label="Open anomalies (NIS2)" value={`${p.anomalies.unacknowledged}${p.anomalies.highSeverityOpen > 0 ? ` (${p.anomalies.highSeverityOpen} high)` : ''}`} tone={p.anomalies.highSeverityOpen > 0 ? 'bad' : p.anomalies.unacknowledged > 0 ? 'warn' : 'good'} />
             </div>
         </div>
     );

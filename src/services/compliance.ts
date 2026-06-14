@@ -41,6 +41,10 @@ export interface CompliancePosture {
         restricted: number;
         unclassified: number;
     };
+    anomalies: {
+        unacknowledged: number;
+        highSeverityOpen: number;
+    };
 }
 
 const num = (v: any): number => (typeof v === 'number' ? v : 0);
@@ -83,6 +87,10 @@ const normalize = (d: any): CompliancePosture => ({
         confidential: num(d.classification?.confidential),
         restricted: num(d.classification?.restricted),
         unclassified: num(d.classification?.unclassified),
+    },
+    anomalies: {
+        unacknowledged: num(d.anomalies?.unacknowledged),
+        highSeverityOpen: num(d.anomalies?.high_severity_open),
     },
 });
 

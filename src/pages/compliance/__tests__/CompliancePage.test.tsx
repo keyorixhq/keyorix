@@ -15,6 +15,7 @@ const posture = {
     identity: { activeUsers: 5, usersWithSecondFactor: 4, secondFactorPercent: 80 },
     emergencyAccess: { activeActivations: 0, totalActivations: 1 },
     classification: { totalSecrets: 12, public: 1, internal: 4, confidential: 1, restricted: 6, unclassified: 0 },
+    anomalies: { unacknowledged: 3, highSeverityOpen: 1 },
 };
 
 describe('CompliancePage posture panel', () => {
@@ -32,6 +33,7 @@ describe('CompliancePage posture panel', () => {
         expect(screen.getByText('3/4')).toBeInTheDocument();        // projects reviewed
         expect(screen.getByText('2')).toBeInTheDocument();          // dormant role grants
         expect(screen.getByText('0 / 12')).toBeInTheDocument();     // unclassified / total secrets
+        expect(screen.getByText('3 (1 high)')).toBeInTheDocument(); // open anomalies (1 high-severity)
         // The static regulatory cards still render below.
         expect(screen.getByText('NIS2 Directive')).toBeInTheDocument();
     });
