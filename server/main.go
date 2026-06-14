@@ -142,6 +142,7 @@ const (
 	schedLockAuditCkpt    int64 = 0x4B455953_41434B50 // "KEYSACKP"
 	schedLockJITExpiry    int64 = 0x4B455953_4A495445 // "KEYSJITE"
 	schedLockRetention    int64 = 0x4B455953_52455445 // "KEYSRETE"
+	schedLockEvidence     int64 = 0x4B455953_45564944 // "KEYSEVID"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -546,6 +547,47 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				}
 			}
 		}()
+	}
+
+	// Start the scheduled compliance-evidence delivery (ISO 27001 / SOC 2) — opt-in.
+	// Periodically generates the auditor evidence pack and writes it to the output
+	// directory for off-box archival; each export emits an audit event (forwarded to
+	// a SIEM if configured). Single-replica-gated (ADR-039) so one timestamped pack
+	// is written per tick. Not legal-hold-gated (it only reads).
+	if cfg.EvidenceDelivery.Enabled {
+		outputDir := cfg.EvidenceDelivery.OutputDir
+		if outputDir == "" {
+			log.Printf("Evidence-delivery scheduler enabled but output_dir is empty; skipping")
+		} else {
+			interval := cfg.EvidenceDelivery.GetInterval()
+			log.Printf("Evidence-delivery scheduler enabled: every %s → %s", interval, outputDir)
+			go func() {
+				ticker := time.NewTicker(interval)
+				defer ticker.Stop()
+				runExport := func() {
+					if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockEvidence, func() error {
+						res, err := coreService.ExportComplianceEvidence(ctx, outputDir)
+						if err != nil {
+							log.Printf("Evidence-delivery error: %v", err)
+							return err
+						}
+						log.Printf("Evidence pack exported: %s (%d bytes)", res.Path, res.Bytes)
+						return nil
+					}); err != nil {
+						log.Printf("Evidence-delivery scheduler error: %v", err)
+					}
+				}
+				runExport() // run once on startup
+				for {
+					select {
+					case <-ticker.C:
+						runExport()
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+		}
 	}
 
 	// Start the audit-checkpoint scheduler (ADR-029) — opt-in. Periodically signs

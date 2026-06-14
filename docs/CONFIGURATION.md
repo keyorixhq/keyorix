@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
 - [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -345,6 +345,29 @@ data_retention:
 
 The configured windows surface in the compliance posture (`keyorix compliance report`
 → "Data retention") as evidence that storage-limitation is actively enforced.
+
+## evidence_delivery
+
+An opt-in background scheduler that periodically generates the **auditor evidence
+pack** (the same bundle as `keyorix compliance export` / `GET /compliance/evidence`
+— the posture plus the records that substantiate it) and writes it as a timestamped
+JSON file to `output_dir`, for off-box archival/backup (ISO 27001 / SOC 2 continuous
+evidence). Files are named `keyorix-evidence-<UTC-timestamp>.json` (mode `0600`; the
+directory is created `0700` if absent).
+
+Each export also emits a `compliance.evidence_exported` audit event, so an installed
+[`audit.siem`](#auditsiem) forwarder receives the delivery signal too. Read-only, so
+it runs even while a legal hold is active. Single-replica-gated (ADR-039).
+
+```yaml
+evidence_delivery:
+  enabled: true
+  schedule: "24h"                           # Go duration between exports (default 24h)
+  output_dir: "/var/lib/keyorix/evidence"   # required when enabled; mount to durable storage
+```
+
+> Point `output_dir` at a volume that is backed up off-box (or synced to object
+> storage) — the value of scheduled delivery is that the evidence survives the node.
 
 ## rotation_reminders
 
