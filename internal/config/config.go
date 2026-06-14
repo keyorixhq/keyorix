@@ -35,6 +35,8 @@ type Config struct {
 	BreakGlass BreakGlassConfig `yaml:"break_glass"`
 	// DualControl configures N-of-M approval for access-request grants (A.5.3).
 	DualControl DualControlConfig `yaml:"dual_control"`
+	// AnomalyAlerts configures proactive alerting for detected access anomalies.
+	AnomalyAlerts AnomalyAlertsConfig `yaml:"anomaly_alerts"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -544,6 +546,25 @@ func (c BreakGlassConfig) GetMaxTTL() time.Duration {
 		}
 	}
 	return 24 * time.Hour
+}
+
+// AnomalyAlertsConfig configures proactive alerting for detected access anomalies
+// (NIS2 detection & response). The hourly detection scan always runs; when this is
+// enabled, each newly detected anomaly is also pushed to the project's admins
+// (in-app) and the audit trail / SIEM. Opt-in (default off).
+type AnomalyAlertsConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+}
+
+// GetInterval returns the anomaly scan/alert interval (Go duration); defaults to 1h.
+func (c AnomalyAlertsConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return time.Hour
 }
 
 // DualControlConfig configures N-of-M approval (dual control) for access-request

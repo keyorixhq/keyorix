@@ -2822,8 +2822,9 @@ paths:
         separation-of-duties violations), rotation hygiene (covered secrets,
         overdue, due-soon), identity
         (active users, with-second-factor + percent), emergency access
-        (active/total break-glass activations), and data classification (secret
-        counts per sensitivity level + unclassified). Requires system.read.
+        (active/total break-glass activations), data classification (secret
+        counts per sensitivity level + unclassified), and anomalies (open /
+        high-severity access-anomaly alerts). Requires system.read.
       operationId: getCompliancePosture
       security: [{bearerAuth: []}]
       responses:

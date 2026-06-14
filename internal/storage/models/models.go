@@ -770,7 +770,10 @@ type AnomalyAlert struct {
 	IPAddress    string
 	DetectedAt   time.Time `gorm:"index"`
 	Acknowledged bool      `gorm:"default:false"`
-	CreatedAt    time.Time
+	// Alerted is set once the anomaly has been pushed out (admin notification +
+	// SIEM forward) so the alerter doesn't re-notify on every scan.
+	Alerted   bool `gorm:"default:false;index"`
+	CreatedAt time.Time
 }
 
 // MachineIdentity is a non-human project member (ADR-023): a CI runner, a

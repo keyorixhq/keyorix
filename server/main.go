@@ -347,15 +347,32 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("failed to create HTTP router: %w", err)
 	}
 
-	// Start anomaly detection scheduler (runs every hour). Single-replica-gated
-	// (ADR-039) so N replicas don't emit N copies of each alert.
+	// Start anomaly detection scheduler. Single-replica-gated (ADR-039) so N
+	// replicas don't emit N copies of each alert. When anomaly_alerts is enabled,
+	// each detection pass is followed by an alerting pass that pushes newly detected
+	// anomalies to project admins + the audit/SIEM pipeline.
 	go func() {
 		detector := core.NewAnomalyDetector(coreService.Storage())
-		ticker := time.NewTicker(1 * time.Hour)
+		alertsEnabled := cfg.AnomalyAlerts.Enabled
+		interval := cfg.AnomalyAlerts.GetInterval()
+		if alertsEnabled {
+			log.Printf("Anomaly alerting enabled: scan + alert every %s", interval)
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		runDetect := func() {
 			if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockAnomaly, func() error {
-				return detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx))
+				if derr := detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx)); derr != nil {
+					return derr
+				}
+				if alertsEnabled {
+					if n, aerr := coreService.AlertNewAnomalies(ctx); aerr != nil {
+						return aerr
+					} else if n > 0 {
+						log.Printf("Anomaly alerting: announced %d new anomaly alert(s)", n)
+					}
+				}
+				return nil
 			}); err != nil {
 				log.Printf("Anomaly detection scheduler error: %v", err)
 			}

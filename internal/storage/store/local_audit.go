@@ -309,6 +309,18 @@ func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) er
 	return ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Update("acknowledged", true).Error
 }
 
+func (ls *LocalStorage) ListUnalertedAnomalyAlerts(ctx context.Context) ([]models.AnomalyAlert, error) {
+	var rows []models.AnomalyAlert
+	if err := ls.db.WithContext(ctx).Where("alerted = ?", false).Order("detected_at ASC").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("failed to list unalerted anomaly alerts: %w", err)
+	}
+	return rows, nil
+}
+
+func (ls *LocalStorage) MarkAnomalyAlertAlerted(ctx context.Context, id uint) error {
+	return ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Update("alerted", true).Error
+}
+
 // GetDistinctActiveUserIDs returns the IDs of users who have logged in since the given time.
 func (ls *LocalStorage) GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error) {
 	var ids []uint

@@ -59,6 +59,10 @@ type posture struct {
 		Restricted   int `json:"restricted"`
 		Unclassified int `json:"unclassified"`
 	} `json:"classification"`
+	Anomalies struct {
+		Unacknowledged   int `json:"unacknowledged"`
+		HighSeverityOpen int `json:"high_severity_open"`
+	} `json:"anomalies"`
 }
 
 func yesNo(b bool) string {
@@ -114,6 +118,9 @@ var reportCmd = &cobra.Command{
 		fmt.Printf("  restricted / confidential : %d / %d\n", p.Classification.Restricted, p.Classification.Confidential)
 		fmt.Printf("  internal / public         : %d / %d\n", p.Classification.Internal, p.Classification.Public)
 		fmt.Printf("  unclassified              : %d\n", p.Classification.Unclassified)
+
+		fmt.Println("\nAccess anomalies (NIS2 detection)")
+		fmt.Printf("  open / high-severity : %d / %d\n", p.Anomalies.Unacknowledged, p.Anomalies.HighSeverityOpen)
 		return nil
 	},
 }

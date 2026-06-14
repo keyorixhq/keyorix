@@ -296,6 +296,10 @@ type Storage interface {
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
 	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
+	// ListUnalertedAnomalyAlerts returns alerts not yet pushed out (alerted=false),
+	// and MarkAnomalyAlertAlerted flags one as pushed — for proactive alerting.
+	ListUnalertedAnomalyAlerts(ctx context.Context) ([]models.AnomalyAlert, error)
+	MarkAnomalyAlertAlerted(ctx context.Context, id uint) error
 	GetAuditLogs(ctx context.Context, filter *AuditFilter) ([]*models.AuditEvent, int64, error)
 	GetRBACAuditLogs(ctx context.Context, filter *RBACAuditFilter) ([]*RBACAuditLog, int64, error)
 	// AuditRetentionStats returns the total audit event count and the oldest /
