@@ -65,6 +65,9 @@ type Storage interface {
 	GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error)
 	UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) error
 	ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error)
+	// Access-request approvals (N-of-M dual control). One row per approver sign-off.
+	CreateAccessRequestApproval(ctx context.Context, a *models.AccessRequestApproval) error
+	ListAccessRequestApprovals(ctx context.Context, requestID uint) ([]*models.AccessRequestApproval, error)
 
 	// Access-review campaigns (ISO 27001 A.5.18) — periodic recertification cycles
 	// and the per-grant items captured within them.

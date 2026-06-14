@@ -68,6 +68,20 @@ type AccessRequest struct {
 	ExpiresAt     *time.Time
 	CreatedAt     time.Time
 	ResolvedAt    *time.Time
+	// ApprovalsReceived / RequiredApprovals are transient (not persisted): the
+	// dual-control progress (M of K) the API surfaces for a pending request.
+	ApprovalsReceived int `gorm:"-"`
+	RequiredApprovals int `gorm:"-"`
+}
+
+// AccessRequestApproval records one approver's sign-off on an access request, for
+// N-of-M dual control (ISO 27001 A.5.3 / SOX): a request grants the role only once
+// RequiredApprovals distinct approvers (none of them the requester) have approved.
+type AccessRequestApproval struct {
+	ID         uint `gorm:"primaryKey"`
+	RequestID  uint `gorm:"index;not null"`
+	ApproverID uint `gorm:"not null"`
+	CreatedAt  time.Time
 }
 
 // SoDPolicy is a separation-of-duties rule (ISO 27001 A.5.3 / SOX): two permissions

@@ -33,6 +33,8 @@ type Config struct {
 	JITAccessExpiry JITAccessExpiryConfig `yaml:"jit_access_expiry"`
 	// BreakGlass configures opt-in self-service emergency access (incident response).
 	BreakGlass BreakGlassConfig `yaml:"break_glass"`
+	// DualControl configures N-of-M approval for access-request grants (A.5.3).
+	DualControl DualControlConfig `yaml:"dual_control"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -542,6 +544,22 @@ func (c BreakGlassConfig) GetMaxTTL() time.Duration {
 		}
 	}
 	return 24 * time.Hour
+}
+
+// DualControlConfig configures N-of-M approval (dual control) for access-request
+// grants (ISO 27001 A.5.3 / SOX): a request grants its role only once this many
+// distinct approvers (none the requester) have approved. 0 or 1 = disabled (a
+// single approval grants, the default behaviour).
+type DualControlConfig struct {
+	RequiredApprovals int `yaml:"required_approvals"`
+}
+
+// GetRequiredApprovals returns the dual-control threshold (minimum 1).
+func (c DualControlConfig) GetRequiredApprovals() int {
+	if c.RequiredApprovals > 1 {
+		return c.RequiredApprovals
+	}
+	return 1
 }
 
 // WebAuthnConfig configures the WebAuthn relying party (ADR-036). RPID is the

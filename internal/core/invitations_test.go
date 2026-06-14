@@ -77,6 +77,8 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 		return e.EventType == "access_request.approved"
 	})).Return(nil)
+	store.On("ListAccessRequestApprovals", ctx, uint(3)).Return([]*models.AccessRequestApproval{}, nil)
+	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 
 	allowNotifications(store) // best-effort outcome notification to the requester
 	out, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "project_developer")
@@ -96,6 +98,8 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+	store.On("ListAccessRequestApprovals", ctx, uint(3)).Return([]*models.AccessRequestApproval{}, nil)
+	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 
 	allowNotifications(store) // best-effort outcome notification to the requester
 	// Empty grantedRole → uses the suggested role.

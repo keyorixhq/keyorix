@@ -166,6 +166,19 @@ func (m *MockStorage) ListAccessRequests(ctx context.Context, projectID uint) ([
 	return args.Get(0).([]*models.AccessRequest), args.Error(1)
 }
 
+func (m *MockStorage) CreateAccessRequestApproval(ctx context.Context, a *models.AccessRequestApproval) error {
+	args := m.Called(ctx, a)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListAccessRequestApprovals(ctx context.Context, requestID uint) ([]*models.AccessRequestApproval, error) {
+	args := m.Called(ctx, requestID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.AccessRequestApproval), args.Error(1)
+}
+
 func (m *MockStorage) CreateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (*models.AccessReviewCampaign, error) {
 	args := m.Called(ctx, c)
 	if args.Get(0) == nil {

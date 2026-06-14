@@ -109,7 +109,7 @@ func TestRemoveExpiredRoleGrants_NoopWhenNothingExpired(t *testing.T) {
 func TestApproveAccessRequestWithExpiry_TimeBound(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
-	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}))
+	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}))
 
 	const proj = uint(2)
 	ctx := context.Background()
@@ -140,7 +140,7 @@ func TestApproveAccessRequestWithExpiry_TimeBound(t *testing.T) {
 func TestApproveAccessRequest_PermanentByDefault(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
-	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}))
+	require.NoError(t, h.DB.AutoMigrate(&models.AccessRequest{}, &models.AccessRequestApproval{}))
 
 	const proj = uint(2)
 	ctx := context.Background()
