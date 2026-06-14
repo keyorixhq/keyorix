@@ -16,6 +16,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/encryption"
 	"github.com/keyorixhq/keyorix/internal/cli/group"
 	"github.com/keyorixhq/keyorix/internal/cli/invite"
+	"github.com/keyorixhq/keyorix/internal/cli/legalhold"
 	"github.com/keyorixhq/keyorix/internal/cli/machine"
 	"github.com/keyorixhq/keyorix/internal/cli/migrate"
 	"github.com/keyorixhq/keyorix/internal/cli/pat"
@@ -53,6 +54,7 @@ func init() {
 	rootCmd.AddCommand(user.UserCmd)
 	rootCmd.AddCommand(group.GroupCmd)
 	rootCmd.AddCommand(invite.InviteCmd)
+	rootCmd.AddCommand(legalhold.LegalHoldCmd)
 	rootCmd.AddCommand(request.RequestCmd)
 	rootCmd.AddCommand(share.ShareCmd)
 	rootCmd.AddCommand(auth.AuthCmd)

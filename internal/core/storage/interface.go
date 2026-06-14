@@ -86,6 +86,12 @@ type Storage interface {
 	ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy, error)
 	DeleteSoDPolicy(ctx context.Context, id uint) error
 
+	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
+	// blocks the purge jobs from hard-deleting records while active.
+	CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error)
+	GetActiveLegalHold(ctx context.Context) (*models.LegalHold, error)
+	UpdateLegalHold(ctx context.Context, h *models.LegalHold) error
+
 	// Break-glass emergency-access activations (NIS2/DORA incident response).
 	CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error)
 	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)

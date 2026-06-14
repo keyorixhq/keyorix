@@ -101,6 +101,21 @@ type SoDPolicy struct {
 // TableName pins the table name (GORM would otherwise derive "so_d_policies").
 func (SoDPolicy) TableName() string { return "sod_policies" }
 
+// LegalHold is a deployment-wide litigation/investigation hold (ISO 27001 A.5.34 /
+// eDiscovery / DORA record-keeping). While one is active (Released = false), the
+// background purge/retention jobs must not hard-delete any records, so data under
+// hold is preserved. Placing/lifting is audited; the row history is the evidence
+// of when holds were in effect.
+type LegalHold struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	Reason     string     `json:"reason"`
+	PlacedBy   uint       `json:"placed_by"`
+	PlacedAt   time.Time  `json:"placed_at"`
+	Released   bool       `gorm:"index" json:"released"` // false = active
+	ReleasedBy uint       `json:"released_by,omitempty"`
+	ReleasedAt *time.Time `json:"released_at,omitempty"`
+}
+
 // BreakGlassActivation records a self-service emergency-access elevation: a user
 // immediately self-granted a time-bound emergency role (no approval), with a
 // written justification, for incident response (NIS2/DORA). The grant itself is a
