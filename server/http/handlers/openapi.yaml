@@ -2838,6 +2838,26 @@ paths:
             rotation, identity, emergency_access} — see the description for each group's fields.
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/compliance/controls:
+    get:
+      tags: [Dashboard]
+      summary: Compliance control matrix (ISO 27001 / SOC 2 / NIS2 / DORA)
+      description: >-
+        The control matrix: each control Keyorix enforces, mapped to its clause
+        references across ISO 27001 Annex A, SOC 2 Trust Services Criteria, NIS2,
+        and DORA, with a live status derived from the posture (pass | gap |
+        not_configured) and a human-readable detail. Includes a summary tally.
+        Requires system.read.
+      operationId: getComplianceControls
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: >-
+            Envelope {data}. data: {generated_at, summary {total, pass, gap,
+            not_configured}, controls[] {id, name, area, status, detail, frameworks
+            {iso_27001[], soc2[], nis2[], dora[]}}}.
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/compliance/evidence:
     get:
       tags: [Dashboard]

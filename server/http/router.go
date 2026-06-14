@@ -457,6 +457,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// Compliance posture — deployment-wide controls snapshot for auditors.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
+		// Compliance control matrix — controls mapped to ISO/SOC2/NIS2/DORA + status.
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/controls", dashboardHandler.GetComplianceControls)
 		// Legal hold (ISO A.5.34): status reads system.read; place/lift system.write.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/legal-hold", dashboardHandler.GetLegalHold)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/legal-hold", dashboardHandler.PlaceLegalHold)

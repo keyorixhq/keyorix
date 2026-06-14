@@ -46,6 +46,18 @@ func (h *DashboardHandler) GetCompliancePosture(w http.ResponseWriter, r *http.R
 	sendSuccess(w, posture, "")
 }
 
+// GetComplianceControls handles GET /api/v1/compliance/controls — the control
+// matrix mapping each enforced control to its ISO 27001 / SOC 2 / NIS2 / DORA
+// references with a live status; gated by system.read in the router.
+func (h *DashboardHandler) GetComplianceControls(w http.ResponseWriter, r *http.Request) {
+	controls, err := h.coreService.GetComplianceControls(r.Context())
+	if err != nil {
+		sendError(w, "InternalServerError", "Failed to evaluate compliance controls", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, controls, "")
+}
+
 // GetComplianceEvidence handles GET /api/v1/compliance/evidence — the auditor
 // evidence pack (posture + supporting records); gated by system.read in the router.
 func (h *DashboardHandler) GetComplianceEvidence(w http.ResponseWriter, r *http.Request) {
