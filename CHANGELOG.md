@@ -3,6 +3,44 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.24.0 — 2026-06-14
+
+The operationalisation release: compliance controls run on a schedule, reach people
+where they work, and deliver evidence off-box.
+
+### Added
+- **Scheduled access recertification (ISO 27001 A.5.18)** — an opt-in scheduler that
+  enforces a review cadence: it finds projects overdue for review (never reviewed,
+  or last reviewed longer ago than the configured window) and either auto-opens a
+  recertification campaign or reminds the project's admins to, and nudges admins of
+  in-flight campaigns with pending items. The cadence also drives a new
+  "projects overdue" figure in the compliance posture. Configure via
+  `recertification`. ([#192])
+- **External notification channels (ISO 27001 A.5.5 / SOC 2)** — the in-app
+  notifications Keyorix creates (approvals, anomaly alerts, rotation/recertification
+  reminders, break-glass) can now be **fanned out to email and/or a webhook**,
+  best-effort and asynchronously (a slow channel never blocks the triggering action).
+  Configure via `notifications.{webhook,email}`. ([#193], [#194])
+- **Off-box evidence delivery (ISO 27001 / SOC 2)** — scheduled compliance-evidence
+  delivery can now **POST the evidence pack to a webhook** in addition to (or instead
+  of) a local directory, so evidence survives the node without a mounted volume.
+  Configure via `evidence_delivery.webhook`. ([#195])
+- **Data-classification filter on the secrets API (ISO 27001 A.5.12)** — `GET
+  /secrets` accepts a `classification` query parameter (`public|internal|
+  confidential|restricted|unclassified`). ([#196])
+
+### Notes
+- No schema changes — every feature builds on existing tables.
+- The Keyorix web console gains a classification column, filter, and bulk-classify on
+  the secrets list, and surfaces the recertification-overdue count and the configured
+  data-retention windows on the Compliance page (keyorix-web).
+
+[#192]: https://github.com/keyorixhq/keyorix/pull/192
+[#193]: https://github.com/keyorixhq/keyorix/pull/193
+[#194]: https://github.com/keyorixhq/keyorix/pull/194
+[#195]: https://github.com/keyorixhq/keyorix/pull/195
+[#196]: https://github.com/keyorixhq/keyorix/pull/196
+
 ## v0.23.0 — 2026-06-14
 
 The retention release: data is kept exactly as long as policy requires, and the
