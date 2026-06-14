@@ -58,6 +58,16 @@ type EmergencyAccessPosture struct {
 	TotalActivations  int `json:"total_activations"`
 }
 
+// ClassificationPosture summarises secret data-classification coverage (A.5.12).
+type ClassificationPosture struct {
+	TotalSecrets int `json:"total_secrets"`
+	Public       int `json:"public"`
+	Internal     int `json:"internal"`
+	Confidential int `json:"confidential"`
+	Restricted   int `json:"restricted"`
+	Unclassified int `json:"unclassified"`
+}
+
 // CompliancePosture is the deployment's control posture at a point in time.
 type CompliancePosture struct {
 	GeneratedAt      time.Time               `json:"generated_at"`
@@ -66,6 +76,7 @@ type CompliancePosture struct {
 	Rotation         RotationPosture         `json:"rotation"`
 	Identity         IdentityPosture         `json:"identity"`
 	EmergencyAccess  EmergencyAccessPosture  `json:"emergency_access"`
+	Classification   ClassificationPosture   `json:"classification"`
 }
 
 // GetCompliancePosture aggregates the deployment's control posture. It is an
@@ -117,7 +128,35 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	if violations, err := c.DetectSoDViolations(ctx); err == nil {
 		p.AccessGovernance.SoDViolations = len(violations)
 	}
+
+	// Data-classification coverage (A.5.12).
+	p.Classification = c.classificationPosture(ctx)
 	return p, nil
+}
+
+// classificationPosture counts secrets per classification level via cheap count
+// queries (PageSize 1 → only the total), rather than walking every secret row.
+func (c *KeyorixCore) classificationPosture(ctx context.Context) ClassificationPosture {
+	count := func(level string) int {
+		f := &storage.SecretFilter{Page: 1, PageSize: 1}
+		if level != "" {
+			lvl := level
+			f.Classification = &lvl
+		}
+		_, total, err := c.storage.ListSecrets(ctx, f)
+		if err != nil {
+			return 0
+		}
+		return int(total)
+	}
+	return ClassificationPosture{
+		TotalSecrets: count(""),
+		Public:       count(ClassificationPublic),
+		Internal:     count(ClassificationInternal),
+		Confidential: count(ClassificationConfidential),
+		Restricted:   count(ClassificationRestricted),
+		Unclassified: count("unclassified"),
+	}
 }
 
 // identityPosture counts active users and how many have a second factor (MFA or

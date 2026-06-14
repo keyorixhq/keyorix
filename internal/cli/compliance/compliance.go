@@ -51,6 +51,14 @@ type posture struct {
 		ActiveActivations int `json:"active_activations"`
 		TotalActivations  int `json:"total_activations"`
 	} `json:"emergency_access"`
+	Classification struct {
+		TotalSecrets int `json:"total_secrets"`
+		Public       int `json:"public"`
+		Internal     int `json:"internal"`
+		Confidential int `json:"confidential"`
+		Restricted   int `json:"restricted"`
+		Unclassified int `json:"unclassified"`
+	} `json:"classification"`
 }
 
 func yesNo(b bool) string {
@@ -100,6 +108,12 @@ var reportCmd = &cobra.Command{
 
 		fmt.Println("\nEmergency access (break-glass)")
 		fmt.Printf("  active / total activations : %d / %d\n", p.EmergencyAccess.ActiveActivations, p.EmergencyAccess.TotalActivations)
+
+		fmt.Println("\nData classification (ISO A.5.12)")
+		fmt.Printf("  total secrets : %d\n", p.Classification.TotalSecrets)
+		fmt.Printf("  restricted / confidential : %d / %d\n", p.Classification.Restricted, p.Classification.Confidential)
+		fmt.Printf("  internal / public         : %d / %d\n", p.Classification.Internal, p.Classification.Public)
+		fmt.Printf("  unclassified              : %d\n", p.Classification.Unclassified)
 		return nil
 	},
 }

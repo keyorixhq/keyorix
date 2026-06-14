@@ -2813,8 +2813,9 @@ paths:
         never-reviewed, open campaigns + pending items, dormant role grants,
         separation-of-duties violations), rotation hygiene (covered secrets,
         overdue, due-soon), identity
-        (active users, with-second-factor + percent), and emergency access
-        (active/total break-glass activations). Requires system.read.
+        (active users, with-second-factor + percent), emergency access
+        (active/total break-glass activations), and data classification (secret
+        counts per sensitivity level + unclassified). Requires system.read.
       operationId: getCompliancePosture
       security: [{bearerAuth: []}]
       responses:
