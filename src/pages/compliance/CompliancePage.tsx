@@ -1,6 +1,81 @@
-import React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { complianceApi } from '../../services/compliance';
+
+// LegalHoldBanner surfaces the deployment legal-hold state (A.5.34) and lets an
+// admin place or lift it. Reads status from the shared posture query; mutations
+// need system.write (a 403 surfaces as an inline error). Hidden until the posture
+// loads (or on 403 — the panel above already shows the admin-only note).
+const LegalHoldBanner: React.FC = () => {
+    const queryClient = useQueryClient();
+    const { data: p } = useQuery({
+        queryKey: ['compliance', 'posture'],
+        queryFn: () => complianceApi.getPosture(),
+        staleTime: 60_000,
+        retry: false,
+    });
+    const invalidate = () => queryClient.invalidateQueries({ queryKey: ['compliance', 'posture'] });
+    const place = useMutation({ mutationFn: (reason: string) => complianceApi.placeLegalHold(reason), onSuccess: invalidate });
+    const lift = useMutation({ mutationFn: () => complianceApi.liftLegalHold(), onSuccess: invalidate });
+
+    const [placing, setPlacing] = useState(false);
+    const [reason, setReason] = useState('');
+    const [error, setError] = useState('');
+    const onError = (err: any) => setError(err?.response?.data?.error ?? err?.response?.data?.message ?? 'Action failed.');
+
+    if (!p) return null;
+    const active = p.legalHold.active;
+
+    return (
+        <div className="rounded-xl border mb-6 px-6 py-4"
+            style={active
+                ? { borderColor: 'var(--error)', backgroundColor: 'var(--error-subtle)' }
+                : { borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold" style={{ color: active ? 'var(--error)' : 'var(--text-primary)' }}>
+                        {active ? 'Legal hold active — purges are blocked' : 'No legal hold'}
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        {active
+                            ? `Records are preserved (A.5.34). Reason: ${p.legalHold.reason || '—'}`
+                            : 'Background purge/retention jobs run normally.'}
+                    </p>
+                </div>
+                {active ? (
+                    <button onClick={() => { setError(''); lift.mutate(undefined, { onError }); }} disabled={lift.isPending}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                        Lift hold
+                    </button>
+                ) : !placing ? (
+                    <button onClick={() => { setError(''); setPlacing(true); }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+                        style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                        Place hold
+                    </button>
+                ) : null}
+            </div>
+            {placing && !active && (
+                <div className="mt-3 flex items-center gap-2">
+                    <input value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason (e.g. litigation hold — case INC-7)" autoFocus
+                        className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={{ backgroundColor: 'var(--bg-app)', border: '1px solid var(--border)', color: 'var(--text-primary)' }} />
+                    <button onClick={() => { if (!reason.trim()) return; setError(''); place.mutate(reason.trim(), { onError, onSuccess: () => { invalidate(); setPlacing(false); setReason(''); } }); }}
+                        disabled={place.isPending || !reason.trim()}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
+                        style={{ backgroundColor: 'var(--error)', color: '#fff' }}>
+                        Confirm hold
+                    </button>
+                    <button onClick={() => { setPlacing(false); setReason(''); }} className="px-2.5 py-1.5 rounded-lg text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        Cancel
+                    </button>
+                </div>
+            )}
+            {error && <p className="text-xs mt-2" style={{ color: 'var(--error)' }}>{error}</p>}
+        </div>
+    );
+};
 
 interface SectionCardProps {
     title: string;
@@ -137,6 +212,7 @@ export const CompliancePage: React.FC = () => (
             </p>
         </div>
 
+        <LegalHoldBanner />
         <PosturePanel />
         <SoDViolationsSection />
 

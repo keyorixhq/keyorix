@@ -45,6 +45,11 @@ export interface CompliancePosture {
         unacknowledged: number;
         highSeverityOpen: number;
     };
+    legalHold: {
+        active: boolean;
+        reason: string;
+        placedAt?: string;
+    };
 }
 
 const num = (v: any): number => (typeof v === 'number' ? v : 0);
@@ -92,6 +97,11 @@ const normalize = (d: any): CompliancePosture => ({
         unacknowledged: num(d.anomalies?.unacknowledged),
         highSeverityOpen: num(d.anomalies?.high_severity_open),
     },
+    legalHold: {
+        active: !!(d.legal_hold?.active),
+        reason: d.legal_hold?.reason ?? '',
+        placedAt: d.legal_hold?.placed_at ?? undefined,
+    },
 });
 
 // One separation-of-duties violation (a principal holding a forbidden permission
@@ -116,6 +126,14 @@ export const complianceApi = {
     async getPosture(): Promise<CompliancePosture> {
         const response = await apiClient.get('/api/v1/compliance/posture');
         return normalize(response.data.data ?? response.data);
+    },
+
+    async placeLegalHold(reason: string): Promise<void> {
+        await apiClient.post('/api/v1/legal-hold', { reason });
+    },
+
+    async liftLegalHold(): Promise<void> {
+        await apiClient.delete('/api/v1/legal-hold');
     },
 
     async getSoDViolations(): Promise<SoDViolation[]> {

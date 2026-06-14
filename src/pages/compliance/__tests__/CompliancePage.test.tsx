@@ -4,7 +4,7 @@ import { CompliancePage } from '../CompliancePage';
 import { complianceApi } from '../../../services/compliance';
 
 vi.mock('../../../services/compliance', () => ({
-    complianceApi: { getPosture: vi.fn(), getSoDViolations: vi.fn() },
+    complianceApi: { getPosture: vi.fn(), getSoDViolations: vi.fn(), placeLegalHold: vi.fn(), liftLegalHold: vi.fn() },
 }));
 
 const posture = {
@@ -16,6 +16,7 @@ const posture = {
     emergencyAccess: { activeActivations: 0, totalActivations: 1 },
     classification: { totalSecrets: 12, public: 1, internal: 4, confidential: 1, restricted: 6, unclassified: 0 },
     anomalies: { unacknowledged: 3, highSeverityOpen: 1 },
+    legalHold: { active: false, reason: '' },
 };
 
 describe('CompliancePage posture panel', () => {
@@ -48,6 +49,13 @@ describe('CompliancePage posture panel', () => {
         expect(await screen.findByText(/Separation-of-duties violations \(1\)/i)).toBeInTheDocument();
         expect(screen.getByText('alice (a@x.io)')).toBeInTheDocument();
         expect(screen.getByText('roles.assign + secrets.delete')).toBeInTheDocument();
+    });
+
+    it('shows a legal-hold banner when a hold is active', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue({ ...posture, legalHold: { active: true, reason: 'litigation INC-7' } });
+        render(<CompliancePage />);
+        expect(await screen.findByText(/Legal hold active/i)).toBeInTheDocument();
+        expect(screen.getByText(/litigation INC-7/)).toBeInTheDocument();
     });
 
     it('shows an admin-only note when the caller lacks system.read (403)', async () => {
