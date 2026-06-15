@@ -93,7 +93,7 @@ func TestKeyProvider_EnvRoundTrip(t *testing.T) {
 func TestKeyProvider_ShamirRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	kek := bytes.Repeat([]byte{0x3D}, 32)
-	shares, err := crypto.Split(kek, 5, 3)
+	shares, err := crypto.SplitKEK(kek, 5, 3)
 	require.NoError(t, err)
 	var files []string
 	for i := 0; i < 3; i++ { // write the threshold-many shares

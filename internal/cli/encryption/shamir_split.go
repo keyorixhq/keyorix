@@ -56,7 +56,7 @@ unrecoverable. Store shares separately and back them up.`,
 		if _, err := cryptorand.Read(kek); err != nil {
 			return fmt.Errorf("generate KEK: %w", err)
 		}
-		shares, err := crypto.Split(kek, ssShares, ssThreshold)
+		shares, err := crypto.SplitKEK(kek, ssShares, ssThreshold)
 		if err != nil {
 			return err
 		}
