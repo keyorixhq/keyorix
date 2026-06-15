@@ -23,9 +23,12 @@ const evidenceFileTimeLayout = "20060102T150405Z"
 // EvidenceForwarder ships a marshalled evidence pack to an off-box target (e.g. a
 // webhook / object store). Called only from the once-a-day evidence scheduler, so a
 // synchronous implementation is fine. Defined here (not in the sink package) so core
-// has no dependency on the forwarder implementation.
+// has no dependency on the forwarder implementation. name is the suggested object
+// name (keyorix-evidence-<ts>.json) — an object store keys on it; a webhook may
+// ignore it. Target returns a short label for the export result (e.g. "webhook").
 type EvidenceForwarder interface {
-	ForwardEvidence(ctx context.Context, data []byte, signature string) error
+	ForwardEvidence(ctx context.Context, name string, data []byte, signature string) error
+	Target() string
 }
 
 // SetEvidenceForwarder wires an off-box evidence target. The server calls this at
@@ -70,11 +73,14 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 
 	res := &EvidenceExportResult{Bytes: len(data), Signed: signed}
 
+	// The pack's canonical name — used both as the local filename and the off-box
+	// object key, so a file and an object-store copy of the same run line up.
+	name := fmt.Sprintf("keyorix-evidence-%s.json", ev.GeneratedAt.UTC().Format(evidenceFileTimeLayout))
+
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0o700); err != nil {
 			return nil, fmt.Errorf("evidence export: create output dir: %w", err)
 		}
-		name := fmt.Sprintf("keyorix-evidence-%s.json", ev.GeneratedAt.UTC().Format(evidenceFileTimeLayout))
 		if err := securefiles.SecureWriteFile(outputDir, name, data, 0o600); err != nil {
 			return nil, fmt.Errorf("evidence export: write: %w", err)
 		}
@@ -89,15 +95,15 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 
 	forwardNote := ""
 	if c.evidenceForwarder != nil {
-		if err := c.evidenceForwarder.ForwardEvidence(ctx, data, signature); err != nil {
+		if err := c.evidenceForwarder.ForwardEvidence(ctx, name, data, signature); err != nil {
 			// Best-effort secondary target: record the failure but don't drop the
 			// export when a durable file was also written.
-			forwardNote = fmt.Sprintf("; webhook delivery FAILED: %v", err)
+			forwardNote = fmt.Sprintf("; off-box delivery FAILED: %v", err)
 			if res.Path == "" {
-				return nil, fmt.Errorf("evidence export: webhook delivery failed: %w", err)
+				return nil, fmt.Errorf("evidence export: off-box delivery failed: %w", err)
 			}
 		} else {
-			res.Targets = append(res.Targets, "webhook")
+			res.Targets = append(res.Targets, c.evidenceForwarder.Target())
 		}
 	}
 

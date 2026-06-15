@@ -96,17 +96,21 @@ func TestExportComplianceEvidence_EmptyOutputDirErrors(t *testing.T) {
 
 type fakeEvidenceForwarder struct {
 	calls int
+	name  string
 	data  []byte
 	sig   string
 	err   error
 }
 
-func (f *fakeEvidenceForwarder) ForwardEvidence(_ context.Context, data []byte, signature string) error {
+func (f *fakeEvidenceForwarder) ForwardEvidence(_ context.Context, name string, data []byte, signature string) error {
 	f.calls++
+	f.name = name
 	f.data = data
 	f.sig = signature
 	return f.err
 }
+
+func (f *fakeEvidenceForwarder) Target() string { return "webhook" }
 
 func TestExportComplianceEvidence_WebhookOnly(t *testing.T) {
 	ctx := context.Background()
@@ -118,6 +122,7 @@ func TestExportComplianceEvidence_WebhookOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, fwd.calls)
 	assert.Greater(t, len(fwd.data), 0)
+	assert.Contains(t, fwd.name, "keyorix-evidence-", "the forwarder receives the canonical pack name")
 	assert.Empty(t, res.Path)
 	assert.Equal(t, []string{"webhook"}, res.Targets)
 
