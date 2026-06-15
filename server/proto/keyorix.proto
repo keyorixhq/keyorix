@@ -682,3 +682,125 @@ message ListEnvironmentsRequest {
 message ListEnvironmentsResponse {
   repeated Environment environments = 1;
 }
+
+// Machine identity service (ADR-023/030): non-human project members + their
+// bearer-token credentials. Mirrors the HTTP surface — list uses users.read,
+// all mutations (create/transition/classify/token ops) use roles.assign, scoped
+// per project.
+service MachineIdentityService {
+  // List a project's machine identities.
+  rpc ListMachineIdentities(ListMachineIdentitiesRequest) returns (ListMachineIdentitiesResponse);
+
+  // Create a machine identity.
+  rpc CreateMachineIdentity(CreateMachineIdentityRequest) returns (MachineIdentity);
+
+  // Advance a machine identity's lifecycle (activate | suspend | revoke).
+  rpc TransitionMachineIdentity(TransitionMachineIdentityRequest) returns (MachineIdentity);
+
+  // Set (or clear, with "") a machine identity's data-classification label.
+  rpc ClassifyMachineIdentity(ClassifyMachineIdentityRequest) returns (MachineIdentity);
+
+  // Issue a bearer token for a machine identity. The raw token is returned ONCE.
+  rpc IssueMachineToken(IssueMachineTokenRequest) returns (IssueMachineTokenResponse);
+
+  // List a machine identity's tokens (metadata only — never the raw token).
+  rpc ListMachineTokens(ListMachineTokensRequest) returns (ListMachineTokensResponse);
+
+  // Revoke a machine token.
+  rpc RevokeMachineToken(RevokeMachineTokenRequest) returns (google.protobuf.Empty);
+
+  // Set (or clear, with "") a machine token's data-classification label.
+  rpc ClassifyMachineToken(ClassifyMachineTokenRequest) returns (MachineToken);
+}
+
+message MachineIdentity {
+  uint32 id = 1;
+  uint32 project_id = 2;
+  string name = 3;
+  string identity_type = 4;
+  string state = 5;
+  string description = 6;
+  string classification = 7;
+  uint32 created_by = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  optional google.protobuf.Timestamp last_seen_at = 11;
+  optional google.protobuf.Timestamp revoked_at = 12;
+}
+
+message MachineToken {
+  uint32 id = 1;
+  string name = 2;
+  string prefix = 3;
+  optional google.protobuf.Timestamp last_used_at = 4;
+  optional google.protobuf.Timestamp expires_at = 5;
+  bool revoked = 6;
+  string classification = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message ListMachineIdentitiesRequest {
+  uint32 project_id = 1;
+}
+
+message ListMachineIdentitiesResponse {
+  repeated MachineIdentity machine_identities = 1;
+}
+
+message CreateMachineIdentityRequest {
+  uint32 project_id = 1;
+  string name = 2;
+  string identity_type = 3;
+  string description = 4;
+  string classification = 5;
+}
+
+message TransitionMachineIdentityRequest {
+  uint32 project_id = 1;
+  uint32 machine_id = 2;
+  string action = 3; // activate | suspend | revoke
+}
+
+message ClassifyMachineIdentityRequest {
+  uint32 project_id = 1;
+  uint32 machine_id = 2;
+  string classification = 3;
+}
+
+message IssueMachineTokenRequest {
+  uint32 project_id = 1;
+  uint32 machine_id = 2;
+  string name = 3;
+  uint32 expires_in_days = 4; // 0 = never expires
+  string classification = 5;
+}
+
+message IssueMachineTokenResponse {
+  string token = 1; // shown once
+  uint32 id = 2;
+  string prefix = 3;
+  optional google.protobuf.Timestamp expires_at = 4;
+  string classification = 5;
+}
+
+message ListMachineTokensRequest {
+  uint32 project_id = 1;
+  uint32 machine_id = 2;
+}
+
+message ListMachineTokensResponse {
+  repeated MachineToken tokens = 1;
+}
+
+message RevokeMachineTokenRequest {
+  uint32 project_id = 1;
+  uint32 machine_id = 2;
+  uint32 token_id = 3;
+}
+
+message ClassifyMachineTokenRequest {
+  uint32 project_id = 1;
+  uint32 machine_id = 2;
+  uint32 token_id = 3;
+  string classification = 4;
+}

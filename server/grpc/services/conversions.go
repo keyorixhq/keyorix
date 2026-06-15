@@ -222,3 +222,33 @@ func environmentToProto(e *models.Environment) *pb.Environment {
 		UpdatedAt: timestamppb.New(e.UpdatedAt),
 	}
 }
+
+func machineIdentityToProto(m *models.MachineIdentity) *pb.MachineIdentity {
+	return &pb.MachineIdentity{
+		Id:             intToU32(int(m.ID)),
+		ProjectId:      intToU32(int(m.ProjectID)),
+		Name:           m.Name,
+		IdentityType:   m.IdentityType,
+		State:          m.State,
+		Description:    m.Description,
+		Classification: m.Classification,
+		CreatedBy:      intToU32(int(m.CreatedBy)),
+		CreatedAt:      timestamppb.New(m.CreatedAt),
+		UpdatedAt:      timestamppb.New(m.UpdatedAt),
+		LastSeenAt:     timePtrToTs(m.LastSeenAt),
+		RevokedAt:      timePtrToTs(m.RevokedAt),
+	}
+}
+
+func machineTokenToProto(c *models.MachineIdentityCredential) *pb.MachineToken {
+	return &pb.MachineToken{
+		Id:             intToU32(int(c.ID)),
+		Name:           c.Name,
+		Prefix:         c.TokenPrefix,
+		LastUsedAt:     timePtrToTs(c.LastUsedAt),
+		ExpiresAt:      timePtrToTs(c.ExpiresAt),
+		Revoked:        c.Revoked,
+		Classification: c.Classification,
+		CreatedAt:      timestamppb.New(c.CreatedAt),
+	}
+}

@@ -2022,3 +2022,398 @@ var ProjectService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "keyorix.proto",
 }
+
+const (
+	MachineIdentityService_ListMachineIdentities_FullMethodName     = "/keyorix.v1.MachineIdentityService/ListMachineIdentities"
+	MachineIdentityService_CreateMachineIdentity_FullMethodName     = "/keyorix.v1.MachineIdentityService/CreateMachineIdentity"
+	MachineIdentityService_TransitionMachineIdentity_FullMethodName = "/keyorix.v1.MachineIdentityService/TransitionMachineIdentity"
+	MachineIdentityService_ClassifyMachineIdentity_FullMethodName   = "/keyorix.v1.MachineIdentityService/ClassifyMachineIdentity"
+	MachineIdentityService_IssueMachineToken_FullMethodName         = "/keyorix.v1.MachineIdentityService/IssueMachineToken"
+	MachineIdentityService_ListMachineTokens_FullMethodName         = "/keyorix.v1.MachineIdentityService/ListMachineTokens"
+	MachineIdentityService_RevokeMachineToken_FullMethodName        = "/keyorix.v1.MachineIdentityService/RevokeMachineToken"
+	MachineIdentityService_ClassifyMachineToken_FullMethodName      = "/keyorix.v1.MachineIdentityService/ClassifyMachineToken"
+)
+
+// MachineIdentityServiceClient is the client API for MachineIdentityService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Machine identity service (ADR-023/030): non-human project members + their
+// bearer-token credentials. Mirrors the HTTP surface — list uses users.read,
+// all mutations (create/transition/classify/token ops) use roles.assign, scoped
+// per project.
+type MachineIdentityServiceClient interface {
+	// List a project's machine identities.
+	ListMachineIdentities(ctx context.Context, in *ListMachineIdentitiesRequest, opts ...grpc.CallOption) (*ListMachineIdentitiesResponse, error)
+	// Create a machine identity.
+	CreateMachineIdentity(ctx context.Context, in *CreateMachineIdentityRequest, opts ...grpc.CallOption) (*MachineIdentity, error)
+	// Advance a machine identity's lifecycle (activate | suspend | revoke).
+	TransitionMachineIdentity(ctx context.Context, in *TransitionMachineIdentityRequest, opts ...grpc.CallOption) (*MachineIdentity, error)
+	// Set (or clear, with "") a machine identity's data-classification label.
+	ClassifyMachineIdentity(ctx context.Context, in *ClassifyMachineIdentityRequest, opts ...grpc.CallOption) (*MachineIdentity, error)
+	// Issue a bearer token for a machine identity. The raw token is returned ONCE.
+	IssueMachineToken(ctx context.Context, in *IssueMachineTokenRequest, opts ...grpc.CallOption) (*IssueMachineTokenResponse, error)
+	// List a machine identity's tokens (metadata only — never the raw token).
+	ListMachineTokens(ctx context.Context, in *ListMachineTokensRequest, opts ...grpc.CallOption) (*ListMachineTokensResponse, error)
+	// Revoke a machine token.
+	RevokeMachineToken(ctx context.Context, in *RevokeMachineTokenRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Set (or clear, with "") a machine token's data-classification label.
+	ClassifyMachineToken(ctx context.Context, in *ClassifyMachineTokenRequest, opts ...grpc.CallOption) (*MachineToken, error)
+}
+
+type machineIdentityServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewMachineIdentityServiceClient(cc grpc.ClientConnInterface) MachineIdentityServiceClient {
+	return &machineIdentityServiceClient{cc}
+}
+
+func (c *machineIdentityServiceClient) ListMachineIdentities(ctx context.Context, in *ListMachineIdentitiesRequest, opts ...grpc.CallOption) (*ListMachineIdentitiesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListMachineIdentitiesResponse)
+	err := c.cc.Invoke(ctx, MachineIdentityService_ListMachineIdentities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *machineIdentityServiceClient) CreateMachineIdentity(ctx context.Context, in *CreateMachineIdentityRequest, opts ...grpc.CallOption) (*MachineIdentity, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MachineIdentity)
+	err := c.cc.Invoke(ctx, MachineIdentityService_CreateMachineIdentity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *machineIdentityServiceClient) TransitionMachineIdentity(ctx context.Context, in *TransitionMachineIdentityRequest, opts ...grpc.CallOption) (*MachineIdentity, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MachineIdentity)
+	err := c.cc.Invoke(ctx, MachineIdentityService_TransitionMachineIdentity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *machineIdentityServiceClient) ClassifyMachineIdentity(ctx context.Context, in *ClassifyMachineIdentityRequest, opts ...grpc.CallOption) (*MachineIdentity, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MachineIdentity)
+	err := c.cc.Invoke(ctx, MachineIdentityService_ClassifyMachineIdentity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *machineIdentityServiceClient) IssueMachineToken(ctx context.Context, in *IssueMachineTokenRequest, opts ...grpc.CallOption) (*IssueMachineTokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IssueMachineTokenResponse)
+	err := c.cc.Invoke(ctx, MachineIdentityService_IssueMachineToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *machineIdentityServiceClient) ListMachineTokens(ctx context.Context, in *ListMachineTokensRequest, opts ...grpc.CallOption) (*ListMachineTokensResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListMachineTokensResponse)
+	err := c.cc.Invoke(ctx, MachineIdentityService_ListMachineTokens_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *machineIdentityServiceClient) RevokeMachineToken(ctx context.Context, in *RevokeMachineTokenRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MachineIdentityService_RevokeMachineToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *machineIdentityServiceClient) ClassifyMachineToken(ctx context.Context, in *ClassifyMachineTokenRequest, opts ...grpc.CallOption) (*MachineToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MachineToken)
+	err := c.cc.Invoke(ctx, MachineIdentityService_ClassifyMachineToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// MachineIdentityServiceServer is the server API for MachineIdentityService service.
+// All implementations must embed UnimplementedMachineIdentityServiceServer
+// for forward compatibility.
+//
+// Machine identity service (ADR-023/030): non-human project members + their
+// bearer-token credentials. Mirrors the HTTP surface — list uses users.read,
+// all mutations (create/transition/classify/token ops) use roles.assign, scoped
+// per project.
+type MachineIdentityServiceServer interface {
+	// List a project's machine identities.
+	ListMachineIdentities(context.Context, *ListMachineIdentitiesRequest) (*ListMachineIdentitiesResponse, error)
+	// Create a machine identity.
+	CreateMachineIdentity(context.Context, *CreateMachineIdentityRequest) (*MachineIdentity, error)
+	// Advance a machine identity's lifecycle (activate | suspend | revoke).
+	TransitionMachineIdentity(context.Context, *TransitionMachineIdentityRequest) (*MachineIdentity, error)
+	// Set (or clear, with "") a machine identity's data-classification label.
+	ClassifyMachineIdentity(context.Context, *ClassifyMachineIdentityRequest) (*MachineIdentity, error)
+	// Issue a bearer token for a machine identity. The raw token is returned ONCE.
+	IssueMachineToken(context.Context, *IssueMachineTokenRequest) (*IssueMachineTokenResponse, error)
+	// List a machine identity's tokens (metadata only — never the raw token).
+	ListMachineTokens(context.Context, *ListMachineTokensRequest) (*ListMachineTokensResponse, error)
+	// Revoke a machine token.
+	RevokeMachineToken(context.Context, *RevokeMachineTokenRequest) (*emptypb.Empty, error)
+	// Set (or clear, with "") a machine token's data-classification label.
+	ClassifyMachineToken(context.Context, *ClassifyMachineTokenRequest) (*MachineToken, error)
+	mustEmbedUnimplementedMachineIdentityServiceServer()
+}
+
+// UnimplementedMachineIdentityServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedMachineIdentityServiceServer struct{}
+
+func (UnimplementedMachineIdentityServiceServer) ListMachineIdentities(context.Context, *ListMachineIdentitiesRequest) (*ListMachineIdentitiesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListMachineIdentities not implemented")
+}
+func (UnimplementedMachineIdentityServiceServer) CreateMachineIdentity(context.Context, *CreateMachineIdentityRequest) (*MachineIdentity, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateMachineIdentity not implemented")
+}
+func (UnimplementedMachineIdentityServiceServer) TransitionMachineIdentity(context.Context, *TransitionMachineIdentityRequest) (*MachineIdentity, error) {
+	return nil, status.Error(codes.Unimplemented, "method TransitionMachineIdentity not implemented")
+}
+func (UnimplementedMachineIdentityServiceServer) ClassifyMachineIdentity(context.Context, *ClassifyMachineIdentityRequest) (*MachineIdentity, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClassifyMachineIdentity not implemented")
+}
+func (UnimplementedMachineIdentityServiceServer) IssueMachineToken(context.Context, *IssueMachineTokenRequest) (*IssueMachineTokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IssueMachineToken not implemented")
+}
+func (UnimplementedMachineIdentityServiceServer) ListMachineTokens(context.Context, *ListMachineTokensRequest) (*ListMachineTokensResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListMachineTokens not implemented")
+}
+func (UnimplementedMachineIdentityServiceServer) RevokeMachineToken(context.Context, *RevokeMachineTokenRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeMachineToken not implemented")
+}
+func (UnimplementedMachineIdentityServiceServer) ClassifyMachineToken(context.Context, *ClassifyMachineTokenRequest) (*MachineToken, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClassifyMachineToken not implemented")
+}
+func (UnimplementedMachineIdentityServiceServer) mustEmbedUnimplementedMachineIdentityServiceServer() {
+}
+func (UnimplementedMachineIdentityServiceServer) testEmbeddedByValue() {}
+
+// UnsafeMachineIdentityServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to MachineIdentityServiceServer will
+// result in compilation errors.
+type UnsafeMachineIdentityServiceServer interface {
+	mustEmbedUnimplementedMachineIdentityServiceServer()
+}
+
+func RegisterMachineIdentityServiceServer(s grpc.ServiceRegistrar, srv MachineIdentityServiceServer) {
+	// If the following call panics, it indicates UnimplementedMachineIdentityServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&MachineIdentityService_ServiceDesc, srv)
+}
+
+func _MachineIdentityService_ListMachineIdentities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListMachineIdentitiesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineIdentityServiceServer).ListMachineIdentities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineIdentityService_ListMachineIdentities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineIdentityServiceServer).ListMachineIdentities(ctx, req.(*ListMachineIdentitiesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MachineIdentityService_CreateMachineIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateMachineIdentityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineIdentityServiceServer).CreateMachineIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineIdentityService_CreateMachineIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineIdentityServiceServer).CreateMachineIdentity(ctx, req.(*CreateMachineIdentityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MachineIdentityService_TransitionMachineIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransitionMachineIdentityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineIdentityServiceServer).TransitionMachineIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineIdentityService_TransitionMachineIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineIdentityServiceServer).TransitionMachineIdentity(ctx, req.(*TransitionMachineIdentityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MachineIdentityService_ClassifyMachineIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClassifyMachineIdentityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineIdentityServiceServer).ClassifyMachineIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineIdentityService_ClassifyMachineIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineIdentityServiceServer).ClassifyMachineIdentity(ctx, req.(*ClassifyMachineIdentityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MachineIdentityService_IssueMachineToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IssueMachineTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineIdentityServiceServer).IssueMachineToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineIdentityService_IssueMachineToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineIdentityServiceServer).IssueMachineToken(ctx, req.(*IssueMachineTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MachineIdentityService_ListMachineTokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListMachineTokensRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineIdentityServiceServer).ListMachineTokens(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineIdentityService_ListMachineTokens_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineIdentityServiceServer).ListMachineTokens(ctx, req.(*ListMachineTokensRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MachineIdentityService_RevokeMachineToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeMachineTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineIdentityServiceServer).RevokeMachineToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineIdentityService_RevokeMachineToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineIdentityServiceServer).RevokeMachineToken(ctx, req.(*RevokeMachineTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MachineIdentityService_ClassifyMachineToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClassifyMachineTokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MachineIdentityServiceServer).ClassifyMachineToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MachineIdentityService_ClassifyMachineToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MachineIdentityServiceServer).ClassifyMachineToken(ctx, req.(*ClassifyMachineTokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// MachineIdentityService_ServiceDesc is the grpc.ServiceDesc for MachineIdentityService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var MachineIdentityService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "keyorix.v1.MachineIdentityService",
+	HandlerType: (*MachineIdentityServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListMachineIdentities",
+			Handler:    _MachineIdentityService_ListMachineIdentities_Handler,
+		},
+		{
+			MethodName: "CreateMachineIdentity",
+			Handler:    _MachineIdentityService_CreateMachineIdentity_Handler,
+		},
+		{
+			MethodName: "TransitionMachineIdentity",
+			Handler:    _MachineIdentityService_TransitionMachineIdentity_Handler,
+		},
+		{
+			MethodName: "ClassifyMachineIdentity",
+			Handler:    _MachineIdentityService_ClassifyMachineIdentity_Handler,
+		},
+		{
+			MethodName: "IssueMachineToken",
+			Handler:    _MachineIdentityService_IssueMachineToken_Handler,
+		},
+		{
+			MethodName: "ListMachineTokens",
+			Handler:    _MachineIdentityService_ListMachineTokens_Handler,
+		},
+		{
+			MethodName: "RevokeMachineToken",
+			Handler:    _MachineIdentityService_RevokeMachineToken_Handler,
+		},
+		{
+			MethodName: "ClassifyMachineToken",
+			Handler:    _MachineIdentityService_ClassifyMachineToken_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "keyorix.proto",
+}
