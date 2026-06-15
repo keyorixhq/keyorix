@@ -21,6 +21,7 @@ export interface MachineIdentity {
     state: MachineIdentityState;
     description: string;
     createdBy: number;
+    classification: string;
     createdAt?: string;
     updatedAt?: string;
     lastSeenAt?: string;
@@ -43,6 +44,7 @@ const normalizeMachineIdentity = (m: any): MachineIdentity => ({
     state: (m.State ?? m.state ?? 'pending') as MachineIdentityState,
     description: m.Description ?? m.description ?? '',
     createdBy: m.CreatedBy ?? m.created_by ?? m.createdBy ?? 0,
+    classification: m.Classification ?? m.classification ?? '',
     createdAt: m.CreatedAt ?? m.created_at ?? m.createdAt ?? undefined,
     updatedAt: m.UpdatedAt ?? m.updated_at ?? m.updatedAt ?? undefined,
     lastSeenAt: m.LastSeenAt ?? m.last_seen_at ?? m.lastSeenAt ?? undefined,
@@ -81,6 +83,21 @@ export const machineIdentitiesApi = {
         const response = await apiClient.put(
             `/api/v1/projects/${projectId}/machine-identities/${machineId}`,
             { action }
+        );
+        const m = response.data.data?.machine_identity ?? response.data.data ?? response.data;
+        return normalizeMachineIdentity(m);
+    },
+
+    // Set (or clear, with '') the machine identity's data-classification label
+    // (ISO 27001 A.5.12).
+    async classify(
+        projectId: number,
+        machineId: number,
+        classification: string
+    ): Promise<MachineIdentity> {
+        const response = await apiClient.patch(
+            `/api/v1/projects/${projectId}/machine-identities/${machineId}/classification`,
+            { classification }
         );
         const m = response.data.data?.machine_identity ?? response.data.data ?? response.data;
         return normalizeMachineIdentity(m);

@@ -16,7 +16,9 @@ import {
     useMachineIdentities,
     useCreateMachineIdentity,
     useTransitionMachineIdentity,
+    useClassifyMachineIdentity,
 } from './api';
+import { classificationMeta, CLASSIFICATION_LEVELS } from '../secrets/classification';
 
 const typeLabel: Record<MachineIdentityType, string> = {
     ci: 'CI',
@@ -53,6 +55,7 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
     const { data: identities = [], isLoading } = useMachineIdentities(projectId);
     const create = useCreateMachineIdentity(projectId);
     const transition = useTransitionMachineIdentity(projectId);
+    const classify = useClassifyMachineIdentity(projectId);
 
     const [name, setName] = useState('');
     const [identityType, setIdentityType] = useState<MachineIdentityType>('ci');
@@ -78,6 +81,15 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
         transition.mutate(
             { machineId: m.id, action },
             { onError: err => surface(err, `Failed to ${action} machine identity.`) }
+        );
+    };
+
+    const reclassify = (m: MachineIdentity, classification: string) => {
+        if (classification === m.classification) return;
+        setError('');
+        classify.mutate(
+            { machineId: m.id, classification },
+            { onError: err => surface(err, 'Failed to update classification.') }
         );
     };
 
@@ -185,6 +197,31 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
                                         {m.description ? ` · ${m.description}` : ''}
                                     </p>
                                 </div>
+                                {isAdmin ? (
+                                    <select
+                                        aria-label={`Classification for ${m.name}`}
+                                        value={m.classification ?? ''}
+                                        disabled={classify.isPending}
+                                        onChange={e => reclassify(m, e.target.value)}
+                                        className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 disabled:opacity-50"
+                                        style={selectStyle}
+                                        title="Data classification (ISO 27001 A.5.12)"
+                                    >
+                                        {CLASSIFICATION_LEVELS.map(level => (
+                                            <option key={level || 'unclassified'} value={level}>
+                                                {classificationMeta(level).label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                ) : (
+                                    <span
+                                        data-testid="mi-classification-badge"
+                                        className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${classificationMeta(m.classification ?? '').color}`}
+                                        title="Data classification (ISO 27001 A.5.12)"
+                                    >
+                                        {classificationMeta(m.classification ?? '').label}
+                                    </span>
+                                )}
                                 <span
                                     className="px-2 py-0.5 rounded-full text-xs font-medium capitalize shrink-0"
                                     style={stateStyle(m.state)}

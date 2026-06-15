@@ -47,3 +47,13 @@ export function useTransitionMachineIdentity(projectId: number) {
             queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
     });
 }
+
+export function useClassifyMachineIdentity(projectId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ machineId, classification }: { machineId: number; classification: string }) =>
+            machineIdentitiesApi.classify(projectId, machineId, classification),
+        onSuccess: () =>
+            queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
+    });
+}

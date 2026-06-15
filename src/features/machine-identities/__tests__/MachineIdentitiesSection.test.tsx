@@ -4,18 +4,20 @@ import { MachineIdentitiesSection } from '../MachineIdentitiesSection';
 
 const createMutate = vi.fn();
 const transitionMutate = vi.fn();
+const classifyMutate = vi.fn();
 let isAdmin = true;
 
 vi.mock('../api', () => ({
     useMachineIdentities: () => ({
         data: [
-            { id: 1, projectId: 3, name: 'ci-runner', identityType: 'ci', state: 'active', description: 'builds' },
-            { id: 2, projectId: 3, name: 'paused-bot', identityType: 'automation', state: 'suspended', description: '' },
+            { id: 1, projectId: 3, name: 'ci-runner', identityType: 'ci', state: 'active', description: 'builds', classification: 'restricted' },
+            { id: 2, projectId: 3, name: 'paused-bot', identityType: 'automation', state: 'suspended', description: '', classification: '' },
         ],
         isLoading: false,
     }),
     useCreateMachineIdentity: () => ({ mutate: createMutate, isPending: false }),
     useTransitionMachineIdentity: () => ({ mutate: transitionMutate, isPending: false }),
+    useClassifyMachineIdentity: () => ({ mutate: classifyMutate, isPending: false }),
 }));
 
 vi.mock('../../auth', () => ({
@@ -25,6 +27,7 @@ vi.mock('../../auth', () => ({
 beforeEach(() => {
     createMutate.mockClear();
     transitionMutate.mockClear();
+    classifyMutate.mockClear();
     isAdmin = true;
 });
 
@@ -82,5 +85,26 @@ describe('MachineIdentitiesSection', () => {
         expect(screen.queryByPlaceholderText('Machine identity name…')).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: /^suspend$/i })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: /revoke/i })).not.toBeInTheDocument();
+    });
+
+    it('admins get a classification picker that calls classify on change', () => {
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        const picker = screen.getByLabelText('Classification for ci-runner') as HTMLSelectElement;
+        expect(picker.value).toBe('restricted'); // reflects the current label
+        fireEvent.change(picker, { target: { value: 'confidential' } });
+        expect(classifyMutate).toHaveBeenCalledWith(
+            { machineId: 1, classification: 'confidential' },
+            expect.anything()
+        );
+    });
+
+    it('non-admins see a read-only classification badge, no picker', () => {
+        isAdmin = false;
+        render(<MachineIdentitiesSection projectId={3} />);
+
+        const badges = screen.getAllByTestId('mi-classification-badge');
+        expect(badges[0]).toHaveTextContent('Restricted');
+        expect(screen.queryByLabelText('Classification for ci-runner')).not.toBeInTheDocument();
     });
 });
