@@ -54,6 +54,9 @@ type Config struct {
 	// Notifications configures external delivery (email/webhook) of the in-app
 	// notifications Keyorix creates (approvals, anomalies, reminders, break-glass).
 	Notifications NotificationsConfig `yaml:"notifications"`
+	// ComplianceDigest configures the opt-in scheduler that periodically broadcasts a
+	// posture + control-matrix summary to the configured notification channels.
+	ComplianceDigest ComplianceDigestConfig `yaml:"compliance_digest"`
 	// SCIM configures the SCIM 2.0 provisioning endpoints (RFC 7644) used by an IdP
 	// to provision/deprovision users. Disabled (zero value) = /scim/v2 is not served.
 	SCIM SCIMConfig `yaml:"scim"`
@@ -618,6 +621,26 @@ func (c *NotificationsConfig) GetSlackWebhookURL() string {
 // GetTeamsWebhookURL returns the resolved Teams incoming-webhook URL.
 func (c *NotificationsConfig) GetTeamsWebhookURL() string {
 	return resolveSecret("KEYORIX_NOTIFY_TEAMS_WEBHOOK", c.Teams.WebhookURL)
+}
+
+// ComplianceDigestConfig configures the scheduled compliance digest (ISO 27001 /
+// SOC 2 continuous monitoring): a periodic posture + control-matrix summary
+// broadcast to the configured notification channels. Opt-in (default off); requires
+// at least one notification channel to have somewhere to deliver.
+type ComplianceDigestConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+}
+
+// GetInterval returns the digest interval, parsing Schedule as a Go duration (e.g.
+// "24h", "168h"); defaults to 24h when unset or unparseable.
+func (c ComplianceDigestConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // NotificationEmailConfig configures the SMTP notification channel: each

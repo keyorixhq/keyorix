@@ -149,6 +149,7 @@ const (
 	schedLockRetention    int64 = 0x4B455953_52455445 // "KEYSRETE"
 	schedLockEvidence     int64 = 0x4B455953_45564944 // "KEYSEVID"
 	schedLockRecertify    int64 = 0x4B455953_52454354 // "KEYSRECT"
+	schedLockDigest       int64 = 0x4B455953_44494753 // "KEYSDIGS"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -629,6 +630,43 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				select {
 				case <-ticker.C:
 					runReminders()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Start the compliance-digest scheduler — opt-in. Periodically broadcasts a
+	// posture + control-matrix summary to the configured notification channels
+	// (Slack/Teams/webhook). Single-replica-gated (ADR-039) so the channel gets one
+	// digest per tick. A no-op (logged) when no notification channel is configured.
+	if cfg.ComplianceDigest.Enabled {
+		interval := cfg.ComplianceDigest.GetInterval()
+		log.Printf("Compliance-digest scheduler enabled: every %s", interval)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runDigest := func() {
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockDigest, func() error {
+					sent, derr := coreService.SendComplianceDigest(ctx)
+					if derr != nil {
+						log.Printf("Compliance-digest error: %v", derr)
+						return derr
+					}
+					if !sent {
+						log.Printf("Compliance digest: no notification channel configured; nothing sent")
+					}
+					return nil
+				}); err != nil {
+					log.Printf("Compliance-digest scheduler error: %v", err)
+				}
+			}
+			runDigest() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runDigest()
 				case <-ctx.Done():
 					return
 				}
