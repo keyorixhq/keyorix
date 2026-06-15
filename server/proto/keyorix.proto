@@ -609,3 +609,76 @@ message SystemMetrics {
   double disk_usage_percent = 3;
   uint32 goroutines = 4;
 }
+
+// Project service for managing projects and their environments. Mirrors the
+// HTTP/CLI surface: list/get use secrets.read, create/update use secrets.write,
+// delete uses secrets.delete (scoped per project for per-project operations).
+service ProjectService {
+  // List all projects the caller can read.
+  rpc ListProjects(google.protobuf.Empty) returns (ListProjectsResponse);
+
+  // Get a project by ID.
+  rpc GetProject(GetProjectRequest) returns (Project);
+
+  // Create a new project.
+  rpc CreateProject(CreateProjectRequest) returns (Project);
+
+  // Update a project's name, description, and/or per-project MFA policy.
+  rpc UpdateProject(UpdateProjectRequest) returns (Project);
+
+  // Delete a project (soft delete; force also removes its secrets).
+  rpc DeleteProject(DeleteProjectRequest) returns (google.protobuf.Empty);
+
+  // List a project's environments.
+  rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);
+}
+
+message Project {
+  uint32 id = 1;
+  string name = 2;
+  string description = 3;
+  bool require_mfa = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message Environment {
+  uint32 id = 1;
+  uint32 project_id = 2;
+  string name = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+message ListProjectsResponse {
+  repeated Project projects = 1;
+}
+
+message GetProjectRequest {
+  uint32 id = 1;
+}
+
+message CreateProjectRequest {
+  string name = 1;
+  string description = 2;
+}
+
+message UpdateProjectRequest {
+  uint32 id = 1;
+  string name = 2;
+  string description = 3;
+  optional bool require_mfa = 4;
+}
+
+message DeleteProjectRequest {
+  uint32 id = 1;
+  bool force = 2;
+}
+
+message ListEnvironmentsRequest {
+  uint32 project_id = 1;
+}
+
+message ListEnvironmentsResponse {
+  repeated Environment environments = 1;
+}

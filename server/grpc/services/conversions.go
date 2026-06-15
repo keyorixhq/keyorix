@@ -201,3 +201,24 @@ func optUint(p *uint32) *uint {
 	v := uint(*p)
 	return &v
 }
+
+func projectToProto(p *models.Project) *pb.Project {
+	return &pb.Project{
+		Id:          intToU32(int(p.ID)),
+		Name:        p.Name,
+		Description: p.Description,
+		RequireMfa:  p.RequireMFA,
+		CreatedAt:   timestamppb.New(p.CreatedAt),
+		UpdatedAt:   timestamppb.New(p.UpdatedAt),
+	}
+}
+
+func environmentToProto(e *models.Environment) *pb.Environment {
+	return &pb.Environment{
+		Id:        intToU32(int(e.ID)),
+		ProjectId: intToU32(int(e.ProjectID)),
+		Name:      e.Name,
+		CreatedAt: timestamppb.New(e.CreatedAt),
+		UpdatedAt: timestamppb.New(e.UpdatedAt),
+	}
+}
