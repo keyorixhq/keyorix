@@ -3,6 +3,35 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.35.0 — 2026-06-15
+
+KEK flexibility + gRPC parity: resolve the KEK from any command, and pull
+compliance posture over gRPC.
+
+### Added
+- **`exec` KEK provider** — a new `key_provider.type: exec` resolves the
+  key-encryption key by running an operator-configured command (`exec_command`,
+  an argv run **without a shell**) and reading the KEK (raw 32 bytes, or
+  hex/base64) from its stdout. It's the universal escape hatch for any external
+  secret store Keyorix has no built-in client for — 1Password (`op read`), sops
+  (`sops -d`), Vault (`vault read -field`), or a CSI/sidecar helper. Runs at
+  startup (fail-closed, 30s timeout); `KEYORIX_MASTER_PASSWORD` is not required.
+  `keyorix encryption migrate-provider --to-type exec --to-exec-command …`
+  re-wraps an existing install's DEK onto it. ([#231])
+- **ComplianceService over gRPC** — the compliance posture
+  (`GetCompliancePosture`) and the evaluated control matrix
+  (`GetComplianceControls`, mapped to ISO 27001 / SOC 2 / NIS2 / DORA clauses)
+  are now available over gRPC in addition to HTTP/CLI, so auditors' automation
+  can pull the deployment's control posture on the same authenticated channel.
+  Read-only, gated by `system.read`. ([#232])
+
+### Notes
+- Both additive and opt-in/parity. No schema changes. The `exec` command is
+  trusted deployment config (like `file_path`/`env_var`), run without a shell.
+
+[#231]: https://github.com/keyorixhq/keyorix/pull/231
+[#232]: https://github.com/keyorixhq/keyorix/pull/232
+
 ## v0.34.0 — 2026-06-15
 
 Brute-force hardening: per-account login lockout.
