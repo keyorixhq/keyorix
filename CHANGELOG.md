@@ -3,6 +3,24 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.29.0 — 2026-06-15
+
+The immutable-evidence release: lock archived compliance evidence as WORM.
+
+### Added
+- **S3 Object Lock (WORM) on the evidence object-store sink** — each scheduled
+  evidence pack and its detached signature can be uploaded with an S3 Object Lock
+  retention (`governance` or `compliance` mode + a retain-until window), so archived
+  evidence cannot be overwritten or deleted before it expires — tamper-resistant
+  evidence an auditor can rely on. The bucket must be created with Object Lock
+  enabled; configure via `evidence_delivery.object_store.{lock_mode,lock_retain_days}`.
+  ([#215])
+
+### Notes
+- Additive and opt-in (object lock is off unless `lock_mode` is set). No schema changes.
+
+[#215]: https://github.com/keyorixhq/keyorix/pull/215
+
 ## v0.28.0 — 2026-06-15
 
 The classification-coverage release: data-sensitivity labels now span every
