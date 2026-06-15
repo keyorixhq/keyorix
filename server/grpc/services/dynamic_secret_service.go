@@ -161,6 +161,7 @@ func (s *DynamicSecretGRPCService) IssueLease(ctx context.Context, req *pb.Issue
 		LeaseId:   lease.LeaseID,
 		Username:  lease.Username,
 		Password:  lease.Password,
+		Fields:    lease.Fields,
 		ExpiresAt: timestamppb.New(lease.ExpiresAt),
 	}, nil
 }

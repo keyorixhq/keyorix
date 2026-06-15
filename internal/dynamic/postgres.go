@@ -13,7 +13,8 @@ import (
 // using the admin DSN, and drops them on revoke.
 type PostgresEngine struct{}
 
-func (e *PostgresEngine) BackendType() string { return "postgres" }
+func (e *PostgresEngine) BackendType() string      { return "postgres" }
+func (e *PostgresEngine) IsEphemeralBackend() bool { return false }
 
 // SupportsNativeExpiry is true: PostgreSQL roles carry a VALID UNTIL, so the
 // credential disables itself at expiry even without the auto-revoke sweeper.

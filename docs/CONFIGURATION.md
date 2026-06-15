@@ -242,20 +242,31 @@ dynamic_secrets:
 Targets are registered via the API — or from the terminal with
 `keyorix dynamic-secret create` (the admin DSN is read from the
 `KEYORIX_DYNAMIC_ADMIN_DSN` env var or a hidden prompt, never a flag) — with an
-admin DSN, a backend type (`postgres`, `mysql`, `mongodb`, or `redis`), an optional
-creation template, and a default TTL. The creation template form depends on the
-backend:
+admin DSN, a backend type (`postgres`, `mysql`, `mongodb`, `redis`, or `aws-sts`), an
+optional creation template, and a default TTL. The creation template form depends on
+the backend:
 - SQL backends (`postgres`, `mysql`) — an SQL grant template using `{{name}}`.
 - `mongodb` — a JSON role spec (`{"roles": [{"role": "readWrite", "db": "app"}]}`);
   the admin DSN is a MongoDB connection URI.
 - `redis` — whitespace-separated ACL rule tokens (`~app:* +@read +@write`); the
   admin DSN is a Redis URI (`redis://:pass@host:6379/0`, or `rediss://…` for TLS)
   for a user that holds the `+acl` command.
+- `aws-sts` (cloud IAM) — the "admin DSN" is instead a small JSON config:
+  `{"role_arn":"arn:aws:iam::123456789012:role/keyorix-dyn","region":"eu-west-1","duration_seconds":3600}`
+  (only `role_arn` is required). Issuing a lease calls `sts:AssumeRole` and returns
+  short-lived **AWS credentials** (`access_key_id` / `secret_access_key` /
+  `session_token`) rather than a username/password. The optional creation template is
+  an inline **STS session policy** (JSON) that scopes the assumed role down. AWS
+  credentials for the AssumeRole call itself come from the standard chain
+  (env / instance-profile / IRSA), like the KMS and S3 integrations. STS credentials
+  are **self-expiring and cannot be revoked or renewed** — a revoke is a no-op and a
+  renew is refused (issue a new lease); minimum duration is 15 minutes (AWS limit).
 
 > **Enable the sweeper for MySQL, MongoDB and Redis targets.** Their accounts have
 > no `VALID UNTIL` equivalent, so a lease TTL is enforced *only* by the sweeper —
 > issuing is refused while it is disabled. PostgreSQL roles additionally carry a
-> DB-level expiry (belt-and-suspenders).
+> DB-level expiry (belt-and-suspenders). `aws-sts` is exempt: AWS enforces the
+> credential's expiry, so it can issue with the sweeper off.
 
 ---
 

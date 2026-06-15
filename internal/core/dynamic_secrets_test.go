@@ -202,6 +202,25 @@ func TestDynamicSecrets_RenewExtendsAndRespectsMaxTTL(t *testing.T) {
 	require.Error(t, err, "renewal beyond the max-TTL ceiling is rejected")
 }
 
+// An ephemeral (cloud-IAM, e.g. AWS STS) backend surfaces its credential via Fields
+// and refuses renewal — its lifetime is fixed by the provider at issue.
+func TestDynamicSecrets_EphemeralBackendFieldsAndRenewRefused(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	fake.Ephemeral = true
+	fake.IssueFields = map[string]string{"access_key_id": "AKIA", "session_token": "tok"}
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	assert.Equal(t, "AKIA", issued.Fields["access_key_id"])
+	assert.Equal(t, "tok", issued.Fields["session_token"])
+
+	_, err = c.RenewLease(ctx, issued.LeaseID, 1200, 7)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be renewed")
+}
+
 func TestDynamicSecrets_RevokeLeasesForConfig(t *testing.T) {
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()

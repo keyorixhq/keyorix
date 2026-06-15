@@ -24,7 +24,8 @@ import (
 // and is the documented SQL-injection trust boundary.
 type MySQLEngine struct{}
 
-func (e *MySQLEngine) BackendType() string { return "mysql" }
+func (e *MySQLEngine) BackendType() string      { return "mysql" }
+func (e *MySQLEngine) IsEphemeralBackend() bool { return false }
 
 // SupportsNativeExpiry is false: MySQL users have no VALID UNTIL, so lease expiry
 // is enforced only by the auto-revoke sweeper (which must be enabled).

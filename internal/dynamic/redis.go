@@ -30,7 +30,8 @@ import (
 // analogue of the SQL creation_template / Mongo role spec).
 type RedisEngine struct{}
 
-func (e *RedisEngine) BackendType() string { return "redis" }
+func (e *RedisEngine) BackendType() string      { return "redis" }
+func (e *RedisEngine) IsEphemeralBackend() bool { return false }
 
 // SupportsNativeExpiry is false: Redis ACL users have no native expiry, so lease
 // expiry is enforced only by the auto-revoke sweeper (which must be enabled).

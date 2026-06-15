@@ -26,6 +26,11 @@ func TestNew_Backends(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "redis", rd.BackendType())
 
+	aws, err := New("aws-sts")
+	require.NoError(t, err)
+	assert.Equal(t, "aws-sts", aws.BackendType())
+	assert.True(t, aws.IsEphemeralBackend(), "aws-sts mints self-expiring credentials")
+
 	_, err = New("cassandra")
 	require.Error(t, err, "an unsupported backend is rejected")
 }
