@@ -653,6 +653,8 @@ sso:
       scopes: [openid, profile, email]
       auto_provision: false      # JIT-create an account on first login (default off)
       default_role: system_viewer # baseline role for JIT-provisioned users
+      group_sync: false          # reconcile native group memberships from the IdP (default off)
+      groups_claim: groups       # id_token claim carrying group names (default "groups")
 ```
 
 > The client secret is read from `KEYORIX_SSO_<NAME>_CLIENT_SECRET` (name upper-cased,
@@ -676,6 +678,26 @@ later SCIM push for the same `externalId` reconciles to the same account. Leave
 > the subject (`externalId`) match applies for that login. An absent `email_verified`
 > claim is treated as trusted (it is optional in OIDC; some enterprise IdPs such as
 > Entra ID omit it for a configured, trusted issuer).
+
+**Group sync (JIT group membership).** Set `group_sync: true` to reconcile a user's
+**native Keyorix group memberships** from the IdP's group claim on each login — so the
+IdP drives group-based access without a separate SCIM push. The named claim
+(`groups_claim`, default `groups`; some IdPs use `roles`) is read from the verified
+id_token and the IdP is treated as **authoritative**: the user is added to native
+groups whose name matches an asserted group and **removed from native groups it did
+not assert**, so revoking a group at the IdP deprovisions the matching Keyorix access
+on next login. Only groups that **already exist natively** (provisioned via
+[`scim`](#scim) Groups or by an admin) are touched — an asserted group with no native
+counterpart is ignored, and groups are never created or deleted. The net change is
+audited as `auth.sso_groups_synced`.
+
+> Because it is authoritative, **do not mix `group_sync` with manual group assignment**
+> for SSO users — a manually-added membership not asserted by the IdP is removed on the
+> next login. If the `groups_claim` is **absent** from the id_token (e.g. the IdP only
+> emits groups at the userinfo endpoint, or behind a scope you didn't request), the
+> sync is a safe no-op — it never strips memberships on a missing claim. Ensure the IdP
+> is configured to emit the group claim in the id_token (in Okta, add a groups claim to
+> the ID token; in Entra, configure the optional `groups` claim).
 
 ## membership
 

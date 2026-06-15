@@ -240,6 +240,90 @@ func TestProvisionSSOUser(t *testing.T) {
 	})
 }
 
+func TestExtractTokenStringList(t *testing.T) {
+	_, _, key, _ := ssoTestCore(t)
+	tok := func(claims jwt.MapClaims) string { return signToken(t, key, "kid-1", claims) }
+
+	t.Run("string array", func(t *testing.T) {
+		vals, present := extractTokenStringList(tok(jwt.MapClaims{"groups": []string{"admins", "devs"}}), "groups")
+		assert.True(t, present)
+		assert.Equal(t, []string{"admins", "devs"}, vals)
+	})
+
+	t.Run("absent claim → not present", func(t *testing.T) {
+		_, present := extractTokenStringList(tok(jwt.MapClaims{"sub": "x"}), "groups")
+		assert.False(t, present, "an absent claim must be distinguishable from an empty list")
+	})
+
+	t.Run("empty array → present and empty", func(t *testing.T) {
+		vals, present := extractTokenStringList(tok(jwt.MapClaims{"groups": []string{}}), "groups")
+		assert.True(t, present)
+		assert.Empty(t, vals)
+	})
+
+	t.Run("single string coerced to a list", func(t *testing.T) {
+		vals, present := extractTokenStringList(tok(jwt.MapClaims{"groups": "admins"}), "groups")
+		assert.True(t, present)
+		assert.Equal(t, []string{"admins"}, vals)
+	})
+
+	t.Run("configurable claim name", func(t *testing.T) {
+		vals, present := extractTokenStringList(tok(jwt.MapClaims{"roles": []string{"ops"}}), "roles")
+		assert.True(t, present)
+		assert.Equal(t, []string{"ops"}, vals)
+	})
+
+	t.Run("malformed token → not present", func(t *testing.T) {
+		_, present := extractTokenStringList("not-a-jwt", "groups")
+		assert.False(t, present)
+	})
+}
+
+func TestSyncSSOGroups(t *testing.T) {
+	t.Run("authoritative: adds asserted, removes non-asserted native groups", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupSync = true
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"admins", "devs"}})
+		// Native groups: admins(1), devs(2), ops(3). User currently in devs(2), ops(3).
+		store.On("ListGroups", mock.Anything).Return([]*models.Group{{ID: 1, Name: "admins"}, {ID: 2, Name: "devs"}, {ID: 3, Name: "ops"}}, nil)
+		store.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{{ID: 2, Name: "devs"}, {ID: 3, Name: "ops"}}, nil)
+		store.On("AddUserToGroup", mock.Anything, uint(7), uint(1)).Return(nil)      // admins: asserted, not current → add
+		store.On("RemoveUserFromGroup", mock.Anything, uint(7), uint(3)).Return(nil) // ops: current, not asserted → remove
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		c.syncSSOGroups(context.Background(), p, 7, raw)
+
+		store.AssertCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(1))
+		store.AssertCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(3))
+		// devs(2) already a member and still asserted → untouched.
+		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(2))
+		store.AssertNotCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(2))
+	})
+
+	t.Run("ignores asserted groups with no native counterpart", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupSync = true
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"nonexistent"}})
+		store.On("ListGroups", mock.Anything).Return([]*models.Group{{ID: 1, Name: "admins"}}, nil)
+		store.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{}, nil)
+
+		c.syncSSOGroups(context.Background(), p, 7, raw)
+		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("absent groups claim → no-op (never touches memberships)", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupSync = true
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"sub": "okta|123"}) // no groups claim
+
+		c.syncSSOGroups(context.Background(), p, 7, raw)
+		// Returns before listing groups — so an IdP that omits groups in the id_token
+		// can't strip a user's memberships.
+		store.AssertNotCalled(t, "ListGroups", mock.Anything)
+		store.AssertNotCalled(t, "RemoveUserFromGroup", mock.Anything, mock.Anything, mock.Anything)
+	})
+}
+
 func TestBeginSSO_BuildsAuthURLWithStateAndNonce(t *testing.T) {
 	c, store, _, _ := ssoTestCore(t)
 	var captured *models.SSOLoginState
