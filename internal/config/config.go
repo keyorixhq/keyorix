@@ -599,6 +599,25 @@ func (c RecertificationConfig) GetInterval() time.Duration {
 type NotificationsConfig struct {
 	Webhook NotificationWebhookConfig `yaml:"webhook"`
 	Email   NotificationEmailConfig   `yaml:"email"`
+	Slack   NotificationChatConfig    `yaml:"slack"`
+	Teams   NotificationChatConfig    `yaml:"teams"`
+}
+
+// NotificationChatConfig configures a Slack or Teams channel: an incoming-webhook
+// URL (which carries the platform's secret token, so prefer the env var).
+type NotificationChatConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	WebhookURL string `yaml:"webhook_url"`
+}
+
+// GetWebhookURL returns the resolved Slack incoming-webhook URL.
+func (c *NotificationsConfig) GetSlackWebhookURL() string {
+	return resolveSecret("KEYORIX_NOTIFY_SLACK_WEBHOOK", c.Slack.WebhookURL)
+}
+
+// GetTeamsWebhookURL returns the resolved Teams incoming-webhook URL.
+func (c *NotificationsConfig) GetTeamsWebhookURL() string {
+	return resolveSecret("KEYORIX_NOTIFY_TEAMS_WEBHOOK", c.Teams.WebhookURL)
 }
 
 // NotificationEmailConfig configures the SMTP notification channel: each

@@ -277,6 +277,22 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		notifySinks = append(notifySinks, sink)
 		log.Printf("Notification email channel enabled (host=%s)", ec.Host)
 	}
+	if cfg.Notifications.Slack.Enabled {
+		sink, serr := notifychan.NewChat(notifychan.ChatConfig{Kind: notifychan.ChatSlack, WebhookURL: cfg.Notifications.GetSlackWebhookURL()})
+		if serr != nil {
+			return nil, nil, fmt.Errorf("failed to init Slack notification channel: %w", serr)
+		}
+		notifySinks = append(notifySinks, sink)
+		log.Printf("Notification Slack channel enabled")
+	}
+	if cfg.Notifications.Teams.Enabled {
+		sink, terr := notifychan.NewChat(notifychan.ChatConfig{Kind: notifychan.ChatTeams, WebhookURL: cfg.Notifications.GetTeamsWebhookURL()})
+		if terr != nil {
+			return nil, nil, fmt.Errorf("failed to init Teams notification channel: %w", terr)
+		}
+		notifySinks = append(notifySinks, sink)
+		log.Printf("Notification Teams channel enabled")
+	}
 	if sink := notifychan.NewMulti(notifySinks...); sink != nil {
 		coreService.SetNotificationSink(sink)
 	}

@@ -403,10 +403,21 @@ notifications:
     password: ""                 # prefer the KEYORIX_NOTIFY_SMTP_PASSWORD env var
     from: "keyorix@example.com"
     tls: "starttls"              # starttls | implicit | none(dev-only)
+  slack:
+    enabled: true
+    webhook_url: ""              # prefer the KEYORIX_NOTIFY_SLACK_WEBHOOK env var
+  teams:
+    enabled: true
+    webhook_url: ""              # prefer the KEYORIX_NOTIFY_TEAMS_WEBHOOK env var
 ```
 
+The **slack** and **teams** channels POST to an incoming-webhook URL (Slack: a
+`{text}` message; Teams: a MessageCard). The webhook URL embeds the platform's secret
+token, so set it via the env var.
+
 > Secrets are read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` / `KEYORIX_NOTIFY_SMTP_PASSWORD`
-> when set, falling back to the YAML value — keep secrets out of the config file.
+> / `KEYORIX_NOTIFY_SLACK_WEBHOOK` / `KEYORIX_NOTIFY_TEAMS_WEBHOOK` when set, falling
+> back to the YAML value — keep secrets out of the config file.
 
 ## evidence_delivery
 
