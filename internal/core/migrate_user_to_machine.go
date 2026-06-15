@@ -44,7 +44,7 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 	}
 	desc := fmt.Sprintf("Migrated from user %q (id %d, %s)", user.Username, user.ID, user.Email)
 
-	m, err := c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, actorID)
+	m, err := c.CreateMachineIdentity(ctx, projectID, name, identityType, desc, "", actorID)
 	if err != nil {
 		return nil, err
 	}

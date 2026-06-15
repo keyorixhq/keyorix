@@ -28,6 +28,10 @@ func (rs *RemoteStorage) ListMachineIdentities(_ context.Context, _ uint) ([]*mo
 	return nil, remoteUnsupported("ListMachineIdentities")
 }
 
+func (rs *RemoteStorage) CountMachineIdentitiesByClassification(_ context.Context) (map[string]int, error) {
+	return nil, remoteUnsupported("CountMachineIdentitiesByClassification")
+}
+
 func (rs *RemoteStorage) CreateMachineIdentityCredential(_ context.Context, _ *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error) {
 	return nil, remoteUnsupported("CreateMachineIdentityCredential")
 }
@@ -42,6 +46,14 @@ func (rs *RemoteStorage) GetMachineIdentityCredentialByID(_ context.Context, _ u
 
 func (rs *RemoteStorage) ListMachineIdentityCredentials(_ context.Context, _ uint) ([]*models.MachineIdentityCredential, error) {
 	return nil, remoteUnsupported("ListMachineIdentityCredentials")
+}
+
+func (rs *RemoteStorage) UpdateMachineIdentityCredential(_ context.Context, _ *models.MachineIdentityCredential) error {
+	return remoteUnsupported("UpdateMachineIdentityCredential")
+}
+
+func (rs *RemoteStorage) CountMachineIdentityCredentialsByClassification(_ context.Context) (map[string]int, error) {
+	return nil, remoteUnsupported("CountMachineIdentityCredentialsByClassification")
 }
 
 func (rs *RemoteStorage) RevokeMachineIdentityCredential(_ context.Context, _ uint) error {

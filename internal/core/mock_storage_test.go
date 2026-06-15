@@ -1312,6 +1312,14 @@ func (m *MockStorage) ListMachineIdentities(ctx context.Context, projectID uint)
 	return args.Get(0).([]*models.MachineIdentity), args.Error(1)
 }
 
+func (m *MockStorage) CountMachineIdentitiesByClassification(ctx context.Context) (map[string]int, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]int), args.Error(1)
+}
+
 func (m *MockStorage) CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error) {
 	args := m.Called(ctx, c)
 	if args.Get(0) == nil {
@@ -1342,6 +1350,19 @@ func (m *MockStorage) ListMachineIdentityCredentials(ctx context.Context, machin
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.MachineIdentityCredential), args.Error(1)
+}
+
+func (m *MockStorage) UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error {
+	args := m.Called(ctx, c)
+	return args.Error(0)
+}
+
+func (m *MockStorage) CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]int), args.Error(1)
 }
 
 func (m *MockStorage) RevokeMachineIdentityCredential(ctx context.Context, id uint) error {

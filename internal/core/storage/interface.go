@@ -116,13 +116,20 @@ type Storage interface {
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
+	// CountMachineIdentitiesByClassification returns install-wide counts keyed by
+	// classification label ("" = unclassified) for the compliance posture.
+	CountMachineIdentitiesByClassification(ctx context.Context) (map[string]int, error)
 
 	// Machine-token credentials (ADR-030) — opaque bearer tokens, hashed at rest.
 	CreateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) (*models.MachineIdentityCredential, error)
 	GetMachineIdentityCredentialByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, error)
 	GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error)
 	ListMachineIdentityCredentials(ctx context.Context, machineID uint) ([]*models.MachineIdentityCredential, error)
+	UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error
 	RevokeMachineIdentityCredential(ctx context.Context, id uint) error
+	// CountMachineIdentityCredentialsByClassification returns install-wide counts
+	// keyed by classification label ("" = unclassified) for the compliance posture.
+	CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error)
 	TouchMachineIdentityCredential(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
 
 	// Machine-identity role grants (ADR-030) — mirror the user_roles surface.

@@ -43,19 +43,7 @@ func (ls *LocalStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models
 // CountDynamicSecretConfigsByClassification returns config counts keyed by
 // classification label ("" = unclassified), install-wide, via a GROUP BY.
 func (ls *LocalStorage) CountDynamicSecretConfigsByClassification(ctx context.Context) (map[string]int, error) {
-	var rows []struct {
-		Classification string
-		N              int
-	}
-	if err := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).
-		Select("classification, COUNT(*) AS n").Group("classification").Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	out := make(map[string]int, len(rows))
-	for _, r := range rows {
-		out[r.Classification] = r.N
-	}
-	return out, nil
+	return countByClassification(ctx, ls.db, &models.DynamicSecretConfig{})
 }
 
 func (ls *LocalStorage) CreateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error) {

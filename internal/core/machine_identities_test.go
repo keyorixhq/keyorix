@@ -50,7 +50,7 @@ func TestCreateMachineIdentity(t *testing.T) {
 			return e.EventType == "machine_identity.created"
 		})).Return(nil)
 
-		m, err := c.CreateMachineIdentity(ctx, 1, "ci-runner", MachineTypeCI, "GitHub Actions", 9)
+		m, err := c.CreateMachineIdentity(ctx, 1, "ci-runner", MachineTypeCI, "GitHub Actions", "", 9)
 		require.NoError(t, err)
 		assert.Equal(t, MachineActive, m.State)
 		store.AssertExpectations(t)
@@ -59,7 +59,7 @@ func TestCreateMachineIdentity(t *testing.T) {
 	t.Run("rejects an unknown identity type", func(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)
-		_, err := c.CreateMachineIdentity(context.Background(), 1, "x", "robot", "", 9)
+		_, err := c.CreateMachineIdentity(context.Background(), 1, "x", "robot", "", "", 9)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid identity_type")
 		store.AssertNotCalled(t, "CreateMachineIdentity", mock.Anything, mock.Anything)
@@ -74,7 +74,7 @@ func TestCreateMachineIdentity(t *testing.T) {
 		})).Return(&models.MachineIdentity{ID: 11, IdentityType: MachineTypeOther, State: MachineActive}, nil)
 		store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
-		_, err := c.CreateMachineIdentity(ctx, 1, "x", "", "", 9)
+		_, err := c.CreateMachineIdentity(ctx, 1, "x", "", "", "", 9)
 		require.NoError(t, err)
 	})
 }

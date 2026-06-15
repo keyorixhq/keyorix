@@ -44,3 +44,7 @@ func (ls *LocalStorage) ListMachineIdentities(ctx context.Context, projectID uin
 	}
 	return rows, nil
 }
+
+func (ls *LocalStorage) CountMachineIdentitiesByClassification(ctx context.Context) (map[string]int, error) {
+	return countByClassification(ctx, ls.db, &models.MachineIdentity{})
+}

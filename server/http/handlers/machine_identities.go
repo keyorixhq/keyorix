@@ -44,9 +44,10 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var body struct {
-		Name         string `json:"name"`
-		IdentityType string `json:"identity_type"`
-		Description  string `json:"description"`
+		Name           string `json:"name"`
+		IdentityType   string `json:"identity_type"`
+		Description    string `json:"description"`
+		Classification string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
@@ -56,7 +57,7 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 		sendError(w, "ValidationError", "name is required", http.StatusBadRequest, nil)
 		return
 	}
-	m, err := h.coreService.CreateMachineIdentity(r.Context(), uint(id), body.Name, body.IdentityType, body.Description, actor.UserID)
+	m, err := h.coreService.CreateMachineIdentity(r.Context(), uint(id), body.Name, body.IdentityType, body.Description, body.Classification, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "invalid identity_type") || strings.Contains(err.Error(), "required") {
@@ -133,8 +134,9 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var body struct {
-		Name          string `json:"name"`
-		ExpiresInDays int    `json:"expires_in_days"`
+		Name           string `json:"name"`
+		ExpiresInDays  int    `json:"expires_in_days"`
+		Classification string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
@@ -145,7 +147,7 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		t := time.Now().AddDate(0, 0, body.ExpiresInDays)
 		expiresAt = &t
 	}
-	result, err := h.coreService.IssueMachineToken(r.Context(), uint(projectID), uint(machineID), body.Name, expiresAt, actor.UserID)
+	result, err := h.coreService.IssueMachineToken(r.Context(), uint(projectID), uint(machineID), body.Name, expiresAt, body.Classification, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {
@@ -159,10 +161,11 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 	}
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, map[string]interface{}{
-		"token":      result.PlainToken, // shown once
-		"id":         result.Credential.ID,
-		"prefix":     result.Credential.TokenPrefix,
-		"expires_at": result.Credential.ExpiresAt,
+		"token":          result.PlainToken, // shown once
+		"id":             result.Credential.ID,
+		"prefix":         result.Credential.TokenPrefix,
+		"expires_at":     result.Credential.ExpiresAt,
+		"classification": result.Credential.Classification,
 	}, "Machine token issued — copy it now; it will not be shown again")
 }
 
@@ -187,13 +190,14 @@ func (h *CatalogHandler) ListMachineTokens(w http.ResponseWriter, r *http.Reques
 	out := make([]map[string]interface{}, 0, len(creds))
 	for _, c := range creds {
 		out = append(out, map[string]interface{}{
-			"id":           c.ID,
-			"name":         c.Name,
-			"prefix":       c.TokenPrefix,
-			"last_used_at": c.LastUsedAt,
-			"expires_at":   c.ExpiresAt,
-			"revoked":      c.Revoked,
-			"created_at":   c.CreatedAt,
+			"id":             c.ID,
+			"name":           c.Name,
+			"prefix":         c.TokenPrefix,
+			"last_used_at":   c.LastUsedAt,
+			"expires_at":     c.ExpiresAt,
+			"revoked":        c.Revoked,
+			"classification": c.Classification,
+			"created_at":     c.CreatedAt,
 		})
 	}
 	sendSuccess(w, map[string]interface{}{"tokens": out}, "")
@@ -230,6 +234,65 @@ func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	sendSuccess(w, nil, "Machine token revoked")
+}
+
+// ClassifyMachineIdentity handles PATCH
+// /api/v1/projects/{id}/machine-identities/{machineId}/classification.
+func (h *CatalogHandler) ClassifyMachineIdentity(w http.ResponseWriter, r *http.Request) {
+	projectID, machineID, actor, ok := h.machineRouteCtx(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Classification string `json:"classification"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	m, err := h.coreService.ClassifyMachineIdentity(r.Context(), projectID, machineID, body.Classification, actor.UserID)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"machine_identity": m}, "Classification updated")
+}
+
+// ClassifyMachineToken handles PATCH
+// /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification.
+func (h *CatalogHandler) ClassifyMachineToken(w http.ResponseWriter, r *http.Request) {
+	projectID, machineID, actor, ok := h.machineRouteCtx(w, r)
+	if !ok {
+		return
+	}
+	tokenID, err := strconv.ParseUint(chi.URLParam(r, "tokenId"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid token ID", http.StatusBadRequest, nil)
+		return
+	}
+	var body struct {
+		Classification string `json:"classification"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	cred, err := h.coreService.ClassifyMachineToken(r.Context(), projectID, machineID, uint(tokenID), body.Classification, actor.UserID)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"id": cred.ID, "classification": cred.Classification,
+	}, "Classification updated")
 }
 
 // GrantMachineRole handles POST /api/v1/projects/{id}/machine-identities/{machineId}/roles.

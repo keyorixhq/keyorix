@@ -47,13 +47,20 @@ func (c *KeyorixCore) machineInProject(ctx context.Context, projectID, machineID
 // IssueMachineToken mints an opaque bearer token for an active machine identity.
 // The raw token is returned once for out-of-band delivery; only its SHA-256 hash
 // is stored. Issuing requires the machine to be active and in the given project.
-func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID uint, name string, expiresAt *time.Time, actorID uint) (*IssueMachineTokenResult, error) {
+func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineID uint, name string, expiresAt *time.Time, classification string, actorID uint) (*IssueMachineTokenResult, error) {
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
 		return nil, err
 	}
 	if m.State != MachineActive {
 		return nil, fmt.Errorf("cannot issue a token for a %s machine identity (must be active)", m.State)
+	}
+	if !IsValidClassification(classification) {
+		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+	}
+	// Default a token's classification to its machine identity's tier when unset.
+	if classification == "" {
+		classification = m.Classification
 	}
 
 	b := make([]byte, 32)
@@ -68,6 +75,7 @@ func (c *KeyorixCore) IssueMachineToken(ctx context.Context, projectID, machineI
 		TokenHash:         sha256Hex(raw),
 		TokenPrefix:       raw[:len(machineTokenPrefix)+6], // "kx_machine_ab12cd"
 		ExpiresAt:         expiresAt,
+		Classification:    classification,
 		CreatedAt:         c.now(),
 	}
 	created, err := c.storage.CreateMachineIdentityCredential(ctx, cred)
@@ -103,6 +111,36 @@ func (c *KeyorixCore) RevokeMachineToken(ctx context.Context, projectID, machine
 	}
 	c.logMachineEvent(ctx, "machine_identity.token_revoked", m, actorID)
 	return nil
+}
+
+// ClassifyMachineToken sets (or clears, with "") the data-classification label on a
+// machine credential, after verifying the machine belongs to the project and the
+// credential to the machine. Audited.
+func (c *KeyorixCore) ClassifyMachineToken(ctx context.Context, projectID, machineID, credentialID uint, level string, actorID uint) (*models.MachineIdentityCredential, error) {
+	if !IsValidClassification(level) {
+		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
+	}
+	m, err := c.machineInProject(ctx, projectID, machineID)
+	if err != nil {
+		return nil, err
+	}
+	cred, err := c.storage.GetMachineIdentityCredentialByID(ctx, credentialID)
+	if err != nil || cred.MachineIdentityID != machineID {
+		return nil, fmt.Errorf("token not found")
+	}
+	if cred.Classification == level {
+		return cred, nil // no-op
+	}
+	old := cred.Classification
+	cred.Classification = level
+	if err := c.storage.UpdateMachineIdentityCredential(ctx, cred); err != nil {
+		return nil, err
+	}
+	aid, pid := actorID, m.ProjectID
+	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
+	c.writeAuditEventDiff(ctx, "machine_identity.token_classified", &aid, nil, &pid, "",
+		fmt.Sprintf("machine credential %d (machine %d) classification set to %q", cred.ID, machineID, level), diff)
+	return cred, nil
 }
 
 // ValidateMachineToken resolves a raw machine token to its identity and granted

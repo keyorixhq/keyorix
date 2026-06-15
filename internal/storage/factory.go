@@ -469,6 +469,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := db.AutoMigrate(&models.MachineIdentity{}); err != nil {
 			return fmt.Errorf("failed to migrate machine_identities table: %w", err)
 		}
+	} else if !columnExists(db, "machine_identities", "classification") {
+		// Data classification (ISO A.5.12). Additive ("" = unclassified).
+		db.Exec("ALTER TABLE machine_identities ADD COLUMN classification TEXT DEFAULT ''")
 	}
 
 	// Create machine-token tables if missing (ADR-030, additive, safe on existing DBs).
@@ -476,6 +479,8 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := db.AutoMigrate(&models.MachineIdentityCredential{}); err != nil {
 			return fmt.Errorf("failed to migrate machine_identity_credentials table: %w", err)
 		}
+	} else if !columnExists(db, "machine_identity_credentials", "classification") {
+		db.Exec("ALTER TABLE machine_identity_credentials ADD COLUMN classification TEXT DEFAULT ''")
 	}
 	if !machineRoleExists {
 		if err := db.AutoMigrate(&models.MachineIdentityRole{}); err != nil {

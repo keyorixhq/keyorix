@@ -51,6 +51,17 @@ func (ls *LocalStorage) ListMachineIdentityCredentials(ctx context.Context, mach
 	return rows, nil
 }
 
+func (ls *LocalStorage) UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error {
+	if err := ls.db.WithContext(ctx).Save(c).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+func (ls *LocalStorage) CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error) {
+	return countByClassification(ctx, ls.db, &models.MachineIdentityCredential{})
+}
+
 func (ls *LocalStorage) RevokeMachineIdentityCredential(ctx context.Context, id uint) error {
 	result := ls.db.WithContext(ctx).Model(&models.MachineIdentityCredential{}).
 		Where("id = ?", id).UpdateColumn("revoked", true)

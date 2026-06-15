@@ -10,10 +10,11 @@ import (
 )
 
 var (
-	createProjectName string
-	createName        string
-	createType        string
-	createDescription string
+	createProjectName    string
+	createName           string
+	createType           string
+	createDescription    string
+	createClassification string
 )
 
 var createCmd = &cobra.Command{
@@ -27,6 +28,7 @@ func init() {
 	createCmd.Flags().StringVar(&createName, "name", "", "Machine identity name (required)")
 	createCmd.Flags().StringVar(&createType, "type", "other", "Identity type: ci | k8s | service | automation | other")
 	createCmd.Flags().StringVar(&createDescription, "description", "", "Description")
+	createCmd.Flags().StringVar(&createClassification, "classification", "", "Data classification: public | internal | confidential | restricted")
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
@@ -41,9 +43,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 	if rc, ok := common.NewRemoteClient(); ok {
 		body := map[string]interface{}{
-			"name":          createName,
-			"identity_type": createType,
-			"description":   createDescription,
+			"name":           createName,
+			"identity_type":  createType,
+			"description":    createDescription,
+			"classification": createClassification,
 		}
 		var resp struct {
 			MachineIdentity models.MachineIdentity `json:"machine_identity"`
@@ -62,7 +65,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	// Local mode has no authenticated user; record a system (0) creator.
-	m, err := svc.CreateMachineIdentity(ctx, projectID, createName, createType, createDescription, 0)
+	m, err := svc.CreateMachineIdentity(ctx, projectID, createName, createType, createDescription, createClassification, 0)
 	if err != nil {
 		return fmt.Errorf("failed to create machine identity: %w", err)
 	}

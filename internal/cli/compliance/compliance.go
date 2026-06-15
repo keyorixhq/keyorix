@@ -22,6 +22,16 @@ var ComplianceCmd = &cobra.Command{
 	Short: "Deployment controls-posture report (ISO 27001 / SOC 2 / NIS2 / DORA)",
 }
 
+// classCounts mirrors core.ClassificationCounts for the non-static-secret entities.
+type classCounts struct {
+	Total        int `json:"total"`
+	Public       int `json:"public"`
+	Internal     int `json:"internal"`
+	Confidential int `json:"confidential"`
+	Restricted   int `json:"restricted"`
+	Unclassified int `json:"unclassified"`
+}
+
 type posture struct {
 	GeneratedAt    string `json:"generated_at"`
 	AuditIntegrity struct {
@@ -55,20 +65,15 @@ type posture struct {
 		TotalActivations  int `json:"total_activations"`
 	} `json:"emergency_access"`
 	Classification struct {
-		TotalSecrets   int `json:"total_secrets"`
-		Public         int `json:"public"`
-		Internal       int `json:"internal"`
-		Confidential   int `json:"confidential"`
-		Restricted     int `json:"restricted"`
-		Unclassified   int `json:"unclassified"`
-		DynamicConfigs struct {
-			Total        int `json:"total"`
-			Restricted   int `json:"restricted"`
-			Confidential int `json:"confidential"`
-			Internal     int `json:"internal"`
-			Public       int `json:"public"`
-			Unclassified int `json:"unclassified"`
-		} `json:"dynamic_configs"`
+		TotalSecrets       int         `json:"total_secrets"`
+		Public             int         `json:"public"`
+		Internal           int         `json:"internal"`
+		Confidential       int         `json:"confidential"`
+		Restricted         int         `json:"restricted"`
+		Unclassified       int         `json:"unclassified"`
+		DynamicConfigs     classCounts `json:"dynamic_configs"`
+		MachineIdentities  classCounts `json:"machine_identities"`
+		MachineCredentials classCounts `json:"machine_credentials"`
 	} `json:"classification"`
 	Anomalies struct {
 		Unacknowledged   int `json:"unacknowledged"`
@@ -150,7 +155,11 @@ var reportCmd = &cobra.Command{
 		fmt.Printf("  internal / public         : %d / %d\n", p.Classification.Internal, p.Classification.Public)
 		fmt.Printf("  unclassified              : %d\n", p.Classification.Unclassified)
 		dc := p.Classification.DynamicConfigs
-		fmt.Printf("  dynamic configs (total / restricted / unclassified) : %d / %d / %d\n", dc.Total, dc.Restricted, dc.Unclassified)
+		fmt.Printf("  dynamic configs (total / restricted / unclassified)     : %d / %d / %d\n", dc.Total, dc.Restricted, dc.Unclassified)
+		mi := p.Classification.MachineIdentities
+		fmt.Printf("  machine identities (total / restricted / unclassified)  : %d / %d / %d\n", mi.Total, mi.Restricted, mi.Unclassified)
+		mc := p.Classification.MachineCredentials
+		fmt.Printf("  machine credentials (total / restricted / unclassified) : %d / %d / %d\n", mc.Total, mc.Restricted, mc.Unclassified)
 
 		fmt.Println("\nAccess anomalies (NIS2 detection)")
 		fmt.Printf("  open / high-severity : %d / %d\n", p.Anomalies.Unacknowledged, p.Anomalies.HighSeverityOpen)
