@@ -3,6 +3,31 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.34.0 — 2026-06-15
+
+Brute-force hardening: per-account login lockout.
+
+### Added
+- **Per-account login lockout** (`security.login_lockout`, opt-in, default off) —
+  brute-force protection distinct from the per-IP rate limiter (ADR-040). After
+  `max_attempts` failed password logins within `window`, the account is locked for a
+  cooldown that backs off exponentially across repeated lockouts (`base_cooldown` ×
+  2ⁿ, capped at `max_cooldown`). It binds to the **account** (not the IP), so rotating
+  source IPs cannot evade it; while locked, even a correct password is refused (the
+  lock is checked before the bcrypt compare, so no work is spent on a guess). A
+  successful login clears the counter and an admin can clear a lock immediately with
+  `POST /api/v1/users/{id}/unlock` (`users.write`), which does not change
+  `account_state`. The lock auto-expires on read — no scheduler. `account.locked` /
+  `account.unlocked` are audited. ([#229])
+
+### Notes
+- Additive migration (four nullable/defaulted `users` columns); safe on existing DBs.
+  Because the lock binds to the account, a known username can be kept locked by
+  failing logins — keep `base_cooldown`/`max_cooldown` short (documented in
+  `CONFIGURATION.md`); the lock always self-heals and an admin can clear it.
+
+[#229]: https://github.com/keyorixhq/keyorix/pull/229
+
 ## v0.33.0 — 2026-06-15
 
 The multi-cloud dynamic-secrets release: GCP and Azure join AWS STS.
