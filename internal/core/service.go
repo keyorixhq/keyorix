@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -101,6 +103,14 @@ type KeyorixCore struct {
 	// enforced after a DEK rotation.
 	auditCkptKey        []byte
 	auditCkptKeyVersion string
+	// checkpointNotary, when set, anchors each freshly-written audit checkpoint to
+	// an external authority (RFC 3161 TSA) for a forge-proof proof-of-existence
+	// (ADR-029). nil = no external anchoring. Set at startup via SetCheckpointNotary.
+	checkpointNotary notary.Notary
+	// checkpointAnchorRoots is the trusted TSA root pool used to VERIFY stored
+	// checkpoint anchors (the issuer trust anchor). nil = anchors cannot be verified
+	// (fail closed). Set at startup via SetCheckpointAnchorRoots.
+	checkpointAnchorRoots *x509.CertPool
 	// evidenceSignKey / evidenceSignKeyVersion sign and verify exported compliance-
 	// evidence packs (HMAC, DEK-derived, domain-separated from the checkpoint key).
 	// nil = signing unavailable (encryption disabled). Set via SetEvidenceSignKey.

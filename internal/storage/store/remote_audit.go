@@ -153,6 +153,11 @@ func (rs *RemoteStorage) LatestAuditCheckpoint(_ context.Context) (*models.Audit
 	return nil, fmt.Errorf("LatestAuditCheckpoint not available in remote mode")
 }
 
+// UpdateAuditCheckpointAnchor is not available in remote mode; checkpointing is server-side.
+func (rs *RemoteStorage) UpdateAuditCheckpointAnchor(_ context.Context, _ uint, _ []byte, _ time.Time, _ string) error {
+	return fmt.Errorf("UpdateAuditCheckpointAnchor not available in remote mode")
+}
+
 // AuditEntryHashByID is not available in remote mode; chain verification runs server-side.
 func (rs *RemoteStorage) AuditEntryHashByID(_ context.Context, _ uint) (string, bool, error) {
 	return "", false, fmt.Errorf("AuditEntryHashByID not available in remote mode")

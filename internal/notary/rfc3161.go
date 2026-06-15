@@ -1,0 +1,79 @@
+package notary
+
+import (
+	"bytes"
+	"context"
+	"crypto"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/digitorus/timestamp"
+)
+
+// defaultTimeout bounds the round-trip to the timestamp authority.
+const defaultTimeout = 15 * time.Second
+
+// maxResponseBytes caps how much of the TSA reply we read — a timestamp response
+// is a few KB; this guards against a misbehaving/hostile endpoint.
+const maxResponseBytes = 1 << 20 // 1 MiB
+
+// RFC3161 anchors a message with an RFC 3161 Time-Stamp Authority (TSA): it POSTs
+// a SHA-256 MessageImprint over the message and stores the returned signed
+// TimeStampToken as the receipt. Credentials/TLS come from the standard HTTP
+// client; the URL is operator-configured deployment config.
+type RFC3161 struct {
+	url    string
+	client *http.Client
+}
+
+// NewRFC3161 builds a TSA notary for the given query URL. A non-positive timeout
+// falls back to defaultTimeout.
+func NewRFC3161(url string, timeout time.Duration) *RFC3161 {
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	return &RFC3161{url: url, client: &http.Client{Timeout: timeout}}
+}
+
+func (r *RFC3161) Provider() string { return "rfc3161:" + r.url }
+
+func (r *RFC3161) Anchor(ctx context.Context, message []byte) (*Receipt, error) {
+	// CreateRequest hashes the message (SHA-256) into the MessageImprint and asks
+	// the TSA to include its signing certificate so the token is self-contained.
+	reqDER, err := timestamp.CreateRequest(bytes.NewReader(message), &timestamp.RequestOptions{
+		Hash:         crypto.SHA256,
+		Certificates: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("rfc3161: build request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, r.url, bytes.NewReader(reqDER))
+	if err != nil {
+		return nil, fmt.Errorf("rfc3161: new request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/timestamp-query")
+	httpReq.Header.Set("Accept", "application/timestamp-reply")
+
+	resp, err := r.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("rfc3161: post to %s: %w", r.url, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("rfc3161: %s returned HTTP %d", r.url, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if err != nil {
+		return nil, fmt.Errorf("rfc3161: read response: %w", err)
+	}
+
+	// ParseResponse validates the PKI status and the token's signature structure.
+	ts, err := timestamp.ParseResponse(body)
+	if err != nil {
+		return nil, fmt.Errorf("rfc3161: parse response: %w", err)
+	}
+	return &Receipt{Token: ts.RawToken, Time: ts.Time, Provider: r.Provider()}, nil
+}

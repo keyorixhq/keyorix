@@ -691,13 +691,20 @@ type AuditEvent struct {
 // chain cannot catch. Append-only: a new checkpoint is added each cycle, never
 // updated.
 type AuditCheckpoint struct {
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	ChainedEvents int64     `json:"chained_events"`
-	HeadID        uint      `json:"head_id"`
-	HeadHash      string    `json:"head_hash"`
-	KeyVersion    string    `json:"key_version"`
-	Signature     string    `gorm:"not null" json:"signature"` // hex HMAC-SHA256
-	CreatedAt     time.Time `json:"created_at"`
+	ID            uint   `gorm:"primaryKey" json:"id"`
+	ChainedEvents int64  `json:"chained_events"`
+	HeadID        uint   `json:"head_id"`
+	HeadHash      string `json:"head_hash"`
+	KeyVersion    string `json:"key_version"`
+	Signature     string `gorm:"not null" json:"signature"` // hex HMAC-SHA256
+	// External-notary anchor (ADR-029): an independent RFC 3161 timestamp over the
+	// checkpoint's canonical bytes, proving it existed at AnchoredAt with a proof the
+	// server cannot forge. Nil/empty when no notary is configured or the anchor call
+	// failed (best-effort — an unanchored checkpoint is still a valid checkpoint).
+	AnchorToken    []byte     `json:"anchor_token,omitempty"`    // opaque RFC 3161 TimeStampToken (DER)
+	AnchoredAt     *time.Time `json:"anchored_at,omitempty"`     // the time the TSA asserts
+	AnchorProvider string     `json:"anchor_provider,omitempty"` // e.g. "rfc3161:https://freetsa.org/tsr"
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type Setting struct {

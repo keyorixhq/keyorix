@@ -21,6 +21,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -43,6 +44,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/server/grpc"
@@ -188,6 +190,20 @@ func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 	return svc, nil
 }
 
+// loadCertPool reads a PEM bundle from path and returns a cert pool of its
+// certificates (the TSA trust anchor for verifying checkpoint anchors).
+func loadCertPool(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path) // #nosec G304 -- operator-configured trusted CA bundle path
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no PEM certificates found in %s", path)
+	}
+	return pool, nil
+}
+
 func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.Service, error) {
 	// Use storage factory to support SQLite, PostgreSQL, and remote storage
 	factory := appstorage.NewStorageFactory()
@@ -216,6 +232,29 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		// exports are signed (and verifiable). Unavailable when encryption is off.
 		if key, keyVer, ok := encSvc.EvidenceSignKey(); ok {
 			coreService.SetEvidenceSignKey(key, keyVer)
+		}
+	}
+
+	// Wire external-notary anchoring of audit checkpoints if enabled (ADR-029): each
+	// written checkpoint gets an independent RFC 3161 timestamp the server cannot
+	// forge. Anchoring is best-effort and only meaningful when checkpoints are
+	// written (which requires encryption).
+	if cn := cfg.Audit.CheckpointNotary; cn.Enabled {
+		if cn.URL == "" {
+			log.Printf("Audit checkpoint notary enabled but no url set; skipping external anchoring")
+		} else {
+			coreService.SetCheckpointNotary(notary.NewRFC3161(cn.URL, cn.GetTimeout()))
+			// Load the TSA trust anchor used to VERIFY stored anchors. Without it,
+			// anchoring still records tokens but verification fails closed (an
+			// untrusted issuer must not be trusted).
+			if cn.CACertPath == "" {
+				log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s) — WARNING: no ca_cert_path set, stored anchors cannot be verified", cn.URL)
+			} else if roots, err := loadCertPool(cn.CACertPath); err != nil {
+				log.Printf("Audit checkpoint notary: failed to load ca_cert_path %q (%v) — anchors cannot be verified", cn.CACertPath, err)
+			} else {
+				coreService.SetCheckpointAnchorRoots(roots)
+				log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s, timeout=%s, trust anchor=%s)", cn.URL, cn.GetTimeout(), cn.CACertPath)
+			}
 		}
 	}
 

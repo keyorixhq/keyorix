@@ -10,6 +10,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
@@ -18,6 +19,21 @@ import (
 // CreateAuditCheckpoint appends a signed checkpoint row (append-only).
 func (ls *LocalStorage) CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error {
 	return ls.db.WithContext(ctx).Create(cp).Error
+}
+
+// UpdateAuditCheckpointAnchor stores the external-notary anchor (RFC 3161 token +
+// asserted time + provider) on an already-written checkpoint row. Updates only the
+// three anchor columns, leaving the signed (chained_events, head, signature)
+// fields immutable.
+func (ls *LocalStorage) UpdateAuditCheckpointAnchor(ctx context.Context, id uint, token []byte, anchoredAt time.Time, provider string) error {
+	return ls.db.WithContext(ctx).
+		Model(&models.AuditCheckpoint{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"anchor_token":    token,
+			"anchored_at":     anchoredAt,
+			"anchor_provider": provider,
+		}).Error
 }
 
 // LatestAuditCheckpoint returns the most recent checkpoint by id, or (nil, nil)

@@ -406,11 +406,17 @@ func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	sendSuccess(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"id":             cp.ID,
 		"chained_events": cp.ChainedEvents,
 		"head_id":        cp.HeadID,
 		"head_hash":      cp.HeadHash,
 		"key_version":    cp.KeyVersion,
-	}, "audit checkpoint written")
+	}
+	// Surface the external-notary anchor when one was obtained (ADR-029).
+	if cp.AnchoredAt != nil {
+		resp["anchored_at"] = cp.AnchoredAt.UTC()
+		resp["anchor_provider"] = cp.AnchorProvider
+	}
+	sendSuccess(w, resp, "audit checkpoint written")
 }
