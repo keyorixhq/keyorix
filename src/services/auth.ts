@@ -135,6 +135,19 @@ export const authService = {
     },
 
     /**
+     * List the configured SSO providers (empty when SSO is disabled). Used by the
+     * login page to render the "Sign in with …" buttons.
+     */
+    async getSSOProviders(): Promise<string[]> {
+        try {
+            const response = await authApi.get('/auth/sso/providers');
+            return response.data?.data?.providers ?? [];
+        } catch {
+            return []; // SSO not configured / endpoint absent — no buttons
+        }
+    },
+
+    /**
      * Request password reset
      */
     async requestPasswordReset(data: PasswordResetRequest): Promise<void> {

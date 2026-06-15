@@ -25,6 +25,9 @@ interface AuthStore extends AuthState {
     // ADR-028: land the user logged in from a setup-link consume response (which is
     // login-shaped) without re-authenticating with a password.
     completeSetup: (response: LoginResponse) => void;
+    // Land the user logged in from an SSO callback, which delivers only a session
+    // token (the user profile is then loaded via checkAuth).
+    completeSSOLogin: (token: string, expiresAt?: string, absoluteExpiresAt?: string) => Promise<void>;
     logout: () => Promise<void>;
     refreshToken: () => Promise<void>;
     checkAuth: () => Promise<void>;
@@ -147,6 +150,23 @@ export const useAuthStore = create<AuthStore>()(
                     absoluteExpiresAt: response.absolute_expires_at,
                     rememberMe: false,
                 });
+            },
+
+            completeSSOLogin: async (token: string, expiresAt?: string, absoluteExpiresAt?: string) => {
+                // Stash the token so the API client (which reads it from the persisted
+                // store) can authenticate the profile fetch, then load the user.
+                set({ token, isAuthenticated: true, isLoading: true, error: null });
+                await get().checkAuth(); // populates user, or clears + redirects on failure
+                const user = get().user;
+                if (user) {
+                    persistAuthData({
+                        user,
+                        token,
+                        expiresAt: expiresAt ?? '',
+                        absoluteExpiresAt,
+                        rememberMe: false,
+                    });
+                }
             },
 
             logout: async () => {

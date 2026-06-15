@@ -16,6 +16,19 @@ export const LoginPage: React.FC = () => {
     const [mode, setMode] = useState<AuthMode>('login');
     const [resetLoading, setResetLoading] = useState(false);
     const [resetError, setResetError] = useState<string | null>(null);
+    const [ssoProviders, setSsoProviders] = useState<string[]>([]);
+    const ssoError = new URLSearchParams(location.search).get('sso_error');
+
+    useEffect(() => {
+        let active = true;
+        authService.getSSOProviders().then(p => { if (active) setSsoProviders(p); });
+        return () => { active = false; };
+    }, []);
+
+    // Where to land after SSO — preserve the originally-requested route.
+    const ssoReturnTo = (location.state as any)?.from?.pathname || ROUTES.DASHBOARD;
+    const ssoHref = (name: string) =>
+        `/auth/sso/${encodeURIComponent(name)}/login?return_to=${encodeURIComponent(ssoReturnTo)}`;
 
     useEffect(() => {
         if (isAuthenticated) {
@@ -74,11 +87,39 @@ export const LoginPage: React.FC = () => {
 
                 <div className="py-8 px-6 shadow-lg rounded-lg border" style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}>
                     {mode === 'login' && (
-                        <LoginForm
-                            onSubmit={handleLogin}
-                            isLoading={isLoading}
-                            error={error}
-                        />
+                        <>
+                            {ssoError && (
+                                <div className="mb-4 rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}>
+                                    SSO sign-in failed: {ssoError}
+                                </div>
+                            )}
+                            <LoginForm
+                                onSubmit={handleLogin}
+                                isLoading={isLoading}
+                                error={error}
+                            />
+                            {ssoProviders.length > 0 && (
+                                <div className="mt-6">
+                                    <div className="relative flex items-center my-4">
+                                        <div className="grow border-t" style={{ borderColor: 'var(--border)' }} />
+                                        <span className="mx-3 text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>or</span>
+                                        <div className="grow border-t" style={{ borderColor: 'var(--border)' }} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        {ssoProviders.map(name => (
+                                            <a
+                                                key={name}
+                                                href={ssoHref(name)}
+                                                className="block w-full text-center px-4 py-2 rounded-lg text-sm font-medium border capitalize"
+                                                style={{ borderColor: 'var(--border)', color: 'var(--text-primary)', backgroundColor: 'var(--bg-app)' }}
+                                            >
+                                                Sign in with {name}
+                                            </a>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
                     {(mode === 'reset' || mode === 'reset-success') && (
                         <PasswordResetForm

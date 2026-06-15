@@ -5,7 +5,7 @@ import { SecretExpiryPage, SecretsHealthPage, RotationPoliciesPage, UsageAnalyti
 import { ProjectsListPage, ProjectDetailPage } from './pages/projects';
 import { ProtectedRoute, PublicRoute, AdminRoute, Layout, RequirePasswordChange } from './components/layout';
 import { SessionTimeoutWarning, AbsoluteSessionExpiryWarning } from './components/ui';
-import { LoginPage, SetupPage } from './pages/auth';
+import { LoginPage, SetupPage, SSOCompletePage } from './pages/auth';
 import { DashboardPage } from './pages/dashboard';
 import { AuditLogPage } from './pages/audit/AuditLogPage';
 import { AdminPage, UserDetailPage, RolesPoliciesPage, GroupsPage, ServiceAccountsPage, APITokensPage } from './pages/admin';
@@ -47,6 +47,10 @@ function App() {
         {/* Credential-delivery setup link (ADR-028) — standalone public page; the
             bearer is the single-use token in the URL, not a session. */}
         <Route path="/auth/setup/:token" element={<SetupPage />} />
+
+        {/* SSO callback landing — reads the session token from the URL fragment and
+            completes login. Public; the token is the credential. */}
+        <Route path="/auth/sso/complete" element={<SSOCompletePage />} />
 
         {/* Authenticated routes */}
         <Route
