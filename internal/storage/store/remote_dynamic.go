@@ -18,6 +18,12 @@ func (rs *RemoteStorage) GetDynamicSecretConfig(_ context.Context, _ uint) (*mod
 func (rs *RemoteStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
 	return nil, remoteUnsupported("ListDynamicSecretConfigs")
 }
+func (rs *RemoteStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
+	return remoteUnsupported("UpdateDynamicSecretConfig")
+}
+func (rs *RemoteStorage) CountDynamicSecretConfigsByClassification(_ context.Context) (map[string]int, error) {
+	return nil, remoteUnsupported("CountDynamicSecretConfigsByClassification")
+}
 func (rs *RemoteStorage) CreateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) (*models.DynamicSecretLease, error) {
 	return nil, remoteUnsupported("CreateDynamicSecretLease")
 }

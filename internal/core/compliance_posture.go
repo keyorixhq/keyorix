@@ -74,6 +74,9 @@ type AnomaliesPosture struct {
 }
 
 // ClassificationPosture summarises secret data-classification coverage (A.5.12).
+// The flat fields count STATIC secrets (unchanged for back-compat); DynamicConfigs
+// (and, later, machine entities) extend coverage to the other secret-bearing
+// surfaces so the posture reflects classification across all of them.
 type ClassificationPosture struct {
 	TotalSecrets int `json:"total_secrets"`
 	Public       int `json:"public"`
@@ -81,6 +84,34 @@ type ClassificationPosture struct {
 	Confidential int `json:"confidential"`
 	Restricted   int `json:"restricted"`
 	Unclassified int `json:"unclassified"`
+	// DynamicConfigs counts dynamic-secret configs by classification (A.5.12).
+	DynamicConfigs ClassificationCounts `json:"dynamic_configs"`
+}
+
+// ClassificationCounts is a per-level tally of a set of classifiable entities.
+type ClassificationCounts struct {
+	Total        int `json:"total"`
+	Public       int `json:"public"`
+	Internal     int `json:"internal"`
+	Confidential int `json:"confidential"`
+	Restricted   int `json:"restricted"`
+	Unclassified int `json:"unclassified"`
+}
+
+// classificationCountsFromMap builds ClassificationCounts from a label→count map
+// (the empty label "" is the unclassified bucket).
+func classificationCountsFromMap(m map[string]int) ClassificationCounts {
+	cc := ClassificationCounts{
+		Public:       m[ClassificationPublic],
+		Internal:     m[ClassificationInternal],
+		Confidential: m[ClassificationConfidential],
+		Restricted:   m[ClassificationRestricted],
+		Unclassified: m[""],
+	}
+	for _, n := range m {
+		cc.Total += n
+	}
+	return cc
 }
 
 // RetentionPosture reports the configured data-retention windows (ISO 27001 A.5.33
@@ -224,7 +255,7 @@ func (c *KeyorixCore) classificationPosture(ctx context.Context) ClassificationP
 		}
 		return int(total)
 	}
-	return ClassificationPosture{
+	p := ClassificationPosture{
 		TotalSecrets: count(""),
 		Public:       count(ClassificationPublic),
 		Internal:     count(ClassificationInternal),
@@ -232,6 +263,10 @@ func (c *KeyorixCore) classificationPosture(ctx context.Context) ClassificationP
 		Restricted:   count(ClassificationRestricted),
 		Unclassified: count("unclassified"),
 	}
+	if m, err := c.storage.CountDynamicSecretConfigsByClassification(ctx); err == nil {
+		p.DynamicConfigs = classificationCountsFromMap(m)
+	}
+	return p
 }
 
 // identityPosture counts active users and how many have a second factor (MFA or

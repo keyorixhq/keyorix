@@ -1543,6 +1543,12 @@ func (m *MockStorage) GetDynamicSecretConfig(_ context.Context, _ uint) (*models
 func (m *MockStorage) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
 	return nil, nil
 }
+func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.DynamicSecretConfig) error {
+	return nil
+}
+func (m *MockStorage) CountDynamicSecretConfigsByClassification(_ context.Context) (map[string]int, error) {
+	return nil, nil
+}
 func (m *MockStorage) CreateDynamicSecretLease(_ context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error) {
 	return l, nil
 }

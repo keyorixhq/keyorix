@@ -55,12 +55,20 @@ type posture struct {
 		TotalActivations  int `json:"total_activations"`
 	} `json:"emergency_access"`
 	Classification struct {
-		TotalSecrets int `json:"total_secrets"`
-		Public       int `json:"public"`
-		Internal     int `json:"internal"`
-		Confidential int `json:"confidential"`
-		Restricted   int `json:"restricted"`
-		Unclassified int `json:"unclassified"`
+		TotalSecrets   int `json:"total_secrets"`
+		Public         int `json:"public"`
+		Internal       int `json:"internal"`
+		Confidential   int `json:"confidential"`
+		Restricted     int `json:"restricted"`
+		Unclassified   int `json:"unclassified"`
+		DynamicConfigs struct {
+			Total        int `json:"total"`
+			Restricted   int `json:"restricted"`
+			Confidential int `json:"confidential"`
+			Internal     int `json:"internal"`
+			Public       int `json:"public"`
+			Unclassified int `json:"unclassified"`
+		} `json:"dynamic_configs"`
 	} `json:"classification"`
 	Anomalies struct {
 		Unacknowledged   int `json:"unacknowledged"`
@@ -141,6 +149,8 @@ var reportCmd = &cobra.Command{
 		fmt.Printf("  restricted / confidential : %d / %d\n", p.Classification.Restricted, p.Classification.Confidential)
 		fmt.Printf("  internal / public         : %d / %d\n", p.Classification.Internal, p.Classification.Public)
 		fmt.Printf("  unclassified              : %d\n", p.Classification.Unclassified)
+		dc := p.Classification.DynamicConfigs
+		fmt.Printf("  dynamic configs (total / restricted / unclassified) : %d / %d / %d\n", dc.Total, dc.Restricted, dc.Unclassified)
 
 		fmt.Println("\nAccess anomalies (NIS2 detection)")
 		fmt.Printf("  open / high-severity : %d / %d\n", p.Anomalies.Unacknowledged, p.Anomalies.HighSeverityOpen)
