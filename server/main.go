@@ -328,6 +328,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			UsePathStyle:   os.UsePathStyle,
 			LockMode:       os.LockMode,
 			LockRetainDays: os.LockRetainDays,
+			LegalHold:      os.LegalHold,
 		})
 		if oerr != nil {
 			return nil, nil, fmt.Errorf("failed to init evidence object-store target: %w", oerr)
