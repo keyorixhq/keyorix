@@ -16,9 +16,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"fmt"
 	"time"
 
+	"github.com/digitorus/pkcs7"
 	"github.com/digitorus/timestamp"
 )
 
@@ -38,12 +40,21 @@ type Notary interface {
 	Provider() string
 }
 
-// VerifyReceipt re-checks an RFC 3161 receipt token against the original message:
-// it parses (and signature-validates) the token, confirms the token's hashed
-// message equals SHA-256(message) — so the receipt is bound to exactly this
-// message — and returns the authority's asserted time. A parse/signature failure
-// or a digest mismatch is an error: the receipt does not prove this message.
-func VerifyReceipt(message, token []byte) (time.Time, error) {
+// VerifyReceipt re-checks an RFC 3161 receipt token against the original message.
+// It (1) verifies the token's signature chains to one of the configured TSA roots
+// with the time-stamping extended key usage — so a self-signed or otherwise
+// untrusted issuer is rejected; (2) confirms the token's hashed message equals
+// SHA-256(message), binding the receipt to exactly this message; and (3) returns
+// the authority's asserted time.
+//
+// roots is REQUIRED: without a trust anchor a token's issuer cannot be trusted, so
+// an attacker who can write the checkpoint row (the very actor the anchor defends
+// against) could mint a self-signed token over the same bytes. A nil roots
+// therefore fails closed rather than asserting an unverifiable proof.
+func VerifyReceipt(roots *x509.CertPool, message, token []byte) (time.Time, error) {
+	if roots == nil {
+		return time.Time{}, fmt.Errorf("notary: no TSA trust anchor configured — cannot verify receipt issuer")
+	}
 	if len(token) == 0 {
 		return time.Time{}, fmt.Errorf("notary: empty receipt token")
 	}
@@ -54,6 +65,25 @@ func VerifyReceipt(message, token []byte) (time.Time, error) {
 	want := sha256.Sum256(message)
 	if !bytes.Equal(ts.HashedMessage, want[:]) {
 		return time.Time{}, fmt.Errorf("notary: receipt does not bind this message (timestamped digest differs)")
+	}
+	// Chain-verify the token's signer to a configured root with the time-stamping
+	// EKU. timestamp.Parse only checks the signature is internally consistent (it
+	// uses an empty trust store), so this is the step that establishes the issuer
+	// is a trusted TSA and not an attacker's self-signed cert.
+	p7, err := pkcs7.Parse(token)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("notary: parse token for chain verification: %w", err)
+	}
+	intermediates := x509.NewCertPool()
+	for _, c := range p7.Certificates {
+		intermediates.AddCert(c)
+	}
+	if err := p7.VerifyWithOpts(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("notary: receipt issuer not trusted: %w", err)
 	}
 	return ts.Time, nil
 }

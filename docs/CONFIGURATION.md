@@ -620,11 +620,20 @@ next write retries — it never blocks checkpointing.
 audit:
   checkpoint_notary:
     enabled: true
-    type: rfc3161           # the only type today (default)
+    type: rfc3161                  # the only type today (default)
     url: https://freetsa.org/tsr   # TSA timestamp-query endpoint
-    timeout: "15s"          # Go duration for the TSA round-trip (default 15s)
+    timeout: "15s"                 # Go duration for the TSA round-trip (default 15s)
+    ca_cert_path: /etc/keyorix/tsa-ca.pem  # PEM of the TSA's trusted root/CA cert(s)
 ```
 
+> `ca_cert_path` is the **trust anchor** used to *verify* a stored anchor's issuer.
+> Verification chains the token's signer to one of these roots (with the
+> time-stamping EKU), so a self-signed/untrusted token — which the very actor the
+> anchor defends against (a DEK + database-write attacker) could otherwise mint — is
+> rejected. Without `ca_cert_path`, anchoring still records tokens but verification
+> **fails closed** (it will not assert an unverifiable proof). Supply the TSA's CA
+> bundle (e.g. FreeTSA's `cacert.pem`).
+>
 > The new checkpoint's anchor (asserted time + TSA) is shown by
 > `keyorix audit checkpoint`. Requires `audit_checkpoints` to be doing the writing
 > (which requires encryption — the checkpoint signing key is DEK-derived).

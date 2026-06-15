@@ -408,6 +408,12 @@ type CheckpointNotaryConfig struct {
 	Type    string `yaml:"type"` // "rfc3161" (default)
 	URL     string `yaml:"url"`  // TSA query endpoint, e.g. https://freetsa.org/tsr
 	Timeout string `yaml:"timeout"`
+	// CACertPath is a PEM bundle of the TSA's trusted root/CA cert(s). REQUIRED to
+	// verify a stored anchor's issuer — without it anchoring still records tokens,
+	// but verification fails closed (an untrusted/self-signed issuer must not be
+	// trusted, since the checkpoint-row writer is the actor the anchor defends
+	// against).
+	CACertPath string `yaml:"ca_cert_path"`
 }
 
 // GetTimeout returns the TSA round-trip timeout (default 15s when unset/unparseable).

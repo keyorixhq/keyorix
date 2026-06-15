@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -49,6 +50,13 @@ func (c *KeyorixCore) SetCheckpointNotary(n notary.Notary) {
 	c.checkpointNotary = n
 }
 
+// SetCheckpointAnchorRoots wires the trusted TSA root pool used to verify stored
+// checkpoint anchors (the issuer trust anchor). Without it, VerifyCheckpointAnchor
+// fails closed rather than trusting an unverifiable token.
+func (c *KeyorixCore) SetCheckpointAnchorRoots(roots *x509.CertPool) {
+	c.checkpointAnchorRoots = roots
+}
+
 // anchorCheckpoint best-effort anchors a checkpoint's canonical bytes with the
 // configured notary and persists the receipt on the row. A notary/storage failure
 // is logged and swallowed: an unanchored checkpoint is still a valid checkpoint,
@@ -80,7 +88,7 @@ func (c *KeyorixCore) VerifyCheckpointAnchor(cp *models.AuditCheckpoint) (anchor
 	if cp == nil || len(cp.AnchorToken) == 0 {
 		return time.Time{}, false, nil
 	}
-	at, err := notary.VerifyReceipt([]byte(checkpointCanonical(cp)), cp.AnchorToken)
+	at, err := notary.VerifyReceipt(c.checkpointAnchorRoots, []byte(checkpointCanonical(cp)), cp.AnchorToken)
 	if err != nil {
 		return time.Time{}, true, err
 	}

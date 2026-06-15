@@ -53,12 +53,13 @@ func newTestTSA(t *testing.T, fixedTime time.Time) (*httptest.Server, crypto.Sig
 			return
 		}
 		ts := &timestamp.Timestamp{
-			HashAlgorithm: req.HashAlgorithm,
-			HashedMessage: req.HashedMessage,
-			Time:          fixedTime,
-			Nonce:         req.Nonce,
-			Policy:        asn1.ObjectIdentifier{1, 2, 3, 4, 1},
-			SerialNumber:  big.NewInt(42),
+			HashAlgorithm:     req.HashAlgorithm,
+			HashedMessage:     req.HashedMessage,
+			Time:              fixedTime,
+			Nonce:             req.Nonce,
+			Policy:            asn1.ObjectIdentifier{1, 2, 3, 4, 1},
+			SerialNumber:      big.NewInt(42),
+			AddTSACertificate: true, // embed the signing cert so the token is self-contained
 		}
 		resp, err := ts.CreateResponseWithOpts(cert, key, crypto.SHA256)
 		if err != nil {
@@ -74,7 +75,9 @@ func newTestTSA(t *testing.T, fixedTime time.Time) (*httptest.Server, crypto.Sig
 
 func TestRFC3161_AnchorAndVerifyRoundTrip(t *testing.T) {
 	fixedTime := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
-	srv, _, _ := newTestTSA(t, fixedTime)
+	srv, _, cert := newTestTSA(t, fixedTime)
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
 
 	msg := []byte("v1\x00128\x0099\x00deadbeef\x00v1")
 	rec, err := NewRFC3161(srv.URL, 5*time.Second).Anchor(context.Background(), msg)
@@ -83,24 +86,36 @@ func TestRFC3161_AnchorAndVerifyRoundTrip(t *testing.T) {
 	assert.WithinDuration(t, fixedTime, rec.Time, time.Second)
 	assert.Equal(t, "rfc3161:"+srv.URL, rec.Provider)
 
-	// The receipt verifies against the original message and yields the TSA time.
-	at, err := VerifyReceipt(msg, rec.Token)
+	// The receipt verifies against the original message + trusted root, yielding the TSA time.
+	at, err := VerifyReceipt(roots, msg, rec.Token)
 	require.NoError(t, err)
 	assert.WithinDuration(t, fixedTime, at, time.Second)
 
 	// A different message must NOT verify against the same token.
-	_, err = VerifyReceipt([]byte("v1\x00129\x0099\x00deadbeef\x00v1"), rec.Token)
+	_, err = VerifyReceipt(roots, []byte("v1\x00129\x0099\x00deadbeef\x00v1"), rec.Token)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not bind")
+
+	// A token from an UNTRUSTED issuer (empty/other root pool) must be rejected —
+	// this is the trust-anchor check that stops a DB+DEK attacker forging a token.
+	_, err = VerifyReceipt(x509.NewCertPool(), msg, rec.Token)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not trusted")
+
+	// A nil trust anchor fails closed rather than asserting an unverifiable proof.
+	_, err = VerifyReceipt(nil, msg, rec.Token)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "trust anchor")
 }
 
 func TestVerifyReceipt_Errors(t *testing.T) {
+	roots := x509.NewCertPool()
 	t.Run("empty token", func(t *testing.T) {
-		_, err := VerifyReceipt([]byte("m"), nil)
+		_, err := VerifyReceipt(roots, []byte("m"), nil)
 		require.Error(t, err)
 	})
 	t.Run("garbage token", func(t *testing.T) {
-		_, err := VerifyReceipt([]byte("m"), []byte("not-a-token"))
+		_, err := VerifyReceipt(roots, []byte("m"), []byte("not-a-token"))
 		require.Error(t, err)
 	})
 }

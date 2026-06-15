@@ -137,6 +137,17 @@ func TestVerifyCheckpointAnchor_NoAnchor(t *testing.T) {
 	assert.True(t, at.IsZero())
 }
 
+func TestVerifyCheckpointAnchor_NoTrustAnchorFailsClosed(t *testing.T) {
+	c, _ := newCheckpointCore(t)
+	// A checkpoint carries an anchor token, but no trust anchor is configured:
+	// verification must fail closed (ok=true, error) rather than assert a proof.
+	cp := &models.AuditCheckpoint{ID: 1, AnchorToken: []byte("some-token")}
+	_, ok, err := c.VerifyCheckpointAnchor(cp)
+	assert.True(t, ok, "an anchor is present")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "trust anchor")
+}
+
 func TestAuditCheckpoint_DetectsTailTruncation(t *testing.T) {
 	ctx := context.Background()
 	c, db := newCheckpointCore(t)
