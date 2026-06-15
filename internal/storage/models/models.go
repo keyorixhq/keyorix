@@ -449,9 +449,14 @@ type DynamicSecretConfig struct {
 	// MaxTTLSeconds caps the lifetime of any lease from this config (issue + all
 	// renewals), regardless of the TTL a caller requests. 0 = no ceiling.
 	MaxTTLSeconds int
-	CreatedBy     string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// Classification is the data-sensitivity label of the credentials this config
+	// mints (ISO 27001 A.5.12/A.5.13): "" = unclassified, else one of
+	// public|internal|confidential|restricted. Folds into the classification posture
+	// so dynamic credentials are covered alongside static secrets.
+	Classification string `gorm:"index"`
+	CreatedBy      string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // DynamicSecretLease is one issued credential: a short-lived role on the target

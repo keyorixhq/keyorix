@@ -27,6 +27,9 @@ type CreateDynamicSecretConfigRequest struct {
 	DefaultTTLSeconds int
 	MaxTTLSeconds     int
 	CreatedBy         string
+	// Classification is an optional data-sensitivity label (A.5.12) for the
+	// credentials this config mints: "" or one of public|internal|confidential|restricted.
+	Classification string
 }
 
 // IssuedLease is the credential returned to the caller once, on issue.
@@ -49,6 +52,9 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if req.MaxTTLSeconds > 0 && req.DefaultTTLSeconds > req.MaxTTLSeconds {
 		return nil, fmt.Errorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)
 	}
+	if !IsValidClassification(req.Classification) {
+		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+	}
 	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
@@ -63,6 +69,7 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 		CreationTemplate:  req.CreationTemplate,
 		DefaultTTLSeconds: req.DefaultTTLSeconds,
 		MaxTTLSeconds:     req.MaxTTLSeconds,
+		Classification:    req.Classification,
 		CreatedBy:         req.CreatedBy,
 		CreatedAt:         c.now(),
 		UpdatedAt:         c.now(),
@@ -82,6 +89,36 @@ func (c *KeyorixCore) GetDynamicSecretConfig(ctx context.Context, id uint) (*mod
 
 func (c *KeyorixCore) ListDynamicSecretConfigs(ctx context.Context, projectID, environmentID uint) ([]*models.DynamicSecretConfig, error) {
 	return c.storage.ListDynamicSecretConfigs(ctx, projectID, environmentID)
+}
+
+// ClassifyDynamicSecretConfig sets (or clears, with "") the data-classification
+// label on a dynamic-secret config and audits the change with a before/after diff.
+func (c *KeyorixCore) ClassifyDynamicSecretConfig(ctx context.Context, actorID uint, configID uint, level string) (*models.DynamicSecretConfig, error) {
+	if configID == 0 {
+		return nil, fmt.Errorf("config id is required")
+	}
+	if !IsValidClassification(level) {
+		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
+	}
+	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
+	if err != nil {
+		return nil, fmt.Errorf("dynamic-secret config not found: %w", err)
+	}
+	if cfg.Classification == level {
+		return cfg, nil // no-op
+	}
+	old := cfg.Classification
+	cfg.Classification = level
+	cfg.UpdatedAt = c.now()
+	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+		return nil, err
+	}
+	aid := actorID
+	pid := cfg.ProjectID
+	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
+	c.writeAuditEventDiff(ctx, "dynamic_secret.config_classified", &aid, nil, &pid, "",
+		fmt.Sprintf("dynamic-secret config %q classification set to %q", cfg.Name, level), diff)
+	return cfg, nil
 }
 
 func (c *KeyorixCore) ListDynamicSecretLeases(ctx context.Context, configID uint) ([]*models.DynamicSecretLease, error) {

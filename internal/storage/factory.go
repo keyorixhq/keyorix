@@ -347,6 +347,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 				return fmt.Errorf("failed to add dynamic_secret_configs.max_ttl_seconds column: %w", err)
 			}
 		}
+		// Data classification (ISO A.5.12). Additive ("" = unclassified).
+		if tableExists(db, "dynamic_secret_configs") && !columnExists(db, "dynamic_secret_configs", "classification") {
+			db.Exec("ALTER TABLE dynamic_secret_configs ADD COLUMN classification TEXT DEFAULT ''")
+		}
 	}
 	if !dynLeaseExists {
 		if err := db.AutoMigrate(&models.DynamicSecretLease{}); err != nil {

@@ -70,6 +70,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		CreationTemplate  string `json:"creation_template"`
 		DefaultTTLSeconds int    `json:"default_ttl_seconds"`
 		MaxTTLSeconds     int    `json:"max_ttl_seconds"`
+		Classification    string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
@@ -89,6 +90,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		CreationTemplate:  body.CreationTemplate,
 		DefaultTTLSeconds: body.DefaultTTLSeconds,
 		MaxTTLSeconds:     body.MaxTTLSeconds,
+		Classification:    body.Classification,
 		CreatedBy:         userCtx.Username,
 	})
 	if err != nil {
@@ -242,6 +244,29 @@ func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Re
 	}, fmt.Sprintf("Revoked %d active lease(s); %d failed.", revoked, failed))
 }
 
+// ClassifyConfig handles PATCH /api/v1/dynamic-secrets/configs/{id}/classification —
+// sets (or clears) the config's data-classification label.
+func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.write")
+	if !ok {
+		return
+	}
+	var body struct {
+		Classification string `json:"classification"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	updated, err := h.coreService.ClassifyDynamicSecretConfig(r.Context(), userCtx.UserID, cfg.ID, body.Classification)
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		return
+	}
+	sendSuccess(w, sanitizeConfig(updated), "Classification updated.")
+}
+
 // loadAuthorizedConfig loads the {id} config and authorizes the caller against
 // its scope. It writes the error response and returns ok=false on failure.
 func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *http.Request, perm string) (*models.DynamicSecretConfig, bool) {
@@ -275,6 +300,7 @@ func sanitizeConfig(c *models.DynamicSecretConfig) map[string]interface{} {
 		"creation_template":   c.CreationTemplate,
 		"default_ttl_seconds": c.DefaultTTLSeconds,
 		"max_ttl_seconds":     c.MaxTTLSeconds,
+		"classification":      c.Classification,
 		"created_by":          c.CreatedBy,
 		"created_at":          c.CreatedAt,
 	}

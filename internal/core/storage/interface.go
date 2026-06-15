@@ -392,6 +392,10 @@ type Storage interface {
 	CreateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error)
 	GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
 	ListDynamicSecretConfigs(ctx context.Context, projectID, environmentID uint) ([]*models.DynamicSecretConfig, error)
+	UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error
+	// CountDynamicSecretConfigsByClassification returns install-wide config counts
+	// keyed by classification label ("" = unclassified) for the compliance posture.
+	CountDynamicSecretConfigsByClassification(ctx context.Context) (map[string]int, error)
 	CreateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error)
 	GetDynamicSecretLease(ctx context.Context, leaseID string) (*models.DynamicSecretLease, error)
 	ListDynamicSecretLeases(ctx context.Context, configID uint) ([]*models.DynamicSecretLease, error)
