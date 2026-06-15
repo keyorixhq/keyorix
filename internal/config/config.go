@@ -395,6 +395,24 @@ func (c SoftDeleteConfig) GetRetentionDays() int {
 // AuditConfig groups audit-log delivery integrations.
 type AuditConfig struct {
 	SIEM SIEMConfig `yaml:"siem"`
+	// CheckpointNotary anchors each written audit checkpoint to an external RFC 3161
+	// timestamp authority for a forge-proof proof-of-existence (ADR-029). Opt-in.
+	CheckpointNotary CheckpointNotaryConfig `yaml:"checkpoint_notary"`
+}
+
+// CheckpointNotaryConfig configures external-notary anchoring of audit checkpoints.
+// type is currently always "rfc3161" (the default when enabled). URL is the TSA's
+// timestamp-query endpoint; Timeout is a Go duration (default 15s).
+type CheckpointNotaryConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Type    string `yaml:"type"` // "rfc3161" (default)
+	URL     string `yaml:"url"`  // TSA query endpoint, e.g. https://freetsa.org/tsr
+	Timeout string `yaml:"timeout"`
+}
+
+// GetTimeout returns the TSA round-trip timeout (default 15s when unset/unparseable).
+func (c CheckpointNotaryConfig) GetTimeout() time.Duration {
+	return parseDurationDefault(c.Timeout, 15*time.Second)
 }
 
 // MembershipConfig configures the project membership lifecycle (ADR-022).

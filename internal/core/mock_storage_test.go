@@ -942,6 +942,11 @@ func (m *MockStorage) LatestAuditCheckpoint(ctx context.Context) (*models.AuditC
 	return args.Get(0).(*models.AuditCheckpoint), args.Error(1)
 }
 
+func (m *MockStorage) UpdateAuditCheckpointAnchor(ctx context.Context, id uint, token []byte, anchoredAt time.Time, provider string) error {
+	args := m.Called(ctx, id, token, anchoredAt, provider)
+	return args.Error(0)
+}
+
 func (m *MockStorage) AuditEntryHashByID(ctx context.Context, id uint) (string, bool, error) {
 	args := m.Called(ctx, id)
 	return args.String(0), args.Bool(1), args.Error(2)

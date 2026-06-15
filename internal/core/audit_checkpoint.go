@@ -18,8 +18,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -36,6 +39,52 @@ func (c *KeyorixCore) SetAuditCheckpointKey(key []byte, keyVersion string) {
 // (i.e. a signing key is configured — encryption is enabled).
 func (c *KeyorixCore) AuditCheckpointsAvailable() bool {
 	return len(c.auditCkptKey) > 0
+}
+
+// SetCheckpointNotary wires an external notary (RFC 3161 TSA) that anchors each
+// freshly-written checkpoint for a forge-proof proof-of-existence (ADR-029).
+// Called at startup when audit.checkpoint_notary is enabled; left unset, no
+// external anchoring is performed.
+func (c *KeyorixCore) SetCheckpointNotary(n notary.Notary) {
+	c.checkpointNotary = n
+}
+
+// anchorCheckpoint best-effort anchors a checkpoint's canonical bytes with the
+// configured notary and persists the receipt on the row. A notary/storage failure
+// is logged and swallowed: an unanchored checkpoint is still a valid checkpoint,
+// and the next write retries — anchoring must never fail checkpointing.
+func (c *KeyorixCore) anchorCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) {
+	if c.checkpointNotary == nil {
+		return
+	}
+	rec, err := c.checkpointNotary.Anchor(ctx, []byte(checkpointCanonical(cp)))
+	if err != nil {
+		log.Printf("audit checkpoint #%d: external anchor failed (left unanchored): %v", cp.ID, err)
+		return
+	}
+	if err := c.storage.UpdateAuditCheckpointAnchor(ctx, cp.ID, rec.Token, rec.Time, rec.Provider); err != nil {
+		log.Printf("audit checkpoint #%d: anchored but failed to persist receipt: %v", cp.ID, err)
+		return
+	}
+	at := rec.Time
+	cp.AnchorToken = rec.Token
+	cp.AnchoredAt = &at
+	cp.AnchorProvider = rec.Provider
+}
+
+// VerifyCheckpointAnchor re-verifies a checkpoint's external-notary receipt: it
+// confirms the stored RFC 3161 token is valid and bound to this exact checkpoint
+// (its canonical bytes), returning the authority-asserted time. ok is false with a
+// nil error when the checkpoint carries no anchor (none was configured/succeeded).
+func (c *KeyorixCore) VerifyCheckpointAnchor(cp *models.AuditCheckpoint) (anchoredAt time.Time, ok bool, err error) {
+	if cp == nil || len(cp.AnchorToken) == 0 {
+		return time.Time{}, false, nil
+	}
+	at, err := notary.VerifyReceipt([]byte(checkpointCanonical(cp)), cp.AnchorToken)
+	if err != nil {
+		return time.Time{}, true, err
+	}
+	return at, true, nil
 }
 
 // WriteAuditCheckpoint verifies the audit chain and, if it is intact, appends a
@@ -83,6 +132,8 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	if err := c.storage.CreateAuditCheckpoint(ctx, newCP); err != nil {
 		return nil, false, fmt.Errorf("failed to write audit checkpoint: %w", err)
 	}
+	// Best-effort external anchor (RFC 3161) — never fails the checkpoint write.
+	c.anchorCheckpoint(ctx, newCP)
 	return newCP, true, nil
 }
 

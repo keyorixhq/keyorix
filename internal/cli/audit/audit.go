@@ -209,11 +209,13 @@ since a point in time with --since --all.`,
 
 // checkpointResult mirrors the /audit/checkpoint payload (ADR-029).
 type checkpointResult struct {
-	ID            uint   `json:"id"`
-	ChainedEvents int64  `json:"chained_events"`
-	HeadID        uint   `json:"head_id"`
-	HeadHash      string `json:"head_hash"`
-	KeyVersion    string `json:"key_version"`
+	ID             uint   `json:"id"`
+	ChainedEvents  int64  `json:"chained_events"`
+	HeadID         uint   `json:"head_id"`
+	HeadHash       string `json:"head_hash"`
+	KeyVersion     string `json:"key_version"`
+	AnchoredAt     string `json:"anchored_at"`
+	AnchorProvider string `json:"anchor_provider"`
 }
 
 var checkpointCmd = &cobra.Command{
@@ -243,6 +245,10 @@ verify (broken, or a prior signed checkpoint proves a truncation).`,
 		fmt.Printf("  chained events: %d\n", out.ChainedEvents)
 		fmt.Printf("  head id:        %d\n", out.HeadID)
 		fmt.Printf("  head hash:      %s\n", out.HeadHash)
+		if out.AnchoredAt != "" {
+			fmt.Printf("  anchored at:    %s\n", out.AnchoredAt)
+			fmt.Printf("  anchor:         %s\n", out.AnchorProvider)
+		}
 		return nil
 	},
 }

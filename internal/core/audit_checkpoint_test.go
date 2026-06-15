@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -63,6 +64,77 @@ func TestAuditCheckpoint_HappyPath(t *testing.T) {
 	assert.True(t, v.Valid)
 	assert.True(t, v.Checkpointed)
 	assert.Empty(t, v.CheckpointReason)
+}
+
+// fakeNotary is a stand-in external authority for the anchoring wiring tests
+// (the real RFC 3161 verify path is covered by the notary package round-trip).
+type fakeNotary struct {
+	token   []byte
+	at      time.Time
+	err     error
+	calls   int
+	lastMsg []byte
+}
+
+func (f *fakeNotary) Anchor(_ context.Context, msg []byte) (*notary.Receipt, error) {
+	f.calls++
+	f.lastMsg = append([]byte(nil), msg...)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &notary.Receipt{Token: f.token, Time: f.at, Provider: "fake"}, nil
+}
+func (f *fakeNotary) Provider() string { return "fake" }
+
+func TestAuditCheckpoint_AnchorsWhenNotarySet(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+	logEvents(t, c, 3)
+	fn := &fakeNotary{token: []byte("opaque-tsa-token"), at: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)}
+	c.SetCheckpointNotary(fn)
+
+	cp, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	// The receipt is reflected on the returned checkpoint...
+	require.Equal(t, 1, fn.calls)
+	require.NotNil(t, cp.AnchoredAt)
+	assert.Equal(t, "fake", cp.AnchorProvider)
+	assert.Equal(t, []byte("opaque-tsa-token"), cp.AnchorToken)
+	// ...the notary saw exactly the checkpoint's canonical bytes...
+	assert.Equal(t, []byte(checkpointCanonical(cp)), fn.lastMsg)
+	// ...and the receipt was persisted on the row.
+	var row models.AuditCheckpoint
+	require.NoError(t, db.First(&row, cp.ID).Error)
+	assert.Equal(t, []byte("opaque-tsa-token"), row.AnchorToken)
+	require.NotNil(t, row.AnchoredAt)
+	assert.Equal(t, "fake", row.AnchorProvider)
+}
+
+func TestAuditCheckpoint_AnchorIsBestEffort(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+	logEvents(t, c, 2)
+	c.SetCheckpointNotary(&fakeNotary{err: fmt.Errorf("tsa unreachable")})
+
+	// A notary failure must NOT fail the checkpoint write.
+	cp, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+	assert.Nil(t, cp.AnchoredAt)
+
+	var row models.AuditCheckpoint
+	require.NoError(t, db.First(&row, cp.ID).Error)
+	assert.Empty(t, row.AnchorToken, "an un-anchored checkpoint is still a valid checkpoint")
+}
+
+func TestVerifyCheckpointAnchor_NoAnchor(t *testing.T) {
+	c, _ := newCheckpointCore(t)
+	at, ok, err := c.VerifyCheckpointAnchor(&models.AuditCheckpoint{ID: 1})
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.True(t, at.IsZero())
 }
 
 func TestAuditCheckpoint_DetectsTailTruncation(t *testing.T) {

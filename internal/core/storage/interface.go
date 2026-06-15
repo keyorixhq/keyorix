@@ -359,6 +359,10 @@ type Storage interface {
 	VerifyAuditChain(ctx context.Context) (*AuditChainVerification, error)
 	// CreateAuditCheckpoint appends a signed checkpoint of the chain head (ADR-029).
 	CreateAuditCheckpoint(ctx context.Context, cp *models.AuditCheckpoint) error
+	// UpdateAuditCheckpointAnchor stores the external-notary anchor (RFC 3161 token,
+	// asserted time, provider) on an existing checkpoint row (ADR-029); the signed
+	// fields stay immutable.
+	UpdateAuditCheckpointAnchor(ctx context.Context, id uint, token []byte, anchoredAt time.Time, provider string) error
 	// LatestAuditCheckpoint returns the most recently written checkpoint, or
 	// (nil, nil) when none exists yet.
 	LatestAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, error)

@@ -399,6 +399,17 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := db.AutoMigrate(&models.AuditCheckpoint{}); err != nil {
 			return fmt.Errorf("failed to migrate audit_checkpoints table: %w", err)
 		}
+	} else {
+		// Add only the newer external-notary anchor columns on an existing table
+		// (additive; same pgx hazard as elsewhere — never full-AutoMigrate here).
+		m := db.Migrator()
+		for _, col := range []string{"AnchorToken", "AnchoredAt", "AnchorProvider"} {
+			if !m.HasColumn(&models.AuditCheckpoint{}, col) {
+				if err := m.AddColumn(&models.AuditCheckpoint{}, col); err != nil {
+					return fmt.Errorf("failed to add audit_checkpoints column %s: %w", col, err)
+				}
+			}
+		}
 	}
 
 	// Create project_invitations if missing (ADR-024, additive); otherwise add only

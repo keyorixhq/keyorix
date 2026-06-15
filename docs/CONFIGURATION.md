@@ -605,6 +605,30 @@ audit_checkpoints:
   schedule: "12h"         # Go duration between checkpoint writes (default 24h)
 ```
 
+**External-notary anchoring** (`audit.checkpoint_notary`, opt-in). The checkpoint
+HMAC is keyed by a DEK-derived key the running server holds — which detects
+truncation/rewrite by a *database* actor, but an attacker who also obtains the DEK
+could forge a checkpoint. Anchoring each written checkpoint to an external **RFC
+3161 timestamp authority (TSA)** adds an independent, signed proof-of-existence over
+the checkpoint's canonical bytes that binds it to a third party's clock and signing
+key — which that attacker does not control, and cannot backdate. The TSA token is
+stored on the checkpoint and re-verifiable offline. Anchoring is **best-effort**: a
+TSA failure leaves the checkpoint un-anchored (still a valid checkpoint) and the
+next write retries — it never blocks checkpointing.
+
+```yaml
+audit:
+  checkpoint_notary:
+    enabled: true
+    type: rfc3161           # the only type today (default)
+    url: https://freetsa.org/tsr   # TSA timestamp-query endpoint
+    timeout: "15s"          # Go duration for the TSA round-trip (default 15s)
+```
+
+> The new checkpoint's anchor (asserted time + TSA) is shown by
+> `keyorix audit checkpoint`. Requires `audit_checkpoints` to be doing the writing
+> (which requires encryption — the checkpoint signing key is DEK-derived).
+
 ## jit_access_expiry
 
 An opt-in background sweeper for **just-in-time / time-bound access**. A role grant

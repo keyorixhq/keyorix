@@ -43,6 +43,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/server/grpc"
@@ -216,6 +217,19 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		// exports are signed (and verifiable). Unavailable when encryption is off.
 		if key, keyVer, ok := encSvc.EvidenceSignKey(); ok {
 			coreService.SetEvidenceSignKey(key, keyVer)
+		}
+	}
+
+	// Wire external-notary anchoring of audit checkpoints if enabled (ADR-029): each
+	// written checkpoint gets an independent RFC 3161 timestamp the server cannot
+	// forge. Anchoring is best-effort and only meaningful when checkpoints are
+	// written (which requires encryption).
+	if cn := cfg.Audit.CheckpointNotary; cn.Enabled {
+		if cn.URL == "" {
+			log.Printf("Audit checkpoint notary enabled but no url set; skipping external anchoring")
+		} else {
+			coreService.SetCheckpointNotary(notary.NewRFC3161(cn.URL, cn.GetTimeout()))
+			log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s, timeout=%s)", cn.URL, cn.GetTimeout())
 		}
 	}
 
