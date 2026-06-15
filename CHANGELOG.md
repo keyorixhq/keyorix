@@ -3,6 +3,45 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.27.0 — 2026-06-15
+
+The federated-identity-lifecycle & evidence-durability release: let your IdP onboard
+and group users on first login, and archive signed evidence to immutable object storage.
+
+### Added
+- **SSO just-in-time (JIT) user provisioning** — with `auto_provision` enabled on a
+  provider, a first SSO login whose verified identity matches no existing account
+  creates one on the spot (active, passwordless, with a configurable `default_role`
+  baseline) instead of being refused, so an IdP that isn't wired for SCIM push can
+  still onboard users on demand. The IdP subject is stored as the account's
+  `externalId` for later reconciliation; audited as `auth.sso_jit_provisioned`.
+  ([#208])
+- **SSO native-group sync** — with `group_sync` enabled, each SSO login reconciles the
+  user's native Keyorix group memberships from the IdP's groups claim (the IdP is
+  authoritative — memberships are added for asserted groups and removed for
+  non-asserted ones), so group-based access follows the IdP without a separate SCIM
+  push. Only existing native groups are touched; the claim name is configurable
+  (`groups_claim`); an absent claim is a safe no-op. Audited as
+  `auth.sso_groups_synced`. ([#210])
+- **S3-compatible object-storage evidence sink** — scheduled compliance evidence packs
+  can now be delivered to an object-storage bucket (AWS S3, MinIO, Cloudflare R2,
+  Backblaze B2, GCS interop) in addition to a local dir and/or webhook, so evidence can
+  land in immutable / object-locked (WORM) storage an auditor pulls from. The pack and
+  its detached signature are uploaded; credentials resolve via the standard AWS chain.
+  Configure via `evidence_delivery.object_store`. ([#209])
+
+### Security
+- SSO no longer trusts an email an IdP explicitly marks unverified
+  (`email_verified: false`) for account matching or provisioning; an absent claim
+  stays trusted (it is optional in OIDC and some enterprise IdPs omit it). ([#208])
+
+### Notes
+- All additive — no schema changes; every new behaviour is opt-in and off by default.
+
+[#208]: https://github.com/keyorixhq/keyorix/pull/208
+[#209]: https://github.com/keyorixhq/keyorix/pull/209
+[#210]: https://github.com/keyorixhq/keyorix/pull/210
+
 ## v0.26.0 — 2026-06-15
 
 The federated-identity & alerting release: sign in through your IdP, get compliance
