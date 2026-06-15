@@ -1122,7 +1122,9 @@ func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core
 				RedirectURL:  pc.RedirectURL,
 				Scopes:       scopes,
 			},
-			CompleteURL: completeURL,
+			CompleteURL:   completeURL,
+			AutoProvision: pc.AutoProvision,
+			DefaultRole:   pc.DefaultRole,
 		}
 		jwksURIs[pc.Issuer] = disc.JWKSURI
 	}
