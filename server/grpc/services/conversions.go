@@ -153,6 +153,15 @@ func i64ToU32(v int64) uint32 {
 	return intToU32(int(v))
 }
 
+// intToI32 safely narrows int → int32 (gosec G115), clamping on overflow.
+func intToI32(v int) int32 {
+	x, err := safeconv.IntToInt32(v)
+	if err != nil {
+		return 0
+	}
+	return x
+}
+
 func intPtrToInt32Ptr(p *int) *int32 {
 	if p == nil {
 		return nil
@@ -237,6 +246,36 @@ func machineIdentityToProto(m *models.MachineIdentity) *pb.MachineIdentity {
 		UpdatedAt:      timestamppb.New(m.UpdatedAt),
 		LastSeenAt:     timePtrToTs(m.LastSeenAt),
 		RevokedAt:      timePtrToTs(m.RevokedAt),
+	}
+}
+
+func dynamicConfigToProto(c *models.DynamicSecretConfig) *pb.DynamicSecretConfig {
+	return &pb.DynamicSecretConfig{
+		Id:                intToU32(int(c.ID)),
+		Name:              c.Name,
+		ProjectId:         intToU32(int(c.ProjectID)),
+		EnvironmentId:     intToU32(int(c.EnvironmentID)),
+		BackendType:       c.BackendType,
+		CreationTemplate:  c.CreationTemplate,
+		DefaultTtlSeconds: intToI32(c.DefaultTTLSeconds),
+		MaxTtlSeconds:     intToI32(c.MaxTTLSeconds),
+		Classification:    c.Classification,
+		CreatedBy:         c.CreatedBy,
+		CreatedAt:         timestamppb.New(c.CreatedAt),
+	}
+}
+
+func dynamicLeaseToProto(l *models.DynamicSecretLease) *pb.DynamicSecretLease {
+	return &pb.DynamicSecretLease{
+		LeaseId:      l.LeaseID,
+		ConfigId:     intToU32(int(l.ConfigID)),
+		RoleName:     l.RoleName,
+		Status:       l.Status,
+		RevokeReason: l.RevokeReason,
+		RevokeError:  l.RevokeError,
+		IssuedAt:     timestamppb.New(l.IssuedAt),
+		ExpiresAt:    timestamppb.New(l.ExpiresAt),
+		RevokedAt:    timePtrToTs(l.RevokedAt),
 	}
 }
 
