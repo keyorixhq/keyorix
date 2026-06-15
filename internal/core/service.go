@@ -100,6 +100,11 @@ type KeyorixCore struct {
 	// enforced after a DEK rotation.
 	auditCkptKey        []byte
 	auditCkptKeyVersion string
+	// evidenceSignKey / evidenceSignKeyVersion sign and verify exported compliance-
+	// evidence packs (HMAC, DEK-derived, domain-separated from the checkpoint key).
+	// nil = signing unavailable (encryption disabled). Set via SetEvidenceSignKey.
+	evidenceSignKey        []byte
+	evidenceSignKeyVersion string
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).

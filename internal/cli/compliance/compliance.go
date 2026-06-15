@@ -6,9 +6,11 @@ package compliance
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
@@ -274,7 +276,64 @@ var controlsCmd = &cobra.Command{
 	},
 }
 
+var (
+	verifyFile string
+	verifySig  string
+)
+
+var verifyCmd = &cobra.Command{
+	Use:   "verify",
+	Short: "Verify an exported evidence pack against its detached signature",
+	Long: `Verify the authenticity of an archived evidence pack. Reads the pack file and
+its signature (default <file>.sig) and asks the server to recompute the HMAC with its
+DEK-derived signing key — proving the pack was produced by this deployment and has
+not been modified. Requires server-side encryption (the signing key is DEK-derived).`,
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if verifyFile == "" {
+			return fmt.Errorf("--file is required")
+		}
+		sigPath := verifySig
+		if sigPath == "" {
+			sigPath = verifyFile + ".sig"
+		}
+		data, err := os.ReadFile(verifyFile) // #nosec G304 -- operator-supplied path
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", verifyFile, err)
+		}
+		sig, err := os.ReadFile(sigPath) // #nosec G304 -- operator-supplied path
+		if err != nil {
+			return fmt.Errorf("failed to read signature %s: %w", sigPath, err)
+		}
+		c, ok := common.NewRemoteClient()
+		if !ok {
+			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+		}
+		body := map[string]string{
+			"data_b64":  base64.StdEncoding.EncodeToString(data),
+			"signature": strings.TrimSpace(string(sig)),
+		}
+		var res struct {
+			Valid          bool   `json:"valid"`
+			KeyVersion     string `json:"key_version"`
+			CurrentVersion string `json:"current_version"`
+			Reason         string `json:"reason"`
+		}
+		if err := c.Post(context.Background(), "/api/v1/compliance/evidence/verify", body, &res); err != nil {
+			return err
+		}
+		if res.Valid {
+			fmt.Printf("VALID — %s is authentic and unmodified (key version %s).\n", verifyFile, res.KeyVersion)
+			return nil
+		}
+		fmt.Printf("NOT VERIFIED — %s\n", res.Reason)
+		return fmt.Errorf("evidence pack failed verification")
+	},
+}
+
 func init() {
 	exportCmd.Flags().StringVar(&exportOutput, "output", "", "Write the evidence pack to a file instead of stdout")
-	ComplianceCmd.AddCommand(reportCmd, controlsCmd, exportCmd)
+	verifyCmd.Flags().StringVar(&verifyFile, "file", "", "Path to the evidence pack JSON to verify (required)")
+	verifyCmd.Flags().StringVar(&verifySig, "sig", "", "Path to the signature file (default <file>.sig)")
+	ComplianceCmd.AddCommand(reportCmd, controlsCmd, exportCmd, verifyCmd)
 }

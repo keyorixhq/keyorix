@@ -42,13 +42,18 @@ func NewWebhook(cfg WebhookConfig) (*Webhook, error) {
 	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport}}, nil
 }
 
-// ForwardEvidence POSTs the marshalled evidence pack as application/json.
-func (w *Webhook) ForwardEvidence(ctx context.Context, data []byte) error {
+// ForwardEvidence POSTs the marshalled evidence pack as application/json. When the
+// pack is signed, the detached HMAC signature is sent in the X-Keyorix-Evidence-
+// Signature header so the receiver can record it for later verification.
+func (w *Webhook) ForwardEvidence(ctx context.Context, data []byte, signature string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.Endpoint, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if signature != "" {
+		req.Header.Set("X-Keyorix-Evidence-Signature", signature)
+	}
 	if w.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+w.cfg.Token)
 	}

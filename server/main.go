@@ -212,6 +212,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if key, keyVer, ok := encSvc.AuditCheckpointKey(); ok {
 			coreService.SetAuditCheckpointKey(key, keyVer)
 		}
+		// Derive the evidence-pack signing key from the DEK so scheduled evidence
+		// exports are signed (and verifiable). Unavailable when encryption is off.
+		if key, keyVer, ok := encSvc.EvidenceSignKey(); ok {
+			coreService.SetEvidenceSignKey(key, keyVer)
+		}
 	}
 
 	// Apply a configured password policy, if any. An absent block leaves the
