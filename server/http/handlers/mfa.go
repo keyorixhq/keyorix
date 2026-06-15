@@ -81,6 +81,56 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, map[string]interface{}{"mfa_enabled": false}, "MFA disabled")
 }
 
+// RegenerateRecoveryCodes issues a fresh set of recovery codes (replacing the old
+// ones) after verifying a current TOTP code or the password. The codes are returned
+// once and never shown again.
+func (h *AuthHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body struct {
+		Code     string `json:"code"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	proof := body.Code
+	if proof == "" {
+		proof = body.Password
+	}
+	codes, err := h.coreService.RegenerateMFARecoveryCodes(r.Context(), userCtx.UserID, proof)
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"recovery_codes": codes,
+	}, "New recovery codes generated. Save them now — they replace your old codes and will not be shown again.")
+}
+
+// RecoveryCodesStatus reports how many unused recovery codes remain (and the total),
+// so the account UI can prompt a regenerate when the user is running low.
+func (h *AuthHandler) RecoveryCodesStatus(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	remaining, total, err := h.coreService.MFARecoveryCodesRemaining(r.Context(), userCtx.UserID)
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{
+		"remaining": remaining,
+		"total":     total,
+	}, "")
+}
+
 // VerifyMFA completes the two-step login: it consumes the challenge from
 // /auth/login, verifies the TOTP (or recovery) code, and returns a session.
 func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {

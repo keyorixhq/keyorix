@@ -129,3 +129,88 @@ func TestMFA_ActivateRejectsWrongCode(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, u.MFAEnabled, "a failed activation must not enable MFA")
 }
+
+// activateMFAForTest enrols + activates MFA for user 1 and returns the base32
+// secret (for generating TOTP codes) and the initial recovery codes.
+func activateMFAForTest(t *testing.T, c *KeyorixCore, fixed time.Time) (secret string, codes []string) {
+	t.Helper()
+	ctx := context.Background()
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	codes, err = c.ActivateMFA(ctx, 1, code)
+	require.NoError(t, err)
+	return secret, codes
+}
+
+func TestMFA_RecoveryCodesRemaining(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+
+	// Not enabled yet → (0, 0).
+	rem, total, err := c.MFARecoveryCodesRemaining(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 0, rem)
+	assert.Equal(t, 0, total)
+
+	_, codes := activateMFAForTest(t, c, fixed)
+	rem, total, err = c.MFARecoveryCodesRemaining(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 10, rem)
+	assert.Equal(t, 10, total)
+
+	// Consume one recovery code via a login → remaining drops to 9.
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	_, _, err = c.VerifyMFALogin(ctx, ch, codes[0], "ua", "1.2.3.4")
+	require.NoError(t, err)
+	rem, _, err = c.MFARecoveryCodesRemaining(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 9, rem, "one recovery code consumed")
+}
+
+func TestMFA_RegenerateRecoveryCodes(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	secret, original := activateMFAForTest(t, c, fixed)
+
+	// Regenerate with the password → a fresh distinct set; the old codes stop working.
+	fresh, err := c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	require.NoError(t, err)
+	require.Len(t, fresh, 10)
+	assert.NotEqual(t, original, fresh, "regenerated codes differ from the originals")
+
+	// An OLD code no longer authenticates (the set was replaced).
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	_, _, err = c.VerifyMFALogin(ctx, ch, original[0], "ua", "1.2.3.4")
+	require.Error(t, err, "old recovery codes are revoked on regenerate")
+
+	// A NEW code works.
+	ch2, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	_, _, err = c.VerifyMFALogin(ctx, ch2, fresh[1], "ua", "1.2.3.4")
+	require.NoError(t, err)
+
+	// Regenerate with a current TOTP code also works (re-auth via code path).
+	totpCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, totpCode)
+	require.NoError(t, err)
+}
+
+func TestMFA_RegenerateRequiresReauth(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	activateMFAForTest(t, c, fixed)
+
+	_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "wrong-password")
+	require.Error(t, err, "regenerate must reject a bad code/password")
+}
+
+func TestMFA_RegenerateRequiresMFAEnabled(t *testing.T) {
+	c, _, _ := newMFATestCore(t)
+	_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, mfaTestPassword)
+	require.Error(t, err, "regenerate requires MFA to be enabled")
+}

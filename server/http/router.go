@@ -189,6 +189,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Post("/auth/mfa/enroll", authHandler.EnrollMFA)
 		r.Post("/auth/mfa/activate", authHandler.ActivateMFA)
 		r.Post("/auth/mfa/disable", authHandler.DisableMFA)
+		r.Get("/auth/mfa/recovery-codes", authHandler.RecoveryCodesStatus)
+		r.Post("/auth/mfa/recovery-codes/regenerate", authHandler.RegenerateRecoveryCodes)
 		// WebAuthn / passkey self-service (acts on the authenticated caller's account).
 		r.Post("/auth/webauthn/register/begin", authHandler.BeginWebAuthnRegistration)
 		r.Post("/auth/webauthn/register/finish", authHandler.FinishWebAuthnRegistration)

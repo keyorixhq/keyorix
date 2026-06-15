@@ -1553,6 +1553,10 @@ func (m *MockStorage) CreateMFARecoveryCodes(_ context.Context, _ uint, _ []stri
 func (m *MockStorage) ConsumeMFARecoveryCode(_ context.Context, _ uint, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
+func (m *MockStorage) CountUnusedMFARecoveryCodes(_ context.Context, _ uint) (int, error) {
+	return 0, nil
+}
+func (m *MockStorage) DeleteMFARecoveryCodes(_ context.Context, _ uint) error             { return nil }
 func (m *MockStorage) CreateMFAChallenge(_ context.Context, _ *models.MFAChallenge) error { return nil }
 func (m *MockStorage) ConsumeMFAChallenge(_ context.Context, _ string, _ time.Time) (*models.MFAChallenge, error) {
 	return nil, nil
