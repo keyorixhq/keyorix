@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -44,6 +46,27 @@ func (h *DashboardHandler) GetCompliancePosture(w http.ResponseWriter, r *http.R
 		return
 	}
 	sendSuccess(w, posture, "")
+}
+
+// VerifyComplianceEvidence handles POST /api/v1/compliance/evidence/verify — checks
+// a previously-exported evidence pack against its detached signature. The pack bytes
+// are base64-encoded in the request so arbitrary JSON can ride in a JSON envelope.
+func (h *DashboardHandler) VerifyComplianceEvidence(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		DataB64   string `json:"data_b64"`
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(body.DataB64)
+	if err != nil {
+		sendError(w, "InvalidParameter", "data_b64 must be base64-encoded", http.StatusBadRequest, nil)
+		return
+	}
+	result := h.coreService.VerifyEvidenceSignature(data, body.Signature)
+	sendSuccess(w, result, "")
 }
 
 // GetComplianceControls handles GET /api/v1/compliance/controls — the control

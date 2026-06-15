@@ -25,7 +25,7 @@ const evidenceFileTimeLayout = "20060102T150405Z"
 // synchronous implementation is fine. Defined here (not in the sink package) so core
 // has no dependency on the forwarder implementation.
 type EvidenceForwarder interface {
-	ForwardEvidence(ctx context.Context, data []byte) error
+	ForwardEvidence(ctx context.Context, data []byte, signature string) error
 }
 
 // SetEvidenceForwarder wires an off-box evidence target. The server calls this at
@@ -39,6 +39,7 @@ type EvidenceExportResult struct {
 	Path    string   `json:"path,omitempty"` // local file written, if a directory was configured
 	Bytes   int      `json:"bytes"`
 	Targets []string `json:"targets"` // where the pack was delivered (e.g. "file:/path", "webhook")
+	Signed  bool     `json:"signed"`  // whether a detached HMAC signature was produced
 }
 
 // ExportComplianceEvidence generates the evidence pack and delivers it to every
@@ -63,7 +64,11 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		return nil, fmt.Errorf("evidence export: marshal: %w", err)
 	}
 
-	res := &EvidenceExportResult{Bytes: len(data)}
+	// Sign the exact bytes we deliver (when encryption is enabled) so an archived
+	// pack's authenticity is provable later. signature is "" when unavailable.
+	signature, signed := c.signEvidence(data)
+
+	res := &EvidenceExportResult{Bytes: len(data), Signed: signed}
 
 	if outputDir != "" {
 		if err := os.MkdirAll(outputDir, 0o700); err != nil {
@@ -75,11 +80,16 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		}
 		res.Path = filepath.Join(outputDir, name)
 		res.Targets = append(res.Targets, "file:"+res.Path)
+		// Write the detached signature alongside the pack (verify with `keyorix
+		// compliance verify`). Best-effort: a sig-write failure must not lose the pack.
+		if signed {
+			_ = securefiles.SecureWriteFile(outputDir, name+".sig", []byte(signature), 0o600)
+		}
 	}
 
 	forwardNote := ""
 	if c.evidenceForwarder != nil {
-		if err := c.evidenceForwarder.ForwardEvidence(ctx, data); err != nil {
+		if err := c.evidenceForwarder.ForwardEvidence(ctx, data, signature); err != nil {
 			// Best-effort secondary target: record the failure but don't drop the
 			// export when a durable file was also written.
 			forwardNote = fmt.Sprintf("; webhook delivery FAILED: %v", err)
@@ -93,8 +103,8 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 
 	sysCtx := WithActorType(ctx, ActorTypeSystem)
 	c.writeAuditEvent(sysCtx, "compliance.evidence_exported", nil, nil,
-		fmt.Sprintf("compliance evidence pack exported to %v (%d bytes; %d campaigns, %d break-glass activations, %d overdue rotations, %d SoD violations)%s",
-			res.Targets, len(data), len(ev.Campaigns), len(ev.BreakGlass), len(ev.RotationOverdue), len(ev.SoDViolations), forwardNote))
+		fmt.Sprintf("compliance evidence pack exported to %v (%d bytes, signed=%t; %d campaigns, %d break-glass activations, %d overdue rotations, %d SoD violations)%s",
+			res.Targets, len(data), signed, len(ev.Campaigns), len(ev.BreakGlass), len(ev.RotationOverdue), len(ev.SoDViolations), forwardNote))
 
 	return res, nil
 }

@@ -12,6 +12,13 @@ useDefault = true
 
 [allowlist]
 description = "Demo / docs / scripts / test fixtures — non-real sample credentials"
+# HKDF domain-separation labels (constant info strings used to derive purpose-bound
+# keys from the DEK) — public, not secrets, but the generic-api-key heuristic flags
+# the `…KeyInfo = "…"` shape.
+regexes = [
+  '''keyorix-audit-checkpoint-v1''',
+  '''keyorix-evidence-signature-v1''',
+]
 paths = [
   '''demo/.*''',
   '''.*\.md''',

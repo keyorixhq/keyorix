@@ -2877,6 +2877,36 @@ paths:
             break_glass[], rotation_overdue[], sod_violations[]}.
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+  /api/v1/compliance/evidence/verify:
+    post:
+      tags: [Dashboard]
+      summary: Verify an exported evidence pack against its signature
+      description: >-
+        Recomputes the HMAC over the supplied evidence-pack bytes with the server's
+        DEK-derived signing key and compares it to the detached signature — proving an
+        archived pack was produced by this deployment and is unmodified. The pack is
+        base64-encoded in data_b64 so arbitrary JSON can ride in the envelope. A
+        signature made under a superseded DEK version (post key-rotation) is reported
+        as unverifiable, distinct from a tamper mismatch. Requires system.read.
+      operationId: verifyComplianceEvidence
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data_b64, signature]
+              properties:
+                data_b64:  {type: string, description: "Base64 of the evidence-pack bytes."}
+                signature: {type: string, description: "The detached signature ('<keyVersion>:<hmac-hex>')."}
+      responses:
+        '200':
+          description: >-
+            Envelope {data}. data: {valid, key_version, current_version, reason}.
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/legal-hold:
     get:
       tags: [Dashboard]

@@ -64,6 +64,29 @@ func TestExportComplianceEvidence_WritesFileAndAudits(t *testing.T) {
 	assert.Equal(t, int64(1), n)
 }
 
+func TestExportComplianceEvidence_SignsAndVerifies(t *testing.T) {
+	c, _, _ := newEvidenceExportCore(t)
+	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")
+	dir := t.TempDir()
+
+	res, err := c.ExportComplianceEvidence(context.Background(), dir)
+	require.NoError(t, err)
+	assert.True(t, res.Signed, "a sign key is set, so the pack is signed")
+
+	sig, err := os.ReadFile(res.Path + ".sig")
+	require.NoError(t, err, "a detached .sig file is written next to the pack")
+	data, err := os.ReadFile(res.Path)
+	require.NoError(t, err)
+
+	vr := c.VerifyEvidenceSignature(data, strings.TrimSpace(string(sig)))
+	assert.True(t, vr.Valid, "the exported pack verifies against its signature")
+
+	// A byte flipped in the archived pack fails verification.
+	tampered := append([]byte{}, data...)
+	tampered[0] = '!'
+	assert.False(t, c.VerifyEvidenceSignature(tampered, strings.TrimSpace(string(sig))).Valid)
+}
+
 func TestExportComplianceEvidence_EmptyOutputDirErrors(t *testing.T) {
 	c, _, _ := newEvidenceExportCore(t)
 	_, err := c.ExportComplianceEvidence(context.Background(), "")
@@ -74,12 +97,14 @@ func TestExportComplianceEvidence_EmptyOutputDirErrors(t *testing.T) {
 type fakeEvidenceForwarder struct {
 	calls int
 	data  []byte
+	sig   string
 	err   error
 }
 
-func (f *fakeEvidenceForwarder) ForwardEvidence(_ context.Context, data []byte) error {
+func (f *fakeEvidenceForwarder) ForwardEvidence(_ context.Context, data []byte, signature string) error {
 	f.calls++
 	f.data = data
+	f.sig = signature
 	return f.err
 }
 

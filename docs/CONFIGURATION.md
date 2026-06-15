@@ -468,6 +468,14 @@ evidence_delivery:
 > in the audit note but does not fail the export when a file was also written. The
 > webhook token is read from `KEYORIX_EVIDENCE_WEBHOOK_TOKEN` when set.
 
+When **encryption is enabled**, each exported pack is **signed**: a detached
+`<file>.json.sig` is written next to it (and the webhook delivery carries the
+signature in the `X-Keyorix-Evidence-Signature` header). The signature is an HMAC
+keyed by a DEK-derived key the database/DBA does not hold, so an archived pack's
+authenticity is provable later — verify with `keyorix compliance verify --file
+<pack>` (it asks the server, which recomputes the HMAC; a signature made under a
+pre-rotation DEK is reported as unverifiable rather than tampered).
+
 ## rotation_reminders
 
 An opt-in background scheduler that notifies project admins (in-app) of secrets

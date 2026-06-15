@@ -30,7 +30,7 @@ func TestWebhook_PostsEvidenceWithAuth(t *testing.T) {
 
 	wh, err := NewWebhook(WebhookConfig{Endpoint: srv.URL, Token: "ev-tok"})
 	require.NoError(t, err)
-	require.NoError(t, wh.ForwardEvidence(context.Background(), []byte(`{"generated_at":"x"}`)))
+	require.NoError(t, wh.ForwardEvidence(context.Background(), []byte(`{"generated_at":"x"}`), "v1:abc"))
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -46,7 +46,7 @@ func TestWebhook_ErrorsOnNon2xx(t *testing.T) {
 	defer srv.Close()
 	wh, err := NewWebhook(WebhookConfig{Endpoint: srv.URL})
 	require.NoError(t, err)
-	require.Error(t, wh.ForwardEvidence(context.Background(), []byte(`{}`)))
+	require.Error(t, wh.ForwardEvidence(context.Background(), []byte(`{}`), ""))
 }
 
 func TestNewWebhook_RequiresEndpoint(t *testing.T) {
