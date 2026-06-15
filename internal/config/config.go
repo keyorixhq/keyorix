@@ -706,6 +706,16 @@ type SSOProviderConfig struct {
 	ClientSecret string   `yaml:"client_secret"` // prefer KEYORIX_SSO_<NAME>_CLIENT_SECRET
 	RedirectURL  string   `yaml:"redirect_url"`  // must equal <public-host>/auth/sso/<name>/callback
 	Scopes       []string `yaml:"scopes"`        // default [openid, profile, email]
+
+	// AutoProvision JIT-creates a Keyorix account on a first SSO login whose verified
+	// identity matches no existing user — so an IdP that isn't wired for SCIM push can
+	// still onboard users on demand. Opt-in (default off): when false, an unknown
+	// identity is refused, exactly as before.
+	AutoProvision bool `yaml:"auto_provision"`
+	// DefaultRole is the install-wide baseline role granted to a JIT-provisioned user
+	// (default "system_viewer"). A misconfigured/unknown role grants nothing —
+	// least-privilege on misconfiguration.
+	DefaultRole string `yaml:"default_role"`
 }
 
 // GetClientSecret returns the resolved client secret, preferring the per-provider

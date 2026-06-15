@@ -637,8 +637,9 @@ Each provider's endpoints are **discovered** from its issuer
 redirect URL are needed. On callback Keyorix verifies the id_token (signature against
 the issuer's JWKS, issuer, audience = `client_id`, expiry, and the nonce it issued)
 and maps the identity to a Keyorix user — by the IdP subject (matched against the SCIM
-`externalId`) first, then by email. There is **no auto-provisioning**: the account
-must already exist (provision it via SCIM or invite). A suspended user is refused.
+`externalId`) first, then by email. By default there is **no auto-provisioning**: the
+account must already exist (provision it via SCIM or invite). A suspended user is
+refused.
 
 ```yaml
 sso:
@@ -650,12 +651,31 @@ sso:
       client_secret: ""          # prefer the KEYORIX_SSO_OKTA_CLIENT_SECRET env var
       redirect_url: https://keyorix.example.com/auth/sso/okta/callback
       scopes: [openid, profile, email]
+      auto_provision: false      # JIT-create an account on first login (default off)
+      default_role: system_viewer # baseline role for JIT-provisioned users
 ```
 
 > The client secret is read from `KEYORIX_SSO_<NAME>_CLIENT_SECRET` (name upper-cased,
 > e.g. `KEYORIX_SSO_OKTA_CLIENT_SECRET`). Register the `redirect_url` exactly as above
 > at the IdP. A provider whose discovery fails at startup is skipped with a warning,
 > not fatal.
+
+**Just-in-time (JIT) provisioning.** Set `auto_provision: true` on a provider to
+JIT-create a Keyorix account the first time an identity that matches no existing user
+signs in — useful when an IdP isn't wired for SCIM push. The account is created
+**active** and passwordless (the IdP is the authenticator), with the IdP subject
+stored as its `externalId` for future reconciliation, and is granted `default_role`
+(`system_viewer` when unset; an unknown role grants nothing — least-privilege on
+misconfiguration). The JIT creation is audited as `auth.sso_jit_provisioned`. The IdP
+must return an `email` claim (request the `email` scope), or the login is refused. A
+later SCIM push for the same `externalId` reconciles to the same account. Leave
+`auto_provision` off to require that accounts be provisioned ahead of time.
+
+> **Email trust.** An email an IdP explicitly marks unverified (`email_verified:
+> false`) is not used to match an existing account or to provision a new one — only
+> the subject (`externalId`) match applies for that login. An absent `email_verified`
+> claim is treated as trusted (it is optional in OIDC; some enterprise IdPs such as
+> Entra ID omit it for a configured, trusted issuer).
 
 ## membership
 

@@ -53,32 +53,81 @@ func TestVerifyIDToken(t *testing.T) {
 		}
 	}
 
-	sub, email, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", base()))
+	b := base()
+	b["name"] = "Ada Lovelace"
+	sub, email, name, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", b))
 	require.NoError(t, err)
 	assert.Equal(t, "okta|123", sub)
 	assert.Equal(t, "ada@x.io", email)
+	assert.Equal(t, "Ada Lovelace", name)
 
 	// Wrong audience → rejected.
 	bad := base()
 	bad["aud"] = "someone-else"
-	_, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", bad))
+	_, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", bad))
 	require.Error(t, err)
 
 	// Nonce mismatch → rejected (replay / mix-up protection).
-	_, _, err = c.verifyIDToken(ctx, p, "WRONG", signToken(t, key, "kid-1", base()))
+	_, _, _, err = c.verifyIDToken(ctx, p, "WRONG", signToken(t, key, "kid-1", base()))
 	require.Error(t, err)
 
 	// Expired → rejected.
 	exp := base()
 	exp["exp"] = time.Now().Add(-time.Hour).Unix()
-	_, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", exp))
+	_, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", exp))
 	require.Error(t, err)
 
 	// Wrong issuer → rejected (keyfn refuses it).
 	iss := base()
 	iss["iss"] = "https://evil.test"
-	_, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", iss))
+	_, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", iss))
 	require.Error(t, err)
+}
+
+func TestVerifyIDToken_EmailVerified(t *testing.T) {
+	c, _, key, p := ssoTestCore(t)
+	ctx := context.Background()
+	base := func() jwt.MapClaims {
+		return jwt.MapClaims{
+			"iss": "https://idp.test", "aud": "client-1", "sub": "okta|123",
+			"email": "ada@x.io", "nonce": "N1", "exp": time.Now().Add(time.Hour).Unix(),
+		}
+	}
+
+	// email_verified absent → email is trusted (OIDC-optional; Entra omits it).
+	_, email, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", base()))
+	require.NoError(t, err)
+	assert.Equal(t, "ada@x.io", email)
+
+	// email_verified: true → email trusted.
+	ok := base()
+	ok["email_verified"] = true
+	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", ok))
+	require.NoError(t, err)
+	assert.Equal(t, "ada@x.io", email)
+
+	// email_verified: false → email DROPPED (untrusted), but the token still verifies
+	// and the subject is unaffected.
+	no := base()
+	no["email_verified"] = false
+	sub, email, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", no))
+	require.NoError(t, err)
+	assert.Equal(t, "okta|123", sub)
+	assert.Empty(t, email)
+
+	// email_verified sent as the string "false" → also dropped (no parse failure).
+	noStr := base()
+	noStr["email_verified"] = "false"
+	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", noStr))
+	require.NoError(t, err)
+	assert.Empty(t, email)
+
+	// email_verified sent as the string "true" → trusted.
+	okStr := base()
+	okStr["email_verified"] = "true"
+	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", okStr))
+	require.NoError(t, err)
+	assert.Equal(t, "ada@x.io", email)
 }
 
 func TestResolveSSOUser(t *testing.T) {
@@ -102,12 +151,92 @@ func TestResolveSSOUser(t *testing.T) {
 		assert.Equal(t, uint(9), u.ID)
 	})
 
-	t.Run("no match errors", func(t *testing.T) {
+	t.Run("no match returns nil (caller decides)", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
 		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
-		_, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io")
+		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io")
+		require.NoError(t, err)
+		assert.Nil(t, u)
+	})
+}
+
+func TestProvisionSSOUser(t *testing.T) {
+	notFound := func() error { return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)) }
+
+	t.Run("JIT-creates an active passwordless user with the default role", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		// No existing match (FindSCIMUser re-check), unique username derivation.
+		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
+		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
+		var created *models.User
+		store.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+			created = u
+			return true
+		})).Return(&models.User{ID: 42}, nil)
+		store.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 3}, nil)
+		store.On("AssignRole", mock.Anything, uint(42), uint(3), mock.Anything).Return(nil)
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada Lovelace")
+		require.NoError(t, err)
+		assert.Equal(t, uint(42), u.ID)
+		// Active (not pending_first_login — an SSO user must not be trapped in a
+		// restricted password-change-only session), externalId pinned, real display name.
+		assert.Equal(t, AccountActive, created.AccountState)
+		assert.True(t, created.IsActive)
+		assert.Equal(t, "okta|123", created.ExternalID)
+		assert.Equal(t, "ada@x.io", created.Email)
+		assert.Equal(t, "Ada Lovelace", created.DisplayName)
+		assert.NotEmpty(t, created.PasswordHash) // unusable random hash, not blank
+	})
+
+	t.Run("refuses when the IdP returned no email", func(t *testing.T) {
+		c, _, _, p := ssoTestCore(t)
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "", "Ada")
 		require.Error(t, err)
+	})
+
+	t.Run("reuses an existing user instead of duplicating", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return(&models.User{ID: 5}, nil)
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		require.NoError(t, err)
+		assert.Equal(t, uint(5), u.ID)
+		store.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
+	})
+
+	t.Run("honours a configured default_role", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		p.DefaultRole = "project_admin"
+		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
+		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
+		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 7}, nil)
+		store.On("GetRoleByName", mock.Anything, "project_admin").Return(&models.Role{ID: 9}, nil)
+		store.On("AssignRole", mock.Anything, uint(7), uint(9), mock.Anything).Return(nil)
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		require.NoError(t, err)
+		store.AssertCalled(t, "GetRoleByName", mock.Anything, "project_admin")
+	})
+
+	t.Run("an unknown default_role grants nothing but still provisions", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		p.DefaultRole = "does_not_exist"
+		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
+		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
+		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 8}, nil)
+		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil), notFound())
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		require.NoError(t, err)
+		assert.Equal(t, uint(8), u.ID)
+		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 }
 
