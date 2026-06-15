@@ -28,7 +28,9 @@ func (h *AuthHandler) BeginSSO(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "SSOError", err.Error(), http.StatusBadRequest, nil)
 		return
 	}
-	http.Redirect(w, r, authURL, http.StatusFound)
+	// authURL is built by core from the provider's operator-configured, discovery-
+	// resolved OIDC authorization endpoint (plus our state/nonce) — never user input.
+	http.Redirect(w, r, authURL, http.StatusFound) // #nosec G710 -- operator-configured IdP endpoint, not user-controlled
 }
 
 // CompleteSSO handles GET /auth/sso/{provider}/callback — exchanges the code, mints a
@@ -73,7 +75,10 @@ func (h *AuthHandler) CompleteSSO(w http.ResponseWriter, r *http.Request) {
 }
 
 // redirectFragment 302-redirects to base#<encoded values>, delivering the token (or
-// an error) to the SPA without it touching query logs.
+// an error) to the SPA without it touching query logs. base is the provider's
+// operator-configured completion URL (SSOCompleteURL); the fragment carries data.
 func (h *AuthHandler) redirectFragment(w http.ResponseWriter, r *http.Request, base string, values url.Values) {
-	http.Redirect(w, r, base+"#"+values.Encode(), http.StatusFound)
+	// base is operator-configured (the SSO completion URL derived from redirect_url),
+	// not user input; the fragment is data the SPA reads.
+	http.Redirect(w, r, base+"#"+values.Encode(), http.StatusFound) // #nosec G710 -- operator-configured completion URL, not user-controlled
 }
