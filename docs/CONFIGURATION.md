@@ -469,6 +469,8 @@ evidence_delivery:
     region: "eu-west-1"
     endpoint: ""                            # optional — set for S3-compatible stores (MinIO/R2/…)
     use_path_style: false                   # set true for MinIO and some gateways
+    lock_mode: ""                           # "" | governance | compliance (S3 Object Lock / WORM)
+    lock_retain_days: 0                     # retention window; required (>0) when lock_mode is set
 ```
 
 > The off-box targets let evidence survive the node without a mounted volume. A file
@@ -483,8 +485,18 @@ evidence_delivery:
 > the detached signature to `<prefix><filename>.sig`. **Credentials are never taken in
 > Keyorix config**: they resolve via the standard AWS credential chain
 > (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars, shared config, or
-> instance/workload identity). Point the bucket at object-lock / immutable storage for
-> WORM-grade evidence retention.
+> instance/workload identity).
+>
+> **Object Lock (WORM).** Set `lock_mode` to `governance` or `compliance` (with
+> `lock_retain_days`) to stamp every uploaded pack and signature with an S3 Object
+> Lock retention period, so the evidence cannot be overwritten or deleted before it
+> expires — tamper-resistant archival an auditor can rely on. `compliance` mode cannot
+> be shortened or removed by anyone (including the root account) until expiry;
+> `governance` allows override by principals with the `s3:BypassGovernanceRetention`
+> permission. **The bucket must be created with Object Lock enabled** (a bucket
+> property Keyorix cannot set); this configures the per-object retention applied on
+> write. A misconfigured bucket surfaces as a delivery error (non-fatal when a local
+> file was also written).
 
 When **encryption is enabled**, each exported pack is **signed**: a detached
 `<file>.json.sig` is written next to it (and the webhook delivery carries the

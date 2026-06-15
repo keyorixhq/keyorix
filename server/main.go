@@ -321,11 +321,13 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 	if os := cfg.EvidenceDelivery.ObjectStore; os.Enabled {
 		sink, oerr := evidencesink.NewObjectStore(context.Background(), evidencesink.ObjectStoreConfig{
-			Bucket:       os.Bucket,
-			Prefix:       os.Prefix,
-			Region:       os.Region,
-			Endpoint:     os.Endpoint,
-			UsePathStyle: os.UsePathStyle,
+			Bucket:         os.Bucket,
+			Prefix:         os.Prefix,
+			Region:         os.Region,
+			Endpoint:       os.Endpoint,
+			UsePathStyle:   os.UsePathStyle,
+			LockMode:       os.LockMode,
+			LockRetainDays: os.LockRetainDays,
 		})
 		if oerr != nil {
 			return nil, nil, fmt.Errorf("failed to init evidence object-store target: %w", oerr)

@@ -5,14 +5,18 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type putCall struct {
 	bucket, key, body, ctype string
+	lockMode                 s3types.ObjectLockMode
+	retainUntil              *time.Time
 }
 
 type fakeS3 struct {
@@ -24,6 +28,7 @@ func (f *fakeS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*
 	b, _ := io.ReadAll(in.Body)
 	f.calls = append(f.calls, putCall{
 		bucket: deref(in.Bucket), key: deref(in.Key), body: string(b), ctype: deref(in.ContentType),
+		lockMode: in.ObjectLockMode, retainUntil: in.ObjectLockRetainUntilDate,
 	})
 	if f.err != nil {
 		return nil, f.err
@@ -39,7 +44,7 @@ func deref(s *string) string {
 }
 
 func newTestObjectStore(api s3PutAPI, prefix string) *ObjectStore {
-	return &ObjectStore{api: api, bucket: "evidence-bkt", prefix: normalizePrefix(prefix)}
+	return &ObjectStore{api: api, bucket: "evidence-bkt", prefix: normalizePrefix(prefix), now: time.Now}
 }
 
 func TestObjectStore_UploadsPackAndSignature(t *testing.T) {
@@ -59,6 +64,40 @@ func TestObjectStore_UploadsPackAndSignature(t *testing.T) {
 	sig := api.calls[1]
 	assert.Equal(t, "keyorix/evidence/keyorix-evidence-20260615T100000Z.json.sig", sig.key)
 	assert.Equal(t, "v1:abc", sig.body)
+
+	// No object lock by default.
+	assert.Empty(t, string(pack.lockMode))
+	assert.Nil(t, pack.retainUntil)
+}
+
+func TestObjectStore_ObjectLockStampsRetentionOnEveryObject(t *testing.T) {
+	api := &fakeS3{}
+	fixed := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	o := &ObjectStore{
+		api: api, bucket: "evidence-bkt", prefix: "",
+		lockMode: s3types.ObjectLockModeCompliance,
+		retain:   7 * 24 * time.Hour,
+		now:      func() time.Time { return fixed },
+	}
+
+	require.NoError(t, o.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), "v1:abc"))
+	require.Len(t, api.calls, 2, "pack + signature both locked")
+	for _, c := range api.calls {
+		assert.Equal(t, s3types.ObjectLockModeCompliance, c.lockMode, "every object carries the lock mode")
+		require.NotNil(t, c.retainUntil)
+		assert.Equal(t, fixed.Add(7*24*time.Hour), *c.retainUntil, "retain-until = now + window")
+	}
+	assert.Contains(t, o.Target(), "lock:compliance")
+}
+
+func TestNewObjectStore_ObjectLockValidation(t *testing.T) {
+	ctx := context.Background()
+	// Unknown mode rejected.
+	_, err := NewObjectStore(ctx, ObjectStoreConfig{Bucket: "b", LockMode: "weak"})
+	require.Error(t, err)
+	// Mode set but no retention → rejected.
+	_, err = NewObjectStore(ctx, ObjectStoreConfig{Bucket: "b", LockMode: "governance"})
+	require.Error(t, err)
 }
 
 func TestObjectStore_NoSignatureSkipsSigObject(t *testing.T) {
