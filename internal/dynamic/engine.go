@@ -62,8 +62,12 @@ func New(backendType string) (CredentialEngine, error) {
 		return &RedisEngine{}, nil
 	case "aws-sts":
 		return &AWSSTSEngine{}, nil
+	case "gcp":
+		return &GCPEngine{}, nil
+	case "azure":
+		return &AzureEngine{}, nil
 	default:
-		return nil, fmt.Errorf("unsupported dynamic-secret backend %q (supported: postgres, mysql, mongodb, redis, aws-sts)", backendType)
+		return nil, fmt.Errorf("unsupported dynamic-secret backend %q (supported: postgres, mysql, mongodb, redis, aws-sts, gcp, azure)", backendType)
 	}
 }
 

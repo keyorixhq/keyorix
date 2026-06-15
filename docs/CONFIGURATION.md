@@ -242,9 +242,9 @@ dynamic_secrets:
 Targets are registered via the API — or from the terminal with
 `keyorix dynamic-secret create` (the admin DSN is read from the
 `KEYORIX_DYNAMIC_ADMIN_DSN` env var or a hidden prompt, never a flag) — with an
-admin DSN, a backend type (`postgres`, `mysql`, `mongodb`, `redis`, or `aws-sts`), an
-optional creation template, and a default TTL. The creation template form depends on
-the backend:
+admin DSN, a backend type (`postgres`, `mysql`, `mongodb`, `redis`, `aws-sts`, `gcp`,
+or `azure`), an optional creation template, and a default TTL. The creation template
+form depends on the backend:
 - SQL backends (`postgres`, `mysql`) — an SQL grant template using `{{name}}`.
 - `mongodb` — a JSON role spec (`{"roles": [{"role": "readWrite", "db": "app"}]}`);
   the admin DSN is a MongoDB connection URI.
@@ -261,6 +261,20 @@ the backend:
   (env / instance-profile / IRSA), like the KMS and S3 integrations. STS credentials
   are **self-expiring and cannot be revoked or renewed** — a revoke is a no-op and a
   renew is refused (issue a new lease); minimum duration is 15 minutes (AWS limit).
+- `gcp` (cloud IAM) — the JSON config is
+  `{"service_account":"sa@project.iam.gserviceaccount.com","scopes":[...],"lifetime_seconds":3600}`
+  (`service_account` required; `scopes` defaults to `cloud-platform`). Issuing mints a
+  short-lived **service-account access token** (`access_token` field) via the IAM
+  Credentials API; the caller's ADC identity (GOOGLE_APPLICATION_CREDENTIALS /
+  workload identity) must hold `roles/iam.serviceAccountTokenCreator` on the target SA.
+- `azure` (cloud IAM) — the JSON config is
+  `{"scopes":["https://management.azure.com/.default"]}`. Issuing acquires a short-lived
+  **Azure AD (Entra) access token** (`access_token` field) via DefaultAzureCredential
+  (env / managed identity / workload identity).
+
+Like `aws-sts`, the `gcp` and `azure` backends mint **self-expiring tokens** — revoke
+is a no-op, renew is refused, and they issue with the sweeper off (the cloud enforces
+expiry); the optional creation template is unused by `gcp`/`azure`.
 
 > **Enable the sweeper for MySQL, MongoDB and Redis targets.** Their accounts have
 > no `VALID UNTIL` equivalent, so a lease TTL is enforced *only* by the sweeper —
