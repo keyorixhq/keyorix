@@ -748,6 +748,11 @@ type SSOProviderConfig struct {
 	// GroupsClaim is the id_token claim carrying the group names (default "groups";
 	// some IdPs use "roles").
 	GroupsClaim string `yaml:"groups_claim"`
+	// GroupRoleMap maps an IdP group-claim value to a Keyorix (system) role name. When
+	// set, each login reconciles the user's grants of the MAPPED roles to their
+	// asserted groups (the IdP drives those assignments); roles outside the map are
+	// untouched. Uses groups_claim as the source. e.g. {keyorix-admins: system_admin}.
+	GroupRoleMap map[string]string `yaml:"group_role_map"`
 }
 
 // GetClientSecret returns the resolved client secret, preferring the per-provider

@@ -1152,6 +1152,7 @@ func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core
 			DefaultRole:   pc.DefaultRole,
 			GroupSync:     pc.GroupSync,
 			GroupsClaim:   pc.GroupsClaim,
+			GroupRoleMap:  pc.GroupRoleMap,
 		}
 		jwksURIs[pc.Issuer] = disc.JWKSURI
 	}

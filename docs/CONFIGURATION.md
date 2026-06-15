@@ -685,6 +685,9 @@ sso:
       default_role: system_viewer # baseline role for JIT-provisioned users
       group_sync: false          # reconcile native group memberships from the IdP (default off)
       groups_claim: groups       # id_token claim carrying group names (default "groups")
+      group_role_map:            # map IdP groups → Keyorix system roles (optional)
+        keyorix-admins: system_admin
+        keyorix-auditors: system_auditor
 ```
 
 > The client secret is read from `KEYORIX_SSO_<NAME>_CLIENT_SECRET` (name upper-cased,
@@ -728,6 +731,33 @@ audited as `auth.sso_groups_synced`.
 > sync is a safe no-op — it never strips memberships on a missing claim. Ensure the IdP
 > is configured to emit the group claim in the id_token (in Okta, add a groups claim to
 > the ID token; in Entra, configure the optional `groups` claim).
+
+**Group → role mapping.** `group_role_map` maps an IdP group (from the same
+`groups_claim`) to a Keyorix **system role**, so the IdP can drive role assignment
+directly — e.g. members of `keyorix-admins` become `system_admin` on login. It is
+**authoritative only over the mapped roles**: on each login the user is granted the
+roles their asserted groups map to and **loses any mapped role they no longer
+qualify for**, while roles *not* named in the map are never touched (so manually
+granted roles are safe). Like `group_sync`, an absent groups claim is a no-op (it
+won't strip roles), an unknown role name is skipped, and roles are bound at global
+scope. This works independently of `group_sync` (you can map roles without syncing
+group memberships, or both). Changes are audited as `auth.sso_roles_synced`.
+
+> Because it is authoritative over the mapped roles, prefer managing those roles
+> **only** through the IdP — a mapped role granted manually to an SSO user is removed
+> on their next login if the IdP doesn't assert the corresponding group.
+>
+> ⚠️ **Security — the mapped IdP groups become privilege grants.** Membership of any
+> group named in `group_role_map` directly drives Keyorix authorization on every
+> login, and a group mapped to `system_admin` confers **global administrator** access.
+> Only map groups whose membership is **governed by your IdP administrators** (e.g. an
+> Okta/Entra group whose roster only IdP admins can change) — never a self-service,
+> open-enrolment, or user-requestable group, or anyone who can join that group at the
+> IdP gains the mapped Keyorix role. Treat the mapping like handing out the role
+> itself: scope it to the least-privileged role that fits, and reserve admin mappings
+> for tightly controlled groups. Keyorix trusts the IdP's `groups` claim (verified
+> id_token) as the source of truth, so the IdP's group governance *is* your Keyorix
+> RBAC governance for these roles.
 
 ## membership
 

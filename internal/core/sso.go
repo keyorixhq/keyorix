@@ -35,6 +35,7 @@ const (
 	EventSSOLogin        = "auth.sso_login"
 	EventSSOJITProvision = "auth.sso_jit_provisioned"
 	EventSSOGroupsSynced = "auth.sso_groups_synced"
+	EventSSORolesSynced  = "auth.sso_roles_synced"
 	ssoClockSkew         = 60 * time.Second
 	ssoCompleteSuffix    = "/auth/sso/complete"
 	ssoDefaultRole       = "system_viewer"
@@ -54,6 +55,12 @@ type SSOProvider struct {
 
 	GroupSync   bool   // reconcile native group memberships from the IdP groups claim on login
 	GroupsClaim string // id_token claim carrying group names ("" → "groups")
+
+	// GroupRoleMap maps an IdP group-claim value to a Keyorix (system) role name. When
+	// non-empty, each login reconciles the user's grants of the MAPPED roles to match
+	// their asserted groups — the IdP drives those role assignments. Roles outside the
+	// map are never touched (so manual grants are safe).
+	GroupRoleMap map[string]string
 }
 
 // SetSSOProviders wires the configured providers (built from config + discovery at
@@ -161,10 +168,14 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		return nil, nil, "", fmt.Errorf("account suspended")
 	}
 
-	// Reconcile native group memberships from the IdP's groups claim (best-effort —
-	// a sync failure must not block an otherwise-valid login).
+	// Reconcile native group memberships and/or mapped role grants from the IdP's
+	// groups claim (best-effort — a sync failure must not block an otherwise-valid
+	// login).
 	if p.GroupSync {
 		c.syncSSOGroups(ctx, p, user.ID, rawID)
+	}
+	if len(p.GroupRoleMap) > 0 {
+		c.syncSSORoles(ctx, p, user.ID, rawID)
 	}
 
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
@@ -318,6 +329,78 @@ func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID 
 	if added > 0 || removed > 0 {
 		c.writeAuditEvent(ctx, EventSSOGroupsSynced, actorPtr(userID), nil,
 			fmt.Sprintf("SSO group sync via %s: user %d (+%d/-%d native group memberships)", p.Name, userID, added, removed))
+	}
+}
+
+// syncSSORoles reconciles the user's grants of the MAPPED (system) roles to match the
+// roles their asserted IdP groups map to via GroupRoleMap — so the IdP drives those
+// role assignments. It is authoritative ONLY over the set of roles named in the map
+// (the "managed" roles): a managed role is granted when an asserted group maps to it
+// and removed when none do; a role NOT in the map is never touched, so manual grants
+// survive. Like group sync, an ABSENT groups claim is a no-op (so an IdP that omits
+// groups can't strip a user's roles), and it is best-effort (never blocks login).
+// Roles are bound at global scope (system roles); an unknown mapped role is skipped.
+func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID uint, rawID string) {
+	claim := strings.TrimSpace(p.GroupsClaim)
+	if claim == "" {
+		claim = ssoDefaultGroupClaim
+	}
+	asserted, present := extractTokenStringList(rawID, claim)
+	if !present {
+		return // IdP did not assert groups in the id_token — leave roles untouched.
+	}
+	assertedSet := make(map[string]bool, len(asserted))
+	for _, g := range asserted {
+		if g = strings.TrimSpace(g); g != "" {
+			assertedSet[g] = true
+		}
+	}
+
+	// desiredRoles = role names an asserted group maps to; managedRoles = every role
+	// name the map can grant (the authoritative scope).
+	desiredRoles := make(map[string]bool)
+	managedRoles := make(map[string]bool)
+	for group, role := range p.GroupRoleMap {
+		role = strings.TrimSpace(role)
+		if role == "" {
+			continue
+		}
+		managedRoles[role] = true
+		if assertedSet[group] {
+			desiredRoles[role] = true
+		}
+	}
+
+	// The user's current global-scope role names.
+	current, err := c.storage.GetUserRoles(ctx, userID)
+	if err != nil {
+		return
+	}
+	currentSet := make(map[string]bool, len(current))
+	for _, r := range current {
+		currentSet[r.Name] = true
+	}
+
+	added, removed := 0, 0
+	for role := range managedRoles {
+		r, rerr := c.storage.GetRoleByName(ctx, role)
+		if rerr != nil {
+			continue // unknown role — skip rather than fail the login
+		}
+		switch {
+		case desiredRoles[role] && !currentSet[role]:
+			if c.storage.AssignRole(ctx, userID, r.ID, Scope{}) == nil {
+				added++
+			}
+		case !desiredRoles[role] && currentSet[role]:
+			if c.storage.RemoveRole(ctx, userID, r.ID, Scope{}) == nil {
+				removed++
+			}
+		}
+	}
+	if added > 0 || removed > 0 {
+		c.writeAuditEvent(ctx, EventSSORolesSynced, actorPtr(userID), nil,
+			fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, added, removed))
 	}
 }
 

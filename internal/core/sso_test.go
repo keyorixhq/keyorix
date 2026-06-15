@@ -324,6 +324,51 @@ func TestSyncSSOGroups(t *testing.T) {
 	})
 }
 
+func TestSyncSSORoles(t *testing.T) {
+	t.Run("authoritative over mapped roles only", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin", "keyorix-auditors": "system_auditor"}
+		// IdP asserts only keyorix-admins → system_admin desired; system_auditor (mapped,
+		// not asserted) must be removed; system_viewer (NOT mapped) left alone.
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
+		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{
+			{ID: 20, Name: "system_auditor"}, {ID: 30, Name: "system_viewer"},
+		}, nil)
+		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
+		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 20, Name: "system_auditor"}, nil)
+		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
+		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		c.syncSSORoles(context.Background(), p, 7, raw)
+
+		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // system_admin granted
+		store.AssertCalled(t, "RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything)    // system_auditor revoked
+		store.AssertNotCalled(t, "RemoveRole", mock.Anything, uint(7), uint(30), mock.Anything) // system_viewer (unmapped) untouched
+	})
+
+	t.Run("absent groups claim → no-op (never touches roles)", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"sub": "okta|1"}) // no groups claim
+
+		c.syncSSORoles(context.Background(), p, 7, raw)
+		store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "RemoveRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("unknown mapped role is skipped, login not failed", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupRoleMap = map[string]string{"keyorix-admins": "does_not_exist"}
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
+		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{}, nil)
+		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil), fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)))
+
+		c.syncSSORoles(context.Background(), p, 7, raw)
+		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+}
+
 func TestBeginSSO_BuildsAuthURLWithStateAndNonce(t *testing.T) {
 	c, store, _, _ := ssoTestCore(t)
 	var captured *models.SSOLoginState
