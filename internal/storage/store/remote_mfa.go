@@ -37,6 +37,14 @@ func (rs *RemoteStorage) ConsumeMFARecoveryCode(_ context.Context, _ uint, _ str
 	return false, remoteUnsupported("ConsumeMFARecoveryCode")
 }
 
+func (rs *RemoteStorage) CountUnusedMFARecoveryCodes(_ context.Context, _ uint) (int, error) {
+	return 0, remoteUnsupported("CountUnusedMFARecoveryCodes")
+}
+
+func (rs *RemoteStorage) DeleteMFARecoveryCodes(_ context.Context, _ uint) error {
+	return remoteUnsupported("DeleteMFARecoveryCodes")
+}
+
 func (rs *RemoteStorage) CreateMFAChallenge(_ context.Context, _ *models.MFAChallenge) error {
 	return remoteUnsupported("CreateMFAChallenge")
 }

@@ -128,6 +128,64 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	return nil
 }
 
+// RegenerateMFARecoveryCodes issues a fresh set of recovery codes after verifying a
+// current TOTP code OR the account password (same re-auth as DisableMFA), replacing
+// any existing codes (used and unused). The plaintext codes are returned once and
+// never stored. Invalidating the old set means a regenerate also revokes leaked or
+// previously-recorded codes.
+func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uint, codeOrPassword string) ([]string, error) {
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+	if !user.MFAEnabled {
+		return nil, fmt.Errorf("MFA is not enabled")
+	}
+	ok := false
+	if secret, err := c.loadTOTPSecret(ctx, userID); err == nil && c.validateTOTP(secret, codeOrPassword) {
+		ok = true
+	}
+	if !ok && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
+		ok = true
+	}
+	if !ok {
+		c.auditMFAFailed(ctx, userID, "regenerate_recovery_codes")
+		return nil, fmt.Errorf("invalid code or password")
+	}
+	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.storage.DeleteMFARecoveryCodes(ctx, userID); err != nil {
+		return nil, fmt.Errorf("failed to clear old recovery codes: %w", err)
+	}
+	if err := c.storage.CreateMFARecoveryCodes(ctx, userID, hashes); err != nil {
+		return nil, fmt.Errorf("failed to store recovery codes: %w", err)
+	}
+	uid := userID
+	c.writeAuditEventFull(ctx, "mfa.recovery_codes_regenerated", &uid, nil, nil, "",
+		fmt.Sprintf("user %s regenerated MFA recovery codes", user.Username))
+	return codes, nil
+}
+
+// MFARecoveryCodesRemaining reports how many unused recovery codes the user has
+// (and the original total), so the account UI can surface a "running low" warning.
+// Returns (0, 0) when MFA is not enabled.
+func (c *KeyorixCore) MFARecoveryCodesRemaining(ctx context.Context, userID uint) (remaining, total int, err error) {
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("user not found")
+	}
+	if !user.MFAEnabled {
+		return 0, 0, nil
+	}
+	remaining, err = c.storage.CountUnusedMFARecoveryCodes(ctx, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	return remaining, mfaRecoveryCodeCount, nil
+}
+
 // CreateMFAChallenge issues a short-lived single-use challenge for an MFA-enabled
 // user that has passed the password step. Only the token hash is stored.
 func (c *KeyorixCore) CreateMFAChallenge(ctx context.Context, userID uint) (string, error) {

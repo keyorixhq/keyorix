@@ -59,6 +59,21 @@ func (ls *LocalStorage) CreateMFARecoveryCodes(ctx context.Context, userID uint,
 	return ls.db.WithContext(ctx).Create(&rows).Error
 }
 
+// CountUnusedMFARecoveryCodes returns how many of the user's recovery codes remain
+// unused (so the UI can warn when the user is running low).
+func (ls *LocalStorage) CountUnusedMFARecoveryCodes(ctx context.Context, userID uint) (int, error) {
+	var n int64
+	err := ls.db.WithContext(ctx).Model(&models.MFARecoveryCode{}).
+		Where("user_id = ? AND used_at IS NULL", userID).Count(&n).Error
+	return int(n), err
+}
+
+// DeleteMFARecoveryCodes removes ALL of the user's recovery codes (used + unused)
+// without touching the TOTP secret — the regenerate flow replaces them wholesale.
+func (ls *LocalStorage) DeleteMFARecoveryCodes(ctx context.Context, userID uint) error {
+	return ls.db.WithContext(ctx).Where("user_id = ?", userID).Delete(&models.MFARecoveryCode{}).Error
+}
+
 // ConsumeMFARecoveryCode marks a matching unused code used; returns true if one
 // was consumed. The conditional UPDATE is atomic (no read-then-write race).
 func (ls *LocalStorage) ConsumeMFARecoveryCode(ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error) {

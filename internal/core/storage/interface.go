@@ -399,6 +399,10 @@ type Storage interface {
 	CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error
 	// ConsumeMFARecoveryCode marks a matching unused code used and reports whether one was consumed.
 	ConsumeMFARecoveryCode(ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error)
+	// CountUnusedMFARecoveryCodes returns how many of the user's recovery codes remain unused.
+	CountUnusedMFARecoveryCodes(ctx context.Context, userID uint) (int, error)
+	// DeleteMFARecoveryCodes removes all of the user's recovery codes (the regenerate flow replaces them).
+	DeleteMFARecoveryCodes(ctx context.Context, userID uint) error
 	// Dynamic secrets (ADR-035).
 	CreateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error)
 	GetDynamicSecretConfig(ctx context.Context, id uint) (*models.DynamicSecretConfig, error)
