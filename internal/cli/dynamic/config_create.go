@@ -36,19 +36,24 @@ short-lived users — is read from the ` + adminDSNEnv + ` environment variable,
 prompted for with hidden input. It is never accepted as a flag (so it cannot land
 in shell history); the server encrypts it at rest and never returns it.
 
-For the aws-sts backend the "admin DSN" is instead a small JSON config
-({"role_arn":"...","region":"...","duration_seconds":3600}); the optional
-creation template is an inline STS session policy that scopes the assumed role
-down. AWS credentials for the AssumeRole call come from the standard chain
-(env / instance-profile / IRSA).
+For the cloud-IAM backends (aws-sts, gcp, azure) the "admin DSN" is instead a
+small JSON config and the issued credential is a short-lived cloud token, not a
+username/password:
+  aws-sts: {"role_arn":"...","region":"...","duration_seconds":3600} (optional
+           creation template = an inline STS session policy)
+  gcp:     {"service_account":"sa@project.iam.gserviceaccount.com","scopes":[...]}
+  azure:   {"scopes":["https://management.azure.com/.default"]}
+Cloud credentials for the mint call come from the ambient identity (AWS chain /
+GCP ADC / Azure DefaultAzureCredential), never from Keyorix config.
 
 Examples:
   keyorix dynamic-secret create --name app-db --project-id 1 --backend postgres \
     --creation-template 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};'
   keyorix dynamic-secret create --name cache --project-id 1 --backend redis \
     --creation-template '~app:* +@read'
-  # aws-sts: paste {"role_arn":"arn:aws:iam::123456789012:role/keyorix-dyn","region":"eu-west-1"} at the prompt
-  keyorix dynamic-secret create --name aws-readonly --project-id 1 --backend aws-sts`,
+  # cloud: paste the JSON config at the hidden prompt
+  keyorix dynamic-secret create --name aws-readonly --project-id 1 --backend aws-sts
+  keyorix dynamic-secret create --name gcp-token   --project-id 1 --backend gcp`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if cfgName == "" || cfgProjectID == 0 || cfgBackend == "" {
 			return fmt.Errorf("--name, --project-id and --backend are required")
@@ -105,7 +110,7 @@ func init() {
 	f.StringVar(&cfgName, "name", "", "Config name (required)")
 	f.IntVar(&cfgProjectID, "project-id", 0, "Project ID (required)")
 	f.IntVar(&cfgEnvID, "environment-id", 0, "Environment ID (0 = project-wide)")
-	f.StringVar(&cfgBackend, "backend", "", "Backend: postgres | mysql | mongodb | redis | aws-sts (required)")
+	f.StringVar(&cfgBackend, "backend", "", "Backend: postgres | mysql | mongodb | redis | aws-sts | gcp | azure (required)")
 	f.StringVar(&cfgTemplate, "creation-template", "", "Backend-specific grant/role/ACL template ({{name}} for SQL)")
 	f.IntVar(&cfgDefaultTTL, "default-ttl", 0, "Default lease TTL in seconds (0 = server default)")
 	f.IntVar(&cfgMaxTTL, "max-ttl", 0, "Max lease TTL ceiling in seconds (0 = no ceiling)")
