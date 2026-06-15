@@ -732,6 +732,17 @@ type SSOProviderConfig struct {
 	// (default "system_viewer"). A misconfigured/unknown role grants nothing —
 	// least-privilege on misconfiguration.
 	DefaultRole string `yaml:"default_role"`
+
+	// GroupSync reconciles the user's NATIVE group memberships from the IdP's groups
+	// claim on each login (the IdP becomes the source of truth — membership is added
+	// for asserted groups and removed for non-asserted ones). Opt-in (default off).
+	// Only existing native groups (provisioned by SCIM or an admin) are touched; an
+	// asserted group with no native counterpart is ignored. If the groups claim is
+	// absent from the id_token, the sync is a no-op.
+	GroupSync bool `yaml:"group_sync"`
+	// GroupsClaim is the id_token claim carrying the group names (default "groups";
+	// some IdPs use "roles").
+	GroupsClaim string `yaml:"groups_claim"`
 }
 
 // GetClientSecret returns the resolved client secret, preferring the per-provider

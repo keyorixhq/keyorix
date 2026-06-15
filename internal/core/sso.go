@@ -15,7 +15,9 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,9 +34,11 @@ const (
 	ssoStateTTL          = 10 * time.Minute
 	EventSSOLogin        = "auth.sso_login"
 	EventSSOJITProvision = "auth.sso_jit_provisioned"
+	EventSSOGroupsSynced = "auth.sso_groups_synced"
 	ssoClockSkew         = 60 * time.Second
 	ssoCompleteSuffix    = "/auth/sso/complete"
 	ssoDefaultRole       = "system_viewer"
+	ssoDefaultGroupClaim = "groups"
 )
 
 // SSOProvider is a resolved OIDC provider whose endpoints have been discovered.
@@ -47,6 +51,9 @@ type SSOProvider struct {
 
 	AutoProvision bool   // JIT-create an account on first login for an unknown identity
 	DefaultRole   string // baseline role for JIT-provisioned users ("" → system_viewer)
+
+	GroupSync   bool   // reconcile native group memberships from the IdP groups claim on login
+	GroupsClaim string // id_token claim carrying group names ("" → "groups")
 }
 
 // SetSSOProviders wires the configured providers (built from config + discovery at
@@ -154,6 +161,12 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		return nil, nil, "", fmt.Errorf("account suspended")
 	}
 
+	// Reconcile native group memberships from the IdP's groups claim (best-effort —
+	// a sync failure must not block an otherwise-valid login).
+	if p.GroupSync {
+		c.syncSSOGroups(ctx, p, user.ID, rawID)
+	}
+
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		return nil, nil, "", err
@@ -235,6 +248,122 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	c.writeAuditEvent(ctx, EventSSOJITProvision, actorPtr(created.ID), nil,
 		fmt.Sprintf("SSO JIT-provisioned user %d via %s (externalId=%q, role=%s)", created.ID, p.Name, sub, role))
 	return created, nil
+}
+
+// syncSSOGroups reconciles the user's NATIVE group memberships to the groups the IdP
+// asserts in the (already-verified) id_token's configured groups claim. The IdP is
+// the source of truth: the user is added to native groups whose name matches an
+// asserted group and removed from native groups it didn't assert — so revoking a
+// group at the IdP deprovisions the corresponding Keyorix access on next login. It
+// only ever touches MEMBERSHIPS of groups that already exist natively (provisioned by
+// SCIM or an admin); it never creates or deletes groups, and an asserted group with
+// no native counterpart is ignored.
+//
+// Crucially, if the groups claim is ABSENT from the token (vs present-but-empty), the
+// sync is a no-op: many IdPs only emit groups in the userinfo endpoint or under a
+// specific scope, and treating "absent" as "assert no groups" would strip every
+// membership on login. Best-effort: errors are swallowed (the caller must not fail an
+// otherwise-valid login on a sync hiccup), but the net change is audited.
+func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID uint, rawID string) {
+	claim := strings.TrimSpace(p.GroupsClaim)
+	if claim == "" {
+		claim = ssoDefaultGroupClaim
+	}
+	asserted, present := extractTokenStringList(rawID, claim)
+	if !present {
+		return // IdP did not assert groups in the id_token — leave memberships untouched.
+	}
+	assertedSet := make(map[string]bool, len(asserted))
+	for _, g := range asserted {
+		if g = strings.TrimSpace(g); g != "" {
+			assertedSet[g] = true
+		}
+	}
+
+	nativeGroups, err := c.storage.ListGroups(ctx)
+	if err != nil {
+		return
+	}
+	// Desired native group IDs = native groups whose name the IdP asserted.
+	desired := make(map[uint]bool)
+	for _, g := range nativeGroups {
+		if assertedSet[g.Name] {
+			desired[g.ID] = true
+		}
+	}
+	current, err := c.storage.GetUserGroups(ctx, userID)
+	if err != nil {
+		return
+	}
+	currentSet := make(map[uint]bool, len(current))
+	for _, g := range current {
+		currentSet[g.ID] = true
+	}
+
+	added, removed := 0, 0
+	for id := range desired {
+		if !currentSet[id] {
+			if err := c.storage.AddUserToGroup(ctx, userID, id); err == nil {
+				added++
+			}
+		}
+	}
+	for id := range currentSet {
+		if !desired[id] {
+			if err := c.storage.RemoveUserFromGroup(ctx, userID, id); err == nil {
+				removed++
+			}
+		}
+	}
+	if added > 0 || removed > 0 {
+		c.writeAuditEvent(ctx, EventSSOGroupsSynced, actorPtr(userID), nil,
+			fmt.Sprintf("SSO group sync via %s: user %d (+%d/-%d native group memberships)", p.Name, userID, added, removed))
+	}
+}
+
+// extractTokenStringList pulls a string-list claim from an ALREADY-VERIFIED id_token
+// (verifyIDToken ran on the same raw token immediately before). The claim name is
+// configurable, so it can't be a static struct tag; the verified payload is decoded
+// into a map and the claim coerced from []string, []any (of strings), or a single
+// string. Returns (values, present) — present distinguishes an absent claim from an
+// empty list.
+func extractTokenStringList(raw, claim string) ([]string, bool) {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return nil, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, false
+	}
+	var claims map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, false
+	}
+	raw2, ok := claims[claim]
+	if !ok {
+		return nil, false
+	}
+	// Try []string, then []any (coerce string elements), then a single string.
+	var list []string
+	if err := json.Unmarshal(raw2, &list); err == nil {
+		return list, true
+	}
+	var anyList []any
+	if err := json.Unmarshal(raw2, &anyList); err == nil {
+		out := make([]string, 0, len(anyList))
+		for _, v := range anyList {
+			if s, isStr := v.(string); isStr {
+				out = append(out, s)
+			}
+		}
+		return out, true
+	}
+	var single string
+	if err := json.Unmarshal(raw2, &single); err == nil {
+		return []string{single}, true
+	}
+	return nil, true // claim present but an unrecognised shape — treat as empty assertion
 }
 
 // ssoBool unmarshals a JSON boolean OR the strings "true"/"false" — some IdPs send
