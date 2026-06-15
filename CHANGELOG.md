@@ -3,6 +3,46 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.26.0 — 2026-06-15
+
+The federated-identity & alerting release: sign in through your IdP, get compliance
+pushed to your team channels, and prove your evidence is authentic.
+
+### Added
+- **Human SSO login via OIDC (RFC 6749 authorization-code flow)** — users sign in
+  through their identity provider (Okta, Entra ID, …) and Keyorix mints the same
+  session a password login would, so an IdP-provisioned (passwordless) user can
+  actually sign in. The id_token is fully verified (signature against the issuer's
+  JWKS, issuer, audience, expiry, and the nonce); the identity maps to a Keyorix
+  account by the SCIM `externalId` then email (no auto-provisioning; suspended users
+  refused). Endpoints discovered from the issuer; configure via `sso`. The web login
+  page gains "Sign in with <provider>" buttons. ([#203])
+- **Slack and Microsoft Teams notification channels** — the in-app notifications
+  Keyorix creates (approvals, anomaly alerts, rotation/recertification reminders,
+  break-glass) can now be delivered to a Slack or Teams channel via an incoming
+  webhook, alongside email/webhook. Configure via `notifications.{slack,teams}`.
+  ([#204])
+- **Scheduled compliance digest** — an opt-in scheduler periodically broadcasts a
+  posture + control-matrix summary (controls pass/gap, overdue recertifications,
+  rotation gaps, unclassified secrets, open anomalies, active risk exceptions) to the
+  configured notification channels — continuous monitoring without opening the
+  console. Configure via `compliance_digest`. ([#205])
+- **Signed, verifiable evidence packs (ISO 27001 / SOC 2)** — each scheduled evidence
+  export is HMAC-signed with a DEK-derived key the database/DBA does not hold; a
+  detached `.sig` is written next to the pack (and the signature rides the webhook in
+  an `X-Keyorix-Evidence-Signature` header). `keyorix compliance verify` (and `POST
+  /compliance/evidence/verify`) prove an archived pack is authentic and unmodified.
+  Requires encryption enabled. ([#206])
+
+### Notes
+- Additive schema only (an `sso_login_states` table) — safe on existing databases.
+- SSO logins bypass Keyorix-local MFA: the IdP is the authenticator.
+
+[#203]: https://github.com/keyorixhq/keyorix/pull/203
+[#204]: https://github.com/keyorixhq/keyorix/pull/204
+[#205]: https://github.com/keyorixhq/keyorix/pull/205
+[#206]: https://github.com/keyorixhq/keyorix/pull/206
+
 ## v0.25.0 — 2026-06-15
 
 The enterprise-compliance release: an auditor-ready control matrix, a governed risk
