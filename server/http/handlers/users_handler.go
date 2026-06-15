@@ -276,6 +276,15 @@ func RestoreUser(w http.ResponseWriter, r *http.Request) {
 	defaultUserHandler.RestoreUser(w, r)
 }
 
+// UnlockUser handles POST /api/v1/users/{id}/unlock — clears login lockout.
+func UnlockUser(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.UnlockUser(w, r)
+}
+
 // SuspendUser handles POST /api/v1/users/{id}/suspend (ADR-025).
 func SuspendUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {

@@ -197,6 +197,12 @@ security:
   auto_fix_file_permissions: true
   allow_unsafe_file_permissions: false
   require_mfa: false              # true = mandate a second factor for interactive login
+  login_lockout:
+    enabled: false                # opt-in per-account lockout (brute-force protection)
+    max_attempts: 5               # failed password logins within the window before locking
+    window: "15m"                 # consecutive-failure window
+    base_cooldown: "1m"           # lock duration for the first lockout
+    max_cooldown: "1h"            # ceiling for the exponential backoff
 ```
 
 With `require_mfa: true`, an interactive (session-authenticated) user **without** a
@@ -205,6 +211,15 @@ secret **or** a passkey satisfies it. Non-interactive credentials — personal
 access tokens, machine tokens, OIDC — are **exempt** so automation is never broken.
 Per-project MFA (ADR-037) is set per project via the API
 (`PUT /projects/{id}` `{ "require_mfa": true }`), independent of this flag.
+
+**Per-account login lockout** (`login_lockout`, opt-in) is brute-force protection
+distinct from the per-IP rate limiter (ADR-040): after `max_attempts` failed
+password logins within `window`, the account is locked for a cooldown that **backs
+off exponentially** across repeated lockouts (`base_cooldown` × 2ⁿ, capped at
+`max_cooldown`). While locked, even a correct password is refused. A successful login
+clears the counter; an admin can clear a lock immediately with
+`POST /api/v1/users/{id}/unlock` (`users.write`). It binds to the account (not the
+IP), so rotating source IPs cannot evade it, and the lock auto-expires (no scheduler).
 
 ---
 

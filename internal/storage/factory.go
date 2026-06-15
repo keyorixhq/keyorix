@@ -181,6 +181,22 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		db.Exec("ALTER TABLE users ADD COLUMN external_id TEXT NOT NULL DEFAULT ''")
 	}
 
+	// Per-account login lockout (brute-force protection). Additive; safe on existing DBs.
+	if tableExists(db, "users") {
+		if !columnExists(db, "users", "failed_login_attempts") {
+			db.Exec("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0")
+		}
+		if !columnExists(db, "users", "last_failed_login_at") {
+			db.Exec("ALTER TABLE users ADD COLUMN last_failed_login_at TIMESTAMP WITH TIME ZONE")
+		}
+		if !columnExists(db, "users", "login_locked_until") {
+			db.Exec("ALTER TABLE users ADD COLUMN login_locked_until TIMESTAMP WITH TIME ZONE")
+		}
+		if !columnExists(db, "users", "login_lockout_count") {
+			db.Exec("ALTER TABLE users ADD COLUMN login_lockout_count INTEGER NOT NULL DEFAULT 0")
+		}
+	}
+
 	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
 	if tableExists(db, "sessions") {
 		if !columnExists(db, "sessions", "user_agent") {

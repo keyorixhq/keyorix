@@ -323,6 +323,51 @@ type SecurityConfig struct {
 	// user without MFA enabled is confined to the MFA-enrolment endpoints until
 	// they enrol. Non-interactive credentials (PAT/machine/OIDC) are exempt.
 	RequireMFA bool `yaml:"require_mfa"`
+	// LoginLockout configures per-account login lockout (brute-force protection):
+	// after MaxAttempts failed password logins within Window, the account is locked
+	// for an exponentially-backing-off cooldown. Distinct from the per-IP rate
+	// limiter (ADR-040). Opt-in (default off).
+	LoginLockout LoginLockoutConfig `yaml:"login_lockout"`
+}
+
+// parseDurationDefault parses a Go duration string, returning def when empty or
+// unparseable / non-positive.
+func parseDurationDefault(raw string, def time.Duration) time.Duration {
+	if raw == "" {
+		return def
+	}
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d
+	}
+	return def
+}
+
+// LoginLockoutConfig configures per-account login lockout.
+type LoginLockoutConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	MaxAttempts  int    `yaml:"max_attempts"`  // failures within the window before locking (default 5)
+	Window       string `yaml:"window"`        // Go duration; consecutive-failure window (default 15m)
+	BaseCooldown string `yaml:"base_cooldown"` // lock duration for the first lockout (default 1m)
+	MaxCooldown  string `yaml:"max_cooldown"`  // cap for the exponential backoff (default 1h)
+}
+
+func (c LoginLockoutConfig) GetMaxAttempts() int {
+	if c.MaxAttempts > 0 {
+		return c.MaxAttempts
+	}
+	return 5
+}
+
+func (c LoginLockoutConfig) GetWindow() time.Duration {
+	return parseDurationDefault(c.Window, 15*time.Minute)
+}
+
+func (c LoginLockoutConfig) GetBaseCooldown() time.Duration {
+	return parseDurationDefault(c.BaseCooldown, time.Minute)
+}
+
+func (c LoginLockoutConfig) GetMaxCooldown() time.Duration {
+	return parseDurationDefault(c.MaxCooldown, time.Hour)
 }
 
 type SoftDeleteConfig struct {

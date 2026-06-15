@@ -235,6 +235,20 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		})
 	}
 
+	// Apply per-account login lockout if enabled (brute-force protection, distinct
+	// from the per-IP rate limiter).
+	if ll := cfg.Security.LoginLockout; ll.Enabled {
+		coreService.SetLoginLockoutPolicy(core.LoginLockoutPolicy{
+			Enabled:      true,
+			MaxAttempts:  ll.GetMaxAttempts(),
+			Window:       ll.GetWindow(),
+			BaseCooldown: ll.GetBaseCooldown(),
+			MaxCooldown:  ll.GetMaxCooldown(),
+		})
+		log.Printf("Per-account login lockout enabled (max_attempts=%d, window=%s, base_cooldown=%s, max_cooldown=%s)",
+			ll.GetMaxAttempts(), ll.GetWindow(), ll.GetBaseCooldown(), ll.GetMaxCooldown())
+	}
+
 	// Wire native SIEM audit forwarding if configured. New returns (nil, nil)
 	// when disabled, so SetAuditForwarder(nil) keeps forwarding off.
 	if sc := cfg.Audit.SIEM; sc.Enabled {

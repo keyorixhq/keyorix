@@ -44,9 +44,17 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
+	// Per-account lockout gate: while locked, refuse regardless of the password (and
+	// before spending a bcrypt comparison), so repeated guessing can't progress.
+	if c.loginLocked(user) {
+		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		c.recordFailedLogin(ctx, user) // increment + lock at the threshold
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
+	// Correct password — clear any accumulated lockout state.
+	c.clearLoginFailures(ctx, user)
 	// A suspended account is refused login outright (ADR-025). Restricted states
 	// (pending_first_login / password_reset_required) still log in, but the auth
 	// middleware confines the session to the password-change allowlist.

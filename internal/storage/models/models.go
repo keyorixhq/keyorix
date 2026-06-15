@@ -240,9 +240,18 @@ type User struct {
 	// externalId, RFC 7644). Empty for locally-created users. Indexed for the SCIM
 	// reconciliation lookup; not unique (legacy/blank rows coexist).
 	ExternalID string `gorm:"index"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	DeletedAt  gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
+	// Per-account login lockout (brute-force protection). FailedLoginAttempts counts
+	// consecutive failed password logins within the configured window;
+	// LoginLockedUntil (when set and in the future) refuses login regardless of the
+	// password; LoginLockoutCount drives the exponential backoff across repeated
+	// lockouts. All reset on a successful login or an admin unlock.
+	FailedLoginAttempts int `gorm:"default:0"`
+	LastFailedLoginAt   *time.Time
+	LoginLockedUntil    *time.Time
+	LoginLockoutCount   int `gorm:"default:0"`
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	DeletedAt           gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
 }
 
 // MFASecret holds a user's TOTP shared secret, encrypted at rest. One row per
