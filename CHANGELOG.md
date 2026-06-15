@@ -3,6 +3,29 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.32.0 — 2026-06-15
+
+The cloud-IAM dynamic-secrets release: mint short-lived AWS credentials on demand.
+
+### Added
+- **AWS STS dynamic-secret backend** — a new `aws-sts` backend for dynamic secrets
+  mints short-lived AWS credentials via `sts:AssumeRole` (alongside the existing
+  postgres/mysql/mongodb/redis database backends). Issuing a lease returns
+  `access_key_id` / `secret_access_key` / `session_token` (surfaced via the API, gRPC,
+  and CLI). The config's encrypted "admin DSN" carries a small JSON blob
+  (`{"role_arn":...,"region":...,"duration_seconds":...}`); the optional creation
+  template is an inline STS session policy that scopes the assumed role down. AWS
+  credentials for the AssumeRole call come from the standard chain (env /
+  instance-profile / IRSA). STS credentials self-expire, so revoke is a no-op and
+  renew is refused (issue a new lease); AWS enforces the expiry, so issuing does not
+  require the auto-revoke sweeper. ([#225])
+
+### Notes
+- Additive: a new backend type + an optional `fields` map on issued credentials; no
+  schema changes. GCP and Azure cloud backends are planned follow-ups.
+
+[#225]: https://github.com/keyorixhq/keyorix/pull/225
+
 ## v0.31.0 — 2026-06-15
 
 The gRPC-parity release: the newer subsystems are now scriptable over gRPC too.
