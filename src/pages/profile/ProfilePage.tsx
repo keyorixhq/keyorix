@@ -4,7 +4,6 @@ import {
     ShieldCheckIcon,
     ComputerDesktopIcon,
     KeyIcon,
-    DevicePhoneMobileIcon,
     TrashIcon,
     ClipboardDocumentIcon,
     CheckIcon,
@@ -28,6 +27,7 @@ import {
 import type { AccountSession } from '../../services/account';
 import { buildCreateTokenBody, type PersonalAccessToken } from '../../services/personalTokens';
 import { useProjects, useProjectEnvironments } from '../../features/projects/api';
+import { MfaSection } from '../../features/account/MfaSection';
 
 // Common preset permissions offered when scoping a token (ADR-042). The advanced
 // free-text field covers anything beyond these.
@@ -227,33 +227,7 @@ const SecurityTab: React.FC = () => {
                 </div>
             </form>
 
-            <div className="pt-8 border-t" style={{ borderColor: 'var(--border)' }}>
-                <h3 className="text-lg font-medium" style={{ color: 'var(--text-primary)' }}>
-                    Two-Factor Authentication
-                </h3>
-                <div
-                    className="mt-4 rounded-lg p-5 flex items-center justify-between"
-                    style={{ backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border)' }}
-                >
-                    <div className="flex items-center">
-                        <DevicePhoneMobileIcon className="h-7 w-7 mr-4" style={{ color: 'var(--text-muted)' }} />
-                        <div>
-                            <h4 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                                Authenticator App
-                            </h4>
-                            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                                Coming soon — TOTP-based two-factor authentication.
-                            </p>
-                        </div>
-                    </div>
-                    <span
-                        className="text-xs font-medium px-2.5 py-1 rounded-full"
-                        style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-app)' }}
-                    >
-                        Soon
-                    </span>
-                </div>
-            </div>
+            <MfaSection />
         </div>
     );
 };
