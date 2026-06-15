@@ -139,7 +139,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
-	c.RecordLogin(ctx, user.ID)
+	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SSO login via %s (subject=%s)", providerName, sub))
 	return session, user, st.ReturnTo, nil
