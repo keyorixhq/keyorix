@@ -3,6 +3,27 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.33.0 — 2026-06-15
+
+The multi-cloud dynamic-secrets release: GCP and Azure join AWS STS.
+
+### Added
+- **GCP and Azure dynamic-secret backends** — two new cloud-IAM backends alongside
+  `aws-sts`: `gcp` mints a short-lived service-account access token via the IAM
+  Credentials API (`{"service_account":...,"scopes":[...],"lifetime_seconds":N}`), and
+  `azure` acquires a short-lived Azure AD (Entra) token via DefaultAzureCredential
+  (`{"scopes":[...]}`). Both return the token in the issued credential's `fields`
+  (`access_token` / `expiration`). Like AWS STS they are self-expiring — revoke is a
+  no-op, renew is refused, and they issue with the auto-revoke sweeper off (the cloud
+  provider enforces expiry). Credentials for the mint call come from the ambient
+  identity (GCP ADC / Azure DefaultAzureCredential), never from Keyorix config. ([#227])
+
+### Notes
+- Additive: new backend types only; no schema changes, no new Go module
+  (GCP via the existing `google.golang.org/api`, Azure via the existing identity SDK).
+
+[#227]: https://github.com/keyorixhq/keyorix/pull/227
+
 ## v0.32.0 — 2026-06-15
 
 The cloud-IAM dynamic-secrets release: mint short-lived AWS credentials on demand.
