@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '../../../test/test-utils';
+import { render, screen, fireEvent } from '../../../test/test-utils';
 import DynamicSecretsPage from '../DynamicSecretsPage';
 
 const classifyMutate = vi.fn();
@@ -45,6 +45,25 @@ describe('DynamicSecretsPage', () => {
 
         const picker = screen.getByLabelText('Classification for analytics-ro') as HTMLSelectElement;
         expect(picker.value).toBe('confidential');
+    });
+
+    it('the create form adapts to cloud backends (JSON config; session policy / no template)', () => {
+        render(<DynamicSecretsPage />);
+        fireEvent.click(screen.getByRole('button', { name: /new config/i }));
+
+        // Default DB backend → admin connection string + SQL creation template.
+        expect(screen.getByLabelText('Admin connection string')).toBeInTheDocument();
+
+        // aws-sts → cloud config JSON + STS session policy (template repurposed).
+        fireEvent.change(screen.getByLabelText('Backend'), { target: { value: 'aws-sts' } });
+        expect(screen.getByLabelText('Cloud config (JSON)')).toBeInTheDocument();
+        expect(screen.queryByLabelText('Admin connection string')).not.toBeInTheDocument();
+        expect(screen.getByLabelText(/STS session policy/)).toBeInTheDocument();
+
+        // gcp → cloud config JSON, no creation template at all.
+        fireEvent.change(screen.getByLabelText('Backend'), { target: { value: 'gcp' } });
+        expect(screen.getByLabelText('Cloud config (JSON)')).toBeInTheDocument();
+        expect(screen.queryByLabelText(/session policy|Creation template/)).not.toBeInTheDocument();
     });
 
     it('non-admins see a read-only classification badge and no create button', () => {

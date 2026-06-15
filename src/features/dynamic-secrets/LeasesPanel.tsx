@@ -20,6 +20,12 @@ const leaseStatusStyle = (status: string): React.CSSProperties => {
     }
 };
 
+// fieldLabel humanizes a cloud-credential field key, e.g. access_key_id → "Access key id".
+const fieldLabel = (key: string): string => {
+    const s = key.replace(/_/g, ' ');
+    return s.charAt(0).toUpperCase() + s.slice(1);
+};
+
 const CopyRow: React.FC<{ label: string; value: string }> = ({ label, value }) => {
     const [copied, setCopied] = useState(false);
     const copy = () => {
@@ -143,8 +149,14 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
                     />
                     {credential && (
                         <>
-                            <CopyRow label="Username" value={credential.username} />
-                            <CopyRow label="Password" value={credential.password} />
+                            {/* Database backends → username/password; cloud-IAM backends → fields. */}
+                            {credential.username && <CopyRow label="Username" value={credential.username} />}
+                            {credential.password && <CopyRow label="Password" value={credential.password} />}
+                            {credential.fields &&
+                                Object.keys(credential.fields)
+                                    .filter(k => k !== 'expiration')
+                                    .sort()
+                                    .map(k => <CopyRow key={k} label={fieldLabel(k)} value={credential.fields![k] ?? ''} />)}
                             {credential.expiresAt && (
                                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                                     Expires {new Date(credential.expiresAt).toLocaleString()}

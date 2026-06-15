@@ -9,10 +9,24 @@ import { apiClient } from './client';
 // The handler emits snake_case JSON; normalizers also tolerate PascalCase so the
 // UI keeps working regardless.
 
-export type DynamicBackend = 'postgres' | 'mysql' | 'mongodb' | 'redis';
+export type DynamicBackend = 'postgres' | 'mysql' | 'mongodb' | 'redis' | 'aws-sts' | 'gcp' | 'azure';
 export type LeaseStatus = 'active' | 'revoked' | 'expired' | 'revoke_failed';
 
-export const DYNAMIC_BACKENDS: DynamicBackend[] = ['postgres', 'mysql', 'mongodb', 'redis'];
+export const DYNAMIC_BACKENDS: DynamicBackend[] = ['postgres', 'mysql', 'mongodb', 'redis', 'aws-sts', 'gcp', 'azure'];
+
+// Cloud-IAM backends mint self-expiring tokens (not a DB role): their "admin DSN" is
+// a JSON config, the issued credential comes back as `fields`, and the creation
+// template is a session policy (aws-sts) or unused (gcp/azure).
+export const CLOUD_BACKENDS: DynamicBackend[] = ['aws-sts', 'gcp', 'azure'];
+
+export const isCloudBackend = (b: DynamicBackend): boolean => CLOUD_BACKENDS.includes(b);
+
+// Placeholder JSON config shown in the create form for each cloud backend.
+export const CLOUD_CONFIG_PLACEHOLDER: Record<string, string> = {
+    'aws-sts': '{"role_arn":"arn:aws:iam::123456789012:role/keyorix-dyn","region":"eu-west-1","duration_seconds":3600}',
+    gcp: '{"service_account":"sa@project.iam.gserviceaccount.com","scopes":["https://www.googleapis.com/auth/cloud-platform"]}',
+    azure: '{"scopes":["https://management.azure.com/.default"]}',
+};
 
 export interface DynamicSecretConfig {
     id: number;
@@ -41,10 +55,13 @@ export interface DynamicSecretLease {
 }
 
 // The one-time credential returned on issue — shown once, never retrievable again.
+// Database backends populate username/password; cloud-IAM backends populate fields
+// (e.g. access_key_id / secret_access_key / session_token, or access_token).
 export interface IssuedCredential {
     leaseId: string;
     username: string;
     password: string;
+    fields?: Record<string, string>;
     expiresAt?: string;
 }
 
@@ -128,6 +145,7 @@ export const dynamicSecretsApi = {
             leaseId: c.lease_id ?? c.LeaseID ?? '',
             username: c.username ?? c.Username ?? '',
             password: c.password ?? c.Password ?? '',
+            fields: c.fields ?? c.Fields ?? undefined,
             expiresAt: c.expires_at ?? c.ExpiresAt ?? undefined,
         };
     },

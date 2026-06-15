@@ -10,7 +10,7 @@ import { Loading } from '../../components/ui/Loading';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
 import { useAuth } from '../../features/auth';
 import { classificationMeta, CLASSIFICATION_LEVELS } from '../../features/secrets/classification';
-import { DYNAMIC_BACKENDS, DynamicBackend } from '../../services/dynamicSecrets';
+import { DYNAMIC_BACKENDS, DynamicBackend, isCloudBackend, CLOUD_CONFIG_PLACEHOLDER } from '../../services/dynamicSecrets';
 import {
     useDynamicConfigs,
     useCreateDynamicConfig,
@@ -195,10 +195,12 @@ const CreateConfigModal: React.FC<{
     const [classification, setClassification] = useState('');
     const [error, setError] = useState('');
 
+    const cloud = isCloudBackend(backendType);
+
     const submit = (e: React.FormEvent) => {
         e.preventDefault();
         if (!name.trim() || !adminDsn.trim()) {
-            setError('Name and admin connection string are required.');
+            setError(cloud ? 'Name and cloud config (JSON) are required.' : 'Name and admin connection string are required.');
             return;
         }
         setError('');
@@ -233,21 +235,43 @@ const CreateConfigModal: React.FC<{
                     onChange={e => setBackendType(e.target.value as DynamicBackend)}
                     options={DYNAMIC_BACKENDS.map(b => ({ value: b, label: b }))}
                 />
-                <Input
-                    label="Admin connection string"
-                    type="password"
-                    value={adminDsn}
-                    onChange={e => setAdminDsn(e.target.value)}
-                    placeholder="postgres://admin:****@host:5432/db"
-                    helperText="Encrypted at rest; never returned by the API."
-                />
-                <Textarea
-                    label="Creation template (SQL run per lease; {{name}} = generated role)"
-                    value={creationTemplate}
-                    onChange={e => setCreationTemplate(e.target.value)}
-                    rows={3}
-                    placeholder={'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{{name}}";'}
-                />
+                {cloud ? (
+                    <Textarea
+                        label="Cloud config (JSON)"
+                        value={adminDsn}
+                        onChange={e => setAdminDsn(e.target.value)}
+                        rows={3}
+                        placeholder={CLOUD_CONFIG_PLACEHOLDER[backendType]}
+                        helperText="Encrypted at rest; never returned. Cloud credentials for the mint call come from the ambient identity (AWS chain / GCP ADC / Azure DefaultAzureCredential)."
+                    />
+                ) : (
+                    <Input
+                        label="Admin connection string"
+                        type="password"
+                        value={adminDsn}
+                        onChange={e => setAdminDsn(e.target.value)}
+                        placeholder="postgres://admin:****@host:5432/db"
+                        helperText="Encrypted at rest; never returned by the API."
+                    />
+                )}
+                {/* gcp/azure don't use a creation template; aws-sts uses it as a session policy. */}
+                {backendType !== 'gcp' && backendType !== 'azure' && (
+                    <Textarea
+                        label={
+                            backendType === 'aws-sts'
+                                ? 'STS session policy (JSON, optional)'
+                                : 'Creation template (SQL run per lease; {{name}} = generated role)'
+                        }
+                        value={creationTemplate}
+                        onChange={e => setCreationTemplate(e.target.value)}
+                        rows={3}
+                        placeholder={
+                            backendType === 'aws-sts'
+                                ? '{"Version":"2012-10-17","Statement":[...]}'
+                                : 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO "{{name}}";'
+                        }
+                    />
+                )}
                 <div className="grid grid-cols-2 gap-3">
                     <Input
                         label="Default TTL (seconds)"
