@@ -16,7 +16,7 @@ The config file is located via, in order: an explicit path argument, then
 - [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
 - [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
@@ -418,6 +418,22 @@ token, so set it via the env var.
 > Secrets are read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` / `KEYORIX_NOTIFY_SMTP_PASSWORD`
 > / `KEYORIX_NOTIFY_SLACK_WEBHOOK` / `KEYORIX_NOTIFY_TEAMS_WEBHOOK` when set, falling
 > back to the YAML value — keep secrets out of the config file.
+
+## compliance_digest
+
+An opt-in scheduler that periodically **broadcasts a compliance summary** to the
+configured notification channels (Slack/Teams/webhook) — a continuous-monitoring
+digest of the control matrix + posture: controls pass/gap, projects overdue for
+recertification, rotation gaps, unclassified secrets, open anomalies, and active risk
+exceptions. It's a single broadcast per run (one message to the channel), and a no-op
+when no [`notifications`](#notifications) channel is configured. Single-replica-gated
+(ADR-039).
+
+```yaml
+compliance_digest:
+  enabled: true
+  schedule: "168h"   # Go duration between digests (default 24h; e.g. 168h = weekly)
+```
 
 ## evidence_delivery
 
