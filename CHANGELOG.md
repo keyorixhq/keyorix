@@ -3,6 +3,33 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.30.0 — 2026-06-15
+
+The IdP-driven-RBAC & legal-hold release: let the IdP grant roles, and place
+indefinite holds on archived evidence.
+
+### Added
+- **SSO group → role mapping** — `group_role_map` on an SSO provider maps an IdP
+  group-claim value to a Keyorix system role (e.g. `keyorix-admins` → `system_admin`),
+  so the IdP can drive role assignment directly on login without pre-granting roles.
+  Authoritative only over the mapped roles (a user gains the roles their asserted
+  groups map to and loses any mapped role they no longer qualify for; unmapped/manual
+  grants are untouched); an absent groups claim is a no-op. Audited as
+  `auth.sso_roles_synced`. ([#217])
+- **S3 Object Lock legal hold on the evidence sink** — `evidence_delivery.object_store
+  .legal_hold` places an indefinite S3 Object Lock legal hold on each uploaded
+  evidence pack and signature (no expiry; cleared only out-of-band by a principal with
+  `s3:PutObjectLegalHold`), for litigation/investigation preservation. Independent of
+  the retention `lock_mode`. ([#218])
+
+### Notes
+- Both additive and opt-in (off unless configured). No schema changes.
+- ⚠️ Any IdP group named in `group_role_map` becomes a privilege grant — map only
+  groups governed by IdP administrators (a group → `system_admin` confers global admin).
+
+[#217]: https://github.com/keyorixhq/keyorix/pull/217
+[#218]: https://github.com/keyorixhq/keyorix/pull/218
+
 ## v0.29.0 — 2026-06-15
 
 The immutable-evidence release: lock archived compliance evidence as WORM.
