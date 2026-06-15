@@ -19,13 +19,13 @@ func TestIssueMachineToken_ActiveOnly(t *testing.T) {
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineSuspended}, nil).Once()
 	c := NewKeyorixCore(store)
 	c.now = func() time.Time { return fixed }
-	_, err := c.IssueMachineToken(context.Background(), 2, 1, "ci", nil, 7)
+	_, err := c.IssueMachineToken(context.Background(), 2, 1, "ci", nil, "", 7)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "must be active")
 
 	// Wrong project → not found (cross-project IDOR guard).
 	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
-	_, err = c.IssueMachineToken(context.Background(), 999, 1, "ci", nil, 7)
+	_, err = c.IssueMachineToken(context.Background(), 999, 1, "ci", nil, "", 7)
 	require.ErrorContains(t, err, "not found")
 
 	// Active machine → token minted with the kx_machine_ prefix, hash stored.
@@ -34,7 +34,7 @@ func TestIssueMachineToken_ActiveOnly(t *testing.T) {
 		Return(&models.MachineIdentityCredential{ID: 5}, nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-	res, err := c.IssueMachineToken(context.Background(), 2, 1, "ci", nil, 7)
+	res, err := c.IssueMachineToken(context.Background(), 2, 1, "ci", nil, "", 7)
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(res.PlainToken, "kx_machine_"))
 

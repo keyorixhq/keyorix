@@ -273,6 +273,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities", catalogHandler.ListMachineIdentities)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities", catalogHandler.CreateMachineIdentity)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/machine-identities/{machineId}", catalogHandler.TransitionMachineIdentity)
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/classification", catalogHandler.ClassifyMachineIdentity)
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification", catalogHandler.ClassifyMachineToken)
 		// Machine-token credentials + role grants (ADR-030).
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.IssueMachineToken)
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.ListMachineTokens)

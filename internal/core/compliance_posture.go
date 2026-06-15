@@ -86,6 +86,10 @@ type ClassificationPosture struct {
 	Unclassified int `json:"unclassified"`
 	// DynamicConfigs counts dynamic-secret configs by classification (A.5.12).
 	DynamicConfigs ClassificationCounts `json:"dynamic_configs"`
+	// MachineIdentities counts machine identities by classification (A.5.12).
+	MachineIdentities ClassificationCounts `json:"machine_identities"`
+	// MachineCredentials counts machine-token credentials by classification (A.5.12).
+	MachineCredentials ClassificationCounts `json:"machine_credentials"`
 }
 
 // ClassificationCounts is a per-level tally of a set of classifiable entities.
@@ -265,6 +269,12 @@ func (c *KeyorixCore) classificationPosture(ctx context.Context) ClassificationP
 	}
 	if m, err := c.storage.CountDynamicSecretConfigsByClassification(ctx); err == nil {
 		p.DynamicConfigs = classificationCountsFromMap(m)
+	}
+	if m, err := c.storage.CountMachineIdentitiesByClassification(ctx); err == nil {
+		p.MachineIdentities = classificationCountsFromMap(m)
+	}
+	if m, err := c.storage.CountMachineIdentityCredentialsByClassification(ctx); err == nil {
+		p.MachineCredentials = classificationCountsFromMap(m)
 	}
 	return p
 }

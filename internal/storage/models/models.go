@@ -852,6 +852,9 @@ type MachineIdentity struct {
 	UpdatedAt    time.Time
 	LastSeenAt   *time.Time
 	RevokedAt    *time.Time
+	// Classification is the data-sensitivity tier this machine identity handles
+	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
+	Classification string `gorm:"index"`
 }
 
 // MachineIdentityCredential is an opaque bearer token a machine identity uses to
@@ -869,6 +872,9 @@ type MachineIdentityCredential struct {
 	ExpiresAt         *time.Time // nil = never expires
 	Revoked           bool       `gorm:"default:false"`
 	CreatedAt         time.Time
+	// Classification is the data-sensitivity tier of what this credential can reach
+	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
+	Classification string `gorm:"index"`
 }
 
 // MachineIdentityRole grants a role to a machine identity at a project/

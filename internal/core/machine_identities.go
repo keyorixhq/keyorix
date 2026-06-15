@@ -59,7 +59,7 @@ func canTransitionMachine(from, to string) bool {
 }
 
 // CreateMachineIdentity creates an active machine identity in a project.
-func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint, name, identityType, description string, createdBy uint) (*models.MachineIdentity, error) {
+func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint, name, identityType, description, classification string, createdBy uint) (*models.MachineIdentity, error) {
 	if projectID == 0 || name == "" {
 		return nil, fmt.Errorf("project ID and name are required")
 	}
@@ -69,16 +69,20 @@ func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint,
 	if _, ok := validMachineTypes[identityType]; !ok {
 		return nil, fmt.Errorf("invalid identity_type %q (want ci|k8s|service|automation|other)", identityType)
 	}
+	if !IsValidClassification(classification) {
+		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
+	}
 	now := c.now()
 	m := &models.MachineIdentity{
-		ProjectID:    projectID,
-		Name:         name,
-		IdentityType: identityType,
-		State:        MachineActive,
-		Description:  description,
-		CreatedBy:    createdBy,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ProjectID:      projectID,
+		Name:           name,
+		IdentityType:   identityType,
+		State:          MachineActive,
+		Description:    description,
+		Classification: classification,
+		CreatedBy:      createdBy,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	created, err := c.storage.CreateMachineIdentity(ctx, m)
 	if err != nil {
@@ -115,6 +119,32 @@ func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, projectID, 
 		return nil, fmt.Errorf("failed to update machine identity: %w", err)
 	}
 	c.logMachineEvent(ctx, "machine_identity."+machineVerb(to), m, actorID)
+	return m, nil
+}
+
+// ClassifyMachineIdentity sets (or clears, with "") the data-classification label
+// on a machine identity, project-scoped (cross-project guard), and audits the change.
+func (c *KeyorixCore) ClassifyMachineIdentity(ctx context.Context, projectID, id uint, level string, actorID uint) (*models.MachineIdentity, error) {
+	if !IsValidClassification(level) {
+		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty to clear)")
+	}
+	m, err := c.machineInProject(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+	if m.Classification == level {
+		return m, nil // no-op
+	}
+	old := m.Classification
+	m.Classification = level
+	m.UpdatedAt = c.now()
+	if err := c.storage.UpdateMachineIdentity(ctx, m); err != nil {
+		return nil, fmt.Errorf("failed to update machine identity: %w", err)
+	}
+	aid, pid := actorID, m.ProjectID
+	diff := fmt.Sprintf(`{"classification":{"before":%q,"after":%q}}`, old, level)
+	c.writeAuditEventDiff(ctx, "machine_identity.classified", &aid, nil, &pid, "",
+		fmt.Sprintf("machine identity %d (%s) classification set to %q", m.ID, m.Name, level), diff)
 	return m, nil
 }
 
