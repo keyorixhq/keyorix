@@ -5,6 +5,7 @@ import {
     PlayIcon,
     PauseIcon,
     NoSymbolIcon,
+    ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import {
     MachineIdentity,
@@ -19,6 +20,7 @@ import {
     useClassifyMachineIdentity,
 } from './api';
 import { classificationMeta, CLASSIFICATION_LEVELS } from '../secrets/classification';
+import { MachineTokensPanel } from './MachineTokensPanel';
 
 const typeLabel: Record<MachineIdentityType, string> = {
     ci: 'CI',
@@ -60,6 +62,7 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
     const [name, setName] = useState('');
     const [identityType, setIdentityType] = useState<MachineIdentityType>('ci');
     const [error, setError] = useState('');
+    const [expanded, setExpanded] = useState<number | null>(null);
 
     const surface = (err: any, fallback: string) =>
         setError(err?.response?.data?.message ?? err?.response?.data?.error ?? fallback);
@@ -181,7 +184,18 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
                 ) : (
                     <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                         {identities.map(m => (
-                            <li key={m.id} className="flex items-center gap-3 px-4 py-3">
+                            <li key={m.id}>
+                              <div className="flex items-center gap-3 px-4 py-3">
+                                <button
+                                    onClick={() => setExpanded(expanded === m.id ? null : m.id)}
+                                    className="shrink-0"
+                                    aria-label={`Toggle tokens for ${m.name}`}
+                                >
+                                    <ChevronRightIcon
+                                        className="h-4 w-4 transition-transform"
+                                        style={{ color: 'var(--text-muted)', transform: expanded === m.id ? 'rotate(90deg)' : 'none' }}
+                                    />
+                                </button>
                                 <div
                                     className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0"
                                     style={{ backgroundColor: 'var(--bg-muted)', color: 'var(--text-secondary)' }}
@@ -263,6 +277,10 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
                                         </button>
                                     </div>
                                 )}
+                              </div>
+                              {expanded === m.id && (
+                                  <MachineTokensPanel projectId={projectId} machineId={m.id} canManage={isAdmin} />
+                              )}
                             </li>
                         ))}
                     </ul>

@@ -9,6 +9,8 @@ import {
 export const MACHINE_IDENTITY_KEYS = {
     all: ['machine-identities'] as const,
     list: (projectId: number) => [...MACHINE_IDENTITY_KEYS.all, 'list', projectId] as const,
+    tokens: (projectId: number, machineId: number) =>
+        [...MACHINE_IDENTITY_KEYS.all, 'tokens', projectId, machineId] as const,
 };
 
 export function useMachineIdentities(projectId: number) {
@@ -55,5 +57,43 @@ export function useClassifyMachineIdentity(projectId: number) {
             machineIdentitiesApi.classify(projectId, machineId, classification),
         onSuccess: () =>
             queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.list(projectId) }),
+    });
+}
+
+export function useMachineTokens(projectId: number, machineId: number, enabled = true) {
+    return useQuery({
+        queryKey: MACHINE_IDENTITY_KEYS.tokens(projectId, machineId),
+        queryFn: () => machineIdentitiesApi.listTokens(projectId, machineId),
+        enabled: enabled && !!projectId && !!machineId,
+        staleTime: 15_000,
+    });
+}
+
+export function useIssueMachineToken(projectId: number, machineId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (opts: { name: string; expiresInDays?: number; classification?: string }) =>
+            machineIdentitiesApi.issueToken(projectId, machineId, opts),
+        onSuccess: () =>
+            queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.tokens(projectId, machineId) }),
+    });
+}
+
+export function useRevokeMachineToken(projectId: number, machineId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (tokenId: number) => machineIdentitiesApi.revokeToken(projectId, machineId, tokenId),
+        onSuccess: () =>
+            queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.tokens(projectId, machineId) }),
+    });
+}
+
+export function useClassifyMachineToken(projectId: number, machineId: number) {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ tokenId, classification }: { tokenId: number; classification: string }) =>
+            machineIdentitiesApi.classifyToken(projectId, machineId, tokenId, classification),
+        onSuccess: () =>
+            queryClient.invalidateQueries({ queryKey: MACHINE_IDENTITY_KEYS.tokens(projectId, machineId) }),
     });
 }

@@ -51,6 +51,40 @@ const normalizeMachineIdentity = (m: any): MachineIdentity => ({
     revokedAt: m.RevokedAt ?? m.revoked_at ?? m.revokedAt ?? undefined,
 });
 
+// ADR-030 machine-token credentials: opaque bearer tokens (kx_machine_…) a machine
+// identity authenticates with. Only the hash is stored server-side; the raw token is
+// returned ONCE on issue. Each carries its own data-classification (ISO A.5.12).
+export interface MachineToken {
+    id: number;
+    name: string;
+    prefix: string;
+    lastUsedAt?: string;
+    expiresAt?: string;
+    revoked: boolean;
+    classification: string;
+    createdAt?: string;
+}
+
+// The one-time token returned on issue — shown once, never retrievable again.
+export interface IssuedMachineToken {
+    token: string;
+    id: number;
+    prefix: string;
+    expiresAt?: string;
+    classification: string;
+}
+
+const normalizeToken = (t: any): MachineToken => ({
+    id: t.id ?? t.ID ?? 0,
+    name: t.name ?? t.Name ?? '',
+    prefix: t.prefix ?? t.TokenPrefix ?? '',
+    lastUsedAt: t.last_used_at ?? t.LastUsedAt ?? undefined,
+    expiresAt: t.expires_at ?? t.ExpiresAt ?? undefined,
+    revoked: t.revoked ?? t.Revoked ?? false,
+    classification: t.classification ?? t.Classification ?? '',
+    createdAt: t.created_at ?? t.CreatedAt ?? undefined,
+});
+
 export const machineIdentitiesApi = {
     async list(projectId: number): Promise<MachineIdentity[]> {
         const response = await apiClient.get(`/api/v1/projects/${projectId}/machine-identities`);
@@ -101,5 +135,56 @@ export const machineIdentitiesApi = {
         );
         const m = response.data.data?.machine_identity ?? response.data.data ?? response.data;
         return normalizeMachineIdentity(m);
+    },
+
+    async listTokens(projectId: number, machineId: number): Promise<MachineToken[]> {
+        const response = await apiClient.get(
+            `/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens`
+        );
+        const rows = response.data.data?.tokens ?? response.data.tokens ?? [];
+        return rows.map(normalizeToken);
+    },
+
+    // Issue a token. The raw token is returned ONCE for out-of-band delivery.
+    async issueToken(
+        projectId: number,
+        machineId: number,
+        opts: { name: string; expiresInDays?: number; classification?: string }
+    ): Promise<IssuedMachineToken> {
+        const response = await apiClient.post(
+            `/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens`,
+            {
+                name: opts.name,
+                expires_in_days: opts.expiresInDays ?? 0,
+                classification: opts.classification ?? '',
+            }
+        );
+        const t = response.data.data ?? response.data;
+        return {
+            token: t.token ?? '',
+            id: t.id ?? t.ID ?? 0,
+            prefix: t.prefix ?? '',
+            expiresAt: t.expires_at ?? t.ExpiresAt ?? undefined,
+            classification: t.classification ?? t.Classification ?? '',
+        };
+    },
+
+    async revokeToken(projectId: number, machineId: number, tokenId: number): Promise<void> {
+        await apiClient.delete(
+            `/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens/${tokenId}`
+        );
+    },
+
+    // Set (or clear, with '') a token's data-classification label (ISO A.5.12).
+    async classifyToken(
+        projectId: number,
+        machineId: number,
+        tokenId: number,
+        classification: string
+    ): Promise<void> {
+        await apiClient.patch(
+            `/api/v1/projects/${projectId}/machine-identities/${machineId}/tokens/${tokenId}/classification`,
+            { classification }
+        );
     },
 };
