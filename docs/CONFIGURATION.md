@@ -575,8 +575,9 @@ stored for reconciliation. Provisioned users have no usable password (they sign 
 via SSO or set one out-of-band) and start in `pending_first_login`; SCIM
 `active:false` (or DELETE) suspends the account and terminates its sessions.
 
-This first increment covers the **Users** resource and `ServiceProviderConfig`;
-Groups are a follow-up.
+Both the **Users** and **Groups** resources are supported (plus
+`ServiceProviderConfig`): groups map to native Keyorix groups (displayName → name),
+with PUT replacing the full member set and PATCH adding/removing members.
 
 ```yaml
 scim:

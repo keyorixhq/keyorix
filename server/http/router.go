@@ -152,6 +152,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Put("/Users/{id}", scimHandler.ReplaceUser)
 			r.Patch("/Users/{id}", scimHandler.PatchUser)
 			r.Delete("/Users/{id}", scimHandler.DeleteUser)
+			r.Get("/Groups", scimHandler.ListGroups)
+			r.Post("/Groups", scimHandler.CreateGroup)
+			r.Get("/Groups/{id}", scimHandler.GetGroup)
+			r.Put("/Groups/{id}", scimHandler.ReplaceGroup)
+			r.Patch("/Groups/{id}", scimHandler.PatchGroup)
+			r.Delete("/Groups/{id}", scimHandler.DeleteGroup)
 		})
 	}
 
