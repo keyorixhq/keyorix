@@ -42,15 +42,19 @@ func NewWebhook(cfg WebhookConfig) (*Webhook, error) {
 	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport}}, nil
 }
 
-// ForwardEvidence POSTs the marshalled evidence pack as application/json. When the
-// pack is signed, the detached HMAC signature is sent in the X-Keyorix-Evidence-
-// Signature header so the receiver can record it for later verification.
-func (w *Webhook) ForwardEvidence(ctx context.Context, data []byte, signature string) error {
+// ForwardEvidence POSTs the marshalled evidence pack as application/json. The pack's
+// canonical name rides in X-Keyorix-Evidence-Filename, and when the pack is signed
+// the detached HMAC signature is sent in X-Keyorix-Evidence-Signature so the receiver
+// can record both for later verification.
+func (w *Webhook) ForwardEvidence(ctx context.Context, name string, data []byte, signature string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.Endpoint, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if name != "" {
+		req.Header.Set("X-Keyorix-Evidence-Filename", name)
+	}
 	if signature != "" {
 		req.Header.Set("X-Keyorix-Evidence-Signature", signature)
 	}
@@ -67,3 +71,6 @@ func (w *Webhook) ForwardEvidence(ctx context.Context, data []byte, signature st
 	}
 	return nil
 }
+
+// Target labels this forwarder in the export result.
+func (w *Webhook) Target() string { return "webhook" }

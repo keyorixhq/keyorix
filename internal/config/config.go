@@ -531,10 +531,26 @@ func (c DataRetentionConfig) GetInterval() time.Duration {
 // the delivery signal too. Opt-in (Enabled, default off); at least one target
 // (OutputDir or Webhook) must be configured.
 type EvidenceDeliveryConfig struct {
-	Enabled   bool                  `yaml:"enabled"`
-	Schedule  string                `yaml:"schedule"`
-	OutputDir string                `yaml:"output_dir"`
-	Webhook   EvidenceWebhookConfig `yaml:"webhook"`
+	Enabled     bool                      `yaml:"enabled"`
+	Schedule    string                    `yaml:"schedule"`
+	OutputDir   string                    `yaml:"output_dir"`
+	Webhook     EvidenceWebhookConfig     `yaml:"webhook"`
+	ObjectStore EvidenceObjectStoreConfig `yaml:"object_store"`
+}
+
+// EvidenceObjectStoreConfig configures the off-box S3-compatible object-storage
+// target: each run uploads the pack (and detached signature) to a bucket. Works with
+// AWS S3 and S3-compatible stores (MinIO, Cloudflare R2, Backblaze B2, GCS interop)
+// via a custom endpoint. Credentials resolve via the standard AWS credential chain
+// (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars, shared config, or
+// instance/workload identity) — never from Keyorix config.
+type EvidenceObjectStoreConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Bucket       string `yaml:"bucket"`         // required when enabled
+	Prefix       string `yaml:"prefix"`         // optional key prefix, e.g. "keyorix/evidence/"
+	Region       string `yaml:"region"`         // bucket region
+	Endpoint     string `yaml:"endpoint"`       // optional custom endpoint for S3-compatible stores
+	UsePathStyle bool   `yaml:"use_path_style"` // path-style addressing (MinIO and some gateways)
 }
 
 // EvidenceWebhookConfig configures the off-box webhook target: each run POSTs the
@@ -553,7 +569,7 @@ func (c *EvidenceWebhookConfig) GetToken() string {
 
 // HasTarget reports whether at least one delivery target is configured.
 func (c EvidenceDeliveryConfig) HasTarget() bool {
-	return c.OutputDir != "" || c.Webhook.Enabled
+	return c.OutputDir != "" || c.Webhook.Enabled || c.ObjectStore.Enabled
 }
 
 // GetInterval returns the evidence-export run interval, parsing Schedule as a Go

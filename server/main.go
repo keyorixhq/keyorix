@@ -303,8 +303,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		coreService.SetNotificationSink(sink)
 	}
 
-	// Wire an off-box evidence webhook target if configured, so the scheduled
-	// evidence pack is POSTed off-box in addition to (or instead of) a local dir.
+	// Wire any off-box evidence targets (webhook and/or S3-compatible object store),
+	// so the scheduled evidence pack is delivered off-box in addition to (or instead
+	// of) a local dir. When both are configured the pack fans out to both.
+	var evidenceTargets []evidencesink.Forwarder
 	if ew := cfg.EvidenceDelivery.Webhook; ew.Enabled {
 		fwd, ferr := evidencesink.NewWebhook(evidencesink.WebhookConfig{
 			Endpoint:           ew.Endpoint,
@@ -314,8 +316,29 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if ferr != nil {
 			return nil, nil, fmt.Errorf("failed to init evidence webhook target: %w", ferr)
 		}
-		coreService.SetEvidenceForwarder(fwd)
+		evidenceTargets = append(evidenceTargets, fwd)
 		log.Printf("Evidence webhook target enabled (endpoint=%s)", ew.Endpoint)
+	}
+	if os := cfg.EvidenceDelivery.ObjectStore; os.Enabled {
+		sink, oerr := evidencesink.NewObjectStore(context.Background(), evidencesink.ObjectStoreConfig{
+			Bucket:       os.Bucket,
+			Prefix:       os.Prefix,
+			Region:       os.Region,
+			Endpoint:     os.Endpoint,
+			UsePathStyle: os.UsePathStyle,
+		})
+		if oerr != nil {
+			return nil, nil, fmt.Errorf("failed to init evidence object-store target: %w", oerr)
+		}
+		evidenceTargets = append(evidenceTargets, sink)
+		log.Printf("Evidence object-store target enabled (bucket=%s, prefix=%q)", os.Bucket, os.Prefix)
+	}
+	switch len(evidenceTargets) {
+	case 0:
+	case 1:
+		coreService.SetEvidenceForwarder(evidenceTargets[0])
+	default:
+		coreService.SetEvidenceForwarder(evidencesink.NewMulti(evidenceTargets...))
 	}
 
 	// Apply the project membership validation mode (ADR-022). Empty = allowlist.

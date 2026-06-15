@@ -448,25 +448,43 @@ Each export also emits a `compliance.evidence_exported` audit event, so an insta
 [`audit.siem`](#auditsiem) forwarder receives the delivery signal too. Read-only, so
 it runs even while a legal hold is active. Single-replica-gated (ADR-039).
 
-Deliver to a local directory, an off-box **webhook** (POST of the pack JSON), or
-both. At least one target must be configured when enabled.
+Deliver to a local directory, an off-box **webhook** (POST of the pack JSON), an
+**S3-compatible object store**, or any combination. At least one target must be
+configured when enabled; when several are set the pack fans out to all of them.
 
 ```yaml
 evidence_delivery:
   enabled: true
   schedule: "24h"                           # Go duration between exports (default 24h)
-  output_dir: "/var/lib/keyorix/evidence"   # local archive; omit to deliver by webhook only
+  output_dir: "/var/lib/keyorix/evidence"   # local archive; omit to deliver off-box only
   webhook:
     enabled: true
     endpoint: "https://evidence.example.com/keyorix"
     token: ""                               # prefer the KEYORIX_EVIDENCE_WEBHOOK_TOKEN env var
     insecure_skip_verify: false             # TLS verification off — self-signed endpoints only
+  object_store:
+    enabled: true
+    bucket: "acme-compliance-evidence"      # required when enabled
+    prefix: "keyorix/evidence/"             # optional key prefix
+    region: "eu-west-1"
+    endpoint: ""                            # optional — set for S3-compatible stores (MinIO/R2/…)
+    use_path_style: false                   # set true for MinIO and some gateways
 ```
 
-> The webhook lets evidence survive the node without a mounted volume. A file write
-> is the primary durable target (its failure is fatal); a webhook failure is recorded
-> in the audit note but does not fail the export when a file was also written. The
-> webhook token is read from `KEYORIX_EVIDENCE_WEBHOOK_TOKEN` when set.
+> The off-box targets let evidence survive the node without a mounted volume. A file
+> write is the primary durable target (its failure is fatal); an off-box delivery
+> failure is recorded in the audit note but does not fail the export when a file was
+> also written. The webhook token is read from `KEYORIX_EVIDENCE_WEBHOOK_TOKEN` when
+> set.
+>
+> **Object store.** Works with AWS S3 and S3-compatible stores (MinIO, Cloudflare R2,
+> Backblaze B2, GCS interop) — point `endpoint` at the store and set `use_path_style:
+> true` where required. The pack is uploaded to `<prefix><filename>` and, when signed,
+> the detached signature to `<prefix><filename>.sig`. **Credentials are never taken in
+> Keyorix config**: they resolve via the standard AWS credential chain
+> (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars, shared config, or
+> instance/workload identity). Point the bucket at object-lock / immutable storage for
+> WORM-grade evidence retention.
 
 When **encryption is enabled**, each exported pack is **signed**: a detached
 `<file>.json.sig` is written next to it (and the webhook delivery carries the
