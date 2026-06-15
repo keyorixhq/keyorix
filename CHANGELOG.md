@@ -3,6 +3,30 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.36.0 — 2026-06-15
+
+Independently verifiable audit trail: anchor checkpoints to a trusted timestamp
+authority.
+
+### Added
+- **External-notary anchoring of audit checkpoints (RFC 3161)** — each signed
+  audit checkpoint (ADR-029) can now be anchored to a trusted timestamp authority
+  (TSA), producing an independent, third-party-signed proof that the checkpoint
+  existed at a point in time — a proof the server cannot forge or backdate, even by
+  an attacker holding the data-encryption key. The TSA token is stored on the
+  checkpoint and re-verifiable offline. Configure via `audit.checkpoint_notary`
+  (`enabled`, `url`, `timeout`, `ca_cert_path`); anchoring is best-effort and never
+  blocks checkpointing. The anchor (asserted time + TSA) is shown by
+  `keyorix audit checkpoint`. ([#234])
+
+### Notes
+- Additive (three nullable `audit_checkpoints` columns) and opt-in. Verification
+  requires `ca_cert_path` (the TSA's trust anchor): the token signer is chained to
+  it with the time-stamping EKU, so an untrusted/self-signed token is rejected, and
+  verification fails closed when no trust anchor is configured.
+
+[#234]: https://github.com/keyorixhq/keyorix/pull/234
+
 ## v0.35.0 — 2026-06-15
 
 KEK flexibility + gRPC parity: resolve the KEK from any command, and pull
