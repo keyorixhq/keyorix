@@ -140,6 +140,12 @@ storage:
       # external secret store Keyorix has no built-in client for.
       # exec_command: ["op", "read", "op://vault/keyorix-kek/value"]
 
+      # type: shamir — reconstruct the KEK from K-of-N Shamir shares (no single
+      # custodian holds it). Provide at least the threshold many shares (hex/base64)
+      # via files and/or env vars. Generate with `keyorix encryption shamir-split`.
+      # shamir_share_files: [/etc/keyorix/share-1.hex, /etc/keyorix/share-2.hex, /etc/keyorix/share-3.hex]
+      # shamir_share_env: [KX_KEK_SHARE_1, KX_KEK_SHARE_2]
+
       # type: aws-kms / gcp-kms / azure-kms — envelope-wrap the KEK with a cloud
       # KMS/HSM key (ADR-041); the wrapping key stays in the KMS/HSM. Credentials
       # come from the standard cloud environment (AWS: env/instance-profile/IRSA;
@@ -161,6 +167,16 @@ storage:
   helper. Output is 32 raw bytes or a hex/base64 encoding thereof. The command runs
   at startup (fail-closed, 30s timeout) and `KEYORIX_MASTER_PASSWORD` is **not**
   required. The argv is trusted deployment config, like `file_path`/`env_var`.
+- **`shamir`**: the KEK is split into **N Shamir shares** with a **K-of-N**
+  threshold, so no single custodian holds it and at least K must combine to unseal
+  (separation of duties for the master key). Generate with `keyorix encryption
+  shamir-split --shares N --threshold K` (the KEK is never printed/stored — only the
+  shares are). Provide at least K shares at startup via `shamir_share_files` and/or
+  `shamir_share_env` (each a hex/base64 share); the server reconstructs the KEK in
+  memory. `KEYORIX_MASTER_PASSWORD` is **not** required. Move an existing install
+  onto it with `keyorix encryption migrate-provider --to-type shamir
+  --to-shamir-share-files …`. ⚠️ Losing more than N-K shares makes the KEK — and all
+  data — permanently unrecoverable; store and back up shares separately.
 - **`aws-kms`** / **`gcp-kms`** / **`azure-kms`** (ADR-041): the KEK is a random key
   **wrapped by a cloud KMS/HSM key**; only the wrapped blob is on disk
   (`wrapped_key_path`), unwrapped via the KMS at startup. The wrapping key never

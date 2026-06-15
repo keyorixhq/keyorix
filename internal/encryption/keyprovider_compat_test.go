@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,6 +85,23 @@ func TestKeyProvider_EnvRoundTrip(t *testing.T) {
 	raw := bytes.Repeat([]byte{0x5C}, 32)
 	t.Setenv("KX_COMPAT_KEK", base64.StdEncoding.EncodeToString(raw))
 	roundTrip(t, dir, func() crypto.KeyProvider { return crypto.NewEnvKeyProvider("KX_COMPAT_KEK") })
+}
+
+// TestKeyProvider_ShamirRoundTrip proves a Shamir-reconstructed KEK wraps/unwraps
+// the DEK end-to-end: a KEK is split into shares written to disk, and a KeyManager
+// using K of those shares unwraps the identical DEK across restarts.
+func TestKeyProvider_ShamirRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	kek := bytes.Repeat([]byte{0x3D}, 32)
+	shares, err := crypto.SplitKEK(kek, 5, 3)
+	require.NoError(t, err)
+	var files []string
+	for i := 0; i < 3; i++ { // write the threshold-many shares
+		p := filepath.Join(dir, "share-"+string(rune('a'+i)))
+		require.NoError(t, os.WriteFile(p, []byte(hex.EncodeToString(shares[i])), 0600))
+		files = append(files, p)
+	}
+	roundTrip(t, dir, func() crypto.KeyProvider { return crypto.NewShamirKeyProvider(files, nil) })
 }
 
 // TestKeyProvider_KMSRoundTrip proves a KMS-envelope KEK wraps/unwraps the DEK

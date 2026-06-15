@@ -173,6 +173,23 @@ func TestTargetEncryptionConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("shamir requires at least 2 shares", func(t *testing.T) {
+		_, err := targetEncryptionConfig(cur, migrateOpts{toType: "shamir", toShareFiles: []string{"only-one"}})
+		if err == nil || !strings.Contains(err.Error(), "at least 2 shares") {
+			t.Fatalf("expected shamir threshold requirement, got: %v", err)
+		}
+	})
+
+	t.Run("shamir carries the share sources", func(t *testing.T) {
+		tgt, err := targetEncryptionConfig(cur, migrateOpts{toType: "shamir", toShareFiles: []string{"a", "b"}, toShareEnv: []string{"C"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tgt.KeyProvider.Type != "shamir" || len(tgt.KeyProvider.ShamirShareFiles) != 2 || len(tgt.KeyProvider.ShamirShareEnv) != 1 {
+			t.Fatalf("expected shamir provider with 2 files + 1 env, got %+v", tgt.KeyProvider)
+		}
+	})
+
 	t.Run("password overrides salt path", func(t *testing.T) {
 		tgt, err := targetEncryptionConfig(cur, migrateOpts{toType: "password", toSaltPath: "keys/new.salt"})
 		if err != nil {
