@@ -656,6 +656,14 @@ func (m *MockStorage) GetUserByUsername(ctx context.Context, username string) (*
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
+func (m *MockStorage) GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error) {
+	args := m.Called(ctx, externalID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
 func (m *MockStorage) GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {

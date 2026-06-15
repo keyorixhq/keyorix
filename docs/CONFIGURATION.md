@@ -17,7 +17,7 @@ The config file is located via, in order: an explicit path argument, then
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
 - [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
-- [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
+- [scim](#scim) (RFC 7644) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
 
@@ -33,6 +33,7 @@ the file:
 | `KEYORIX_DB_PASSWORD` | PostgreSQL password |
 | `KEYORIX_API_KEY` | API key for remote-client mode |
 | `KEYORIX_SIEM_TOKEN` | SIEM push token (`audit.siem`) |
+| `KEYORIX_SCIM_TOKEN` | SCIM provisioning bearer token (`scim`) |
 | `KEYORIX_SMTP_PASSWORD` | SMTP relay password (`credential_delivery.smtp`) |
 | `KEYORIX_DOMAIN` | substituted into `server` origins in the shipped example configs |
 | _(operator-named)_ | the raw KEK, when `key_provider.type: env` (see [key_provider](#encryption--kek-providers)) |
@@ -559,6 +560,32 @@ audit:
     # token: ""                 # prefer KEYORIX_SIEM_TOKEN
     insecure_skip_verify: false # never true in production
 ```
+
+## scim
+
+SCIM 2.0 provisioning (RFC 7644). When enabled, Keyorix serves `/scim/v2` so an
+identity provider (Okta, Entra ID, …) can **provision, update, deactivate, and
+deprovision users** automatically. The endpoints are authenticated by a single
+**static bearer token** the IdP presents — separate from the session/PAT auth — and
+emit SCIM-format JSON, not the API envelope.
+
+A SCIM `userName` (typically an email/UPN) maps to the user's email; a compliant
+alphanumeric Keyorix username is **derived** from it, and the IdP's `externalId` is
+stored for reconciliation. Provisioned users have no usable password (they sign in
+via SSO or set one out-of-band) and start in `pending_first_login`; SCIM
+`active:false` (or DELETE) suspends the account and terminates its sessions.
+
+This first increment covers the **Users** resource and `ServiceProviderConfig`;
+Groups are a follow-up.
+
+```yaml
+scim:
+  enabled: true
+  token: ""        # prefer the KEYORIX_SCIM_TOKEN env var — the IdP's bearer token
+```
+
+> Set `token` only via `KEYORIX_SCIM_TOKEN`. Point your IdP's SCIM connector at
+> `https://<host>/scim/v2` with that token as the bearer credential.
 
 ## membership
 

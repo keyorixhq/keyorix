@@ -221,9 +221,13 @@ type User struct {
 	// security key (ADR-036); like MFAEnabled it makes login a two-step flow, with
 	// a WebAuthn assertion as the second factor (see WebAuthnCredential).
 	WebAuthnEnabled bool `gorm:"default:false"`
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	DeletedAt       gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
+	// ExternalID is the IdP's stable identifier for a SCIM-provisioned user (SCIM
+	// externalId, RFC 7644). Empty for locally-created users. Indexed for the SCIM
+	// reconciliation lookup; not unique (legacy/blank rows coexist).
+	ExternalID string `gorm:"index"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  gorm.DeletedAt `gorm:"index"` // soft delete — set by DELETE /users/{id}, cleared by restore
 }
 
 // MFASecret holds a user's TOTP shared secret, encrypted at rest. One row per

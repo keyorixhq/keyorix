@@ -235,6 +235,9 @@ type Storage interface {
 	// who were created before the cutoff (ADR-025 stale-account warnings).
 	ListUsersInStateBefore(ctx context.Context, state string, before time.Time) ([]*models.User, error)
 	GetUserByUsername(ctx context.Context, username string) (*models.User, error)
+	// GetUserByExternalID resolves a SCIM-provisioned user by the IdP's externalId
+	// (RFC 7644). Returns the not-found error when no user carries that external id.
+	GetUserByExternalID(ctx context.Context, externalID string) (*models.User, error)
 	GetUserGroups(ctx context.Context, userID uint) ([]*models.Group, error)
 
 	// Password history (ADR-025 history_count). AddPasswordHistory records a
