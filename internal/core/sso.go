@@ -237,15 +237,31 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	return created, nil
 }
 
+// ssoBool unmarshals a JSON boolean OR the strings "true"/"false" — some IdPs send
+// email_verified as a string rather than a bool, and a strict bool field would fail
+// the whole token parse. A pointer to it distinguishes "absent" (nil) from "false".
+type ssoBool bool
+
+func (b *ssoBool) UnmarshalJSON(data []byte) error {
+	*b = ssoBool(strings.Trim(string(data), `"`) == "true")
+	return nil
+}
+
 // verifyIDToken validates the id_token's signature (asymmetric only), issuer,
 // audience (= the provider's client_id), expiry, and the nonce, returning the
-// subject, email, and (best-effort) name claims.
+// subject, email, and (best-effort) name claims. The email is returned only when the
+// IdP has not explicitly marked it unverified (email_verified: false) — so an IdP
+// that lets a user self-assert an arbitrary, unverified address cannot use it to
+// match an existing account or seed a JIT-provisioned one. An absent email_verified
+// claim is treated as trusted: it is OPTIONAL in OIDC and common enterprise IdPs
+// (e.g. Entra ID) omit it for a configured, trusted issuer.
 func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expectedNonce, raw string) (sub, email, name string, err error) {
 	var claims struct {
 		jwt.RegisteredClaims
-		Email string `json:"email"`
-		Name  string `json:"name"`
-		Nonce string `json:"nonce"`
+		Email         string   `json:"email"`
+		EmailVerified *ssoBool `json:"email_verified"`
+		Name          string   `json:"name"`
+		Nonce         string   `json:"nonce"`
 	}
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"}),
@@ -283,7 +299,14 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 	if strings.TrimSpace(claims.Subject) == "" {
 		return "", "", "", fmt.Errorf("id_token has no subject")
 	}
-	return claims.Subject, claims.Email, claims.Name, nil
+	email = claims.Email
+	if email != "" && claims.EmailVerified != nil && !bool(*claims.EmailVerified) {
+		// The IdP explicitly says this address is unverified — don't trust it for
+		// identity. The subject (externalId) match still works; only the email
+		// fallback / JIT-provisioning lose this untrusted address.
+		email = ""
+	}
+	return claims.Subject, email, claims.Name, nil
 }
 
 func randToken() (string, error) {

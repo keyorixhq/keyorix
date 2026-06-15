@@ -84,6 +84,52 @@ func TestVerifyIDToken(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestVerifyIDToken_EmailVerified(t *testing.T) {
+	c, _, key, p := ssoTestCore(t)
+	ctx := context.Background()
+	base := func() jwt.MapClaims {
+		return jwt.MapClaims{
+			"iss": "https://idp.test", "aud": "client-1", "sub": "okta|123",
+			"email": "ada@x.io", "nonce": "N1", "exp": time.Now().Add(time.Hour).Unix(),
+		}
+	}
+
+	// email_verified absent → email is trusted (OIDC-optional; Entra omits it).
+	_, email, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", base()))
+	require.NoError(t, err)
+	assert.Equal(t, "ada@x.io", email)
+
+	// email_verified: true → email trusted.
+	ok := base()
+	ok["email_verified"] = true
+	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", ok))
+	require.NoError(t, err)
+	assert.Equal(t, "ada@x.io", email)
+
+	// email_verified: false → email DROPPED (untrusted), but the token still verifies
+	// and the subject is unaffected.
+	no := base()
+	no["email_verified"] = false
+	sub, email, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", no))
+	require.NoError(t, err)
+	assert.Equal(t, "okta|123", sub)
+	assert.Empty(t, email)
+
+	// email_verified sent as the string "false" → also dropped (no parse failure).
+	noStr := base()
+	noStr["email_verified"] = "false"
+	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", noStr))
+	require.NoError(t, err)
+	assert.Empty(t, email)
+
+	// email_verified sent as the string "true" → trusted.
+	okStr := base()
+	okStr["email_verified"] = "true"
+	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", okStr))
+	require.NoError(t, err)
+	assert.Equal(t, "ada@x.io", email)
+}
+
 func TestResolveSSOUser(t *testing.T) {
 	notFound := func() error { return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)) }
 

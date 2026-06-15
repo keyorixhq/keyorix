@@ -671,6 +671,12 @@ must return an `email` claim (request the `email` scope), or the login is refuse
 later SCIM push for the same `externalId` reconciles to the same account. Leave
 `auto_provision` off to require that accounts be provisioned ahead of time.
 
+> **Email trust.** An email an IdP explicitly marks unverified (`email_verified:
+> false`) is not used to match an existing account or to provision a new one — only
+> the subject (`externalId`) match applies for that login. An absent `email_verified`
+> claim is treated as trusted (it is optional in OIDC; some enterprise IdPs such as
+> Entra ID omit it for a configured, trusted issuer).
+
 ## membership
 
 Project-membership onboarding mode (ADR-022).
