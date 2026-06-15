@@ -58,6 +58,7 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 	pb.RegisterProjectServiceServer(server, services.NewProjectService(coreService))
 	pb.RegisterMachineIdentityServiceServer(server, services.NewMachineIdentityService(coreService))
 	pb.RegisterDynamicSecretServiceServer(server, services.NewDynamicSecretService(coreService))
+	pb.RegisterComplianceServiceServer(server, services.NewComplianceService(coreService))
 
 	// Enable reflection for development
 	if cfg.Server.GRPC.ReflectionEnabled {

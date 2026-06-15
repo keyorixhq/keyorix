@@ -939,3 +939,139 @@ message RevokeAllLeasesResponse {
   uint32 revoked = 1;
   uint32 failed = 2;
 }
+
+// ---------------------------------------------------------------------------
+// Compliance posture & control matrix (read-only; gated by system.read).
+// Mirrors the HTTP/CLI compliance surface so auditors' automation can pull the
+// deployment's control posture over gRPC too.
+// ---------------------------------------------------------------------------
+service ComplianceService {
+  // GetCompliancePosture returns the deployment-wide controls-posture snapshot.
+  rpc GetCompliancePosture(google.protobuf.Empty) returns (CompliancePosture);
+  // GetComplianceControls returns the evaluated control matrix (per-control
+  // status mapped to ISO 27001 / SOC 2 / NIS2 / DORA clauses).
+  rpc GetComplianceControls(google.protobuf.Empty) returns (ComplianceControls);
+}
+
+message AuditIntegrityPosture {
+  bool chain_verified = 1;
+  int64 chained_events = 2;
+  bool checkpointed = 3;
+  string reason = 4;
+}
+
+message AccessGovernancePosture {
+  int32 projects = 1;
+  int32 projects_with_open_campaign = 2;
+  int32 projects_never_reviewed = 3;
+  int32 open_campaigns = 4;
+  int32 pending_items = 5;
+  int32 projects_overdue = 6;
+  int32 dormant_role_grants = 7;
+  int32 sod_violations = 8;
+}
+
+message RotationPosture {
+  int32 covered_secrets = 1;
+  int32 overdue = 2;
+  int32 due_soon = 3;
+}
+
+message IdentityPosture {
+  int32 active_users = 1;
+  int32 users_with_second_factor = 2;
+  int32 second_factor_percent = 3;
+}
+
+message EmergencyAccessPosture {
+  int32 active_activations = 1;
+  int32 total_activations = 2;
+}
+
+message ClassificationCounts {
+  int32 total = 1;
+  int32 public = 2;
+  int32 internal = 3;
+  int32 confidential = 4;
+  int32 restricted = 5;
+  int32 unclassified = 6;
+}
+
+message ClassificationPosture {
+  int32 total_secrets = 1;
+  int32 public = 2;
+  int32 internal = 3;
+  int32 confidential = 4;
+  int32 restricted = 5;
+  int32 unclassified = 6;
+  ClassificationCounts dynamic_configs = 7;
+  ClassificationCounts machine_identities = 8;
+  ClassificationCounts machine_credentials = 9;
+}
+
+message AnomaliesPosture {
+  int32 unacknowledged = 1;
+  int32 high_severity_open = 2;
+}
+
+message LegalHoldPosture {
+  bool active = 1;
+  google.protobuf.Timestamp placed_at = 2;
+  string reason = 3;
+}
+
+message RetentionPosture {
+  bool enabled = 1;
+  int32 anomaly_alerts_days = 2;
+  int32 closed_access_reviews_days = 3;
+  int32 break_glass_days = 4;
+  int32 resolved_access_requests_days = 5;
+}
+
+message RiskPosture {
+  int32 active_exceptions = 1;
+  int32 expiring_soon = 2;
+}
+
+message CompliancePosture {
+  google.protobuf.Timestamp generated_at = 1;
+  AuditIntegrityPosture audit_integrity = 2;
+  AccessGovernancePosture access_governance = 3;
+  RotationPosture rotation = 4;
+  IdentityPosture identity = 5;
+  EmergencyAccessPosture emergency_access = 6;
+  ClassificationPosture classification = 7;
+  AnomaliesPosture anomalies = 8;
+  LegalHoldPosture legal_hold = 9;
+  RetentionPosture retention = 10;
+  RiskPosture risk = 11;
+}
+
+message FrameworkRefs {
+  repeated string iso_27001 = 1;
+  repeated string soc2 = 2;
+  repeated string nis2 = 3;
+  repeated string dora = 4;
+}
+
+message ControlState {
+  string id = 1;
+  string name = 2;
+  string area = 3;
+  string status = 4;
+  string detail = 5;
+  FrameworkRefs frameworks = 6;
+}
+
+message ControlsSummary {
+  int32 total = 1;
+  int32 pass = 2;
+  int32 gap = 3;
+  int32 not_configured = 4;
+}
+
+message ComplianceControls {
+  google.protobuf.Timestamp generated_at = 1;
+  repeated ControlState controls = 2;
+  ControlsSummary summary = 3;
+}

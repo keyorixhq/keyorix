@@ -2851,3 +2851,161 @@ var DynamicSecretService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "keyorix.proto",
 }
+
+const (
+	ComplianceService_GetCompliancePosture_FullMethodName  = "/keyorix.v1.ComplianceService/GetCompliancePosture"
+	ComplianceService_GetComplianceControls_FullMethodName = "/keyorix.v1.ComplianceService/GetComplianceControls"
+)
+
+// ComplianceServiceClient is the client API for ComplianceService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// ---------------------------------------------------------------------------
+// Compliance posture & control matrix (read-only; gated by system.read).
+// Mirrors the HTTP/CLI compliance surface so auditors' automation can pull the
+// deployment's control posture over gRPC too.
+// ---------------------------------------------------------------------------
+type ComplianceServiceClient interface {
+	// GetCompliancePosture returns the deployment-wide controls-posture snapshot.
+	GetCompliancePosture(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*CompliancePosture, error)
+	// GetComplianceControls returns the evaluated control matrix (per-control
+	// status mapped to ISO 27001 / SOC 2 / NIS2 / DORA clauses).
+	GetComplianceControls(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ComplianceControls, error)
+}
+
+type complianceServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewComplianceServiceClient(cc grpc.ClientConnInterface) ComplianceServiceClient {
+	return &complianceServiceClient{cc}
+}
+
+func (c *complianceServiceClient) GetCompliancePosture(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*CompliancePosture, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompliancePosture)
+	err := c.cc.Invoke(ctx, ComplianceService_GetCompliancePosture_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *complianceServiceClient) GetComplianceControls(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ComplianceControls, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ComplianceControls)
+	err := c.cc.Invoke(ctx, ComplianceService_GetComplianceControls_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ComplianceServiceServer is the server API for ComplianceService service.
+// All implementations must embed UnimplementedComplianceServiceServer
+// for forward compatibility.
+//
+// ---------------------------------------------------------------------------
+// Compliance posture & control matrix (read-only; gated by system.read).
+// Mirrors the HTTP/CLI compliance surface so auditors' automation can pull the
+// deployment's control posture over gRPC too.
+// ---------------------------------------------------------------------------
+type ComplianceServiceServer interface {
+	// GetCompliancePosture returns the deployment-wide controls-posture snapshot.
+	GetCompliancePosture(context.Context, *emptypb.Empty) (*CompliancePosture, error)
+	// GetComplianceControls returns the evaluated control matrix (per-control
+	// status mapped to ISO 27001 / SOC 2 / NIS2 / DORA clauses).
+	GetComplianceControls(context.Context, *emptypb.Empty) (*ComplianceControls, error)
+	mustEmbedUnimplementedComplianceServiceServer()
+}
+
+// UnimplementedComplianceServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedComplianceServiceServer struct{}
+
+func (UnimplementedComplianceServiceServer) GetCompliancePosture(context.Context, *emptypb.Empty) (*CompliancePosture, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCompliancePosture not implemented")
+}
+func (UnimplementedComplianceServiceServer) GetComplianceControls(context.Context, *emptypb.Empty) (*ComplianceControls, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetComplianceControls not implemented")
+}
+func (UnimplementedComplianceServiceServer) mustEmbedUnimplementedComplianceServiceServer() {}
+func (UnimplementedComplianceServiceServer) testEmbeddedByValue()                           {}
+
+// UnsafeComplianceServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ComplianceServiceServer will
+// result in compilation errors.
+type UnsafeComplianceServiceServer interface {
+	mustEmbedUnimplementedComplianceServiceServer()
+}
+
+func RegisterComplianceServiceServer(s grpc.ServiceRegistrar, srv ComplianceServiceServer) {
+	// If the following call panics, it indicates UnimplementedComplianceServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&ComplianceService_ServiceDesc, srv)
+}
+
+func _ComplianceService_GetCompliancePosture_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ComplianceServiceServer).GetCompliancePosture(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ComplianceService_GetCompliancePosture_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ComplianceServiceServer).GetCompliancePosture(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ComplianceService_GetComplianceControls_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ComplianceServiceServer).GetComplianceControls(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ComplianceService_GetComplianceControls_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ComplianceServiceServer).GetComplianceControls(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// ComplianceService_ServiceDesc is the grpc.ServiceDesc for ComplianceService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var ComplianceService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "keyorix.v1.ComplianceService",
+	HandlerType: (*ComplianceServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetCompliancePosture",
+			Handler:    _ComplianceService_GetCompliancePosture_Handler,
+		},
+		{
+			MethodName: "GetComplianceControls",
+			Handler:    _ComplianceService_GetComplianceControls_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "keyorix.proto",
+}
