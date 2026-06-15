@@ -551,6 +551,11 @@ type EvidenceObjectStoreConfig struct {
 	Region       string `yaml:"region"`         // bucket region
 	Endpoint     string `yaml:"endpoint"`       // optional custom endpoint for S3-compatible stores
 	UsePathStyle bool   `yaml:"use_path_style"` // path-style addressing (MinIO and some gateways)
+	// LockMode opts into S3 Object Lock (WORM) on each uploaded object: "" (off),
+	// "governance", or "compliance". The bucket must have Object Lock enabled.
+	LockMode string `yaml:"lock_mode"`
+	// LockRetainDays is the retention window in days; required (> 0) when LockMode set.
+	LockRetainDays int `yaml:"lock_retain_days"`
 }
 
 // EvidenceWebhookConfig configures the off-box webhook target: each run POSTs the
