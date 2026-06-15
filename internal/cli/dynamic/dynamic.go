@@ -8,11 +8,22 @@ package dynamic
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
 )
+
+// sortedKeys returns a map's keys in deterministic order, for stable CLI output.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // DynamicSecretCmd is the root `keyorix dynamic-secret` command.
 var DynamicSecretCmd = &cobra.Command{
@@ -57,10 +68,11 @@ type configView struct {
 }
 
 type issuedLease struct {
-	LeaseID   string `json:"lease_id"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	ExpiresAt string `json:"expires_at"`
+	LeaseID   string            `json:"lease_id"`
+	Username  string            `json:"username"`
+	Password  string            `json:"password"`
+	Fields    map[string]string `json:"fields"`
+	ExpiresAt string            `json:"expires_at"`
 }
 
 type leaseView struct {
@@ -124,8 +136,16 @@ var issueCmd = &cobra.Command{
 		}
 		fmt.Println("Credential issued — shown once, auto-revokes at expiry.")
 		fmt.Printf("  lease:    %s\n", lease.LeaseID)
-		fmt.Printf("  username: %s\n", lease.Username)
-		fmt.Printf("  password: %s\n", lease.Password)
+		if lease.Username != "" {
+			fmt.Printf("  username: %s\n", lease.Username)
+		}
+		if lease.Password != "" {
+			fmt.Printf("  password: %s\n", lease.Password)
+		}
+		// Cloud-IAM backends (AWS STS) return their credential as fields.
+		for _, k := range sortedKeys(lease.Fields) {
+			fmt.Printf("  %-9s %s\n", k+":", lease.Fields[k])
+		}
 		fmt.Printf("  expires:  %s\n", lease.ExpiresAt)
 		return nil
 	},

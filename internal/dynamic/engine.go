@@ -12,9 +12,13 @@ import (
 )
 
 // Credential is an issued, short-lived credential returned to the caller once.
+// Database backends populate Username/Password; cloud-IAM backends (e.g. AWS STS)
+// have no username/password and instead populate Fields (access_key_id,
+// secret_access_key, session_token, …).
 type Credential struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username string            `json:"username,omitempty"`
+	Password string            `json:"password,omitempty"`
+	Fields   map[string]string `json:"fields,omitempty"`
 }
 
 // CredentialEngine mints and revokes credentials on a target backend. The admin
@@ -37,6 +41,12 @@ type CredentialEngine interface {
 	// the sweeper disabled would mint a credential whose TTL is never enforced.
 	SupportsNativeExpiry() bool
 	BackendType() string
+	// IsEphemeralBackend reports whether the backend mints self-expiring,
+	// non-revocable credentials (e.g. AWS STS) rather than a persistent role on a
+	// target. For such backends Revoke is a no-op (nothing to drop) and Renew is
+	// refused — the credential's lifetime is fixed by the cloud provider at issue,
+	// so a new lease must be issued instead of extending an existing one.
+	IsEphemeralBackend() bool
 }
 
 // New returns the engine for a backend type.
@@ -50,8 +60,10 @@ func New(backendType string) (CredentialEngine, error) {
 		return &MongoEngine{}, nil
 	case "redis":
 		return &RedisEngine{}, nil
+	case "aws-sts":
+		return &AWSSTSEngine{}, nil
 	default:
-		return nil, fmt.Errorf("unsupported dynamic-secret backend %q (supported: postgres, mysql, mongodb, redis)", backendType)
+		return nil, fmt.Errorf("unsupported dynamic-secret backend %q (supported: postgres, mysql, mongodb, redis, aws-sts)", backendType)
 	}
 }
 
@@ -84,11 +96,14 @@ type FakeEngine struct {
 	FailIssue    bool
 	FailRevoke   bool
 	FailRenew    bool
-	NativeExpiry bool // when true, mimics a backend with DB-level TTL (e.g. Postgres)
+	NativeExpiry bool              // when true, mimics a backend with DB-level TTL (e.g. Postgres)
+	Ephemeral    bool              // when true, mimics a cloud-IAM backend (no revoke, no renew)
+	IssueFields  map[string]string // when set, returned in the issued Credential.Fields
 }
 
 func (f *FakeEngine) BackendType() string        { return "fake" }
 func (f *FakeEngine) SupportsNativeExpiry() bool { return f.NativeExpiry }
+func (f *FakeEngine) IsEphemeralBackend() bool   { return f.Ephemeral }
 
 func (f *FakeEngine) Issue(_ context.Context, _, _ string, _ time.Duration) (Credential, string, error) {
 	f.mu.Lock()
@@ -103,7 +118,7 @@ func (f *FakeEngine) Issue(_ context.Context, _, _ string, _ time.Duration) (Cre
 	role := "kx_fake_" + suffix
 	pw, _ := randString(16)
 	f.Issued = append(f.Issued, role)
-	return Credential{Username: role, Password: pw}, role, nil
+	return Credential{Username: role, Password: pw, Fields: f.IssueFields}, role, nil
 }
 
 func (f *FakeEngine) Revoke(_ context.Context, _, roleName string) error {

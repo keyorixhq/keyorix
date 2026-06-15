@@ -32,12 +32,15 @@ type CreateDynamicSecretConfigRequest struct {
 	Classification string
 }
 
-// IssuedLease is the credential returned to the caller once, on issue.
+// IssuedLease is the credential returned to the caller once, on issue. Database
+// backends populate Username/Password; cloud-IAM backends (AWS STS) leave those
+// empty and populate Fields (access_key_id, secret_access_key, session_token, …).
 type IssuedLease struct {
-	LeaseID   string    `json:"lease_id"`
-	Username  string    `json:"username"`
-	Password  string    `json:"password"`
-	ExpiresAt time.Time `json:"expires_at"`
+	LeaseID   string            `json:"lease_id"`
+	Username  string            `json:"username,omitempty"`
+	Password  string            `json:"password,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"`
+	ExpiresAt time.Time         `json:"expires_at"`
 }
 
 // CreateDynamicSecretConfig validates the backend, encrypts the admin DSN, and
@@ -192,7 +195,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	pid := cfg.ProjectID
 	c.writeAuditEventFull(ctx, "dynamic_lease.issued", &uid, nil, &pid, "",
 		fmt.Sprintf("issued dynamic credential (lease=%s, config=%q, ttl=%s)", lease.LeaseID, cfg.Name, ttl))
-	return &IssuedLease{LeaseID: lease.LeaseID, Username: cred.Username, Password: cred.Password, ExpiresAt: expiresAt}, nil
+	return &IssuedLease{LeaseID: lease.LeaseID, Username: cred.Username, Password: cred.Password, Fields: cred.Fields, ExpiresAt: expiresAt}, nil
 }
 
 // cleanupOrphanedRole drops a just-minted role after a post-mint failure aborts the
@@ -372,6 +375,11 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("config not found")
+	}
+	// Cloud-IAM backends (AWS STS) mint self-expiring credentials whose lifetime is
+	// fixed by the provider at issue — they cannot be renewed; issue a new lease.
+	if eng, eerr := c.dynamicEngine(cfg.BackendType); eerr == nil && eng.IsEphemeralBackend() {
+		return time.Time{}, fmt.Errorf("the %s backend mints self-expiring credentials that cannot be renewed; issue a new lease instead", cfg.BackendType)
 	}
 	newExpiry := c.now().Add(c.dynamicTTL(cfg, ttlSeconds))
 	// Never let renewal push total lifetime past the config's max-TTL ceiling.

@@ -869,6 +869,9 @@ message IssuedCredential {
   string username = 2;
   string password = 3;
   optional google.protobuf.Timestamp expires_at = 4;
+  // fields carries cloud-IAM credentials (e.g. AWS STS access_key_id /
+  // secret_access_key / session_token) for backends with no username/password.
+  map<string, string> fields = 5;
 }
 
 message ListDynamicConfigsRequest {

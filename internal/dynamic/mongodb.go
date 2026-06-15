@@ -32,7 +32,8 @@ import (
 // database.
 type MongoEngine struct{}
 
-func (e *MongoEngine) BackendType() string { return "mongodb" }
+func (e *MongoEngine) BackendType() string      { return "mongodb" }
+func (e *MongoEngine) IsEphemeralBackend() bool { return false }
 
 // SupportsNativeExpiry is false: MongoDB users have no native expiry, so lease
 // expiry is enforced only by the auto-revoke sweeper (which must be enabled).
