@@ -221,6 +221,14 @@ clears the counter; an admin can clear a lock immediately with
 `POST /api/v1/users/{id}/unlock` (`users.write`). It binds to the account (not the
 IP), so rotating source IPs cannot evade it, and the lock auto-expires (no scheduler).
 
+> **Tradeoff — account-lockout denial of service.** Because the lock binds to the
+> account, anyone who knows a username can deliberately fail logins to keep that
+> account locked. This is inherent to *any* account-bound lockout; here it is bounded
+> by `max_cooldown` (the lock always self-heals) and an admin can clear it instantly.
+> Keep `base_cooldown`/`max_cooldown` short enough that a lock-out attack degrades to a
+> brief wait rather than a lasting denial — a large `max_cooldown` (e.g. hours) turns
+> this defense into a weapon an attacker can wield against your users.
+
 ---
 
 ## webauthn
