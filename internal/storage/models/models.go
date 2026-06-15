@@ -116,6 +116,21 @@ type LegalHold struct {
 	ReleasedAt *time.Time `json:"released_at,omitempty"`
 }
 
+// SSOLoginState is the short-lived CSRF/nonce state for an in-flight OIDC
+// authorization-code login (RFC 6749 §10.12 / the OIDC nonce). It is created when
+// the user is redirected to the IdP and consumed single-use on callback, binding the
+// returned id_token's nonce to this browser and proving the callback's state was the
+// one we issued. Expires within minutes.
+type SSOLoginState struct {
+	ID        uint      `gorm:"primaryKey"`
+	State     string    `gorm:"uniqueIndex;not null"` // random CSRF token; the lookup key
+	Nonce     string    `gorm:"not null"`             // bound into the requested id_token
+	Provider  string    `gorm:"not null"`
+	ReturnTo  string    // optional in-app path to land on after login
+	ExpiresAt time.Time `gorm:"index"`
+	CreatedAt time.Time
+}
+
 // RiskException records a governed acceptance of a known control gap or policy
 // exception (ISO 27001 A.5.8 risk treatment / A.5.36 compliance-with-policies): a
 // named risk, accepted by an owner with a written justification, for a bounded time.

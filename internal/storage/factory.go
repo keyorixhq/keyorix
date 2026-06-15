@@ -270,6 +270,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	breakGlassExists := tableExists(db, "break_glass_activations")
 	legalHoldExists := tableExists(db, "legal_holds")
 	riskExceptionExists := tableExists(db, "risk_exceptions")
+	ssoLoginStateExists := tableExists(db, "sso_login_states")
 	sodExists := tableExists(db, "sod_policies")
 	pwHistExists := tableExists(db, "password_histories")
 	machineExists := tableExists(db, "machine_identities")
@@ -435,6 +436,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !riskExceptionExists {
 		if err := db.AutoMigrate(&models.RiskException{}); err != nil {
 			return fmt.Errorf("failed to migrate risk_exceptions table: %w", err)
+		}
+	}
+
+	// Create the SSO-login-state table if missing (OIDC human SSO, additive).
+	if !ssoLoginStateExists {
+		if err := db.AutoMigrate(&models.SSOLoginState{}); err != nil {
+			return fmt.Errorf("failed to migrate sso_login_states table: %w", err)
 		}
 	}
 

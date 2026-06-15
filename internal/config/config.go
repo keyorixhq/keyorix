@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/delivery"
@@ -56,6 +57,10 @@ type Config struct {
 	// SCIM configures the SCIM 2.0 provisioning endpoints (RFC 7644) used by an IdP
 	// to provision/deprovision users. Disabled (zero value) = /scim/v2 is not served.
 	SCIM SCIMConfig `yaml:"scim"`
+	// SSO configures human single-sign-on login via OIDC (authorization-code flow):
+	// users sign in through their IdP and Keyorix mints a session. Disabled (zero
+	// value) = the /auth/sso endpoints are not served.
+	SSO SSOConfig `yaml:"sso"`
 	// DynamicSecrets configures the on-demand database-credentials engine and its
 	// auto-revoke sweep (ADR-035). Disabled (zero value) = the API is still served
 	// but no background sweeper runs; enable to auto-revoke leases at expiry.
@@ -639,6 +644,32 @@ type SCIMConfig struct {
 // GetToken returns the resolved SCIM bearer token, preferring the env var.
 func (s *SCIMConfig) GetToken() string {
 	return resolveSecret("KEYORIX_SCIM_TOKEN", s.Token)
+}
+
+// SSOConfig configures human OIDC single-sign-on. Opt-in (default off). Each
+// provider is an OIDC IdP; users are matched to a Keyorix account by the IdP
+// subject (against the SCIM externalId) and, failing that, by email.
+type SSOConfig struct {
+	Enabled   bool                `yaml:"enabled"`
+	Providers []SSOProviderConfig `yaml:"providers"`
+}
+
+// SSOProviderConfig is one configured OIDC provider. Endpoints are discovered from
+// the issuer's /.well-known/openid-configuration at startup, so only the issuer +
+// client credentials + redirect URL are required.
+type SSOProviderConfig struct {
+	Name         string   `yaml:"name"`          // operator label + URL slug (e.g. "okta")
+	Issuer       string   `yaml:"issuer"`        // OIDC issuer URL
+	ClientID     string   `yaml:"client_id"`     // the OAuth client id registered at the IdP
+	ClientSecret string   `yaml:"client_secret"` // prefer KEYORIX_SSO_<NAME>_CLIENT_SECRET
+	RedirectURL  string   `yaml:"redirect_url"`  // must equal <public-host>/auth/sso/<name>/callback
+	Scopes       []string `yaml:"scopes"`        // default [openid, profile, email]
+}
+
+// GetClientSecret returns the resolved client secret, preferring the per-provider
+// env var KEYORIX_SSO_<NAME>_CLIENT_SECRET (name upper-cased).
+func (p *SSOProviderConfig) GetClientSecret() string {
+	return resolveSecret("KEYORIX_SSO_"+strings.ToUpper(p.Name)+"_CLIENT_SECRET", p.ClientSecret)
 }
 
 // RotationRemindersConfig configures the rotation-reminder scheduler: a background

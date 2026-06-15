@@ -321,6 +321,19 @@ func (m *MockStorage) UpdateRiskException(ctx context.Context, e *models.RiskExc
 	return args.Error(0)
 }
 
+func (m *MockStorage) CreateSSOLoginState(ctx context.Context, s *models.SSOLoginState) error {
+	args := m.Called(ctx, s)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ConsumeSSOLoginState(ctx context.Context, state string) (*models.SSOLoginState, error) {
+	args := m.Called(ctx, state)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SSOLoginState), args.Error(1)
+}
+
 func (m *MockStorage) CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
 	args := m.Called(ctx, a)
 	if args.Get(0) == nil {

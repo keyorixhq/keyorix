@@ -17,7 +17,7 @@ The config file is located via, in order: an explicit path argument, then
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
 - [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [audit.siem](#auditsiem)
-- [scim](#scim) (RFC 7644) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
+- [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
 
 ---
 
@@ -34,6 +34,7 @@ the file:
 | `KEYORIX_API_KEY` | API key for remote-client mode |
 | `KEYORIX_SIEM_TOKEN` | SIEM push token (`audit.siem`) |
 | `KEYORIX_SCIM_TOKEN` | SCIM provisioning bearer token (`scim`) |
+| `KEYORIX_SSO_<NAME>_CLIENT_SECRET` | per-provider OIDC client secret (`sso`) |
 | `KEYORIX_SMTP_PASSWORD` | SMTP relay password (`credential_delivery.smtp`) |
 | `KEYORIX_DOMAIN` | substituted into `server` origins in the shipped example configs |
 | _(operator-named)_ | the raw KEK, when `key_provider.type: env` (see [key_provider](#encryption--kek-providers)) |
@@ -587,6 +588,39 @@ scim:
 
 > Set `token` only via `KEYORIX_SCIM_TOKEN`. Point your IdP's SCIM connector at
 > `https://<host>/scim/v2` with that token as the bearer credential.
+
+## sso
+
+Human single-sign-on login via **OIDC** (authorization-code flow). When enabled, the
+login page offers a "Sign in with <provider>" button: the user authenticates at their
+IdP and Keyorix mints the same session a password login would — so an IdP-provisioned
+([`scim`](#scim)) user, who has no password, can actually sign in. SSO logins bypass
+Keyorix-local MFA (the IdP is the authenticator).
+
+Each provider's endpoints are **discovered** from its issuer
+(`/.well-known/openid-configuration`), so only the issuer + client credentials +
+redirect URL are needed. On callback Keyorix verifies the id_token (signature against
+the issuer's JWKS, issuer, audience = `client_id`, expiry, and the nonce it issued)
+and maps the identity to a Keyorix user — by the IdP subject (matched against the SCIM
+`externalId`) first, then by email. There is **no auto-provisioning**: the account
+must already exist (provision it via SCIM or invite). A suspended user is refused.
+
+```yaml
+sso:
+  enabled: true
+  providers:
+    - name: okta                 # also the URL slug: /auth/sso/okta/login
+      issuer: https://your-tenant.okta.com
+      client_id: 0oa...
+      client_secret: ""          # prefer the KEYORIX_SSO_OKTA_CLIENT_SECRET env var
+      redirect_url: https://keyorix.example.com/auth/sso/okta/callback
+      scopes: [openid, profile, email]
+```
+
+> The client secret is read from `KEYORIX_SSO_<NAME>_CLIENT_SECRET` (name upper-cased,
+> e.g. `KEYORIX_SSO_OKTA_CLIENT_SECRET`). Register the `redirect_url` exactly as above
+> at the IdP. A provider whose discovery fails at startup is skipped with a warning,
+> not fatal.
 
 ## membership
 

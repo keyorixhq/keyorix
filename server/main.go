@@ -21,10 +21,12 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -46,6 +48,7 @@ import (
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
 	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/oauth2"
 )
 
 func main() {
@@ -369,6 +372,17 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 		coreService.SetOIDCVerifier(verifier)
 		log.Printf("OIDC federation enabled for %d issuer(s)", len(oidc.Issuers))
+	}
+
+	// Wire human SSO login (OIDC authorization-code flow) when configured. Each
+	// provider's endpoints are discovered from its issuer; a provider whose discovery
+	// fails is skipped with a warning rather than failing startup.
+	if sso := cfg.SSO; sso.Enabled && len(sso.Providers) > 0 {
+		providers, jwks, n := buildSSOProviders(sso)
+		if n > 0 {
+			coreService.SetSSOProviders(providers, jwks)
+			log.Printf("Human SSO enabled for %d provider(s)", n)
+		}
 	}
 
 	// Wire WebAuthn / passkeys (ADR-036) when configured. A bad RP config (no
@@ -971,4 +985,95 @@ func resolveOutboundIP() string {
 	}
 	defer conn.Close() //nolint:errcheck
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// oidcDiscovery is the subset of an OIDC discovery document we need.
+type oidcDiscovery struct {
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	JWKSURI               string `json:"jwks_uri"`
+}
+
+// discoverOIDC fetches an issuer's /.well-known/openid-configuration.
+func discoverOIDC(issuer string) (*oidcDiscovery, error) {
+	u := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(u) // #nosec G107 -- issuer is operator-configured, not user input
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("discovery returned %s", resp.Status)
+	}
+	var d oidcDiscovery
+	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+		return nil, err
+	}
+	if d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" || d.JWKSURI == "" {
+		return nil, fmt.Errorf("discovery document is missing required endpoints")
+	}
+	return &d, nil
+}
+
+// ssoCompleteURL derives the SPA completion URL (<redirect origin>/auth/sso/complete)
+// from a provider's redirect_url.
+func ssoCompleteURL(redirectURL string) (string, error) {
+	u, err := url.Parse(redirectURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid redirect_url %q", redirectURL)
+	}
+	return u.Scheme + "://" + u.Host + "/auth/sso/complete", nil
+}
+
+// buildSSOProviders discovers each configured provider and builds the resolved
+// providers + a JWKS resolver over their issuers. A provider that is misconfigured
+// or whose discovery fails is skipped with a warning (it must not block startup).
+func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core.JWKSResolver, int) {
+	providers := map[string]*core.SSOProvider{}
+	jwksURIs := map[string]string{}
+	for i := range sso.Providers {
+		pc := sso.Providers[i]
+		if pc.Name == "" || pc.Issuer == "" || pc.ClientID == "" || pc.RedirectURL == "" {
+			log.Printf("SSO provider %q misconfigured (name/issuer/client_id/redirect_url required); skipping", pc.Name)
+			continue
+		}
+		disc, err := discoverOIDC(pc.Issuer)
+		if err != nil {
+			log.Printf("SSO provider %q discovery failed: %v; skipping", pc.Name, err)
+			continue
+		}
+		completeURL, err := ssoCompleteURL(pc.RedirectURL)
+		if err != nil {
+			log.Printf("SSO provider %q: %v; skipping", pc.Name, err)
+			continue
+		}
+		scopes := pc.Scopes
+		if len(scopes) == 0 {
+			scopes = []string{"openid", "profile", "email"}
+		}
+		providers[pc.Name] = &core.SSOProvider{
+			Name:     pc.Name,
+			Issuer:   pc.Issuer,
+			ClientID: pc.ClientID,
+			OAuth: &oauth2.Config{
+				ClientID:     pc.ClientID,
+				ClientSecret: pc.GetClientSecret(),
+				Endpoint:     oauth2.Endpoint{AuthURL: disc.AuthorizationEndpoint, TokenURL: disc.TokenEndpoint},
+				RedirectURL:  pc.RedirectURL,
+				Scopes:       scopes,
+			},
+			CompleteURL: completeURL,
+		}
+		jwksURIs[pc.Issuer] = disc.JWKSURI
+	}
+	if len(providers) == 0 {
+		return nil, nil, 0
+	}
+	resolver, err := core.NewHTTPJWKSResolver(jwksURIs)
+	if err != nil {
+		log.Printf("SSO disabled: jwks resolver init failed: %v", err)
+		return nil, nil, 0
+	}
+	return providers, resolver, len(providers)
 }

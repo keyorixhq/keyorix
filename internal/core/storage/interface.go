@@ -101,6 +101,11 @@ type Storage interface {
 	GetRiskException(ctx context.Context, id uint) (*models.RiskException, error)
 	UpdateRiskException(ctx context.Context, e *models.RiskException) error
 
+	// SSO login state (OIDC human SSO) — short-lived CSRF/nonce state.
+	// ConsumeSSOLoginState is single-use: it returns the row and deletes it.
+	CreateSSOLoginState(ctx context.Context, s *models.SSOLoginState) error
+	ConsumeSSOLoginState(ctx context.Context, state string) (*models.SSOLoginState, error)
+
 	// Break-glass emergency-access activations (NIS2/DORA incident response).
 	CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error)
 	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)
