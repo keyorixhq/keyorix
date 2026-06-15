@@ -556,6 +556,10 @@ type EvidenceObjectStoreConfig struct {
 	LockMode string `yaml:"lock_mode"`
 	// LockRetainDays is the retention window in days; required (> 0) when LockMode set.
 	LockRetainDays int `yaml:"lock_retain_days"`
+	// LegalHold places an indefinite S3 Object Lock legal hold on each uploaded
+	// object (no expiry; cleared only out-of-band). Independent of LockMode; the
+	// bucket must have Object Lock enabled.
+	LegalHold bool `yaml:"legal_hold"`
 }
 
 // EvidenceWebhookConfig configures the off-box webhook target: each run POSTs the

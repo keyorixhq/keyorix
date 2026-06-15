@@ -42,6 +42,11 @@ type ObjectStoreConfig struct {
 	// LockRetainDays is the retention period in days applied from upload time.
 	// Required (> 0) when LockMode is set.
 	LockRetainDays int
+	// LegalHold places an S3 Object Lock legal hold on each uploaded object — an
+	// indefinite hold (no expiry) that blocks deletion/overwrite until a principal
+	// with s3:PutObjectLegalHold explicitly clears it. Independent of LockMode; the
+	// bucket must have Object Lock enabled.
+	LegalHold bool
 }
 
 // s3PutAPI is the slice of the S3 client the sink uses — an interface seam so the
@@ -52,12 +57,13 @@ type s3PutAPI interface {
 
 // ObjectStore delivers the evidence pack to an S3-compatible bucket.
 type ObjectStore struct {
-	api      s3PutAPI
-	bucket   string
-	prefix   string
-	lockMode s3types.ObjectLockMode // "" when object lock is off
-	retain   time.Duration
-	now      func() time.Time
+	api       s3PutAPI
+	bucket    string
+	prefix    string
+	lockMode  s3types.ObjectLockMode // "" when object lock is off
+	retain    time.Duration
+	legalHold bool
+	now       func() time.Time
 }
 
 // objectLockMode maps the config string to the S3 enum, validating it.
@@ -102,12 +108,13 @@ func NewObjectStore(ctx context.Context, cfg ObjectStoreConfig) (*ObjectStore, e
 		o.UsePathStyle = cfg.UsePathStyle
 	})
 	return &ObjectStore{
-		api:      client,
-		bucket:   cfg.Bucket,
-		prefix:   normalizePrefix(cfg.Prefix),
-		lockMode: lockMode,
-		retain:   time.Duration(cfg.LockRetainDays) * 24 * time.Hour,
-		now:      time.Now,
+		api:       client,
+		bucket:    cfg.Bucket,
+		prefix:    normalizePrefix(cfg.Prefix),
+		lockMode:  lockMode,
+		retain:    time.Duration(cfg.LockRetainDays) * 24 * time.Hour,
+		legalHold: cfg.LegalHold,
+		now:       time.Now,
 	}, nil
 }
 
@@ -140,13 +147,23 @@ func (o *ObjectStore) putInput(key string, body io.Reader, contentType string) *
 		in.ObjectLockMode = o.lockMode
 		in.ObjectLockRetainUntilDate = aws.Time(o.now().Add(o.retain))
 	}
+	if o.legalHold {
+		in.ObjectLockLegalHoldStatus = s3types.ObjectLockLegalHoldStatusOn
+	}
 	return in
 }
 
 // Target labels this forwarder in the export result.
 func (o *ObjectStore) Target() string {
+	var marks []string
 	if o.lockMode != "" {
-		return fmt.Sprintf("objectstore:%s/%s (lock:%s)", o.bucket, o.prefix, strings.ToLower(string(o.lockMode)))
+		marks = append(marks, "lock:"+strings.ToLower(string(o.lockMode)))
+	}
+	if o.legalHold {
+		marks = append(marks, "legal-hold")
+	}
+	if len(marks) > 0 {
+		return fmt.Sprintf("objectstore:%s/%s (%s)", o.bucket, o.prefix, strings.Join(marks, ","))
 	}
 	return fmt.Sprintf("objectstore:%s/%s", o.bucket, o.prefix)
 }

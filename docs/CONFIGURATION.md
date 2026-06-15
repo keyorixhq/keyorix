@@ -471,6 +471,7 @@ evidence_delivery:
     use_path_style: false                   # set true for MinIO and some gateways
     lock_mode: ""                           # "" | governance | compliance (S3 Object Lock / WORM)
     lock_retain_days: 0                     # retention window; required (>0) when lock_mode is set
+    legal_hold: false                       # place an indefinite S3 Object Lock legal hold on each object
 ```
 
 > The off-box targets let evidence survive the node without a mounted volume. A file
@@ -497,6 +498,13 @@ evidence_delivery:
 > property Keyorix cannot set); this configures the per-object retention applied on
 > write. A misconfigured bucket surfaces as a delivery error (non-fatal when a local
 > file was also written).
+>
+> **Legal hold.** `legal_hold: true` additionally places an S3 Object Lock *legal
+> hold* on each uploaded object — an **indefinite** hold with no expiry date that
+> blocks deletion/overwrite until a principal with `s3:PutObjectLegalHold` explicitly
+> clears it (e.g. for litigation/investigation preservation). It is independent of
+> `lock_mode` (use either or both); like retention it requires the bucket to have
+> Object Lock enabled.
 
 When **encryption is enabled**, each exported pack is **signed**: a detached
 `<file>.json.sig` is written next to it (and the webhook delivery carries the

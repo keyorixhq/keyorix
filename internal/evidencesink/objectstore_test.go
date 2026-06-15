@@ -17,6 +17,7 @@ type putCall struct {
 	bucket, key, body, ctype string
 	lockMode                 s3types.ObjectLockMode
 	retainUntil              *time.Time
+	legalHold                s3types.ObjectLockLegalHoldStatus
 }
 
 type fakeS3 struct {
@@ -28,7 +29,7 @@ func (f *fakeS3) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...func(*
 	b, _ := io.ReadAll(in.Body)
 	f.calls = append(f.calls, putCall{
 		bucket: deref(in.Bucket), key: deref(in.Key), body: string(b), ctype: deref(in.ContentType),
-		lockMode: in.ObjectLockMode, retainUntil: in.ObjectLockRetainUntilDate,
+		lockMode: in.ObjectLockMode, retainUntil: in.ObjectLockRetainUntilDate, legalHold: in.ObjectLockLegalHoldStatus,
 	})
 	if f.err != nil {
 		return nil, f.err
@@ -88,6 +89,26 @@ func TestObjectStore_ObjectLockStampsRetentionOnEveryObject(t *testing.T) {
 		assert.Equal(t, fixed.Add(7*24*time.Hour), *c.retainUntil, "retain-until = now + window")
 	}
 	assert.Contains(t, o.Target(), "lock:compliance")
+}
+
+func TestObjectStore_LegalHoldStampsEveryObject(t *testing.T) {
+	api := &fakeS3{}
+	o := &ObjectStore{api: api, bucket: "evidence-bkt", prefix: "", legalHold: true, now: time.Now}
+
+	require.NoError(t, o.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), "v1:abc"))
+	require.Len(t, api.calls, 2)
+	for _, c := range api.calls {
+		assert.Equal(t, s3types.ObjectLockLegalHoldStatusOn, c.legalHold, "every object gets a legal hold")
+		assert.Empty(t, string(c.lockMode), "legal hold is independent of retention mode")
+	}
+	assert.Contains(t, o.Target(), "legal-hold")
+}
+
+func TestObjectStore_NoLegalHoldByDefault(t *testing.T) {
+	api := &fakeS3{}
+	o := newTestObjectStore(api, "")
+	require.NoError(t, o.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), ""))
+	assert.Empty(t, string(api.calls[0].legalHold))
 }
 
 func TestNewObjectStore_ObjectLockValidation(t *testing.T) {
