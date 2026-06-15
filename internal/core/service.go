@@ -45,6 +45,7 @@ type KeyorixCore struct {
 	webauthnRP     *webauthn.WebAuthn
 	now            func() time.Time // For testability
 	passwordPolicy PasswordPolicy
+	loginLockout   LoginLockoutPolicy // per-account login lockout (disabled by default)
 	auditForwarder AuditForwarder
 	// notificationSink fans each in-app notification out to an external channel
 	// (email/webhook). nil = in-app only. Set from config via SetNotificationSink.
@@ -240,6 +241,13 @@ func (c *KeyorixCore) WebAuthnEnabled() bool { return c.webauthnRP != nil }
 // configures a password_policy block.
 func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
 	c.passwordPolicy = p
+}
+
+// SetLoginLockoutPolicy enables/configures per-account login lockout. The server
+// calls this at startup when security.login_lockout is enabled; left unset, lockout
+// is disabled (Enabled=false).
+func (c *KeyorixCore) SetLoginLockoutPolicy(p LoginLockoutPolicy) {
+	c.loginLockout = p
 }
 
 // SetSetupTokenTTL overrides the setup-token lifetime (ADR-028). The server calls

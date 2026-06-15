@@ -381,6 +381,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", handlers.UpdateUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", handlers.DeleteUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/restore", handlers.RestoreUser)
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/unlock", handlers.UnlockUser)
 			// Account state transitions (ADR-025).
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/suspend", handlers.SuspendUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/reactivate", handlers.ReactivateUser)

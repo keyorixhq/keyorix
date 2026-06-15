@@ -325,6 +325,31 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, nil, "User restored successfully")
 }
 
+// UnlockUser handles POST /api/v1/users/{id}/unlock — clears a user's login-lockout
+// state (failed-attempt counter + active lock) after repeated failed logins.
+func (h *UserHandler) UnlockUser(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.UnlockUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+			return
+		}
+		sendError(w, "InternalError", "Failed to unlock user", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, nil, "User login lockout cleared")
+}
+
 // accountStateAction is the shared handler body for the admin account-state
 // transitions (ADR-025). transition performs the state change.
 func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request, okMessage string, transition func(ctx context.Context, adminID, userID uint) error) {
