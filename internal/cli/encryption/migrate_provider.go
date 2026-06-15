@@ -33,6 +33,7 @@ var (
 	mpToWrappedKeyPath string
 	mpToFilePath       string
 	mpToEnvVar         string
+	mpToExecCommand    []string
 	mpToSaltPath       string
 	mpConfirm          bool
 )
@@ -62,11 +63,12 @@ restart — the printed summary shows the exact block.`,
 func init() {
 	EncryptionCmd.AddCommand(migrateProviderCmd)
 	f := migrateProviderCmd.Flags()
-	f.StringVar(&mpToType, "to-type", "", "target provider: password|file|env|aws-kms|gcp-kms|azure-kms (required)")
+	f.StringVar(&mpToType, "to-type", "", "target provider: password|file|env|exec|aws-kms|gcp-kms|azure-kms (required)")
 	f.StringVar(&mpToKMSKeyID, "to-kms-key-id", "", "target KMS key id/ARN/resource-name/URL (kms types)")
 	f.StringVar(&mpToWrappedKeyPath, "to-wrapped-key-path", "", "where to store the KMS-wrapped KEK blob (kms types)")
 	f.StringVar(&mpToFilePath, "to-file-path", "", "path to the raw KEK material (file type)")
 	f.StringVar(&mpToEnvVar, "to-env-var", "", "env var holding the raw KEK (env type)")
+	f.StringSliceVar(&mpToExecCommand, "to-exec-command", nil, "resolver argv whose stdout supplies the KEK (exec type), e.g. op,read,op://vault/kek/value")
 	f.StringVar(&mpToSaltPath, "to-salt-path", "", "salt path for the target password provider (default: current salt_path)")
 	f.BoolVar(&mpConfirm, "confirm", false, "required acknowledgement before re-wrapping the DEK")
 }
@@ -79,6 +81,7 @@ type migrateOpts struct {
 	toWrappedKeyPath string
 	toFilePath       string
 	toEnvVar         string
+	toExecCommand    []string
 	toSaltPath       string
 }
 
@@ -93,6 +96,7 @@ func runMigrateProvider(cmd *cobra.Command, args []string) error {
 		toWrappedKeyPath: mpToWrappedKeyPath,
 		toFilePath:       mpToFilePath,
 		toEnvVar:         mpToEnvVar,
+		toExecCommand:    mpToExecCommand,
 		toSaltPath:       mpToSaltPath,
 	}
 	return migrateProviderWithConfig(cfg, opts, mpConfirm)
@@ -120,6 +124,11 @@ func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (con
 			return tgt, fmt.Errorf("--to-env-var is required for --to-type env")
 		}
 		kp.EnvVar = opts.toEnvVar
+	case "exec":
+		if len(opts.toExecCommand) == 0 {
+			return tgt, fmt.Errorf("--to-exec-command is required for --to-type exec")
+		}
+		kp.ExecCommand = opts.toExecCommand
 	case "aws-kms", "gcp-kms", "azure-kms":
 		if opts.toKMSKeyID == "" {
 			return tgt, fmt.Errorf("--to-kms-key-id is required for --to-type %s", opts.toType)
@@ -133,7 +142,7 @@ func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (con
 		kp.KMSKeyID = opts.toKMSKeyID
 		kp.WrappedKeyPath = opts.toWrappedKeyPath
 	default:
-		return tgt, fmt.Errorf("unknown --to-type %q (supported: password, file, env, aws-kms, gcp-kms, azure-kms)", opts.toType)
+		return tgt, fmt.Errorf("unknown --to-type %q (supported: password, file, env, exec, aws-kms, gcp-kms, azure-kms)", opts.toType)
 	}
 	tgt.KeyProvider = kp
 	return tgt, nil
@@ -166,7 +175,7 @@ func migrateProviderWithConfig(cfg *config.Config, opts migrateOpts, confirm boo
 		return fmt.Errorf("KEK-provider migration must run on the server host. Current storage type is 'remote' — connect to the server and run this command there")
 	}
 	if opts.toType == "" {
-		return fmt.Errorf("--to-type is required (password|file|env|aws-kms|gcp-kms|azure-kms)")
+		return fmt.Errorf("--to-type is required (password|file|env|exec|aws-kms|gcp-kms|azure-kms)")
 	}
 	tgtEnc, err := targetEncryptionConfig(enc, opts)
 	if err != nil {

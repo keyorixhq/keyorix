@@ -281,10 +281,12 @@ type EncryptionConfig struct {
 
 // KeyProviderConfig selects the KEK source. type: "password" (default) derives the
 // KEK from KEYORIX_MASTER_PASSWORD; "file" reads raw key material from FilePath;
-// "env" reads it from the EnvVar's value (hex or base64); "aws-kms" / "gcp-kms" /
-// "azure-kms" envelope-wrap the KEK with a cloud KMS/HSM key (ADR-041) and store
-// the wrapped blob at WrappedKeyPath. file/env suit a KEK injected by a sealed/SOPS
-// secret or CSI driver; the KMS providers keep the wrapping key in the cloud HSM.
+// "env" reads it from the EnvVar's value (hex or base64); "exec" runs ExecCommand
+// and reads the KEK from its stdout; "aws-kms" / "gcp-kms" / "azure-kms"
+// envelope-wrap the KEK with a cloud KMS/HSM key (ADR-041) and store the wrapped
+// blob at WrappedKeyPath. file/env/exec suit a KEK injected by a sealed/SOPS secret,
+// a CSI driver, or any external secret store; the KMS providers keep the wrapping
+// key in the cloud HSM.
 type KeyProviderConfig struct {
 	Type     string `yaml:"type"`
 	FilePath string `yaml:"file_path"`
@@ -298,6 +300,12 @@ type KeyProviderConfig struct {
 	// WrappedKeyPath is where the KMS-wrapped KEK blob lives (aws-kms / gcp-kms /
 	// azure-kms).
 	WrappedKeyPath string `yaml:"wrapped_key_path"`
+	// ExecCommand is the argv for type "exec": the resolver command (argv[0] is the
+	// binary, the rest are arguments) whose stdout supplies the KEK as raw 32 bytes
+	// or a hex/base64 encoding thereof. Run directly without a shell. Lets a
+	// deployment fetch the KEK from any external secret store (e.g.
+	// ["op","read","op://vault/kek/value"], ["sops","-d","kek.enc"]).
+	ExecCommand []string `yaml:"exec_command"`
 }
 
 type SecretsConfig struct {

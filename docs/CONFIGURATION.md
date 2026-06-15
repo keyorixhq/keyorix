@@ -126,7 +126,7 @@ storage:
 
     # key_provider — default is "password" when omitted.
     key_provider:
-      type: password              # password | file | env | aws-kms | gcp-kms | azure-kms
+      type: password              # password | file | env | exec | aws-kms | gcp-kms | azure-kms
 
       # type: file — read raw key material from a path (mounted CSI/sealed
       # secret, KMS sidecar output). Accepts 32 raw bytes, hex, or base64.
@@ -134,6 +134,11 @@ storage:
 
       # type: env — read the KEK (hex or base64) from the named env var's value.
       # env_var: KEYORIX_KEK
+
+      # type: exec — run a resolver command and read the KEK (32 raw bytes, or
+      # hex/base64) from its stdout. argv form (no shell); fetches from any
+      # external secret store Keyorix has no built-in client for.
+      # exec_command: ["op", "read", "op://vault/keyorix-kek/value"]
 
       # type: aws-kms / gcp-kms / azure-kms — envelope-wrap the KEK with a cloud
       # KMS/HSM key (ADR-041); the wrapping key stays in the KMS/HSM. Credentials
@@ -150,6 +155,12 @@ storage:
   prior releases — existing `dek.key` files keep working.
 - **`file`** / **`env`**: the KEK is externally managed (e.g. injected by a KMS,
   CSI driver, or sealed/SOPS secret). `KEYORIX_MASTER_PASSWORD` is **not** required.
+- **`exec`**: the KEK is produced on stdout by an operator-configured resolver
+  command (`exec_command`, an argv run **without a shell**) — e.g. `op read …`
+  (1Password), `sops -d kek.enc`, `vault read -field=kek …`, or a CSI/sidecar
+  helper. Output is 32 raw bytes or a hex/base64 encoding thereof. The command runs
+  at startup (fail-closed, 30s timeout) and `KEYORIX_MASTER_PASSWORD` is **not**
+  required. The argv is trusted deployment config, like `file_path`/`env_var`.
 - **`aws-kms`** / **`gcp-kms`** / **`azure-kms`** (ADR-041): the KEK is a random key
   **wrapped by a cloud KMS/HSM key**; only the wrapped blob is on disk
   (`wrapped_key_path`), unwrapped via the KMS at startup. The wrapping key never

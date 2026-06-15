@@ -156,6 +156,23 @@ func TestTargetEncryptionConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("exec requires command", func(t *testing.T) {
+		_, err := targetEncryptionConfig(cur, migrateOpts{toType: "exec"})
+		if err == nil || !strings.Contains(err.Error(), "--to-exec-command") {
+			t.Fatalf("expected exec-command requirement, got: %v", err)
+		}
+	})
+
+	t.Run("exec carries the resolver argv", func(t *testing.T) {
+		tgt, err := targetEncryptionConfig(cur, migrateOpts{toType: "exec", toExecCommand: []string{"op", "read", "op://vault/kek/value"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tgt.KeyProvider.Type != "exec" || len(tgt.KeyProvider.ExecCommand) != 3 {
+			t.Fatalf("expected exec provider with 3-element argv, got %+v", tgt.KeyProvider)
+		}
+	})
+
 	t.Run("password overrides salt path", func(t *testing.T) {
 		tgt, err := targetEncryptionConfig(cur, migrateOpts{toType: "password", toSaltPath: "keys/new.salt"})
 		if err != nil {
