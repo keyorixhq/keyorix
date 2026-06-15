@@ -3,6 +3,32 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.28.0 — 2026-06-15
+
+The classification-coverage release: data-sensitivity labels now span every
+secret-bearing surface, not just static secrets.
+
+### Added
+- **Classify dynamic-secret configs** — a dynamic-secret config (ADR-035) carries a
+  data-classification label (public/internal/confidential/restricted), set at create
+  or via `PATCH /dynamic-secrets/configs/{id}/classification`, so the credentials it
+  mints have a sensitivity tier. ([#212])
+- **Classify machine identities & credentials** — machine identities (ADR-023) and
+  their bearer-token credentials (ADR-030) carry a classification label too, set at
+  create/issue or via `PATCH …/machine-identities/{id}/classification` and
+  `…/tokens/{tokenId}/classification` (a token defaults to its identity's tier). Adds
+  `keyorix machine create --classification`. ([#213])
+- **Classification posture coverage** — the compliance posture's classification
+  section now tallies dynamic configs, machine identities, and machine credentials by
+  level alongside static secrets (in the evidence pack and `keyorix compliance
+  report`), so an auditor sees sensitivity coverage across all of them. ([#212], [#213])
+
+### Notes
+- All additive — new indexed columns only; classification defaults to unclassified.
+
+[#212]: https://github.com/keyorixhq/keyorix/pull/212
+[#213]: https://github.com/keyorixhq/keyorix/pull/213
+
 ## v0.27.0 — 2026-06-15
 
 The federated-identity-lifecycle & evidence-durability release: let your IdP onboard
