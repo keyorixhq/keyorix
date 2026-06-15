@@ -3,6 +3,31 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.31.0 — 2026-06-15
+
+The gRPC-parity release: the newer subsystems are now scriptable over gRPC too.
+
+### Added
+- **gRPC ProjectService** — list/get/create/update/delete projects and list
+  environments over gRPC, with the same scoped authorization as the HTTP/CLI
+  surface (`secrets.read`/`write`/`delete`). ([#221])
+- **gRPC MachineIdentityService** — machine identities and their bearer-token
+  credentials over gRPC: list/create/transition/classify identities and
+  issue/list/revoke/classify tokens (the raw token is returned once). ([#222])
+- **gRPC DynamicSecretService** — dynamic-secret configs and lease lifecycle over
+  gRPC: list/get/create/classify configs and issue/list/revoke/renew/revoke-all
+  leases (the issued credential is returned once; the admin DSN is never
+  returned). ([#223])
+
+### Notes
+- Additive — new gRPC services alongside the existing HTTP+CLI; no schema changes.
+- All new RPCs authenticate via the existing interceptor (session / PAT / machine
+  token) and enforce the same RBAC the HTTP routes do.
+
+[#221]: https://github.com/keyorixhq/keyorix/pull/221
+[#222]: https://github.com/keyorixhq/keyorix/pull/222
+[#223]: https://github.com/keyorixhq/keyorix/pull/223
+
 ## v0.30.0 — 2026-06-15
 
 The IdP-driven-RBAC & legal-hold release: let the IdP grant roles, and place
