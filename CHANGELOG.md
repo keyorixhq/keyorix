@@ -3,6 +3,43 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.25.0 — 2026-06-15
+
+The enterprise-compliance release: an auditor-ready control matrix, a governed risk
+register, and SCIM provisioning for IdP-driven identity lifecycle.
+
+### Added
+- **Compliance control matrix (ISO 27001 / SOC 2 / NIS2 / DORA)** — every control
+  Keyorix enforces is now mapped to its clause references across the four regimes,
+  with a **live status** (pass / gap / not-configured) derived from the posture.
+  `GET /compliance/controls`, embedded in the evidence pack, `keyorix compliance
+  controls`, and a control-matrix panel in the web console. ([#198])
+- **Risk register / exceptions (ISO 27001 A.5.8)** — record a **governed, time-bound
+  acceptance** of a known control gap (an SoD violation, an un-rotated secret, …):
+  an owner, a justification, and a required expiry. Active exceptions surface in the
+  posture and the evidence pack, so an auditor sees an accepted-with-a-deadline risk
+  rather than an ungoverned gap. `GET/POST/DELETE /risk-exceptions`, `keyorix risk
+  list|add|revoke`, and a register panel in the web console. ([#199])
+- **SCIM 2.0 provisioning (RFC 7644)** — an opt-in `/scim/v2` endpoint group lets an
+  IdP (Okta, Entra ID, …) **provision, update, deactivate, and deprovision users and
+  sync groups** automatically, authenticated by a static bearer token. Users:
+  Create/List/Get/Replace/PATCH(active)/Delete + `ServiceProviderConfig`; Groups:
+  Create/List/Get/Replace/PATCH(members)/Delete. Configure via `scim`. ([#200], [#201])
+
+### Notes
+- Additive schema only (a `risk_exceptions` table; an `external_id` column on
+  `users`) — safe on existing databases.
+- A SCIM `userName` (typically an email/UPN) maps to the user's email and a compliant
+  alphanumeric Keyorix username is derived from it; the IdP's `externalId` is stored
+  for reconciliation. Provisioned users have no usable password (SSO / out-of-band).
+- The Keyorix web console gains the control-matrix and risk-register panels on the
+  Compliance page (keyorix-web).
+
+[#198]: https://github.com/keyorixhq/keyorix/pull/198
+[#199]: https://github.com/keyorixhq/keyorix/pull/199
+[#200]: https://github.com/keyorixhq/keyorix/pull/200
+[#201]: https://github.com/keyorixhq/keyorix/pull/201
+
 ## v0.24.0 — 2026-06-14
 
 The operationalisation release: compliance controls run on a schedule, reach people
