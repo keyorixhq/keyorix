@@ -2417,3 +2417,437 @@ var MachineIdentityService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "keyorix.proto",
 }
+
+const (
+	DynamicSecretService_ListConfigs_FullMethodName     = "/keyorix.v1.DynamicSecretService/ListConfigs"
+	DynamicSecretService_GetConfig_FullMethodName       = "/keyorix.v1.DynamicSecretService/GetConfig"
+	DynamicSecretService_CreateConfig_FullMethodName    = "/keyorix.v1.DynamicSecretService/CreateConfig"
+	DynamicSecretService_ClassifyConfig_FullMethodName  = "/keyorix.v1.DynamicSecretService/ClassifyConfig"
+	DynamicSecretService_IssueLease_FullMethodName      = "/keyorix.v1.DynamicSecretService/IssueLease"
+	DynamicSecretService_ListLeases_FullMethodName      = "/keyorix.v1.DynamicSecretService/ListLeases"
+	DynamicSecretService_RevokeLease_FullMethodName     = "/keyorix.v1.DynamicSecretService/RevokeLease"
+	DynamicSecretService_RenewLease_FullMethodName      = "/keyorix.v1.DynamicSecretService/RenewLease"
+	DynamicSecretService_RevokeAllLeases_FullMethodName = "/keyorix.v1.DynamicSecretService/RevokeAllLeases"
+)
+
+// DynamicSecretServiceClient is the client API for DynamicSecretService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Dynamic secrets service (ADR-035): on-demand database credentials. Configs are
+// project+environment scoped; lease ops authorize at the owning config/lease scope.
+// Mirrors the HTTP surface — reads use secrets.read, mutations use secrets.write.
+// The admin DSN is never returned; an issued credential is returned exactly once.
+type DynamicSecretServiceClient interface {
+	// List dynamic-secret configs in a project (optionally one environment).
+	ListConfigs(ctx context.Context, in *ListDynamicConfigsRequest, opts ...grpc.CallOption) (*ListDynamicConfigsResponse, error)
+	// Get a config by ID.
+	GetConfig(ctx context.Context, in *GetDynamicConfigRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error)
+	// Register a new dynamic-secret target.
+	CreateConfig(ctx context.Context, in *CreateDynamicConfigRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error)
+	// Set (or clear, with "") a config's data-classification label.
+	ClassifyConfig(ctx context.Context, in *ClassifyDynamicConfigRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error)
+	// Issue a short-lived credential. The username/password are returned ONCE.
+	IssueLease(ctx context.Context, in *IssueLeaseRequest, opts ...grpc.CallOption) (*IssuedCredential, error)
+	// List a config's leases (never the credential bytes).
+	ListLeases(ctx context.Context, in *ListLeasesRequest, opts ...grpc.CallOption) (*ListLeasesResponse, error)
+	// Revoke a single lease.
+	RevokeLease(ctx context.Context, in *RevokeLeaseRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Renew a lease, extending its expiry (capped by the config's max TTL).
+	RenewLease(ctx context.Context, in *RenewLeaseRequest, opts ...grpc.CallOption) (*RenewLeaseResponse, error)
+	// Revoke every active lease from a config (incident kill switch).
+	RevokeAllLeases(ctx context.Context, in *RevokeAllLeasesRequest, opts ...grpc.CallOption) (*RevokeAllLeasesResponse, error)
+}
+
+type dynamicSecretServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewDynamicSecretServiceClient(cc grpc.ClientConnInterface) DynamicSecretServiceClient {
+	return &dynamicSecretServiceClient{cc}
+}
+
+func (c *dynamicSecretServiceClient) ListConfigs(ctx context.Context, in *ListDynamicConfigsRequest, opts ...grpc.CallOption) (*ListDynamicConfigsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListDynamicConfigsResponse)
+	err := c.cc.Invoke(ctx, DynamicSecretService_ListConfigs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) GetConfig(ctx context.Context, in *GetDynamicConfigRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DynamicSecretConfig)
+	err := c.cc.Invoke(ctx, DynamicSecretService_GetConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) CreateConfig(ctx context.Context, in *CreateDynamicConfigRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DynamicSecretConfig)
+	err := c.cc.Invoke(ctx, DynamicSecretService_CreateConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) ClassifyConfig(ctx context.Context, in *ClassifyDynamicConfigRequest, opts ...grpc.CallOption) (*DynamicSecretConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DynamicSecretConfig)
+	err := c.cc.Invoke(ctx, DynamicSecretService_ClassifyConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) IssueLease(ctx context.Context, in *IssueLeaseRequest, opts ...grpc.CallOption) (*IssuedCredential, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IssuedCredential)
+	err := c.cc.Invoke(ctx, DynamicSecretService_IssueLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) ListLeases(ctx context.Context, in *ListLeasesRequest, opts ...grpc.CallOption) (*ListLeasesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListLeasesResponse)
+	err := c.cc.Invoke(ctx, DynamicSecretService_ListLeases_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) RevokeLease(ctx context.Context, in *RevokeLeaseRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, DynamicSecretService_RevokeLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) RenewLease(ctx context.Context, in *RenewLeaseRequest, opts ...grpc.CallOption) (*RenewLeaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewLeaseResponse)
+	err := c.cc.Invoke(ctx, DynamicSecretService_RenewLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *dynamicSecretServiceClient) RevokeAllLeases(ctx context.Context, in *RevokeAllLeasesRequest, opts ...grpc.CallOption) (*RevokeAllLeasesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevokeAllLeasesResponse)
+	err := c.cc.Invoke(ctx, DynamicSecretService_RevokeAllLeases_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DynamicSecretServiceServer is the server API for DynamicSecretService service.
+// All implementations must embed UnimplementedDynamicSecretServiceServer
+// for forward compatibility.
+//
+// Dynamic secrets service (ADR-035): on-demand database credentials. Configs are
+// project+environment scoped; lease ops authorize at the owning config/lease scope.
+// Mirrors the HTTP surface — reads use secrets.read, mutations use secrets.write.
+// The admin DSN is never returned; an issued credential is returned exactly once.
+type DynamicSecretServiceServer interface {
+	// List dynamic-secret configs in a project (optionally one environment).
+	ListConfigs(context.Context, *ListDynamicConfigsRequest) (*ListDynamicConfigsResponse, error)
+	// Get a config by ID.
+	GetConfig(context.Context, *GetDynamicConfigRequest) (*DynamicSecretConfig, error)
+	// Register a new dynamic-secret target.
+	CreateConfig(context.Context, *CreateDynamicConfigRequest) (*DynamicSecretConfig, error)
+	// Set (or clear, with "") a config's data-classification label.
+	ClassifyConfig(context.Context, *ClassifyDynamicConfigRequest) (*DynamicSecretConfig, error)
+	// Issue a short-lived credential. The username/password are returned ONCE.
+	IssueLease(context.Context, *IssueLeaseRequest) (*IssuedCredential, error)
+	// List a config's leases (never the credential bytes).
+	ListLeases(context.Context, *ListLeasesRequest) (*ListLeasesResponse, error)
+	// Revoke a single lease.
+	RevokeLease(context.Context, *RevokeLeaseRequest) (*emptypb.Empty, error)
+	// Renew a lease, extending its expiry (capped by the config's max TTL).
+	RenewLease(context.Context, *RenewLeaseRequest) (*RenewLeaseResponse, error)
+	// Revoke every active lease from a config (incident kill switch).
+	RevokeAllLeases(context.Context, *RevokeAllLeasesRequest) (*RevokeAllLeasesResponse, error)
+	mustEmbedUnimplementedDynamicSecretServiceServer()
+}
+
+// UnimplementedDynamicSecretServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedDynamicSecretServiceServer struct{}
+
+func (UnimplementedDynamicSecretServiceServer) ListConfigs(context.Context, *ListDynamicConfigsRequest) (*ListDynamicConfigsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListConfigs not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) GetConfig(context.Context, *GetDynamicConfigRequest) (*DynamicSecretConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetConfig not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) CreateConfig(context.Context, *CreateDynamicConfigRequest) (*DynamicSecretConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateConfig not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) ClassifyConfig(context.Context, *ClassifyDynamicConfigRequest) (*DynamicSecretConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClassifyConfig not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) IssueLease(context.Context, *IssueLeaseRequest) (*IssuedCredential, error) {
+	return nil, status.Error(codes.Unimplemented, "method IssueLease not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) ListLeases(context.Context, *ListLeasesRequest) (*ListLeasesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListLeases not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) RevokeLease(context.Context, *RevokeLeaseRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeLease not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) RenewLease(context.Context, *RenewLeaseRequest) (*RenewLeaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewLease not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) RevokeAllLeases(context.Context, *RevokeAllLeasesRequest) (*RevokeAllLeasesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeAllLeases not implemented")
+}
+func (UnimplementedDynamicSecretServiceServer) mustEmbedUnimplementedDynamicSecretServiceServer() {}
+func (UnimplementedDynamicSecretServiceServer) testEmbeddedByValue()                              {}
+
+// UnsafeDynamicSecretServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to DynamicSecretServiceServer will
+// result in compilation errors.
+type UnsafeDynamicSecretServiceServer interface {
+	mustEmbedUnimplementedDynamicSecretServiceServer()
+}
+
+func RegisterDynamicSecretServiceServer(s grpc.ServiceRegistrar, srv DynamicSecretServiceServer) {
+	// If the following call panics, it indicates UnimplementedDynamicSecretServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&DynamicSecretService_ServiceDesc, srv)
+}
+
+func _DynamicSecretService_ListConfigs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListDynamicConfigsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).ListConfigs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_ListConfigs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).ListConfigs(ctx, req.(*ListDynamicConfigsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_GetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetDynamicConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).GetConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_GetConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).GetConfig(ctx, req.(*GetDynamicConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_CreateConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateDynamicConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).CreateConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_CreateConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).CreateConfig(ctx, req.(*CreateDynamicConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_ClassifyConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClassifyDynamicConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).ClassifyConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_ClassifyConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).ClassifyConfig(ctx, req.(*ClassifyDynamicConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_IssueLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IssueLeaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).IssueLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_IssueLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).IssueLease(ctx, req.(*IssueLeaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_ListLeases_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListLeasesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).ListLeases(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_ListLeases_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).ListLeases(ctx, req.(*ListLeasesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_RevokeLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeLeaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).RevokeLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_RevokeLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).RevokeLease(ctx, req.(*RevokeLeaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_RenewLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewLeaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).RenewLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_RenewLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).RenewLease(ctx, req.(*RenewLeaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DynamicSecretService_RevokeAllLeases_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeAllLeasesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DynamicSecretServiceServer).RevokeAllLeases(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DynamicSecretService_RevokeAllLeases_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DynamicSecretServiceServer).RevokeAllLeases(ctx, req.(*RevokeAllLeasesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// DynamicSecretService_ServiceDesc is the grpc.ServiceDesc for DynamicSecretService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var DynamicSecretService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "keyorix.v1.DynamicSecretService",
+	HandlerType: (*DynamicSecretServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListConfigs",
+			Handler:    _DynamicSecretService_ListConfigs_Handler,
+		},
+		{
+			MethodName: "GetConfig",
+			Handler:    _DynamicSecretService_GetConfig_Handler,
+		},
+		{
+			MethodName: "CreateConfig",
+			Handler:    _DynamicSecretService_CreateConfig_Handler,
+		},
+		{
+			MethodName: "ClassifyConfig",
+			Handler:    _DynamicSecretService_ClassifyConfig_Handler,
+		},
+		{
+			MethodName: "IssueLease",
+			Handler:    _DynamicSecretService_IssueLease_Handler,
+		},
+		{
+			MethodName: "ListLeases",
+			Handler:    _DynamicSecretService_ListLeases_Handler,
+		},
+		{
+			MethodName: "RevokeLease",
+			Handler:    _DynamicSecretService_RevokeLease_Handler,
+		},
+		{
+			MethodName: "RenewLease",
+			Handler:    _DynamicSecretService_RenewLease_Handler,
+		},
+		{
+			MethodName: "RevokeAllLeases",
+			Handler:    _DynamicSecretService_RevokeAllLeases_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "keyorix.proto",
+}

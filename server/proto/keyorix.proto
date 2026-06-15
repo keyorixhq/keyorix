@@ -804,3 +804,135 @@ message ClassifyMachineTokenRequest {
   uint32 token_id = 3;
   string classification = 4;
 }
+
+// Dynamic secrets service (ADR-035): on-demand database credentials. Configs are
+// project+environment scoped; lease ops authorize at the owning config/lease scope.
+// Mirrors the HTTP surface — reads use secrets.read, mutations use secrets.write.
+// The admin DSN is never returned; an issued credential is returned exactly once.
+service DynamicSecretService {
+  // List dynamic-secret configs in a project (optionally one environment).
+  rpc ListConfigs(ListDynamicConfigsRequest) returns (ListDynamicConfigsResponse);
+
+  // Get a config by ID.
+  rpc GetConfig(GetDynamicConfigRequest) returns (DynamicSecretConfig);
+
+  // Register a new dynamic-secret target.
+  rpc CreateConfig(CreateDynamicConfigRequest) returns (DynamicSecretConfig);
+
+  // Set (or clear, with "") a config's data-classification label.
+  rpc ClassifyConfig(ClassifyDynamicConfigRequest) returns (DynamicSecretConfig);
+
+  // Issue a short-lived credential. The username/password are returned ONCE.
+  rpc IssueLease(IssueLeaseRequest) returns (IssuedCredential);
+
+  // List a config's leases (never the credential bytes).
+  rpc ListLeases(ListLeasesRequest) returns (ListLeasesResponse);
+
+  // Revoke a single lease.
+  rpc RevokeLease(RevokeLeaseRequest) returns (google.protobuf.Empty);
+
+  // Renew a lease, extending its expiry (capped by the config's max TTL).
+  rpc RenewLease(RenewLeaseRequest) returns (RenewLeaseResponse);
+
+  // Revoke every active lease from a config (incident kill switch).
+  rpc RevokeAllLeases(RevokeAllLeasesRequest) returns (RevokeAllLeasesResponse);
+}
+
+message DynamicSecretConfig {
+  uint32 id = 1;
+  string name = 2;
+  uint32 project_id = 3;
+  uint32 environment_id = 4;
+  string backend_type = 5;
+  string creation_template = 6;
+  int32 default_ttl_seconds = 7;
+  int32 max_ttl_seconds = 8;
+  string classification = 9;
+  string created_by = 10;
+  google.protobuf.Timestamp created_at = 11;
+}
+
+message DynamicSecretLease {
+  string lease_id = 1;
+  uint32 config_id = 2;
+  string role_name = 3;
+  string status = 4;
+  string revoke_reason = 5;
+  string revoke_error = 6;
+  optional google.protobuf.Timestamp issued_at = 7;
+  optional google.protobuf.Timestamp expires_at = 8;
+  optional google.protobuf.Timestamp revoked_at = 9;
+}
+
+message IssuedCredential {
+  string lease_id = 1;
+  string username = 2;
+  string password = 3;
+  optional google.protobuf.Timestamp expires_at = 4;
+}
+
+message ListDynamicConfigsRequest {
+  uint32 project_id = 1;
+  uint32 environment_id = 2; // 0 = all environments in the project
+}
+
+message ListDynamicConfigsResponse {
+  repeated DynamicSecretConfig configs = 1;
+}
+
+message GetDynamicConfigRequest {
+  uint32 id = 1;
+}
+
+message CreateDynamicConfigRequest {
+  string name = 1;
+  uint32 project_id = 2;
+  uint32 environment_id = 3;
+  string backend_type = 4;
+  string admin_dsn = 5;
+  string creation_template = 6;
+  int32 default_ttl_seconds = 7;
+  int32 max_ttl_seconds = 8;
+  string classification = 9;
+}
+
+message ClassifyDynamicConfigRequest {
+  uint32 id = 1;
+  string classification = 2;
+}
+
+message IssueLeaseRequest {
+  uint32 config_id = 1;
+  int32 ttl_seconds = 2; // 0 = config default
+}
+
+message ListLeasesRequest {
+  uint32 config_id = 1;
+}
+
+message ListLeasesResponse {
+  repeated DynamicSecretLease leases = 1;
+}
+
+message RevokeLeaseRequest {
+  string lease_id = 1;
+}
+
+message RenewLeaseRequest {
+  string lease_id = 1;
+  int32 ttl_seconds = 2;
+}
+
+message RenewLeaseResponse {
+  string lease_id = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message RevokeAllLeasesRequest {
+  uint32 config_id = 1;
+}
+
+message RevokeAllLeasesResponse {
+  uint32 revoked = 1;
+  uint32 failed = 2;
+}
