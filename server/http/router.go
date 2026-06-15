@@ -93,6 +93,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Get("/auth/setup/{token}", authHandler.GetSetupToken)
 	r.Post("/auth/setup/consume", authHandler.ConsumeSetup)
 
+	// Human SSO login (OIDC authorization-code flow) — unauthenticated: the IdP is
+	// the authenticator. The login redirect, the IdP callback, and the provider list
+	// the login page reads. With sso disabled the provider list is empty and BeginSSO
+	// 400s on any provider.
+	r.Get("/auth/sso/providers", authHandler.ListSSOProviders)
+	r.Get("/auth/sso/{provider}/login", authHandler.BeginSSO)
+	r.Get("/auth/sso/{provider}/callback", authHandler.CompleteSSO)
+
 	// Health check endpoint
 	r.Get("/health", handlers.HealthCheck)
 

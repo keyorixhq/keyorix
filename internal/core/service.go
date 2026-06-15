@@ -69,6 +69,10 @@ type KeyorixCore struct {
 	// oidcVerifier verifies federated machine-identity JWTs (ADR-031); nil = OIDC
 	// auth disabled. Set from config via SetOIDCVerifier.
 	oidcVerifier *OIDCVerifier
+	// ssoProviders are the configured human-SSO OIDC providers (keyed by name);
+	// ssoJWKS verifies their id_tokens. Empty = SSO disabled. Set via SetSSOProviders.
+	ssoProviders map[string]*SSOProvider
+	ssoJWKS      JWKSResolver
 	// membershipValidationMode is the ADR-022 install-level onboarding mode;
 	// "" = allowlist default. Set via SetMembershipValidationMode.
 	membershipValidationMode string
