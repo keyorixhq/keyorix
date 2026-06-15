@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './features/auth';
 import { SecretsListPage } from "./pages/secrets/SecretsListPage";
 import { SecretExpiryPage, SecretsHealthPage, RotationPoliciesPage, UsageAnalyticsPage } from "./pages/secrets";
+import DynamicSecretsPage from "./pages/secrets/DynamicSecretsPage";
 import { ProjectsListPage, ProjectDetailPage } from './pages/projects';
 import { ProtectedRoute, PublicRoute, AdminRoute, Layout, RequirePasswordChange } from './components/layout';
 import { SessionTimeoutWarning, AbsoluteSessionExpiryWarning } from './components/ui';
@@ -61,7 +62,7 @@ function App() {
                 <Routes>
                   <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
                   <Route path={ROUTES.SECRETS} element={<SecretsListPage />} />
-                  <Route path="/secrets/dynamic" element={<div className="p-8" style={{ color: 'var(--text-muted)' }}>Dynamic Secrets — coming soon</div>} />
+                  <Route path="/secrets/dynamic" element={<DynamicSecretsPage />} />
                   <Route path="/secrets/rotation" element={<RotationPoliciesPage />} />
                   <Route path="/secrets/expiry" element={<SecretExpiryPage />} />
                   <Route path="/secrets/health" element={<SecretsHealthPage />} />

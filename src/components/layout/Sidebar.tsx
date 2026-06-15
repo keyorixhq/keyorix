@@ -68,7 +68,7 @@ const NAV: NavItem[] = [
             { kind: 'leaf', name: 'Secret Expiry', href: '/secrets/expiry' },
             { kind: 'leaf', name: 'Secrets Health', href: '/secrets/health' },
             { kind: 'leaf', name: 'Usage Analytics', href: '/secrets/usage' },
-            { kind: 'leaf', name: 'Dynamic Secrets', href: '/secrets/dynamic', soon: true },
+            { kind: 'leaf', name: 'Dynamic Secrets', href: '/secrets/dynamic' },
             { kind: 'leaf', name: 'Rotation Policies', href: '/secrets/rotation' },
         ],
     },
