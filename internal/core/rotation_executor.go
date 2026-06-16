@@ -234,6 +234,16 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	if (spec.Backend == "") != (spec.Ref == "") {
 		return fmt.Errorf("rotation_backend and rotation_ref must be set together (or both empty)")
 	}
+	// Reject an unknown backend at configuration time (the backend's own allowed_refs
+	// then bounds, at rotation time, which refs it will actually rotate).
+	if spec.Backend != "" {
+		if c.rotationManager == nil {
+			return fmt.Errorf("no rotation backends are configured")
+		}
+		if _, ok := c.rotationManager.Get(spec.Backend); !ok {
+			return fmt.Errorf("unknown rotation backend %q", spec.Backend)
+		}
+	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return fmt.Errorf("secret not found: %w", err)

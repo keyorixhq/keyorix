@@ -282,6 +282,7 @@ func TestRunAutoRotation_UnknownBackendSkipped(t *testing.T) {
 func TestSetSecretAutoRotate_BackendRefBothOrNeither(t *testing.T) {
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
 	ctx := context.Background()
 
 	// backend without ref → error
@@ -289,10 +290,27 @@ func TestSetSecretAutoRotate_BackendRefBothOrNeither(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be set together")
 
-	// both set → ok
+	// both set, backend exists → ok
 	require.NoError(t, c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9))
 	var s models.SecretNode
 	require.NoError(t, db.First(&s, 1).Error)
 	assert.Equal(t, "pg", s.RotationBackend)
 	assert.Equal(t, "app_svc", s.RotationRef)
+}
+
+func TestSetSecretAutoRotate_RejectsUnknownBackend(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+	ctx := context.Background()
+
+	// No manager configured → backend reference rejected.
+	err := c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no rotation backends")
+
+	// Manager present but the named backend is not registered → rejected.
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "other"}}))
+	err = c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown rotation backend")
 }

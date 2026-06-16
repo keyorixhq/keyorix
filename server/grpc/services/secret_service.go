@@ -297,7 +297,8 @@ func mapSecretError(err error) error {
 	case strings.Contains(msg, "already exists"):
 		return status.Error(codes.AlreadyExists, "secret with this name already exists")
 	case strings.Contains(msg, "unknown rotation charset"), strings.Contains(msg, "out of range"),
-		strings.Contains(msg, "must be set together"):
+		strings.Contains(msg, "must be set together"), strings.Contains(msg, "unknown rotation backend"),
+		strings.Contains(msg, "no rotation backends"):
 		return status.Error(codes.InvalidArgument, msg)
 	default:
 		return status.Error(codes.Internal, "secret operation failed")

@@ -170,7 +170,9 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusNotFound
 		case strings.Contains(err.Error(), "unknown rotation charset"),
 			strings.Contains(err.Error(), "out of range"),
-			strings.Contains(err.Error(), "must be set together"):
+			strings.Contains(err.Error(), "must be set together"),
+			strings.Contains(err.Error(), "unknown rotation backend"),
+			strings.Contains(err.Error(), "no rotation backends"):
 			status = http.StatusBadRequest
 		}
 		h.sendError(w, "Error", err.Error(), status, nil)
