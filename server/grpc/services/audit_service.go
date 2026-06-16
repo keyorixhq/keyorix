@@ -158,14 +158,24 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 	subID, wake := s.core.SubscribeAuditStream()
 	defer s.core.UnsubscribeAuditStream(subID)
 
-	cursor, err := s.latestAuditID(ctx)
-	if err != nil {
-		return status.Error(codes.Internal, "failed to start audit stream")
+	// Resume from a client-supplied cursor (gap-free reconnect): start just after
+	// after_id and replay the backlog before tailing live. Default (0/unset) starts at
+	// the current head, tailing only new events.
+	var cursor uint
+	if req.AfterId != nil && req.GetAfterId() > 0 {
+		cursor = uint(req.GetAfterId())
+	} else {
+		head, err := s.latestAuditID(ctx)
+		if err != nil {
+			return status.Error(codes.Internal, "failed to start audit stream")
+		}
+		cursor = head
 	}
 
 	fallback := time.NewTicker(auditStreamFallbackInterval)
 	defer fallback.Stop()
 
+	// Replay any backlog after the resume cursor immediately, then block for live ticks.
 	drain := func() error {
 		for {
 			after := cursor
@@ -195,6 +205,12 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 				return nil
 			}
 		}
+	}
+
+	// Deliver the resume backlog (if any) before waiting for live events; for the
+	// default head-start cursor this is a no-op.
+	if err := drain(); err != nil {
+		return err
 	}
 
 	for {
