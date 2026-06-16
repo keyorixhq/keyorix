@@ -3,6 +3,27 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.46.0 — 2026-06-16
+
+Automated secret rotation (ADR-046).
+
+### Added
+- **Automated rotation executor** — an opt-in scheduler that actually rotates secrets,
+  not just tracks/reminds. A secret marked `auto_rotate` that is overdue under an active
+  rotation policy has its value regenerated (a new version) automatically, audited as
+  `secret.auto_rotated`. Opt-in per secret and only for Keyorix-owned (generated) values,
+  so externally-managed credentials are never silently changed. ([#263])
+- **Per-secret generated-value shape** — choose the rotated value's `length` (8–256,
+  default 32) and `charset` (`alphanumeric` [default] / `lower_alphanumeric` / `hex` /
+  `alphanumeric_symbols`) to meet a system's password requirements. ([#264])
+- **Manage auto-rotation everywhere** — toggle it over HTTP (`PATCH
+  /secrets/{id}/auto-rotate`), gRPC (`SecretService.SetSecretAutoRotate`), and the CLI
+  (`keyorix secret auto-rotate`), all gated by scoped `secrets.write`. ([#263], [#265])
+
+[#263]: https://github.com/keyorixhq/keyorix/pull/263
+[#264]: https://github.com/keyorixhq/keyorix/pull/264
+[#265]: https://github.com/keyorixhq/keyorix/pull/265
+
 ## v0.45.0 — 2026-06-16
 
 Real-time audit streaming for SIEM consumers.
