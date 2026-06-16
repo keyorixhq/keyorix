@@ -150,28 +150,29 @@ func (c *KeyorixCore) connectRefAllowed(ctx context.Context, actorType string, p
 	return false, nil
 }
 
-// actorRoleIDs resolves the caller's role IDs from the correct identity store for the
-// actor kind — machine identities hold roles in machine_identity_roles, users in
-// user_roles — so the per-reference policy is enforceable for both. Connect is a
-// global surface, so roles are resolved at global scope.
+// actorRoleIDs resolves the caller's EFFECTIVE role IDs the same way canonical
+// authorization does, so the per-reference policy matches the rest of RBAC: machine
+// identities resolve from machine_identity_roles; users resolve their direct roles
+// PLUS group-derived roles (scopedRoleIDs). Resolving only direct roles would deny a
+// user whose granted role comes via a group even though connect.read itself honors it.
+// Connect is a global surface, so roles are resolved at global scope.
 func (c *KeyorixCore) actorRoleIDs(ctx context.Context, actorType string, principalID uint) (map[uint]bool, error) {
-	set := map[uint]bool{}
+	var ids []uint
+	var err error
 	if actorType == ActorTypeMachine {
-		ids, err := c.storage.GetMachineRoleIDsAt(ctx, principalID, Scope{})
+		ids, err = c.storage.GetMachineRoleIDsAt(ctx, principalID, Scope{})
 		if err != nil {
 			return nil, fmt.Errorf("connect ref-grant: load machine roles: %w", err)
 		}
-		for _, id := range ids {
-			set[id] = true
+	} else {
+		ids, err = c.scopedRoleIDs(ctx, principalID, Scope{})
+		if err != nil {
+			return nil, fmt.Errorf("connect ref-grant: load actor roles: %w", err)
 		}
-		return set, nil
 	}
-	roles, err := c.GetUserRolesByID(ctx, principalID)
-	if err != nil {
-		return nil, fmt.Errorf("connect ref-grant: load actor roles: %w", err)
-	}
-	for _, r := range roles {
-		set[r.ID] = true
+	set := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
 	}
 	return set, nil
 }
