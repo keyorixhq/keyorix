@@ -933,16 +933,23 @@ connect:
   enabled: true
   connectors:
     - name: prod-aws            # API path key (unique); GET /api/v1/connect/prod-aws/secret?ref=…
-      type: aws-secrets-manager # the only backend today (GCP SM / Vault are follow-ups)
-      region: eu-west-1
+      type: aws-secrets-manager # aws-secrets-manager | gcp-secret-manager (Vault is a follow-up)
+      region: eu-west-1         # AWS region (aws-secrets-manager)
       allowed_refs:             # optional prefix allowlist — a ref must match one
         - keyorix/              # (defense-in-depth on top of the backend's IAM scope)
+    - name: prod-gcp
+      type: gcp-secret-manager  # ref is the version resource name (creds from ADC)
+      allowed_refs:
+        - projects/my-proj/secrets/keyorix-
 ```
 
 - Reads are **read-only** and gated by `secrets.read`; each is audited as
   `connect.secret_read`. The value is returned to the caller and never stored.
-- `ref` (query parameter) is connector-specific — for AWS Secrets Manager it is the
-  secret **name or ARN**. A binary secret is returned base64-encoded.
+- `ref` (query parameter) is connector-specific — for **AWS Secrets Manager** it is
+  the secret **name or ARN** (a binary secret is returned base64-encoded); for **GCP
+  Secret Manager** it is the **version resource name**
+  (`projects/P/secrets/NAME/versions/latest`). GCP credentials come from Application
+  Default Credentials (ADC) / workload identity.
 - Backend credentials come from the **ambient identity chain** (AWS: env /
   instance-profile / IRSA), never from this config. A backend failure surfaces as
   `502 Bad Gateway`.
