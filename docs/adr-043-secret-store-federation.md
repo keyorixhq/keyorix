@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted — first slice shipped (AWS Secrets Manager read-through). GCP Secret
-Manager, HashiCorp Vault, and caching are planned follow-ups.
+Accepted — AWS Secrets Manager and GCP Secret Manager read-through shipped.
+HashiCorp Vault, caching, and finer scoping are planned follow-ups.
 
 ## Context
 

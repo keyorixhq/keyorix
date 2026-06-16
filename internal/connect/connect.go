@@ -9,7 +9,25 @@
 // an interface seam so the engine is unit-tested with a fake.
 package connect
 
-import "context"
+import (
+	"context"
+	"strings"
+)
+
+// prefixAllowed reports whether ref is permitted by an allowlist of prefixes. An
+// empty allowlist permits everything (the backend identity's own scope is then the
+// only bound). Shared by the connectors as a defense-in-depth guardrail (ADR-043).
+func prefixAllowed(allowed []string, ref string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, p := range allowed {
+		if p != "" && strings.HasPrefix(ref, p) {
+			return true
+		}
+	}
+	return false
+}
 
 // Connector reads a secret value from one external store. It is read-only: there is
 // no create/update/delete — federation proxies reads, it does not own the secret.

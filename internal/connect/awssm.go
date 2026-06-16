@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -39,20 +38,6 @@ func NewAWSSecretsManagerConnector(name, region string, allowedRefs []string) *A
 	return &AWSSecretsManagerConnector{name: name, region: region, allowedRefs: allowedRefs}
 }
 
-// refAllowed reports whether ref is permitted by the connector's allowlist. An empty
-// allowlist permits everything (the backend IAM policy is then the only bound).
-func (c *AWSSecretsManagerConnector) refAllowed(ref string) bool {
-	if len(c.allowedRefs) == 0 {
-		return true
-	}
-	for _, p := range c.allowedRefs {
-		if p != "" && strings.HasPrefix(ref, p) {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *AWSSecretsManagerConnector) Name() string { return c.name }
 func (c *AWSSecretsManagerConnector) Type() string { return "aws-secrets-manager" }
 
@@ -75,7 +60,7 @@ func (c *AWSSecretsManagerConnector) GetSecret(ctx context.Context, ref string) 
 	if ref == "" {
 		return "", fmt.Errorf("aws-secrets-manager: secret reference is required")
 	}
-	if !c.refAllowed(ref) {
+	if !prefixAllowed(c.allowedRefs, ref) {
 		return "", fmt.Errorf("aws-secrets-manager: ref %q is not permitted by this connector's allowed_refs", ref)
 	}
 	cl, err := c.client(ctx)
