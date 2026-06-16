@@ -3,6 +3,29 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.44.0 — 2026-06-16
+
+Keyorix Connect per-reference RBAC — gRPC parity, group/glob support.
+
+### Added
+- **gRPC management of per-reference grants** — `ConnectService` gains
+  `ListRefGrants` / `CreateRefGrant` / `DeleteRefGrant` (gated `roles.read` /
+  `roles.write`), at parity with the HTTP `/connect/ref-grants` routes. ([#256])
+- **Glob ref-grant patterns** — a grant pattern is a prefix by default, or a
+  shell-style glob if it contains `*` `?` `[` (e.g. `prod/*/db`; `*` does not cross
+  `/`). Existing prefix grants are unchanged; a malformed glob matches nothing. ([#258])
+
+### Fixed
+- **Per-reference grants honor group-derived roles** — ref-grant matching now resolves
+  a caller's *effective* roles (direct **plus** group-derived for users,
+  `machine_identity_roles` for machines), consistent with how `connect.read` itself is
+  authorized. Previously a user whose granted role came via a group was wrongly denied.
+  ([#257])
+
+[#256]: https://github.com/keyorixhq/keyorix/pull/256
+[#257]: https://github.com/keyorixhq/keyorix/pull/257
+[#258]: https://github.com/keyorixhq/keyorix/pull/258
+
 ## v0.43.0 — 2026-06-16
 
 Fine-grained authorization for Keyorix Connect.
