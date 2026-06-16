@@ -46,11 +46,7 @@ func (h *ConnectHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", "ref query parameter is required", http.StatusBadRequest, nil)
 		return
 	}
-	principalID := userCtx.UserID
-	if userCtx.ActorKind() == core.ActorTypeMachine && userCtx.MachineIdentityID != nil {
-		principalID = *userCtx.MachineIdentityID
-	}
-	value, err := h.coreService.ReadFederatedSecret(r.Context(), userCtx.ActorKind(), principalID, name, ref)
+	value, err := h.coreService.ReadFederatedSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), name, ref)
 	if err != nil {
 		// Unknown connector / disabled is a client error; backend failures surface as
 		// a bad gateway since the upstream store is external.
