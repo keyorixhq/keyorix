@@ -38,7 +38,7 @@ func TestReadFederatedSecret_Success(t *testing.T) {
 	c, ms := connectTestCore(t, fakeConnector{name: "aws", val: "v3ry-secret"})
 	require.True(t, c.ConnectEnabled())
 
-	val, err := c.ReadFederatedSecret(context.Background(), 1, "aws", "prod/db")
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "prod/db")
 	require.NoError(t, err)
 	assert.Equal(t, "v3ry-secret", val)
 	// The read is audited.
@@ -47,7 +47,7 @@ func TestReadFederatedSecret_Success(t *testing.T) {
 
 func TestReadFederatedSecret_UnknownConnector(t *testing.T) {
 	c, _ := connectTestCore(t, fakeConnector{name: "aws", val: "x"})
-	_, err := c.ReadFederatedSecret(context.Background(), 1, "nope", "ref")
+	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "nope", "ref")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown connector")
 }
@@ -55,14 +55,14 @@ func TestReadFederatedSecret_UnknownConnector(t *testing.T) {
 func TestReadFederatedSecret_DisabledWhenNoManager(t *testing.T) {
 	c := &KeyorixCore{storage: new(MockStorage)}
 	assert.False(t, c.ConnectEnabled())
-	_, err := c.ReadFederatedSecret(context.Background(), 1, "aws", "ref")
+	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not enabled")
 }
 
 func TestReadFederatedSecret_BackendErrorAudited(t *testing.T) {
 	c, ms := connectTestCore(t, fakeConnector{name: "aws", err: errors.New("AccessDenied")})
-	_, err := c.ReadFederatedSecret(context.Background(), 1, "aws", "ref")
+	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "ref")
 	require.Error(t, err)
 	// A failed read is still audited (with FAILED in the description).
 	ms.AssertCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)

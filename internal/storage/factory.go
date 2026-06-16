@@ -305,6 +305,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	webauthnSessExists := tableExists(db, "web_authn_sessions")
 	loginAttemptExists := tableExists(db, "login_attempts")
 	auditCkptExists := tableExists(db, "audit_checkpoints")
+	connectRefGrantExists := tableExists(db, "connect_ref_grants")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -409,6 +410,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 					return fmt.Errorf("failed to add audit_checkpoints column %s: %w", col, err)
 				}
 			}
+		}
+	}
+
+	// Create connect_ref_grants if missing (ADR-045 per-reference Connect RBAC,
+	// additive, safe on existing DBs).
+	if !connectRefGrantExists {
+		if err := db.AutoMigrate(&models.ConnectRefGrant{}); err != nil {
+			return fmt.Errorf("failed to migrate connect_ref_grants table: %w", err)
 		}
 	}
 

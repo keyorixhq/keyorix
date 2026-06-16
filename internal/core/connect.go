@@ -6,13 +6,21 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // EventConnectSecretRead is audited on every federated read (success or failure is
 // distinguished by the description).
 const EventConnectSecretRead = "connect.secret_read"
+
+// Per-reference grant management events (ADR-045).
+const (
+	EventConnectRefGrantCreate = "connect.ref_grant_create"
+	EventConnectRefGrantDelete = "connect.ref_grant_delete"
+)
 
 // SetConnectManager wires the configured external-store connectors (ADR-043). nil
 // (the default) leaves Keyorix Connect disabled.
@@ -34,9 +42,11 @@ func (c *KeyorixCore) ConnectConnectorNames() []string {
 }
 
 // ReadFederatedSecret proxies a read of ref from the named external-store connector
-// and audits it. The caller (HTTP layer) must have already enforced RBAC. The value
-// is returned to the caller and never persisted.
-func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorID uint, connectorName, ref string) (string, error) {
+// and audits it. The caller (transport layer) must have already enforced the global
+// connect.read permission; actorType ("user" / "machine_identity") and principalID
+// identify the caller for per-reference RBAC (ADR-045). The value is returned to the
+// caller and never persisted.
+func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (string, error) {
 	if c.connectManager == nil {
 		return "", fmt.Errorf("keyorix connect is not enabled")
 	}
@@ -44,7 +54,21 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorID uint, con
 	if !ok {
 		return "", fmt.Errorf("unknown connector %q", connectorName)
 	}
-	uid := actorID
+	uid := principalID
+
+	// Per-reference RBAC (ADR-045): once a connector has any ref-grant, the read is
+	// permitted only if one of the caller's roles holds a matching grant. A connector
+	// with no grants is governed solely by connect.read + allowed_refs (unchanged).
+	allowed, err := c.connectRefAllowed(ctx, actorType, principalID, connectorName, ref)
+	if err != nil {
+		return "", err
+	}
+	if !allowed {
+		c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
+			fmt.Sprintf("federated read DENIED by per-reference policy: connector %q (%s) ref %q", connectorName, conn.Type(), ref))
+		return "", fmt.Errorf("ref %q is not permitted for your roles on connector %q", ref, connectorName)
+	}
+
 	value, err := conn.GetSecret(ctx, ref)
 	if err != nil {
 		c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
@@ -54,4 +78,100 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorID uint, con
 	c.writeAuditEvent(ctx, EventConnectSecretRead, &uid, nil,
 		fmt.Sprintf("federated read via connector %q (%s) ref %q", connectorName, conn.Type(), ref))
 	return value, nil
+}
+
+// ListConnectRefGrants returns every per-reference grant (ADR-045), for management.
+func (c *KeyorixCore) ListConnectRefGrants(ctx context.Context) ([]*models.ConnectRefGrant, error) {
+	return c.storage.ListConnectRefGrants(ctx)
+}
+
+// CreateConnectRefGrant adds a per-reference grant (ADR-045): role roleID may read any
+// ref under refPrefix ("" = all) on connectorName. The connector must be configured —
+// scoping a non-existent (typo'd) connector is rejected so an operator can't believe
+// they restricted a connector that is in fact still unscoped. Audited.
+func (c *KeyorixCore) CreateConnectRefGrant(ctx context.Context, actorID, roleID uint, connectorName, refPrefix string) (*models.ConnectRefGrant, error) {
+	if c.connectManager == nil {
+		return nil, fmt.Errorf("keyorix connect is not enabled")
+	}
+	if _, ok := c.connectManager.Get(connectorName); !ok {
+		return nil, fmt.Errorf("unknown connector %q", connectorName)
+	}
+	if roleID == 0 {
+		return nil, fmt.Errorf("a role is required for a connect ref-grant")
+	}
+	g, err := c.storage.CreateConnectRefGrant(ctx, &models.ConnectRefGrant{
+		RoleID:    roleID,
+		Connector: connectorName,
+		RefPrefix: refPrefix,
+	})
+	if err != nil {
+		return nil, err
+	}
+	uid := actorID
+	c.writeAuditEvent(ctx, EventConnectRefGrantCreate, &uid, nil,
+		fmt.Sprintf("connect ref-grant: role %d may read ref-prefix %q on connector %q", roleID, refPrefix, connectorName))
+	return g, nil
+}
+
+// DeleteConnectRefGrant removes a per-reference grant by id. Audited.
+func (c *KeyorixCore) DeleteConnectRefGrant(ctx context.Context, actorID, id uint) error {
+	if err := c.storage.DeleteConnectRefGrant(ctx, id); err != nil {
+		return err
+	}
+	uid := actorID
+	c.writeAuditEvent(ctx, EventConnectRefGrantDelete, &uid, nil,
+		fmt.Sprintf("connect ref-grant %d deleted", id))
+	return nil
+}
+
+// connectRefAllowed applies the per-reference RBAC policy (ADR-045) for a federated
+// read. It returns true when the connector has no ref-grants (the policy is opt-in,
+// per connector), or when one of the caller's roles holds a grant whose RefPrefix is a
+// prefix of ref. Otherwise the read is denied — deny-by-default once a connector is
+// scoped, so a principal whose roles do not match (including one with no resolvable
+// roles) cannot read from a grant-scoped connector.
+func (c *KeyorixCore) connectRefAllowed(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (bool, error) {
+	grants, err := c.storage.ListConnectRefGrantsByConnector(ctx, connectorName)
+	if err != nil {
+		return false, fmt.Errorf("connect ref-grant lookup: %w", err)
+	}
+	if len(grants) == 0 {
+		return true, nil // no per-ref policy for this connector
+	}
+	roleSet, err := c.actorRoleIDs(ctx, actorType, principalID)
+	if err != nil {
+		return false, err
+	}
+	for _, g := range grants {
+		if roleSet[g.RoleID] && strings.HasPrefix(ref, g.RefPrefix) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// actorRoleIDs resolves the caller's role IDs from the correct identity store for the
+// actor kind — machine identities hold roles in machine_identity_roles, users in
+// user_roles — so the per-reference policy is enforceable for both. Connect is a
+// global surface, so roles are resolved at global scope.
+func (c *KeyorixCore) actorRoleIDs(ctx context.Context, actorType string, principalID uint) (map[uint]bool, error) {
+	set := map[uint]bool{}
+	if actorType == ActorTypeMachine {
+		ids, err := c.storage.GetMachineRoleIDsAt(ctx, principalID, Scope{})
+		if err != nil {
+			return nil, fmt.Errorf("connect ref-grant: load machine roles: %w", err)
+		}
+		for _, id := range ids {
+			set[id] = true
+		}
+		return set, nil
+	}
+	roles, err := c.GetUserRolesByID(ctx, principalID)
+	if err != nil {
+		return nil, fmt.Errorf("connect ref-grant: load actor roles: %w", err)
+	}
+	for _, r := range roles {
+		set[r.ID] = true
+	}
+	return set, nil
 }

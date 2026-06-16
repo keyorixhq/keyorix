@@ -1247,6 +1247,21 @@ func (m *MockStorage) RemovePermissionFromRole(_ context.Context, _, _ uint) err
 	return nil
 }
 
+// Keyorix Connect per-reference grants (ADR-045) — core enforcement is tested against
+// real SQLite, so these mock stubs just satisfy the interface.
+func (m *MockStorage) ListConnectRefGrantsByConnector(_ context.Context, _ string) ([]*models.ConnectRefGrant, error) {
+	return nil, nil
+}
+func (m *MockStorage) ListConnectRefGrants(_ context.Context) ([]*models.ConnectRefGrant, error) {
+	return nil, nil
+}
+func (m *MockStorage) CreateConnectRefGrant(_ context.Context, grant *models.ConnectRefGrant) (*models.ConnectRefGrant, error) {
+	return grant, nil
+}
+func (m *MockStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
+	return nil
+}
+
 // Group-Role assignments
 
 func (m *MockStorage) GetGroupRoles(_ context.Context, _ uint) ([]*models.Role, error) {
