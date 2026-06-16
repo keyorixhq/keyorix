@@ -24,6 +24,17 @@ type Executor interface {
 	Rotate(ctx context.Context, ref, newValue string) error
 }
 
+// GeneratingExecutor is a rotation backend whose UPSTREAM mints the new value — e.g. a
+// cloud access-key API that issues a fresh key pair — rather than accepting a
+// Keyorix-generated one. GenerateUpstream performs the upstream rotation and returns the
+// new value to store in Keyorix (the candidate value the caller generated is ignored
+// for such backends). A backend signals this capability by implementing the interface;
+// the rotation flow prefers GenerateUpstream over Rotate when it is present.
+type GeneratingExecutor interface {
+	Executor
+	GenerateUpstream(ctx context.Context, ref string) (string, error)
+}
+
 // Manager holds the configured rotation executors, keyed by name.
 type Manager struct {
 	execs map[string]Executor

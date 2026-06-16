@@ -10,7 +10,12 @@ stored if the upstream apply fails. Manageable over HTTP/gRPC/CLI (scoped
 account names/passwords emitted as doubled-quote/backslash literals — injection-safe
 under both default and NO_BACKSLASH_ESCAPES sql_modes). Cloud-key APIs (KMS/IAM)
 would need a different contract (the cloud *generates* the new key rather than accepting
-one) and are a separate follow-up.
+one). That contract now exists as `rotation.GeneratingExecutor` (`GenerateUpstream(ref)
+→ value`): the rotation flow prefers it over `Rotate`, storing the value the upstream
+minted. The first such backend is **AWS IAM** — rotating a user's access key by minting
+a fresh pair (deleting prior keys) and storing `{access_key_id, secret_access_key}` as
+JSON. Credentials come from the ambient AWS chain; the same fail-closed `allowed_refs`
+guardrail (on IAM usernames) applies.
 
 ## Context
 
