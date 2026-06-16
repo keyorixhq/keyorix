@@ -933,7 +933,7 @@ connect:
   enabled: true
   connectors:
     - name: prod-aws            # API path key (unique); GET /api/v1/connect/prod-aws/secret?ref=…
-      type: aws-secrets-manager # aws-secrets-manager | gcp-secret-manager | vault
+      type: aws-secrets-manager # aws-secrets-manager | gcp-secret-manager | azure-key-vault | vault
       region: eu-west-1         # AWS region (aws-secrets-manager)
       allowed_refs:             # optional prefix allowlist — a ref must match one
         - keyorix/              # (defense-in-depth on top of the backend's IAM scope)
@@ -941,6 +941,11 @@ connect:
       type: gcp-secret-manager  # ref is the version resource name (creds from ADC)
       allowed_refs:
         - projects/my-proj/secrets/keyorix-
+    - name: prod-azure
+      type: azure-key-vault     # ref is the secret name (or name/version); creds from DefaultAzureCredential
+      address: https://myvault.vault.azure.net/   # the Key Vault URL
+      allowed_refs:
+        - keyorix-
     - name: prod-vault
       type: vault               # ref is the read path; KV v2 is unwrapped
       address: https://vault.example.com:8200
@@ -956,12 +961,15 @@ connect:
 - `ref` (query parameter) is connector-specific — for **AWS Secrets Manager** it is
   the secret **name or ARN** (a binary secret is returned base64-encoded); for **GCP
   Secret Manager** it is the **version resource name**
-  (`projects/P/secrets/NAME/versions/latest`); for **Vault** it is the **read path**
+  (`projects/P/secrets/NAME/versions/latest`); for **Azure Key Vault** it is the
+  **secret name** (optionally `name/version`; a bare name reads the current version)
+  within the connector's `address` vault; for **Vault** it is the **read path**
   (e.g. `secret/data/myapp` for KV v2, whose inner `data` map is returned). GCP
-  credentials come from ADC / workload identity; the Vault token comes from `token_env`.
+  credentials come from ADC / workload identity; Azure from `DefaultAzureCredential`
+  (managed/workload identity / env / CLI); the Vault token comes from `token_env`.
 - Backend credentials come from the **ambient identity chain** (AWS: env /
-  instance-profile / IRSA; GCP: ADC; Vault: `token_env`), never from this config. A
-  backend failure surfaces as `502 Bad Gateway`.
+  instance-profile / IRSA; GCP: ADC; Azure: `DefaultAzureCredential`; Vault:
+  `token_env`), never from this config. A backend failure surfaces as `502 Bad Gateway`.
 - A federated read is bounded by **two** controls: the backend identity's IAM policy
   (the load-bearing one — scope the connector's credentials to exactly the intended
   secrets) and, optionally, the per-connector **`allowed_refs`** prefix allowlist
