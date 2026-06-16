@@ -328,6 +328,11 @@ export interface RotationStatusEntry {
     days_since_rotation: number;
     days_overdue: number;
     status: RotationStatus;
+    // Whether the covered secret self-rotates (ADR-046/047) and via which backend
+    // ("" / undefined = regenerated in Keyorix). Lets the status view distinguish a
+    // self-rotating secret from a reminder-only one.
+    auto_rotate?: boolean;
+    rotation_backend?: string;
 }
 
 export interface CreateRotationPolicyPayload {

@@ -326,6 +326,7 @@ export function SecretsHealthPage() {
                                         <StatRow label="Due soon" value={rotation.dueSoon} dot={rotation.dueSoon > 0 ? 'amber' : 'green'} />
                                         <StatRow label="Up to date" value={rotation.ok} dot="green" />
                                         <StatRow label="Secrets under policy" value={rotation.covered} dot="neutral" />
+                                        <StatRow label="Self-rotating" value={rotation.items.filter(e => e.auto_rotate).length} dot="neutral" />
 
                                         {rotation.overdue > 0 && (
                                             <div className="mt-4 space-y-2">
@@ -342,8 +343,17 @@ export function SecretsHealthPage() {
                                                                 borderColor: isDark ? 'rgba(239,68,68,0.20)' : '#fca5a5',
                                                             }}
                                                         >
-                                                            <span className="text-xs font-medium truncate" style={{ color: isDark ? '#f87171' : '#991b1b' }}>
+                                                            <span className="text-xs font-medium truncate flex items-center gap-1.5" style={{ color: isDark ? '#f87171' : '#991b1b' }}>
                                                                 {e.secret_name}
+                                                                {e.auto_rotate && (
+                                                                    <span
+                                                                        title={e.rotation_backend ? `Auto-rotates via ${e.rotation_backend}` : 'Auto-rotates (Keyorix-generated)'}
+                                                                        className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                                                                        style={{ backgroundColor: isDark ? 'rgba(59,130,246,0.18)' : '#dbeafe', color: isDark ? '#93c5fd' : '#1e40af' }}
+                                                                    >
+                                                                        Auto{e.rotation_backend ? `: ${e.rotation_backend}` : ''}
+                                                                    </span>
+                                                                )}
                                                             </span>
                                                             <span className="text-xs tabular-nums shrink-0" style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}>
                                                                 {e.days_overdue}d overdue · {e.interval_days}d policy
