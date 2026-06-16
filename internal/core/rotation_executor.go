@@ -21,19 +21,65 @@ const (
 	EventSecretAutoRotateConfig = "secret.auto_rotate_configured"
 )
 
-// rotatedValueLength / rotatedValueCharset define the generated value: 32 chars over a
-// 62-symbol alphanumeric set (~190 bits of entropy). Alphanumeric only, so a consumer
-// that reads the value back never trips over shell/URL metacharacters.
+// Default generated value: 32 chars over a 62-symbol alphanumeric set (~190 bits).
+// Alphanumeric so a consumer reading it back never trips over shell/URL metacharacters.
 const (
-	rotatedValueLength  = 32
-	rotatedValueCharset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	rotatedValueLength    = 32
+	rotatedValueMinLength = 8
+	rotatedValueMaxLength = 256
 )
 
-// generateRotatedValue returns a fresh random secret value (crypto/rand).
+// Named charsets a secret may select via RotationCharset (ADR-046). "" = alphanumeric.
+const (
+	charsetAlphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	charsetLowerAlnum   = "abcdefghijklmnopqrstuvwxyz0123456789"
+	charsetHex          = "0123456789abcdef"
+	charsetAlnumSymbols = charsetAlphanumeric + "!@#$%^&*-_=+"
+	rotatedValueCharset = charsetAlphanumeric // back-compat alias (default)
+)
+
+// resolveCharset maps a RotationCharset name to its character set, defaulting to
+// alphanumeric for "" or an unknown name (fail-safe: never an empty alphabet).
+func resolveCharset(name string) string {
+	switch name {
+	case "lower_alphanumeric":
+		return charsetLowerAlnum
+	case "hex":
+		return charsetHex
+	case "alphanumeric_symbols":
+		return charsetAlnumSymbols
+	default:
+		return charsetAlphanumeric
+	}
+}
+
+// resolveLength clamps a requested length into [min,max], defaulting to 32 for 0.
+func resolveLength(n int) int {
+	if n <= 0 {
+		return rotatedValueLength
+	}
+	if n < rotatedValueMinLength {
+		return rotatedValueMinLength
+	}
+	if n > rotatedValueMaxLength {
+		return rotatedValueMaxLength
+	}
+	return n
+}
+
+// generateRotatedValue returns a fresh random value of the default shape (crypto/rand).
 func generateRotatedValue() (string, error) {
-	b := make([]byte, rotatedValueLength)
+	return generateRotatedValueSpec(0, "")
+}
+
+// generateRotatedValueSpec returns a fresh random value of the requested length and
+// charset (crypto/rand), applying the defaults/clamping above.
+func generateRotatedValueSpec(length int, charset string) (string, error) {
+	n := resolveLength(length)
+	set := resolveCharset(charset)
+	b := make([]byte, n)
 	for i := range b {
-		ch, err := randChar(rotatedValueCharset)
+		ch, err := randChar(set)
 		if err != nil {
 			return "", err
 		}
@@ -77,7 +123,7 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 				continue // not yet due under this policy
 			}
 
-			val, gerr := generateRotatedValue()
+			val, gerr := generateRotatedValueSpec(secret.RotationLength, secret.RotationCharset)
 			if gerr != nil {
 				log.Printf("auto-rotation: generate value for secret %d: %v", secret.ID, gerr)
 				continue
@@ -96,14 +142,33 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 	return rotated, nil
 }
 
-// SetSecretAutoRotate enables or disables automated rotation for a secret and audits
-// the change. Enable only for secrets whose value Keyorix owns (see the file header).
-func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, enabled bool, actorID uint) error {
+// knownRotationCharset reports whether name is a recognized charset (or "" = default).
+func knownRotationCharset(name string) bool {
+	switch name {
+	case "", "alphanumeric", "lower_alphanumeric", "hex", "alphanumeric_symbols":
+		return true
+	default:
+		return false
+	}
+}
+
+// SetSecretAutoRotate enables or disables automated rotation for a secret and sets the
+// generated-value shape (length 0 = default, charset "" = default alphanumeric), then
+// audits the change. Enable only for secrets whose value Keyorix owns (see file header).
+func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, enabled bool, length int, charset string, actorID uint) error {
+	if !knownRotationCharset(charset) {
+		return fmt.Errorf("unknown rotation charset %q (want alphanumeric|lower_alphanumeric|hex|alphanumeric_symbols)", charset)
+	}
+	if length != 0 && (length < rotatedValueMinLength || length > rotatedValueMaxLength) {
+		return fmt.Errorf("rotation length %d out of range (%d–%d, or 0 for default)", length, rotatedValueMinLength, rotatedValueMaxLength)
+	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return fmt.Errorf("secret not found: %w", err)
 	}
 	secret.AutoRotate = enabled
+	secret.RotationLength = length
+	secret.RotationCharset = charset
 	secret.UpdatedAt = c.now()
 	if _, err := c.storage.UpdateSecret(ctx, secret); err != nil {
 		return fmt.Errorf("failed to update secret: %w", err)

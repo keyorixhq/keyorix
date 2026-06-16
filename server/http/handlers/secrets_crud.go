@@ -150,21 +150,28 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var reqBody struct {
-		Enabled bool `json:"enabled"`
+		Enabled bool   `json:"enabled"`
+		Length  int    `json:"length"`  // 0 = default
+		Charset string `json:"charset"` // "" = default alphanumeric
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.SetSecretAutoRotate(r.Context(), uint(id), reqBody.Enabled, userCtx.UserID); err != nil {
+	if err := h.coreService.SetSecretAutoRotate(r.Context(), uint(id), reqBody.Enabled, reqBody.Length, reqBody.Charset, userCtx.UserID); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
 			status = http.StatusNotFound
+		case strings.Contains(err.Error(), "unknown rotation charset"), strings.Contains(err.Error(), "out of range"):
+			status = http.StatusBadRequest
 		}
 		h.sendError(w, "Error", err.Error(), status, nil)
 		return
 	}
-	h.sendSuccess(w, map[string]interface{}{"id": id, "auto_rotate": reqBody.Enabled}, "Auto-rotation updated")
+	h.sendSuccess(w, map[string]interface{}{
+		"id": id, "auto_rotate": reqBody.Enabled, "length": reqBody.Length, "charset": reqBody.Charset,
+	}, "Auto-rotation updated")
 }
 
 // GetSecret handles GET /api/v1/secrets/{id}

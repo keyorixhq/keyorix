@@ -103,14 +103,82 @@ func TestSetSecretAutoRotate_TogglesAndPersists(t *testing.T) {
 	c, db, fixed := rotationExecCore(t)
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 
-	require.NoError(t, c.SetSecretAutoRotate(context.Background(), 1, true, 9))
+	// Enable with a generator spec.
+	require.NoError(t, c.SetSecretAutoRotate(context.Background(), 1, true, 48, "hex", 9))
 	var s models.SecretNode
 	require.NoError(t, db.First(&s, 1).Error)
 	assert.True(t, s.AutoRotate)
+	assert.Equal(t, 48, s.RotationLength)
+	assert.Equal(t, "hex", s.RotationCharset)
 
-	require.NoError(t, c.SetSecretAutoRotate(context.Background(), 1, false, 9))
+	require.NoError(t, c.SetSecretAutoRotate(context.Background(), 1, false, 0, "", 9))
 	require.NoError(t, db.First(&s, 1).Error)
 	assert.False(t, s.AutoRotate)
+}
+
+func TestSetSecretAutoRotate_ValidatesSpec(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+	ctx := context.Background()
+
+	err := c.SetSecretAutoRotate(ctx, 1, true, 0, "klingon", 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown rotation charset")
+
+	err = c.SetSecretAutoRotate(ctx, 1, true, 5000, "", 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "out of range")
+}
+
+func TestGenerateRotatedValueSpec_LengthAndCharset(t *testing.T) {
+	// hex charset, custom length.
+	v, err := generateRotatedValueSpec(48, "hex")
+	require.NoError(t, err)
+	assert.Len(t, v, 48)
+	for _, ch := range v {
+		assert.Contains(t, charsetHex, string(ch))
+	}
+	// length 0 → default; unknown charset → alphanumeric (fail-safe, never empty).
+	v, err = generateRotatedValueSpec(0, "bogus")
+	require.NoError(t, err)
+	assert.Len(t, v, rotatedValueLength)
+	for _, ch := range v {
+		assert.Contains(t, charsetAlphanumeric, string(ch))
+	}
+	// below-min length clamps up, not to zero-length.
+	v, err = generateRotatedValueSpec(2, "")
+	require.NoError(t, err)
+	assert.Len(t, v, rotatedValueMinLength)
+}
+
+// The executor honors a secret's generator spec.
+func TestRunAutoRotation_UsesSecretSpec(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30,
+		IsActive: true, CreatedBy: "admin",
+	}).Error)
+	// Overdue, opted-in, hex/16.
+	lr := fixed.Add(-60 * 24 * time.Hour)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 1, Name: "hex-key", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active",
+		AutoRotate: true, RotationLength: 16, RotationCharset: "hex", LastRotatedAt: &lr, CreatedAt: lr,
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: lr,
+	}).Error)
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber)
+	assert.Len(t, string(v.EncryptedValue), 16)
+	for _, ch := range string(v.EncryptedValue) {
+		assert.Contains(t, charsetHex, string(ch))
+	}
 }
 
 func TestGenerateRotatedValue_UniqueAndCharset(t *testing.T) {
