@@ -51,6 +51,7 @@ var defaultPermissions = []bootstrapPermissionDef{
 	{"audit.read", "View audit logs", "audit", "read"},
 	{"system.read", "View system information", "system", "read"},
 	{"system.write", "Manage service accounts and API tokens", "system", "write"},
+	{"connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
 }
 
 // adminPermissions lists the permission names granted to the admin role.
@@ -59,6 +60,7 @@ var adminPermissions = []string{
 	"users.read", "users.write", "users.delete",
 	"roles.read", "roles.write", "roles.assign",
 	"audit.read", "system.read", "system.write",
+	"connect.read",
 }
 
 // editorPermissions lists the permission names granted to the editor role.

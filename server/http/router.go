@@ -220,8 +220,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// project has no parent scope, so it requires global write.
 		projectScope := customMiddleware.ScopeFromProjectParam("id")
 		// Keyorix Connect (ADR-043): read-through federation to external secret stores.
-		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/connect/connectors", connectHandler.ListConnectors)
-		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/connect/{name}/secret", connectHandler.GetSecret)
+		// Gated by the dedicated connect.read permission (ADR-044) — distinct from
+		// native secrets.read, so external-store access is granted explicitly.
+		r.With(customMiddleware.RequirePermission("connect.read")).Get("/connect/connectors", connectHandler.ListConnectors)
+		r.With(customMiddleware.RequirePermission("connect.read")).Get("/connect/{name}/secret", connectHandler.GetSecret)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects", catalogHandler.ListProjects)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}", catalogHandler.GetProject)
 		r.With(customMiddleware.RequirePermission("secrets.write")).Post("/projects", catalogHandler.CreateProject)
