@@ -29,6 +29,10 @@ service SecretService {
 
   // Get a secret's version history
   rpc GetSecretVersions(GetSecretVersionsRequest) returns (GetSecretVersionsResponse);
+
+  // Enable/disable automated rotation for a secret and set its generated-value shape
+  // (ADR-046). Requires scoped secrets.write.
+  rpc SetSecretAutoRotate(SetSecretAutoRotateRequest) returns (google.protobuf.Empty);
 }
 
 // Share service for managing secret sharing
@@ -214,6 +218,13 @@ message ListSecretsResponse {
 
 message GetSecretVersionsRequest {
   uint32 id = 1;
+}
+
+message SetSecretAutoRotateRequest {
+  uint32 id = 1;
+  bool enabled = 2;
+  int32 length = 3;  // 0 = default
+  string charset = 4; // "" = default alphanumeric
 }
 
 message SecretVersion {
