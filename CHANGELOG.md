@@ -3,6 +3,26 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.51.0 — 2026-06-17
+
+Rotation: Azure backend, failure alerts, status visibility.
+
+### Added
+- **Azure AD app-secret rotation** (ADR-047) — a generate-upstream backend completing the
+  cloud trio (AWS IAM · GCP service-account keys · Azure): rotation mints a fresh client
+  secret via Microsoft Graph and removes the app's prior secrets. Ambient Azure creds;
+  fail-closed `allowed_refs`. ([#279])
+- **Auto-rotation failure alerts** — a run that leaves any secret unrotated broadcasts one
+  summary (names + reasons, never values) to the configured notification channel
+  (Slack/Teams/webhook), so a silently-failed rotation is surfaced. ([#277])
+- **Auto-rotation visibility in rotation status** — the rotation status read model now
+  reports whether each covered secret self-rotates and via which backend; the web Secrets
+  Health page shows a self-rotating count and an "Auto" badge on overdue items. ([#278])
+
+[#277]: https://github.com/keyorixhq/keyorix/pull/277
+[#278]: https://github.com/keyorixhq/keyorix/pull/278
+[#279]: https://github.com/keyorixhq/keyorix/pull/279
+
 ## v0.50.0 — 2026-06-17
 
 ### Added
