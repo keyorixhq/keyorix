@@ -45,7 +45,11 @@ func (s *ConnectGRPCService) ReadSecret(ctx context.Context, req *pb.ReadFederat
 	if err := authorizeGlobal(ctx, s.core, actor, "connect.read"); err != nil {
 		return nil, err
 	}
-	value, err := s.core.ReadFederatedSecret(ctx, actor.UserID, req.GetConnector(), req.GetRef())
+	principalID := actor.UserID
+	if actor.ActorKind() == core.ActorTypeMachine {
+		principalID = actor.MachineIdentityID
+	}
+	value, err := s.core.ReadFederatedSecret(ctx, actor.ActorKind(), principalID, req.GetConnector(), req.GetRef())
 	if err != nil {
 		return nil, err
 	}

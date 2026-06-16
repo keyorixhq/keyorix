@@ -46,7 +46,10 @@ permissions rather than `connect.read`. Create/delete are audited
 that is in fact still unscoped.
 
 Enforcement lives in the core layer (`ReadFederatedSecret`), so it protects **every**
-transport uniformly — HTTP and the gRPC `ConnectService` alike.
+transport uniformly — HTTP and the gRPC `ConnectService` alike. The caller's roles are
+resolved from the correct identity store for the actor kind — `user_roles` for users,
+`machine_identity_roles` for machine identities — so the policy is enforceable for both
+human and machine principals (at global scope, since Connect is a global surface).
 
 ## The deny-by-default footgun (documented)
 

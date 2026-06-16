@@ -19,7 +19,7 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.UserRole{}, &models.ConnectRefGrant{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.UserRole{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{}, &models.AuditEvent{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	if len(conns) > 0 {
 		c.SetConnectManager(connect.NewManager(conns))
@@ -44,7 +44,7 @@ func seedGrant(t *testing.T, c *KeyorixCore, roleID uint, connector, prefix stri
 func TestConnectRefRBAC_NoGrantsAllows(t *testing.T) {
 	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
 	seedRoleForUser(t, db, 1, 5, "reader")
-	val, err := c.ReadFederatedSecret(context.Background(), 1, "aws", "anything/at/all")
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "anything/at/all")
 	require.NoError(t, err)
 	assert.Equal(t, "v", val)
 }
@@ -56,11 +56,11 @@ func TestConnectRefRBAC_PrefixScopes(t *testing.T) {
 	seedRoleForUser(t, db, 1, 5, "metrics-reader")
 	seedGrant(t, c, 5, "aws", "metrics/")
 
-	val, err := c.ReadFederatedSecret(context.Background(), 1, "aws", "metrics/qps")
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "metrics/qps")
 	require.NoError(t, err)
 	assert.Equal(t, "v", val)
 
-	_, err = c.ReadFederatedSecret(context.Background(), 1, "aws", "db/password")
+	_, err = c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "db/password")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not permitted")
 }
@@ -72,7 +72,7 @@ func TestConnectRefRBAC_RoleMismatchDenied(t *testing.T) {
 	seedRoleForUser(t, db, 1, 5, "reader")
 	seedGrant(t, c, 9, "aws", "metrics/") // granted to role 9, not the user's role 5
 
-	_, err := c.ReadFederatedSecret(context.Background(), 1, "aws", "metrics/qps")
+	_, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "metrics/qps")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not permitted")
 }
@@ -84,7 +84,7 @@ func TestConnectRefRBAC_EmptyPrefixAllowsAll(t *testing.T) {
 	seedGrant(t, c, 5, "aws", "")
 
 	for _, ref := range []string{"metrics/x", "db/y", "anything"} {
-		val, err := c.ReadFederatedSecret(context.Background(), 1, "aws", ref)
+		val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", ref)
 		require.NoError(t, err, ref)
 		assert.Equal(t, "v", val)
 	}
@@ -100,12 +100,12 @@ func TestConnectRefRBAC_OtherConnectorUnaffected(t *testing.T) {
 	seedGrant(t, c, 5, "aws", "metrics/") // scopes aws only
 
 	// gcp has no grants → unaffected.
-	val, err := c.ReadFederatedSecret(context.Background(), 1, "gcp", "projects/p/secrets/x/versions/latest")
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "gcp", "projects/p/secrets/x/versions/latest")
 	require.NoError(t, err)
 	assert.Equal(t, "g", val)
 
 	// aws is scoped → a non-matching ref is denied.
-	_, err = c.ReadFederatedSecret(context.Background(), 1, "aws", "db/x")
+	_, err = c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "db/x")
 	require.Error(t, err)
 }
 
@@ -118,9 +118,34 @@ func TestConnectRefRBAC_MultiRoleUnion(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 6}).Error)
 	seedGrant(t, c, 6, "aws", "db/") // only the db role grants db/
 
-	val, err := c.ReadFederatedSecret(context.Background(), 1, "aws", "db/password")
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "db/password")
 	require.NoError(t, err)
 	assert.Equal(t, "v", val)
+}
+
+// A machine identity's grants resolve from machine_identity_roles (not user_roles), so
+// the per-reference policy is enforceable for machine principals too (ADR-045).
+func TestConnectRefRBAC_MachineIdentityRoles(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	require.NoError(t, db.Create(&models.Role{ID: 7, Name: "ci-metrics"}).Error)
+	require.NoError(t, db.Create(&models.MachineIdentityRole{MachineIdentityID: 42, RoleID: 7}).Error)
+	seedGrant(t, c, 7, "aws", "metrics/")
+	ctx := context.Background()
+
+	// Machine 42 holds role 7, which is granted metrics/* → allowed.
+	val, err := c.ReadFederatedSecret(ctx, ActorTypeMachine, 42, "aws", "metrics/qps")
+	require.NoError(t, err)
+	assert.Equal(t, "v", val)
+
+	// Same machine, ref outside the granted prefix → denied.
+	_, err = c.ReadFederatedSecret(ctx, ActorTypeMachine, 42, "aws", "db/password")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not permitted")
+
+	// A different machine with no matching role → denied (deny-by-default).
+	_, err = c.ReadFederatedSecret(ctx, ActorTypeMachine, 99, "aws", "metrics/qps")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not permitted")
 }
 
 func TestConnectRefAllowed_Direct(t *testing.T) {
@@ -129,16 +154,16 @@ func TestConnectRefAllowed_Direct(t *testing.T) {
 	seedGrant(t, c, 5, "aws", "metrics/")
 	ctx := context.Background()
 
-	ok, err := c.connectRefAllowed(ctx, 1, "aws", "metrics/foo")
+	ok, err := c.connectRefAllowed(ctx, ActorTypeUser, 1, "aws", "metrics/foo")
 	require.NoError(t, err)
 	assert.True(t, ok)
 
-	ok, err = c.connectRefAllowed(ctx, 1, "aws", "secrets/foo")
+	ok, err = c.connectRefAllowed(ctx, ActorTypeUser, 1, "aws", "secrets/foo")
 	require.NoError(t, err)
 	assert.False(t, ok)
 
 	// A connector with no grants is unconstrained.
-	ok, err = c.connectRefAllowed(ctx, 1, "vault", "secret/data/x")
+	ok, err = c.connectRefAllowed(ctx, ActorTypeUser, 1, "vault", "secret/data/x")
 	require.NoError(t, err)
 	assert.True(t, ok)
 }
