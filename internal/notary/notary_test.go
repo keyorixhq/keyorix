@@ -28,10 +28,13 @@ func newTestTSA(t *testing.T, fixedTime time.Time) (*httptest.Server, crypto.Sig
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "Test TSA"},
-		NotBefore:             fixedTime.Add(-time.Hour),
-		NotAfter:              fixedTime.Add(24 * time.Hour),
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Test TSA"},
+		// Wide validity so the test is never time-bombed: the in-process TSA signs at
+		// real wall-clock time (the embedded CMS signingTime is "now"), so the cert
+		// must cover real now, not just the fixed genTime.
+		NotBefore:             fixedTime.Add(-365 * 24 * time.Hour),
+		NotAfter:              fixedTime.Add(3650 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
 		BasicConstraintsValid: true,
