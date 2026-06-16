@@ -14,9 +14,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// Audit-stream tail tuning: how often to poll for new events, and the max events
-// drained per poll. The interval is a var so tests can shorten it.
-var auditStreamPollInterval = 2 * time.Second
+// Audit-stream tail tuning: a SAFETY-NET fallback interval (the common path is the
+// push signal from core.SubscribeAuditStream, not this) and the max events drained per
+// wake. The interval is a var so tests can shorten it.
+var auditStreamFallbackInterval = 30 * time.Second
 
 const auditStreamBatch = 100
 
@@ -133,11 +134,14 @@ func rbacEntryToProto(e *core.RBACAuditEntry) *pb.RBACAuditLog {
 }
 
 // StreamAuditLogs tails the audit log: it streams audit events as they occur
-// (events created after the stream opens — use GetAuditLogs for history),
-// applying the same event_type/user/project filters. Implemented by polling the
-// forward id cursor (AuditFilter.AfterID/Ascending) every auditStreamPollInterval,
-// which avoids a separate pub/sub broker and reuses the existing query path. The
-// stream ends when the client disconnects (context cancellation).
+// (events created after the stream opens — use GetAuditLogs for history), applying
+// the same event_type/user/project filters. It is PUSH-driven: an in-process broker
+// wakes the stream the instant an event is written (core.SubscribeAuditStream), then
+// the stream drains the new rows from its forward id cursor (AuditFilter.AfterID/
+// Ascending). The database stays authoritative — the signal only collapses latency, so
+// no event is lost to a slow consumer. A long fallback ticker is a safety net for any
+// write that did not signal (e.g. a path that bypasses the audit funnel). The stream
+// ends when the client disconnects (context cancellation).
 func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, stream pb.AuditService_StreamAuditLogsServer) error {
 	ctx := stream.Context()
 	actor := interceptors.GetUserFromGRPCContext(ctx)
@@ -148,20 +152,22 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 		return err
 	}
 
-	// Start at the current head so we tail new events, not the backlog.
+	// Subscribe BEFORE reading the head id so no write between the two is missed: a
+	// write in that window leaves a pending tick, and the first drain queries from the
+	// head cursor anyway.
+	subID, wake := s.core.SubscribeAuditStream()
+	defer s.core.UnsubscribeAuditStream(subID)
+
 	cursor, err := s.latestAuditID(ctx)
 	if err != nil {
 		return status.Error(codes.Internal, "failed to start audit stream")
 	}
 
-	ticker := time.NewTicker(auditStreamPollInterval)
-	defer ticker.Stop()
+	fallback := time.NewTicker(auditStreamFallbackInterval)
+	defer fallback.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
+	drain := func() error {
+		for {
 			after := cursor
 			events, _, err := s.core.Storage().GetAuditLogs(ctx, &corestorage.AuditFilter{
 				AfterID:   &after,
@@ -175,7 +181,7 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 				return status.Error(codes.Internal, "failed to read audit logs")
 			}
 			if len(events) == 0 {
-				continue
+				return nil
 			}
 			names := s.core.ResolveUsernames(ctx, events)
 			for _, e := range events {
@@ -183,6 +189,25 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 					return err // client gone / send failed
 				}
 				cursor = e.ID
+			}
+			// A full page may mean more is queued; loop until the cursor catches up.
+			if len(events) < auditStreamBatch {
+				return nil
+			}
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-wake:
+			if err := drain(); err != nil {
+				return err
+			}
+		case <-fallback.C:
+			if err := drain(); err != nil {
+				return err
 			}
 		}
 	}

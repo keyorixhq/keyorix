@@ -81,10 +81,14 @@ func TestAuditService_StreamAuditLogs_PermissionDenied(t *testing.T) {
 }
 
 func TestAuditService_StreamAuditLogs_TailsNewEvents(t *testing.T) {
-	// Fast poll for the test.
-	old := auditStreamPollInterval
-	auditStreamPollInterval = 15 * time.Millisecond
-	defer func() { auditStreamPollInterval = old }()
+	// These events are inserted directly into the DB (bypassing the emitAudit funnel
+	// that normally fires the push signal), so delivery here rides the fallback
+	// safety-net drain — shorten it for the test. The push (signal) path itself is
+	// unit-tested in package core (TestEmitAudit_SignalsSubscribers + broker tests);
+	// both paths run the same drain() send/cursor logic exercised below.
+	old := auditStreamFallbackInterval
+	auditStreamFallbackInterval = 15 * time.Millisecond
+	defer func() { auditStreamFallbackInterval = old }()
 
 	svc, db := newStreamCore(t)
 
