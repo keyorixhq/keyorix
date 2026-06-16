@@ -85,6 +85,12 @@ func userToAPIResponse(u *models.User) map[string]interface{} {
 	if u.DeletedAt.Valid {
 		out["deleted_at"] = u.DeletedAt.Time.UTC().Format(time.RFC3339)
 	}
+	// Surface an ACTIVE per-account login lockout (ADR-040 hardening) so an admin can
+	// see a locked-out account and clear it via POST /users/{id}/unlock. Only emitted
+	// while the lock is in the future; an expired lock reads as unlocked.
+	if u.LoginLockedUntil != nil && time.Now().Before(*u.LoginLockedUntil) {
+		out["login_locked_until"] = u.LoginLockedUntil.UTC().Format(time.RFC3339)
+	}
 	return out
 }
 
