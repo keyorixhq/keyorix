@@ -366,6 +366,16 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AllowedRefs))
 			case "gcp-secret-manager":
 				connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.AllowedRefs))
+			case "vault":
+				tokenEnv := cn.TokenEnv
+				if tokenEnv == "" {
+					tokenEnv = "VAULT_TOKEN"
+				}
+				token := os.Getenv(tokenEnv)
+				if token == "" {
+					log.Printf("Keyorix Connect: vault connector %q has no token (%s unset) — reads will fail", cn.Name, tokenEnv)
+				}
+				connectors = append(connectors, connect.NewVaultConnector(cn.Name, cn.Address, token, cn.AllowedRefs))
 			default:
 				log.Printf("Keyorix Connect: skipping connector %q with unknown type %q", cn.Name, cn.Type)
 			}
