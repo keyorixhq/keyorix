@@ -3,6 +3,26 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.45.0 — 2026-06-16
+
+Real-time audit streaming for SIEM consumers.
+
+### Added
+- **Gap-free audit-stream resume** — the gRPC `StreamAuditLogs` RPC accepts an optional
+  `after_id`; a consumer that tracks its last-seen event id can reconnect from there,
+  replaying the backlog before tailing live, so a disconnect loses no events. Omitting
+  it keeps the head-start (tail-only) behavior. ([#261])
+
+### Changed
+- **`StreamAuditLogs` is now push-driven** — instead of polling the database on a fixed
+  interval, an in-process broker wakes live tails the instant an audit event is written;
+  the stream then drains new rows from its cursor (the database stays authoritative, so
+  no event is lost). Delivery latency drops to ~immediate and steady-state poll load is
+  removed; a long fallback ticker remains as a safety net. ([#260])
+
+[#260]: https://github.com/keyorixhq/keyorix/pull/260
+[#261]: https://github.com/keyorixhq/keyorix/pull/261
+
 ## v0.44.0 — 2026-06-16
 
 Keyorix Connect per-reference RBAC — gRPC parity, group/glob support.
