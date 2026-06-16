@@ -3,6 +3,26 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.48.0 — 2026-06-16
+
+More rotation backends (ADR-047).
+
+### Added
+- **MySQL rotation backend** — rotate a MySQL account's password in place
+  (`ALTER USER … IDENTIFIED BY`), alongside PostgreSQL. Injection-safe, fail-closed on a
+  required `allowed_refs`. ([#270])
+- **Cloud-key rotation (AWS IAM)** — a *generate-upstream* backend: rotation mints a
+  fresh IAM access key (deleting the user's prior keys) and stores the new
+  `{access_key_id, secret_access_key}`, for credentials the cloud issues rather than
+  accepts. Credentials come from the ambient AWS chain; same fail-closed `allowed_refs`.
+  ([#271])
+
+Backend rotation now spans PostgreSQL · MySQL (password-set) and AWS IAM (generate). The
+auto-rotation toggle (incl. backend/ref) is also now manageable from the web console.
+
+[#270]: https://github.com/keyorixhq/keyorix/pull/270
+[#271]: https://github.com/keyorixhq/keyorix/pull/271
+
 ## v0.47.0 — 2026-06-16
 
 Backend rotation executors (ADR-047) — rotate the upstream credential, not just the copy.
