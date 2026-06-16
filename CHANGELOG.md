@@ -3,6 +3,36 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.39.0 — 2026-06-16
+
+Keyorix Connect: read secrets from external stores through Keyorix.
+
+### Added
+- **Keyorix Connect — read-through federation** (ADR-043, opt-in, off by default). A
+  new read-only API proxies an authorized, audited read of a secret's *current* value
+  from an external store, without importing or persisting it — so teams reach existing
+  external secrets through Keyorix's RBAC and audit trail. Backends:
+  **AWS Secrets Manager** and **GCP Secret Manager**. Configure connectors under
+  `connect.connectors`; `GET /api/v1/connect/{name}/secret?ref=…` returns the value
+  (gated by `secrets.read`, audited `connect.secret_read`). Backend credentials come
+  from the ambient identity chain (AWS env/instance-profile/IRSA; GCP ADC), never from
+  config. An optional per-connector `allowed_refs` prefix allowlist bounds the
+  readable set on top of the backend's IAM scope. ([#243], [#244])
+
+### Fixed
+- **RFC 3161 checkpoint anchors stay verifiable after the TSA cert expires** — anchor
+  verification (ADR-029) now validates the timestamp-authority chain as of the token's
+  asserted time rather than the current clock, so a stored anchor does not become
+  unverifiable once its TSA signing certificate lapses. ([#245])
+
+### Notes
+- Connect is read-only (no import/sync); the external store stays authoritative.
+  Vault, caching, and a dedicated `connect.read` permission are planned follow-ups.
+
+[#243]: https://github.com/keyorixhq/keyorix/pull/243
+[#244]: https://github.com/keyorixhq/keyorix/pull/244
+[#245]: https://github.com/keyorixhq/keyorix/pull/245
+
 ## v0.38.0 — 2026-06-16
 
 Hardware-sealed master key, plus secret-ownership and lockout-visibility fixes.
