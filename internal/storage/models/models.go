@@ -446,6 +446,11 @@ type SecretNode struct {
 	// value Keyorix owns (generated, no external consumer to coordinate) should enable
 	// it, since auto-rotation changes the stored value without touching any upstream.
 	AutoRotate bool `gorm:"not null;default:false"`
+	// RotationLength / RotationCharset shape the value the auto-rotation executor
+	// generates (ADR-046). RotationLength 0 = the default length; RotationCharset "" =
+	// the default alphanumeric set. See the rotation executor for the named charsets.
+	RotationLength  int    `gorm:"not null;default:0"`
+	RotationCharset string `gorm:"not null;default:''"`
 	// DeletedAt enables soft delete (ADR-033). DELETE stamps it; restore clears
 	// it; the purge scheduler hard-deletes rows past the retention window. GORM
 	// auto-scopes `deleted_at IS NULL` on model-based queries — raw/Table/Joins

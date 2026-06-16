@@ -56,8 +56,13 @@ value automatically — which is the intended pattern.
   credentials. Deferred; the generated-value path covers Keyorix-owned secrets — the
   common toil — with no new trust surface. This ADR leaves room for backend executors
   later (the opt-in + scheduler are reusable).
-- **A generator spec per secret** (length/charset): deferred in favor of one strong
-  alphanumeric default; add a spec if a real need appears.
+- **A generator spec per secret** (length/charset): now supported — a secret may set
+  `rotation_length` (8–256, default 32) and `rotation_charset` (one of `alphanumeric`
+  [default] / `lower_alphanumeric` / `hex` / `alphanumeric_symbols`) via the toggle
+  endpoint, so the generated value can meet a system's password requirements. Defaults
+  preserve the original 32-char alphanumeric behavior; an unknown charset fails the
+  request (and, defensively, falls back to alphanumeric at generation — never an empty
+  alphabet). A full template language was rejected as overkill for v1.
 
 ## Consequences
 
