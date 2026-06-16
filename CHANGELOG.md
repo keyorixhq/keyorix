@@ -3,6 +3,24 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.43.0 — 2026-06-16
+
+Fine-grained authorization for Keyorix Connect.
+
+### Added
+- **Per-reference RBAC for Keyorix Connect** (ADR-045) — scope *which roles* may read
+  *which references* on a connector with a `(role, connector, ref_prefix)` allowlist,
+  refining the global `connect.read` permission and the uniform per-connector
+  `allowed_refs`. Enforced in the core read path, so it covers both the HTTP and gRPC
+  surfaces, and applies to user and machine-identity callers alike. Opt-in and
+  backward compatible: a connector with no grants is unchanged; once it has any grant
+  it is **deny-by-default** (only a caller holding a role with a matching ref-prefix
+  may read), and denied reads are audited. Manage grants at
+  `GET/POST/DELETE /api/v1/connect/ref-grants` (gated by `roles.read` / `roles.write`).
+  ([#254])
+
+[#254]: https://github.com/keyorixhq/keyorix/pull/254
+
 ## v0.42.0 — 2026-06-16
 
 Keyorix Connect reaches full surface coverage — every cloud secret store, every transport.
