@@ -50,6 +50,10 @@ type KeyorixCore struct {
 	passwordPolicy PasswordPolicy
 	loginLockout   LoginLockoutPolicy // per-account login lockout (disabled by default)
 	auditForwarder AuditForwarder
+	// auditStream is the in-process pub/sub broker that wakes live audit tails
+	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
+	// DB polling. Always non-nil (set in the constructors).
+	auditStream *auditBroker
 	// notificationSink fans each in-app notification out to an external channel
 	// (email/webhook). nil = in-app only. Set from config via SetNotificationSink.
 	notificationSink NotificationSink
@@ -143,6 +147,11 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
 	if c.auditForwarder != nil {
 		c.auditForwarder.Forward(event)
 	}
+	// Wake any live audit tails (gRPC StreamAuditLogs). Non-blocking; subscribers
+	// then read the new rows from storage with their cursor (DB stays authoritative).
+	if c.auditStream != nil {
+		c.auditStream.signal()
+	}
 }
 
 // NotificationEvent is one user-facing notification handed to an external sink for
@@ -179,6 +188,7 @@ func NewKeyorixCore(storage storage.Storage) *KeyorixCore {
 		encryption:     nil,
 		now:            time.Now,
 		passwordPolicy: DefaultPasswordPolicy(),
+		auditStream:    newAuditBroker(),
 	}
 }
 
@@ -189,6 +199,7 @@ func NewKeyorixCoreWithEncryption(storage storage.Storage, enc *encryption.Secre
 		encryption:     enc,
 		now:            time.Now,
 		passwordPolicy: DefaultPasswordPolicy(),
+		auditStream:    newAuditBroker(),
 	}
 }
 
