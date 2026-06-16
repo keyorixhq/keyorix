@@ -3,6 +3,41 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.38.0 — 2026-06-16
+
+Hardware-sealed master key, plus secret-ownership and lockout-visibility fixes.
+
+### Added
+- **TPM 2.0 hardware-sealed KEK provider** — `key_provider.type: tpm` seals the
+  key-encryption key to the host TPM 2.0 (`tpm_device`, default `/dev/tpmrm0`). A
+  random KEK is generated and sealed on first start; only the sealed blob
+  (`wrapped_key_path`) touches disk and it is unsealable only on that machine's TPM,
+  so the KEK can't be recovered from a stolen disk alone. `KEYORIX_MASTER_PASSWORD`
+  is not required; move an existing install on with `migrate-provider --to-type tpm`.
+  This completes the KEK-custody set: passphrase · file · env · exec · Shamir · TPM ·
+  AWS/GCP/Azure KMS. ([#241])
+
+### Fixed
+- **Ownerless (machine-created) secrets are owned by nobody** — secrets created by a
+  machine identity carry `OwnerID 0`; the owner-equality gates compared that directly
+  to the actor id, so a machine actor (id 0) matched every ownerless secret and was
+  treated as its owner (owner permission + share/revoke). Ownership now requires a
+  non-zero, matching id on both sides. ([#239])
+
+### Changed
+- **Admin visibility of login lockout** — the user API now exposes
+  `login_locked_until` while a per-account lockout is active, so an admin can see a
+  locked-out account and clear it (`POST /users/{id}/unlock`). ([#240])
+
+### Notes
+- Additive/opt-in; no schema changes. The TPM sealed blob is bound to one host — back
+  up the data under a portable provider, as a TPM clear/replacement makes it
+  unrecoverable.
+
+[#239]: https://github.com/keyorixhq/keyorix/pull/239
+[#240]: https://github.com/keyorixhq/keyorix/pull/240
+[#241]: https://github.com/keyorixhq/keyorix/pull/241
+
 ## v0.37.0 — 2026-06-16
 
 Split-custody master key + MFA recovery-code self-service.
