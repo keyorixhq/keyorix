@@ -3,6 +3,28 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.47.0 — 2026-06-16
+
+Backend rotation executors (ADR-047) — rotate the upstream credential, not just the copy.
+
+### Added
+- **Backend rotation executors** — automated rotation can now rotate the **upstream**
+  credential in place, so externally-owned secrets (not just Keyorix-generated values)
+  can auto-rotate. A secret configured with a `rotation_backend` + `rotation_ref` has its
+  new value applied upstream by the backend executor **before** it is stored in Keyorix,
+  so the two never drift; if the upstream apply fails, nothing is stored. The first
+  backend is **PostgreSQL** (`ALTER ROLE … WITH PASSWORD`, injection-safe). Configure
+  via HTTP / gRPC / CLI `auto-rotate` (scoped `secrets.write`). ([#267], [#268])
+
+### Security
+- Rotation backends are **fail-closed**: each requires an `allowed_refs` allow-list (a
+  backend without one is refused at registration and the executor refuses to rotate),
+  bounding which upstream principals a rotation may touch; the named backend is validated
+  when a secret is configured. Admin DSNs are operator-provided and env-sourced. ([#268])
+
+[#267]: https://github.com/keyorixhq/keyorix/pull/267
+[#268]: https://github.com/keyorixhq/keyorix/pull/268
+
 ## v0.46.0 — 2026-06-16
 
 Automated secret rotation (ADR-046).
