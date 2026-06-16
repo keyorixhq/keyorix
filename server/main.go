@@ -374,6 +374,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AllowedRefs))
 			case "gcp-secret-manager":
 				connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.AllowedRefs))
+			case "azure-key-vault":
+				connectors = append(connectors, connect.NewAzureKeyVaultConnector(cn.Name, cn.Address, cn.AllowedRefs))
 			case "vault":
 				tokenEnv := cn.TokenEnv
 				if tokenEnv == "" {

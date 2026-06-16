@@ -110,7 +110,9 @@ type ConnectorConfig struct {
 	Name   string `yaml:"name"`
 	Type   string `yaml:"type"`
 	Region string `yaml:"region"`
-	// Address is the backend base URL for type "vault" (e.g. https://vault:8200).
+	// Address is the backend base URL: the Vault server for type "vault"
+	// (e.g. https://vault:8200), or the Key Vault URL for type "azure-key-vault"
+	// (e.g. https://myvault.vault.azure.net/).
 	Address string `yaml:"address"`
 	// TokenEnv names the environment variable holding the backend token for type
 	// "vault" (default "VAULT_TOKEN"). The token is read from the environment, never

@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted — AWS Secrets Manager, GCP Secret Manager, and HashiCorp Vault
-read-through shipped. Caching, a dedicated `connect.read` permission, and finer
-per-reference scoping are planned follow-ups.
+Accepted — AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, and
+HashiCorp Vault read-through shipped, over HTTP and gRPC, gated by the dedicated
+`connect.read` permission (ADR-044). Caching and finer per-reference scoping are
+planned follow-ups.
 
 ## Context
 
