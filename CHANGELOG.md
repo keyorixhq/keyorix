@@ -3,6 +3,25 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.40.0 — 2026-06-16
+
+Keyorix Connect adds HashiCorp Vault.
+
+### Added
+- **Keyorix Connect — HashiCorp Vault backend** (ADR-043): a `vault` connector reads
+  a secret path via Vault's HTTP API and returns its data, completing the
+  AWS / GCP / Vault trio. KV v2 is detected and unwrapped; KV v1 returns the data map
+  as-is. Configure with `address` and `token_env` (default `VAULT_TOKEN`, read from
+  the environment); the per-connector `allowed_refs` prefix allowlist applies as for
+  the other backends. Read-only, gated by `secrets.read`, audited
+  `connect.secret_read`. ([#247])
+
+### Notes
+- No new dependency (a Vault KV read is a single authenticated HTTP GET). A dedicated
+  `connect.read` permission, caching, and per-reference scoping remain follow-ups.
+
+[#247]: https://github.com/keyorixhq/keyorix/pull/247
+
 ## v0.39.0 — 2026-06-16
 
 Keyorix Connect: read secrets from external stores through Keyorix.
