@@ -52,6 +52,8 @@ export interface AdminUser {
     deleted_at: string | null;
     project_count?: number;
     active_project_count?: number;
+    // Present (RFC3339) only while a per-account login lockout is ACTIVE (ADR-040).
+    login_locked_until?: string | null;
 }
 
 // UserMembership is one row of a user's project-assignments view (ADR-025).
@@ -149,6 +151,11 @@ export const usersApi = {
 
     async reactivate(id: number): Promise<void> {
         await apiClient.post(`/api/v1/users/${id}/reactivate`);
+    },
+
+    // Clear an active per-account login lockout (ADR-040). Does not change account_state.
+    async unlock(id: number): Promise<void> {
+        await apiClient.post(`/api/v1/users/${id}/unlock`);
     },
 
     async requirePasswordReset(id: number): Promise<void> {

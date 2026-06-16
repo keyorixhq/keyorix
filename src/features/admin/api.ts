@@ -141,6 +141,7 @@ const useUserLifecycleMutation = (fn: (id: number) => Promise<unknown>) => {
 
 export const useSuspendUser = () => useUserLifecycleMutation(usersApi.suspend);
 export const useReactivateUser = () => useUserLifecycleMutation(usersApi.reactivate);
+export const useUnlockUser = () => useUserLifecycleMutation(usersApi.unlock);
 export const useRequirePasswordReset = () => useUserLifecycleMutation(usersApi.requirePasswordReset);
 
 // Resend returns the delivery outcome (link for out-of-band relay), so it is a

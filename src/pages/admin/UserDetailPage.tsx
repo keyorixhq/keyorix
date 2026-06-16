@@ -8,6 +8,7 @@ import {
     useUserRoles,
     useSuspendUser,
     useReactivateUser,
+    useUnlockUser,
     useRequirePasswordReset,
     useResendSetupLink,
     AccountStateBadge,
@@ -30,12 +31,13 @@ function formatDate(iso?: string | null): string {
     }
 }
 
-type PendingAction = null | 'suspend' | 'reactivate' | 'reset';
+type PendingAction = null | 'suspend' | 'reactivate' | 'reset' | 'unlock';
 
 const ACTION_COPY: Record<Exclude<PendingAction, null>, { title: string; body: string; confirm: string; danger?: boolean }> = {
     suspend: { title: 'Suspend user', body: 'Block this user from logging in. This is reversible — you can reactivate them later.', confirm: 'Suspend', danger: true },
     reactivate: { title: 'Reactivate user', body: 'Return this user to the active state and restore their login.', confirm: 'Reactivate' },
     reset: { title: 'Force password reset', body: 'Confine this user to a restricted session until they set a new password at next login.', confirm: 'Force reset', danger: true },
+    unlock: { title: 'Clear login lockout', body: 'Remove the active brute-force lockout so this user can sign in again immediately. Does not change their account state.', confirm: 'Unlock' },
 };
 
 export const UserDetailPage: React.FC = () => {
@@ -50,6 +52,7 @@ export const UserDetailPage: React.FC = () => {
 
     const suspend = useSuspendUser();
     const reactivate = useReactivateUser();
+    const unlock = useUnlockUser();
     const requireReset = useRequirePasswordReset();
     const resend = useResendSetupLink();
 
@@ -71,6 +74,8 @@ export const UserDetailPage: React.FC = () => {
     const user = detail as unknown as AdminUser;
     const isSelf = currentUser?.id === user.id;
     const state = user.account_state || 'active';
+    // login_locked_until is emitted by the API only while a lockout is active (ADR-040).
+    const locked = !!user.login_locked_until;
     const surface = (err: any, fallback: string) => setError(err?.response?.data?.error ?? err?.message ?? fallback);
 
     const runAction = () => {
@@ -82,6 +87,7 @@ export const UserDetailPage: React.FC = () => {
         };
         if (pending === 'suspend') suspend.mutate(userId, opts);
         else if (pending === 'reactivate') reactivate.mutate(userId, opts);
+        else if (pending === 'unlock') unlock.mutate(userId, opts);
         else requireReset.mutate(userId, opts);
     };
 
@@ -141,7 +147,18 @@ export const UserDetailPage: React.FC = () => {
                         <p className="text-sm truncate" style={{ color: 'var(--text-muted)' }}>@{user.username} · {user.email}</p>
                     </div>
                 </div>
-                <AccountStateBadge state={state} deleted={!!user.deleted_at} />
+                <div className="flex items-center gap-2">
+                    {locked && (
+                        <span
+                            className="text-xs font-medium px-2.5 py-1 rounded-full"
+                            style={{ color: 'var(--danger-text, #b91c1c)', backgroundColor: 'var(--danger-subtle, #fee2e2)' }}
+                            title={`Locked until ${formatDate(user.login_locked_until)}`}
+                        >
+                            Locked out
+                        </span>
+                    )}
+                    <AccountStateBadge state={state} deleted={!!user.deleted_at} />
+                </div>
             </div>
 
             {error && <Alert type="error" message={error} dismissible onDismiss={() => setError('')} className="mb-4" />}
@@ -160,6 +177,9 @@ export const UserDetailPage: React.FC = () => {
                 <div className="mb-6">
                     <h2 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Account actions</h2>
                     <div className="flex flex-wrap gap-2">
+                        {locked && (
+                            <Button variant="outline" size="sm" onClick={() => setPending('unlock')}>Unlock login</Button>
+                        )}
                         {state === 'suspended' ? (
                             <Button variant="outline" size="sm" onClick={() => setPending('reactivate')}>Reactivate</Button>
                         ) : (
