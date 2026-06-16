@@ -1,1 +1,7 @@
-export { useConnectors, useReadFederatedSecret } from './api';
+export {
+    useConnectors,
+    useReadFederatedSecret,
+    useRefGrants,
+    useCreateRefGrant,
+    useDeleteRefGrant,
+} from './api';
