@@ -75,6 +75,14 @@ func TestAzure_GenerateUpstream_Errors(t *testing.T) {
 		_, err := azureWith(&fakeAzure{}, "app-").GenerateUpstream(context.Background(), "")
 		require.Error(t, err)
 	})
+	t.Run("ref with path metacharacters rejected", func(t *testing.T) {
+		fake := &fakeAzure{newSecret: "x"}
+		// would otherwise path-traverse to a different app despite the allowed prefix
+		_, err := azureWith(fake, "app-").GenerateUpstream(context.Background(), "app-1/../victim-2")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid application object id")
+		assert.Empty(t, fake.addedFor, "a path-shaped ref never reaches Azure")
+	})
 	t.Run("fail-closed without allowed_refs", func(t *testing.T) {
 		_, err := azureWith(&fakeAzure{}).GenerateUpstream(context.Background(), "app-123")
 		require.Error(t, err)

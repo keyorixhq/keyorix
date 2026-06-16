@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -74,6 +76,13 @@ func (e *AzureAppSecretExecutor) client(ctx context.Context) (azureGraphAPI, err
 func (e *AzureAppSecretExecutor) GenerateUpstream(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("azure-app: application object id (ref) is required")
+	}
+	// ref is interpolated into the Graph URL path; an app object id is a GUID, so reject
+	// any path/query metacharacter. Without this, a crafted ref that begins with an
+	// allowed prefix (e.g. "<allowed-guid>/../<victim-guid>") could path-traverse to a
+	// different application and defeat allowed_refs.
+	if strings.ContainsAny(ref, "/?#%") {
+		return "", fmt.Errorf("azure-app: invalid application object id %q (must be a bare GUID)", ref)
 	}
 	if len(e.allowedRefs) == 0 {
 		return "", fmt.Errorf("azure-app: backend %q has no allowed_refs configured — refusing to rotate (fail-closed)", e.name)
@@ -163,8 +172,8 @@ func (c *azureGraphClient) ListPasswordKeyIDs(ctx context.Context, appID string)
 			KeyID string `json:"keyId"`
 		} `json:"passwordCredentials"`
 	}
-	url := fmt.Sprintf("%s/applications/%s?$select=passwordCredentials", azureGraphBase, appID)
-	if err := c.do(ctx, http.MethodGet, url, nil, &out); err != nil {
+	reqURL := fmt.Sprintf("%s/applications/%s?$select=passwordCredentials", azureGraphBase, url.PathEscape(appID))
+	if err := c.do(ctx, http.MethodGet, reqURL, nil, &out); err != nil {
 		return nil, err
 	}
 	ids := make([]string, 0, len(out.PasswordCredentials))
@@ -181,14 +190,14 @@ func (c *azureGraphClient) AddPassword(ctx context.Context, appID string) (strin
 	var out struct {
 		SecretText string `json:"secretText"`
 	}
-	url := fmt.Sprintf("%s/applications/%s/addPassword", azureGraphBase, appID)
-	if err := c.do(ctx, http.MethodPost, url, body, &out); err != nil {
+	reqURL := fmt.Sprintf("%s/applications/%s/addPassword", azureGraphBase, url.PathEscape(appID))
+	if err := c.do(ctx, http.MethodPost, reqURL, body, &out); err != nil {
 		return "", err
 	}
 	return out.SecretText, nil
 }
 
 func (c *azureGraphClient) RemovePassword(ctx context.Context, appID, keyID string) error {
-	url := fmt.Sprintf("%s/applications/%s/removePassword", azureGraphBase, appID)
-	return c.do(ctx, http.MethodPost, url, map[string]any{"keyId": keyID}, nil)
+	reqURL := fmt.Sprintf("%s/applications/%s/removePassword", azureGraphBase, url.PathEscape(appID))
+	return c.do(ctx, http.MethodPost, reqURL, map[string]any{"keyId": keyID}, nil)
 }
