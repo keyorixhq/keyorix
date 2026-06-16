@@ -47,6 +47,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
+	"github.com/keyorixhq/keyorix/internal/rotation"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
@@ -394,6 +395,29 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if len(connectors) > 0 {
 			coreService.SetConnectManager(connect.NewManager(connectors))
 			log.Printf("Keyorix Connect enabled (%d connector(s))", len(connectors))
+		}
+	}
+
+	// Wire backend rotation executors (ADR-047) — upstream systems whose credentials the
+	// auto-rotation flow can rotate in place. Admin DSNs come from the environment, never
+	// the config file.
+	if len(cfg.AutoRotation.Backends) > 0 {
+		var execs []rotation.Executor
+		for _, b := range cfg.AutoRotation.Backends {
+			switch b.Type {
+			case "postgresql":
+				dsn := b.GetDSN()
+				if dsn == "" {
+					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
+				}
+				execs = append(execs, rotation.NewPostgresExecutor(b.Name, dsn, b.AllowedRefs))
+			default:
+				log.Printf("Rotation backend %q: unknown type %q, skipping", b.Name, b.Type)
+			}
+		}
+		if len(execs) > 0 {
+			coreService.SetRotationManager(rotation.NewManager(execs))
+			log.Printf("Backend rotation executors enabled (%d backend(s))", len(execs))
 		}
 	}
 

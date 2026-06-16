@@ -13,7 +13,24 @@ import (
 	"context"
 	"fmt"
 	"log"
+
+	"github.com/keyorixhq/keyorix/internal/rotation"
 )
+
+// SetRotationManager wires the configured backend rotation executors (ADR-047) that
+// apply a new credential to an upstream system. nil (the default) leaves backend
+// rotation disabled — auto-rotation then only regenerates Keyorix-owned values.
+func (c *KeyorixCore) SetRotationManager(m *rotation.Manager) {
+	c.rotationManager = m
+}
+
+// RotationBackendNames lists the configured rotation-backend names (for discovery).
+func (c *KeyorixCore) RotationBackendNames() []string {
+	if c.rotationManager == nil {
+		return nil
+	}
+	return c.rotationManager.Names()
+}
 
 // Audit events for automated rotation (ADR-046).
 const (

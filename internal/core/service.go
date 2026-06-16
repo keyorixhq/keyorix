@@ -13,6 +13,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/notary"
+	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -60,6 +61,9 @@ type KeyorixCore struct {
 	// connectManager proxies read-through federation to external secret stores
 	// (ADR-043). nil = Keyorix Connect disabled. Set via SetConnectManager.
 	connectManager *connect.Manager
+	// rotationManager holds the backend rotation executors (ADR-047) that apply a new
+	// credential to an upstream system during rotation. nil = no backends configured.
+	rotationManager *rotation.Manager
 	// evidenceForwarder ships the scheduled compliance-evidence pack to an off-box
 	// target (webhook). nil = local-file only. Set via SetEvidenceForwarder.
 	evidenceForwarder EvidenceForwarder
