@@ -101,4 +101,20 @@ export const secretsApi = {
     async classify(id: number, classification: string): Promise<void> {
         await apiClient.patch(API_ENDPOINTS.SECRETS.CLASSIFY(id), { classification });
     },
+
+    // setAutoRotate configures automated rotation (ADR-046/047) via
+    // PATCH /secrets/{id}/auto-rotate: enable/disable, the generated-value shape
+    // (length/charset), and an optional backend + ref to rotate an upstream credential.
+    async setAutoRotate(
+        id: number,
+        opts: { enabled: boolean; length?: number; charset?: string; backend?: string; ref?: string },
+    ): Promise<void> {
+        await apiClient.patch(`/api/v1/secrets/${id}/auto-rotate`, {
+            enabled: opts.enabled,
+            length: opts.length ?? 0,
+            charset: opts.charset ?? '',
+            backend: opts.backend ?? '',
+            ref: opts.ref ?? '',
+        });
+    },
 };

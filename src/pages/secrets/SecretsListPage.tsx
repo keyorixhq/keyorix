@@ -11,7 +11,7 @@ import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
-import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow, useBulkClassifySecrets } from '../../features/secrets';
+import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow, useBulkClassifySecrets, useSetAutoRotate } from '../../features/secrets';
 import { ShareSecretModal } from '../../features/sharing';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
 
@@ -92,6 +92,14 @@ export const SecretsListPage: React.FC = () => {
     const [editValue, setEditValue] = React.useState('');
     const [rotateValue, setRotateValue] = React.useState('');
 
+    // Automated-rotation modal form (ADR-046/047).
+    const [arEnabled, setArEnabled] = React.useState(true);
+    const [arLength, setArLength] = React.useState('');
+    const [arCharset, setArCharset] = React.useState('');
+    const [arBackend, setArBackend] = React.useState('');
+    const [arRef, setArRef] = React.useState('');
+    const autoRotate = useSetAutoRotate(list.modalData?.secret?.id ?? 0);
+
     React.useEffect(() => {
         if (list.activeModal === 'edit-secret' && list.modalData?.secret) {
             setEditName(list.modalData.secret.name);
@@ -101,10 +109,36 @@ export const SecretsListPage: React.FC = () => {
         if (list.activeModal === 'rotate-secret') {
             setRotateValue(generateSecret());
         }
+        if (list.activeModal === 'auto-rotate') {
+            setArEnabled(true);
+            setArLength('');
+            setArCharset('');
+            setArBackend('');
+            setArRef('');
+        }
     }, [list.activeModal, list.modalData]);
 
     const handleRotate = (secret: any) => {
         list.openModal('rotate-secret', { secret });
+    };
+
+    const handleAutoRotate = (secret: any) => {
+        list.openModal('auto-rotate', { secret });
+    };
+
+    const submitAutoRotate = (e: React.FormEvent) => {
+        e.preventDefault();
+        if ((arBackend === '') !== (arRef === '')) return; // both-or-neither (UI guard)
+        autoRotate.mutate(
+            {
+                enabled: arEnabled,
+                length: arLength ? Number(arLength) : 0,
+                charset: arCharset,
+                backend: arBackend.trim(),
+                ref: arRef.trim(),
+            },
+            { onSuccess: () => list.closeModal() },
+        );
     };
 
     if (list.error) {
@@ -277,6 +311,7 @@ export const SecretsListPage: React.FC = () => {
                                         onDelete={s => list.openModal('delete-secret', { secret: s })}
                                         onShare={s => list.openModal('share-secret', { secret: s })}
                                         onRotate={handleRotate}
+                                        onAutoRotate={handleAutoRotate}
                                         onCopy={reveal.handleCopySecretValue}
                                         copyingId={reveal.copyingSecretId}
                                         copiedId={reveal.copiedSecretId}
@@ -439,6 +474,47 @@ export const SecretsListPage: React.FC = () => {
                     <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">
                         <Button type="button" variant="outline" onClick={list.closeModal} disabled={list.rotateMutation.isPending}>Cancel</Button>
                         <Button type="submit" disabled={list.rotateMutation.isPending || !rotateValue.trim()}>{list.rotateMutation.isPending ? 'Rotating…' : 'Rotate'}</Button>
+                    </div>
+                </form>
+            </Modal>
+
+            <Modal isOpen={list.activeModal === 'auto-rotate'} onClose={list.closeModal} title={`Automated Rotation: ${list.modalData?.secret?.name ?? ''}`} size="md">
+                <form onSubmit={submitAutoRotate} className="space-y-4">
+                    {autoRotate.isError && <Alert type="error" title="Failed to update auto-rotation" message={autoRotate.error instanceof Error ? autoRotate.error.message : 'An unexpected error occurred'} />}
+                    <p className="text-sm text-base-muted">
+                        When enabled, Keyorix regenerates this secret on its rotation-policy schedule. Enable only for
+                        values Keyorix owns — or set a backend to rotate the upstream credential in place.
+                    </p>
+                    <label className="flex items-center gap-2 text-sm text-base-secondary">
+                        <input type="checkbox" checked={arEnabled} onChange={(e) => setArEnabled(e.target.checked)} aria-label="Enable auto-rotation" />
+                        Enable automated rotation
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                        <Input label="Value length" type="number" placeholder="default 32" value={arLength} onChange={(e) => setArLength(e.target.value)} />
+                        <div>
+                            <label className="block text-sm font-medium text-base-secondary mb-1">Charset</label>
+                            <Select value={arCharset} onChange={(e) => setArCharset(e.target.value)}
+                                options={[
+                                    { value: '', label: 'Alphanumeric (default)' },
+                                    { value: 'lower_alphanumeric', label: 'Lowercase + digits' },
+                                    { value: 'hex', label: 'Hex' },
+                                    { value: 'alphanumeric_symbols', label: 'Alphanumeric + symbols' },
+                                ]} />
+                        </div>
+                    </div>
+                    <div className="pt-2 border-t border-base">
+                        <p className="text-xs text-base-muted mb-2">Optional — rotate an upstream credential (e.g. a DB role or cloud key) via a configured backend.</p>
+                        <div className="grid grid-cols-2 gap-3">
+                            <Input label="Backend" placeholder="e.g. prod-postgres" value={arBackend} onChange={(e) => setArBackend(e.target.value)} />
+                            <Input label="Upstream ref" placeholder="e.g. app_svc" value={arRef} onChange={(e) => setArRef(e.target.value)} />
+                        </div>
+                        {(arBackend === '') !== (arRef === '') && (
+                            <p className="text-xs text-red-600 mt-1">Backend and ref must be set together.</p>
+                        )}
+                    </div>
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t border-base">
+                        <Button type="button" variant="outline" onClick={list.closeModal} disabled={autoRotate.isPending}>Cancel</Button>
+                        <Button type="submit" disabled={autoRotate.isPending || ((arBackend === '') !== (arRef === ''))}>{autoRotate.isPending ? 'Saving…' : 'Save'}</Button>
                     </div>
                 </form>
             </Modal>

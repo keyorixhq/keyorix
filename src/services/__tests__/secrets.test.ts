@@ -6,6 +6,7 @@ vi.mock('../client', () => ({
         get: vi.fn(),
         post: vi.fn(),
         put: vi.fn(),
+        patch: vi.fn(),
         delete: vi.fn(),
     },
 }));
@@ -16,6 +17,7 @@ import { secretsApi } from '../secrets';
 const mocked = apiClient as unknown as {
     get: ReturnType<typeof vi.fn>;
     post: ReturnType<typeof vi.fn>;
+    patch: ReturnType<typeof vi.fn>;
 };
 
 beforeEach(() => {
@@ -91,5 +93,23 @@ describe('secretsApi.risk', () => {
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/secrets/7/risk');
         expect(out).toMatchObject({ secret_id: 7, score: 72, band: 'high' });
         expect(out.factors).toHaveLength(1);
+    });
+});
+
+describe('secretsApi.setAutoRotate', () => {
+    it('PATCHes the full auto-rotate payload (with defaults filled)', async () => {
+        mocked.patch.mockResolvedValue({ data: { message: 'ok' } });
+        await secretsApi.setAutoRotate(7, { enabled: true });
+        expect(mocked.patch).toHaveBeenCalledWith('/api/v1/secrets/7/auto-rotate', {
+            enabled: true, length: 0, charset: '', backend: '', ref: '',
+        });
+    });
+
+    it('passes a backend + ref + generator spec through', async () => {
+        mocked.patch.mockResolvedValue({ data: { message: 'ok' } });
+        await secretsApi.setAutoRotate(9, { enabled: true, length: 24, charset: 'hex', backend: 'prod-pg', ref: 'app_svc' });
+        expect(mocked.patch).toHaveBeenCalledWith('/api/v1/secrets/9/auto-rotate', {
+            enabled: true, length: 24, charset: 'hex', backend: 'prod-pg', ref: 'app_svc',
+        });
     });
 });

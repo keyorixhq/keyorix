@@ -1,7 +1,7 @@
 import React from 'react';
 import {
     EyeIcon, PencilIcon, TrashIcon, ShareIcon,
-    DocumentDuplicateIcon, CheckIcon, ArrowPathIcon,
+    DocumentDuplicateIcon, CheckIcon, ArrowPathIcon, ClockIcon,
 } from '@heroicons/react/24/outline';
 import { Secret } from '../../types';
 import { classificationMeta } from './classification';
@@ -18,6 +18,7 @@ interface SecretTableRowProps {
     onDelete: (secret: Secret) => void;
     onShare: (secret: Secret) => void;
     onRotate: (secret: Secret) => void;
+    onAutoRotate?: (secret: Secret) => void;
     onCopy: (secret: Secret) => void;
     copyingId: number | null;
     copiedId: number | null;
@@ -51,7 +52,7 @@ const TypeBadge: React.FC<{ type: string }> = ({ type }) => {
 
 export const SecretTableRow: React.FC<SecretTableRowProps> = ({
     secret, isSelected, onToggleSelect,
-    onView, onEdit, onDelete, onShare, onRotate, onCopy,
+    onView, onEdit, onDelete, onShare, onRotate, onAutoRotate, onCopy,
     copyingId, copiedId, copyErrorId,
 }) => (
     <tr className={`hover:bg-subtle ${isSelected ? 'bg-accent-subtle' : ''}`}>
@@ -110,6 +111,9 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                 <button onClick={() => onView(secret)} title="View" className="p-1 text-base-muted hover:text-base-primary transition-colors"><EyeIcon className="h-4 w-4" /></button>
                 <button onClick={() => onEdit(secret)} title="Edit" className="p-1 text-base-muted hover:text-base-primary transition-colors"><PencilIcon className="h-4 w-4" /></button>
                 <button onClick={() => onRotate(secret)} title="Rotate" className="p-1 text-base-muted hover:text-green-600 transition-colors"><ArrowPathIcon className="h-4 w-4" /></button>
+                {onAutoRotate && (
+                    <button onClick={() => onAutoRotate(secret)} title="Automated rotation" className="p-1 text-base-muted hover:text-blue-600 transition-colors"><ClockIcon className="h-4 w-4" /></button>
+                )}
                 <button onClick={() => onShare(secret)} title="Share" className="p-1 text-base-muted hover:text-blue-600 transition-colors"><ShareIcon className="h-4 w-4" /></button>
                 <button
                     onClick={() => onCopy(secret)}

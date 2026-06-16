@@ -95,6 +95,17 @@ export const useClassifySecret = (id: number) => {
     });
 };
 
+export const useSetAutoRotate = (id: number) => {
+    return useMutation({
+        mutationFn: (opts: { enabled: boolean; length?: number; charset?: string; backend?: string; ref?: string }) =>
+            secretsApi.setAutoRotate(id, opts),
+        onSuccess: () => {
+            invalidateQueries.secrets.detail(id);
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
 export const useDeleteSecret = () => {
     const queryClient = useQueryClient();
 
