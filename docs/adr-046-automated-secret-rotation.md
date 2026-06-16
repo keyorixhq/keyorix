@@ -70,5 +70,8 @@ value automatically — which is the intended pattern.
   audited.
 - New per-secret column `auto_rotate` (additive migration) and an opt-in scheduler;
   both off by default, so existing installs are unchanged.
-- Management of the flag currently lands over HTTP; gRPC/CLI/web toggles are follow-ups
-  (the executor and audit trail are transport-agnostic).
+- Management of the flag is available over HTTP / gRPC / CLI / web.
+- **Failure alerting:** a silently-failed auto-rotation is a security event, so each run
+  that leaves any secret unrotated broadcasts one summary (secret names + reasons, never
+  values) to the configured notification channel (Slack/Teams/webhook), in addition to
+  the per-failure audit events. No-op when no channel is wired.

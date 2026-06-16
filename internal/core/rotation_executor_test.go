@@ -370,3 +370,37 @@ func TestRunAutoRotation_GenerateUpstreamFailureNotStored(t *testing.T) {
 	assert.Equal(t, 0, n)
 	assert.Equal(t, 1, latestVersion(t, db, 1).VersionNumber)
 }
+
+// A rotation failure broadcasts a single summary notification (fakeSink is defined in
+// notification_dispatch_test.go).
+func TestRunAutoRotation_NotifiesFailures(t *testing.T) {
+	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
+	c, db, fixed := backendPolicyCore(t, fake)
+	sink := &fakeSink{}
+	c.SetNotificationSink(sink)
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour)) // name "upstream-cred"
+
+	_, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	require.Len(t, sink.events, 1)
+	assert.Equal(t, "rotation.failed", sink.events[0].Type)
+	assert.Contains(t, sink.events[0].Title, "1 secret")
+	assert.Contains(t, sink.events[0].Message, "upstream-cred")
+	assert.Contains(t, sink.events[0].Message, "connection refused")
+}
+
+// A clean run (no failures) sends nothing.
+func TestRunAutoRotation_NoFailuresNoNotify(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	sink := &fakeSink{}
+	c.SetNotificationSink(sink)
+	seedRotatableSecret(t, db, 1, "k", true, fixed.Add(-60*24*time.Hour)) // generated → succeeds
+
+	_, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, sink.events)
+}

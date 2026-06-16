@@ -13,10 +13,42 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// EventAutoRotationFailures is audited once per run when one or more secrets failed.
+const EventAutoRotationFailures = "rotation.failures_alerted"
+
+// notifyRotationFailures broadcasts a single summary of the run's rotation failures to
+// the configured notification channel (Slack/Teams/webhook) — a silently-failed
+// credential rotation is a security event operators must see. No-op when no sink is
+// wired or nothing failed; the sink is non-blocking. Also audited.
+func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, failed map[uint]string) {
+	if len(failed) == 0 {
+		return
+	}
+	lines := make([]string, 0, len(failed))
+	for _, msg := range failed {
+		lines = append(lines, "• "+msg)
+	}
+	sort.Strings(lines) // stable, deterministic ordering
+	sysCtx := WithActorType(ctx, ActorTypeSystem)
+	c.writeAuditEvent(sysCtx, EventAutoRotationFailures, nil, nil,
+		fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate", len(failed)))
+	if c.notificationSink == nil {
+		return
+	}
+	c.notificationSink.Deliver(NotificationEvent{
+		Type:    "rotation.failed",
+		Title:   fmt.Sprintf("Auto-rotation: %d secret(s) failed to rotate", len(failed)),
+		Message: "The following secrets could not be auto-rotated:\n" + strings.Join(lines, "\n"),
+		Link:    "/secrets",
+	})
+}
 
 // SetRotationManager wires the configured backend rotation executors (ADR-047) that
 // apply a new credential to an upstream system. nil (the default) leaves backend
@@ -119,6 +151,9 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 	now := c.now()
 	rotated := 0
 	done := make(map[uint]bool)
+	// failed records the last failure per secret id; a secret that later rotates under
+	// another covering policy is removed, so only genuine end-of-run failures remain.
+	failed := make(map[uint]string)
 
 	for _, policy := range policies {
 		if !policy.IsActive {
@@ -144,6 +179,7 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 			val, gerr := generateRotatedValueSpec(secret.RotationLength, secret.RotationCharset)
 			if gerr != nil {
 				log.Printf("auto-rotation: generate value for secret %d: %v", secret.ID, gerr)
+				failed[secret.ID] = fmt.Sprintf("%q: generate value: %v", secret.Name, gerr)
 				continue
 			}
 			// Backend rotation (ADR-047): if the secret names a configured executor,
@@ -160,14 +196,17 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
 						fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
 					log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
+					failed[secret.ID] = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
 					continue
 				}
 				storeVal = upstreamVal
 			}
 			if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), "system:auto-rotation"); rerr != nil {
 				log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
+				failed[secret.ID] = fmt.Sprintf("%q: store new version: %v", secret.Name, rerr)
 				continue
 			}
+			delete(failed, secret.ID) // rotated successfully (e.g. under a later policy)
 			done[secret.ID] = true
 			rotated++
 			sid := secret.ID
@@ -179,6 +218,7 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 				fmt.Sprintf("auto-rotated secret %q (policy %q, interval %dd)%s", secret.Name, policy.Name, policy.IntervalDays, via))
 		}
 	}
+	c.notifyRotationFailures(ctx, failed)
 	return rotated, nil
 }
 
