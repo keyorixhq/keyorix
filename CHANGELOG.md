@@ -3,6 +3,30 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.41.0 — 2026-06-16
+
+Least-privilege for Keyorix Connect + upgrade-safe permission seeding.
+
+### Added
+- **`connect.read` permission** — Keyorix Connect now has its own permission instead
+  of reusing `secrets.read`, so granting native secret-read access no longer implies
+  read access to external stores (ADR-044). It ships granted to `admin` /
+  `system_admin`. ([#249])
+- **Idempotent RBAC permission reconciliation on startup** — new canonical
+  permissions added in a release are now seeded into already-initialised installs
+  automatically (created and granted to their baseline roles), so an upgrade no longer
+  leaves a new permission unheld by any role. Additive and **non-clobbering**:
+  existing permissions' grants are never altered, preserving operator customizations;
+  a no-op on a pre-bootstrap install. ([#249])
+
+### Changed
+- The Keyorix Connect routes (`/connect/*`) now require `connect.read` instead of
+  `secrets.read`. **Upgrade note:** a non-admin principal that used Connect via
+  `secrets.read` must be granted `connect.read`; admins/`system_admin` receive it
+  automatically on first start after upgrade. ([#249])
+
+[#249]: https://github.com/keyorixhq/keyorix/pull/249
+
 ## v0.40.0 — 2026-06-16
 
 Keyorix Connect adds HashiCorp Vault.
