@@ -82,6 +82,13 @@ func VerifyReceipt(roots *x509.CertPool, message, token []byte) (time.Time, erro
 		Roots:         roots,
 		Intermediates: intermediates,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+		// Verify the chain AS OF the timestamp's asserted time, not time.Now(): an
+		// RFC 3161 timestamp must remain verifiable AFTER the TSA's signing cert
+		// expires — that durability is the whole point of trusted timestamping.
+		// Verifying against now would make every anchor unverifiable once its TSA
+		// cert lapsed (and is itself the more correct check: was the issuer trusted
+		// when it signed?).
+		CurrentTime: ts.Time,
 	}); err != nil {
 		return time.Time{}, fmt.Errorf("notary: receipt issuer not trusted: %w", err)
 	}
