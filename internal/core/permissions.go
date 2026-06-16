@@ -9,6 +9,17 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// secretOwnedBy reports whether actorID is the owner of a secret with the given
+// OwnerID. A zero OwnerID means the secret has NO human owner — e.g. one created by
+// a machine identity (ADR-023/030 store OwnerID 0 for machines) or a legacy/ownerless
+// row. Such a secret must be owned by nobody: without the zero guard, a machine
+// actor (whose ID is also 0) would match every ownerless secret via 0 == 0 and gain
+// owner-level rights over all of them. Ownership therefore requires a non-zero,
+// matching id on both sides.
+func secretOwnedBy(ownerID, actorID uint) bool {
+	return ownerID != 0 && ownerID == actorID
+}
+
 // PermissionLevel represents the level of access a user has to a secret.
 type PermissionLevel string
 
@@ -43,7 +54,7 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 	}
 
 	// Owners have all permissions.
-	if secret.OwnerID == userID {
+	if secretOwnedBy(secret.OwnerID, userID) {
 		return &PermissionContext{
 			SecretID:   secretID,
 			UserID:     userID,
