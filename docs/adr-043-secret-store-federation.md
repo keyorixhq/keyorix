@@ -55,5 +55,8 @@ Both are gated by `secrets.read` (a federated read is a secret read) and audited
 - A federated read depends on the external store's availability and latency (a
   backend failure surfaces as `502 Bad Gateway`). Caching (with a TTL) is a planned
   follow-up to bound this.
-- Authorization is coarse for now (`secrets.read` globally). Finer, per-connector or
-  per-reference scoping can be layered on later.
+- Authorization is coarse for now (`secrets.read` globally). A federated read is
+  bounded by the backend identity's IAM policy (the load-bearing control) plus an
+  optional per-connector `allowed_refs` prefix allowlist enforced in Keyorix before
+  the backend call. Finer per-reference RBAC and a dedicated `connect.read`
+  permission (so native read access doesn't imply external-store read) are follow-ups.

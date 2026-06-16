@@ -363,7 +363,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		for _, cn := range cc.Connectors {
 			switch cn.Type {
 			case "aws-secrets-manager":
-				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region))
+				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AllowedRefs))
 			default:
 				log.Printf("Keyorix Connect: skipping connector %q with unknown type %q", cn.Name, cn.Type)
 			}

@@ -935,6 +935,8 @@ connect:
     - name: prod-aws            # API path key (unique); GET /api/v1/connect/prod-aws/secret?ref=…
       type: aws-secrets-manager # the only backend today (GCP SM / Vault are follow-ups)
       region: eu-west-1
+      allowed_refs:             # optional prefix allowlist — a ref must match one
+        - keyorix/              # (defense-in-depth on top of the backend's IAM scope)
 ```
 
 - Reads are **read-only** and gated by `secrets.read`; each is audited as
@@ -944,3 +946,8 @@ connect:
 - Backend credentials come from the **ambient identity chain** (AWS: env /
   instance-profile / IRSA), never from this config. A backend failure surfaces as
   `502 Bad Gateway`.
+- A federated read is bounded by **two** controls: the backend identity's IAM policy
+  (the load-bearing one — scope the connector's credentials to exactly the intended
+  secrets) and, optionally, the per-connector **`allowed_refs`** prefix allowlist
+  enforced in Keyorix before the backend call. Set both: any holder of global
+  `secrets.read` can otherwise read every secret the connector's identity can reach.

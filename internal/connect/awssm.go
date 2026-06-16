@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -23,16 +24,33 @@ type smGetAPI interface {
 
 // AWSSecretsManagerConnector reads secrets from AWS Secrets Manager.
 type AWSSecretsManagerConnector struct {
-	name   string
-	region string
+	name        string
+	region      string
+	allowedRefs []string
 	// newClient builds an SM client for the region; nil uses the real AWS client
 	// (the standard credential chain). Tests inject a fake.
 	newClient func(ctx context.Context, region string) (smGetAPI, error)
 }
 
-// NewAWSSecretsManagerConnector builds an AWS Secrets Manager connector.
-func NewAWSSecretsManagerConnector(name, region string) *AWSSecretsManagerConnector {
-	return &AWSSecretsManagerConnector{name: name, region: region}
+// NewAWSSecretsManagerConnector builds an AWS Secrets Manager connector. allowedRefs,
+// when non-empty, restricts readable references to those with one of the given
+// prefixes (a guardrail on top of the AWS IAM scope of the ambient identity).
+func NewAWSSecretsManagerConnector(name, region string, allowedRefs []string) *AWSSecretsManagerConnector {
+	return &AWSSecretsManagerConnector{name: name, region: region, allowedRefs: allowedRefs}
+}
+
+// refAllowed reports whether ref is permitted by the connector's allowlist. An empty
+// allowlist permits everything (the backend IAM policy is then the only bound).
+func (c *AWSSecretsManagerConnector) refAllowed(ref string) bool {
+	if len(c.allowedRefs) == 0 {
+		return true
+	}
+	for _, p := range c.allowedRefs {
+		if p != "" && strings.HasPrefix(ref, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *AWSSecretsManagerConnector) Name() string { return c.name }
@@ -56,6 +74,9 @@ func (c *AWSSecretsManagerConnector) client(ctx context.Context) (smGetAPI, erro
 func (c *AWSSecretsManagerConnector) GetSecret(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("aws-secrets-manager: secret reference is required")
+	}
+	if !c.refAllowed(ref) {
+		return "", fmt.Errorf("aws-secrets-manager: ref %q is not permitted by this connector's allowed_refs", ref)
 	}
 	cl, err := c.client(ctx)
 	if err != nil {

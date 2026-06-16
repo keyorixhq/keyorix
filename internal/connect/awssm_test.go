@@ -24,15 +24,33 @@ func (f *fakeSM) GetSecretValue(_ context.Context, in *secretsmanager.GetSecretV
 }
 
 func connectorWith(name string, fake *fakeSM) *AWSSecretsManagerConnector {
-	c := NewAWSSecretsManagerConnector(name, "eu-west-1")
+	c := NewAWSSecretsManagerConnector(name, "eu-west-1", nil)
 	c.newClient = func(_ context.Context, _ string) (smGetAPI, error) { return fake, nil }
 	return c
 }
 
 func TestAWSSM_TypeAndName(t *testing.T) {
-	c := NewAWSSecretsManagerConnector("prod-aws", "us-east-1")
+	c := NewAWSSecretsManagerConnector("prod-aws", "us-east-1", nil)
 	assert.Equal(t, "prod-aws", c.Name())
 	assert.Equal(t, "aws-secrets-manager", c.Type())
+}
+
+func TestAWSSM_AllowedRefsGuardrail(t *testing.T) {
+	fake := &fakeSM{out: &secretsmanager.GetSecretValueOutput{SecretString: aws.String("ok")}}
+	c := NewAWSSecretsManagerConnector("aws", "eu-west-1", []string{"keyorix/", "shared/"})
+	c.newClient = func(_ context.Context, _ string) (smGetAPI, error) { return fake, nil }
+
+	// A ref matching an allowed prefix passes.
+	val, err := c.GetSecret(context.Background(), "keyorix/prod/db")
+	require.NoError(t, err)
+	assert.Equal(t, "ok", val)
+
+	// A ref outside the allowlist is rejected BEFORE any backend call.
+	fake.got = ""
+	_, err = c.GetSecret(context.Background(), "prod/root")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not permitted")
+	assert.Empty(t, fake.got, "a disallowed ref must not reach the backend")
 }
 
 func TestAWSSM_GetSecret_String(t *testing.T) {

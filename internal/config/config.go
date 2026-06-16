@@ -110,6 +110,12 @@ type ConnectorConfig struct {
 	Name   string `yaml:"name"`
 	Type   string `yaml:"type"`
 	Region string `yaml:"region"`
+	// AllowedRefs, when non-empty, restricts which secret references this connector
+	// may read: a requested ref must have one of these prefixes (a defense-in-depth
+	// guardrail in Keyorix's layer, on top of the backend identity's IAM policy). An
+	// empty list places no restriction here — the backend IAM scope is then the only
+	// bound, so prefer setting both.
+	AllowedRefs []string `yaml:"allowed_refs"`
 }
 
 // PasswordPolicyConfig mirrors the password rules from ADR-025: synchronous
