@@ -3,6 +3,27 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.42.0 — 2026-06-16
+
+Keyorix Connect reaches full surface coverage — every cloud secret store, every transport.
+
+### Added
+- **Azure Key Vault Connect connector** — read-through federation now supports Azure
+  Key Vault alongside AWS Secrets Manager, GCP Secret Manager, and HashiCorp Vault.
+  `ref` is the secret name (optionally `name/version`); the vault URL is the
+  connector's `address`. Credentials come from `DefaultAzureCredential` (managed /
+  workload identity / env / CLI), never from config, and the per-connector
+  `allowed_refs` prefix guardrail applies. No new dependency. ([#252])
+- **gRPC ConnectService** — Keyorix Connect is now reachable over gRPC at parity with
+  the HTTP `/connect` routes (`ListConnectors`, `ReadSecret`), gated by the dedicated
+  `connect.read` permission. Values are proxied on demand and never persisted. ([#251])
+
+With this release Keyorix Connect spans **4 stores × 2 transports** — AWS SM / GCP SM /
+Azure KV / Vault, over HTTP and gRPC, all gated by `connect.read` and audited.
+
+[#251]: https://github.com/keyorixhq/keyorix/pull/251
+[#252]: https://github.com/keyorixhq/keyorix/pull/252
+
 ## v0.41.0 — 2026-06-16
 
 Least-privilege for Keyorix Connect + upgrade-safe permission seeding.
