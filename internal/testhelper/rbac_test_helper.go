@@ -151,6 +151,7 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 		{16, "system.admin", "Full administrative access to system", "system", "admin"},
 		{17, "audit.read", "View audit logs", "audit", "read"},
 		{18, "audit.admin", "Full administrative access to audit system", "audit", "admin"},
+		{19, "connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
 	}
 
 	// Create permissions table if it doesn't exist
@@ -181,7 +182,7 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 			"users.read", "users.write", "users.delete", "users.admin",
 			"roles.read", "roles.write", "roles.delete", "roles.admin", "roles.assign",
 			"system.read", "system.write", "system.admin",
-			"audit.read", "audit.admin"},
+			"audit.read", "audit.admin", "connect.read"},
 		"admin": {"secrets.read", "secrets.write", "secrets.delete",
 			"users.read", "users.write",
 			"roles.read", "roles.assign",

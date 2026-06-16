@@ -3009,3 +3009,157 @@ var ComplianceService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "keyorix.proto",
 }
+
+const (
+	ConnectService_ListConnectors_FullMethodName = "/keyorix.v1.ConnectService/ListConnectors"
+	ConnectService_ReadSecret_FullMethodName     = "/keyorix.v1.ConnectService/ReadSecret"
+)
+
+// ConnectServiceClient is the client API for ConnectService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// ---------------------------------------------------------------------------
+// Keyorix Connect — read-through federation to external secret stores (ADR-043),
+// over gRPC. Read-only; gated by connect.read (ADR-044). Mirrors the HTTP surface.
+// ---------------------------------------------------------------------------
+type ConnectServiceClient interface {
+	// ListConnectors returns the configured connector names.
+	ListConnectors(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ConnectorList, error)
+	// ReadSecret proxies a read-through of a secret's current value from a connector.
+	ReadSecret(ctx context.Context, in *ReadFederatedSecretRequest, opts ...grpc.CallOption) (*FederatedSecretValue, error)
+}
+
+type connectServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewConnectServiceClient(cc grpc.ClientConnInterface) ConnectServiceClient {
+	return &connectServiceClient{cc}
+}
+
+func (c *connectServiceClient) ListConnectors(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ConnectorList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConnectorList)
+	err := c.cc.Invoke(ctx, ConnectService_ListConnectors_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *connectServiceClient) ReadSecret(ctx context.Context, in *ReadFederatedSecretRequest, opts ...grpc.CallOption) (*FederatedSecretValue, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FederatedSecretValue)
+	err := c.cc.Invoke(ctx, ConnectService_ReadSecret_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ConnectServiceServer is the server API for ConnectService service.
+// All implementations must embed UnimplementedConnectServiceServer
+// for forward compatibility.
+//
+// ---------------------------------------------------------------------------
+// Keyorix Connect — read-through federation to external secret stores (ADR-043),
+// over gRPC. Read-only; gated by connect.read (ADR-044). Mirrors the HTTP surface.
+// ---------------------------------------------------------------------------
+type ConnectServiceServer interface {
+	// ListConnectors returns the configured connector names.
+	ListConnectors(context.Context, *emptypb.Empty) (*ConnectorList, error)
+	// ReadSecret proxies a read-through of a secret's current value from a connector.
+	ReadSecret(context.Context, *ReadFederatedSecretRequest) (*FederatedSecretValue, error)
+	mustEmbedUnimplementedConnectServiceServer()
+}
+
+// UnimplementedConnectServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedConnectServiceServer struct{}
+
+func (UnimplementedConnectServiceServer) ListConnectors(context.Context, *emptypb.Empty) (*ConnectorList, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListConnectors not implemented")
+}
+func (UnimplementedConnectServiceServer) ReadSecret(context.Context, *ReadFederatedSecretRequest) (*FederatedSecretValue, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadSecret not implemented")
+}
+func (UnimplementedConnectServiceServer) mustEmbedUnimplementedConnectServiceServer() {}
+func (UnimplementedConnectServiceServer) testEmbeddedByValue()                        {}
+
+// UnsafeConnectServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ConnectServiceServer will
+// result in compilation errors.
+type UnsafeConnectServiceServer interface {
+	mustEmbedUnimplementedConnectServiceServer()
+}
+
+func RegisterConnectServiceServer(s grpc.ServiceRegistrar, srv ConnectServiceServer) {
+	// If the following call panics, it indicates UnimplementedConnectServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&ConnectService_ServiceDesc, srv)
+}
+
+func _ConnectService_ListConnectors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConnectServiceServer).ListConnectors(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConnectService_ListConnectors_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConnectServiceServer).ListConnectors(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ConnectService_ReadSecret_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadFederatedSecretRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConnectServiceServer).ReadSecret(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConnectService_ReadSecret_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConnectServiceServer).ReadSecret(ctx, req.(*ReadFederatedSecretRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// ConnectService_ServiceDesc is the grpc.ServiceDesc for ConnectService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var ConnectService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "keyorix.v1.ConnectService",
+	HandlerType: (*ConnectServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListConnectors",
+			Handler:    _ConnectService_ListConnectors_Handler,
+		},
+		{
+			MethodName: "ReadSecret",
+			Handler:    _ConnectService_ReadSecret_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "keyorix.proto",
+}

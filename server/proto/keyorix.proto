@@ -1075,3 +1075,29 @@ message ComplianceControls {
   repeated ControlState controls = 2;
   ControlsSummary summary = 3;
 }
+
+// ---------------------------------------------------------------------------
+// Keyorix Connect — read-through federation to external secret stores (ADR-043),
+// over gRPC. Read-only; gated by connect.read (ADR-044). Mirrors the HTTP surface.
+// ---------------------------------------------------------------------------
+service ConnectService {
+  // ListConnectors returns the configured connector names.
+  rpc ListConnectors(google.protobuf.Empty) returns (ConnectorList);
+  // ReadSecret proxies a read-through of a secret's current value from a connector.
+  rpc ReadSecret(ReadFederatedSecretRequest) returns (FederatedSecretValue);
+}
+
+message ConnectorList {
+  repeated string connectors = 1;
+}
+
+message ReadFederatedSecretRequest {
+  string connector = 1;
+  string ref = 2;
+}
+
+message FederatedSecretValue {
+  string connector = 1;
+  string ref = 2;
+  string value = 3;
+}
