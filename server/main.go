@@ -147,6 +147,7 @@ const (
 	schedLockDynamicSweep int64 = 0x4B455953_44594E53 // "KEYSDYNS"
 	schedLockLoginPrune   int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
 	schedLockRotationRmdr int64 = 0x4B455953_524F5452 // "KEYSROTR"
+	schedLockAutoRotate   int64 = 0x4B455953_4155544F // "KEYSAUTO"
 	schedLockAuditCkpt    int64 = 0x4B455953_41434B50 // "KEYSACKP"
 	schedLockJITExpiry    int64 = 0x4B455953_4A495445 // "KEYSJITE"
 	schedLockRetention    int64 = 0x4B455953_52455445 // "KEYSRETE"
@@ -754,6 +755,43 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				select {
 				case <-ticker.C:
 					runReminders()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Start the automated-rotation scheduler — opt-in (ADR-046). Rotates auto-rotate-
+	// enabled secrets that are overdue under an active policy, regenerating their value.
+	// Single-replica-gated (ADR-039) so a secret rotates once per tick in an HA
+	// deployment.
+	if cfg.AutoRotation.Enabled {
+		interval := cfg.AutoRotation.GetInterval()
+		log.Printf("Auto-rotation scheduler enabled: every %s", interval)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runAutoRotation := func() {
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockAutoRotate, func() error {
+					n, rerr := coreService.RunAutoRotation(ctx)
+					if rerr != nil {
+						log.Printf("Auto-rotation error: %v", rerr)
+						return rerr
+					}
+					if n > 0 {
+						log.Printf("Auto-rotation: rotated %d secret(s)", n)
+					}
+					return nil
+				}); err != nil {
+					log.Printf("Auto-rotation scheduler error: %v", err)
+				}
+			}
+			runAutoRotation() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runAutoRotation()
 				case <-ctx.Done():
 					return
 				}

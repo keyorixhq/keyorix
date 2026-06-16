@@ -136,6 +136,37 @@ func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 	h.sendSuccess(w, secret, "Classification updated")
 }
 
+// SetAutoRotate handles PATCH /api/v1/secrets/{id}/auto-rotate — toggles automated
+// rotation (ADR-046) for a secret. Enable only for secrets whose value Keyorix owns.
+func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	var reqBody struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.SetSecretAutoRotate(r.Context(), uint(id), reqBody.Enabled, userCtx.UserID); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		h.sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	h.sendSuccess(w, map[string]interface{}{"id": id, "auto_rotate": reqBody.Enabled}, "Auto-rotation updated")
+}
+
 // GetSecret handles GET /api/v1/secrets/{id}
 func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
