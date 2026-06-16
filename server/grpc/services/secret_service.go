@@ -160,6 +160,25 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 	return &emptypb.Empty{}, nil
 }
 
+// SetSecretAutoRotate enables/disables automated rotation for a secret and sets its
+// generated-value shape (ADR-046). Scoped secrets.write, mirroring the HTTP endpoint.
+func (s *SecretGRPCService) SetSecretAutoRotate(ctx context.Context, req *pb.SetSecretAutoRotateRequest) (*emptypb.Empty, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.write"); err != nil {
+		return nil, err
+	}
+	if err := s.core.SetSecretAutoRotate(ctx, uint(req.GetId()), req.GetEnabled(), int(req.GetLength()), req.GetCharset(), user.PrincipalID()); err != nil {
+		return nil, mapSecretError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
+
 // ListSecrets lists secrets visible to the caller with sharing context.
 func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecretsRequest) (*pb.ListSecretsResponse, error) {
 	user, err := requireUser(ctx)
@@ -274,6 +293,8 @@ func mapSecretError(err error) error {
 		return status.Error(codes.PermissionDenied, "access denied to this secret")
 	case strings.Contains(msg, "already exists"):
 		return status.Error(codes.AlreadyExists, "secret with this name already exists")
+	case strings.Contains(msg, "unknown rotation charset"), strings.Contains(msg, "out of range"):
+		return status.Error(codes.InvalidArgument, msg)
 	default:
 		return status.Error(codes.Internal, "secret operation failed")
 	}

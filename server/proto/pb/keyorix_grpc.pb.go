@@ -20,13 +20,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SecretService_CreateSecret_FullMethodName      = "/keyorix.v1.SecretService/CreateSecret"
-	SecretService_GetSecret_FullMethodName         = "/keyorix.v1.SecretService/GetSecret"
-	SecretService_GetSecretValue_FullMethodName    = "/keyorix.v1.SecretService/GetSecretValue"
-	SecretService_UpdateSecret_FullMethodName      = "/keyorix.v1.SecretService/UpdateSecret"
-	SecretService_DeleteSecret_FullMethodName      = "/keyorix.v1.SecretService/DeleteSecret"
-	SecretService_ListSecrets_FullMethodName       = "/keyorix.v1.SecretService/ListSecrets"
-	SecretService_GetSecretVersions_FullMethodName = "/keyorix.v1.SecretService/GetSecretVersions"
+	SecretService_CreateSecret_FullMethodName        = "/keyorix.v1.SecretService/CreateSecret"
+	SecretService_GetSecret_FullMethodName           = "/keyorix.v1.SecretService/GetSecret"
+	SecretService_GetSecretValue_FullMethodName      = "/keyorix.v1.SecretService/GetSecretValue"
+	SecretService_UpdateSecret_FullMethodName        = "/keyorix.v1.SecretService/UpdateSecret"
+	SecretService_DeleteSecret_FullMethodName        = "/keyorix.v1.SecretService/DeleteSecret"
+	SecretService_ListSecrets_FullMethodName         = "/keyorix.v1.SecretService/ListSecrets"
+	SecretService_GetSecretVersions_FullMethodName   = "/keyorix.v1.SecretService/GetSecretVersions"
+	SecretService_SetSecretAutoRotate_FullMethodName = "/keyorix.v1.SecretService/SetSecretAutoRotate"
 )
 
 // SecretServiceClient is the client API for SecretService service.
@@ -49,6 +50,9 @@ type SecretServiceClient interface {
 	ListSecrets(ctx context.Context, in *ListSecretsRequest, opts ...grpc.CallOption) (*ListSecretsResponse, error)
 	// Get a secret's version history
 	GetSecretVersions(ctx context.Context, in *GetSecretVersionsRequest, opts ...grpc.CallOption) (*GetSecretVersionsResponse, error)
+	// Enable/disable automated rotation for a secret and set its generated-value shape
+	// (ADR-046). Requires scoped secrets.write.
+	SetSecretAutoRotate(ctx context.Context, in *SetSecretAutoRotateRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type secretServiceClient struct {
@@ -129,6 +133,16 @@ func (c *secretServiceClient) GetSecretVersions(ctx context.Context, in *GetSecr
 	return out, nil
 }
 
+func (c *secretServiceClient) SetSecretAutoRotate(ctx context.Context, in *SetSecretAutoRotateRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, SecretService_SetSecretAutoRotate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretServiceServer is the server API for SecretService service.
 // All implementations must embed UnimplementedSecretServiceServer
 // for forward compatibility.
@@ -149,6 +163,9 @@ type SecretServiceServer interface {
 	ListSecrets(context.Context, *ListSecretsRequest) (*ListSecretsResponse, error)
 	// Get a secret's version history
 	GetSecretVersions(context.Context, *GetSecretVersionsRequest) (*GetSecretVersionsResponse, error)
+	// Enable/disable automated rotation for a secret and set its generated-value shape
+	// (ADR-046). Requires scoped secrets.write.
+	SetSecretAutoRotate(context.Context, *SetSecretAutoRotateRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedSecretServiceServer()
 }
 
@@ -179,6 +196,9 @@ func (UnimplementedSecretServiceServer) ListSecrets(context.Context, *ListSecret
 }
 func (UnimplementedSecretServiceServer) GetSecretVersions(context.Context, *GetSecretVersionsRequest) (*GetSecretVersionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSecretVersions not implemented")
+}
+func (UnimplementedSecretServiceServer) SetSecretAutoRotate(context.Context, *SetSecretAutoRotateRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetSecretAutoRotate not implemented")
 }
 func (UnimplementedSecretServiceServer) mustEmbedUnimplementedSecretServiceServer() {}
 func (UnimplementedSecretServiceServer) testEmbeddedByValue()                       {}
@@ -327,6 +347,24 @@ func _SecretService_GetSecretVersions_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SecretService_SetSecretAutoRotate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetSecretAutoRotateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretServiceServer).SetSecretAutoRotate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SecretService_SetSecretAutoRotate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretServiceServer).SetSecretAutoRotate(ctx, req.(*SetSecretAutoRotateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SecretService_ServiceDesc is the grpc.ServiceDesc for SecretService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -361,6 +399,10 @@ var SecretService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSecretVersions",
 			Handler:    _SecretService_GetSecretVersions_Handler,
+		},
+		{
+			MethodName: "SetSecretAutoRotate",
+			Handler:    _SecretService_SetSecretAutoRotate_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

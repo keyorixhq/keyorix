@@ -296,3 +296,50 @@ func TestSecretService_GetSecretVersions(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func TestSecretService_SetSecretAutoRotate(t *testing.T) {
+	r := newSecretTestRig(t)
+	ctx := authCtx(1, "writer", "secrets.write", "secrets.read")
+	sec := r.createSecret(t, ctx, "rotatable", "v")
+
+	_, err := r.svc.SetSecretAutoRotate(ctx, &pb.SetSecretAutoRotateRequest{
+		Id: sec.GetId(), Enabled: true, Length: 48, Charset: "hex",
+	})
+	require.NoError(t, err)
+
+	var s models.SecretNode
+	require.NoError(t, r.db.First(&s, sec.GetId()).Error)
+	assert.True(t, s.AutoRotate)
+	assert.Equal(t, 48, s.RotationLength)
+	assert.Equal(t, "hex", s.RotationCharset)
+}
+
+func TestSecretService_SetSecretAutoRotate_BadCharset(t *testing.T) {
+	r := newSecretTestRig(t)
+	ctx := authCtx(1, "writer", "secrets.write", "secrets.read")
+	sec := r.createSecret(t, ctx, "rotatable", "v")
+
+	_, err := r.svc.SetSecretAutoRotate(ctx, &pb.SetSecretAutoRotateRequest{
+		Id: sec.GetId(), Enabled: true, Charset: "klingon",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestSecretService_SetSecretAutoRotate_Unauthenticated(t *testing.T) {
+	r := newSecretTestRig(t)
+	_, err := r.svc.SetSecretAutoRotate(context.Background(), &pb.SetSecretAutoRotateRequest{Id: 1, Enabled: true})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+func TestSecretService_SetSecretAutoRotate_PermissionDenied(t *testing.T) {
+	r := newSecretTestRig(t)
+	owner := authCtx(1, "writer", "secrets.write", "secrets.read")
+	sec := r.createSecret(t, owner, "rotatable", "v")
+
+	ctx := authCtx(2, "reader", "secrets.read") // no write grant
+	_, err := r.svc.SetSecretAutoRotate(ctx, &pb.SetSecretAutoRotateRequest{Id: sec.GetId(), Enabled: true})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
