@@ -3,6 +3,19 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.50.0 — 2026-06-17
+
+### Added
+- **GCP service-account key rotation** (ADR-047) — a generate-upstream backend (like AWS
+  IAM): rotation mints a fresh user-managed service-account key, deletes the account's
+  prior user-managed keys, and stores the new key file. Credentials come from Application
+  Default Credentials; fail-closed on a required `allowed_refs`. ([#275])
+
+With this release, backend rotation spans **PostgreSQL · MySQL · MongoDB · Redis**
+(password-set) and **AWS IAM · GCP service-account keys** (generate-upstream).
+
+[#275]: https://github.com/keyorixhq/keyorix/pull/275
+
 ## v0.49.0 — 2026-06-17
 
 ### Added
