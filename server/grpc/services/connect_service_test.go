@@ -94,3 +94,69 @@ func TestConnectService_PermissionDenied(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
+
+// --- Per-reference grant management (ADR-045) ---
+
+func TestConnectService_RefGrants_CRUD(t *testing.T) {
+	svc := newConnectService(t)
+	ctx := authCtx(1, "admin", "roles.write")
+
+	// Empty to start.
+	list, err := svc.ListRefGrants(ctx, &emptypb.Empty{})
+	require.NoError(t, err)
+	assert.Empty(t, list.GetGrants())
+
+	// Create one for an existing connector.
+	g, err := svc.CreateRefGrant(ctx, &pb.CreateConnectRefGrantRequest{RoleId: 5, Connector: "aws", RefPrefix: "metrics/"})
+	require.NoError(t, err)
+	assert.NotZero(t, g.GetId())
+	assert.Equal(t, uint32(5), g.GetRoleId())
+	assert.Equal(t, "aws", g.GetConnector())
+	assert.Equal(t, "metrics/", g.GetRefPrefix())
+
+	// It now lists.
+	list, err = svc.ListRefGrants(ctx, &emptypb.Empty{})
+	require.NoError(t, err)
+	require.Len(t, list.GetGrants(), 1)
+
+	// Delete it.
+	_, err = svc.DeleteRefGrant(ctx, &pb.DeleteConnectRefGrantRequest{Id: g.GetId()})
+	require.NoError(t, err)
+	list, err = svc.ListRefGrants(ctx, &emptypb.Empty{})
+	require.NoError(t, err)
+	assert.Empty(t, list.GetGrants())
+}
+
+func TestConnectService_RefGrants_UnknownConnectorRejected(t *testing.T) {
+	svc := newConnectService(t)
+	_, err := svc.CreateRefGrant(authCtx(1, "admin", "roles.write"),
+		&pb.CreateConnectRefGrantRequest{RoleId: 5, Connector: "nope", RefPrefix: "x/"})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestConnectService_RefGrants_Unauthenticated(t *testing.T) {
+	svc := newConnectService(t)
+	_, err := svc.ListRefGrants(context.Background(), &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	_, err = svc.CreateRefGrant(context.Background(), &pb.CreateConnectRefGrantRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+func TestConnectService_RefGrants_PermissionDenied(t *testing.T) {
+	svc := newConnectService(t)
+	// connect.read alone (held via super_admin in other tests) is not roles.write;
+	// an ungranted user is denied outright.
+	ctx := authCtx(7, "nobody")
+	_, err := svc.ListRefGrants(ctx, &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	_, err = svc.CreateRefGrant(ctx, &pb.CreateConnectRefGrantRequest{RoleId: 5, Connector: "aws", RefPrefix: "x/"})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	_, err = svc.DeleteRefGrant(ctx, &pb.DeleteConnectRefGrantRequest{Id: 1})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
