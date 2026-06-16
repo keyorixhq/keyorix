@@ -85,8 +85,8 @@ func (s *Service) buildKeyProvider(passphrase string) (crypto.KeyProvider, error
 // (ADR-038/ADR-041). The default and the absent/zero value is the passphrase
 // provider, byte-identical to the historical derivation; file/env supply
 // externally-managed raw key material, exec fetches it from a resolver command,
-// and shamir reconstructs it from K-of-N shares; the *-kms providers envelope-wrap
-// the KEK with a cloud KMS key. baseDir resolves
+// shamir reconstructs it from K-of-N shares, and tpm seals it to the host TPM; the
+// *-kms providers envelope-wrap the KEK with a cloud KMS key. baseDir resolves
 // provider-relative paths (salt /
 // wrapped_key_path). Exported so the KEK-provider migration tool can build a
 // *target* provider from a different config than the running service's.
@@ -103,6 +103,8 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 		return crypto.NewExecKeyProvider(kp.ExecCommand), nil
 	case "shamir":
 		return crypto.NewShamirKeyProvider(kp.ShamirShareFiles, kp.ShamirShareEnv), nil
+	case "tpm":
+		return crypto.NewTPMKeyProvider(kp.TPMDevice, baseDir, kp.WrappedKeyPath), nil
 	case "aws-kms":
 		kmsClient, err := awskms.New(context.Background(), kp.KMSKeyID)
 		if err != nil {
@@ -122,7 +124,7 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 		}
 		return crypto.NewKMSKeyProvider(kmsClient, "azure-kms", baseDir, kp.WrappedKeyPath), nil
 	default:
-		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, exec, shamir, aws-kms, gcp-kms, azure-kms)", kp.Type)
+		return nil, fmt.Errorf("unknown encryption key_provider type %q (supported: password, file, env, exec, shamir, tpm, aws-kms, gcp-kms, azure-kms)", kp.Type)
 	}
 }
 

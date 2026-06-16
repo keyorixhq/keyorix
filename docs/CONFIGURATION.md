@@ -146,6 +146,12 @@ storage:
       # shamir_share_files: [/etc/keyorix/share-1.hex, /etc/keyorix/share-2.hex, /etc/keyorix/share-3.hex]
       # shamir_share_env: [KX_KEK_SHARE_1, KX_KEK_SHARE_2]
 
+      # type: tpm — seal the KEK to the host TPM 2.0. The KEK is generated and sealed
+      # on first start; only the sealed blob (wrapped_key_path) is on disk, and it is
+      # unsealable only on this machine's TPM.
+      # tpm_device: /dev/tpmrm0
+      # wrapped_key_path: keys/kek.tpm
+
       # type: aws-kms / gcp-kms / azure-kms — envelope-wrap the KEK with a cloud
       # KMS/HSM key (ADR-041); the wrapping key stays in the KMS/HSM. Credentials
       # come from the standard cloud environment (AWS: env/instance-profile/IRSA;
@@ -177,6 +183,15 @@ storage:
   onto it with `keyorix encryption migrate-provider --to-type shamir
   --to-shamir-share-files …`. ⚠️ Losing more than N-K shares makes the KEK — and all
   data — permanently unrecoverable; store and back up shares separately.
+- **`tpm`**: the KEK is **sealed to the host TPM 2.0** (`tpm_device`, default
+  `/dev/tpmrm0`) and only unsealable on that machine. A random KEK is generated and
+  sealed on first start; only the **sealed blob** (`wrapped_key_path`) touches disk,
+  so the KEK can't be recovered from a stolen disk alone. `KEYORIX_MASTER_PASSWORD`
+  is **not** required; startup needs the TPM reachable (fail-closed). ⚠️ The sealed
+  blob is bound to *this* TPM — it cannot be unsealed on another host, so back up the
+  data under a portable provider (or re-seal per host) and note that a TPM
+  clear/replacement makes the blob unrecoverable. Move an existing install on with
+  `keyorix encryption migrate-provider --to-type tpm --to-wrapped-key-path keys/kek.tpm`.
 - **`aws-kms`** / **`gcp-kms`** / **`azure-kms`** (ADR-041): the KEK is a random key
   **wrapped by a cloud KMS/HSM key**; only the wrapped blob is on disk
   (`wrapped_key_path`), unwrapped via the KMS at startup. The wrapping key never
