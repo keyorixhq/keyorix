@@ -920,3 +920,27 @@ credential_delivery:
 `out_of_band` / `log` return or log the link instead of emailing it (useful when no
 mail relay is available). A link-producing mode with an empty `base_url` is a
 misconfiguration — link minting refuses it rather than emitting a relative link.
+
+## connect
+
+**Keyorix Connect** (ADR-043) is opt-in **read-through federation** to external
+secret stores: it proxies an authorized, audited read of a secret's *current* value
+held in an external store, without importing or persisting it. Disabled by default;
+with no connectors the `/connect` endpoints are not served.
+
+```yaml
+connect:
+  enabled: true
+  connectors:
+    - name: prod-aws            # API path key (unique); GET /api/v1/connect/prod-aws/secret?ref=…
+      type: aws-secrets-manager # the only backend today (GCP SM / Vault are follow-ups)
+      region: eu-west-1
+```
+
+- Reads are **read-only** and gated by `secrets.read`; each is audited as
+  `connect.secret_read`. The value is returned to the caller and never stored.
+- `ref` (query parameter) is connector-specific — for AWS Secrets Manager it is the
+  secret **name or ARN**. A binary secret is returned base64-encoded.
+- Backend credentials come from the **ambient identity chain** (AWS: env /
+  instance-profile / IRSA), never from this config. A backend failure surfaces as
+  `502 Bad Gateway`.

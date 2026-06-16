@@ -39,6 +39,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/audit/siem"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/encryption"
@@ -354,6 +355,23 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 	if sink := notifychan.NewMulti(notifySinks...); sink != nil {
 		coreService.SetNotificationSink(sink)
+	}
+
+	// Wire Keyorix Connect (ADR-043) read-through federation if enabled.
+	if cc := cfg.Connect; cc.Enabled && len(cc.Connectors) > 0 {
+		var connectors []connect.Connector
+		for _, cn := range cc.Connectors {
+			switch cn.Type {
+			case "aws-secrets-manager":
+				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region))
+			default:
+				log.Printf("Keyorix Connect: skipping connector %q with unknown type %q", cn.Name, cn.Type)
+			}
+		}
+		if len(connectors) > 0 {
+			coreService.SetConnectManager(connect.NewManager(connectors))
+			log.Printf("Keyorix Connect enabled (%d connector(s))", len(connectors))
+		}
 	}
 
 	// Wire any off-box evidence targets (webhook and/or S3-compatible object store),

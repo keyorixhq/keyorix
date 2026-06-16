@@ -88,6 +88,28 @@ type Config struct {
 	// server keeps its conservative built-in defaults (see core.DefaultPasswordPolicy);
 	// when present, the install's values fully replace them.
 	PasswordPolicy PasswordPolicyConfig `yaml:"password_policy"`
+
+	// Connect configures Keyorix Connect (ADR-043): read-through federation to
+	// external secret stores. Disabled (zero value) = the /connect endpoints are not
+	// served.
+	Connect ConnectConfig `yaml:"connect"`
+}
+
+// ConnectConfig configures read-through federation to external secret stores
+// (ADR-043). Opt-in: with no connectors (or Enabled false) the /connect API is off.
+type ConnectConfig struct {
+	Enabled    bool              `yaml:"enabled"`
+	Connectors []ConnectorConfig `yaml:"connectors"`
+}
+
+// ConnectorConfig describes one external-store connector. Name is the API path key
+// (unique); Type selects the backend ("aws-secrets-manager"); Region is the backend
+// region where applicable. Credentials come from the backend's ambient identity
+// chain, never from here.
+type ConnectorConfig struct {
+	Name   string `yaml:"name"`
+	Type   string `yaml:"type"`
+	Region string `yaml:"region"`
 }
 
 // PasswordPolicyConfig mirrors the password rules from ADR-025: synchronous

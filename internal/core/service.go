@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
@@ -52,6 +53,9 @@ type KeyorixCore struct {
 	// notificationSink fans each in-app notification out to an external channel
 	// (email/webhook). nil = in-app only. Set from config via SetNotificationSink.
 	notificationSink NotificationSink
+	// connectManager proxies read-through federation to external secret stores
+	// (ADR-043). nil = Keyorix Connect disabled. Set via SetConnectManager.
+	connectManager *connect.Manager
 	// evidenceForwarder ships the scheduled compliance-evidence pack to an off-box
 	// target (webhook). nil = local-file only. Set via SetEvidenceForwarder.
 	evidenceForwarder EvidenceForwarder
