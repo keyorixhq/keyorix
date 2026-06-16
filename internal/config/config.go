@@ -283,11 +283,12 @@ type EncryptionConfig struct {
 // KEK from KEYORIX_MASTER_PASSWORD; "file" reads raw key material from FilePath;
 // "env" reads it from the EnvVar's value (hex or base64); "exec" runs ExecCommand
 // and reads the KEK from its stdout; "shamir" reconstructs it from K-of-N Shamir
-// shares (ShamirShareFiles / ShamirShareEnv); "aws-kms" / "gcp-kms" / "azure-kms"
+// shares (ShamirShareFiles / ShamirShareEnv); "tpm" seals it to the host TPM 2.0
+// (TPMDevice, sealed blob at WrappedKeyPath); "aws-kms" / "gcp-kms" / "azure-kms"
 // envelope-wrap the KEK with a cloud KMS/HSM key (ADR-041) and store the wrapped
 // blob at WrappedKeyPath. file/env/exec suit a KEK injected by a sealed/SOPS secret,
 // a CSI driver, or any external secret store; shamir splits it across custodians;
-// the KMS providers keep the wrapping key in the cloud HSM.
+// tpm binds it to host hardware; the KMS providers keep the wrapping key in the cloud HSM.
 type KeyProviderConfig struct {
 	Type     string `yaml:"type"`
 	FilePath string `yaml:"file_path"`
@@ -314,6 +315,9 @@ type KeyProviderConfig struct {
 	// single share reveals the KEK.
 	ShamirShareFiles []string `yaml:"shamir_share_files"`
 	ShamirShareEnv   []string `yaml:"shamir_share_env"`
+	// TPMDevice is the TPM 2.0 device for type "tpm" (default /dev/tpmrm0). The KEK
+	// is sealed to this TPM and the sealed blob stored at WrappedKeyPath.
+	TPMDevice string `yaml:"tpm_device"`
 }
 
 type SecretsConfig struct {

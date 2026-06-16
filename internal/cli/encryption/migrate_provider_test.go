@@ -190,6 +190,27 @@ func TestTargetEncryptionConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("tpm requires a wrapped-key-path distinct from the DEK", func(t *testing.T) {
+		_, err := targetEncryptionConfig(cur, migrateOpts{toType: "tpm"})
+		if err == nil || !strings.Contains(err.Error(), "--to-wrapped-key-path") {
+			t.Fatalf("expected wrapped-key-path requirement, got: %v", err)
+		}
+		_, err = targetEncryptionConfig(cur, migrateOpts{toType: "tpm", toWrappedKeyPath: cur.DEKPath})
+		if err == nil || !strings.Contains(err.Error(), "must differ from the DEK path") {
+			t.Fatalf("expected DEK-path guard, got: %v", err)
+		}
+	})
+
+	t.Run("tpm carries device + blob path", func(t *testing.T) {
+		tgt, err := targetEncryptionConfig(cur, migrateOpts{toType: "tpm", toWrappedKeyPath: "keys/kek.tpm", toTPMDevice: "/dev/tpm0"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tgt.KeyProvider.Type != "tpm" || tgt.KeyProvider.WrappedKeyPath != "keys/kek.tpm" || tgt.KeyProvider.TPMDevice != "/dev/tpm0" {
+			t.Fatalf("expected tpm provider with device + blob path, got %+v", tgt.KeyProvider)
+		}
+	})
+
 	t.Run("password overrides salt path", func(t *testing.T) {
 		tgt, err := targetEncryptionConfig(cur, migrateOpts{toType: "password", toSaltPath: "keys/new.salt"})
 		if err != nil {
