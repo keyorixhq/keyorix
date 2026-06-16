@@ -2,8 +2,11 @@
 
 ## Status
 
-Accepted (first slice). PostgreSQL executor shipped; the auto-rotation wiring and
-further backends follow.
+Accepted. PostgreSQL executor shipped and wired into the auto-rotation flow: a secret
+with `rotation_backend` + `rotation_ref` set has its new value applied upstream (the
+executor) before being stored in Keyorix, so the two never drift — and the value is NOT
+stored if the upstream apply fails. Manageable over HTTP/gRPC/CLI (scoped
+`secrets.write`). Further backends (MySQL, cloud-key APIs) follow.
 
 ## Context
 

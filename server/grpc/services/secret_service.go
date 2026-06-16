@@ -173,7 +173,10 @@ func (s *SecretGRPCService) SetSecretAutoRotate(ctx context.Context, req *pb.Set
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.write"); err != nil {
 		return nil, err
 	}
-	if err := s.core.SetSecretAutoRotate(ctx, uint(req.GetId()), req.GetEnabled(), int(req.GetLength()), req.GetCharset(), user.PrincipalID()); err != nil {
+	if err := s.core.SetSecretAutoRotate(ctx, uint(req.GetId()), core.AutoRotateSpec{
+		Enabled: req.GetEnabled(), Length: int(req.GetLength()), Charset: req.GetCharset(),
+		Backend: req.GetBackend(), Ref: req.GetRef(),
+	}, user.PrincipalID()); err != nil {
 		return nil, mapSecretError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -293,7 +296,8 @@ func mapSecretError(err error) error {
 		return status.Error(codes.PermissionDenied, "access denied to this secret")
 	case strings.Contains(msg, "already exists"):
 		return status.Error(codes.AlreadyExists, "secret with this name already exists")
-	case strings.Contains(msg, "unknown rotation charset"), strings.Contains(msg, "out of range"):
+	case strings.Contains(msg, "unknown rotation charset"), strings.Contains(msg, "out of range"),
+		strings.Contains(msg, "must be set together"):
 		return status.Error(codes.InvalidArgument, msg)
 	default:
 		return status.Error(codes.Internal, "secret operation failed")

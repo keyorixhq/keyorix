@@ -15,6 +15,7 @@ import (
 	"log"
 
 	"github.com/keyorixhq/keyorix/internal/rotation"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // SetRotationManager wires the configured backend rotation executors (ADR-047) that
@@ -145,6 +146,19 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 				log.Printf("auto-rotation: generate value for secret %d: %v", secret.ID, gerr)
 				continue
 			}
+			// Backend rotation (ADR-047): if the secret names a configured executor,
+			// apply the new value UPSTREAM first. Only on success do we store it in
+			// Keyorix, so the two never drift. A backend that is named but unconfigured
+			// or whose upstream apply fails is skipped (logged + audited), not stored.
+			if secret.RotationBackend != "" {
+				if err := c.applyBackendRotation(ctx, secret, val); err != nil {
+					sid := secret.ID
+					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+						fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
+					log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
+					continue
+				}
+			}
 			if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(val), "system:auto-rotation"); rerr != nil {
 				log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
 				continue
@@ -152,11 +166,33 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 			done[secret.ID] = true
 			rotated++
 			sid := secret.ID
+			via := ""
+			if secret.RotationBackend != "" {
+				via = fmt.Sprintf(" via backend %q ref %q", secret.RotationBackend, secret.RotationRef)
+			}
 			c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
-				fmt.Sprintf("auto-rotated secret %q (policy %q, interval %dd)", secret.Name, policy.Name, policy.IntervalDays))
+				fmt.Sprintf("auto-rotated secret %q (policy %q, interval %dd)%s", secret.Name, policy.Name, policy.IntervalDays, via))
 		}
 	}
 	return rotated, nil
+}
+
+// applyBackendRotation resolves the secret's named rotation executor and applies
+// newValue to the upstream credential (ADR-047). Returns an error (so the caller does
+// NOT store the value) when no backend manager is configured, the named backend is
+// unknown, or the upstream apply fails.
+func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.SecretNode, newValue string) error {
+	if c.rotationManager == nil {
+		return fmt.Errorf("no rotation backends configured")
+	}
+	exec, ok := c.rotationManager.Get(secret.RotationBackend)
+	if !ok {
+		return fmt.Errorf("unknown rotation backend %q", secret.RotationBackend)
+	}
+	if secret.RotationRef == "" {
+		return fmt.Errorf("rotation_ref is required for backend rotation")
+	}
+	return exec.Rotate(ctx, secret.RotationRef, newValue)
 }
 
 // knownRotationCharset reports whether name is a recognized charset (or "" = default).
@@ -169,23 +205,44 @@ func knownRotationCharset(name string) bool {
 	}
 }
 
-// SetSecretAutoRotate enables or disables automated rotation for a secret and sets the
-// generated-value shape (length 0 = default, charset "" = default alphanumeric), then
-// audits the change. Enable only for secrets whose value Keyorix owns (see file header).
-func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, enabled bool, length int, charset string, actorID uint) error {
-	if !knownRotationCharset(charset) {
-		return fmt.Errorf("unknown rotation charset %q (want alphanumeric|lower_alphanumeric|hex|alphanumeric_symbols)", charset)
+// AutoRotateSpec is the per-secret automated-rotation configuration set via
+// SetSecretAutoRotate (ADR-046/047). Length 0 = default; Charset "" = default
+// alphanumeric. Backend "" = regenerate in Keyorix only; when Backend names a
+// configured executor, Ref is the upstream identifier it rotates (required iff Backend
+// is set).
+type AutoRotateSpec struct {
+	Enabled bool
+	Length  int
+	Charset string
+	Backend string
+	Ref     string
+}
+
+// SetSecretAutoRotate configures automated rotation for a secret and audits the change.
+// Enable only for secrets whose value Keyorix owns, OR point Backend at an executor that
+// rotates the upstream credential too (ADR-047). The caller (transport) must have
+// enforced scoped secrets.write.
+func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec AutoRotateSpec, actorID uint) error {
+	if !knownRotationCharset(spec.Charset) {
+		return fmt.Errorf("unknown rotation charset %q (want alphanumeric|lower_alphanumeric|hex|alphanumeric_symbols)", spec.Charset)
 	}
-	if length != 0 && (length < rotatedValueMinLength || length > rotatedValueMaxLength) {
-		return fmt.Errorf("rotation length %d out of range (%d–%d, or 0 for default)", length, rotatedValueMinLength, rotatedValueMaxLength)
+	if spec.Length != 0 && (spec.Length < rotatedValueMinLength || spec.Length > rotatedValueMaxLength) {
+		return fmt.Errorf("rotation length %d out of range (%d–%d, or 0 for default)", spec.Length, rotatedValueMinLength, rotatedValueMaxLength)
+	}
+	// Backend and ref are both-or-neither: a backend with no ref can't be applied, and a
+	// ref with no backend is meaningless.
+	if (spec.Backend == "") != (spec.Ref == "") {
+		return fmt.Errorf("rotation_backend and rotation_ref must be set together (or both empty)")
 	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return fmt.Errorf("secret not found: %w", err)
 	}
-	secret.AutoRotate = enabled
-	secret.RotationLength = length
-	secret.RotationCharset = charset
+	secret.AutoRotate = spec.Enabled
+	secret.RotationLength = spec.Length
+	secret.RotationCharset = spec.Charset
+	secret.RotationBackend = spec.Backend
+	secret.RotationRef = spec.Ref
 	secret.UpdatedAt = c.now()
 	if _, err := c.storage.UpdateSecret(ctx, secret); err != nil {
 		return fmt.Errorf("failed to update secret: %w", err)
@@ -193,10 +250,14 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, enabled 
 	uid := actorID
 	sid := id
 	verb := "disabled"
-	if enabled {
+	if spec.Enabled {
 		verb = "enabled"
 	}
+	via := ""
+	if spec.Backend != "" {
+		via = fmt.Sprintf(" (backend %q ref %q)", spec.Backend, spec.Ref)
+	}
 	c.writeAuditEvent(ctx, EventSecretAutoRotateConfig, &uid, &sid,
-		fmt.Sprintf("auto-rotation %s for secret %q", verb, secret.Name))
+		fmt.Sprintf("auto-rotation %s for secret %q%s", verb, secret.Name, via))
 	return nil
 }

@@ -451,6 +451,12 @@ type SecretNode struct {
 	// the default alphanumeric set. See the rotation executor for the named charsets.
 	RotationLength  int    `gorm:"not null;default:0"`
 	RotationCharset string `gorm:"not null;default:''"`
+	// RotationBackend / RotationRef wire a secret to a backend rotation executor
+	// (ADR-047): when RotationBackend names a configured executor, auto-rotation applies
+	// the new value to the upstream system (RotationRef = the upstream identifier, e.g. a
+	// DB role) before storing it. Empty RotationBackend = regenerate in Keyorix only.
+	RotationBackend string `gorm:"not null;default:''"`
+	RotationRef     string `gorm:"not null;default:''"`
 	// DeletedAt enables soft delete (ADR-033). DELETE stamps it; restore clears
 	// it; the purge scheduler hard-deletes rows past the retention window. GORM
 	// auto-scopes `deleted_at IS NULL` on model-based queries — raw/Table/Joins

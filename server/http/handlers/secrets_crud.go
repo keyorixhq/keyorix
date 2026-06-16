@@ -153,24 +153,32 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 		Enabled bool   `json:"enabled"`
 		Length  int    `json:"length"`  // 0 = default
 		Charset string `json:"charset"` // "" = default alphanumeric
+		Backend string `json:"backend"` // "" = regenerate in Keyorix only
+		Ref     string `json:"ref"`     // upstream identifier (required iff backend set)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.SetSecretAutoRotate(r.Context(), uint(id), reqBody.Enabled, reqBody.Length, reqBody.Charset, userCtx.UserID); err != nil {
+	if err := h.coreService.SetSecretAutoRotate(r.Context(), uint(id), core.AutoRotateSpec{
+		Enabled: reqBody.Enabled, Length: reqBody.Length, Charset: reqBody.Charset,
+		Backend: reqBody.Backend, Ref: reqBody.Ref,
+	}, userCtx.UserID); err != nil {
 		status := http.StatusInternalServerError
 		switch {
 		case strings.Contains(err.Error(), "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "unknown rotation charset"), strings.Contains(err.Error(), "out of range"):
+		case strings.Contains(err.Error(), "unknown rotation charset"),
+			strings.Contains(err.Error(), "out of range"),
+			strings.Contains(err.Error(), "must be set together"):
 			status = http.StatusBadRequest
 		}
 		h.sendError(w, "Error", err.Error(), status, nil)
 		return
 	}
 	h.sendSuccess(w, map[string]interface{}{
-		"id": id, "auto_rotate": reqBody.Enabled, "length": reqBody.Length, "charset": reqBody.Charset,
+		"id": id, "auto_rotate": reqBody.Enabled, "length": reqBody.Length,
+		"charset": reqBody.Charset, "backend": reqBody.Backend, "ref": reqBody.Ref,
 	}, "Auto-rotation updated")
 }
 

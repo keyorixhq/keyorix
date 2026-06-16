@@ -163,6 +163,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if !columnExists(db, "secret_nodes", "rotation_charset") {
 			db.Exec("ALTER TABLE secret_nodes ADD COLUMN rotation_charset TEXT NOT NULL DEFAULT ''")
 		}
+		// ADR-047: backend rotation wiring. Additive ('' = regenerate-in-Keyorix).
+		if !columnExists(db, "secret_nodes", "rotation_backend") {
+			db.Exec("ALTER TABLE secret_nodes ADD COLUMN rotation_backend TEXT NOT NULL DEFAULT ''")
+		}
+		if !columnExists(db, "secret_nodes", "rotation_ref") {
+			db.Exec("ALTER TABLE secret_nodes ADD COLUMN rotation_ref TEXT NOT NULL DEFAULT ''")
+		}
 	}
 	// Anomaly alerting: additive `alerted` flag (false = not yet pushed out).
 	if tableExists(db, "anomaly_alerts") && !columnExists(db, "anomaly_alerts", "alerted") {

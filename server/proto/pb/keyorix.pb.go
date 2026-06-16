@@ -837,6 +837,8 @@ type SetSecretAutoRotateRequest struct {
 	Enabled       bool                   `protobuf:"varint,2,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	Length        int32                  `protobuf:"varint,3,opt,name=length,proto3" json:"length,omitempty"`  // 0 = default
 	Charset       string                 `protobuf:"bytes,4,opt,name=charset,proto3" json:"charset,omitempty"` // "" = default alphanumeric
+	Backend       string                 `protobuf:"bytes,5,opt,name=backend,proto3" json:"backend,omitempty"` // "" = regenerate in Keyorix only (ADR-047)
+	Ref           string                 `protobuf:"bytes,6,opt,name=ref,proto3" json:"ref,omitempty"`         // upstream identifier (required iff backend set)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -895,6 +897,20 @@ func (x *SetSecretAutoRotateRequest) GetLength() int32 {
 func (x *SetSecretAutoRotateRequest) GetCharset() string {
 	if x != nil {
 		return x.Charset
+	}
+	return ""
+}
+
+func (x *SetSecretAutoRotateRequest) GetBackend() string {
+	if x != nil {
+		return x.Backend
+	}
+	return ""
+}
+
+func (x *SetSecretAutoRotateRequest) GetRef() string {
+	if x != nil {
+		return x.Ref
 	}
 	return ""
 }
@@ -8438,12 +8454,14 @@ const file_keyorix_proto_rawDesc = "" +
 	"ownedCount\x12!\n" +
 	"\fshared_count\x18\a \x01(\rR\vsharedCount\"*\n" +
 	"\x18GetSecretVersionsRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\rR\x02id\"x\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\"\xa4\x01\n" +
 	"\x1aSetSecretAutoRotateRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x18\n" +
 	"\aenabled\x18\x02 \x01(\bR\aenabled\x12\x16\n" +
 	"\x06length\x18\x03 \x01(\x05R\x06length\x12\x18\n" +
-	"\acharset\x18\x04 \x01(\tR\acharset\"\x90\x01\n" +
+	"\acharset\x18\x04 \x01(\tR\acharset\x12\x18\n" +
+	"\abackend\x18\x05 \x01(\tR\abackend\x12\x10\n" +
+	"\x03ref\x18\x06 \x01(\tR\x03ref\"\x90\x01\n" +
 	"\rSecretVersion\x12%\n" +
 	"\x0eversion_number\x18\x01 \x01(\rR\rversionNumber\x129\n" +
 	"\n" +
