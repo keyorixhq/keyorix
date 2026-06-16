@@ -455,6 +455,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 					continue
 				}
 				execs = append(execs, rotation.NewAWSIAMExecutor(b.Name, b.Region, b.AllowedRefs))
+			case "gcp-service-account":
+				// Generate-upstream backend: GCP mints the key; credentials come from
+				// Application Default Credentials (no DSN). Fail-closed on allowed_refs.
+				if len(b.AllowedRefs) == 0 {
+					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+					continue
+				}
+				execs = append(execs, rotation.NewGCPServiceAccountKeyExecutor(b.Name, b.AllowedRefs))
 			default:
 				log.Printf("Rotation backend %q: unknown type %q, skipping", b.Name, b.Type)
 			}
