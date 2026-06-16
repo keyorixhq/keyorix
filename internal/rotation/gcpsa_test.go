@@ -84,6 +84,13 @@ func TestGCPSA_GenerateUpstream_Errors(t *testing.T) {
 		_, err := gcpWith(&fakeGCP{}, "svc-").GenerateUpstream(context.Background(), "")
 		require.Error(t, err)
 	})
+	t.Run("ref with slash rejected", func(t *testing.T) {
+		fake := &fakeGCP{newJSON: "{}"}
+		_, err := gcpWith(fake, "svc-").GenerateUpstream(context.Background(), "svc-app@p.iam/keys/x")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "resource path")
+		assert.Empty(t, fake.createdAt, "a path-shaped ref never reaches GCP")
+	})
 	t.Run("fail-closed without allowed_refs", func(t *testing.T) {
 		_, err := gcpWith(&fakeGCP{}).GenerateUpstream(context.Background(), "svc-app@p.iam")
 		require.Error(t, err)

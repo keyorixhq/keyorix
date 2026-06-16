@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	iam "google.golang.org/api/iam/v1"
 )
@@ -66,6 +67,11 @@ func (e *GCPServiceAccountKeyExecutor) client(ctx context.Context) (gcpKeyAPI, e
 func (e *GCPServiceAccountKeyExecutor) GenerateUpstream(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("gcp-service-account: service-account email (ref) is required")
+	}
+	// ref is concatenated into the SA resource name; an email never contains '/', so
+	// reject one defensively (it cannot then introduce extra path segments).
+	if strings.ContainsRune(ref, '/') {
+		return "", fmt.Errorf("gcp-service-account: ref %q must be a service-account email, not a resource path", ref)
 	}
 	if len(e.allowedRefs) == 0 {
 		return "", fmt.Errorf("gcp-service-account: backend %q has no allowed_refs configured — refusing to rotate (fail-closed)", e.name)
