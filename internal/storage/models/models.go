@@ -440,6 +440,12 @@ type SecretNode struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	LastRotatedAt  *time.Time
+	// AutoRotate opts this secret into automated rotation (ADR-046): when set, and the
+	// secret is covered by an active rotation policy it is overdue under, the rotation
+	// executor regenerates its value on schedule. Off by default — only secrets whose
+	// value Keyorix owns (generated, no external consumer to coordinate) should enable
+	// it, since auto-rotation changes the stored value without touching any upstream.
+	AutoRotate bool `gorm:"not null;default:false"`
 	// DeletedAt enables soft delete (ADR-033). DELETE stamps it; restore clears
 	// it; the purge scheduler hard-deletes rows past the retention window. GORM
 	// auto-scopes `deleted_at IS NULL` on model-based queries — raw/Table/Joins

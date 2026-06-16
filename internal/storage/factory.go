@@ -151,6 +151,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "classification") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN classification TEXT DEFAULT ''")
 	}
+	// ADR-046: automated rotation opt-in. Additive auto_rotate (false = off).
+	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "auto_rotate") {
+		db.Exec("ALTER TABLE secret_nodes ADD COLUMN auto_rotate BOOLEAN NOT NULL DEFAULT false")
+	}
 	// Anomaly alerting: additive `alerted` flag (false = not yet pushed out).
 	if tableExists(db, "anomaly_alerts") && !columnExists(db, "anomaly_alerts", "alerted") {
 		db.Exec("ALTER TABLE anomaly_alerts ADD COLUMN alerted BOOLEAN DEFAULT FALSE")

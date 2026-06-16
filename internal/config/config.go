@@ -25,6 +25,10 @@ type Config struct {
 	// RotationReminders configures the opt-in background scheduler that notifies
 	// project admins of secrets overdue / approaching their rotation deadline.
 	RotationReminders RotationRemindersConfig `yaml:"rotation_reminders"`
+	// AutoRotation configures the opt-in background scheduler that actually rotates
+	// auto-rotate-enabled secrets overdue under a policy (ADR-046), regenerating their
+	// value. Distinct from rotation_reminders, which only notifies.
+	AutoRotation AutoRotationConfig `yaml:"auto_rotation"`
 	// AuditCheckpoints configures the opt-in background scheduler that writes
 	// signed checkpoints of the audit hash chain (ADR-029) for on-box truncation
 	// detection. Requires encryption enabled (the signing key is DEK-derived).
@@ -896,6 +900,23 @@ func (p *SSOProviderConfig) GetClientSecret() string {
 type RotationRemindersConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
+}
+
+// AutoRotationConfig configures the opt-in automated-rotation scheduler (ADR-046).
+type AutoRotationConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+}
+
+// GetInterval returns the auto-rotation run interval (Go duration, e.g. "1h");
+// defaults to 1h when unset or unparseable.
+func (c AutoRotationConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return time.Hour
 }
 
 // GetInterval returns the rotation-reminder run interval (Go duration, e.g. "24h");
