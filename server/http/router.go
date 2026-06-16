@@ -69,6 +69,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	rbacHandler := handlers.NewRBACHandler(coreService)
 	usersRolesHandler := handlers.NewUsersRolesHandler(coreService)
 	notificationHandler := handlers.NewNotificationHandler(coreService)
+	connectHandler := handlers.NewConnectHandler(coreService)
 
 	// Auth endpoints (no authentication middleware)
 	r.Post("/auth/login", authHandler.Login)
@@ -218,6 +219,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// specific project/environment is scoped to that project. Creating a
 		// project has no parent scope, so it requires global write.
 		projectScope := customMiddleware.ScopeFromProjectParam("id")
+		// Keyorix Connect (ADR-043): read-through federation to external secret stores.
+		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/connect/connectors", connectHandler.ListConnectors)
+		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/connect/{name}/secret", connectHandler.GetSecret)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/projects", catalogHandler.ListProjects)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}", catalogHandler.GetProject)
 		r.With(customMiddleware.RequirePermission("secrets.write")).Post("/projects", catalogHandler.CreateProject)
