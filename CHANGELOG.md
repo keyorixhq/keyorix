@@ -3,6 +3,20 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.49.0 — 2026-06-17
+
+### Added
+- **MongoDB and Redis rotation backends** (ADR-047) — automated rotation can now rotate
+  a MongoDB account (`updateUser`) or a Redis ACL user (`ACL SETUSER … resetpass`) in
+  place, alongside PostgreSQL and MySQL. Both pass the username/password as typed/discrete
+  values (injection-safe by construction) and are fail-closed on a required
+  `allowed_refs`. ([#273])
+
+Backend rotation now spans PostgreSQL · MySQL · MongoDB · Redis (password-set) and AWS
+IAM (generate-upstream).
+
+[#273]: https://github.com/keyorixhq/keyorix/pull/273
+
 ## v0.48.0 — 2026-06-16
 
 More rotation backends (ADR-047).
