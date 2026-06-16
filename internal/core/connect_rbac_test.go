@@ -175,6 +175,47 @@ func TestConnectRefRBAC_GroupDerivedRole(t *testing.T) {
 	require.Error(t, err)
 }
 
+// Glob patterns (ADR-045): a pattern with metacharacters matches via path.Match
+// (* not crossing '/'); a plain pattern stays a prefix match (backward compatible).
+func TestConnectRefRBAC_GlobPatterns(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	seedRoleForUser(t, db, 1, 5, "reader")
+	seedGrant(t, c, 5, "aws", "prod/*/db") // exactly one segment between prod/ and /db
+	ctx := context.Background()
+
+	val, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "prod/eu/db")
+	require.NoError(t, err)
+	assert.Equal(t, "v", val)
+
+	// * does not cross '/', so a two-segment middle does not match.
+	_, err = c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "prod/eu/west/db")
+	require.Error(t, err)
+	// A different leaf does not match.
+	_, err = c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "prod/eu/secrets")
+	require.Error(t, err)
+}
+
+func TestRefMatches(t *testing.T) {
+	cases := []struct {
+		pattern, ref string
+		want         bool
+	}{
+		{"", "anything", true},              // empty prefix = all
+		{"metrics/", "metrics/qps", true},   // plain prefix
+		{"metrics/", "db/x", false},         // prefix miss
+		{"metrics/*", "metrics/qps", true},  // glob, one segment
+		{"metrics/*", "metrics/a/b", false}, // * does not cross '/'
+		{"prod/*/db", "prod/eu/db", true},   // middle wildcard
+		{"prod/*/db", "prod/eu/west/db", false},
+		{"db?", "db1", true}, // single-char wildcard
+		{"db?", "db", false},
+		{"[", "anything", false}, // malformed glob matches nothing
+	}
+	for _, tc := range cases {
+		assert.Equalf(t, tc.want, refMatches(tc.pattern, tc.ref), "refMatches(%q, %q)", tc.pattern, tc.ref)
+	}
+}
+
 func TestConnectRefAllowed_Direct(t *testing.T) {
 	c, db := connectRBACCore(t)
 	seedRoleForUser(t, db, 1, 5, "reader")

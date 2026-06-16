@@ -24,8 +24,13 @@ deployment where different teams share one connector but should see different se
 Add **per-reference grants**: a `(role, connector, ref_prefix)` allowlist that refines
 `connect.read`, enforced in `ReadFederatedSecret` before the backend call.
 
-- A grant authorizes any `ref` whose value begins with `ref_prefix` (an empty prefix =
-  all refs on that connector) for holders of the role.
+- A grant authorizes a `ref` for holders of the role when the grant's pattern matches.
+  A pattern with **no** glob metacharacters (`*`, `?`, `[`) matches as a **prefix** (an
+  empty pattern = all refs on that connector); a pattern **containing** a metacharacter
+  matches as a shell-style **glob** via `path.Match`, where `*` does not cross `/`. So
+  `metrics/` grants everything under `metrics/`, `metrics/*` grants exactly one further
+  path segment, and `prod/*/db` matches `prod/<env>/db`. A malformed glob matches
+  nothing (fails closed).
 - Enforcement is **deny-by-default, but only for connectors that have at least one
   grant**:
   - a connector with **no** grants is governed exactly as before — `connect.read` plus
@@ -66,10 +71,12 @@ implicit admin bypass.
 
 ## Alternatives considered
 
-- **Glob / regex ref patterns** instead of prefixes: more expressive but inconsistent
-  with the existing `allowed_refs` prefix semantics and harder to reason about for
-  least-privilege. Prefix matching covers the hierarchical-path naming every supported
-  backend uses; revisit if a real need for mid-path wildcards appears.
+- **Regex ref patterns**: rejected as too sharp an edge for an allowlist (catastrophic
+  backtracking, hard to reason about for least-privilege). Shell-style globs via
+  `path.Match` were instead added **additively** on top of prefixes (a plain pattern
+  stays a prefix, so existing grants are unchanged; a pattern with `*`/`?`/`[` matches
+  as a glob), which covers mid-path wildcards (`prod/*/db`) without the regex hazards.
+  The coarse connector-level `allowed_refs` guardrail remains prefix-only for now.
 - **User-scoped (not role-scoped) grants**: rejected — Keyorix authorization is
   role-based throughout; per-user grants would fork the model and not compose with
   groups.
