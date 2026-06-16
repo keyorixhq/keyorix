@@ -263,6 +263,30 @@ func (rs *RemoteStorage) RemovePermissionFromRole(ctx context.Context, roleID, p
 	return nil
 }
 
+// Keyorix Connect per-reference grants (ADR-045) are a server-side concern: the live
+// federated-read path and grant management both run against LocalStorage, so the
+// remote (client) storage does not proxy these primitives.
+
+// ListConnectRefGrantsByConnector is not supported in remote storage.
+func (rs *RemoteStorage) ListConnectRefGrantsByConnector(_ context.Context, _ string) ([]*models.ConnectRefGrant, error) {
+	return nil, remoteUnsupported("ListConnectRefGrantsByConnector")
+}
+
+// ListConnectRefGrants is not supported in remote storage.
+func (rs *RemoteStorage) ListConnectRefGrants(_ context.Context) ([]*models.ConnectRefGrant, error) {
+	return nil, remoteUnsupported("ListConnectRefGrants")
+}
+
+// CreateConnectRefGrant is not supported in remote storage.
+func (rs *RemoteStorage) CreateConnectRefGrant(_ context.Context, _ *models.ConnectRefGrant) (*models.ConnectRefGrant, error) {
+	return nil, remoteUnsupported("CreateConnectRefGrant")
+}
+
+// DeleteConnectRefGrant is not supported in remote storage.
+func (rs *RemoteStorage) DeleteConnectRefGrant(_ context.Context, _ uint) error {
+	return remoteUnsupported("DeleteConnectRefGrant")
+}
+
 // GetGroupRoles lists the roles assigned to a group via remote API.
 func (rs *RemoteStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error) {
 	path := fmt.Sprintf("/api/v1/groups/%d/roles", groupID)

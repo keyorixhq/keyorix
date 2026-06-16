@@ -307,6 +307,14 @@ type Storage interface {
 	GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error)
 	RemovePermissionFromRole(ctx context.Context, roleID, permissionID uint) error
 
+	// Keyorix Connect per-reference grants (ADR-045). ListConnectRefGrantsByConnector
+	// returns the grants scoped to one connector (the enforcement path);
+	// ListConnectRefGrants returns all grants (management/listing).
+	ListConnectRefGrantsByConnector(ctx context.Context, connector string) ([]*models.ConnectRefGrant, error)
+	ListConnectRefGrants(ctx context.Context) ([]*models.ConnectRefGrant, error)
+	CreateConnectRefGrant(ctx context.Context, grant *models.ConnectRefGrant) (*models.ConnectRefGrant, error)
+	DeleteConnectRefGrant(ctx context.Context, id uint) error
+
 	// Group-Role assignments. Assign/Remove bind a role to a group at the given
 	// Scope (zero Scope = global).
 	GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error)

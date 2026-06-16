@@ -377,6 +377,25 @@ type UserRole struct {
 	ExpiresAt *time.Time `gorm:"index"`
 }
 
+// ConnectRefGrant scopes which secret references a role may read through a Keyorix
+// Connect connector (ADR-045) — a per-connector, per-role reference allowlist that
+// refines the global connect.read permission. A grant authorizes any ref whose value
+// begins with RefPrefix on the named connector for holders of RoleID (RefPrefix "" =
+// all refs on that connector).
+//
+// Enforcement is deny-by-default ONLY for connectors that have at least one grant:
+// when NO grant exists for a connector, that connector is governed solely by
+// connect.read plus the operator's allowed_refs (backward compatible); once any grant
+// exists for a connector, a read is permitted only if one of the caller's roles holds
+// a matching grant.
+type ConnectRefGrant struct {
+	ID        uint   `gorm:"primaryKey"`
+	RoleID    uint   `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:1"`
+	Connector string `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:2"`
+	RefPrefix string `gorm:"not null;uniqueIndex:uq_connect_ref_grant,priority:3"`
+	CreatedAt time.Time
+}
+
 type Group struct {
 	ID          uint   `gorm:"primaryKey"`
 	Name        string `gorm:"unique;not null"`

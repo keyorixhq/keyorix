@@ -970,8 +970,19 @@ connect:
 - Backend credentials come from the **ambient identity chain** (AWS: env /
   instance-profile / IRSA; GCP: ADC; Azure: `DefaultAzureCredential`; Vault:
   `token_env`), never from this config. A backend failure surfaces as `502 Bad Gateway`.
-- A federated read is bounded by **two** controls: the backend identity's IAM policy
-  (the load-bearing one — scope the connector's credentials to exactly the intended
-  secrets) and, optionally, the per-connector **`allowed_refs`** prefix allowlist
-  enforced in Keyorix before the backend call. Set both: any holder of global
-  `secrets.read` can otherwise read every secret the connector's identity can reach.
+- A federated read is bounded by up to **three** controls: the backend identity's IAM
+  policy (the load-bearing one — scope the connector's credentials to exactly the
+  intended secrets); optionally the per-connector **`allowed_refs`** prefix allowlist
+  enforced in Keyorix before the backend call; and optionally **per-reference RBAC
+  grants** (ADR-045) — a `(role, connector, ref_prefix)` allowlist. Set the IAM policy
+  for sure: any holder of `connect.read` can otherwise read every secret the
+  connector's identity can reach.
+- **Per-reference RBAC (ADR-045)** scopes *which roles* may read *which refs* on a
+  connector. It is opt-in per connector: a connector with **no** grants behaves as
+  before (governed by `connect.read` + `allowed_refs`), but once a connector has any
+  grant it is **deny-by-default** — only a caller holding a role with a matching
+  ref-prefix grant may read, and a denied read is audited. Manage grants at
+  `GET /api/v1/connect/ref-grants` (`roles.read`), `POST /api/v1/connect/ref-grants`
+  and `DELETE /api/v1/connect/ref-grants/{id}` (`roles.write`). To keep an admin role's
+  blanket access while scoping others, give it an **empty-prefix** grant (matches every
+  ref) on the connector.
