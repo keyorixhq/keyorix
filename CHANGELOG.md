@@ -3,6 +3,36 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.37.0 — 2026-06-16
+
+Split-custody master key + MFA recovery-code self-service.
+
+### Added
+- **Shamir K-of-N split-custody KEK provider** — a new `key_provider.type: shamir`
+  splits the 32-byte key-encryption key into **N Shamir shares** with a **K-of-N**
+  threshold, so no single custodian holds it and at least K must combine their shares
+  to unseal — separation of duties for the master key (ISO 27001 / NIS2). Generate
+  with `keyorix encryption shamir-split --shares N --threshold K` (the KEK is never
+  printed or stored — only the shares are); supply ≥ K shares at startup via
+  `shamir_share_files` / `shamir_share_env`, or move an existing install on with
+  `migrate-provider --to-type shamir`. The KEK is framed before splitting so a
+  sub-threshold or wrong set of shares fails closed (it does not silently establish a
+  wrong key). ([#236])
+- **MFA recovery-code regeneration + remaining count** — a user can now see how many
+  recovery codes remain (`GET /auth/mfa/recovery-codes`) and generate a fresh set
+  (`POST /auth/mfa/recovery-codes/regenerate`) after re-authenticating with a current
+  authenticator code or their password. Regenerating replaces the whole set (so old
+  or leaked codes are revoked) and returns the new codes once. Audited
+  `mfa.recovery_codes_regenerated`. ([#237])
+
+### Notes
+- Both additive and opt-in/self-service. `shamir` adds no schema change; the MFA
+  change adds no schema change. ⚠️ For `shamir`, losing more than N-K shares makes the
+  KEK — and all data — permanently unrecoverable; store and back up shares separately.
+
+[#236]: https://github.com/keyorixhq/keyorix/pull/236
+[#237]: https://github.com/keyorixhq/keyorix/pull/237
+
 ## v0.36.0 — 2026-06-15
 
 Independently verifiable audit trail: anchor checkpoints to a trusted timestamp
