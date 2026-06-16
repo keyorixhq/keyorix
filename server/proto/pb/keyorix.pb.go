@@ -3040,10 +3040,15 @@ func (x *GetRBACAuditLogsResponse) GetTotalPages() uint32 {
 }
 
 type StreamAuditLogsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EventType     *string                `protobuf:"bytes,1,opt,name=event_type,json=eventType,proto3,oneof" json:"event_type,omitempty"`
-	UserId        *uint32                `protobuf:"varint,2,opt,name=user_id,json=userId,proto3,oneof" json:"user_id,omitempty"`
-	ProjectId     *uint32                `protobuf:"varint,3,opt,name=project_id,json=projectId,proto3,oneof" json:"project_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	EventType *string                `protobuf:"bytes,1,opt,name=event_type,json=eventType,proto3,oneof" json:"event_type,omitempty"`
+	UserId    *uint32                `protobuf:"varint,2,opt,name=user_id,json=userId,proto3,oneof" json:"user_id,omitempty"`
+	ProjectId *uint32                `protobuf:"varint,3,opt,name=project_id,json=projectId,proto3,oneof" json:"project_id,omitempty"`
+	// after_id resumes the tail just after this audit event id: the stream first
+	// replays the backlog of matching events with id > after_id, then continues live.
+	// Omit (or 0) to tail only new events from the current head. Lets a disconnected
+	// SIEM consumer reconnect from its last-seen id without losing the gap.
+	AfterId       *uint32 `protobuf:"varint,4,opt,name=after_id,json=afterId,proto3,oneof" json:"after_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3095,6 +3100,13 @@ func (x *StreamAuditLogsRequest) GetUserId() uint32 {
 func (x *StreamAuditLogsRequest) GetProjectId() uint32 {
 	if x != nil && x.ProjectId != nil {
 		return *x.ProjectId
+	}
+	return 0
+}
+
+func (x *StreamAuditLogsRequest) GetAfterId() uint32 {
+	if x != nil && x.AfterId != nil {
+		return *x.AfterId
 	}
 	return 0
 }
@@ -8606,17 +8618,19 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x04page\x18\x03 \x01(\rR\x04page\x12\x1b\n" +
 	"\tpage_size\x18\x04 \x01(\rR\bpageSize\x12\x1f\n" +
 	"\vtotal_pages\x18\x05 \x01(\rR\n" +
-	"totalPages\"\xa8\x01\n" +
+	"totalPages\"\xd5\x01\n" +
 	"\x16StreamAuditLogsRequest\x12\"\n" +
 	"\n" +
 	"event_type\x18\x01 \x01(\tH\x00R\teventType\x88\x01\x01\x12\x1c\n" +
 	"\auser_id\x18\x02 \x01(\rH\x01R\x06userId\x88\x01\x01\x12\"\n" +
 	"\n" +
-	"project_id\x18\x03 \x01(\rH\x02R\tprojectId\x88\x01\x01B\r\n" +
+	"project_id\x18\x03 \x01(\rH\x02R\tprojectId\x88\x01\x01\x12\x1e\n" +
+	"\bafter_id\x18\x04 \x01(\rH\x03R\aafterId\x88\x01\x01B\r\n" +
 	"\v_event_typeB\n" +
 	"\n" +
 	"\b_user_idB\r\n" +
-	"\v_project_id\"\xa9\x02\n" +
+	"\v_project_idB\v\n" +
+	"\t_after_id\"\xa9\x02\n" +
 	"\vShareRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1b\n" +
 	"\tsecret_id\x18\x02 \x01(\rR\bsecretId\x12\x19\n" +

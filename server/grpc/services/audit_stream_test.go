@@ -80,6 +80,40 @@ func TestAuditService_StreamAuditLogs_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+func TestAuditService_StreamAuditLogs_ResumesFromCursor(t *testing.T) {
+	svc, db := newStreamCore(t)
+
+	// Two pre-existing events. A client that last saw id e1 reconnects with
+	// after_id=e1 and must receive the backlog (e2) without any new write.
+	uid := uint(1)
+	e1 := &models.AuditEvent{EventType: "role.assigned", UserID: &uid, EventTime: time.Now()}
+	require.NoError(t, db.Create(e1).Error)
+	e2 := &models.AuditEvent{EventType: "role.removed", UserID: &uid, EventTime: time.Now()}
+	require.NoError(t, db.Create(e2).Error)
+
+	ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))
+	defer cancel()
+	stream := &fakeAuditStream{ctx: ctx}
+
+	after := uint32(e1.ID)
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{AfterId: &after}, stream)
+	}()
+
+	// The backlog after e1 (i.e. e2) is replayed immediately, before any new event.
+	require.Eventually(t, func() bool { return stream.count() >= 1 }, time.Second, 10*time.Millisecond)
+	assert.Equal(t, "role.removed", stream.first().GetEventType())
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("stream did not return after cancel")
+	}
+}
+
 func TestAuditService_StreamAuditLogs_TailsNewEvents(t *testing.T) {
 	// These events are inserted directly into the DB (bypassing the emitAudit funnel
 	// that normally fires the push signal), so delivery here rides the fallback

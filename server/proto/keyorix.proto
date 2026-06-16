@@ -477,6 +477,11 @@ message StreamAuditLogsRequest {
   optional string event_type = 1;
   optional uint32 user_id = 2;
   optional uint32 project_id = 3;
+  // after_id resumes the tail just after this audit event id: the stream first
+  // replays the backlog of matching events with id > after_id, then continues live.
+  // Omit (or 0) to tail only new events from the current head. Lets a disconnected
+  // SIEM consumer reconnect from its last-seen id without losing the gap.
+  optional uint32 after_id = 4;
 }
 
 // ---------------------------------------------------------------------------
