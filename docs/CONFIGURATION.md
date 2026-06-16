@@ -981,7 +981,9 @@ connect:
   connector. It is opt-in per connector: a connector with **no** grants behaves as
   before (governed by `connect.read` + `allowed_refs`), but once a connector has any
   grant it is **deny-by-default** — only a caller holding a role with a matching
-  ref-prefix grant may read, and a denied read is audited. Manage grants at
+  ref-prefix grant may read, and a denied read is audited. A grant pattern is a
+  **prefix** by default; one containing glob metacharacters (`*`, `?`, `[`) matches as
+  a shell-style glob (`*` does not cross `/`), e.g. `prod/*/db`. Manage grants at
   `GET /api/v1/connect/ref-grants` (`roles.read`), `POST /api/v1/connect/ref-grants`
   and `DELETE /api/v1/connect/ref-grants/{id}` (`roles.write`). To keep an admin role's
   blanket access while scoping others, give it an **empty-prefix** grant (matches every

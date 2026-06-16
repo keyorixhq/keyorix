@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
@@ -143,11 +144,25 @@ func (c *KeyorixCore) connectRefAllowed(ctx context.Context, actorType string, p
 		return false, err
 	}
 	for _, g := range grants {
-		if roleSet[g.RoleID] && strings.HasPrefix(ref, g.RefPrefix) {
+		if roleSet[g.RoleID] && refMatches(g.RefPrefix, ref) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// refMatches reports whether ref is covered by a grant's pattern (ADR-045). A pattern
+// with no glob metacharacters (*, ?, [) is matched as a PREFIX — backward compatible,
+// and "" matches everything. A pattern containing a metacharacter is matched as a
+// shell-style glob via path.Match, where * does not cross '/'. So "metrics/" still
+// grants everything under metrics/, "metrics/*" grants exactly one further path
+// segment, and "prod/*/db" matches prod/<env>/db. A malformed glob matches nothing.
+func refMatches(pattern, ref string) bool {
+	if !strings.ContainsAny(pattern, "*?[") {
+		return strings.HasPrefix(ref, pattern)
+	}
+	ok, err := path.Match(pattern, ref)
+	return err == nil && ok
 }
 
 // actorRoleIDs resolves the caller's EFFECTIVE role IDs the same way canonical
