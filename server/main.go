@@ -463,6 +463,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 					continue
 				}
 				execs = append(execs, rotation.NewGCPServiceAccountKeyExecutor(b.Name, b.AllowedRefs))
+			case "azure-app":
+				// Generate-upstream backend: Azure mints the client secret via Graph;
+				// credentials come from the ambient Azure chain (no DSN). Fail-closed.
+				if len(b.AllowedRefs) == 0 {
+					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+					continue
+				}
+				execs = append(execs, rotation.NewAzureAppSecretExecutor(b.Name, b.AllowedRefs))
 			default:
 				log.Printf("Rotation backend %q: unknown type %q, skipping", b.Name, b.Type)
 			}

@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted. PostgreSQL, MySQL, MongoDB, and Redis (password-set) plus AWS IAM and GCP
-service-account keys (generate-upstream) executors shipped and wired into the
-auto-rotation flow: a secret
+Accepted. PostgreSQL, MySQL, MongoDB, and Redis (password-set) plus AWS IAM, GCP
+service-account keys, and Azure AD app secrets (generate-upstream) executors shipped and
+wired into the auto-rotation flow: a secret
 with `rotation_backend` + `rotation_ref` set has its new value applied upstream (the
 executor) before being stored in Keyorix, so the two never drift — and the value is NOT
 stored if the upstream apply fails. Manageable over HTTP/gRPC/CLI (scoped
