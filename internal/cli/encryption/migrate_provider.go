@@ -331,6 +331,20 @@ func printMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 		fmt.Printf("      file_path: %s\n", kp.FilePath)
 	case "env":
 		fmt.Printf("      env_var: %s\n", kp.EnvVar)
+	case "exec":
+		fmt.Printf("      exec_command: %v\n", kp.ExecCommand)
+	case "shamir":
+		if len(kp.ShamirShareFiles) > 0 {
+			fmt.Printf("      shamir_share_files: %v\n", kp.ShamirShareFiles)
+		}
+		if len(kp.ShamirShareEnv) > 0 {
+			fmt.Printf("      shamir_share_env: %v\n", kp.ShamirShareEnv)
+		}
+	case "tpm":
+		if kp.TPMDevice != "" {
+			fmt.Printf("      tpm_device: %s\n", kp.TPMDevice)
+		}
+		fmt.Printf("      wrapped_key_path: %s\n", kp.WrappedKeyPath)
 	case "aws-kms", "gcp-kms", "azure-kms":
 		fmt.Printf("      kms_key_id: %s\n", kp.KMSKeyID)
 		fmt.Printf("      wrapped_key_path: %s\n", kp.WrappedKeyPath)
