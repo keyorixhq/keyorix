@@ -949,7 +949,9 @@ connect:
         - secret/data/keyorix/
 ```
 
-- Reads are **read-only** and gated by `secrets.read`; each is audited as
+- Reads are **read-only** and gated by the dedicated `connect.read` permission
+  (ADR-044) — distinct from `secrets.read`, so external-store access is granted
+  explicitly (it ships granted to `admin` / `system_admin`); each is audited as
   `connect.secret_read`. The value is returned to the caller and never stored.
 - `ref` (query parameter) is connector-specific — for **AWS Secrets Manager** it is
   the secret **name or ARN** (a binary secret is returned base64-encoded); for **GCP

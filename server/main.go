@@ -219,6 +219,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 
 	coreService := core.NewKeyorixCore(store)
+
+	// Top up the canonical RBAC permission catalog (ADR-044): adds any permission
+	// introduced in a later release to an already-initialised install, granting it to
+	// its baseline roles. No-op pre-bootstrap and best-effort (never blocks startup).
+	if err := coreService.ReconcileRBACPermissions(context.Background()); err != nil {
+		log.Printf("RBAC permission reconciliation: %v (continuing)", err)
+	}
+
 	if encSvc != nil {
 		// Wire the initialised encryption service for reversibly-encrypted auth
 		// secrets (the TOTP MFA secret, which cannot be hashed).

@@ -39,7 +39,7 @@ Add **Keyorix Connect**: a **read-through** federation layer.
 - `GET /api/v1/connect/{name}/secret?ref=<id>` — read-through a secret. `ref` is
   connector-specific (for AWS Secrets Manager: the secret name or ARN).
 
-Both are gated by `secrets.read` (a federated read is a secret read) and audited.
+Both are gated by the dedicated `connect.read` permission (ADR-044) and audited.
 
 ## Alternatives considered
 

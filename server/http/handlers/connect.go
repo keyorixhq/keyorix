@@ -1,6 +1,7 @@
 // connect.go — HTTP handlers for Keyorix Connect (ADR-043): list configured
 // external-store connectors and proxy an authorized, audited read-through of a
-// secret. Both are gated by secrets.read in the router; values are never persisted.
+// secret. Both are gated by connect.read in the router (ADR-044); values are never
+// persisted.
 package handlers
 
 import (
