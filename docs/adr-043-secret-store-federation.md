@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted — AWS Secrets Manager and GCP Secret Manager read-through shipped.
-HashiCorp Vault, caching, and finer scoping are planned follow-ups.
+Accepted — AWS Secrets Manager, GCP Secret Manager, and HashiCorp Vault
+read-through shipped. Caching, a dedicated `connect.read` permission, and finer
+per-reference scoping are planned follow-ups.
 
 ## Context
 

@@ -933,7 +933,7 @@ connect:
   enabled: true
   connectors:
     - name: prod-aws            # API path key (unique); GET /api/v1/connect/prod-aws/secret?ref=…
-      type: aws-secrets-manager # aws-secrets-manager | gcp-secret-manager (Vault is a follow-up)
+      type: aws-secrets-manager # aws-secrets-manager | gcp-secret-manager | vault
       region: eu-west-1         # AWS region (aws-secrets-manager)
       allowed_refs:             # optional prefix allowlist — a ref must match one
         - keyorix/              # (defense-in-depth on top of the backend's IAM scope)
@@ -941,6 +941,12 @@ connect:
       type: gcp-secret-manager  # ref is the version resource name (creds from ADC)
       allowed_refs:
         - projects/my-proj/secrets/keyorix-
+    - name: prod-vault
+      type: vault               # ref is the read path; KV v2 is unwrapped
+      address: https://vault.example.com:8200
+      token_env: VAULT_TOKEN    # env var holding the Vault token (default VAULT_TOKEN)
+      allowed_refs:
+        - secret/data/keyorix/
 ```
 
 - Reads are **read-only** and gated by `secrets.read`; each is audited as
@@ -948,11 +954,12 @@ connect:
 - `ref` (query parameter) is connector-specific — for **AWS Secrets Manager** it is
   the secret **name or ARN** (a binary secret is returned base64-encoded); for **GCP
   Secret Manager** it is the **version resource name**
-  (`projects/P/secrets/NAME/versions/latest`). GCP credentials come from Application
-  Default Credentials (ADC) / workload identity.
+  (`projects/P/secrets/NAME/versions/latest`); for **Vault** it is the **read path**
+  (e.g. `secret/data/myapp` for KV v2, whose inner `data` map is returned). GCP
+  credentials come from ADC / workload identity; the Vault token comes from `token_env`.
 - Backend credentials come from the **ambient identity chain** (AWS: env /
-  instance-profile / IRSA), never from this config. A backend failure surfaces as
-  `502 Bad Gateway`.
+  instance-profile / IRSA; GCP: ADC; Vault: `token_env`), never from this config. A
+  backend failure surfaces as `502 Bad Gateway`.
 - A federated read is bounded by **two** controls: the backend identity's IAM policy
   (the load-bearing one — scope the connector's credentials to exactly the intended
   secrets) and, optionally, the per-connector **`allowed_refs`** prefix allowlist

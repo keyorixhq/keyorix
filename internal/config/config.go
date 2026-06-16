@@ -110,6 +110,12 @@ type ConnectorConfig struct {
 	Name   string `yaml:"name"`
 	Type   string `yaml:"type"`
 	Region string `yaml:"region"`
+	// Address is the backend base URL for type "vault" (e.g. https://vault:8200).
+	Address string `yaml:"address"`
+	// TokenEnv names the environment variable holding the backend token for type
+	// "vault" (default "VAULT_TOKEN"). The token is read from the environment, never
+	// from this file.
+	TokenEnv string `yaml:"token_env"`
 	// AllowedRefs, when non-empty, restricts which secret references this connector
 	// may read: a requested ref must have one of these prefixes (a defense-in-depth
 	// guardrail in Keyorix's layer, on top of the backend identity's IAM policy). An
