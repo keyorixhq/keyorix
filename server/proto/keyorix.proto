@@ -1085,6 +1085,12 @@ service ConnectService {
   rpc ListConnectors(google.protobuf.Empty) returns (ConnectorList);
   // ReadSecret proxies a read-through of a secret's current value from a connector.
   rpc ReadSecret(ReadFederatedSecretRequest) returns (FederatedSecretValue);
+  // ListRefGrants returns all per-reference grants (ADR-045). Requires roles.read.
+  rpc ListRefGrants(google.protobuf.Empty) returns (ConnectRefGrantList);
+  // CreateRefGrant adds a per-reference grant. Requires roles.write.
+  rpc CreateRefGrant(CreateConnectRefGrantRequest) returns (ConnectRefGrant);
+  // DeleteRefGrant removes a per-reference grant by id. Requires roles.write.
+  rpc DeleteRefGrant(DeleteConnectRefGrantRequest) returns (google.protobuf.Empty);
 }
 
 message ConnectorList {
@@ -1100,4 +1106,25 @@ message FederatedSecretValue {
   string connector = 1;
   string ref = 2;
   string value = 3;
+}
+
+message ConnectRefGrant {
+  uint32 id = 1;
+  uint32 role_id = 2;
+  string connector = 3;
+  string ref_prefix = 4;
+}
+
+message ConnectRefGrantList {
+  repeated ConnectRefGrant grants = 1;
+}
+
+message CreateConnectRefGrantRequest {
+  uint32 role_id = 1;
+  string connector = 2;
+  string ref_prefix = 3;
+}
+
+message DeleteConnectRefGrantRequest {
+  uint32 id = 1;
 }

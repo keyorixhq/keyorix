@@ -8025,6 +8025,222 @@ func (x *FederatedSecretValue) GetValue() string {
 	return ""
 }
 
+type ConnectRefGrant struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	RoleId        uint32                 `protobuf:"varint,2,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`
+	Connector     string                 `protobuf:"bytes,3,opt,name=connector,proto3" json:"connector,omitempty"`
+	RefPrefix     string                 `protobuf:"bytes,4,opt,name=ref_prefix,json=refPrefix,proto3" json:"ref_prefix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConnectRefGrant) Reset() {
+	*x = ConnectRefGrant{}
+	mi := &file_keyorix_proto_msgTypes[115]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConnectRefGrant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConnectRefGrant) ProtoMessage() {}
+
+func (x *ConnectRefGrant) ProtoReflect() protoreflect.Message {
+	mi := &file_keyorix_proto_msgTypes[115]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConnectRefGrant.ProtoReflect.Descriptor instead.
+func (*ConnectRefGrant) Descriptor() ([]byte, []int) {
+	return file_keyorix_proto_rawDescGZIP(), []int{115}
+}
+
+func (x *ConnectRefGrant) GetId() uint32 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
+func (x *ConnectRefGrant) GetRoleId() uint32 {
+	if x != nil {
+		return x.RoleId
+	}
+	return 0
+}
+
+func (x *ConnectRefGrant) GetConnector() string {
+	if x != nil {
+		return x.Connector
+	}
+	return ""
+}
+
+func (x *ConnectRefGrant) GetRefPrefix() string {
+	if x != nil {
+		return x.RefPrefix
+	}
+	return ""
+}
+
+type ConnectRefGrantList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Grants        []*ConnectRefGrant     `protobuf:"bytes,1,rep,name=grants,proto3" json:"grants,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConnectRefGrantList) Reset() {
+	*x = ConnectRefGrantList{}
+	mi := &file_keyorix_proto_msgTypes[116]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConnectRefGrantList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConnectRefGrantList) ProtoMessage() {}
+
+func (x *ConnectRefGrantList) ProtoReflect() protoreflect.Message {
+	mi := &file_keyorix_proto_msgTypes[116]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConnectRefGrantList.ProtoReflect.Descriptor instead.
+func (*ConnectRefGrantList) Descriptor() ([]byte, []int) {
+	return file_keyorix_proto_rawDescGZIP(), []int{116}
+}
+
+func (x *ConnectRefGrantList) GetGrants() []*ConnectRefGrant {
+	if x != nil {
+		return x.Grants
+	}
+	return nil
+}
+
+type CreateConnectRefGrantRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RoleId        uint32                 `protobuf:"varint,1,opt,name=role_id,json=roleId,proto3" json:"role_id,omitempty"`
+	Connector     string                 `protobuf:"bytes,2,opt,name=connector,proto3" json:"connector,omitempty"`
+	RefPrefix     string                 `protobuf:"bytes,3,opt,name=ref_prefix,json=refPrefix,proto3" json:"ref_prefix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateConnectRefGrantRequest) Reset() {
+	*x = CreateConnectRefGrantRequest{}
+	mi := &file_keyorix_proto_msgTypes[117]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateConnectRefGrantRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateConnectRefGrantRequest) ProtoMessage() {}
+
+func (x *CreateConnectRefGrantRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_keyorix_proto_msgTypes[117]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateConnectRefGrantRequest.ProtoReflect.Descriptor instead.
+func (*CreateConnectRefGrantRequest) Descriptor() ([]byte, []int) {
+	return file_keyorix_proto_rawDescGZIP(), []int{117}
+}
+
+func (x *CreateConnectRefGrantRequest) GetRoleId() uint32 {
+	if x != nil {
+		return x.RoleId
+	}
+	return 0
+}
+
+func (x *CreateConnectRefGrantRequest) GetConnector() string {
+	if x != nil {
+		return x.Connector
+	}
+	return ""
+}
+
+func (x *CreateConnectRefGrantRequest) GetRefPrefix() string {
+	if x != nil {
+		return x.RefPrefix
+	}
+	return ""
+}
+
+type DeleteConnectRefGrantRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteConnectRefGrantRequest) Reset() {
+	*x = DeleteConnectRefGrantRequest{}
+	mi := &file_keyorix_proto_msgTypes[118]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteConnectRefGrantRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteConnectRefGrantRequest) ProtoMessage() {}
+
+func (x *DeleteConnectRefGrantRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_keyorix_proto_msgTypes[118]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteConnectRefGrantRequest.ProtoReflect.Descriptor instead.
+func (*DeleteConnectRefGrantRequest) Descriptor() ([]byte, []int) {
+	return file_keyorix_proto_rawDescGZIP(), []int{118}
+}
+
+func (x *DeleteConnectRefGrantRequest) GetId() uint32 {
+	if x != nil {
+		return x.Id
+	}
+	return 0
+}
+
 var File_keyorix_proto protoreflect.FileDescriptor
 
 const file_keyorix_proto_rawDesc = "" +
@@ -8844,7 +9060,22 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x14FederatedSecretValue\x12\x1c\n" +
 	"\tconnector\x18\x01 \x01(\tR\tconnector\x12\x10\n" +
 	"\x03ref\x18\x02 \x01(\tR\x03ref\x12\x14\n" +
-	"\x05value\x18\x03 \x01(\tR\x05value2\x9c\x04\n" +
+	"\x05value\x18\x03 \x01(\tR\x05value\"w\n" +
+	"\x0fConnectRefGrant\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\x12\x17\n" +
+	"\arole_id\x18\x02 \x01(\rR\x06roleId\x12\x1c\n" +
+	"\tconnector\x18\x03 \x01(\tR\tconnector\x12\x1d\n" +
+	"\n" +
+	"ref_prefix\x18\x04 \x01(\tR\trefPrefix\"J\n" +
+	"\x13ConnectRefGrantList\x123\n" +
+	"\x06grants\x18\x01 \x03(\v2\x1b.keyorix.v1.ConnectRefGrantR\x06grants\"t\n" +
+	"\x1cCreateConnectRefGrantRequest\x12\x17\n" +
+	"\arole_id\x18\x01 \x01(\rR\x06roleId\x12\x1c\n" +
+	"\tconnector\x18\x02 \x01(\tR\tconnector\x12\x1d\n" +
+	"\n" +
+	"ref_prefix\x18\x03 \x01(\tR\trefPrefix\".\n" +
+	"\x1cDeleteConnectRefGrantRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id2\x9c\x04\n" +
 	"\rSecretService\x12C\n" +
 	"\fCreateSecret\x12\x1f.keyorix.v1.CreateSecretRequest\x1a\x12.keyorix.v1.Secret\x12=\n" +
 	"\tGetSecret\x12\x1c.keyorix.v1.GetSecretRequest\x1a\x12.keyorix.v1.Secret\x12G\n" +
@@ -8924,11 +9155,14 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x0fRevokeAllLeases\x12\".keyorix.v1.RevokeAllLeasesRequest\x1a#.keyorix.v1.RevokeAllLeasesResponse2\xb3\x01\n" +
 	"\x11ComplianceService\x12M\n" +
 	"\x14GetCompliancePosture\x12\x16.google.protobuf.Empty\x1a\x1d.keyorix.v1.CompliancePosture\x12O\n" +
-	"\x15GetComplianceControls\x12\x16.google.protobuf.Empty\x1a\x1e.keyorix.v1.ComplianceControls2\xad\x01\n" +
+	"\x15GetComplianceControls\x12\x16.google.protobuf.Empty\x1a\x1e.keyorix.v1.ComplianceControls2\xa4\x03\n" +
 	"\x0eConnectService\x12C\n" +
 	"\x0eListConnectors\x12\x16.google.protobuf.Empty\x1a\x19.keyorix.v1.ConnectorList\x12V\n" +
 	"\n" +
-	"ReadSecret\x12&.keyorix.v1.ReadFederatedSecretRequest\x1a .keyorix.v1.FederatedSecretValueB.Z,github.com/keyorixhq/keyorix/server/proto/pbb\x06proto3"
+	"ReadSecret\x12&.keyorix.v1.ReadFederatedSecretRequest\x1a .keyorix.v1.FederatedSecretValue\x12H\n" +
+	"\rListRefGrants\x12\x16.google.protobuf.Empty\x1a\x1f.keyorix.v1.ConnectRefGrantList\x12W\n" +
+	"\x0eCreateRefGrant\x12(.keyorix.v1.CreateConnectRefGrantRequest\x1a\x1b.keyorix.v1.ConnectRefGrant\x12R\n" +
+	"\x0eDeleteRefGrant\x12(.keyorix.v1.DeleteConnectRefGrantRequest\x1a\x16.google.protobuf.EmptyB.Z,github.com/keyorixhq/keyorix/server/proto/pbb\x06proto3"
 
 var (
 	file_keyorix_proto_rawDescOnce sync.Once
@@ -8942,7 +9176,7 @@ func file_keyorix_proto_rawDescGZIP() []byte {
 	return file_keyorix_proto_rawDescData
 }
 
-var file_keyorix_proto_msgTypes = make([]protoimpl.MessageInfo, 121)
+var file_keyorix_proto_msgTypes = make([]protoimpl.MessageInfo, 125)
 var file_keyorix_proto_goTypes = []any{
 	(*Secret)(nil),                           // 0: keyorix.v1.Secret
 	(*SecretValue)(nil),                      // 1: keyorix.v1.SecretValue
@@ -9059,50 +9293,54 @@ var file_keyorix_proto_goTypes = []any{
 	(*ConnectorList)(nil),                    // 112: keyorix.v1.ConnectorList
 	(*ReadFederatedSecretRequest)(nil),       // 113: keyorix.v1.ReadFederatedSecretRequest
 	(*FederatedSecretValue)(nil),             // 114: keyorix.v1.FederatedSecretValue
-	nil,                                      // 115: keyorix.v1.Secret.MetadataEntry
-	nil,                                      // 116: keyorix.v1.CreateSecretRequest.MetadataEntry
-	nil,                                      // 117: keyorix.v1.UpdateSecretRequest.MetadataEntry
-	nil,                                      // 118: keyorix.v1.HealthResponse.ServicesEntry
-	nil,                                      // 119: keyorix.v1.SystemInfo.FeaturesEntry
-	nil,                                      // 120: keyorix.v1.IssuedCredential.FieldsEntry
-	(*timestamppb.Timestamp)(nil),            // 121: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                    // 122: google.protobuf.Empty
+	(*ConnectRefGrant)(nil),                  // 115: keyorix.v1.ConnectRefGrant
+	(*ConnectRefGrantList)(nil),              // 116: keyorix.v1.ConnectRefGrantList
+	(*CreateConnectRefGrantRequest)(nil),     // 117: keyorix.v1.CreateConnectRefGrantRequest
+	(*DeleteConnectRefGrantRequest)(nil),     // 118: keyorix.v1.DeleteConnectRefGrantRequest
+	nil,                                      // 119: keyorix.v1.Secret.MetadataEntry
+	nil,                                      // 120: keyorix.v1.CreateSecretRequest.MetadataEntry
+	nil,                                      // 121: keyorix.v1.UpdateSecretRequest.MetadataEntry
+	nil,                                      // 122: keyorix.v1.HealthResponse.ServicesEntry
+	nil,                                      // 123: keyorix.v1.SystemInfo.FeaturesEntry
+	nil,                                      // 124: keyorix.v1.IssuedCredential.FieldsEntry
+	(*timestamppb.Timestamp)(nil),            // 125: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                    // 126: google.protobuf.Empty
 }
 var file_keyorix_proto_depIdxs = []int32{
-	121, // 0: keyorix.v1.Secret.expiration:type_name -> google.protobuf.Timestamp
-	115, // 1: keyorix.v1.Secret.metadata:type_name -> keyorix.v1.Secret.MetadataEntry
-	121, // 2: keyorix.v1.Secret.created_at:type_name -> google.protobuf.Timestamp
-	121, // 3: keyorix.v1.Secret.updated_at:type_name -> google.protobuf.Timestamp
-	121, // 4: keyorix.v1.CreateSecretRequest.expiration:type_name -> google.protobuf.Timestamp
-	116, // 5: keyorix.v1.CreateSecretRequest.metadata:type_name -> keyorix.v1.CreateSecretRequest.MetadataEntry
-	121, // 6: keyorix.v1.UpdateSecretRequest.expiration:type_name -> google.protobuf.Timestamp
-	117, // 7: keyorix.v1.UpdateSecretRequest.metadata:type_name -> keyorix.v1.UpdateSecretRequest.MetadataEntry
+	125, // 0: keyorix.v1.Secret.expiration:type_name -> google.protobuf.Timestamp
+	119, // 1: keyorix.v1.Secret.metadata:type_name -> keyorix.v1.Secret.MetadataEntry
+	125, // 2: keyorix.v1.Secret.created_at:type_name -> google.protobuf.Timestamp
+	125, // 3: keyorix.v1.Secret.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 4: keyorix.v1.CreateSecretRequest.expiration:type_name -> google.protobuf.Timestamp
+	120, // 5: keyorix.v1.CreateSecretRequest.metadata:type_name -> keyorix.v1.CreateSecretRequest.MetadataEntry
+	125, // 6: keyorix.v1.UpdateSecretRequest.expiration:type_name -> google.protobuf.Timestamp
+	121, // 7: keyorix.v1.UpdateSecretRequest.metadata:type_name -> keyorix.v1.UpdateSecretRequest.MetadataEntry
 	0,   // 8: keyorix.v1.ListSecretsResponse.secrets:type_name -> keyorix.v1.Secret
-	121, // 9: keyorix.v1.SecretVersion.created_at:type_name -> google.protobuf.Timestamp
+	125, // 9: keyorix.v1.SecretVersion.created_at:type_name -> google.protobuf.Timestamp
 	9,   // 10: keyorix.v1.GetSecretVersionsResponse.versions:type_name -> keyorix.v1.SecretVersion
-	121, // 11: keyorix.v1.User.last_login_at:type_name -> google.protobuf.Timestamp
-	121, // 12: keyorix.v1.User.created_at:type_name -> google.protobuf.Timestamp
-	121, // 13: keyorix.v1.User.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 11: keyorix.v1.User.last_login_at:type_name -> google.protobuf.Timestamp
+	125, // 12: keyorix.v1.User.created_at:type_name -> google.protobuf.Timestamp
+	125, // 13: keyorix.v1.User.updated_at:type_name -> google.protobuf.Timestamp
 	12,  // 14: keyorix.v1.CreateUserRequest.project_assignments:type_name -> keyorix.v1.ProjectAssignment
 	11,  // 15: keyorix.v1.CreateUserResponse.user:type_name -> keyorix.v1.User
 	11,  // 16: keyorix.v1.ListUsersResponse.users:type_name -> keyorix.v1.User
 	20,  // 17: keyorix.v1.Role.permissions:type_name -> keyorix.v1.Permission
-	121, // 18: keyorix.v1.Role.created_at:type_name -> google.protobuf.Timestamp
-	121, // 19: keyorix.v1.Role.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 18: keyorix.v1.Role.created_at:type_name -> google.protobuf.Timestamp
+	125, // 19: keyorix.v1.Role.updated_at:type_name -> google.protobuf.Timestamp
 	21,  // 20: keyorix.v1.ListRolesResponse.roles:type_name -> keyorix.v1.Role
 	21,  // 21: keyorix.v1.GetUserRolesResponse.roles:type_name -> keyorix.v1.Role
-	121, // 22: keyorix.v1.AuditLog.event_time:type_name -> google.protobuf.Timestamp
-	121, // 23: keyorix.v1.GetAuditLogsRequest.start_time:type_name -> google.protobuf.Timestamp
-	121, // 24: keyorix.v1.GetAuditLogsRequest.end_time:type_name -> google.protobuf.Timestamp
+	125, // 22: keyorix.v1.AuditLog.event_time:type_name -> google.protobuf.Timestamp
+	125, // 23: keyorix.v1.GetAuditLogsRequest.start_time:type_name -> google.protobuf.Timestamp
+	125, // 24: keyorix.v1.GetAuditLogsRequest.end_time:type_name -> google.protobuf.Timestamp
 	33,  // 25: keyorix.v1.GetAuditLogsResponse.logs:type_name -> keyorix.v1.AuditLog
-	121, // 26: keyorix.v1.RBACAuditLog.created_at:type_name -> google.protobuf.Timestamp
+	125, // 26: keyorix.v1.RBACAuditLog.created_at:type_name -> google.protobuf.Timestamp
 	36,  // 27: keyorix.v1.GetRBACAuditLogsResponse.logs:type_name -> keyorix.v1.RBACAuditLog
-	121, // 28: keyorix.v1.ShareRecord.created_at:type_name -> google.protobuf.Timestamp
-	121, // 29: keyorix.v1.ShareRecord.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 28: keyorix.v1.ShareRecord.created_at:type_name -> google.protobuf.Timestamp
+	125, // 29: keyorix.v1.ShareRecord.updated_at:type_name -> google.protobuf.Timestamp
 	40,  // 30: keyorix.v1.ListSharesResponse.shares:type_name -> keyorix.v1.ShareRecord
-	121, // 31: keyorix.v1.HealthResponse.timestamp:type_name -> google.protobuf.Timestamp
-	118, // 32: keyorix.v1.HealthResponse.services:type_name -> keyorix.v1.HealthResponse.ServicesEntry
-	119, // 33: keyorix.v1.SystemInfo.features:type_name -> keyorix.v1.SystemInfo.FeaturesEntry
+	125, // 31: keyorix.v1.HealthResponse.timestamp:type_name -> google.protobuf.Timestamp
+	122, // 32: keyorix.v1.HealthResponse.services:type_name -> keyorix.v1.HealthResponse.ServicesEntry
+	123, // 33: keyorix.v1.SystemInfo.features:type_name -> keyorix.v1.SystemInfo.FeaturesEntry
 	50,  // 34: keyorix.v1.SystemInfo.database:type_name -> keyorix.v1.DatabaseInfo
 	51,  // 35: keyorix.v1.SystemInfo.encryption:type_name -> keyorix.v1.EncryptionInfo
 	53,  // 36: keyorix.v1.Metrics.requests:type_name -> keyorix.v1.RequestMetrics
@@ -9110,36 +9348,36 @@ var file_keyorix_proto_depIdxs = []int32{
 	55,  // 38: keyorix.v1.Metrics.users:type_name -> keyorix.v1.UserMetrics
 	56,  // 39: keyorix.v1.Metrics.performance:type_name -> keyorix.v1.PerformanceMetrics
 	57,  // 40: keyorix.v1.Metrics.system:type_name -> keyorix.v1.SystemMetrics
-	121, // 41: keyorix.v1.Project.created_at:type_name -> google.protobuf.Timestamp
-	121, // 42: keyorix.v1.Project.updated_at:type_name -> google.protobuf.Timestamp
-	121, // 43: keyorix.v1.Environment.created_at:type_name -> google.protobuf.Timestamp
-	121, // 44: keyorix.v1.Environment.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 41: keyorix.v1.Project.created_at:type_name -> google.protobuf.Timestamp
+	125, // 42: keyorix.v1.Project.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 43: keyorix.v1.Environment.created_at:type_name -> google.protobuf.Timestamp
+	125, // 44: keyorix.v1.Environment.updated_at:type_name -> google.protobuf.Timestamp
 	58,  // 45: keyorix.v1.ListProjectsResponse.projects:type_name -> keyorix.v1.Project
 	59,  // 46: keyorix.v1.ListEnvironmentsResponse.environments:type_name -> keyorix.v1.Environment
-	121, // 47: keyorix.v1.MachineIdentity.created_at:type_name -> google.protobuf.Timestamp
-	121, // 48: keyorix.v1.MachineIdentity.updated_at:type_name -> google.protobuf.Timestamp
-	121, // 49: keyorix.v1.MachineIdentity.last_seen_at:type_name -> google.protobuf.Timestamp
-	121, // 50: keyorix.v1.MachineIdentity.revoked_at:type_name -> google.protobuf.Timestamp
-	121, // 51: keyorix.v1.MachineToken.last_used_at:type_name -> google.protobuf.Timestamp
-	121, // 52: keyorix.v1.MachineToken.expires_at:type_name -> google.protobuf.Timestamp
-	121, // 53: keyorix.v1.MachineToken.created_at:type_name -> google.protobuf.Timestamp
+	125, // 47: keyorix.v1.MachineIdentity.created_at:type_name -> google.protobuf.Timestamp
+	125, // 48: keyorix.v1.MachineIdentity.updated_at:type_name -> google.protobuf.Timestamp
+	125, // 49: keyorix.v1.MachineIdentity.last_seen_at:type_name -> google.protobuf.Timestamp
+	125, // 50: keyorix.v1.MachineIdentity.revoked_at:type_name -> google.protobuf.Timestamp
+	125, // 51: keyorix.v1.MachineToken.last_used_at:type_name -> google.protobuf.Timestamp
+	125, // 52: keyorix.v1.MachineToken.expires_at:type_name -> google.protobuf.Timestamp
+	125, // 53: keyorix.v1.MachineToken.created_at:type_name -> google.protobuf.Timestamp
 	67,  // 54: keyorix.v1.ListMachineIdentitiesResponse.machine_identities:type_name -> keyorix.v1.MachineIdentity
-	121, // 55: keyorix.v1.IssueMachineTokenResponse.expires_at:type_name -> google.protobuf.Timestamp
+	125, // 55: keyorix.v1.IssueMachineTokenResponse.expires_at:type_name -> google.protobuf.Timestamp
 	68,  // 56: keyorix.v1.ListMachineTokensResponse.tokens:type_name -> keyorix.v1.MachineToken
-	121, // 57: keyorix.v1.DynamicSecretConfig.created_at:type_name -> google.protobuf.Timestamp
-	121, // 58: keyorix.v1.DynamicSecretLease.issued_at:type_name -> google.protobuf.Timestamp
-	121, // 59: keyorix.v1.DynamicSecretLease.expires_at:type_name -> google.protobuf.Timestamp
-	121, // 60: keyorix.v1.DynamicSecretLease.revoked_at:type_name -> google.protobuf.Timestamp
-	121, // 61: keyorix.v1.IssuedCredential.expires_at:type_name -> google.protobuf.Timestamp
-	120, // 62: keyorix.v1.IssuedCredential.fields:type_name -> keyorix.v1.IssuedCredential.FieldsEntry
+	125, // 57: keyorix.v1.DynamicSecretConfig.created_at:type_name -> google.protobuf.Timestamp
+	125, // 58: keyorix.v1.DynamicSecretLease.issued_at:type_name -> google.protobuf.Timestamp
+	125, // 59: keyorix.v1.DynamicSecretLease.expires_at:type_name -> google.protobuf.Timestamp
+	125, // 60: keyorix.v1.DynamicSecretLease.revoked_at:type_name -> google.protobuf.Timestamp
+	125, // 61: keyorix.v1.IssuedCredential.expires_at:type_name -> google.protobuf.Timestamp
+	124, // 62: keyorix.v1.IssuedCredential.fields:type_name -> keyorix.v1.IssuedCredential.FieldsEntry
 	80,  // 63: keyorix.v1.ListDynamicConfigsResponse.configs:type_name -> keyorix.v1.DynamicSecretConfig
 	81,  // 64: keyorix.v1.ListLeasesResponse.leases:type_name -> keyorix.v1.DynamicSecretLease
-	121, // 65: keyorix.v1.RenewLeaseResponse.expires_at:type_name -> google.protobuf.Timestamp
+	125, // 65: keyorix.v1.RenewLeaseResponse.expires_at:type_name -> google.protobuf.Timestamp
 	101, // 66: keyorix.v1.ClassificationPosture.dynamic_configs:type_name -> keyorix.v1.ClassificationCounts
 	101, // 67: keyorix.v1.ClassificationPosture.machine_identities:type_name -> keyorix.v1.ClassificationCounts
 	101, // 68: keyorix.v1.ClassificationPosture.machine_credentials:type_name -> keyorix.v1.ClassificationCounts
-	121, // 69: keyorix.v1.LegalHoldPosture.placed_at:type_name -> google.protobuf.Timestamp
-	121, // 70: keyorix.v1.CompliancePosture.generated_at:type_name -> google.protobuf.Timestamp
+	125, // 69: keyorix.v1.LegalHoldPosture.placed_at:type_name -> google.protobuf.Timestamp
+	125, // 70: keyorix.v1.CompliancePosture.generated_at:type_name -> google.protobuf.Timestamp
 	96,  // 71: keyorix.v1.CompliancePosture.audit_integrity:type_name -> keyorix.v1.AuditIntegrityPosture
 	97,  // 72: keyorix.v1.CompliancePosture.access_governance:type_name -> keyorix.v1.AccessGovernancePosture
 	98,  // 73: keyorix.v1.CompliancePosture.rotation:type_name -> keyorix.v1.RotationPosture
@@ -9151,132 +9389,139 @@ var file_keyorix_proto_depIdxs = []int32{
 	105, // 79: keyorix.v1.CompliancePosture.retention:type_name -> keyorix.v1.RetentionPosture
 	106, // 80: keyorix.v1.CompliancePosture.risk:type_name -> keyorix.v1.RiskPosture
 	108, // 81: keyorix.v1.ControlState.frameworks:type_name -> keyorix.v1.FrameworkRefs
-	121, // 82: keyorix.v1.ComplianceControls.generated_at:type_name -> google.protobuf.Timestamp
+	125, // 82: keyorix.v1.ComplianceControls.generated_at:type_name -> google.protobuf.Timestamp
 	109, // 83: keyorix.v1.ComplianceControls.controls:type_name -> keyorix.v1.ControlState
 	110, // 84: keyorix.v1.ComplianceControls.summary:type_name -> keyorix.v1.ControlsSummary
-	2,   // 85: keyorix.v1.SecretService.CreateSecret:input_type -> keyorix.v1.CreateSecretRequest
-	3,   // 86: keyorix.v1.SecretService.GetSecret:input_type -> keyorix.v1.GetSecretRequest
-	3,   // 87: keyorix.v1.SecretService.GetSecretValue:input_type -> keyorix.v1.GetSecretRequest
-	4,   // 88: keyorix.v1.SecretService.UpdateSecret:input_type -> keyorix.v1.UpdateSecretRequest
-	5,   // 89: keyorix.v1.SecretService.DeleteSecret:input_type -> keyorix.v1.DeleteSecretRequest
-	6,   // 90: keyorix.v1.SecretService.ListSecrets:input_type -> keyorix.v1.ListSecretsRequest
-	8,   // 91: keyorix.v1.SecretService.GetSecretVersions:input_type -> keyorix.v1.GetSecretVersionsRequest
-	41,  // 92: keyorix.v1.ShareService.ShareSecret:input_type -> keyorix.v1.ShareSecretRequest
-	42,  // 93: keyorix.v1.ShareService.ListSecretShares:input_type -> keyorix.v1.ListSecretSharesRequest
-	43,  // 94: keyorix.v1.ShareService.ListUserShares:input_type -> keyorix.v1.ListUserSharesRequest
-	44,  // 95: keyorix.v1.ShareService.ListSharedSecrets:input_type -> keyorix.v1.ListSharedSecretsRequest
-	46,  // 96: keyorix.v1.ShareService.UpdateSharePermission:input_type -> keyorix.v1.UpdateSharePermissionRequest
-	47,  // 97: keyorix.v1.ShareService.RevokeShare:input_type -> keyorix.v1.RevokeShareRequest
-	13,  // 98: keyorix.v1.UserService.CreateUser:input_type -> keyorix.v1.CreateUserRequest
-	15,  // 99: keyorix.v1.UserService.GetUser:input_type -> keyorix.v1.GetUserRequest
-	16,  // 100: keyorix.v1.UserService.UpdateUser:input_type -> keyorix.v1.UpdateUserRequest
-	17,  // 101: keyorix.v1.UserService.DeleteUser:input_type -> keyorix.v1.DeleteUserRequest
-	18,  // 102: keyorix.v1.UserService.ListUsers:input_type -> keyorix.v1.ListUsersRequest
-	22,  // 103: keyorix.v1.RoleService.CreateRole:input_type -> keyorix.v1.CreateRoleRequest
-	23,  // 104: keyorix.v1.RoleService.GetRole:input_type -> keyorix.v1.GetRoleRequest
-	24,  // 105: keyorix.v1.RoleService.UpdateRole:input_type -> keyorix.v1.UpdateRoleRequest
-	25,  // 106: keyorix.v1.RoleService.DeleteRole:input_type -> keyorix.v1.DeleteRoleRequest
-	26,  // 107: keyorix.v1.RoleService.ListRoles:input_type -> keyorix.v1.ListRolesRequest
-	28,  // 108: keyorix.v1.RoleService.AssignRole:input_type -> keyorix.v1.AssignRoleRequest
-	30,  // 109: keyorix.v1.RoleService.RemoveRole:input_type -> keyorix.v1.RemoveRoleRequest
-	31,  // 110: keyorix.v1.RoleService.GetUserRoles:input_type -> keyorix.v1.GetUserRolesRequest
-	34,  // 111: keyorix.v1.AuditService.GetAuditLogs:input_type -> keyorix.v1.GetAuditLogsRequest
-	37,  // 112: keyorix.v1.AuditService.GetRBACAuditLogs:input_type -> keyorix.v1.GetRBACAuditLogsRequest
-	39,  // 113: keyorix.v1.AuditService.StreamAuditLogs:input_type -> keyorix.v1.StreamAuditLogsRequest
-	122, // 114: keyorix.v1.SystemService.HealthCheck:input_type -> google.protobuf.Empty
-	122, // 115: keyorix.v1.SystemService.GetSystemInfo:input_type -> google.protobuf.Empty
-	122, // 116: keyorix.v1.SystemService.GetMetrics:input_type -> google.protobuf.Empty
-	122, // 117: keyorix.v1.ProjectService.ListProjects:input_type -> google.protobuf.Empty
-	61,  // 118: keyorix.v1.ProjectService.GetProject:input_type -> keyorix.v1.GetProjectRequest
-	62,  // 119: keyorix.v1.ProjectService.CreateProject:input_type -> keyorix.v1.CreateProjectRequest
-	63,  // 120: keyorix.v1.ProjectService.UpdateProject:input_type -> keyorix.v1.UpdateProjectRequest
-	64,  // 121: keyorix.v1.ProjectService.DeleteProject:input_type -> keyorix.v1.DeleteProjectRequest
-	65,  // 122: keyorix.v1.ProjectService.ListEnvironments:input_type -> keyorix.v1.ListEnvironmentsRequest
-	69,  // 123: keyorix.v1.MachineIdentityService.ListMachineIdentities:input_type -> keyorix.v1.ListMachineIdentitiesRequest
-	71,  // 124: keyorix.v1.MachineIdentityService.CreateMachineIdentity:input_type -> keyorix.v1.CreateMachineIdentityRequest
-	72,  // 125: keyorix.v1.MachineIdentityService.TransitionMachineIdentity:input_type -> keyorix.v1.TransitionMachineIdentityRequest
-	73,  // 126: keyorix.v1.MachineIdentityService.ClassifyMachineIdentity:input_type -> keyorix.v1.ClassifyMachineIdentityRequest
-	74,  // 127: keyorix.v1.MachineIdentityService.IssueMachineToken:input_type -> keyorix.v1.IssueMachineTokenRequest
-	76,  // 128: keyorix.v1.MachineIdentityService.ListMachineTokens:input_type -> keyorix.v1.ListMachineTokensRequest
-	78,  // 129: keyorix.v1.MachineIdentityService.RevokeMachineToken:input_type -> keyorix.v1.RevokeMachineTokenRequest
-	79,  // 130: keyorix.v1.MachineIdentityService.ClassifyMachineToken:input_type -> keyorix.v1.ClassifyMachineTokenRequest
-	83,  // 131: keyorix.v1.DynamicSecretService.ListConfigs:input_type -> keyorix.v1.ListDynamicConfigsRequest
-	85,  // 132: keyorix.v1.DynamicSecretService.GetConfig:input_type -> keyorix.v1.GetDynamicConfigRequest
-	86,  // 133: keyorix.v1.DynamicSecretService.CreateConfig:input_type -> keyorix.v1.CreateDynamicConfigRequest
-	87,  // 134: keyorix.v1.DynamicSecretService.ClassifyConfig:input_type -> keyorix.v1.ClassifyDynamicConfigRequest
-	88,  // 135: keyorix.v1.DynamicSecretService.IssueLease:input_type -> keyorix.v1.IssueLeaseRequest
-	89,  // 136: keyorix.v1.DynamicSecretService.ListLeases:input_type -> keyorix.v1.ListLeasesRequest
-	91,  // 137: keyorix.v1.DynamicSecretService.RevokeLease:input_type -> keyorix.v1.RevokeLeaseRequest
-	92,  // 138: keyorix.v1.DynamicSecretService.RenewLease:input_type -> keyorix.v1.RenewLeaseRequest
-	94,  // 139: keyorix.v1.DynamicSecretService.RevokeAllLeases:input_type -> keyorix.v1.RevokeAllLeasesRequest
-	122, // 140: keyorix.v1.ComplianceService.GetCompliancePosture:input_type -> google.protobuf.Empty
-	122, // 141: keyorix.v1.ComplianceService.GetComplianceControls:input_type -> google.protobuf.Empty
-	122, // 142: keyorix.v1.ConnectService.ListConnectors:input_type -> google.protobuf.Empty
-	113, // 143: keyorix.v1.ConnectService.ReadSecret:input_type -> keyorix.v1.ReadFederatedSecretRequest
-	0,   // 144: keyorix.v1.SecretService.CreateSecret:output_type -> keyorix.v1.Secret
-	0,   // 145: keyorix.v1.SecretService.GetSecret:output_type -> keyorix.v1.Secret
-	1,   // 146: keyorix.v1.SecretService.GetSecretValue:output_type -> keyorix.v1.SecretValue
-	0,   // 147: keyorix.v1.SecretService.UpdateSecret:output_type -> keyorix.v1.Secret
-	122, // 148: keyorix.v1.SecretService.DeleteSecret:output_type -> google.protobuf.Empty
-	7,   // 149: keyorix.v1.SecretService.ListSecrets:output_type -> keyorix.v1.ListSecretsResponse
-	10,  // 150: keyorix.v1.SecretService.GetSecretVersions:output_type -> keyorix.v1.GetSecretVersionsResponse
-	40,  // 151: keyorix.v1.ShareService.ShareSecret:output_type -> keyorix.v1.ShareRecord
-	45,  // 152: keyorix.v1.ShareService.ListSecretShares:output_type -> keyorix.v1.ListSharesResponse
-	45,  // 153: keyorix.v1.ShareService.ListUserShares:output_type -> keyorix.v1.ListSharesResponse
-	7,   // 154: keyorix.v1.ShareService.ListSharedSecrets:output_type -> keyorix.v1.ListSecretsResponse
-	40,  // 155: keyorix.v1.ShareService.UpdateSharePermission:output_type -> keyorix.v1.ShareRecord
-	122, // 156: keyorix.v1.ShareService.RevokeShare:output_type -> google.protobuf.Empty
-	14,  // 157: keyorix.v1.UserService.CreateUser:output_type -> keyorix.v1.CreateUserResponse
-	11,  // 158: keyorix.v1.UserService.GetUser:output_type -> keyorix.v1.User
-	11,  // 159: keyorix.v1.UserService.UpdateUser:output_type -> keyorix.v1.User
-	122, // 160: keyorix.v1.UserService.DeleteUser:output_type -> google.protobuf.Empty
-	19,  // 161: keyorix.v1.UserService.ListUsers:output_type -> keyorix.v1.ListUsersResponse
-	21,  // 162: keyorix.v1.RoleService.CreateRole:output_type -> keyorix.v1.Role
-	21,  // 163: keyorix.v1.RoleService.GetRole:output_type -> keyorix.v1.Role
-	21,  // 164: keyorix.v1.RoleService.UpdateRole:output_type -> keyorix.v1.Role
-	122, // 165: keyorix.v1.RoleService.DeleteRole:output_type -> google.protobuf.Empty
-	27,  // 166: keyorix.v1.RoleService.ListRoles:output_type -> keyorix.v1.ListRolesResponse
-	29,  // 167: keyorix.v1.RoleService.AssignRole:output_type -> keyorix.v1.RoleAssignment
-	122, // 168: keyorix.v1.RoleService.RemoveRole:output_type -> google.protobuf.Empty
-	32,  // 169: keyorix.v1.RoleService.GetUserRoles:output_type -> keyorix.v1.GetUserRolesResponse
-	35,  // 170: keyorix.v1.AuditService.GetAuditLogs:output_type -> keyorix.v1.GetAuditLogsResponse
-	38,  // 171: keyorix.v1.AuditService.GetRBACAuditLogs:output_type -> keyorix.v1.GetRBACAuditLogsResponse
-	33,  // 172: keyorix.v1.AuditService.StreamAuditLogs:output_type -> keyorix.v1.AuditLog
-	48,  // 173: keyorix.v1.SystemService.HealthCheck:output_type -> keyorix.v1.HealthResponse
-	49,  // 174: keyorix.v1.SystemService.GetSystemInfo:output_type -> keyorix.v1.SystemInfo
-	52,  // 175: keyorix.v1.SystemService.GetMetrics:output_type -> keyorix.v1.Metrics
-	60,  // 176: keyorix.v1.ProjectService.ListProjects:output_type -> keyorix.v1.ListProjectsResponse
-	58,  // 177: keyorix.v1.ProjectService.GetProject:output_type -> keyorix.v1.Project
-	58,  // 178: keyorix.v1.ProjectService.CreateProject:output_type -> keyorix.v1.Project
-	58,  // 179: keyorix.v1.ProjectService.UpdateProject:output_type -> keyorix.v1.Project
-	122, // 180: keyorix.v1.ProjectService.DeleteProject:output_type -> google.protobuf.Empty
-	66,  // 181: keyorix.v1.ProjectService.ListEnvironments:output_type -> keyorix.v1.ListEnvironmentsResponse
-	70,  // 182: keyorix.v1.MachineIdentityService.ListMachineIdentities:output_type -> keyorix.v1.ListMachineIdentitiesResponse
-	67,  // 183: keyorix.v1.MachineIdentityService.CreateMachineIdentity:output_type -> keyorix.v1.MachineIdentity
-	67,  // 184: keyorix.v1.MachineIdentityService.TransitionMachineIdentity:output_type -> keyorix.v1.MachineIdentity
-	67,  // 185: keyorix.v1.MachineIdentityService.ClassifyMachineIdentity:output_type -> keyorix.v1.MachineIdentity
-	75,  // 186: keyorix.v1.MachineIdentityService.IssueMachineToken:output_type -> keyorix.v1.IssueMachineTokenResponse
-	77,  // 187: keyorix.v1.MachineIdentityService.ListMachineTokens:output_type -> keyorix.v1.ListMachineTokensResponse
-	122, // 188: keyorix.v1.MachineIdentityService.RevokeMachineToken:output_type -> google.protobuf.Empty
-	68,  // 189: keyorix.v1.MachineIdentityService.ClassifyMachineToken:output_type -> keyorix.v1.MachineToken
-	84,  // 190: keyorix.v1.DynamicSecretService.ListConfigs:output_type -> keyorix.v1.ListDynamicConfigsResponse
-	80,  // 191: keyorix.v1.DynamicSecretService.GetConfig:output_type -> keyorix.v1.DynamicSecretConfig
-	80,  // 192: keyorix.v1.DynamicSecretService.CreateConfig:output_type -> keyorix.v1.DynamicSecretConfig
-	80,  // 193: keyorix.v1.DynamicSecretService.ClassifyConfig:output_type -> keyorix.v1.DynamicSecretConfig
-	82,  // 194: keyorix.v1.DynamicSecretService.IssueLease:output_type -> keyorix.v1.IssuedCredential
-	90,  // 195: keyorix.v1.DynamicSecretService.ListLeases:output_type -> keyorix.v1.ListLeasesResponse
-	122, // 196: keyorix.v1.DynamicSecretService.RevokeLease:output_type -> google.protobuf.Empty
-	93,  // 197: keyorix.v1.DynamicSecretService.RenewLease:output_type -> keyorix.v1.RenewLeaseResponse
-	95,  // 198: keyorix.v1.DynamicSecretService.RevokeAllLeases:output_type -> keyorix.v1.RevokeAllLeasesResponse
-	107, // 199: keyorix.v1.ComplianceService.GetCompliancePosture:output_type -> keyorix.v1.CompliancePosture
-	111, // 200: keyorix.v1.ComplianceService.GetComplianceControls:output_type -> keyorix.v1.ComplianceControls
-	112, // 201: keyorix.v1.ConnectService.ListConnectors:output_type -> keyorix.v1.ConnectorList
-	114, // 202: keyorix.v1.ConnectService.ReadSecret:output_type -> keyorix.v1.FederatedSecretValue
-	144, // [144:203] is the sub-list for method output_type
-	85,  // [85:144] is the sub-list for method input_type
-	85,  // [85:85] is the sub-list for extension type_name
-	85,  // [85:85] is the sub-list for extension extendee
-	0,   // [0:85] is the sub-list for field type_name
+	115, // 85: keyorix.v1.ConnectRefGrantList.grants:type_name -> keyorix.v1.ConnectRefGrant
+	2,   // 86: keyorix.v1.SecretService.CreateSecret:input_type -> keyorix.v1.CreateSecretRequest
+	3,   // 87: keyorix.v1.SecretService.GetSecret:input_type -> keyorix.v1.GetSecretRequest
+	3,   // 88: keyorix.v1.SecretService.GetSecretValue:input_type -> keyorix.v1.GetSecretRequest
+	4,   // 89: keyorix.v1.SecretService.UpdateSecret:input_type -> keyorix.v1.UpdateSecretRequest
+	5,   // 90: keyorix.v1.SecretService.DeleteSecret:input_type -> keyorix.v1.DeleteSecretRequest
+	6,   // 91: keyorix.v1.SecretService.ListSecrets:input_type -> keyorix.v1.ListSecretsRequest
+	8,   // 92: keyorix.v1.SecretService.GetSecretVersions:input_type -> keyorix.v1.GetSecretVersionsRequest
+	41,  // 93: keyorix.v1.ShareService.ShareSecret:input_type -> keyorix.v1.ShareSecretRequest
+	42,  // 94: keyorix.v1.ShareService.ListSecretShares:input_type -> keyorix.v1.ListSecretSharesRequest
+	43,  // 95: keyorix.v1.ShareService.ListUserShares:input_type -> keyorix.v1.ListUserSharesRequest
+	44,  // 96: keyorix.v1.ShareService.ListSharedSecrets:input_type -> keyorix.v1.ListSharedSecretsRequest
+	46,  // 97: keyorix.v1.ShareService.UpdateSharePermission:input_type -> keyorix.v1.UpdateSharePermissionRequest
+	47,  // 98: keyorix.v1.ShareService.RevokeShare:input_type -> keyorix.v1.RevokeShareRequest
+	13,  // 99: keyorix.v1.UserService.CreateUser:input_type -> keyorix.v1.CreateUserRequest
+	15,  // 100: keyorix.v1.UserService.GetUser:input_type -> keyorix.v1.GetUserRequest
+	16,  // 101: keyorix.v1.UserService.UpdateUser:input_type -> keyorix.v1.UpdateUserRequest
+	17,  // 102: keyorix.v1.UserService.DeleteUser:input_type -> keyorix.v1.DeleteUserRequest
+	18,  // 103: keyorix.v1.UserService.ListUsers:input_type -> keyorix.v1.ListUsersRequest
+	22,  // 104: keyorix.v1.RoleService.CreateRole:input_type -> keyorix.v1.CreateRoleRequest
+	23,  // 105: keyorix.v1.RoleService.GetRole:input_type -> keyorix.v1.GetRoleRequest
+	24,  // 106: keyorix.v1.RoleService.UpdateRole:input_type -> keyorix.v1.UpdateRoleRequest
+	25,  // 107: keyorix.v1.RoleService.DeleteRole:input_type -> keyorix.v1.DeleteRoleRequest
+	26,  // 108: keyorix.v1.RoleService.ListRoles:input_type -> keyorix.v1.ListRolesRequest
+	28,  // 109: keyorix.v1.RoleService.AssignRole:input_type -> keyorix.v1.AssignRoleRequest
+	30,  // 110: keyorix.v1.RoleService.RemoveRole:input_type -> keyorix.v1.RemoveRoleRequest
+	31,  // 111: keyorix.v1.RoleService.GetUserRoles:input_type -> keyorix.v1.GetUserRolesRequest
+	34,  // 112: keyorix.v1.AuditService.GetAuditLogs:input_type -> keyorix.v1.GetAuditLogsRequest
+	37,  // 113: keyorix.v1.AuditService.GetRBACAuditLogs:input_type -> keyorix.v1.GetRBACAuditLogsRequest
+	39,  // 114: keyorix.v1.AuditService.StreamAuditLogs:input_type -> keyorix.v1.StreamAuditLogsRequest
+	126, // 115: keyorix.v1.SystemService.HealthCheck:input_type -> google.protobuf.Empty
+	126, // 116: keyorix.v1.SystemService.GetSystemInfo:input_type -> google.protobuf.Empty
+	126, // 117: keyorix.v1.SystemService.GetMetrics:input_type -> google.protobuf.Empty
+	126, // 118: keyorix.v1.ProjectService.ListProjects:input_type -> google.protobuf.Empty
+	61,  // 119: keyorix.v1.ProjectService.GetProject:input_type -> keyorix.v1.GetProjectRequest
+	62,  // 120: keyorix.v1.ProjectService.CreateProject:input_type -> keyorix.v1.CreateProjectRequest
+	63,  // 121: keyorix.v1.ProjectService.UpdateProject:input_type -> keyorix.v1.UpdateProjectRequest
+	64,  // 122: keyorix.v1.ProjectService.DeleteProject:input_type -> keyorix.v1.DeleteProjectRequest
+	65,  // 123: keyorix.v1.ProjectService.ListEnvironments:input_type -> keyorix.v1.ListEnvironmentsRequest
+	69,  // 124: keyorix.v1.MachineIdentityService.ListMachineIdentities:input_type -> keyorix.v1.ListMachineIdentitiesRequest
+	71,  // 125: keyorix.v1.MachineIdentityService.CreateMachineIdentity:input_type -> keyorix.v1.CreateMachineIdentityRequest
+	72,  // 126: keyorix.v1.MachineIdentityService.TransitionMachineIdentity:input_type -> keyorix.v1.TransitionMachineIdentityRequest
+	73,  // 127: keyorix.v1.MachineIdentityService.ClassifyMachineIdentity:input_type -> keyorix.v1.ClassifyMachineIdentityRequest
+	74,  // 128: keyorix.v1.MachineIdentityService.IssueMachineToken:input_type -> keyorix.v1.IssueMachineTokenRequest
+	76,  // 129: keyorix.v1.MachineIdentityService.ListMachineTokens:input_type -> keyorix.v1.ListMachineTokensRequest
+	78,  // 130: keyorix.v1.MachineIdentityService.RevokeMachineToken:input_type -> keyorix.v1.RevokeMachineTokenRequest
+	79,  // 131: keyorix.v1.MachineIdentityService.ClassifyMachineToken:input_type -> keyorix.v1.ClassifyMachineTokenRequest
+	83,  // 132: keyorix.v1.DynamicSecretService.ListConfigs:input_type -> keyorix.v1.ListDynamicConfigsRequest
+	85,  // 133: keyorix.v1.DynamicSecretService.GetConfig:input_type -> keyorix.v1.GetDynamicConfigRequest
+	86,  // 134: keyorix.v1.DynamicSecretService.CreateConfig:input_type -> keyorix.v1.CreateDynamicConfigRequest
+	87,  // 135: keyorix.v1.DynamicSecretService.ClassifyConfig:input_type -> keyorix.v1.ClassifyDynamicConfigRequest
+	88,  // 136: keyorix.v1.DynamicSecretService.IssueLease:input_type -> keyorix.v1.IssueLeaseRequest
+	89,  // 137: keyorix.v1.DynamicSecretService.ListLeases:input_type -> keyorix.v1.ListLeasesRequest
+	91,  // 138: keyorix.v1.DynamicSecretService.RevokeLease:input_type -> keyorix.v1.RevokeLeaseRequest
+	92,  // 139: keyorix.v1.DynamicSecretService.RenewLease:input_type -> keyorix.v1.RenewLeaseRequest
+	94,  // 140: keyorix.v1.DynamicSecretService.RevokeAllLeases:input_type -> keyorix.v1.RevokeAllLeasesRequest
+	126, // 141: keyorix.v1.ComplianceService.GetCompliancePosture:input_type -> google.protobuf.Empty
+	126, // 142: keyorix.v1.ComplianceService.GetComplianceControls:input_type -> google.protobuf.Empty
+	126, // 143: keyorix.v1.ConnectService.ListConnectors:input_type -> google.protobuf.Empty
+	113, // 144: keyorix.v1.ConnectService.ReadSecret:input_type -> keyorix.v1.ReadFederatedSecretRequest
+	126, // 145: keyorix.v1.ConnectService.ListRefGrants:input_type -> google.protobuf.Empty
+	117, // 146: keyorix.v1.ConnectService.CreateRefGrant:input_type -> keyorix.v1.CreateConnectRefGrantRequest
+	118, // 147: keyorix.v1.ConnectService.DeleteRefGrant:input_type -> keyorix.v1.DeleteConnectRefGrantRequest
+	0,   // 148: keyorix.v1.SecretService.CreateSecret:output_type -> keyorix.v1.Secret
+	0,   // 149: keyorix.v1.SecretService.GetSecret:output_type -> keyorix.v1.Secret
+	1,   // 150: keyorix.v1.SecretService.GetSecretValue:output_type -> keyorix.v1.SecretValue
+	0,   // 151: keyorix.v1.SecretService.UpdateSecret:output_type -> keyorix.v1.Secret
+	126, // 152: keyorix.v1.SecretService.DeleteSecret:output_type -> google.protobuf.Empty
+	7,   // 153: keyorix.v1.SecretService.ListSecrets:output_type -> keyorix.v1.ListSecretsResponse
+	10,  // 154: keyorix.v1.SecretService.GetSecretVersions:output_type -> keyorix.v1.GetSecretVersionsResponse
+	40,  // 155: keyorix.v1.ShareService.ShareSecret:output_type -> keyorix.v1.ShareRecord
+	45,  // 156: keyorix.v1.ShareService.ListSecretShares:output_type -> keyorix.v1.ListSharesResponse
+	45,  // 157: keyorix.v1.ShareService.ListUserShares:output_type -> keyorix.v1.ListSharesResponse
+	7,   // 158: keyorix.v1.ShareService.ListSharedSecrets:output_type -> keyorix.v1.ListSecretsResponse
+	40,  // 159: keyorix.v1.ShareService.UpdateSharePermission:output_type -> keyorix.v1.ShareRecord
+	126, // 160: keyorix.v1.ShareService.RevokeShare:output_type -> google.protobuf.Empty
+	14,  // 161: keyorix.v1.UserService.CreateUser:output_type -> keyorix.v1.CreateUserResponse
+	11,  // 162: keyorix.v1.UserService.GetUser:output_type -> keyorix.v1.User
+	11,  // 163: keyorix.v1.UserService.UpdateUser:output_type -> keyorix.v1.User
+	126, // 164: keyorix.v1.UserService.DeleteUser:output_type -> google.protobuf.Empty
+	19,  // 165: keyorix.v1.UserService.ListUsers:output_type -> keyorix.v1.ListUsersResponse
+	21,  // 166: keyorix.v1.RoleService.CreateRole:output_type -> keyorix.v1.Role
+	21,  // 167: keyorix.v1.RoleService.GetRole:output_type -> keyorix.v1.Role
+	21,  // 168: keyorix.v1.RoleService.UpdateRole:output_type -> keyorix.v1.Role
+	126, // 169: keyorix.v1.RoleService.DeleteRole:output_type -> google.protobuf.Empty
+	27,  // 170: keyorix.v1.RoleService.ListRoles:output_type -> keyorix.v1.ListRolesResponse
+	29,  // 171: keyorix.v1.RoleService.AssignRole:output_type -> keyorix.v1.RoleAssignment
+	126, // 172: keyorix.v1.RoleService.RemoveRole:output_type -> google.protobuf.Empty
+	32,  // 173: keyorix.v1.RoleService.GetUserRoles:output_type -> keyorix.v1.GetUserRolesResponse
+	35,  // 174: keyorix.v1.AuditService.GetAuditLogs:output_type -> keyorix.v1.GetAuditLogsResponse
+	38,  // 175: keyorix.v1.AuditService.GetRBACAuditLogs:output_type -> keyorix.v1.GetRBACAuditLogsResponse
+	33,  // 176: keyorix.v1.AuditService.StreamAuditLogs:output_type -> keyorix.v1.AuditLog
+	48,  // 177: keyorix.v1.SystemService.HealthCheck:output_type -> keyorix.v1.HealthResponse
+	49,  // 178: keyorix.v1.SystemService.GetSystemInfo:output_type -> keyorix.v1.SystemInfo
+	52,  // 179: keyorix.v1.SystemService.GetMetrics:output_type -> keyorix.v1.Metrics
+	60,  // 180: keyorix.v1.ProjectService.ListProjects:output_type -> keyorix.v1.ListProjectsResponse
+	58,  // 181: keyorix.v1.ProjectService.GetProject:output_type -> keyorix.v1.Project
+	58,  // 182: keyorix.v1.ProjectService.CreateProject:output_type -> keyorix.v1.Project
+	58,  // 183: keyorix.v1.ProjectService.UpdateProject:output_type -> keyorix.v1.Project
+	126, // 184: keyorix.v1.ProjectService.DeleteProject:output_type -> google.protobuf.Empty
+	66,  // 185: keyorix.v1.ProjectService.ListEnvironments:output_type -> keyorix.v1.ListEnvironmentsResponse
+	70,  // 186: keyorix.v1.MachineIdentityService.ListMachineIdentities:output_type -> keyorix.v1.ListMachineIdentitiesResponse
+	67,  // 187: keyorix.v1.MachineIdentityService.CreateMachineIdentity:output_type -> keyorix.v1.MachineIdentity
+	67,  // 188: keyorix.v1.MachineIdentityService.TransitionMachineIdentity:output_type -> keyorix.v1.MachineIdentity
+	67,  // 189: keyorix.v1.MachineIdentityService.ClassifyMachineIdentity:output_type -> keyorix.v1.MachineIdentity
+	75,  // 190: keyorix.v1.MachineIdentityService.IssueMachineToken:output_type -> keyorix.v1.IssueMachineTokenResponse
+	77,  // 191: keyorix.v1.MachineIdentityService.ListMachineTokens:output_type -> keyorix.v1.ListMachineTokensResponse
+	126, // 192: keyorix.v1.MachineIdentityService.RevokeMachineToken:output_type -> google.protobuf.Empty
+	68,  // 193: keyorix.v1.MachineIdentityService.ClassifyMachineToken:output_type -> keyorix.v1.MachineToken
+	84,  // 194: keyorix.v1.DynamicSecretService.ListConfigs:output_type -> keyorix.v1.ListDynamicConfigsResponse
+	80,  // 195: keyorix.v1.DynamicSecretService.GetConfig:output_type -> keyorix.v1.DynamicSecretConfig
+	80,  // 196: keyorix.v1.DynamicSecretService.CreateConfig:output_type -> keyorix.v1.DynamicSecretConfig
+	80,  // 197: keyorix.v1.DynamicSecretService.ClassifyConfig:output_type -> keyorix.v1.DynamicSecretConfig
+	82,  // 198: keyorix.v1.DynamicSecretService.IssueLease:output_type -> keyorix.v1.IssuedCredential
+	90,  // 199: keyorix.v1.DynamicSecretService.ListLeases:output_type -> keyorix.v1.ListLeasesResponse
+	126, // 200: keyorix.v1.DynamicSecretService.RevokeLease:output_type -> google.protobuf.Empty
+	93,  // 201: keyorix.v1.DynamicSecretService.RenewLease:output_type -> keyorix.v1.RenewLeaseResponse
+	95,  // 202: keyorix.v1.DynamicSecretService.RevokeAllLeases:output_type -> keyorix.v1.RevokeAllLeasesResponse
+	107, // 203: keyorix.v1.ComplianceService.GetCompliancePosture:output_type -> keyorix.v1.CompliancePosture
+	111, // 204: keyorix.v1.ComplianceService.GetComplianceControls:output_type -> keyorix.v1.ComplianceControls
+	112, // 205: keyorix.v1.ConnectService.ListConnectors:output_type -> keyorix.v1.ConnectorList
+	114, // 206: keyorix.v1.ConnectService.ReadSecret:output_type -> keyorix.v1.FederatedSecretValue
+	116, // 207: keyorix.v1.ConnectService.ListRefGrants:output_type -> keyorix.v1.ConnectRefGrantList
+	115, // 208: keyorix.v1.ConnectService.CreateRefGrant:output_type -> keyorix.v1.ConnectRefGrant
+	126, // 209: keyorix.v1.ConnectService.DeleteRefGrant:output_type -> google.protobuf.Empty
+	148, // [148:210] is the sub-list for method output_type
+	86,  // [86:148] is the sub-list for method input_type
+	86,  // [86:86] is the sub-list for extension type_name
+	86,  // [86:86] is the sub-list for extension extendee
+	0,   // [0:86] is the sub-list for field type_name
 }
 
 func init() { file_keyorix_proto_init() }
@@ -9313,7 +9558,7 @@ func file_keyorix_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_keyorix_proto_rawDesc), len(file_keyorix_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   121,
+			NumMessages:   125,
 			NumExtensions: 0,
 			NumServices:   11,
 		},

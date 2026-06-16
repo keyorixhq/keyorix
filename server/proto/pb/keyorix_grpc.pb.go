@@ -3013,6 +3013,9 @@ var ComplianceService_ServiceDesc = grpc.ServiceDesc{
 const (
 	ConnectService_ListConnectors_FullMethodName = "/keyorix.v1.ConnectService/ListConnectors"
 	ConnectService_ReadSecret_FullMethodName     = "/keyorix.v1.ConnectService/ReadSecret"
+	ConnectService_ListRefGrants_FullMethodName  = "/keyorix.v1.ConnectService/ListRefGrants"
+	ConnectService_CreateRefGrant_FullMethodName = "/keyorix.v1.ConnectService/CreateRefGrant"
+	ConnectService_DeleteRefGrant_FullMethodName = "/keyorix.v1.ConnectService/DeleteRefGrant"
 )
 
 // ConnectServiceClient is the client API for ConnectService service.
@@ -3028,6 +3031,12 @@ type ConnectServiceClient interface {
 	ListConnectors(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ConnectorList, error)
 	// ReadSecret proxies a read-through of a secret's current value from a connector.
 	ReadSecret(ctx context.Context, in *ReadFederatedSecretRequest, opts ...grpc.CallOption) (*FederatedSecretValue, error)
+	// ListRefGrants returns all per-reference grants (ADR-045). Requires roles.read.
+	ListRefGrants(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ConnectRefGrantList, error)
+	// CreateRefGrant adds a per-reference grant. Requires roles.write.
+	CreateRefGrant(ctx context.Context, in *CreateConnectRefGrantRequest, opts ...grpc.CallOption) (*ConnectRefGrant, error)
+	// DeleteRefGrant removes a per-reference grant by id. Requires roles.write.
+	DeleteRefGrant(ctx context.Context, in *DeleteConnectRefGrantRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type connectServiceClient struct {
@@ -3058,6 +3067,36 @@ func (c *connectServiceClient) ReadSecret(ctx context.Context, in *ReadFederated
 	return out, nil
 }
 
+func (c *connectServiceClient) ListRefGrants(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ConnectRefGrantList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConnectRefGrantList)
+	err := c.cc.Invoke(ctx, ConnectService_ListRefGrants_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *connectServiceClient) CreateRefGrant(ctx context.Context, in *CreateConnectRefGrantRequest, opts ...grpc.CallOption) (*ConnectRefGrant, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConnectRefGrant)
+	err := c.cc.Invoke(ctx, ConnectService_CreateRefGrant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *connectServiceClient) DeleteRefGrant(ctx context.Context, in *DeleteConnectRefGrantRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, ConnectService_DeleteRefGrant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ConnectServiceServer is the server API for ConnectService service.
 // All implementations must embed UnimplementedConnectServiceServer
 // for forward compatibility.
@@ -3071,6 +3110,12 @@ type ConnectServiceServer interface {
 	ListConnectors(context.Context, *emptypb.Empty) (*ConnectorList, error)
 	// ReadSecret proxies a read-through of a secret's current value from a connector.
 	ReadSecret(context.Context, *ReadFederatedSecretRequest) (*FederatedSecretValue, error)
+	// ListRefGrants returns all per-reference grants (ADR-045). Requires roles.read.
+	ListRefGrants(context.Context, *emptypb.Empty) (*ConnectRefGrantList, error)
+	// CreateRefGrant adds a per-reference grant. Requires roles.write.
+	CreateRefGrant(context.Context, *CreateConnectRefGrantRequest) (*ConnectRefGrant, error)
+	// DeleteRefGrant removes a per-reference grant by id. Requires roles.write.
+	DeleteRefGrant(context.Context, *DeleteConnectRefGrantRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedConnectServiceServer()
 }
 
@@ -3086,6 +3131,15 @@ func (UnimplementedConnectServiceServer) ListConnectors(context.Context, *emptyp
 }
 func (UnimplementedConnectServiceServer) ReadSecret(context.Context, *ReadFederatedSecretRequest) (*FederatedSecretValue, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReadSecret not implemented")
+}
+func (UnimplementedConnectServiceServer) ListRefGrants(context.Context, *emptypb.Empty) (*ConnectRefGrantList, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRefGrants not implemented")
+}
+func (UnimplementedConnectServiceServer) CreateRefGrant(context.Context, *CreateConnectRefGrantRequest) (*ConnectRefGrant, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateRefGrant not implemented")
+}
+func (UnimplementedConnectServiceServer) DeleteRefGrant(context.Context, *DeleteConnectRefGrantRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteRefGrant not implemented")
 }
 func (UnimplementedConnectServiceServer) mustEmbedUnimplementedConnectServiceServer() {}
 func (UnimplementedConnectServiceServer) testEmbeddedByValue()                        {}
@@ -3144,6 +3198,60 @@ func _ConnectService_ReadSecret_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ConnectService_ListRefGrants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConnectServiceServer).ListRefGrants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConnectService_ListRefGrants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConnectServiceServer).ListRefGrants(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ConnectService_CreateRefGrant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateConnectRefGrantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConnectServiceServer).CreateRefGrant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConnectService_CreateRefGrant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConnectServiceServer).CreateRefGrant(ctx, req.(*CreateConnectRefGrantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ConnectService_DeleteRefGrant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteConnectRefGrantRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConnectServiceServer).DeleteRefGrant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConnectService_DeleteRefGrant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConnectServiceServer).DeleteRefGrant(ctx, req.(*DeleteConnectRefGrantRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ConnectService_ServiceDesc is the grpc.ServiceDesc for ConnectService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3158,6 +3266,18 @@ var ConnectService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReadSecret",
 			Handler:    _ConnectService_ReadSecret_Handler,
+		},
+		{
+			MethodName: "ListRefGrants",
+			Handler:    _ConnectService_ListRefGrants_Handler,
+		},
+		{
+			MethodName: "CreateRefGrant",
+			Handler:    _ConnectService_CreateRefGrant_Handler,
+		},
+		{
+			MethodName: "DeleteRefGrant",
+			Handler:    _ConnectService_DeleteRefGrant_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
