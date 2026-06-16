@@ -19,7 +19,11 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.UserRole{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(
+		&models.Role{}, &models.UserRole{}, &models.MachineIdentityRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.ConnectRefGrant{}, &models.AuditEvent{},
+	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	if len(conns) > 0 {
 		c.SetConnectManager(connect.NewManager(conns))
@@ -146,6 +150,29 @@ func TestConnectRefRBAC_MachineIdentityRoles(t *testing.T) {
 	_, err = c.ReadFederatedSecret(ctx, ActorTypeMachine, 99, "aws", "metrics/qps")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not permitted")
+}
+
+// A grant for a role the caller holds only VIA GROUP MEMBERSHIP must authorize them —
+// the per-reference policy resolves effective roles (direct + group-derived) the same
+// way connect.read itself is authorized (ADR-045).
+func TestConnectRefRBAC_GroupDerivedRole(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	// Role 5 exists; user 1 is NOT directly assigned it — they're in group 3, and
+	// group 3 has role 5.
+	require.NoError(t, db.Create(&models.Role{ID: 5, Name: "metrics"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 3, Name: "analytics"}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 3}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 3, RoleID: 5}).Error)
+	seedGrant(t, c, 5, "aws", "metrics/")
+
+	// The user reaches the grant through their group-derived role.
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "metrics/qps")
+	require.NoError(t, err)
+	assert.Equal(t, "v", val)
+
+	// Still deny-by-default outside the granted prefix.
+	_, err = c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "db/x")
+	require.Error(t, err)
 }
 
 func TestConnectRefAllowed_Direct(t *testing.T) {

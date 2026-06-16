@@ -47,9 +47,13 @@ that is in fact still unscoped.
 
 Enforcement lives in the core layer (`ReadFederatedSecret`), so it protects **every**
 transport uniformly — HTTP and the gRPC `ConnectService` alike. The caller's roles are
-resolved from the correct identity store for the actor kind — `user_roles` for users,
-`machine_identity_roles` for machine identities — so the policy is enforceable for both
-human and machine principals (at global scope, since Connect is a global surface).
+resolved exactly as canonical authorization resolves them, so the per-reference policy
+is consistent with the rest of RBAC: a user's **effective** roles — direct assignments
+**plus group-derived roles** — and, for a machine identity, its `machine_identity_roles`
+(at global scope, since Connect is a global surface). Resolving only direct roles would
+wrongly deny a user whose granted role comes via a group even though `connect.read`
+itself honors it. **Group-based scoping therefore works out of the box**: grant a
+ref-prefix to a role and manage who holds it through group membership.
 
 ## The deny-by-default footgun (documented)
 
