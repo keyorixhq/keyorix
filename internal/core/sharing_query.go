@@ -56,7 +56,7 @@ func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, s
 	if err != nil {
 		return nil, err
 	}
-	if secret.OwnerID != userID {
+	if !secretOwnedBy(secret.OwnerID, userID) {
 		return nil, fmt.Errorf("not authorized to view shares for this secret")
 	}
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID)

@@ -72,7 +72,7 @@ func (c *KeyorixCore) GetSecretSharingStatusWithIndicators(ctx context.Context, 
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
-	isOwner := secret.OwnerID == userID
+	isOwner := secretOwnedBy(secret.OwnerID, userID)
 	userPermission := ""
 	if !isOwner {
 		for _, share := range shares {
@@ -132,7 +132,7 @@ func (c *KeyorixCore) GetUserSecretPermission(ctx context.Context, secretID, use
 		return nil, err
 	}
 
-	if secret.OwnerID == userID {
+	if secretOwnedBy(secret.OwnerID, userID) {
 		return &models.UserSecretPermission{
 			SecretID:   secretID,
 			UserID:     userID,

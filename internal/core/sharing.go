@@ -40,9 +40,10 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 		return nil, err
 	}
 
-	// Only the secret owner may share it.
+	// Only the secret owner may share it (an ownerless / machine-created secret —
+	// OwnerID 0 — is owned by nobody and cannot be shared via the owner gate).
 	// Sharing semantics: same-project only (RBAC is global; ownership enforces project boundary).
-	if secret.OwnerID != req.SharedBy {
+	if !secretOwnedBy(secret.OwnerID, req.SharedBy) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 
@@ -89,7 +90,7 @@ func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShar
 	if err != nil {
 		return nil, err
 	}
-	if secret.OwnerID != req.UpdatedBy {
+	if !secretOwnedBy(secret.OwnerID, req.UpdatedBy) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 
@@ -128,7 +129,7 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 	if err != nil {
 		return err
 	}
-	if secret.OwnerID != revokedBy {
+	if !secretOwnedBy(secret.OwnerID, revokedBy) {
 		return fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 

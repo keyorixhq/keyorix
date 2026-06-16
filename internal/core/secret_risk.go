@@ -171,7 +171,10 @@ func (c *KeyorixCore) countReads(ctx context.Context, secretID uint, since time.
 // countPrincipals counts the distinct users that can read a secret: the owner
 // plus direct share recipients plus the members of any group it is shared with.
 func (c *KeyorixCore) countPrincipals(ctx context.Context, secret *models.SecretNode) int {
-	principals := map[uint]struct{}{secret.OwnerID: {}}
+	principals := map[uint]struct{}{}
+	if secret.OwnerID != 0 { // an ownerless (machine-created) secret has no owner principal
+		principals[secret.OwnerID] = struct{}{}
+	}
 	shares, err := c.storage.ListSharesBySecret(ctx, secret.ID)
 	if err != nil {
 		return len(principals)
