@@ -225,6 +225,8 @@ message SetSecretAutoRotateRequest {
   bool enabled = 2;
   int32 length = 3;  // 0 = default
   string charset = 4; // "" = default alphanumeric
+  string backend = 5; // "" = regenerate in Keyorix only (ADR-047)
+  string ref = 6;     // upstream identifier (required iff backend set)
 }
 
 message SecretVersion {

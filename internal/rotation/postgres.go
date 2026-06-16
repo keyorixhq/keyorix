@@ -57,6 +57,12 @@ func (e *PostgresExecutor) Rotate(ctx context.Context, ref, newValue string) err
 	if newValue == "" {
 		return fmt.Errorf("postgresql: new value is required")
 	}
+	// Fail closed: a rotation backend runs privileged DDL with an admin DSN, so it must
+	// carry an explicit allow-list — an unbounded backend would let any caller who can
+	// configure a secret's rotation_ref rotate every role the DSN can reach.
+	if len(e.allowedRefs) == 0 {
+		return fmt.Errorf("postgresql: backend %q has no allowed_refs configured — refusing to rotate (fail-closed)", e.name)
+	}
 	if !prefixAllowed(e.allowedRefs, ref) {
 		return fmt.Errorf("postgresql: role %q is not permitted by this backend's allowed_refs", ref)
 	}

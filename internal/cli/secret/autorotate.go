@@ -14,6 +14,8 @@ var (
 	autoRotateOff     bool
 	autoRotateLength  int
 	autoRotateCharset string
+	autoRotateBackend string
+	autoRotateRef     string
 )
 
 var autoRotateCmd = &cobra.Command{
@@ -39,10 +41,15 @@ value without touching any upstream system. Requires secrets.write at the secret
 		if !ok {
 			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 		}
+		if (autoRotateBackend == "") != (autoRotateRef == "") {
+			return fmt.Errorf("--backend and --ref must be set together (or both omitted)")
+		}
 		body := map[string]interface{}{
 			"enabled": !autoRotateOff,
 			"length":  autoRotateLength,
 			"charset": autoRotateCharset,
+			"backend": autoRotateBackend,
+			"ref":     autoRotateRef,
 		}
 		var out struct{}
 		path := "/api/v1/secrets/" + strconv.Itoa(int(autoRotateID)) + "/auto-rotate"
@@ -63,5 +70,7 @@ func init() {
 	autoRotateCmd.Flags().BoolVar(&autoRotateOff, "off", false, "Disable auto-rotation (default enables)")
 	autoRotateCmd.Flags().IntVar(&autoRotateLength, "length", 0, "Generated value length (8–256, 0 = default 32)")
 	autoRotateCmd.Flags().StringVar(&autoRotateCharset, "charset", "", "alphanumeric|lower_alphanumeric|hex|alphanumeric_symbols (empty = default)")
+	autoRotateCmd.Flags().StringVar(&autoRotateBackend, "backend", "", "Rotation backend name — rotate the upstream credential too (ADR-047)")
+	autoRotateCmd.Flags().StringVar(&autoRotateRef, "ref", "", "Upstream identifier the backend rotates (required with --backend)")
 	SecretCmd.AddCommand(autoRotateCmd)
 }

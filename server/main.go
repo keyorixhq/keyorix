@@ -406,6 +406,12 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		for _, b := range cfg.AutoRotation.Backends {
 			switch b.Type {
 			case "postgresql":
+				// Fail closed: a backend runs privileged DDL with an admin DSN, so an
+				// explicit allow-list is required — refuse to register an unbounded one.
+				if len(b.AllowedRefs) == 0 {
+					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+					continue
+				}
 				dsn := b.GetDSN()
 				if dsn == "" {
 					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)

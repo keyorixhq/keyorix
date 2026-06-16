@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -104,14 +106,14 @@ func TestSetSecretAutoRotate_TogglesAndPersists(t *testing.T) {
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 
 	// Enable with a generator spec.
-	require.NoError(t, c.SetSecretAutoRotate(context.Background(), 1, true, 48, "hex", 9))
+	require.NoError(t, c.SetSecretAutoRotate(context.Background(), 1, AutoRotateSpec{Enabled: true, Length: 48, Charset: "hex"}, 9))
 	var s models.SecretNode
 	require.NoError(t, db.First(&s, 1).Error)
 	assert.True(t, s.AutoRotate)
 	assert.Equal(t, 48, s.RotationLength)
 	assert.Equal(t, "hex", s.RotationCharset)
 
-	require.NoError(t, c.SetSecretAutoRotate(context.Background(), 1, false, 0, "", 9))
+	require.NoError(t, c.SetSecretAutoRotate(context.Background(), 1, AutoRotateSpec{Enabled: false}, 9))
 	require.NoError(t, db.First(&s, 1).Error)
 	assert.False(t, s.AutoRotate)
 }
@@ -121,11 +123,11 @@ func TestSetSecretAutoRotate_ValidatesSpec(t *testing.T) {
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	ctx := context.Background()
 
-	err := c.SetSecretAutoRotate(ctx, 1, true, 0, "klingon", 9)
+	err := c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Charset: "klingon"}, 9)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown rotation charset")
 
-	err = c.SetSecretAutoRotate(ctx, 1, true, 5000, "", 9)
+	err = c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Length: 5000}, 9)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "out of range")
 }
@@ -193,4 +195,122 @@ func TestGenerateRotatedValue_UniqueAndCharset(t *testing.T) {
 		assert.False(t, seen[v], "values must not repeat")
 		seen[v] = true
 	}
+}
+
+// fakeExecutor records the (ref, value) it was asked to rotate and can fail on demand.
+type fakeExecutor struct {
+	name   string
+	gotRef string
+	gotVal string
+	called bool
+	err    error
+}
+
+func (f *fakeExecutor) Name() string { return f.name }
+func (f *fakeExecutor) Type() string { return "fake" }
+func (f *fakeExecutor) Rotate(_ context.Context, ref, val string) error {
+	f.called = true
+	f.gotRef, f.gotVal = ref, val
+	return f.err
+}
+
+func seedBackendSecret(t *testing.T, db *gorm.DB, id uint, backend, ref string, lastRotated time.Time) {
+	t.Helper()
+	lr := lastRotated
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: id, Name: "upstream-cred", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active",
+		AutoRotate: true, RotationBackend: backend, RotationRef: ref, LastRotatedAt: &lr, CreatedAt: lastRotated,
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: id, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: lastRotated,
+	}).Error)
+}
+
+func backendPolicyCore(t *testing.T, fake *fakeExecutor) (*KeyorixCore, *gorm.DB, time.Time) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	return c, db, fixed
+}
+
+// Backend rotation: the executor applies the new value upstream, then it's stored.
+func TestRunAutoRotation_BackendApplied(t *testing.T) {
+	fake := &fakeExecutor{name: "pg"}
+	c, db, fixed := backendPolicyCore(t, fake)
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+
+	require.True(t, fake.called, "the upstream executor was invoked")
+	assert.Equal(t, "app_svc", fake.gotRef)
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber, "new value stored after upstream success")
+	assert.Equal(t, fake.gotVal, string(v.EncryptedValue), "stored value matches what was applied upstream")
+}
+
+// If the upstream apply fails, the value is NOT stored (no drift between Keyorix and upstream).
+func TestRunAutoRotation_BackendFailureNotStored(t *testing.T) {
+	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
+	c, db, fixed := backendPolicyCore(t, fake)
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "a failed upstream apply rotates nothing")
+	assert.True(t, fake.called)
+	assert.Equal(t, 1, latestVersion(t, db, 1).VersionNumber, "value not stored on upstream failure")
+}
+
+// An unknown backend name (no executor registered) is skipped, not stored.
+func TestRunAutoRotation_UnknownBackendSkipped(t *testing.T) {
+	fake := &fakeExecutor{name: "pg"}
+	c, db, fixed := backendPolicyCore(t, fake)
+	seedBackendSecret(t, db, 1, "nope", "app_svc", fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.False(t, fake.called, "the registered executor is not invoked for a different backend name")
+	assert.Equal(t, 1, latestVersion(t, db, 1).VersionNumber)
+}
+
+func TestSetSecretAutoRotate_BackendRefBothOrNeither(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
+	ctx := context.Background()
+
+	// backend without ref → error
+	err := c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg"}, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be set together")
+
+	// both set, backend exists → ok
+	require.NoError(t, c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9))
+	var s models.SecretNode
+	require.NoError(t, db.First(&s, 1).Error)
+	assert.Equal(t, "pg", s.RotationBackend)
+	assert.Equal(t, "app_svc", s.RotationRef)
+}
+
+func TestSetSecretAutoRotate_RejectsUnknownBackend(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+	ctx := context.Background()
+
+	// No manager configured → backend reference rejected.
+	err := c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no rotation backends")
+
+	// Manager present but the named backend is not registered → rejected.
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "other"}}))
+	err = c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown rotation backend")
 }

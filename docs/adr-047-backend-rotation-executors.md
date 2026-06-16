@@ -2,8 +2,11 @@
 
 ## Status
 
-Accepted (first slice). PostgreSQL executor shipped; the auto-rotation wiring and
-further backends follow.
+Accepted. PostgreSQL executor shipped and wired into the auto-rotation flow: a secret
+with `rotation_backend` + `rotation_ref` set has its new value applied upstream (the
+executor) before being stored in Keyorix, so the two never drift — and the value is NOT
+stored if the upstream apply fails. Manageable over HTTP/gRPC/CLI (scoped
+`secrets.write`). Further backends (MySQL, cloud-key APIs) follow.
 
 ## Context
 
@@ -39,9 +42,15 @@ upstream → Keyorix stores it as a new version (the existing ADR-046 step).
   config file — the same trust model as Connect backends and dynamic-secrets engines
   (ambient/operator-provided credentials with enough privilege to rotate, scoped tightly
   by the operator).
-- **`allowed_refs` guardrail.** As with Connect, a backend may carry an optional prefix
-  allowlist on the refs (role names) it will rotate, so a misconfigured or compromised
-  caller can't ask it to rotate an arbitrary upstream principal.
+- **`allowed_refs` guardrail — REQUIRED (fail-closed).** A backend carries a prefix
+  allowlist of the refs (role names) it will rotate. Unlike Connect's optional
+  allowlist, a rotation backend **must** declare one: a backend with no `allowed_refs`
+  is refused at registration, and the executor itself refuses to rotate when the list is
+  empty. This is load-bearing — pointing a secret's `rotation_ref` is gated only by
+  scoped `secrets.write` on that secret, so without the allowlist a writer could drive
+  `ALTER ROLE` against any principal the admin DSN can reach. The allowlist (operator-
+  chosen, safe-to-rotate prefixes) is what bounds that. Setting a secret's
+  `rotation_backend` also validates the backend exists at configuration time.
 
 This ADR's slice ships the executor subsystem (interface + manager + PostgreSQL backend)
 and its configuration/wiring. A follow-up wires it into `RunAutoRotation` (a per-secret
