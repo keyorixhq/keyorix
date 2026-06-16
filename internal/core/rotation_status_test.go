@@ -37,7 +37,7 @@ func TestGetRotationStatus_Classification(t *testing.T) {
 
 	secrets := []*models.SecretNode{
 		{ID: 1, Name: "overdue-key", EnvironmentID: 2, LastRotatedAt: daysAgo(120)}, // 120 > 90 → overdue
-		{ID: 2, Name: "due-soon-key", EnvironmentID: 2, LastRotatedAt: daysAgo(80)}, // 90-80=10 <= 14 → due_soon
+		{ID: 2, Name: "due-soon-key", EnvironmentID: 2, LastRotatedAt: daysAgo(80), AutoRotate: true, RotationBackend: "prod-pg"}, // 90-80=10 <= 14 → due_soon
 		{ID: 3, Name: "healthy-key", EnvironmentID: 2, LastRotatedAt: daysAgo(10)},  // 90-10=80 > 14 → ok
 		{ID: 4, Name: "never-rotated", EnvironmentID: 2, CreatedAt: *daysAgo(200)},  // falls back to CreatedAt → overdue
 	}
@@ -64,4 +64,8 @@ func TestGetRotationStatus_Classification(t *testing.T) {
 	require.Equal(t, RotationStatusOverdue, byID[4].Status, "never-rotated falls back to CreatedAt")
 	require.Equal(t, uint(7), byID[1].PolicyID)
 	require.Equal(t, 90, byID[1].IntervalDays)
+	// Auto-rotation visibility flows through: a self-rotating secret reports its backend.
+	require.True(t, byID[2].AutoRotate)
+	require.Equal(t, "prod-pg", byID[2].RotationBackend)
+	require.False(t, byID[1].AutoRotate, "reminder-only secret is not auto-rotate")
 }

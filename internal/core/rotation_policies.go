@@ -145,6 +145,11 @@ type RotationStatusEntry struct {
 	DaysSinceRotation int        `json:"days_since_rotation"`
 	DaysOverdue       int        `json:"days_overdue"` // positive = overdue, negative = days remaining
 	Status            string     `json:"status"`       // overdue | due_soon | ok
+	// AutoRotate / RotationBackend surface whether this covered secret self-rotates
+	// (ADR-046/047) and via which backend ("" = regenerate in Keyorix), so an operator
+	// can tell a self-rotating secret from a reminder-only one at a glance.
+	AutoRotate      bool   `json:"auto_rotate"`
+	RotationBackend string `json:"rotation_backend,omitempty"`
 }
 
 // GetRotationStatus returns the rotation posture of every secret covered by an
@@ -228,6 +233,8 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID *uint) ([
 				DaysSinceRotation: daysSince,
 				DaysOverdue:       daysOverdue,
 				Status:            status,
+				AutoRotate:        secret.AutoRotate,
+				RotationBackend:   secret.RotationBackend,
 			})
 		}
 	}
