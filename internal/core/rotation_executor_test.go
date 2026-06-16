@@ -314,3 +314,59 @@ func TestSetSecretAutoRotate_RejectsUnknownBackend(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown rotation backend")
 }
+
+// fakeGenExecutor is a generate-upstream backend: GenerateUpstream mints the value.
+type fakeGenExecutor struct {
+	name   string
+	value  string
+	gotRef string
+	err    error
+}
+
+func (f *fakeGenExecutor) Name() string { return f.name }
+func (f *fakeGenExecutor) Type() string { return "fakegen" }
+func (f *fakeGenExecutor) Rotate(context.Context, string, string) error {
+	return errors.New("use GenerateUpstream")
+}
+func (f *fakeGenExecutor) GenerateUpstream(_ context.Context, ref string) (string, error) {
+	f.gotRef = ref
+	return f.value, f.err
+}
+
+// For a generate-upstream backend the STORED value is what the upstream minted, not the
+// Keyorix-generated candidate.
+func TestRunAutoRotation_GenerateUpstreamStored(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	fake := &fakeGenExecutor{name: "cloud", value: `{"access_key_id":"AKIANEW","secret_access_key":"s"}`}
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	assert.Equal(t, "svc-app", fake.gotRef)
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber)
+	assert.Equal(t, fake.value, string(v.EncryptedValue), "stored value is the upstream-minted one, not a generated candidate")
+}
+
+// A generate-upstream failure stores nothing.
+func TestRunAutoRotation_GenerateUpstreamFailureNotStored(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	fake := &fakeGenExecutor{name: "cloud", err: errors.New("LimitExceeded")}
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, 1, latestVersion(t, db, 1).VersionNumber)
+}

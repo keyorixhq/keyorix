@@ -427,6 +427,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
 				}
 				execs = append(execs, rotation.NewMySQLExecutor(b.Name, dsn, b.AllowedRefs))
+			case "aws-iam":
+				// Generate-upstream backend: AWS mints the new key; credentials come from
+				// the ambient AWS chain (no DSN). Still fail-closed on allowed_refs.
+				if len(b.AllowedRefs) == 0 {
+					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+					continue
+				}
+				execs = append(execs, rotation.NewAWSIAMExecutor(b.Name, b.Region, b.AllowedRefs))
 			default:
 				log.Printf("Rotation backend %q: unknown type %q, skipping", b.Name, b.Type)
 			}

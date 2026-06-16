@@ -921,6 +921,7 @@ type RotationBackendConfig struct {
 	Name        string   `yaml:"name"`
 	Type        string   `yaml:"type"`
 	DSNEnv      string   `yaml:"dsn_env"`
+	Region      string   `yaml:"region"` // for cloud backends (e.g. aws-iam); creds from the ambient chain
 	AllowedRefs []string `yaml:"allowed_refs"`
 }
 

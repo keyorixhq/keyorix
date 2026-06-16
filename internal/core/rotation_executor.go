@@ -147,19 +147,24 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 				continue
 			}
 			// Backend rotation (ADR-047): if the secret names a configured executor,
-			// apply the new value UPSTREAM first. Only on success do we store it in
-			// Keyorix, so the two never drift. A backend that is named but unconfigured
-			// or whose upstream apply fails is skipped (logged + audited), not stored.
+			// rotate the credential UPSTREAM first and store the resulting value only on
+			// success, so the two never drift. For a generate-upstream backend (e.g. a
+			// cloud key API) the stored value is what the upstream minted; for a
+			// password-set backend it is the candidate we generated. A backend that is
+			// unconfigured/unknown or whose upstream apply fails is skipped (audited).
+			storeVal := val
 			if secret.RotationBackend != "" {
-				if err := c.applyBackendRotation(ctx, secret, val); err != nil {
+				upstreamVal, err := c.applyBackendRotation(ctx, secret, val)
+				if err != nil {
 					sid := secret.ID
 					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
 						fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
 					log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
 					continue
 				}
+				storeVal = upstreamVal
 			}
-			if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(val), "system:auto-rotation"); rerr != nil {
+			if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), "system:auto-rotation"); rerr != nil {
 				log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
 				continue
 			}
@@ -177,22 +182,30 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 	return rotated, nil
 }
 
-// applyBackendRotation resolves the secret's named rotation executor and applies
-// newValue to the upstream credential (ADR-047). Returns an error (so the caller does
-// NOT store the value) when no backend manager is configured, the named backend is
-// unknown, or the upstream apply fails.
-func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.SecretNode, newValue string) error {
+// applyBackendRotation resolves the secret's named rotation executor and rotates the
+// upstream credential (ADR-047). It returns the VALUE to store in Keyorix: for a
+// generate-upstream backend (rotation.GeneratingExecutor, e.g. a cloud key API) that is
+// the value the upstream minted; for a password-set backend it is the candidate passed
+// in (which the executor applied). Returns an error (so the caller does NOT store
+// anything) when no manager is configured, the backend is unknown, or the apply fails.
+func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.SecretNode, candidate string) (string, error) {
 	if c.rotationManager == nil {
-		return fmt.Errorf("no rotation backends configured")
+		return "", fmt.Errorf("no rotation backends configured")
 	}
 	exec, ok := c.rotationManager.Get(secret.RotationBackend)
 	if !ok {
-		return fmt.Errorf("unknown rotation backend %q", secret.RotationBackend)
+		return "", fmt.Errorf("unknown rotation backend %q", secret.RotationBackend)
 	}
 	if secret.RotationRef == "" {
-		return fmt.Errorf("rotation_ref is required for backend rotation")
+		return "", fmt.Errorf("rotation_ref is required for backend rotation")
 	}
-	return exec.Rotate(ctx, secret.RotationRef, newValue)
+	if gen, ok := exec.(rotation.GeneratingExecutor); ok {
+		return gen.GenerateUpstream(ctx, secret.RotationRef)
+	}
+	if err := exec.Rotate(ctx, secret.RotationRef, candidate); err != nil {
+		return "", err
+	}
+	return candidate, nil
 }
 
 // knownRotationCharset reports whether name is a recognized charset (or "" = default).
