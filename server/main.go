@@ -417,6 +417,16 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
 				}
 				execs = append(execs, rotation.NewPostgresExecutor(b.Name, dsn, b.AllowedRefs))
+			case "mysql":
+				if len(b.AllowedRefs) == 0 {
+					log.Printf("Rotation backend %q has no allowed_refs — refusing to register (fail-closed; set allowed_refs)", b.Name)
+					continue
+				}
+				dsn := b.GetDSN()
+				if dsn == "" {
+					log.Printf("Rotation backend %q has no admin DSN (%s unset) — rotations will fail", b.Name, b.DSNEnv)
+				}
+				execs = append(execs, rotation.NewMySQLExecutor(b.Name, dsn, b.AllowedRefs))
 			default:
 				log.Printf("Rotation backend %q: unknown type %q, skipping", b.Name, b.Type)
 			}
