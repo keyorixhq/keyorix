@@ -3,6 +3,38 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.54.0 — 2026-06-17
+
+Kubernetes integration: sync Keyorix secrets into native Kubernetes Secrets.
+
+### Added
+- **Kubernetes sync agent** (`keyorix-k8s-sync`) — a small in-cluster agent that
+  materialises selected Keyorix secrets into native Kubernetes Secrets and refreshes
+  them as the upstream values rotate. It authenticates to Keyorix with a
+  machine-identity token and writes Secrets via the Kubernetes API (Server-Side Apply)
+  using its service-account credentials — **no `client-go` dependency**. A reconcile
+  creates/updates a target Secret only when its data changes and never writes a Secret
+  partially if any value fails to fetch. ([#291], [#292], [#293], [#294])
+- **Agent container image** — published to `ghcr.io/keyorixhq/keyorix-k8s-sync`
+  alongside the server image. ([#295])
+- **Helm chart** (`deploy/helm/keyorix-k8s-sync`) — deploys the agent with
+  least-privilege RBAC (a `RoleBinding` to a `secrets` `get`/`create`/`patch`
+  `ClusterRole` per target namespace), config, and the token sourced from an existing
+  Secret. ([#296])
+- **Health & probes** — the agent serves `/healthz`, `/readyz` (gated on the first
+  successful reconcile), and `/status`; the chart wires liveness/readiness probes. ([#297])
+- **`-once` and `-dry-run` modes** — run a single reconcile (a CI gate / Kubernetes
+  `Job`; non-zero exit on failure) and preview what would change without writing. ([#298])
+
+[#291]: https://github.com/keyorixhq/keyorix/pull/291
+[#292]: https://github.com/keyorixhq/keyorix/pull/292
+[#293]: https://github.com/keyorixhq/keyorix/pull/293
+[#294]: https://github.com/keyorixhq/keyorix/pull/294
+[#295]: https://github.com/keyorixhq/keyorix/pull/295
+[#296]: https://github.com/keyorixhq/keyorix/pull/296
+[#297]: https://github.com/keyorixhq/keyorix/pull/297
+[#298]: https://github.com/keyorixhq/keyorix/pull/298
+
 ## v0.53.0 — 2026-06-17
 
 Access-anomaly detection and secret-sharing lifecycle improvements.
