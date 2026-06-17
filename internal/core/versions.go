@@ -149,6 +149,43 @@ func (c *KeyorixCore) GetSecretValueByVersion(ctx context.Context, secretID uint
 	return version.EncryptedValue, nil
 }
 
+// EventSecretRolledBack is audited when a secret is restored to a prior version.
+const EventSecretRolledBack = "secret.rolled_back"
+
+// RollbackSecret restores a secret to the value of a prior version by re-instating that
+// value as a NEW version — version history stays append-only (the rollback itself is a
+// new version, so it too can be undone). The caller (transport) must have enforced
+// scoped secrets.write. Unlike a value read, this fetches the historical version
+// directly (no max-reads / expiry guard) since a restore is a write, not a use.
+func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetVersion int, actorID uint, actorName string) (*models.SecretNode, error) {
+	version, err := c.GetSecretVersion(ctx, secretID, targetVersion)
+	if err != nil {
+		return nil, err
+	}
+	latest, err := c.storage.GetLatestSecretVersion(ctx, secretID)
+	if err == nil && latest != nil && latest.VersionNumber == targetVersion {
+		return nil, fmt.Errorf("version %d is already the current version", targetVersion)
+	}
+	var val []byte
+	if c.encryption != nil {
+		val, err = c.encryption.RetrieveSecret(version.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read version %d: %w", targetVersion, err)
+		}
+	} else {
+		val = version.EncryptedValue
+	}
+	secret, err := c.RotateSecret(ctx, secretID, val, actorName)
+	if err != nil {
+		return nil, err
+	}
+	uid := actorID
+	sid := secretID
+	c.writeAuditEvent(ctx, EventSecretRolledBack, &uid, &sid,
+		fmt.Sprintf("rolled back secret %q to the value of version %d", secret.Name, targetVersion))
+	return secret, nil
+}
+
 // GetSecretValueByVersionWithPermissionCheck retrieves the decrypted value of a specific version with permission validation.
 func (c *KeyorixCore) GetSecretValueByVersionWithPermissionCheck(ctx context.Context, secretID, userID uint, versionNumber int) ([]byte, error) {
 	if userID == 0 {
