@@ -95,6 +95,16 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 			continue
 		}
 
+		// In dry-run, tally what WOULD change but don't write.
+		if e.dryRun {
+			if current == nil {
+				res.Created++
+			} else {
+				res.Updated++
+			}
+			continue
+		}
+
 		if aerr := e.sink.Apply(ctx, t.namespace, t.name, desired); aerr != nil {
 			res.Failed++
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: apply: %v", t, aerr))
@@ -113,11 +123,25 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 type Engine struct {
 	fetcher Fetcher
 	sink    Sink
+	dryRun  bool
+}
+
+// Option configures an Engine.
+type Option func(*Engine)
+
+// WithDryRun makes the engine compute the diff and report what WOULD change without
+// writing any Secret — for config validation and safe previews.
+func WithDryRun() Option {
+	return func(e *Engine) { e.dryRun = true }
 }
 
 // NewEngine constructs an Engine over the given Fetcher and Sink.
-func NewEngine(fetcher Fetcher, sink Sink) *Engine {
-	return &Engine{fetcher: fetcher, sink: sink}
+func NewEngine(fetcher Fetcher, sink Sink, opts ...Option) *Engine {
+	e := &Engine{fetcher: fetcher, sink: sink}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // buildDesired fetches every mapping's referenced value and assembles the target

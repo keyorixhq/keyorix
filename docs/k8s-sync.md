@@ -60,6 +60,17 @@ keyorix-k8s-sync -config /etc/keyorix/k8s-sync.yaml
 
 Logs are counts and target identities only — secret values are never logged.
 
+### Flags
+
+- `-once` — run a single reconcile pass and exit (no health server / loop). Exits
+  non-zero if any target failed, so it works as a CI gate or a Kubernetes `Job`.
+- `-dry-run` — report what *would* change (created/updated/unchanged counts) without
+  writing any Secret. Combine with `-once` to validate config and preview a sync.
+
+```
+keyorix-k8s-sync -config ./k8s-sync.yaml -once -dry-run
+```
+
 ## Health & probes
 
 The agent serves probe endpoints on `health_port` (default `8080`):

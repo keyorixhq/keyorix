@@ -29,6 +29,8 @@ import (
 func main() {
 	configPath := flag.String("config", envOr("KEYORIX_K8S_SYNC_CONFIG", "/etc/keyorix/k8s-sync.yaml"),
 		"path to the sync config (YAML)")
+	once := flag.Bool("once", false, "run a single reconcile pass and exit (for CI / one-shot Jobs)")
+	dryRun := flag.Bool("dry-run", false, "report what would change without writing any Secret")
 	flag.Parse()
 
 	cfg, err := k8ssync.LoadConfig(*configPath)
@@ -46,7 +48,11 @@ func main() {
 		log.Fatalf("k8s-sync: kubernetes: %v", err)
 	}
 
-	engine := k8ssync.NewEngine(k8ssync.NewKeyorixFetcher(cfg.KeyorixURL, token), sink)
+	var engineOpts []k8ssync.Option
+	if *dryRun {
+		engineOpts = append(engineOpts, k8ssync.WithDryRun())
+	}
+	engine := k8ssync.NewEngine(k8ssync.NewKeyorixFetcher(cfg.KeyorixURL, token), sink, engineOpts...)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -57,6 +63,22 @@ func main() {
 		log.Println("k8s-sync: shutdown signal received")
 		cancel()
 	}()
+
+	// One-shot mode: a single reconcile, then exit non-zero if anything failed (handy
+	// as a CI gate or a Kubernetes Job). No health server / loop.
+	if *once {
+		mode := ""
+		if *dryRun {
+			mode = " (dry-run)"
+		}
+		log.Printf("k8s-sync: one-shot reconcile of %d mapping(s) from %s%s",
+			len(cfg.Mappings), cfg.KeyorixURL, mode)
+		res := k8ssync.Sync(ctx, engine, cfg.Mappings, log.Printf)
+		if res.Failed > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Health/readiness server for Kubernetes probes (/healthz, /readyz, /status).
 	status := k8ssync.NewStatus()
@@ -76,8 +98,12 @@ func main() {
 		_ = healthSrv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("k8s-sync: syncing %d mapping(s) from %s every %s (health :%d)",
-		len(cfg.Mappings), cfg.KeyorixURL, cfg.GetInterval(), cfg.GetHealthPort())
+	loopMode := ""
+	if *dryRun {
+		loopMode = " (dry-run)"
+	}
+	log.Printf("k8s-sync: syncing %d mapping(s) from %s every %s (health :%d)%s",
+		len(cfg.Mappings), cfg.KeyorixURL, cfg.GetInterval(), cfg.GetHealthPort(), loopMode)
 	k8ssync.Run(ctx, engine, cfg.Mappings, cfg.GetInterval(), log.Printf, status)
 	log.Println("k8s-sync: stopped")
 }
