@@ -3,6 +3,32 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.52.0 — 2026-06-17
+
+Secret lifecycle: rollback, expiry reminders, and time-bound (JIT) shares.
+
+### Added
+- **Time-bound (expiring) secret shares** — a share can now carry an optional expiry
+  (just-in-time access), mirroring time-bound role grants. An expired share authorizes
+  nothing (filtered at the permission chokepoint and in the storage queries, so it neither
+  grants access nor surfaces in "shared with me"); a past expiry is rejected at creation.
+  Lapsed shares are reclaimed and audited (`share.expired`) by the JIT expiry scheduler.
+  `POST /secrets/{id}/share` accepts an optional `expires_at`; the Share modal offers an
+  "Access expires" preset (1h/24h/7d/30d). ([#284])
+- **Secret version rollback** — restore a secret to a prior version's value, re-instated as
+  a new version so history stays append-only and the rollback is itself undoable. Audited
+  as `secret.rolled_back`; refuses rolling back to the current head. Exposed over HTTP
+  (`POST /secrets/{id}/rollback`, scoped `secrets.write`), the web Version History view, and
+  the `keyorix secret rollback` CLI command. ([#282], [#283])
+- **Secret-expiry reminders** — an opt-in scheduler proactively notifies a project's
+  approvers before (and once after) a secret with an expiration lapses, deduped on the
+  unread reminder. Mirrors the rotation-reminder scheduler; single-replica-gated. ([#281])
+
+[#281]: https://github.com/keyorixhq/keyorix/pull/281
+[#282]: https://github.com/keyorixhq/keyorix/pull/282
+[#283]: https://github.com/keyorixhq/keyorix/pull/283
+[#284]: https://github.com/keyorixhq/keyorix/pull/284
+
 ## v0.51.0 — 2026-06-17
 
 Rotation: Azure backend, failure alerts, status visibility.
