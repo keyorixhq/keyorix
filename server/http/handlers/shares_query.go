@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -48,7 +49,11 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 	h.sendSuccess(w, map[string]interface{}{"shares": shares}, "")
 }
 
-// ListShares handles GET /api/v1/shares
+// ListShares handles GET /api/v1/shares — returns the caller's shares (received +
+// owned) as a paginated list of enriched views (recipient/creator names resolved,
+// expiry included). Supports ?secretId= and ?recipientType=user|group filters and
+// ?page / ?pageSize paging. The response shape matches the web client's
+// PaginatedResponse (camelCase), which consumes it without field mapping.
 func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -56,14 +61,77 @@ func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shares, err := h.coreService.ListSharesByUser(r.Context(), userCtx.UserID)
+	views, err := h.coreService.ListUserShareViews(r.Context(), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error listing shares: %v", err)
 		h.sendError(w, "InternalError", "Failed to list shares", http.StatusInternalServerError, nil)
 		return
 	}
 
-	h.sendSuccess(w, map[string]interface{}{"shares": shares}, "")
+	// Optional server-side filters.
+	if v := r.URL.Query().Get("secretId"); v != "" {
+		if sid, perr := strconv.ParseUint(v, 10, 32); perr == nil {
+			views = filterShareViews(views, func(s core.ShareView) bool { return s.SecretID == uint(sid) })
+		}
+	}
+	if rt := r.URL.Query().Get("recipientType"); rt == "user" || rt == "group" {
+		views = filterShareViews(views, func(s core.ShareView) bool { return s.RecipientType == rt })
+	}
+
+	page := atoiDefault(r.URL.Query().Get("page"), 1)
+	pageSize := atoiDefault(r.URL.Query().Get("pageSize"), 20)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 20
+	}
+
+	total := len(views)
+	totalPages := (total + pageSize - 1) / pageSize
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	pageItems := views[start:end]
+	if pageItems == nil {
+		pageItems = []core.ShareView{}
+	}
+
+	h.sendSuccess(w, map[string]interface{}{
+		"data":       pageItems,
+		"total":      total,
+		"page":       page,
+		"pageSize":   pageSize,
+		"totalPages": totalPages,
+	}, "")
+}
+
+// filterShareViews returns the views satisfying keep.
+func filterShareViews(views []core.ShareView, keep func(core.ShareView) bool) []core.ShareView {
+	out := views[:0:0]
+	for _, v := range views {
+		if keep(v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// atoiDefault parses s as an int, returning def on empty/invalid input.
+func atoiDefault(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 // ListSharedSecrets handles GET /api/v1/shared-secrets

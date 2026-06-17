@@ -189,6 +189,30 @@ func TestUpdateShareExpiry(t *testing.T) {
 	})
 }
 
+func TestListUserShareViews(t *testing.T) {
+	ctx := context.Background()
+	c, secretID, now, _ := newSharesExpiryFixture(t)
+
+	exp := now.Add(time.Hour)
+	_, err := c.ShareSecret(ctx, &ShareSecretRequest{
+		SecretID: secretID, RecipientID: 2, Permission: "read", SharedBy: 1, ExpiresAt: &exp,
+	})
+	require.NoError(t, err)
+
+	// The owner's view list resolves recipient + creator names and carries the expiry.
+	views, err := c.ListUserShareViews(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, views, 1)
+	v := views[0]
+	assert.Equal(t, secretID, v.SecretID)
+	assert.Equal(t, "user", v.RecipientType)
+	assert.Equal(t, "recip2", v.RecipientName, "recipient id should resolve to a username")
+	assert.Equal(t, "owner", v.CreatedBy, "owner id should resolve to a username")
+	assert.Equal(t, "read", v.Permission)
+	require.NotNil(t, v.ExpiresAt)
+	assert.True(t, v.ExpiresAt.Equal(exp))
+}
+
 // mustShare is a thin wrapper returning just the core, secret, and base now for the
 // subtests that don't need the db handle.
 func mustShare(t *testing.T) (*KeyorixCore, uint, time.Time) {
