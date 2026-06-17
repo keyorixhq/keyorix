@@ -820,7 +820,13 @@ func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
 	}
 	// Self-service (own account) and public routes a read-only/unauthenticated
 	// caller may legitimately reach; everything else mutating must be denied.
-	allowExact := map[string]bool{"/system/init": true, "/health": true, "/metrics": true}
+	// /secrets/render is a read operation behind a POST (it resolves secret refs the
+	// caller can already read, gated on secrets.read) — legitimately reachable by a
+	// read-only persona, like /system/init etc.
+	allowExact := map[string]bool{
+		"/system/init": true, "/health": true, "/metrics": true,
+		"/api/v1/projects/{id}/secrets/render": true,
+	}
 	allowPrefix := []string{"/auth/", "/api/v1/auth/", "/notifications", "/api/v1/notifications"}
 	allowed := func(route string) bool {
 		if allowExact[route] {
