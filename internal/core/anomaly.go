@@ -64,6 +64,12 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 				_ = d.storage.CreateAnomalyAlert(ctx, &alert)
 			}
 		}
+
+		// Per-secret aggregate: a read-volume spike for the window versus the learned
+		// baseline (one alert per secret per pass, not per access).
+		if alert := volumeSpikeAlert(secret, len(recentLogs), baseline, now); alert != nil {
+			_ = d.storage.CreateAnomalyAlert(ctx, alert)
+		}
 	}
 	return nil
 }
@@ -141,6 +147,46 @@ func detectAnomalies(secret models.SecretNode, log models.SecretAccessLog, basel
 	}
 
 	return alerts
+}
+
+const (
+	// volumeSpikeMinCount is the absolute floor below which a burst is never flagged —
+	// avoids false positives on low-traffic secrets where a handful of reads dwarfs a
+	// near-zero baseline.
+	volumeSpikeMinCount = 10
+	// volumeSpikeMultiplier flags a window whose read count exceeds this many times the
+	// secret's learned hourly baseline.
+	volumeSpikeMultiplier = 3.0
+)
+
+// isVolumeSpike reports whether recentCount reads in the (one-hour) detection window
+// is anomalously high versus the secret's learned hourly baseline (dailyAvg / 24).
+// Requires both an absolute floor and a multiple of the baseline, so neither a quiet
+// secret seeing a few reads nor a busy secret at its normal rate is flagged.
+func isVolumeSpike(recentCount int, baseline accessBaseline) bool {
+	if recentCount < volumeSpikeMinCount {
+		return false
+	}
+	hourlyAvg := baseline.dailyAvg / 24.0
+	return float64(recentCount) > volumeSpikeMultiplier*hourlyAvg
+}
+
+// volumeSpikeAlert returns a frequency_spike alert when the window's read count is a
+// spike versus the baseline, or nil otherwise. The alert is a per-secret aggregate, so
+// it carries no single accessor/IP.
+func volumeSpikeAlert(secret models.SecretNode, recentCount int, baseline accessBaseline, now time.Time) *models.AnomalyAlert {
+	if !isVolumeSpike(recentCount, baseline) {
+		return nil
+	}
+	return &models.AnomalyAlert{
+		SecretNodeID: secret.ID,
+		SecretName:   secret.Name,
+		AlertType:    "frequency_spike",
+		Severity:     "medium",
+		Description: fmt.Sprintf("Unusual access volume: %d reads in the last hour (baseline ~%.1f/hour)",
+			recentCount, baseline.dailyAvg/24.0),
+		DetectedAt: now,
+	}
 }
 
 // ListAlerts returns anomaly alerts. acknowledged filters by state: nil returns
