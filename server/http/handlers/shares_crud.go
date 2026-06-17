@@ -104,7 +104,9 @@ func (h *ShareHandler) UpdateSharePermission(w http.ResponseWriter, r *http.Requ
 	}
 
 	var reqBody struct {
-		Permission string `json:"permission" validate:"required,oneof=read write"`
+		Permission  string     `json:"permission" validate:"required,oneof=read write"`
+		ExpiresAt   *time.Time `json:"expires_at"`   // optional: set/extend/shorten the time-bound expiry
+		ClearExpiry bool       `json:"clear_expiry"` // optional: make the share permanent
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -116,9 +118,11 @@ func (h *ShareHandler) UpdateSharePermission(w http.ResponseWriter, r *http.Requ
 	}
 
 	shareRecord, err := h.coreService.UpdateSharePermission(r.Context(), &core.UpdateShareRequest{
-		ShareID:    uint(id),
-		Permission: reqBody.Permission,
-		UpdatedBy:  userCtx.UserID,
+		ShareID:     uint(id),
+		Permission:  reqBody.Permission,
+		UpdatedBy:   userCtx.UserID,
+		ExpiresAt:   reqBody.ExpiresAt,
+		ClearExpiry: reqBody.ClearExpiry,
 	})
 	if err != nil {
 		log.Printf("Error updating share permission: %v", err)
@@ -126,6 +130,8 @@ func (h *ShareHandler) UpdateSharePermission(w http.ResponseWriter, r *http.Requ
 			h.sendError(w, "NotFound", "Share not found", http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), "not authorized") {
 			h.sendError(w, "Forbidden", "Not authorized to update this share", http.StatusForbidden, nil)
+		} else if strings.Contains(err.Error(), "expiry must be in the future") {
+			h.sendError(w, "ValidationError", "Share expiry must be in the future", http.StatusBadRequest, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to update share permission", http.StatusInternalServerError, nil)
 		}

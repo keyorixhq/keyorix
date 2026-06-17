@@ -121,6 +121,74 @@ func TestShareExpiry_Enforcement(t *testing.T) {
 	})
 }
 
+func TestUpdateShareExpiry(t *testing.T) {
+	ctx := context.Background()
+
+	// share creates a permanent read share of the fixture secret to recipient 2 and
+	// returns the core, the share, and the base clock.
+	share := func(t *testing.T) (*KeyorixCore, *models.ShareRecord, time.Time) {
+		c, secretID, now, _ := newSharesExpiryFixture(t)
+		rec, err := c.ShareSecret(ctx, &ShareSecretRequest{
+			SecretID: secretID, RecipientID: 2, Permission: "read", SharedBy: 1,
+		})
+		require.NoError(t, err)
+		return c, rec, now
+	}
+
+	t.Run("sets an expiry on a permanent share", func(t *testing.T) {
+		c, rec, now := share(t)
+		require.Nil(t, rec.ExpiresAt)
+		exp := now.Add(time.Hour)
+		updated, err := c.UpdateSharePermission(ctx, &UpdateShareRequest{
+			ShareID: rec.ID, Permission: "read", UpdatedBy: 1, ExpiresAt: &exp,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, updated.ExpiresAt)
+		assert.True(t, updated.ExpiresAt.Equal(exp))
+	})
+
+	t.Run("clears an expiry (back to permanent)", func(t *testing.T) {
+		c, rec, now := share(t)
+		exp := now.Add(time.Hour)
+		_, err := c.UpdateSharePermission(ctx, &UpdateShareRequest{
+			ShareID: rec.ID, Permission: "read", UpdatedBy: 1, ExpiresAt: &exp,
+		})
+		require.NoError(t, err)
+		updated, err := c.UpdateSharePermission(ctx, &UpdateShareRequest{
+			ShareID: rec.ID, Permission: "read", UpdatedBy: 1, ClearExpiry: true,
+		})
+		require.NoError(t, err)
+		assert.Nil(t, updated.ExpiresAt, "clear_expiry should make the share permanent")
+	})
+
+	t.Run("preserves expiry when the request changes only the permission", func(t *testing.T) {
+		c, rec, now := share(t)
+		exp := now.Add(time.Hour)
+		_, err := c.UpdateSharePermission(ctx, &UpdateShareRequest{
+			ShareID: rec.ID, Permission: "read", UpdatedBy: 1, ExpiresAt: &exp,
+		})
+		require.NoError(t, err)
+		// A permission-only update must not silently drop the expiry.
+		updated, err := c.UpdateSharePermission(ctx, &UpdateShareRequest{
+			ShareID: rec.ID, Permission: "write", UpdatedBy: 1,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "write", updated.Permission)
+		require.NotNil(t, updated.ExpiresAt, "permission-only update must preserve the expiry")
+		assert.True(t, updated.ExpiresAt.Equal(exp))
+	})
+
+	t.Run("rejects a past expiry", func(t *testing.T) {
+		c, rec, now := share(t)
+		past := now.Add(-time.Minute)
+		_, err := c.UpdateSharePermission(ctx, &UpdateShareRequest{
+			ShareID: rec.ID, Permission: "read", UpdatedBy: 1, ExpiresAt: &past,
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "future")
+	})
+}
+
 // mustShare is a thin wrapper returning just the core, secret, and base now for the
 // subtests that don't need the db handle.
 func mustShare(t *testing.T) (*KeyorixCore, uint, time.Time) {
