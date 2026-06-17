@@ -148,6 +148,7 @@ const (
 	schedLockDynamicSweep int64 = 0x4B455953_44594E53 // "KEYSDYNS"
 	schedLockLoginPrune   int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
 	schedLockRotationRmdr int64 = 0x4B455953_524F5452 // "KEYSROTR"
+	schedLockExpiryRmdr   int64 = 0x4B455953_45585052 // "KEYSEXPR"
 	schedLockAutoRotate   int64 = 0x4B455953_4155544F // "KEYSAUTO"
 	schedLockAuditCkpt    int64 = 0x4B455953_41434B50 // "KEYSACKP"
 	schedLockJITExpiry    int64 = 0x4B455953_4A495445 // "KEYSJITE"
@@ -839,6 +840,43 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				select {
 				case <-ticker.C:
 					runReminders()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Start the secret-expiry reminder scheduler — opt-in. Notifies project admins of
+	// secrets that have expired or are approaching expiration, so a secret never silently
+	// lapses. Single-replica-gated (ADR-039) so admins aren't notified N times in HA.
+	if cfg.ExpiryReminders.Enabled {
+		interval := cfg.ExpiryReminders.GetInterval()
+		leadDays := cfg.ExpiryReminders.LeadDays
+		log.Printf("Expiry-reminder scheduler enabled: every %s (lead %dd)", interval, leadDays)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runExpiry := func() {
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockExpiryRmdr, func() error {
+					n, rerr := coreService.SendExpiryReminders(ctx, leadDays)
+					if rerr != nil {
+						log.Printf("Expiry-reminder error: %v", rerr)
+						return rerr
+					}
+					if n > 0 {
+						log.Printf("Expiry reminders: sent %d notification(s)", n)
+					}
+					return nil
+				}); err != nil {
+					log.Printf("Expiry-reminder scheduler error: %v", err)
+				}
+			}
+			runExpiry() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runExpiry()
 				case <-ctx.Done():
 					return
 				}

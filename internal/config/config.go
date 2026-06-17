@@ -25,6 +25,9 @@ type Config struct {
 	// RotationReminders configures the opt-in background scheduler that notifies
 	// project admins of secrets overdue / approaching their rotation deadline.
 	RotationReminders RotationRemindersConfig `yaml:"rotation_reminders"`
+	// ExpiryReminders configures the opt-in background scheduler that notifies project
+	// admins of secrets that have expired or are approaching their expiration.
+	ExpiryReminders ExpiryRemindersConfig `yaml:"expiry_reminders"`
 	// AutoRotation configures the opt-in background scheduler that actually rotates
 	// auto-rotate-enabled secrets overdue under a policy (ADR-046), regenerating their
 	// value. Distinct from rotation_reminders, which only notifies.
@@ -900,6 +903,24 @@ func (p *SSOProviderConfig) GetClientSecret() string {
 type RotationRemindersConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
+}
+
+// ExpiryRemindersConfig configures the opt-in secret-expiry reminder scheduler.
+type ExpiryRemindersConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+	LeadDays int    `yaml:"lead_days"` // notify this many days before expiry (0 = default 14)
+}
+
+// GetInterval returns the expiry-reminder run interval (Go duration, e.g. "24h");
+// defaults to 24h when unset or unparseable.
+func (c ExpiryRemindersConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // AutoRotationConfig configures the opt-in automated-rotation scheduler (ADR-046) and
