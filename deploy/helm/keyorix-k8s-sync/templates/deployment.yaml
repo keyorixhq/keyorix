@@ -36,6 +36,21 @@ spec:
                 secretKeyRef:
                   name: {{ required "keyorix.tokenSecret.name is required" .Values.keyorix.tokenSecret.name }}
                   key: {{ .Values.keyorix.tokenSecret.key | default "token" }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.healthPort | default 8080 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
           volumeMounts:
             - name: config
               mountPath: /etc/keyorix

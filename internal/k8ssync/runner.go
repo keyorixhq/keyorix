@@ -25,15 +25,22 @@ func Sync(ctx context.Context, e *Engine, mappings []SecretMapping, logf Logf) R
 	return res
 }
 
-// Run reconciles once immediately, then every interval until ctx is cancelled.
-func Run(ctx context.Context, e *Engine, mappings []SecretMapping, interval time.Duration, logf Logf) {
-	Sync(ctx, e, mappings, logf)
+// Run reconciles once immediately, then every interval until ctx is cancelled. When
+// status is non-nil, each pass's result is recorded for the health/readiness probes.
+func Run(ctx context.Context, e *Engine, mappings []SecretMapping, interval time.Duration, logf Logf, status *Status) {
+	sync := func() {
+		res := Sync(ctx, e, mappings, logf)
+		if status != nil {
+			status.Record(res)
+		}
+	}
+	sync()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			Sync(ctx, e, mappings, logf)
+			sync()
 		case <-ctx.Done():
 			return
 		}

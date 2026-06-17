@@ -60,5 +60,16 @@ keyorix-k8s-sync -config /etc/keyorix/k8s-sync.yaml
 
 Logs are counts and target identities only — secret values are never logged.
 
+## Health & probes
+
+The agent serves probe endpoints on `health_port` (default `8080`):
+
+- `GET /healthz` — liveness; always `200` while the process is responsive.
+- `GET /readyz` — readiness; `503` until the first reconcile completes, then `200`.
+- `GET /status` — JSON of the last pass (counts + timestamp + error count; no values).
+
+The Helm chart wires `/healthz` and `/readyz` as the Deployment's liveness and
+readiness probes.
+
 > A Helm chart that deploys the agent with its RBAC and config ships separately
 > (`deploy/helm/keyorix-k8s-sync`).
