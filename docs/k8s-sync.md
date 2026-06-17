@@ -78,6 +78,9 @@ The agent serves probe endpoints on `health_port` (default `8080`):
 - `GET /healthz` — liveness; always `200` while the process is responsive.
 - `GET /readyz` — readiness; `503` until the first reconcile completes, then `200`.
 - `GET /status` — JSON of the last pass (counts + timestamp + error count; no values).
+- `GET /metrics` — Prometheus metrics: `keyorix_k8s_sync_reconcile_passes_total`,
+  `keyorix_k8s_sync_secrets_total{outcome=…}`, `keyorix_k8s_sync_last_run_timestamp_seconds`,
+  and `keyorix_k8s_sync_last_failed`. The chart adds `prometheus.io/scrape` pod annotations.
 
 The Helm chart wires `/healthz` and `/readyz` as the Deployment's liveness and
 readiness probes.
