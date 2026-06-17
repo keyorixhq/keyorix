@@ -195,6 +195,26 @@ func (d *AnomalyDetector) ListAlerts(ctx context.Context, acknowledged *bool) ([
 	return d.storage.ListAnomalyAlerts(ctx, acknowledged)
 }
 
+// FilterAlerts narrows a set of alerts to those matching the given severity
+// (low/medium/high) and/or alert type (off_hours/new_ip/new_user/frequency_spike).
+// An empty string for either is "no constraint", so FilterAlerts(a, "", "") == a.
+func FilterAlerts(alerts []models.AnomalyAlert, severity, alertType string) []models.AnomalyAlert {
+	if severity == "" && alertType == "" {
+		return alerts
+	}
+	out := make([]models.AnomalyAlert, 0, len(alerts))
+	for _, a := range alerts {
+		if severity != "" && a.Severity != severity {
+			continue
+		}
+		if alertType != "" && a.AlertType != alertType {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 // AcknowledgeAlert marks an alert as acknowledged.
 func (d *AnomalyDetector) AcknowledgeAlert(ctx context.Context, id uint) error {
 	return d.storage.AcknowledgeAnomalyAlert(ctx, id)
