@@ -12,7 +12,13 @@ First create a Secret holding the agent's Keyorix machine-identity token:
 kubectl -n keyorix create secret generic keyorix-token --from-literal=token=<TOKEN>
 ```
 
-Then install with your mappings:
+Then install with your mappings — from the published OCI chart:
+
+```sh
+helm install kx-sync oci://ghcr.io/keyorixhq/charts/keyorix-k8s-sync --version <release> \
+```
+
+…or from this repo checkout:
 
 ```sh
 helm install kx-sync deploy/helm/keyorix-k8s-sync \
