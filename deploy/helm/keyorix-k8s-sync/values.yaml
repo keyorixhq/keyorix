@@ -1,0 +1,49 @@
+# keyorix-k8s-sync — deploys the Keyorix Kubernetes sync agent.
+#
+# The agent reads selected Keyorix secrets and materialises them into native
+# Kubernetes Secrets, refreshing on rotation. It authenticates to Keyorix with a
+# machine-identity token (sourced from an existing Secret) and writes Secrets via the
+# Kubernetes API using its ServiceAccount.
+
+image:
+  repository: ghcr.io/keyorixhq/keyorix-k8s-sync
+  # tag defaults to the chart's appVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+keyorix:
+  # url is the Keyorix server base URL (required), e.g. https://keyorix.internal
+  url: ""
+  # interval is the reconcile cadence (Go duration).
+  interval: 5m
+  # token is read from an existing Secret — never put the token in values.
+  tokenSecret:
+    name: ""        # required: a Secret holding the Keyorix machine-identity token
+    key: token      # the key within that Secret
+
+# mappings: each copies one Keyorix secret ("<environment>/<name>") into one key of
+# one Kubernetes Secret. Several mappings may target the same Secret.
+#   - ref: production/db-password
+#     namespace: app
+#     name: db-creds
+#     key: DB_PASSWORD
+mappings: []
+
+# targetNamespaces lists the namespaces the agent may write Secrets in; a RoleBinding
+# to the chart's ClusterRole (get/create/patch secrets) is created in each. When
+# empty, only the release namespace is granted.
+targetNamespaces: []
+
+serviceAccount:
+  create: true
+  # name overrides the generated ServiceAccount name.
+  name: ""
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+nameOverride: ""
+fullnameOverride: ""

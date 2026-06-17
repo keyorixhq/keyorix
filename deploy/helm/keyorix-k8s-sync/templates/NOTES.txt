@@ -1,0 +1,8 @@
+keyorix-k8s-sync is deployed.
+
+It syncs {{ len .Values.mappings }} mapping(s) from {{ .Values.keyorix.url }} every {{ .Values.keyorix.interval | default "5m" }} into Kubernetes Secrets.
+
+Watch it:
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "kxsync.fullname" . }} -f
+
+The agent can write Secrets in: {{ if .Values.targetNamespaces }}{{ join ", " .Values.targetNamespaces }}{{ else }}{{ .Release.Namespace }}{{ end }}.
