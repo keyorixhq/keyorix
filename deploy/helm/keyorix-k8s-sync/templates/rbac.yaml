@@ -1,0 +1,37 @@
+{{/*
+The agent needs to read and write Secrets in each target namespace. A single
+ClusterRole holds the permission set; a namespaced RoleBinding grants it to the
+agent's ServiceAccount in each target namespace (least privilege — no cluster-wide
+Secret access).
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kxsync.fullname" . }}
+  labels:
+    {{- include "kxsync.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "patch"]
+---
+{{- $ns := .Values.targetNamespaces | default (list .Release.Namespace) }}
+{{- $root := . }}
+{{- range $ns }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kxsync.fullname" $root }}
+  namespace: {{ . }}
+  labels:
+    {{- include "kxsync.labels" $root | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kxsync.fullname" $root }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kxsync.serviceAccountName" $root }}
+    namespace: {{ $root.Release.Namespace }}
+---
+{{- end }}

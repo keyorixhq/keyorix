@@ -115,3 +115,13 @@ jobs:
             --set auth.masterPassword=ci --set postgresql.enabled=false \
             --set externalDatabase.host=db.example.com --set externalDatabase.password=ci \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
+
+      - name: Lint + render keyorix-k8s-sync chart
+        run: |
+          K8S_SYNC_SET="--set keyorix.url=https://k --set keyorix.tokenSecret.name=tok \
+            --set mappings[0].ref=e/n --set mappings[0].namespace=app \
+            --set mappings[0].name=s --set mappings[0].key=K"
+          helm lint deploy/helm/keyorix-k8s-sync $K8S_SYNC_SET
+          helm template kx deploy/helm/keyorix-k8s-sync $K8S_SYNC_SET \
+            --set targetNamespaces='{app,web}' \
+            | ./kubeconform -strict -summary -kubernetes-version 1.29.0

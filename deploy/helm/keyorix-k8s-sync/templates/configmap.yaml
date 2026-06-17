@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kxsync.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kxsync.labels" . | nindent 4 }}
+data:
+  k8s-sync.yaml: |
+    keyorix_url: {{ required "keyorix.url is required" .Values.keyorix.url | quote }}
+    interval: {{ .Values.keyorix.interval | default "5m" | quote }}
+    mappings:
+    {{- if .Values.mappings }}
+      {{- toYaml .Values.mappings | nindent 6 }}
+    {{- else }}
+      []
+    {{- end }}
