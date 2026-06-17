@@ -31,6 +31,30 @@ const PERMISSION_OPTIONS = [
     { value: 'write', label: 'Read & Write' },
 ];
 
+// shareExpiry renders a time-bound share's expiry as a coloured badge: permanent
+// (no expiry), expired (in the past), or a short "in 3d / 5h / 12m" countdown.
+export const shareExpiry = (
+    expiresAt: string | undefined,
+    now: number = Date.now(),
+): { label: string; className: string } => {
+    if (!expiresAt) {
+        return { label: 'Permanent', className: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' };
+    }
+    const ms = new Date(expiresAt).getTime() - now;
+    if (Number.isNaN(ms)) {
+        return { label: 'Permanent', className: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' };
+    }
+    if (ms <= 0) {
+        return { label: 'Expired', className: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' };
+    }
+    const mins = Math.floor(ms / 60000);
+    let rel: string;
+    if (mins < 60) rel = `${Math.max(mins, 1)}m`;
+    else if (mins < 60 * 24) rel = `${Math.floor(mins / 60)}h`;
+    else rel = `${Math.floor(mins / (60 * 24))}d`;
+    return { label: `in ${rel}`, className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' };
+};
+
 export const SharingManagementPage: React.FC = () => {
     const { openModal } = useUIStore();
     const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
@@ -344,6 +368,9 @@ export const SharingManagementPage: React.FC = () => {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
                                         Created
                                     </th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
+                                        Expires
+                                    </th>
                                     <th className="px-6 py-3 text-right text-xs font-medium text-base-muted dark:text-base-muted uppercase tracking-wider">
                                         Actions
                                     </th>
@@ -402,6 +429,19 @@ export const SharingManagementPage: React.FC = () => {
                                                 <div>{formatDate(share.createdAt)}</div>
                                                 <div className="text-xs">{formatTime(share.createdAt)}</div>
                                             </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {(() => {
+                                                const e = shareExpiry(share.expiresAt);
+                                                return (
+                                                    <span
+                                                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${e.className}`}
+                                                        title={share.expiresAt ?? 'No expiry'}
+                                                    >
+                                                        {e.label}
+                                                    </span>
+                                                );
+                                            })()}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                             <div className="flex items-center justify-end space-x-2">

@@ -74,6 +74,9 @@ export interface ShareRecord {
     permission: 'read' | 'write';
     createdAt: string;
     createdBy: string;
+    // expiresAt (ISO 8601), when present, is when this time-bound share lapses;
+    // absent/undefined = a permanent share.
+    expiresAt?: string;
 }
 
 export interface ShareFormData {
