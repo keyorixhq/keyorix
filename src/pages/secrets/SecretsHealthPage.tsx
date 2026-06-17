@@ -9,6 +9,7 @@ import {
     CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import { useSecretsHealth } from '../../features/secrets/useSecretsHealth';
+import { humanizeAlertType } from '../../utils/anomaly';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { useUIStore } from '../../store/uiStore';
@@ -455,7 +456,7 @@ export function SecretsHealthPage() {
                                                     />
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-xs font-semibold" style={{ color: isDark ? '#f87171' : '#991b1b' }}>
-                                                            {a.AlertType}
+                                                            {humanizeAlertType(a.AlertType)}
                                                         </p>
                                                         <p className="text-xs truncate" style={{ color: isDark ? '#fca5a5' : '#b91c1c' }}>
                                                             {a.SecretName} · {a.AccessedBy}

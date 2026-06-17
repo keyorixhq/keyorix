@@ -6,6 +6,7 @@ import { Alert } from '../../components/ui/Alert';
 import { useAuditLog, AuditLogEntry } from '../../features/audit';
 import { useAnomalyAlerts, useAcknowledgeAnomaly } from '../../features/dashboard';
 import { AnomalyAlert } from '../../types';
+import { humanizeAlertType } from '../../utils/anomaly';
 
 // ─── Audit log helpers ───────────────────────────────────────────────────────
 
@@ -57,6 +58,7 @@ function sevStyle(severity: string, isDark: boolean) {
     return isDark ? (SEV[severity] ?? SEV['low']!).dark : (SEV[severity] ?? SEV['low']!).light;
 }
 
+
 // ─── AnomalyTable ────────────────────────────────────────────────────────────
 
 interface AnomalyTableProps {
@@ -72,6 +74,10 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
     const [sortDir,       setSortDir]      = useState<SortDir>('desc');
     const [filterSev,     setFilterSev]    = useState('all');
     const [filterStatus,  setFilterStatus] = useState('open');
+    const [filterType,    setFilterType]   = useState('all');
+
+    // Alert types present in the data, for the type filter.
+    const alertTypes = Array.from(new Set(anomalies.map(a => a.AlertType))).sort();
 
     const toggleSort = (field: SortField) => {
         if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -80,6 +86,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
 
     const sorted = [...anomalies]
         .filter(a => filterSev    === 'all' || a.Severity    === filterSev)
+        .filter(a => filterType   === 'all' || a.AlertType   === filterType)
         .filter(a => filterStatus === 'all' || (filterStatus === 'open' ? !a.Acknowledged : a.Acknowledged))
         .sort((a, b) => {
             let cmp: number;
@@ -159,6 +166,24 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                     ))}
                 </div>
 
+                {alertTypes.length > 1 && (
+                    <>
+                        <div className="w-px h-4 bg-base" />
+                        {/* Alert-type filter */}
+                        <select
+                            value={filterType}
+                            onChange={e => setFilterType(e.target.value)}
+                            className="px-2 py-1 rounded text-xs font-medium border border-base bg-surface text-base-secondary"
+                            aria-label="Filter by alert type"
+                        >
+                            <option value="all">All types</option>
+                            {alertTypes.map(t => (
+                                <option key={t} value={t}>{humanizeAlertType(t)}</option>
+                            ))}
+                        </select>
+                    </>
+                )}
+
                 <span className="ml-auto text-xs text-base-muted tabular-nums">
                     {sorted.length} result{sorted.length !== 1 ? 's' : ''}
                 </span>
@@ -201,7 +226,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies, isLoading, isDar
                                             <td className="px-5 py-3 whitespace-nowrap">
                                                 <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium"
                                                     style={{ backgroundColor: sty.bg, color: sty.color }}>
-                                                    {a.AlertType}
+                                                    {humanizeAlertType(a.AlertType)}
                                                 </span>
                                             </td>
                                             <td className="px-5 py-3 text-sm font-medium text-base-primary">{a.SecretName}</td>

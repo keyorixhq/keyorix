@@ -4,6 +4,7 @@ import { ROUTES } from '../../constants';
 import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 import { ActivityItem, AnomalyAlert } from '../../types';
+import { humanizeAlertType } from '../../utils/anomaly';
 import {
     useDashboardStats,
     useDashboardActivity,
@@ -381,7 +382,7 @@ export const DashboardPage: React.FC = () => {
                                     {anomalies.map(a => (
                                         <div key={a.ID} className="flex items-start justify-between gap-2 p-3 bg-red-50 rounded-lg">
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-xs font-semibold text-red-700">{a.AlertType}</p>
+                                                <p className="text-xs font-semibold text-red-700">{humanizeAlertType(a.AlertType)}</p>
                                                 <p className="text-xs text-red-600 mt-0.5 truncate">{a.SecretName}</p>
                                                 <p className="text-xs text-base-muted mt-0.5">{a.AccessedBy} · {a.IPAddress}</p>
                                             </div>
