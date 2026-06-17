@@ -3,6 +3,20 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.56.0 — 2026-06-17
+
+Secret templating: render config/`.env` files from live secrets.
+
+### Added
+- **Secret-reference templating** — a template can embed `${secret:<environment>/<name>}`
+  placeholders that expand to a secret's current value (`$$` escapes a literal `$`).
+  `keyorix secret render <template>` renders a file (or stdin) to stdout or `--output`,
+  resolving only the secrets the caller can read and failing without partial output on a
+  missing/forbidden reference — handy for generating a `.env` or config file. ([#303], [#304])
+
+[#303]: https://github.com/keyorixhq/keyorix/pull/303
+[#304]: https://github.com/keyorixhq/keyorix/pull/304
+
 ## v0.55.0 — 2026-06-17
 
 Kubernetes sync agent: observability + distribution.
