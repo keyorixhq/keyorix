@@ -15,7 +15,8 @@ import (
 // KEYORIX_TOKEN environment variable so it can come from a mounted Secret.
 type Config struct {
 	KeyorixURL string          `yaml:"keyorix_url"`
-	Interval   string          `yaml:"interval"` // Go duration (e.g. "5m"); default 5m
+	Interval   string          `yaml:"interval"`    // Go duration (e.g. "5m"); default 5m
+	HealthPort int             `yaml:"health_port"` // probe/status HTTP port; default 8080
 	Mappings   []SecretMapping `yaml:"mappings"`
 }
 
@@ -65,4 +66,14 @@ func (c *Config) GetInterval() time.Duration {
 		}
 	}
 	return defaultSyncInterval
+}
+
+const defaultHealthPort = 8080
+
+// GetHealthPort returns the health/probe HTTP port, defaulting to 8080 when unset.
+func (c *Config) GetHealthPort() int {
+	if c.HealthPort > 0 {
+		return c.HealthPort
+	}
+	return defaultHealthPort
 }

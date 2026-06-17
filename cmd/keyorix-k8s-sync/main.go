@@ -14,11 +14,14 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/k8ssync"
 )
@@ -55,9 +58,27 @@ func main() {
 		cancel()
 	}()
 
-	log.Printf("k8s-sync: syncing %d mapping(s) from %s every %s",
-		len(cfg.Mappings), cfg.KeyorixURL, cfg.GetInterval())
-	k8ssync.Run(ctx, engine, cfg.Mappings, cfg.GetInterval(), log.Printf)
+	// Health/readiness server for Kubernetes probes (/healthz, /readyz, /status).
+	status := k8ssync.NewStatus()
+	healthSrv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.GetHealthPort()),
+		Handler:           status.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		if err := healthSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("k8s-sync: health server error: %v", err)
+		}
+	}()
+	defer func() {
+		shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+		defer c()
+		_ = healthSrv.Shutdown(shutdownCtx)
+	}()
+
+	log.Printf("k8s-sync: syncing %d mapping(s) from %s every %s (health :%d)",
+		len(cfg.Mappings), cfg.KeyorixURL, cfg.GetInterval(), cfg.GetHealthPort())
+	k8ssync.Run(ctx, engine, cfg.Mappings, cfg.GetInterval(), log.Printf, status)
 	log.Println("k8s-sync: stopped")
 }
 

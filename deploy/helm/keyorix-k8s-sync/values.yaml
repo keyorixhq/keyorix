@@ -21,6 +21,9 @@ keyorix:
     name: ""        # required: a Secret holding the Keyorix machine-identity token
     key: token      # the key within that Secret
 
+# healthPort is where the agent serves /healthz, /readyz and /status (probes).
+healthPort: 8080
+
 # mappings: each copies one Keyorix secret ("<environment>/<name>") into one key of
 # one Kubernetes Secret. Several mappings may target the same Secret.
 #   - ref: production/db-password
