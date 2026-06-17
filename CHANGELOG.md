@@ -3,6 +3,33 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.53.0 — 2026-06-17
+
+Access-anomaly detection and secret-sharing lifecycle improvements.
+
+### Added
+- **Anomaly frequency-spike detection** — the access-anomaly detector now emits a
+  `frequency_spike` alert when a secret's read count in the detection window clears an
+  absolute floor and exceeds a multiple of its learned hourly baseline (activating the
+  previously-computed-but-unused baseline). ([#286])
+- **Anomaly alert filtering** — `GET /anomalies` accepts `?severity` and `?alertType`
+  filters (AND-combined); the web alerts table gains an alert-type filter and renders
+  humanized type labels. ([#289])
+- **Editable share expiry** — `PUT /shares/{id}` accepts `expires_at` / `clear_expiry`
+  so a time-bound share can be extended, shortened, or made permanent after creation;
+  omitting both preserves the current expiry. ([#287])
+
+### Fixed
+- **`GET /shares` returns a proper paginated DTO** — the endpoint now returns shares
+  with resolved recipient/creator names, the expiry, and `{data, total, page, pageSize,
+  totalPages}` (with `?secretId` / `?recipientType` filters), instead of raw models —
+  repairing the Sharing Management page, which rendered empty against a real backend. ([#288])
+
+[#286]: https://github.com/keyorixhq/keyorix/pull/286
+[#287]: https://github.com/keyorixhq/keyorix/pull/287
+[#288]: https://github.com/keyorixhq/keyorix/pull/288
+[#289]: https://github.com/keyorixhq/keyorix/pull/289
+
 ## v0.52.0 — 2026-06-17
 
 Secret lifecycle: rollback, expiry reminders, and time-bound (JIT) shares.
