@@ -127,6 +127,25 @@ func TestReconcile_FetchFailureSkipsWholeTarget(t *testing.T) {
 	assert.Contains(t, res.Errors[0], "app/creds")
 }
 
+func TestReconcile_DryRunReportsButDoesNotWrite(t *testing.T) {
+	f := &fakeFetcher{values: map[string][]byte{"prod/new": []byte("v"), "prod/chg": []byte("rotated")}}
+	s := newFakeSink()
+	s.existing["app/changed"] = map[string][]byte{"K": []byte("old")} // would update
+	s.existing["app/same"] = map[string][]byte{"K": []byte("v")}      // unchanged
+	e := NewEngine(f, s, WithDryRun())
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/new", Namespace: "app", Name: "created", Key: "K"}, // would create
+		{Ref: "prod/chg", Namespace: "app", Name: "changed", Key: "K"}, // would update
+		{Ref: "prod/new", Namespace: "app", Name: "same", Key: "K"},    // unchanged
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Created, "dry-run still reports a would-create")
+	assert.Equal(t, 1, res.Updated, "dry-run still reports a would-update")
+	assert.Equal(t, 1, res.Unchanged)
+	assert.Empty(t, s.applied, "dry-run must not write any Secret")
+}
+
 func TestReconcile_OneTargetFailureDoesNotBlockOthers(t *testing.T) {
 	f := &fakeFetcher{
 		values: map[string][]byte{"prod/ok": []byte("v")},
