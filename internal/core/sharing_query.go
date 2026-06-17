@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -97,6 +98,80 @@ func (c *KeyorixCore) ListSharesByUser(ctx context.Context, userID uint) ([]*mod
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// ShareView is an enriched, transport-ready share record: recipient and creator are
+// resolved to display names and the JSON is camelCase to match the web client (which
+// consumes the /shares list verbatim, without field mapping).
+type ShareView struct {
+	ID            uint       `json:"id"`
+	SecretID      uint       `json:"secretId"`
+	RecipientType string     `json:"recipientType"` // "user" | "group"
+	RecipientID   uint       `json:"recipientId"`
+	RecipientName string     `json:"recipientName"`
+	Permission    string     `json:"permission"`
+	ExpiresAt     *time.Time `json:"expiresAt,omitempty"` // nil = permanent (time-bound shares)
+	CreatedAt     time.Time  `json:"createdAt"`
+	CreatedBy     string     `json:"createdBy"` // username of the share's owner
+}
+
+// ListUserShareViews returns the user's shares (received + owned) as enriched views
+// with recipient/creator names resolved, ready to serialise for the web sharing UI.
+func (c *KeyorixCore) ListUserShareViews(ctx context.Context, userID uint) ([]ShareView, error) {
+	shares, err := c.ListSharesByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	userNames := map[uint]string{}
+	resolveUser := func(id uint) string {
+		if id == 0 {
+			return ""
+		}
+		if n, ok := userNames[id]; ok {
+			return n
+		}
+		name := fmt.Sprintf("User %d", id)
+		if u, err := c.storage.GetUser(ctx, id); err == nil && u != nil && u.Username != "" {
+			name = u.Username
+		}
+		userNames[id] = name
+		return name
+	}
+	groupNames := map[uint]string{}
+	resolveGroup := func(id uint) string {
+		if n, ok := groupNames[id]; ok {
+			return n
+		}
+		name := fmt.Sprintf("Group %d", id)
+		if g, err := c.storage.GetGroup(ctx, id); err == nil && g != nil && g.Name != "" {
+			name = g.Name
+		}
+		groupNames[id] = name
+		return name
+	}
+
+	views := make([]ShareView, 0, len(shares))
+	for _, s := range shares {
+		v := ShareView{
+			ID:          s.ID,
+			SecretID:    s.SecretID,
+			RecipientID: s.RecipientID,
+			Permission:  s.Permission,
+			ExpiresAt:   s.ExpiresAt,
+			CreatedAt:   s.CreatedAt,
+			CreatedBy:   resolveUser(s.OwnerID),
+		}
+		if s.IsGroup {
+			v.RecipientType = "group"
+			v.RecipientName = resolveGroup(s.RecipientID)
+		} else {
+			v.RecipientType = "user"
+			v.RecipientName = resolveUser(s.RecipientID)
+		}
+		views = append(views, v)
+	}
+	return views, nil
 }
 
 // CheckSharePermission checks if a user has permission to access a secret.
