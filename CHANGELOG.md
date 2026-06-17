@@ -3,6 +3,21 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.55.0 — 2026-06-17
+
+Kubernetes sync agent: observability + distribution.
+
+### Added
+- **Prometheus metrics** — the sync agent serves `/metrics` (reconcile passes,
+  per-outcome Secret counts, last-run timestamp, last-failed gauge); the Helm chart
+  adds `prometheus.io/scrape` pod annotations. ([#301])
+- **Agent Helm chart published to GHCR** — `keyorix-k8s-sync` is now pushed to
+  `oci://ghcr.io/keyorixhq/charts/keyorix-k8s-sync` on release, so it can be installed
+  with `helm install … oci://…` rather than only from a repo checkout. ([#300])
+
+[#300]: https://github.com/keyorixhq/keyorix/pull/300
+[#301]: https://github.com/keyorixhq/keyorix/pull/301
+
 ## v0.54.0 — 2026-06-17
 
 Kubernetes integration: sync Keyorix secrets into native Kubernetes Secrets.
