@@ -8,7 +8,7 @@ import {
     EyeIcon,
     MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
-import { useShares, useDeleteShare, useBulkDeleteShares } from '../../features/sharing';
+import { useShares, useDeleteShare, useBulkDeleteShares, useUpdateShare, expiresAtFromPreset } from '../../features/sharing';
 import { useUIStore } from '../../store/uiStore';
 import { ShareRecord, PaginationState } from '../../types';
 import { Button } from '../../components/ui/Button';
@@ -16,6 +16,7 @@ import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
+import { Modal } from '../../components/ui/Modal';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -29,6 +30,16 @@ const PERMISSION_OPTIONS = [
     { value: 'all', label: 'All Permissions' },
     { value: 'read', label: 'Read Only' },
     { value: 'write', label: 'Read & Write' },
+];
+
+// Expiry actions offered when editing an existing share.
+const EDIT_EXPIRY_OPTIONS = [
+    { value: 'keep', label: 'Keep current' },
+    { value: 'clear', label: 'No expiry (permanent)' },
+    { value: '1h', label: 'In 1 hour' },
+    { value: '24h', label: 'In 24 hours' },
+    { value: '7d', label: 'In 7 days' },
+    { value: '30d', label: 'In 30 days' },
 ];
 
 // shareExpiry renders a time-bound share's expiry as a coloured badge: permanent
@@ -56,7 +67,21 @@ export const shareExpiry = (
 };
 
 export const SharingManagementPage: React.FC = () => {
-    const { openModal } = useUIStore();
+    const { openModal, closeModal, activeModal, modalData } = useUIStore();
+    const updateShare = useUpdateShare();
+    // Edit-share form: the chosen permission and an expiry action (keep current,
+    // clear to permanent, or a new duration).
+    const editShare = modalData?.share as ShareRecord | undefined;
+    const [editPermission, setEditPermission] = useState<'read' | 'write'>('read');
+    const [editExpiry, setEditExpiry] = useState('keep');
+    React.useEffect(() => {
+        if (activeModal === 'edit-share' && editShare) {
+            setEditPermission(editShare.permission);
+            setEditExpiry('keep');
+            updateShare.reset();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeModal, editShare?.id]);
     const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
     const [bulkActionMode, setBulkActionMode] = useState(false);
     const toggleSelectedItem = (id: number) => setSelectedItems(prev => {
@@ -129,6 +154,23 @@ export const SharingManagementPage: React.FC = () => {
 
     const handleEditShare = (share: ShareRecord) => {
         openModal('edit-share', { share });
+    };
+
+    const handleSubmitEditShare = () => {
+        if (!editShare) return;
+        const args: { id: number; permission: 'read' | 'write'; expiresAt?: string; clearExpiry?: boolean } = {
+            id: editShare.id,
+            permission: editPermission,
+        };
+        if (editExpiry === 'clear') {
+            args.clearExpiry = true;
+        } else if (editExpiry !== 'keep') {
+            const iso = expiresAtFromPreset(editExpiry);
+            if (iso) args.expiresAt = iso;
+        }
+        updateShare.mutate(args, {
+            onSuccess: () => { closeModal(); refetch(); },
+        });
     };
 
     const handleDeleteShare = (share: ShareRecord) => {
@@ -552,6 +594,58 @@ export const SharingManagementPage: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            <Modal
+                isOpen={activeModal === 'edit-share'}
+                onClose={closeModal}
+                title={editShare ? `Edit share — ${editShare.recipientName}` : 'Edit share'}
+                size="sm"
+            >
+                <div className="space-y-4">
+                    {updateShare.isError && (
+                        <Alert
+                            type="error"
+                            title="Error"
+                            message={updateShare.error instanceof Error ? updateShare.error.message : 'Failed to update share.'}
+                        />
+                    )}
+                    <div>
+                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                            Permission
+                        </label>
+                        <Select
+                            value={editPermission}
+                            onChange={e => setEditPermission(e.target.value as 'read' | 'write')}
+                            options={[{ value: 'read', label: 'Read Only' }, { value: 'write', label: 'Read & Write' }]}
+                            disabled={updateShare.isPending}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                            Access expires
+                        </label>
+                        <Select
+                            value={editExpiry}
+                            onChange={e => setEditExpiry(e.target.value)}
+                            options={EDIT_EXPIRY_OPTIONS}
+                            disabled={updateShare.isPending}
+                        />
+                        {editShare?.expiresAt && editExpiry === 'keep' && (
+                            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                                Currently expires {new Date(editShare.expiresAt).toLocaleString()}.
+                            </p>
+                        )}
+                    </div>
+                    <div className="flex items-center justify-end space-x-3 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+                        <Button variant="outline" onClick={closeModal} disabled={updateShare.isPending}>
+                            Cancel
+                        </Button>
+                        <Button onClick={handleSubmitEditShare} disabled={updateShare.isPending}>
+                            {updateShare.isPending ? 'Saving…' : 'Save'}
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 };

@@ -1,2 +1,2 @@
 export * from './api';
-export { ShareSecretModal } from './ShareSecretModal';
+export { ShareSecretModal, expiresAtFromPreset } from './ShareSecretModal';

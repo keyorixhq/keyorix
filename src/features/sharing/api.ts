@@ -40,6 +40,26 @@ export const useBulkDeleteShares = () => {
     });
 };
 
+// useUpdateShare changes a share's permission and/or its time-bound expiry.
+export const useUpdateShare = () => {
+    return useMutation({
+        mutationFn: ({ id, permission, expiresAt, clearExpiry }: {
+            id: number;
+            permission: 'read' | 'write';
+            expiresAt?: string;
+            clearExpiry?: boolean;
+        }) => sharingApi.update(id, {
+            permission,
+            ...(expiresAt ? { expiresAt } : {}),
+            ...(clearExpiry ? { clearExpiry } : {}),
+        }),
+        onSuccess: () => {
+            invalidateQueries.sharing.all();
+            invalidateQueries.secrets.all();
+        },
+    });
+};
+
 export const useCreateShare = () => {
     return useMutation({
         mutationFn: (data: ShareFormData & { secretId: number }) => sharingApi.create(data),

@@ -2,6 +2,17 @@ import { apiClient } from './client';
 import { ApiResponse, PaginatedResponse, ShareRecord, ShareFormData } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
+// buildUpdateShareBody maps the edit-share form into the PUT /shares/{id} payload.
+// Only the requested change is sent: clear_expiry to make a share permanent, or
+// expires_at to set/extend/shorten it; sending neither preserves the current expiry.
+export const buildUpdateShareBody = (
+    data: { permission: 'read' | 'write'; expiresAt?: string; clearExpiry?: boolean },
+): { permission: 'read' | 'write'; clear_expiry?: boolean; expires_at?: string } => ({
+    permission: data.permission,
+    ...(data.clearExpiry ? { clear_expiry: true } : {}),
+    ...(data.expiresAt ? { expires_at: data.expiresAt } : {}),
+});
+
 export const sharingApi = {
     async list(params?: {
         page?: number;
@@ -35,10 +46,16 @@ export const sharingApi = {
         return response.data.data;
     },
 
-    async update(id: number, data: Partial<ShareFormData>): Promise<ShareRecord> {
+    // update changes a share's permission and, optionally, its time-bound expiry:
+    // expiresAt (ISO) sets/extends/shortens it; clearExpiry makes it permanent; sending
+    // neither preserves the current expiry. The server validates a future expiry.
+    async update(
+        id: number,
+        data: { permission: 'read' | 'write'; expiresAt?: string; clearExpiry?: boolean },
+    ): Promise<ShareRecord> {
         const response = await apiClient.put<ApiResponse<ShareRecord>>(
             API_ENDPOINTS.SHARING.UPDATE(id),
-            data
+            buildUpdateShareBody(data),
         );
         return response.data.data;
     },
