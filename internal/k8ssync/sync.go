@@ -20,10 +20,10 @@ import (
 // SecretMapping maps one Keyorix secret reference to a key inside a target
 // Kubernetes Secret. Several mappings may target the same Secret with different keys.
 type SecretMapping struct {
-	Ref       string // Keyorix secret reference, e.g. "production/db-password"
-	Namespace string // target Kubernetes namespace
-	Name      string // target Kubernetes Secret name
-	Key       string // key within the Secret's data map
+	Ref       string `yaml:"ref"`       // Keyorix secret reference, e.g. "production/db-password"
+	Namespace string `yaml:"namespace"` // target Kubernetes namespace
+	Name      string `yaml:"name"`      // target Kubernetes Secret name
+	Key       string `yaml:"key"`       // key within the Secret's data map
 }
 
 // Fetcher retrieves a secret value by reference from Keyorix.
