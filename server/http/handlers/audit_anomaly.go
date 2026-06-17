@@ -35,6 +35,9 @@ func ListAnomalyAlerts(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InternalError", "Failed to list anomaly alerts", http.StatusInternalServerError, nil)
 		return
 	}
+	// Optional ?severity=low|medium|high and ?alertType=off_hours|new_ip|new_user|
+	// frequency_spike narrow the list server-side (an empty value is no constraint).
+	alerts = core.FilterAlerts(alerts, r.URL.Query().Get("severity"), r.URL.Query().Get("alertType"))
 	sendSuccess(w, map[string]interface{}{"alerts": alerts, "total": len(alerts)}, "")
 }
 

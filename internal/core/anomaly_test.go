@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildBaseline(t *testing.T) {
@@ -108,6 +110,34 @@ func TestVolumeSpike(t *testing.T) {
 	if a.AccessedBy != "" || a.IPAddress != "" {
 		t.Errorf("aggregate spike alert should carry no accessor/IP, got by=%q ip=%q", a.AccessedBy, a.IPAddress)
 	}
+}
+
+func TestFilterAlerts(t *testing.T) {
+	alerts := []models.AnomalyAlert{
+		{AlertType: "off_hours", Severity: "medium"},
+		{AlertType: "new_ip", Severity: "high"},
+		{AlertType: "frequency_spike", Severity: "medium"},
+		{AlertType: "new_user", Severity: "high"},
+	}
+
+	// No constraint returns the input unchanged.
+	assert.Len(t, FilterAlerts(alerts, "", ""), 4)
+
+	// Severity only.
+	high := FilterAlerts(alerts, "high", "")
+	assert.Len(t, high, 2)
+	for _, a := range high {
+		assert.Equal(t, "high", a.Severity)
+	}
+
+	// Type only.
+	spikes := FilterAlerts(alerts, "", "frequency_spike")
+	require.Len(t, spikes, 1)
+	assert.Equal(t, "frequency_spike", spikes[0].AlertType)
+
+	// Both must match (AND).
+	assert.Empty(t, FilterAlerts(alerts, "high", "frequency_spike"), "high + frequency_spike matches nothing here")
+	require.Len(t, FilterAlerts(alerts, "medium", "off_hours"), 1)
 }
 
 func kindsOf(alerts []models.AnomalyAlert) map[string]bool {
