@@ -83,6 +83,20 @@ export const useRotateSecret = (id: number) => {
     });
 };
 
+export const useRollbackSecret = (id: number) => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (version: number) => secretsApi.rollback(id, version),
+        onSuccess: () => {
+            // Rollback appends a new version (with the old value), so the same caches
+            // as a rotation are stale.
+            queryClient.invalidateQueries({ queryKey: queryKeys.secrets.versions(id) });
+            invalidateQueries.secrets.detail(id);
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
 export const useClassifySecret = (id: number) => {
     return useMutation({
         mutationFn: (classification: string) => secretsApi.classify(id, classification),

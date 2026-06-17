@@ -15,7 +15,7 @@ import {
     ShieldExclamationIcon,
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret } from './api';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
 const formatDate = (d: string | Date) =>
@@ -72,8 +72,14 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
 
     const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
     const rotateMutation = useRotateSecret(secret.id);
+    const rollbackMutation = useRollbackSecret(secret.id);
     const { data: risk } = useSecretRisk(secret.id);
     const classifyMutation = useClassifySecret(secret.id);
+
+    const handleRollback = (version: number) => {
+        if (!window.confirm(`Roll back to version ${version}? Its value will be re-instated as a new version.`)) return;
+        rollbackMutation.mutate(version, { onSuccess: () => setShowValue(false) });
+    };
 
     // Optimistically reflect the new level; revert if the server rejects it.
     const handleClassify = (level: string) => {
@@ -328,6 +334,39 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     </div>
                 )}
             </div>
+
+            {/* Version History */}
+            {versions && versions.length > 1 && latestVersion && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Version History</h3>
+                    {rollbackMutation.isError && (
+                        <Alert type="error" title="Rollback failed" message={rollbackMutation.error instanceof Error ? rollbackMutation.error.message : 'An unexpected error occurred'} />
+                    )}
+                    <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                        {[...versions].sort((a, b) => b.VersionNumber - a.VersionNumber).map((v) => (
+                            <div key={v.VersionNumber} className="flex items-center justify-between py-2.5">
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="font-medium text-gray-900 dark:text-white tabular-nums">v{v.VersionNumber}</span>
+                                    {v.VersionNumber === latestVersion.VersionNumber && (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">current</span>
+                                    )}
+                                    <span className="text-gray-500 dark:text-gray-400">{new Date(v.CreatedAt).toLocaleString()}</span>
+                                </div>
+                                {v.VersionNumber !== latestVersion.VersionNumber && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={rollbackMutation.isPending}
+                                        onClick={() => handleRollback(v.VersionNumber)}
+                                    >
+                                        {rollbackMutation.isPending ? 'Rolling back…' : 'Roll back'}
+                                    </Button>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Risk Score */}
             {risk && (

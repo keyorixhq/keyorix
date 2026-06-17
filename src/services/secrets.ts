@@ -74,6 +74,12 @@ export const secretsApi = {
         return response.data;
     },
 
+    // rollback restores the secret to a prior version's value as a new version.
+    async rollback(id: number, version: number) {
+        const response = await apiClient.post(`/api/v1/secrets/${id}/rollback`, { version });
+        return response.data;
+    },
+
     async mostAccessed(params?: { days?: number; limit?: number; projectId?: number }): Promise<SecretUsageStat[]> {
         const query: Record<string, unknown> = {};
         if (params?.days) query.days = params.days;
