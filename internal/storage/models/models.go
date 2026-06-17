@@ -821,9 +821,14 @@ type ShareRecord struct {
 	RecipientID uint   `gorm:"index"`
 	IsGroup     bool   `gorm:"default:false"`
 	Permission  string `gorm:"default:read"` // "read" or "write"
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeletedAt   gorm.DeletedAt `gorm:"index"`
+	// ExpiresAt makes a share time-bound (just-in-time secret access): nil = permanent;
+	// otherwise the share stops authorizing the moment it passes and is swept by the
+	// JIT expiry scheduler. The permission queries filter on it directly so an expired
+	// share is denied immediately, before the sweep removes the row. Mirrors UserRole.ExpiresAt.
+	ExpiresAt *time.Time `gorm:"index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 type GRPCService struct {

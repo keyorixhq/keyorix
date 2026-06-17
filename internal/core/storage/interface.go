@@ -208,6 +208,10 @@ type Storage interface {
 	ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error)
 	ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error)
 	CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error)
+	// DeleteExpiredShareRecords removes time-bound shares whose ExpiresAt is non-NULL
+	// and at or before the cutoff, returning the removed rows so the caller can audit
+	// each expiry. Server-side only (run by the JIT expiry scheduler).
+	DeleteExpiredShareRecords(ctx context.Context, before time.Time) ([]*models.ShareRecord, error)
 
 	// User Management
 	CreateUser(ctx context.Context, user *models.User) (*models.User, error)

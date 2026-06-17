@@ -3,11 +3,31 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// shareActive reports whether a share still authorizes at time now: a nil ExpiresAt
+// is permanent, otherwise the share stops authorizing the instant it passes (a
+// time-bound / JIT secret share, mirroring UserRole.ExpiresAt). The JIT sweeper later
+// reclaims the row, but enforcement denies an expired share immediately regardless.
+func shareActive(share *models.ShareRecord, now time.Time) bool {
+	return share.ExpiresAt == nil || now.Before(*share.ExpiresAt)
+}
+
+// activeShares returns only the shares still authorizing at now (drops expired ones).
+func activeShares(shares []*models.ShareRecord, now time.Time) []*models.ShareRecord {
+	active := make([]*models.ShareRecord, 0, len(shares))
+	for _, s := range shares {
+		if shareActive(s, now) {
+			active = append(active, s)
+		}
+	}
+	return active
+}
 
 // secretOwnedBy reports whether actorID is the owner of a secret with the given
 // OwnerID. A zero OwnerID means the secret has NO human owner — e.g. one created by
@@ -67,6 +87,9 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	// Drop expired (time-bound) shares before any authorization: an expired share
+	// must never grant access, even though the sweep that reclaims its row runs later.
+	shares = activeShares(shares, c.now())
 
 	// Check direct shares.
 	for _, share := range shares {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -33,9 +34,10 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqBody struct {
-		RecipientID uint   `json:"recipient_id" validate:"required"`
-		IsGroup     bool   `json:"is_group"`
-		Permission  string `json:"permission" validate:"required,oneof=read write"`
+		RecipientID uint       `json:"recipient_id" validate:"required"`
+		IsGroup     bool       `json:"is_group"`
+		Permission  string     `json:"permission" validate:"required,oneof=read write"`
+		ExpiresAt   *time.Time `json:"expires_at"` // optional: time-bound (JIT) share
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -55,6 +57,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 			GroupID:    reqBody.RecipientID,
 			Permission: reqBody.Permission,
 			SharedBy:   userCtx.UserID,
+			ExpiresAt:  reqBody.ExpiresAt,
 		})
 	} else {
 		shareRecord, shareErr = h.coreService.ShareSecret(r.Context(), &core.ShareSecretRequest{
@@ -63,6 +66,7 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 			IsGroup:     false,
 			Permission:  reqBody.Permission,
 			SharedBy:    userCtx.UserID,
+			ExpiresAt:   reqBody.ExpiresAt,
 		})
 	}
 
@@ -72,6 +76,8 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else if strings.Contains(shareErr.Error(), "not authorized") {
 			h.sendError(w, "Forbidden", "Not authorized to share this secret", http.StatusForbidden, nil)
+		} else if strings.Contains(shareErr.Error(), "expiry must be in the future") {
+			h.sendError(w, "ValidationError", "Share expiry must be in the future", http.StatusBadRequest, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to share secret", http.StatusInternalServerError, nil)
 		}
