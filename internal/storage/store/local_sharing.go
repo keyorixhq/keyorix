@@ -97,6 +97,10 @@ func (ls *LocalStorage) UpdateShareRecord(ctx context.Context, share *models.Sha
 		return nil, err
 	}
 	existing.Permission = share.Permission
+	// ExpiresAt is caller-resolved (the core layer preserves the current value unless a
+	// change was requested), so copy it through — including nil to clear a time-bound
+	// share back to permanent. Save writes the nil as NULL.
+	existing.ExpiresAt = share.ExpiresAt
 	existing.UpdatedAt = time.Now()
 	if err := ls.db.Save(existing).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)

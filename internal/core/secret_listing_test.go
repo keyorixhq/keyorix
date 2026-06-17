@@ -285,6 +285,7 @@ func TestKeyorixCore_GetUserSecretPermission(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now, // share-permission paths filter expired shares via c.now()
 	}
 	ctx := context.Background()
 

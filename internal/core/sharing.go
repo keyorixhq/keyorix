@@ -26,11 +26,16 @@ type ShareSecretRequest struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
-// UpdateShareRequest represents a request to update a share's permissions.
+// UpdateShareRequest represents a request to update a share's permissions and,
+// optionally, its time-bound expiry. Expiry semantics: ClearExpiry makes the share
+// permanent; otherwise a non-nil ExpiresAt sets/extends/shortens it (must be in the
+// future); leaving both unset preserves the share's current expiry.
 type UpdateShareRequest struct {
-	ShareID    uint   `json:"share_id" validate:"required"`
-	Permission string `json:"permission" validate:"required,oneof=read write"`
-	UpdatedBy  uint   `json:"updated_by" validate:"required"`
+	ShareID     uint       `json:"share_id" validate:"required"`
+	Permission  string     `json:"permission" validate:"required,oneof=read write"`
+	UpdatedBy   uint       `json:"updated_by" validate:"required"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	ClearExpiry bool       `json:"clear_expiry,omitempty"`
 }
 
 // ShareSecret shares a secret with another user or group.
@@ -103,6 +108,19 @@ func (c *KeyorixCore) UpdateSharePermission(ctx context.Context, req *UpdateShar
 	}
 	if !secretOwnedBy(secret.OwnerID, req.UpdatedBy) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
+	}
+
+	// Resolve the share's expiry: clear it (permanent), set/extend/shorten it, or
+	// preserve the current value when the request specifies neither. A new expiry must
+	// be in the future, just like at creation.
+	switch {
+	case req.ClearExpiry:
+		shareRecord.ExpiresAt = nil
+	case req.ExpiresAt != nil:
+		if !req.ExpiresAt.After(c.now()) {
+			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "share expiry must be in the future")
+		}
+		shareRecord.ExpiresAt = req.ExpiresAt
 	}
 
 	oldPermission := shareRecord.Permission
