@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -97,4 +98,43 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	go h.coreService.LogSecretRotatedWithProject(core.DetachedAuditContext(r.Context()), userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua) // #nosec G118
 
 	h.sendSuccess(w, secret, "Secret rotated successfully")
+}
+
+// RollbackSecret handles POST /api/v1/secrets/{id}/rollback — restores the secret to a
+// prior version's value as a new version. Scoped secrets.write (route-gated).
+func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		h.sendError(w, "BadRequest", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	var reqBody struct {
+		Version int `json:"version" validate:"required"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	if reqBody.Version <= 0 {
+		h.sendError(w, "ValidationError", "version must be a positive version number", http.StatusBadRequest, nil)
+		return
+	}
+	secret, err := h.coreService.RollbackSecret(r.Context(), uint(id), reqBody.Version, userCtx.UserID, userCtx.Username)
+	if err != nil {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
+		case strings.Contains(err.Error(), "already the current version"), strings.Contains(err.Error(), "version number must be positive"):
+			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+		default:
+			h.sendError(w, "InternalError", "Failed to roll back secret", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+	h.sendSuccess(w, secret, fmt.Sprintf("Secret rolled back to version %d", reqBody.Version))
 }
