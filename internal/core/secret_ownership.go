@@ -8,8 +8,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -58,12 +60,15 @@ func (c *KeyorixCore) TransferSecretOwnership(ctx context.Context, secretID, new
 	return updated, nil
 }
 
-// currentOwnerGone reports whether a secret's owner is absent: ownerless (0) or an
-// account that no longer exists.
+// currentOwnerGone reports whether a secret's owner is positively absent: ownerless
+// (0) or an account confirmed not to exist. It FAILS CLOSED — a transient GetUser
+// error returns false (owner assumed present), so a non-owner cannot ride a momentary
+// lookup failure into seizing an actively-owned secret. Only the typed not-found
+// sentinel counts as "gone".
 func (c *KeyorixCore) currentOwnerGone(ctx context.Context, ownerID uint) bool {
 	if ownerID == 0 {
 		return true
 	}
-	u, err := c.storage.GetUser(ctx, ownerID)
-	return err != nil || u == nil
+	_, err := c.storage.GetUser(ctx, ownerID)
+	return errors.Is(err, storage.ErrUserNotFound)
 }

@@ -61,7 +61,9 @@ func (ls *LocalStorage) GetUser(ctx context.Context, id uint) (*models.User, err
 	var user models.User
 	if err := ls.db.WithContext(ctx).First(&user, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+			// Wrap the typed sentinel so callers can distinguish "absent" from a
+			// transient failure (e.g. ownership-transfer recovery must fail closed).
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -13,6 +15,21 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+// transientOwnerLookup wraps LocalStorage so GetUser(failID) returns a transient
+// (non-not-found) error, simulating a momentary backend failure during the owner
+// lookup. All other methods/users behave normally.
+type transientOwnerLookup struct {
+	*store.LocalStorage
+	failID uint
+}
+
+func (t *transientOwnerLookup) GetUser(ctx context.Context, id uint) (*models.User, error) {
+	if id == t.failID {
+		return nil, errors.New("db timeout") // transient, NOT storage.ErrUserNotFound
+	}
+	return t.LocalStorage.GetUser(ctx, id)
+}
 
 // newOwnershipFixture builds an in-memory core with users 1 (owner), 2, 3 and a
 // secret owned by user 1.
@@ -85,6 +102,25 @@ func TestTransferSecretOwnership(t *testing.T) {
 		_, err := c.TransferSecretOwnership(ctx, id, 1, 1)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already owned")
+	})
+
+	t.Run("fail-closed: a transient owner-lookup error does NOT permit takeover", func(t *testing.T) {
+		c, id := newOwnershipFixture(t)
+		// Wrap storage so the OWNER lookup (user 1) fails transiently (not not-found),
+		// while other users resolve normally.
+		base := c.storage.(*store.LocalStorage)
+		c.storage = &transientOwnerLookup{LocalStorage: base, failID: 1}
+		_, err := c.TransferSecretOwnership(ctx, id, 2, 3) // non-owner actor, owner "errors"
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "only the current owner",
+			"a transient lookup error must be treated as owner-present (fail closed)")
+	})
+
+	t.Run("GetUser surfaces the typed not-found sentinel", func(t *testing.T) {
+		c, _ := newOwnershipFixture(t)
+		_, err := c.storage.GetUser(ctx, 999)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, coreStorage.ErrUserNotFound)
 	})
 
 	t.Run("validates ids", func(t *testing.T) {
