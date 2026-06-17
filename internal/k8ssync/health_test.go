@@ -35,6 +35,31 @@ func TestHealth_ReadinessGatesOnFirstSync(t *testing.T) {
 	assert.Equal(t, http.StatusOK, get(t, h, "/readyz").Code)
 }
 
+func TestHealth_MetricsExposition(t *testing.T) {
+	s := NewStatus()
+	h := s.Handler()
+
+	// Two passes accumulate into the counters; the gauge reflects the last pass.
+	s.Record(Result{Created: 1, Updated: 0, Unchanged: 2, Failed: 0})
+	s.Record(Result{Created: 0, Updated: 3, Unchanged: 2, Failed: 1})
+
+	body := get(t, h, "/metrics").Body.String()
+	assert.Contains(t, body, "keyorix_k8s_sync_reconcile_passes_total 2")
+	assert.Contains(t, body, `keyorix_k8s_sync_secrets_total{outcome="created"} 1`)
+	assert.Contains(t, body, `keyorix_k8s_sync_secrets_total{outcome="updated"} 3`)
+	assert.Contains(t, body, `keyorix_k8s_sync_secrets_total{outcome="unchanged"} 4`)
+	assert.Contains(t, body, `keyorix_k8s_sync_secrets_total{outcome="failed"} 1`)
+	assert.Contains(t, body, "keyorix_k8s_sync_last_failed 1")
+	// Well-formed exposition: every metric has a HELP and TYPE line.
+	assert.Contains(t, body, "# TYPE keyorix_k8s_sync_reconcile_passes_total counter")
+}
+
+func TestHealth_MetricsBeforeFirstRun(t *testing.T) {
+	body := get(t, NewStatus().Handler(), "/metrics").Body.String()
+	assert.Contains(t, body, "keyorix_k8s_sync_reconcile_passes_total 0")
+	assert.Contains(t, body, "keyorix_k8s_sync_last_run_timestamp_seconds 0")
+}
+
 func TestHealth_StatusReportsCounts(t *testing.T) {
 	s := NewStatus()
 	h := s.Handler()
