@@ -27,6 +27,30 @@ const PERMISSION_OPTIONS = [
     { value: 'write', label: 'Read & Write' },
 ];
 
+// Time-bound (JIT) share presets. 'never' = a permanent share (no expiry sent);
+// the rest are durations from now, resolved to an ISO timestamp at submit time.
+const EXPIRY_OPTIONS = [
+    { value: 'never', label: 'Never (permanent)' },
+    { value: '1h', label: '1 hour' },
+    { value: '24h', label: '24 hours' },
+    { value: '7d', label: '7 days' },
+    { value: '30d', label: '30 days' },
+];
+
+const EXPIRY_MS: Record<string, number> = {
+    '1h': 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+    '30d': 30 * 24 * 60 * 60 * 1000,
+};
+
+// expiresAtFromPreset resolves a preset key to an ISO timestamp, or undefined for
+// a permanent share.
+export const expiresAtFromPreset = (preset: string, now: number = Date.now()): string | undefined => {
+    const ms = EXPIRY_MS[preset];
+    return ms ? new Date(now + ms).toISOString() : undefined;
+};
+
 export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
     secret, isOpen, onClose, onSuccess,
 }) => {
@@ -36,6 +60,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [permission, setPermission] = useState<'read' | 'write'>('read');
+    const [expiry, setExpiry] = useState('never');
     const [success, setSuccess] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
@@ -74,7 +99,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
     const handleClose = () => {
         setQuery(''); setResults([]); setSelected(null);
         setOpen(false); setSuccess(false); shareSecret.reset();
-        setPermission('read');
+        setPermission('read'); setExpiry('never');
         onClose();
     };
 
@@ -87,8 +112,9 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!selected) return;
+        const expiresAt = expiresAtFromPreset(expiry);
         shareSecret.mutate(
-            { username: selected.username, permission },
+            { username: selected.username, permission, ...(expiresAt ? { expiresAt } : {}) },
             {
                 onSuccess: () => {
                     setSuccess(true);
@@ -189,6 +215,24 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({
                         options={PERMISSION_OPTIONS}
                         disabled={shareSecret.isPending || success}
                     />
+                </div>
+
+                {/* Access expiry (time-bound / JIT share) */}
+                <div>
+                    <label className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Access expires
+                    </label>
+                    <Select
+                        value={expiry}
+                        onChange={e => setExpiry(e.target.value)}
+                        options={EXPIRY_OPTIONS}
+                        disabled={shareSecret.isPending || success}
+                    />
+                    {expiry !== 'never' && (
+                        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                            Access is automatically revoked after this period.
+                        </p>
+                    )}
                 </div>
 
                 <div className="flex items-center justify-end space-x-3 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>

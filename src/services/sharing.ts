@@ -28,6 +28,8 @@ export const sharingApi = {
                 recipient_id: data.recipientId,
                 is_group: data.recipientType === 'group',
                 permission: data.permission,
+                // Only send expires_at for a time-bound share; omit it for a permanent one.
+                ...(data.expiresAt ? { expires_at: data.expiresAt } : {}),
             }
         );
         return response.data.data;

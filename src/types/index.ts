@@ -80,6 +80,9 @@ export interface ShareFormData {
     recipientType: 'user' | 'group';
     recipientId: number;
     permission: 'read' | 'write';
+    // expiresAt, when set (ISO 8601), makes the share time-bound (JIT access): it
+    // stops authorizing once it passes. Omitted/undefined = a permanent share.
+    expiresAt?: string;
 }
 
 export interface Recipient {

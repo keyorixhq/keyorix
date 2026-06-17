@@ -57,7 +57,7 @@ export const searchRecipients = (query: string) => usersApi.search(query);
 // Composite mutation: search user by username then create share in one step.
 export const useShareSecret = (secretId: number) => {
     return useMutation({
-        mutationFn: async ({ username, permission }: { username: string; permission: 'read' | 'write' }) => {
+        mutationFn: async ({ username, permission, expiresAt }: { username: string; permission: 'read' | 'write'; expiresAt?: string }) => {
             const results = await usersApi.search(username.trim());
             const match = results.find(
                 (r) => r.name.toLowerCase() === username.trim().toLowerCase()
@@ -68,6 +68,7 @@ export const useShareSecret = (secretId: number) => {
                 recipientType: match.type,
                 recipientId: match.id,
                 permission,
+                ...(expiresAt ? { expiresAt } : {}),
             });
         },
         onSuccess: () => {
