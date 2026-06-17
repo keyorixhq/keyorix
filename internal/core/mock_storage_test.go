@@ -573,6 +573,14 @@ func (m *MockStorage) CheckSharePermission(ctx context.Context, secretID, userID
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockStorage) DeleteExpiredShareRecords(ctx context.Context, before time.Time) ([]*models.ShareRecord, error) {
+	args := m.Called(ctx, before)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.ShareRecord), args.Error(1)
+}
+
 // User Management
 
 func (m *MockStorage) CreateUser(ctx context.Context, user *models.User) (*models.User, error) {

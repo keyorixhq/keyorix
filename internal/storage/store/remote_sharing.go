@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -169,4 +170,9 @@ func (rs *RemoteStorage) CheckSharePermission(ctx context.Context, secretID, use
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 	return result.Permission, nil
+}
+
+// DeleteExpiredShareRecords is server-side only (run by the JIT expiry scheduler).
+func (rs *RemoteStorage) DeleteExpiredShareRecords(_ context.Context, _ time.Time) ([]*models.ShareRecord, error) {
+	return nil, remoteUnsupported("DeleteExpiredShareRecords")
 }

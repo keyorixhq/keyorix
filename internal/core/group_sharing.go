@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -14,6 +15,8 @@ type GroupShareSecretRequest struct {
 	GroupID    uint   `json:"group_id" validate:"required"`
 	Permission string `json:"permission" validate:"required,oneof=read write"`
 	SharedBy   uint   `json:"shared_by" validate:"required"`
+	// ExpiresAt, when set, makes the group share time-bound; see ShareSecretRequest.ExpiresAt.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // ShareSecretWithGroup shares a secret with a group
@@ -35,6 +38,11 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 		return nil, fmt.Errorf("not authorized to share this secret")
 	}
 
+	// A time-bound share must expire in the future (see ShareSecret).
+	if req.ExpiresAt != nil && !req.ExpiresAt.After(c.now()) {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "share expiry must be in the future")
+	}
+
 	// Create share record
 	shareRecord := &models.ShareRecord{
 		SecretID:    req.SecretID,
@@ -42,6 +50,7 @@ func (c *KeyorixCore) ShareSecretWithGroup(ctx context.Context, req *GroupShareS
 		RecipientID: req.GroupID,
 		IsGroup:     true,
 		Permission:  req.Permission,
+		ExpiresAt:   req.ExpiresAt,
 	}
 
 	// Validate the group share record

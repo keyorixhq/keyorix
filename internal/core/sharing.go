@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -20,6 +21,9 @@ type ShareSecretRequest struct {
 	IsGroup     bool   `json:"is_group"`
 	Permission  string `json:"permission" validate:"required,oneof=read write"`
 	SharedBy    uint   `json:"shared_by" validate:"required"`
+	// ExpiresAt, when set, makes the share time-bound (just-in-time access): it stops
+	// authorizing the instant it passes and is later swept. nil = a permanent share.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // UpdateShareRequest represents a request to update a share's permissions.
@@ -47,12 +51,19 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 
+	// A time-bound share must expire in the future; a past/now expiry would create a
+	// share that never authorizes.
+	if req.ExpiresAt != nil && !req.ExpiresAt.After(c.now()) {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "share expiry must be in the future")
+	}
+
 	shareRecord := &models.ShareRecord{
 		SecretID:    req.SecretID,
 		OwnerID:     secret.OwnerID,
 		RecipientID: req.RecipientID,
 		IsGroup:     req.IsGroup,
 		Permission:  req.Permission,
+		ExpiresAt:   req.ExpiresAt,
 	}
 	createdShare, err := c.storage.CreateShareRecord(ctx, shareRecord)
 	if err != nil {

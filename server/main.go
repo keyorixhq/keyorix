@@ -1099,13 +1099,24 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				}
 				// Single-replica-gated (ADR-039): one replica sweeps per tick.
 				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockJITExpiry, func() error {
-					n, rerr := coreService.RemoveExpiredRoleGrants(ctx, time.Now())
+					now := time.Now()
+					n, rerr := coreService.RemoveExpiredRoleGrants(ctx, now)
 					if rerr != nil {
 						log.Printf("JIT access-expiry sweep error: %v", rerr)
 						return rerr
 					}
 					if n > 0 {
 						log.Printf("JIT access-expiry sweep removed %d expired grant(s)", n)
+					}
+					// The same sweep reclaims expired time-bound secret shares (both already
+					// stop authorizing immediately; this keeps the tables clean + audited).
+					sn, serr := coreService.RemoveExpiredShares(ctx, now)
+					if serr != nil {
+						log.Printf("JIT access-expiry share-sweep error: %v", serr)
+						return serr
+					}
+					if sn > 0 {
+						log.Printf("JIT access-expiry sweep removed %d expired share(s)", sn)
 					}
 					return nil
 				}); err != nil {

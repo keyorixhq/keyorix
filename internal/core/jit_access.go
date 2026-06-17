@@ -34,6 +34,31 @@ func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, gr
 	return nil
 }
 
+// EventShareExpired is audited when a time-bound secret share is swept after expiry.
+const EventShareExpired = "share.expired"
+
+// RemoveExpiredShares removes every time-bound secret share whose expiry is at or
+// before `before` and audits each as share.expired (the system sweep, no actor).
+// Returns the number removed. Idempotent. Expired shares already stop authorizing
+// the instant they pass (the permission queries filter on expiry); this just reclaims
+// the rows and writes the expiry audit trail. Backs the JIT access-expiry scheduler.
+func (c *KeyorixCore) RemoveExpiredShares(ctx context.Context, before time.Time) (int, error) {
+	removed, err := c.storage.DeleteExpiredShareRecords(ctx, before)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	for _, s := range removed {
+		sid := s.SecretID
+		recipientKind := "user"
+		if s.IsGroup {
+			recipientKind = "group"
+		}
+		c.writeAuditEvent(ctx, EventShareExpired, nil, &sid,
+			fmt.Sprintf("time-bound share of secret %d expired for %s %d", s.SecretID, recipientKind, s.RecipientID))
+	}
+	return len(removed), nil
+}
+
 // RemoveExpiredRoleGrants removes every user/group role grant whose expiry is at or
 // before `before` and audits each as role.expired (actor 0 = the system sweep).
 // Returns the number of grants removed. Idempotent — a tick that finds nothing

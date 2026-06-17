@@ -116,6 +116,33 @@ func (ls *LocalStorage) DeleteShareRecord(ctx context.Context, shareID uint) err
 	return nil
 }
 
+// DeleteExpiredShareRecords soft-deletes time-bound shares whose ExpiresAt is
+// non-NULL and at or before the cutoff, returning the removed rows so the caller can
+// audit each. Runs in a transaction so the rows it reports are exactly the rows it
+// removed. Idempotent — a tick that finds nothing removes nothing.
+func (ls *LocalStorage) DeleteExpiredShareRecords(ctx context.Context, before time.Time) ([]*models.ShareRecord, error) {
+	var removed []*models.ShareRecord
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where(
+			"expires_at IS NOT NULL AND expires_at <= ? AND deleted_at IS NULL", before,
+		).Find(&removed).Error; err != nil {
+			return err
+		}
+		if len(removed) == 0 {
+			return nil
+		}
+		ids := make([]uint, len(removed))
+		for i, s := range removed {
+			ids[i] = s.ID
+		}
+		return tx.Where("id IN ?", ids).Delete(&models.ShareRecord{}).Error
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+	}
+	return removed, nil
+}
+
 // ListSharesBySecret lists active share records for a secret.
 func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord
@@ -155,12 +182,16 @@ func (ls *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]
 // ListSharedSecrets returns all secrets shared with userID, directly or via group membership.
 func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*models.SecretNode, error) {
 	var secrets []*models.SecretNode
+	// Expired (time-bound) shares no longer authorize, so they must not surface in
+	// the "shared with me" listing either — filter them the same way the auth queries do.
+	now := time.Now()
 	directQuery := `
 		SELECT s.* FROM secret_nodes s
 		JOIN share_records sr ON s.id = sr.secret_id
 		WHERE sr.recipient_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
+		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
 	`
-	if err := ls.db.Raw(directQuery, userID, false).Scan(&secrets).Error; err != nil {
+	if err := ls.db.Raw(directQuery, userID, false, now).Scan(&secrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 
@@ -169,9 +200,10 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 		JOIN share_records sr ON s.id = sr.secret_id
 		JOIN user_groups ug ON sr.recipient_id = ug.group_id
 		WHERE ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
+		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
 	`
 	var groupSecrets []*models.SecretNode
-	if err := ls.db.Raw(groupQuery, userID, true).Scan(&groupSecrets).Error; err != nil {
+	if err := ls.db.Raw(groupQuery, userID, true, now).Scan(&groupSecrets).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 
@@ -193,10 +225,12 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		return "write", nil
 	}
 
+	// Skip expired (time-bound) shares — an expired share grants no permission.
+	now := time.Now()
 	var directShare models.ShareRecord
 	err := ls.db.Where(
-		"secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
-		secretID, userID, false,
+		"secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+		secretID, userID, false, now,
 	).First(&directShare).Error
 	if err == nil {
 		return directShare.Permission, nil
@@ -209,9 +243,10 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		SELECT sr.* FROM share_records sr
 		JOIN user_groups ug ON sr.recipient_id = ug.group_id
 		WHERE sr.secret_id = ? AND ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL
+		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
 		LIMIT 1
 	`
-	res := ls.db.Raw(groupQuery, secretID, userID, true).Scan(&groupShare)
+	res := ls.db.Raw(groupQuery, secretID, userID, true, now).Scan(&groupShare)
 	if res.Error == nil && groupShare.ID != 0 {
 		return groupShare.Permission, nil
 	} else if res.Error != nil && !errors.Is(res.Error, gorm.ErrRecordNotFound) {
