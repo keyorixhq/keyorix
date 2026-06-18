@@ -3,6 +3,27 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.59.0 — 2026-06-18
+
+Secret investigation, project-wide incident response, and machine-identity hygiene.
+
+### Added
+- **Per-secret access history** — `GET /secrets/{id}/access-log?days=N` lists who has
+  read a secret recently (accessor, IP, time), complementing the access inspector. ([#316])
+- **Project-wide suspend / resume** — `POST /projects/{id}/secrets/suspend-all` and
+  `/resume-all` freeze or restore value reads of every secret in a project (breach
+  response). ([#317])
+- **CLI investigation commands** — `keyorix secret access` (who can read) and
+  `keyorix secret access-log` (who has read). ([#318])
+- **Stale machine-identity detection** — `GET /projects/{id}/machine-identities/stale?days=N`
+  surfaces active machine identities not authenticated within the window — abandoned
+  credentials to revoke. ([#319])
+
+[#316]: https://github.com/keyorixhq/keyorix/pull/316
+[#317]: https://github.com/keyorixhq/keyorix/pull/317
+[#318]: https://github.com/keyorixhq/keyorix/pull/318
+[#319]: https://github.com/keyorixhq/keyorix/pull/319
+
 ## v0.58.0 — 2026-06-18
 
 Incident response: suspend/resume a secret.
