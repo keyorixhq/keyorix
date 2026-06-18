@@ -46,11 +46,12 @@ type KeyorixCore struct {
 	dynamicSweepEnabled bool
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
 	// Set from config at startup via SetWebAuthn.
-	webauthnRP     *webauthn.WebAuthn
-	now            func() time.Time // For testability
-	passwordPolicy PasswordPolicy
-	loginLockout   LoginLockoutPolicy // per-account login lockout (disabled by default)
-	auditForwarder AuditForwarder
+	webauthnRP        *webauthn.WebAuthn
+	now               func() time.Time // For testability
+	passwordPolicy    PasswordPolicy
+	secretValuePolicy SecretValuePolicy  // optional quality gate on secret values (off by default)
+	loginLockout      LoginLockoutPolicy // per-account login lockout (disabled by default)
+	auditForwarder    AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).
@@ -270,6 +271,12 @@ func (c *KeyorixCore) WebAuthnEnabled() bool { return c.webauthnRP != nil }
 // configures a password_policy block.
 func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
 	c.passwordPolicy = p
+}
+
+// SetSecretValuePolicy enables/configures the secret-value quality gate (off by
+// default). The server calls this at startup when secret_value_policy.enabled is set.
+func (c *KeyorixCore) SetSecretValuePolicy(p SecretValuePolicy) {
+	c.secretValuePolicy = p
 }
 
 // SetLoginLockoutPolicy enables/configures per-account login lockout. The server

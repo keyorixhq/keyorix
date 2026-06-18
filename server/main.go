@@ -286,6 +286,18 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		})
 	}
 
+	// Apply the optional secret-value quality gate (reject weak/placeholder values).
+	if svp := cfg.SecretValuePolicy; svp.Enabled {
+		coreService.SetSecretValuePolicy(core.SecretValuePolicy{
+			Enabled:       true,
+			MinLength:     svp.MinLength,
+			RejectCommon:  svp.RejectCommon,
+			ExtraDenylist: svp.ExtraDenylist,
+		})
+		log.Printf("Secret-value policy enabled (min_length=%d, reject_common=%t, denylist=%d)",
+			svp.MinLength, svp.RejectCommon, len(svp.ExtraDenylist))
+	}
+
 	// Apply per-account login lockout if enabled (brute-force protection, distinct
 	// from the per-IP rate limiter).
 	if ll := cfg.Security.LoginLockout; ll.Enabled {

@@ -55,6 +55,9 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	if err := c.validateCreateSecretRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
+	if err := c.secretValuePolicy.Validate(req.Value); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
 
 	// Verify the environment belongs to the stated project.
 	env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID)
@@ -185,6 +188,9 @@ func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *
 
 // RotateSecret creates a new version with a new value and updates LastRotatedAt.
 func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte, rotatedBy string) (*models.SecretNode, error) {
+	if err := c.secretValuePolicy.Validate(newValue); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
