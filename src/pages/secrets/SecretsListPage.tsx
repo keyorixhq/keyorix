@@ -11,6 +11,7 @@ import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
+import { apiErrorMessage } from '../../services/client';
 import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow, useBulkClassifySecrets, useSetAutoRotate } from '../../features/secrets';
 import { ShareSecretModal } from '../../features/sharing';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
@@ -402,7 +403,7 @@ export const SecretsListPage: React.FC = () => {
             </Modal>
 
             <Modal isOpen={list.activeModal === 'create-secret'} onClose={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} title="Create New Secret" size="md">
-                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); if (!createProjectId || !createEnvId) { setCreateError('Select a project and environment for the new secret.'); return; } list.createMutation.mutate({ name: createName, value: createValue, type: createType, project_id: createProjectId, environment_id: createEnvId } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); } }); }} className="space-y-4">
+                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); if (!createProjectId || !createEnvId) { setCreateError('Select a project and environment for the new secret.'); return; } list.createMutation.mutate({ name: createName, value: createValue, type: createType, project_id: createProjectId, environment_id: createEnvId } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }, onError: (err) => setCreateError(apiErrorMessage(err)) }); }} className="space-y-4">
                     {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name <span className="text-red-500">*</span></label>
@@ -456,7 +457,7 @@ export const SecretsListPage: React.FC = () => {
 
             <Modal isOpen={list.activeModal === 'rotate-secret'} onClose={list.closeModal} title={`Rotate Secret: ${list.modalData?.secret?.name ?? ''}`} size="sm">
                 <form onSubmit={(e) => { e.preventDefault(); if (!list.modalData?.secret) return; list.rotateMutation.mutate({ id: list.modalData.secret.id, newValue: rotateValue }); }} className="space-y-4">
-                    {list.rotateMutation.isError && <Alert type="error" title="Failed to rotate secret" message={list.rotateMutation.error instanceof Error ? list.rotateMutation.error.message : 'An unexpected error occurred'} />}
+                    {list.rotateMutation.isError && <Alert type="error" title="Failed to rotate secret" message={apiErrorMessage(list.rotateMutation.error)} />}
                     <p className="text-sm text-base-muted">A new random value has been generated. Edit it or regenerate, then click Rotate to create a new version.</p>
                     <div>
                         <div className="flex items-center justify-between mb-1">

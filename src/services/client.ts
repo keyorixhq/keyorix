@@ -120,6 +120,21 @@ export const makeAuthenticatedRequest = async <T>(
     return response.data;
 };
 
+// apiErrorMessage extracts the human-readable reason from an API error, preferring
+// the server's `message` (e.g. a validation reason like "secret value is a known weak
+// or placeholder value") over the `error` type code. Use this where the message is
+// shown to the user; handleApiError keeps its legacy code-first ordering.
+export const apiErrorMessage = (error: unknown): string => {
+    if (axios.isAxiosError(error)) {
+        const data = error.response?.data as { message?: string; error?: string } | undefined;
+        if (data?.message) return data.message;
+        if (data?.error) return data.error;
+        if (error.message) return error.message;
+    }
+    if (error instanceof Error) return error.message;
+    return 'An unexpected error occurred';
+};
+
 export const handleApiError = (error: unknown): string => {
     if (axios.isAxiosError(error)) {
         if (error.response?.data?.error) {
