@@ -3,6 +3,26 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.62.0 — 2026-06-19
+
+Secret tags and a project hygiene summary.
+
+### Added
+- **Secret tags** — free-form labels on a secret: `GET`/`PUT /secrets/{id}/tags`
+  (normalized: trimmed, lowercased, de-duplicated, ≤20 tags, ≤50 chars), plus
+  `keyorix secret tags --id N [--set a,b]` and a tag editor on the web secret
+  detail view. ([#335], [#337])
+- **Filter secrets by tag** — `GET /secrets?tag=prod&tag=tier1` (or
+  `?tag=prod,tier1`) returns only secrets carrying every requested tag (AND). ([#336])
+- **Project hygiene summary** — `GET /projects/{id}/hygiene` returns one-call
+  counts of the project's outstanding cleanup signals (orphaned, unused, and
+  expiring secrets; stale machine identities) for an at-a-glance posture. ([#338])
+
+[#335]: https://github.com/keyorixhq/keyorix/pull/335
+[#336]: https://github.com/keyorixhq/keyorix/pull/336
+[#337]: https://github.com/keyorixhq/keyorix/pull/337
+[#338]: https://github.com/keyorixhq/keyorix/pull/338
+
 ## v0.61.0 — 2026-06-18
 
 Offboarding & incident response: cut off a departing or compromised user across
