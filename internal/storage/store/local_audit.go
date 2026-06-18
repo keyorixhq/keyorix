@@ -195,6 +195,9 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 		if filter.UserID != nil {
 			query = query.Where("user_id = ?", *filter.UserID)
 		}
+		if filter.SecretID != nil {
+			query = query.Where("secret_node_id = ?", *filter.SecretID)
+		}
 		if filter.Action != nil {
 			query = query.Where("event_type = ?", *filter.Action)
 		}
