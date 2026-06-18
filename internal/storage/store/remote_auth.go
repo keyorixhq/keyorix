@@ -260,6 +260,10 @@ func (rs *RemoteStorage) ListPersonalAccessTokensByUser(_ context.Context, _ uin
 	return nil, errUnsupportedRemote
 }
 
+func (rs *RemoteStorage) ListActivePersonalAccessTokens(_ context.Context) ([]*models.PersonalAccessToken, error) {
+	return nil, errUnsupportedRemote
+}
+
 func (rs *RemoteStorage) GetPersonalAccessTokenByID(_ context.Context, _ uint) (*models.PersonalAccessToken, error) {
 	return nil, errUnsupportedRemote
 }

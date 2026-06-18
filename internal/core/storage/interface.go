@@ -458,6 +458,9 @@ type Storage interface {
 	// Personal Access Token Management (ADR-027) — user-owned bearer credentials.
 	CreatePersonalAccessToken(ctx context.Context, t *models.PersonalAccessToken) (*models.PersonalAccessToken, error)
 	ListPersonalAccessTokensByUser(ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error)
+	// ListActivePersonalAccessTokens returns every non-revoked PAT across all users —
+	// the deployment-wide view for token-hygiene auditing (stale / expired-but-active).
+	ListActivePersonalAccessTokens(ctx context.Context) ([]*models.PersonalAccessToken, error)
 	GetPersonalAccessTokenByID(ctx context.Context, id uint) (*models.PersonalAccessToken, error)
 	GetPersonalAccessTokenByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, error)
 	RevokePersonalAccessToken(ctx context.Context, id uint) error

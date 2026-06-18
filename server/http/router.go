@@ -518,6 +518,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/metrics", handlers.GetMetrics)
 		})
 
+		// Personal-access-token hygiene — deployment-wide stale / expired-but-active
+		// tokens an admin should revoke (token sprawl).
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/pat-hygiene", patHandler.PATHygiene)
+
 		// Compliance posture — deployment-wide controls snapshot for auditors.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
 		// Compliance control matrix — controls mapped to ISO/SOC2/NIS2/DORA + status.
