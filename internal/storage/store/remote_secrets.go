@@ -170,6 +170,15 @@ func (rs *RemoteStorage) ListOrphanedSecrets(_ context.Context, _ uint) ([]*mode
 	return nil, fmt.Errorf("ListOrphanedSecrets not available in remote mode")
 }
 
+// GetSecretTags / SetSecretTags are not available in remote mode; tag storage is server-side.
+func (rs *RemoteStorage) GetSecretTags(_ context.Context, _ uint) ([]string, error) {
+	return nil, fmt.Errorf("GetSecretTags not available in remote mode")
+}
+
+func (rs *RemoteStorage) SetSecretTags(_ context.Context, _ uint, _ []string) error {
+	return fmt.Errorf("SetSecretTags not available in remote mode")
+}
+
 // buildSecretFilterPath constructs the /api/v1/secrets query string from filter fields.
 func buildSecretFilterPath(filter *storage.SecretFilter) string {
 	if filter == nil {

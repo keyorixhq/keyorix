@@ -190,6 +190,10 @@ type Storage interface {
 	// a live user (the owner was deleted/soft-deleted) — offboarding hygiene, so an
 	// admin can re-assign ownership. Scoped to the project via the environment JOIN.
 	ListOrphanedSecrets(ctx context.Context, projectID uint) ([]*models.SecretNode, error)
+	// GetSecretTags returns a secret's tag names (sorted). SetSecretTags replaces a
+	// secret's tags wholesale, upserting Tag rows by name — secret organization/search.
+	GetSecretTags(ctx context.Context, secretID uint) ([]string, error)
+	SetSecretTags(ctx context.Context, secretID uint, tagNames []string) error
 	// ListProjectSecretsForDrift returns one lightweight row per secret in the
 	// project (folders excluded, secrets in soft-deleted environments excluded),
 	// carrying just the fields cross-environment drift detection pivots on:
