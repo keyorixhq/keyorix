@@ -565,7 +565,9 @@ type MembershipCounts struct {
 type AuditFilter struct {
 	ProjectID *uint
 	UserID    *uint
-	Action    *string
+	// SecretID restricts to events about a specific secret (secret_node_id).
+	SecretID *uint
+	Action   *string
 	// Actions matches any of several event types (event_type IN). Used to pull a
 	// related family of events together, e.g. the RBAC audit log (role.*).
 	Actions  []string

@@ -71,6 +71,7 @@ func buildAuditFilterPath(filter *storage.AuditFilter) string {
 	}
 	params := newQueryBuilder()
 	params.addUint("user_id", filter.UserID)
+	params.addUint("secret_id", filter.SecretID)
 	params.addString("action", filter.Action)
 	params.addString("resource", filter.Resource)
 	params.addString("actor_type", filter.ActorType)
