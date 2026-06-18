@@ -80,6 +80,13 @@ export const secretsApi = {
         return response.data;
     },
 
+    // transferOwnership hands the secret to another user (the new owner). The server
+    // requires the caller to be the current owner (or the owner to be gone).
+    async transferOwnership(id: number, newOwnerId: number) {
+        const response = await apiClient.post(`/api/v1/secrets/${id}/transfer-ownership`, { new_owner_id: newOwnerId });
+        return response.data;
+    },
+
     async mostAccessed(params?: { days?: number; limit?: number; projectId?: number }): Promise<SecretUsageStat[]> {
         const query: Record<string, unknown> = {};
         if (params?.days) query.days = params.days;

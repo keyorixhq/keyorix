@@ -97,6 +97,18 @@ export const useRollbackSecret = (id: number) => {
     });
 };
 
+export const useTransferOwnership = (id: number) => {
+    return useMutation({
+        mutationFn: (newOwnerId: number) => secretsApi.transferOwnership(id, newOwnerId),
+        onSuccess: () => {
+            // Ownership changes who can manage/share the secret — refresh the detail
+            // (owner field) and the lists.
+            invalidateQueries.secrets.detail(id);
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
 export const useClassifySecret = (id: number) => {
     return useMutation({
         mutationFn: (classification: string) => secretsApi.classify(id, classification),

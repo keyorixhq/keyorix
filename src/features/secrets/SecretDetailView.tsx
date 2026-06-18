@@ -16,6 +16,7 @@ import {
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
 import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret } from './api';
+import { TransferOwnership } from './TransferOwnership';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
 const formatDate = (d: string | Date) =>
@@ -206,6 +207,9 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                                 ))}
                             </select>
                         </label>
+                    </div>
+                    <div className="mt-2">
+                        <TransferOwnership secretId={secret.id} currentOwner={secret.owner} />
                     </div>
                 </div>
 
