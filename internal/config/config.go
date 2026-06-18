@@ -91,6 +91,10 @@ type Config struct {
 	// setup link (ADR-028). Absent (zero value) = auto mode, out-of-band when no SMTP.
 	CredentialDelivery CredentialDeliveryConfig `yaml:"credential_delivery"`
 
+	// SecretValuePolicy is an optional quality gate on secret VALUES (reject weak/
+	// placeholder values at create/rotate). Disabled (zero value) by default.
+	SecretValuePolicy SecretValuePolicyConfig `yaml:"secret_value_policy"`
+
 	// PasswordPolicy is optional. When the block is absent (zero value), the
 	// server keeps its conservative built-in defaults (see core.DefaultPasswordPolicy);
 	// when present, the install's values fully replace them.
@@ -1256,4 +1260,13 @@ func Save(path string, cfg *Config) error {
 	}
 
 	return nil
+}
+
+// SecretValuePolicyConfig configures the opt-in secret-value quality gate
+// (core.SecretValuePolicy). Disabled unless Enabled is true.
+type SecretValuePolicyConfig struct {
+	Enabled       bool     `yaml:"enabled"`
+	MinLength     int      `yaml:"min_length"`     // reject values shorter than this (0 = no minimum)
+	RejectCommon  bool     `yaml:"reject_common"`  // reject a built-in denylist of weak/placeholder values
+	ExtraDenylist []string `yaml:"extra_denylist"` // additional rejected values (case-insensitive)
 }
