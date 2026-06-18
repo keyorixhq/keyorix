@@ -36,6 +36,21 @@ export const MACHINE_IDENTITY_TYPES: MachineIdentityType[] = [
     'other',
 ];
 
+// STALE_MACHINE_IDENTITY_DAYS mirrors the server's default stale window (#319).
+export const STALE_MACHINE_IDENTITY_DAYS = 90;
+
+// isStaleMachineIdentity reports whether an ACTIVE machine identity hasn't been seen
+// within `days` (a never-seen one counts from its creation, so a brand-new identity
+// isn't flagged until it has had the full window). A hint for revocation hygiene.
+export function isStaleMachineIdentity(m: MachineIdentity, now: number = Date.now(), days = STALE_MACHINE_IDENTITY_DAYS): boolean {
+    if (m.state !== 'active') return false;
+    const ref = m.lastSeenAt ?? m.createdAt;
+    if (!ref) return false;
+    const t = new Date(ref).getTime();
+    if (Number.isNaN(t)) return false;
+    return now - t > days * 24 * 60 * 60 * 1000;
+}
+
 const normalizeMachineIdentity = (m: any): MachineIdentity => ({
     id: m.ID ?? m.id,
     projectId: m.ProjectID ?? m.project_id ?? m.projectId,

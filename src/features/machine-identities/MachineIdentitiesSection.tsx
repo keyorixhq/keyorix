@@ -11,6 +11,8 @@ import {
     MachineIdentity,
     MachineIdentityType,
     MACHINE_IDENTITY_TYPES,
+    isStaleMachineIdentity,
+    STALE_MACHINE_IDENTITY_DAYS,
 } from '../../services/machineIdentities';
 import { useAuth } from '../auth';
 import {
@@ -242,6 +244,15 @@ export const MachineIdentitiesSection: React.FC<{ projectId: number }> = ({ proj
                                 >
                                     {m.state}
                                 </span>
+                                {isStaleMachineIdentity(m) && (
+                                    <span
+                                        data-testid="mi-stale-badge"
+                                        className="px-2 py-0.5 rounded-full text-xs font-medium shrink-0 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+                                        title={`Not seen in ${STALE_MACHINE_IDENTITY_DAYS}+ days — consider revoking`}
+                                    >
+                                        Stale
+                                    </span>
+                                )}
                                 {isAdmin && m.state !== 'revoked' && (
                                     <div className="flex items-center gap-1 shrink-0">
                                         {(m.state === 'pending' || m.state === 'suspended') && (
