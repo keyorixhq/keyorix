@@ -379,6 +379,26 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 	return secrets, total, nil
 }
 
+// ListOrphanedSecrets returns the project's live secrets whose owner is no longer a
+// live user (deleted or soft-deleted) — offboarding hygiene. The environment JOIN
+// scopes to the project (anti-leak, consistent with ListSecrets); the LEFT JOIN to a
+// non-soft-deleted user with no match (users.id IS NULL) is the "owner gone" test.
+// GORM auto-applies secret_nodes.deleted_at IS NULL, so only live secrets are listed.
+func (ls *LocalStorage) ListOrphanedSecrets(ctx context.Context, projectID uint) ([]*models.SecretNode, error) {
+	var secrets []*models.SecretNode
+	err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Joins("JOIN environments ON environments.id = secret_nodes.environment_id AND environments.project_id = ?", projectID).
+		Joins("LEFT JOIN users ON users.id = secret_nodes.owner_id AND users.deleted_at IS NULL").
+		Where("secret_nodes.project_id = ?", projectID).
+		Where("users.id IS NULL").
+		Order("secret_nodes.name ASC").
+		Find(&secrets).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return secrets, nil
+}
+
 // --- Versions ---
 
 // CreateSecretVersion creates a new version of a secret.
