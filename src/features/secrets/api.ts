@@ -124,6 +124,24 @@ export const useSecretAuditTrail = (id: number, limit = 50, enabled = true) => {
     });
 };
 
+export const useSecretTags = (id: number, enabled = true) => {
+    return useQuery({
+        queryKey: [...queryKeys.secrets.detail(id), 'tags'],
+        queryFn: () => secretsApi.tags(id),
+        enabled,
+        staleTime: 60 * 1000,
+    });
+};
+
+export const useSetSecretTags = (id: number) => {
+    return useMutation({
+        mutationFn: (tags: string[]) => secretsApi.setTags(id, tags),
+        onSuccess: () => {
+            invalidateQueries.secrets.detail(id);
+        },
+    });
+};
+
 export const useSuspendSecret = (id: number) => {
     return useMutation({
         mutationFn: (reason?: string) => secretsApi.suspend(id, reason),

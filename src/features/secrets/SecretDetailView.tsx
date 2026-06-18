@@ -15,7 +15,7 @@ import {
     ShieldExclamationIcon,
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSuspendSecret, useResumeSecret } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSecretTags, useSetSecretTags, useSuspendSecret, useResumeSecret } from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
@@ -108,6 +108,9 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const { data: accessors } = useSecretAccessors(secret.id);
     const { data: accessLog } = useSecretAccessLog(secret.id);
     const { data: auditTrail } = useSecretAuditTrail(secret.id);
+    const { data: secretTags = [] } = useSecretTags(secret.id);
+    const setTags = useSetSecretTags(secret.id);
+    const [tagDraft, setTagDraft] = useState('');
     const { data: risk } = useSecretRisk(secret.id);
     const classifyMutation = useClassifySecret(secret.id);
 
@@ -480,6 +483,46 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     )}
                 </div>
             )}
+
+            {/* Tags — free-form organization labels (editable) */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Tags</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                    Free-form labels for organizing and filtering secrets.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                    {secretTags.map((t) => (
+                        <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+                            {t}
+                            <button
+                                type="button"
+                                aria-label={`Remove tag ${t}`}
+                                disabled={setTags.isPending}
+                                onClick={() => setTags.mutate(secretTags.filter((x) => x !== t))}
+                                className="text-gray-400 hover:text-red-500 disabled:opacity-50"
+                            >
+                                ×
+                            </button>
+                        </span>
+                    ))}
+                    {secretTags.length === 0 && (
+                        <span className="text-xs text-gray-400">No tags yet.</span>
+                    )}
+                </div>
+                <input
+                    value={tagDraft}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return;
+                        const t = tagDraft.trim().toLowerCase();
+                        if (!t || secretTags.includes(t)) { setTagDraft(''); return; }
+                        setTags.mutate([...secretTags, t], { onSuccess: () => setTagDraft('') });
+                    }}
+                    disabled={setTags.isPending}
+                    placeholder="Add a tag and press Enter…"
+                    className="mt-3 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-900 dark:text-white disabled:opacity-50"
+                />
+            </div>
 
             {/* History — what happened to this secret (lifecycle audit trail) */}
             {auditTrail && auditTrail.length > 0 && (

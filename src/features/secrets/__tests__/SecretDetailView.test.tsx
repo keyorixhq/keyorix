@@ -11,6 +11,8 @@ let mockVersions: { EncryptedValue: string; VersionNumber: number; CreatedAt: st
 let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
 let mockAccessLog: { AccessedBy: string; AccessTime: string; Action: string; IPAddress: string }[] = [];
 let mockAuditTrail: { id: number; event_type: string; timestamp: string; actor_type: string; description: string; success: boolean }[] = [];
+let mockTags: string[] = [];
+const setTagsMutate = vi.fn();
 
 vi.mock('../api', () => ({
     useSecretVersions: () => ({ data: mockVersions, isLoading: false, error: null }),
@@ -22,6 +24,8 @@ vi.mock('../api', () => ({
     useSecretAccessors: () => ({ data: mockAccessors }),
     useSecretAccessLog: () => ({ data: mockAccessLog }),
     useSecretAuditTrail: () => ({ data: mockAuditTrail }),
+    useSecretTags: () => ({ data: mockTags }),
+    useSetSecretTags: () => ({ mutate: setTagsMutate, isPending: false }),
     useSecretRisk: () => ({ data: null }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
 }));
@@ -201,5 +205,40 @@ describe('SecretDetailView history', () => {
         mockAuditTrail = [];
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.queryByText('History')).not.toBeInTheDocument();
+    });
+});
+
+describe('SecretDetailView tags', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+        mockAccessLog = [];
+        mockAuditTrail = [];
+        mockTags = ['prod', 'tier1'];
+        setTagsMutate.mockClear();
+    });
+
+    it('renders the tag chips', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Tags')).toBeInTheDocument();
+        expect(screen.getByText('prod')).toBeInTheDocument();
+        expect(screen.getByText('tier1')).toBeInTheDocument();
+    });
+
+    it('adds a tag on Enter', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        const input = screen.getByPlaceholderText(/add a tag/i);
+        fireEvent.change(input, { target: { value: 'web' } });
+        fireEvent.keyDown(input, { key: 'Enter' });
+        expect(setTagsMutate).toHaveBeenCalledTimes(1);
+        expect(setTagsMutate.mock.calls[0][0]).toEqual(['prod', 'tier1', 'web']);
+    });
+
+    it('removes a tag', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        fireEvent.click(screen.getByRole('button', { name: /remove tag prod/i }));
+        expect(setTagsMutate).toHaveBeenCalledTimes(1);
+        expect(setTagsMutate.mock.calls[0][0]).toEqual(['tier1']);
     });
 });

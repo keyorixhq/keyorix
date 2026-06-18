@@ -119,6 +119,19 @@ export const secretsApi = {
         return response.data.data?.audit ?? [];
     },
 
+    // tags returns the secret's tags — GET /secrets/{id}/tags.
+    async tags(id: number): Promise<string[]> {
+        const response = await apiClient.get(`/api/v1/secrets/${id}/tags`);
+        return response.data.data?.tags ?? [];
+    },
+
+    // setTags replaces the secret's tag set — PUT /secrets/{id}/tags. Returns the
+    // stored (server-normalized) tags.
+    async setTags(id: number, tags: string[]): Promise<string[]> {
+        const response = await apiClient.put(`/api/v1/secrets/${id}/tags`, { tags });
+        return response.data.data?.tags ?? [];
+    },
+
     async mostAccessed(params?: { days?: number; limit?: number; projectId?: number }): Promise<SecretUsageStat[]> {
         const query: Record<string, unknown> = {};
         if (params?.days) query.days = params.days;
