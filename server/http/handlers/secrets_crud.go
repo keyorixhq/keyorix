@@ -270,7 +270,7 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, "Error", err.Error(), status, nil)
 		return
 	}
-	h.sendSuccess(w, nil, "Secret restored")
+	h.sendSuccess(w, map[string]interface{}{"id": id, "restored": true}, "Secret restored")
 }
 
 // UpdateSecret handles PUT /api/v1/secrets/{id}
