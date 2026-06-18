@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -95,6 +96,33 @@ func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint,
 // ListMachineIdentities returns the machine identities in a project.
 func (c *KeyorixCore) ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error) {
 	return c.storage.ListMachineIdentities(ctx, projectID)
+}
+
+// ListStaleMachineIdentities returns a project's ACTIVE machine identities that have
+// not authenticated within olderThan — abandoned credentials that are candidates for
+// revocation (a security-hygiene aid). An identity that has never been seen counts
+// from its creation time, so a freshly-created one isn't flagged until it has had the
+// full window to be used. Suspended/revoked identities are excluded (already handled).
+func (c *KeyorixCore) ListStaleMachineIdentities(ctx context.Context, projectID uint, olderThan time.Duration) ([]*models.MachineIdentity, error) {
+	all, err := c.storage.ListMachineIdentities(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	cutoff := c.now().Add(-olderThan)
+	var stale []*models.MachineIdentity
+	for _, m := range all {
+		if m.State != MachineActive {
+			continue
+		}
+		last := m.CreatedAt
+		if m.LastSeenAt != nil {
+			last = *m.LastSeenAt
+		}
+		if last.Before(cutoff) {
+			stale = append(stale, m)
+		}
+	}
+	return stale, nil
 }
 
 // TransitionMachineIdentity advances a machine identity to a new state,
