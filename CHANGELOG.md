@@ -3,6 +3,36 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.57.0 — 2026-06-18
+
+Secret governance: ownership transfer, value policy, access inspector, HTTP render.
+
+### Added
+- **Secret ownership transfer** — hand a secret to another user (recover orphaned
+  secrets when an owner leaves). The current owner can transfer; an authorized caller
+  can recover a secret whose owner is gone (the lookup fails closed on a transient
+  error, so an active owner's secret can't be taken). `POST /secrets/{id}/transfer-ownership`,
+  audited `secret.owner_transferred`. ([#307])
+- **Secret-value quality policy** — an opt-in (off-by-default) gate that rejects weak/
+  placeholder values (`changeme`, too-short, a configurable denylist) at create and
+  rotate. The rejection reason never echoes the value. ([#309])
+- **"Who can access" inspector** — `GET /secrets/{id}/access` lists every user who can
+  read a secret (owner + direct + group shares, members expanded; expired shares
+  excluded), for least-privilege review. ([#310])
+- **HTTP template render** — `POST /projects/{id}/secrets/render` expands
+  `${secret:<environment>/<name>}` references within a project, resolving only the
+  caller's readable secrets. ([#306])
+
+### Fixed
+- Corrected an integration test's assertion against the paginated `/shares` response
+  shape introduced in v0.54.0. ([#308])
+
+[#306]: https://github.com/keyorixhq/keyorix/pull/306
+[#307]: https://github.com/keyorixhq/keyorix/pull/307
+[#308]: https://github.com/keyorixhq/keyorix/pull/308
+[#309]: https://github.com/keyorixhq/keyorix/pull/309
+[#310]: https://github.com/keyorixhq/keyorix/pull/310
+
 ## v0.56.0 — 2026-06-17
 
 Secret templating: render config/`.env` files from live secrets.
