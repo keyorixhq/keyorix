@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQueryClient, useMutation } from '@tanstack/react-query';
+import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
 import { TrashIcon, PlusIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { useProject, useProjectEnvironments, useRestoreEnvironment, PROJECT_KEYS } from '../../features/projects/api';
 import { apiClient } from '../../services/client';
@@ -109,6 +109,23 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         mutationFn: () => apiClient.post(`/api/v1/projects/${projectId}/secrets/resume-all`, {}),
         onSuccess: (res: any) => {
             setFreezeMsg(`Resumed ${res?.data?.data?.resumed ?? 0} secret(s) — value reads are restored.`);
+            queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+        },
+    });
+
+    // Recycle bin: soft-deleted (restorable) secrets in this project (server #323).
+    interface DeletedSecret { id: number; name: string; type: string; classification?: string; deleted_at?: string; }
+    const { data: deletedSecrets = [] } = useQuery<DeletedSecret[]>({
+        queryKey: ['project-deleted-secrets', projectId],
+        queryFn: async () => {
+            const res = await apiClient.get(`/api/v1/projects/${projectId}/secrets/deleted`);
+            return res?.data?.data?.deleted ?? [];
+        },
+    });
+    const restoreSecretMutation = useMutation({
+        mutationFn: (secretId: number) => apiClient.post(`/api/v1/secrets/${secretId}/restore`, {}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['project-deleted-secrets', projectId] });
             queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
         },
     });
@@ -309,6 +326,46 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                             {resumeAllMutation.isPending ? 'Resuming…' : 'Resume all'}
                         </Button>
                     </div>
+                </div>
+            </section>
+
+            {/* ── Recycle bin ── */}
+            <section>
+                <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Recycle bin</h2>
+                <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                    Deleted secrets stay restorable until the retention window expires. Restore one to return it
+                    to the live list.
+                </p>
+                <div className="rounded-lg border"
+                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    {deletedSecrets.length === 0 ? (
+                        <div className="px-4 py-6 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+                            Recycle bin is empty.
+                        </div>
+                    ) : (
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                            {deletedSecrets.map(s => (
+                                <li key={s.id} className="flex items-center justify-between px-4 py-3">
+                                    <div className="min-w-0">
+                                        <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
+                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
+                                            {s.type}{s.deleted_at ? ` · deleted ${new Date(s.deleted_at).toLocaleDateString()}` : ''}
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => restoreSecretMutation.mutate(s.id)}
+                                        disabled={restoreSecretMutation.isPending}
+                                        className="flex items-center gap-1 p-1.5 rounded-sm text-sm transition-opacity disabled:opacity-50"
+                                        style={{ color: 'var(--accent)' }}
+                                        title="Restore secret"
+                                    >
+                                        <ArrowPathIcon className="h-4 w-4" />Restore
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
                 </div>
             </section>
 
