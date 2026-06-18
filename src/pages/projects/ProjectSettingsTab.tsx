@@ -139,6 +139,18 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             return res?.data?.data?.orphaned ?? [];
         },
     });
+    const [reassignMsg, setReassignMsg] = useState('');
+    const reassignOwnerMutation = useMutation({
+        mutationFn: (vars: { from: number; to: number }) =>
+            apiClient.post(`/api/v1/projects/${projectId}/secrets/reassign-owner`, { from_owner_id: vars.from, to_owner_id: vars.to }),
+        onSuccess: (res: any) => {
+            setReassignMsg(`Reassigned ${res?.data?.data?.reassigned ?? 0} secret(s).`);
+            queryClient.invalidateQueries({ queryKey: ['project-orphaned-secrets', projectId] });
+            queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+        },
+    });
+    // Distinct former owners across the orphaned secrets, for the per-owner "Reassign all".
+    const orphanedOwners = Array.from(new Set(orphanedSecrets.map(s => s.owner_id)));
 
     if (projectLoading) {
         return (
@@ -344,9 +356,13 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                 <section>
                     <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Orphaned secrets</h2>
                     <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                        These secrets are owned by a user who no longer exists (offboarded). Open each and
-                        transfer ownership so it has an accountable owner.
+                        These secrets are owned by a user who no longer exists (offboarded). Re-home a former
+                        owner's secrets in bulk below, or open a secret to transfer it individually.
                     </p>
+                    {reassignOwnerMutation.isError && (
+                        <Alert type="error" title="Reassignment failed" message="Could not reassign ownership. Check the new owner's user ID." />
+                    )}
+                    {reassignMsg && <Alert type="success" title="Done" message={reassignMsg} />}
                     <div className="rounded-lg border"
                         style={{ borderColor: 'var(--warning, #a16207)', backgroundColor: 'var(--warning-subtle, #fef9c3)' }}>
                         <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
@@ -367,6 +383,27 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                 </li>
                             ))}
                         </ul>
+                        {/* Bulk re-home, one action per distinct former owner. */}
+                        <div className="border-t px-4 py-3 space-y-2" style={{ borderColor: 'var(--border)' }}>
+                            {orphanedOwners.map(ownerId => (
+                                <button
+                                    key={ownerId}
+                                    type="button"
+                                    disabled={reassignOwnerMutation.isPending}
+                                    onClick={() => {
+                                        const input = window.prompt(`Reassign all secrets from former owner #${ownerId} to which user ID?`);
+                                        const to = Number(input);
+                                        if (!input || !Number.isInteger(to) || to <= 0) return;
+                                        setReassignMsg('');
+                                        reassignOwnerMutation.mutate({ from: ownerId, to });
+                                    }}
+                                    className="flex items-center gap-1 text-sm font-medium disabled:opacity-50"
+                                    style={{ color: 'var(--accent)' }}
+                                >
+                                    <ArrowPathIcon className="h-4 w-4" />Reassign all from former owner #{ownerId}…
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 </section>
             )}
