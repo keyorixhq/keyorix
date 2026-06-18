@@ -394,6 +394,32 @@ func (h *UserHandler) RequirePasswordReset(w http.ResponseWriter, r *http.Reques
 	h.accountStateAction(w, r, "Password reset required", h.coreService.RequirePasswordReset)
 }
 
+// RevokeSessions handles POST /api/v1/users/{id}/revoke-sessions — admin force-logout:
+// terminate all of the user's active sessions without changing their account state
+// (e.g. suspected token/session theft). Scoped users.write is enforced by the router.
+func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
+	admin := middleware.GetUserFromContext(r.Context())
+	if admin == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
+		return
+	}
+	n, err := h.coreService.RevokeUserSessions(r.Context(), admin.UserID, uint(id))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"revoked": n}, "Sessions revoked")
+}
+
 // ResendSetupLink handles POST /api/v1/users/{id}/resend-setup-link (ADR-028). It
 // reissues the user's account_setup link (superseding any prior one) and re-delivers
 // it, returning the delivery outcome — including the link itself in out-of-band mode.

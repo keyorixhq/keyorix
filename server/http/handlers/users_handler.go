@@ -300,6 +300,15 @@ func SuspendUser(w http.ResponseWriter, r *http.Request) {
 	defaultUserHandler.SuspendUser(w, r)
 }
 
+// RevokeSessions handles POST /api/v1/users/{id}/revoke-sessions — admin force-logout.
+func RevokeSessions(w http.ResponseWriter, r *http.Request) {
+	if defaultUserHandler == nil {
+		sendError(w, "ServiceUnavailable", "User handler not initialised", http.StatusServiceUnavailable, nil)
+		return
+	}
+	defaultUserHandler.RevokeSessions(w, r)
+}
+
 // ReactivateUser handles POST /api/v1/users/{id}/reactivate (ADR-025).
 func ReactivateUser(w http.ResponseWriter, r *http.Request) {
 	if defaultUserHandler == nil {
