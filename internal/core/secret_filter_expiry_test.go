@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func TestApplySecretFilters_ExpiresBefore(t *testing.T) {
 		sec("never", nil),
 	}
 
-	out := c.applySecretFilters(in, &models.SecretListFilter{ExpiresBefore: &cutoff})
+	out := c.applySecretFilters(context.Background(), in, &models.SecretListFilter{ExpiresBefore: &cutoff})
 
 	names := make([]string, 0, len(out))
 	for _, s := range out {
@@ -42,6 +43,6 @@ func TestApplySecretFilters_ExpiresBefore(t *testing.T) {
 		"only secrets strictly before the cutoff pass; at-cutoff, far-future and never-expiring are excluded")
 
 	// Without the filter, everything passes (no behavior change for existing callers).
-	all := c.applySecretFilters(in, &models.SecretListFilter{})
+	all := c.applySecretFilters(context.Background(), in, &models.SecretListFilter{})
 	assert.Len(t, all, 5)
 }
