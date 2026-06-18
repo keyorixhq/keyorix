@@ -100,6 +100,19 @@ export interface SecretAccessLogEntry {
     UserAgent?: string;
 }
 
+// SecretAuditEntry is one lifecycle event of a secret, from GET /secrets/{id}/audit
+// (created, rotated, rolled-back, suspended/resumed, shared, owner-transferred,
+// reclassified, …). The diff marker never carries a plaintext value.
+export interface SecretAuditEntry {
+    id: number;
+    event_type: string;
+    timestamp: string;
+    actor_type: string;
+    user_id?: number;
+    description: string;
+    success: boolean;
+}
+
 // SecretAccessor is one user who can read a secret, from GET /secrets/{id}/access.
 export interface SecretAccessor {
     user_id: number;

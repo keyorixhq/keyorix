@@ -10,6 +10,7 @@ const mockResumeMutate = vi.fn();
 let mockVersions: { EncryptedValue: string; VersionNumber: number; CreatedAt: string }[] = [];
 let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
 let mockAccessLog: { AccessedBy: string; AccessTime: string; Action: string; IPAddress: string }[] = [];
+let mockAuditTrail: { id: number; event_type: string; timestamp: string; actor_type: string; description: string; success: boolean }[] = [];
 
 vi.mock('../api', () => ({
     useSecretVersions: () => ({ data: mockVersions, isLoading: false, error: null }),
@@ -20,6 +21,7 @@ vi.mock('../api', () => ({
     useResumeSecret: () => ({ mutate: mockResumeMutate, isPending: false }),
     useSecretAccessors: () => ({ data: mockAccessors }),
     useSecretAccessLog: () => ({ data: mockAccessLog }),
+    useSecretAuditTrail: () => ({ data: mockAuditTrail }),
     useSecretRisk: () => ({ data: null }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
 }));
@@ -172,5 +174,32 @@ describe('SecretDetailView recent access', () => {
         mockAccessLog = [];
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.queryByText('Recent access')).not.toBeInTheDocument();
+    });
+});
+
+describe('SecretDetailView history', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+        mockAccessLog = [];
+        mockAuditTrail = [
+            { id: 2, event_type: 'secret.suspended', timestamp: '2026-06-18T12:00:00Z', actor_type: 'user', description: 'frozen for incident', success: true },
+            { id: 1, event_type: 'secret.created', timestamp: '2026-06-18T10:00:00Z', actor_type: 'user', description: '', success: true },
+        ];
+    });
+
+    it('renders the history panel with humanized event labels', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('History')).toBeInTheDocument();
+        expect(screen.getByText('Suspended')).toBeInTheDocument();
+        expect(screen.getByText('Created')).toBeInTheDocument();
+        expect(screen.getByText('frozen for incident')).toBeInTheDocument();
+    });
+
+    it('omits the panel when there is no audit trail', () => {
+        mockAuditTrail = [];
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.queryByText('History')).not.toBeInTheDocument();
     });
 });

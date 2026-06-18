@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor, SecretAccessLogEntry } from '../types';
+import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor, SecretAccessLogEntry, SecretAuditEntry } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 export const secretsApi = {
@@ -110,6 +110,13 @@ export const secretsApi = {
     async accessLog(id: number, days = 30): Promise<SecretAccessLogEntry[]> {
         const response = await apiClient.get(`/api/v1/secrets/${id}/access-log`, { params: { days } });
         return response.data.data?.access_log ?? [];
+    },
+
+    // auditTrail returns the secret's lifecycle events (created/rotated/suspended/
+    // shared/…) newest-first — GET /secrets/{id}/audit?limit=N. Never a value.
+    async auditTrail(id: number, limit = 50): Promise<SecretAuditEntry[]> {
+        const response = await apiClient.get(`/api/v1/secrets/${id}/audit`, { params: { limit } });
+        return response.data.data?.audit ?? [];
     },
 
     async mostAccessed(params?: { days?: number; limit?: number; projectId?: number }): Promise<SecretUsageStat[]> {

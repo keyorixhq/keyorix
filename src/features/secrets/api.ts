@@ -115,6 +115,15 @@ export const useSecretAccessLog = (id: number, days = 30, enabled = true) => {
     });
 };
 
+export const useSecretAuditTrail = (id: number, limit = 50, enabled = true) => {
+    return useQuery({
+        queryKey: [...queryKeys.secrets.detail(id), 'audit', limit],
+        queryFn: () => secretsApi.auditTrail(id, limit),
+        enabled,
+        staleTime: 60 * 1000,
+    });
+};
+
 export const useSuspendSecret = (id: number) => {
     return useMutation({
         mutationFn: (reason?: string) => secretsApi.suspend(id, reason),

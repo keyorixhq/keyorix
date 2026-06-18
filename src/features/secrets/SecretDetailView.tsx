@@ -15,7 +15,7 @@ import {
     ShieldExclamationIcon,
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSuspendSecret, useResumeSecret } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSuspendSecret, useResumeSecret } from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
@@ -39,6 +39,25 @@ const relativeFromNow = (d: string | Date): string => {
     if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`;
     const years = Math.floor(days / 365);
     return `${years} year${years === 1 ? '' : 's'} ago`;
+};
+
+// Human-readable label for an audit event_type; falls back to the raw type with the
+// "secret." prefix stripped so unknown/new events still render sensibly.
+const auditEventLabel = (eventType: string): string => {
+    const KNOWN: Record<string, string> = {
+        'secret.created': 'Created',
+        'secret.updated': 'Updated',
+        'secret.rotated': 'Rotated',
+        'secret.rolled_back': 'Rolled back',
+        'secret.suspended': 'Suspended',
+        'secret.resumed': 'Resumed',
+        'secret.shared': 'Shared',
+        'secret.unshared': 'Unshared',
+        'secret.owner_transferred': 'Owner transferred',
+        'secret.classified': 'Reclassified',
+        'secret.deleted': 'Deleted',
+    };
+    return KNOWN[eventType] ?? eventType.replace(/^secret\./, '').replace(/_/g, ' ');
 };
 
 const RISK_BAND_STYLE: Record<RiskBand, { label: string; color: string }> = {
@@ -88,6 +107,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const rollbackMutation = useRollbackSecret(secret.id);
     const { data: accessors } = useSecretAccessors(secret.id);
     const { data: accessLog } = useSecretAccessLog(secret.id);
+    const { data: auditTrail } = useSecretAuditTrail(secret.id);
     const { data: risk } = useSecretRisk(secret.id);
     const classifyMutation = useClassifySecret(secret.id);
 
@@ -458,6 +478,35 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     {accessLog.length > 25 && (
                         <p className="text-xs text-gray-400 mt-3">Showing the 25 most recent of {accessLog.length}.</p>
                     )}
+                </div>
+            )}
+
+            {/* History — what happened to this secret (lifecycle audit trail) */}
+            {auditTrail && auditTrail.length > 0 && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">History</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                        Lifecycle events for this secret — created, rotated, suspended, shared, and more.
+                    </p>
+                    <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                        {auditTrail.map((e) => (
+                            <div key={e.id} className="flex items-center justify-between py-2 text-sm">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <ClockIcon className="h-4 w-4 text-gray-400 shrink-0" />
+                                    <span className="font-medium text-gray-900 dark:text-white">{auditEventLabel(e.event_type)}</span>
+                                    {e.description && (
+                                        <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{e.description}</span>
+                                    )}
+                                    {e.actor_type === 'machine_identity' && (
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">machine</span>
+                                    )}
+                                </div>
+                                <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap" title={new Date(e.timestamp).toLocaleString()}>
+                                    {relativeFromNow(e.timestamp)}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
