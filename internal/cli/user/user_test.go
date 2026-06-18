@@ -19,7 +19,7 @@ func TestUserCommandStructure(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"create", "get", "update", "delete", "list",
-		"suspend", "reactivate", "force-password-reset",
+		"suspend", "reactivate", "force-password-reset", "revoke-sessions",
 	} {
 		assert.Contains(t, names, expected, "expected subcommand %q", expected)
 	}
@@ -30,6 +30,7 @@ func TestLifecycleRequiredFlags(t *testing.T) {
 		"suspend":              suspendCmd,
 		"reactivate":           reactivateCmd,
 		"force-password-reset": forcePasswordResetCmd,
+		"revoke-sessions":      revokeSessionsCmd,
 	}
 	for label, c := range cmds {
 		for _, name := range []string{"id", "by"} {

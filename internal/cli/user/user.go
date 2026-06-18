@@ -24,6 +24,7 @@ func init() {
 	UserCmd.AddCommand(suspendCmd)
 	UserCmd.AddCommand(reactivateCmd)
 	UserCmd.AddCommand(forcePasswordResetCmd)
+	UserCmd.AddCommand(revokeSessionsCmd)
 	UserCmd.AddCommand(resendSetupLinkCmd)
 }
 
