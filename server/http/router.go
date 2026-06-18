@@ -301,6 +301,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities/{machineId}/oidc-bindings", catalogHandler.ListOIDCBindings)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/oidc-bindings/{bindingId}", catalogHandler.DeleteOIDCBinding)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Post("/projects/{id}/secrets/render", secretHandler.RenderTemplate)
+		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/deleted", secretHandler.DeletedSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/suspend-all", secretHandler.SuspendProjectSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/resume-all", secretHandler.ResumeProjectSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/environments", catalogHandler.ListProjectEnvironments)

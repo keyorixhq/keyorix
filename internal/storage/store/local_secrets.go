@@ -316,7 +316,14 @@ func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 // passes a mismatched environment_id.
 func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
 	query := ls.db.WithContext(ctx).Model(&models.SecretNode{})
-	if filter.IncludeDeleted {
+	if filter.DeletedOnly {
+		// Recycle bin: only soft-deleted rows, newest-deleted first (ordered in SQL
+		// so it survives the LIMIT). Unscoped reaches past GORM's deleted_at IS NULL
+		// scope; the explicit predicate then keeps just the trashed secrets.
+		query = query.Unscoped().
+			Where("secret_nodes.deleted_at IS NOT NULL").
+			Order("secret_nodes.deleted_at DESC")
+	} else if filter.IncludeDeleted {
 		// Reach soft-deleted rows too (restore UI); GORM hides them by default.
 		query = query.Unscoped()
 	}
