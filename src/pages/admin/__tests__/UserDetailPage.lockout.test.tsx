@@ -21,6 +21,7 @@ vi.mock('../../../features/admin', () => ({
     useReactivateUser: () => noop,
     useUnlockUser: () => ({ mutate: unlockMutate, isPending: false }),
     useRequirePasswordReset: () => noop,
+    useRevokeSessions: () => noop,
     useResendSetupLink: () => noop,
     AccountStateBadge: ({ state }: { state: string }) => <span>state:{state}</span>,
 }));

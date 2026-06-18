@@ -162,6 +162,12 @@ export const usersApi = {
         await apiClient.post(`/api/v1/users/${id}/require-password-reset`);
     },
 
+    // Force-logout: revoke all of the user's active sessions (admin force-logout
+    // for suspected session/token theft). Does not change account_state.
+    async revokeSessions(id: number): Promise<void> {
+        await apiClient.post(`/api/v1/users/${id}/revoke-sessions`);
+    },
+
     // Reissue + re-deliver a setup link (ADR-028). Returns the delivery outcome,
     // including the link itself for out-of-band relay.
     async resendSetupLink(id: number): Promise<SetupLinkResult> {

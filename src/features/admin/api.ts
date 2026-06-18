@@ -144,6 +144,7 @@ export const useSuspendUser = () => useUserLifecycleMutation(usersApi.suspend);
 export const useReactivateUser = () => useUserLifecycleMutation(usersApi.reactivate);
 export const useUnlockUser = () => useUserLifecycleMutation(usersApi.unlock);
 export const useRequirePasswordReset = () => useUserLifecycleMutation(usersApi.requirePasswordReset);
+export const useRevokeSessions = () => useUserLifecycleMutation(usersApi.revokeSessions);
 
 // Resend returns the delivery outcome (link for out-of-band relay), so it is a
 // plain mutation the caller reads from rather than a void lifecycle one.

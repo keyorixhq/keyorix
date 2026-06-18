@@ -10,6 +10,7 @@ import {
     useReactivateUser,
     useUnlockUser,
     useRequirePasswordReset,
+    useRevokeSessions,
     useResendSetupLink,
     AccountStateBadge,
 } from '../../features/admin';
@@ -31,13 +32,14 @@ function formatDate(iso?: string | null): string {
     }
 }
 
-type PendingAction = null | 'suspend' | 'reactivate' | 'reset' | 'unlock';
+type PendingAction = null | 'suspend' | 'reactivate' | 'reset' | 'unlock' | 'revoke-sessions';
 
 const ACTION_COPY: Record<Exclude<PendingAction, null>, { title: string; body: string; confirm: string; danger?: boolean }> = {
     suspend: { title: 'Suspend user', body: 'Block this user from logging in. This is reversible — you can reactivate them later.', confirm: 'Suspend', danger: true },
     reactivate: { title: 'Reactivate user', body: 'Return this user to the active state and restore their login.', confirm: 'Reactivate' },
     reset: { title: 'Force password reset', body: 'Confine this user to a restricted session until they set a new password at next login.', confirm: 'Force reset', danger: true },
     unlock: { title: 'Clear login lockout', body: 'Remove the active brute-force lockout so this user can sign in again immediately. Does not change their account state.', confirm: 'Unlock' },
+    'revoke-sessions': { title: 'Force log out', body: 'Revoke all of this user’s active sessions immediately. They can log back in after re-authenticating — use this for a suspected stolen session or device. Does not change their account state.', confirm: 'Force log out', danger: true },
 };
 
 export const UserDetailPage: React.FC = () => {
@@ -54,6 +56,7 @@ export const UserDetailPage: React.FC = () => {
     const reactivate = useReactivateUser();
     const unlock = useUnlockUser();
     const requireReset = useRequirePasswordReset();
+    const revokeSessions = useRevokeSessions();
     const resend = useResendSetupLink();
 
     const [pending, setPending] = useState<PendingAction>(null);
@@ -88,6 +91,7 @@ export const UserDetailPage: React.FC = () => {
         if (pending === 'suspend') suspend.mutate(userId, opts);
         else if (pending === 'reactivate') reactivate.mutate(userId, opts);
         else if (pending === 'unlock') unlock.mutate(userId, opts);
+        else if (pending === 'revoke-sessions') revokeSessions.mutate(userId, opts);
         else requireReset.mutate(userId, opts);
     };
 
@@ -187,6 +191,9 @@ export const UserDetailPage: React.FC = () => {
                         )}
                         {state === 'active' && (
                             <Button variant="outline" size="sm" onClick={() => setPending('reset')}>Force password reset</Button>
+                        )}
+                        {state !== 'suspended' && (
+                            <Button variant="outline" size="sm" onClick={() => setPending('revoke-sessions')}>Force log out</Button>
                         )}
                         {state === 'pending_first_login' && (
                             <Button variant="outline" size="sm" onClick={handleResend} disabled={resend.isPending}>
