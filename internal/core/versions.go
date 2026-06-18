@@ -105,6 +105,9 @@ func (c *KeyorixCore) GetSecretValue(ctx context.Context, secretID uint) ([]byte
 	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
 	}
+	if secret.Status == SecretStatusSuspended {
+		return nil, fmt.Errorf("secret is suspended")
+	}
 	version, err := c.storage.GetLatestSecretVersion(ctx, secretID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), err)
@@ -138,6 +141,9 @@ func (c *KeyorixCore) GetSecretValueByVersion(ctx context.Context, secretID uint
 	}
 	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
+	}
+	if secret.Status == SecretStatusSuspended {
+		return nil, fmt.Errorf("secret is suspended")
 	}
 	version, err := c.GetSecretVersion(ctx, secretID, versionNumber)
 	if err != nil {
