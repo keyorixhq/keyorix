@@ -96,6 +96,23 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         },
     });
 
+    // Incident-response: freeze / thaw every secret in the project (server #317).
+    const [freezeMsg, setFreezeMsg] = useState('');
+    const suspendAllMutation = useMutation({
+        mutationFn: () => apiClient.post(`/api/v1/projects/${projectId}/secrets/suspend-all`, {}),
+        onSuccess: (res: any) => {
+            setFreezeMsg(`Froze ${res?.data?.data?.suspended ?? 0} secret(s) — value reads are blocked.`);
+            queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+        },
+    });
+    const resumeAllMutation = useMutation({
+        mutationFn: () => apiClient.post(`/api/v1/projects/${projectId}/secrets/resume-all`, {}),
+        onSuccess: (res: any) => {
+            setFreezeMsg(`Resumed ${res?.data?.data?.resumed ?? 0} secret(s) — value reads are restored.`);
+            queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+        },
+    });
+
     if (projectLoading) {
         return (
             <div className="space-y-3 animate-pulse">
@@ -254,6 +271,43 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                 <PlusIcon className="h-4 w-4 mr-1" />Add
                             </Button>
                         </div>
+                    </div>
+                </div>
+            </section>
+
+            {/* ── Incident response ── */}
+            <section>
+                <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>Incident response</h2>
+                <div className="rounded-lg border p-5 space-y-3"
+                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        Freeze blocks value reads of every secret in this project (versions and shares are
+                        preserved); resume restores them. Use during incident response.
+                    </p>
+                    {(suspendAllMutation.isError || resumeAllMutation.isError) && (
+                        <Alert type="error" title="Error" message="The action failed. Please try again." />
+                    )}
+                    {freezeMsg && <Alert type="success" title="Done" message={freezeMsg} />}
+                    <div className="flex gap-2">
+                        <Button
+                            variant="outline"
+                            disabled={suspendAllMutation.isPending}
+                            onClick={() => {
+                                if (window.confirm('Freeze ALL secrets in this project? Value reads will be blocked until you resume them.')) {
+                                    setFreezeMsg('');
+                                    suspendAllMutation.mutate();
+                                }
+                            }}
+                        >
+                            {suspendAllMutation.isPending ? 'Freezing…' : 'Freeze all secrets'}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            disabled={resumeAllMutation.isPending}
+                            onClick={() => { setFreezeMsg(''); resumeAllMutation.mutate(); }}
+                        >
+                            {resumeAllMutation.isPending ? 'Resuming…' : 'Resume all'}
+                        </Button>
                     </div>
                 </div>
             </section>
