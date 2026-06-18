@@ -63,6 +63,42 @@ var forcePasswordResetCmd = &cobra.Command{
 	},
 }
 
+var (
+	revokeSessionsUserID uint
+	revokeSessionsBy     string
+)
+
+var revokeSessionsCmd = &cobra.Command{
+	Use:   "revoke-sessions",
+	Short: "Force-logout a user (revoke all active sessions)",
+	Long: "Terminate every active session of a user immediately, without changing their\n" +
+		"account state — for suspected session/token theft. The user can log back in after\n" +
+		"re-authenticating. To block login entirely, use 'suspend' instead.",
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if revokeSessionsUserID == 0 {
+			return errors.New("user id is required (use --id)")
+		}
+		if revokeSessionsBy == "" {
+			return errors.New("acting admin email is required (use --by)")
+		}
+		service, err := common.InitializeCoreService()
+		if err != nil {
+			return fmt.Errorf("failed to initialize service: %w", err)
+		}
+		ctx := context.Background()
+		adminID, err := resolveAdminID(ctx, service, revokeSessionsBy)
+		if err != nil {
+			return err
+		}
+		n, err := service.RevokeUserSessions(ctx, adminID, revokeSessionsUserID)
+		if err != nil {
+			return fmt.Errorf("failed: %w", err)
+		}
+		fmt.Printf("Revoked %d active session(s) for user %d.\n", n, revokeSessionsUserID)
+		return nil
+	},
+}
+
 func init() {
 	suspendCmd.Flags().UintVar(&suspendUserID, "id", 0, "Target user ID (required)")
 	suspendCmd.Flags().StringVar(&suspendBy, "by", "", "Acting admin email (required, for audit)")
@@ -78,6 +114,11 @@ func init() {
 	forcePasswordResetCmd.Flags().StringVar(&forcePasswordResetBy, "by", "", "Acting admin email (required, for audit)")
 	_ = forcePasswordResetCmd.MarkFlagRequired("id")
 	_ = forcePasswordResetCmd.MarkFlagRequired("by")
+
+	revokeSessionsCmd.Flags().UintVar(&revokeSessionsUserID, "id", 0, "Target user ID (required)")
+	revokeSessionsCmd.Flags().StringVar(&revokeSessionsBy, "by", "", "Acting admin email (required, for audit)")
+	_ = revokeSessionsCmd.MarkFlagRequired("id")
+	_ = revokeSessionsCmd.MarkFlagRequired("by")
 }
 
 // runLifecycle is the shared body for the three account-state commands: it
