@@ -333,6 +333,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/rollback", secretHandler.RollbackSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/suspend", secretHandler.SuspendSecret)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/resume", secretHandler.ResumeSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/share", shareHandler.ShareSecret)
 
 			r.With(customMiddleware.RequireScopedPermission("secrets.delete", secretScope)).Delete("/{id}", secretHandler.DeleteSecret)
