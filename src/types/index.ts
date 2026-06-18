@@ -90,6 +90,16 @@ export interface ShareFormData {
     expiresAt?: string;
 }
 
+// SecretAccessLogEntry is one recorded read of a secret, from
+// GET /secrets/{id}/access-log (server JSON is PascalCase).
+export interface SecretAccessLogEntry {
+    AccessedBy: string;
+    AccessTime: string;
+    Action: string;
+    IPAddress: string;
+    UserAgent?: string;
+}
+
 // SecretAccessor is one user who can read a secret, from GET /secrets/{id}/access.
 export interface SecretAccessor {
     user_id: number;

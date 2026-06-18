@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor } from '../types';
+import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor, SecretAccessLogEntry } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 export const secretsApi = {
@@ -103,6 +103,13 @@ export const secretsApi = {
     async accessList(id: number): Promise<SecretAccessor[]> {
         const response = await apiClient.get(`/api/v1/secrets/${id}/access`);
         return response.data.data?.accessors ?? [];
+    },
+
+    // accessLog returns the secret's recent reads (who/when/from where) —
+    // GET /secrets/{id}/access-log?days=N.
+    async accessLog(id: number, days = 30): Promise<SecretAccessLogEntry[]> {
+        const response = await apiClient.get(`/api/v1/secrets/${id}/access-log`, { params: { days } });
+        return response.data.data?.access_log ?? [];
     },
 
     async mostAccessed(params?: { days?: number; limit?: number; projectId?: number }): Promise<SecretUsageStat[]> {

@@ -15,7 +15,7 @@ import {
     ShieldExclamationIcon,
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSuspendSecret, useResumeSecret } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSuspendSecret, useResumeSecret } from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
@@ -87,6 +87,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const rotateMutation = useRotateSecret(secret.id);
     const rollbackMutation = useRollbackSecret(secret.id);
     const { data: accessors } = useSecretAccessors(secret.id);
+    const { data: accessLog } = useSecretAccessLog(secret.id);
     const { data: risk } = useSecretRisk(secret.id);
     const classifyMutation = useClassifySecret(secret.id);
 
@@ -430,6 +431,33 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             </div>
                         ))}
                     </div>
+                </div>
+            )}
+
+            {/* Recent access — who has read this secret */}
+            {accessLog && accessLog.length > 0 && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Recent access</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                        Reads of this secret in the last 30 days.
+                    </p>
+                    <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                        {accessLog.slice(0, 25).map((e, i) => (
+                            <div key={i} className="flex items-center justify-between py-2 text-sm">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <UserIcon className="h-4 w-4 text-gray-400 shrink-0" />
+                                    <span className="font-medium text-gray-900 dark:text-white">{e.AccessedBy || 'unknown'}</span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{e.Action}{e.IPAddress ? ` · ${e.IPAddress}` : ''}</span>
+                                </div>
+                                <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap" title={new Date(e.AccessTime).toLocaleString()}>
+                                    {relativeFromNow(e.AccessTime)}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                    {accessLog.length > 25 && (
+                        <p className="text-xs text-gray-400 mt-3">Showing the 25 most recent of {accessLog.length}.</p>
+                    )}
                 </div>
             )}
 

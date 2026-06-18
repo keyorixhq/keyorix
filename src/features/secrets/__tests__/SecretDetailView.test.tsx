@@ -9,6 +9,7 @@ const mockSuspendMutate = vi.fn();
 const mockResumeMutate = vi.fn();
 let mockVersions: { EncryptedValue: string; VersionNumber: number; CreatedAt: string }[] = [];
 let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
+let mockAccessLog: { AccessedBy: string; AccessTime: string; Action: string; IPAddress: string }[] = [];
 
 vi.mock('../api', () => ({
     useSecretVersions: () => ({ data: mockVersions, isLoading: false, error: null }),
@@ -18,6 +19,7 @@ vi.mock('../api', () => ({
     useSuspendSecret: () => ({ mutate: mockSuspendMutate, isPending: false }),
     useResumeSecret: () => ({ mutate: mockResumeMutate, isPending: false }),
     useSecretAccessors: () => ({ data: mockAccessors }),
+    useSecretAccessLog: () => ({ data: mockAccessLog }),
     useSecretRisk: () => ({ data: null }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
 }));
@@ -147,5 +149,28 @@ describe('SecretDetailView suspend/resume', () => {
         expect(screen.getByTestId('suspended-badge')).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: /^Resume$/i }));
         expect(mockResumeMutate).toHaveBeenCalled();
+    });
+});
+
+describe('SecretDetailView recent access', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+        mockAccessLog = [
+            { AccessedBy: 'alice', AccessTime: '2026-06-18T10:00:00Z', Action: 'read', IPAddress: '10.0.0.7' },
+        ];
+    });
+
+    it('renders the recent-access panel with accessor + ip', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Recent access')).toBeInTheDocument();
+        expect(screen.getByText(/10\.0\.0\.7/)).toBeInTheDocument();
+    });
+
+    it('omits the panel when there is no access log', () => {
+        mockAccessLog = [];
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.queryByText('Recent access')).not.toBeInTheDocument();
     });
 });

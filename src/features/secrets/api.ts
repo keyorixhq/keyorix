@@ -106,6 +106,15 @@ export const useSecretAccessors = (id: number, enabled = true) => {
     });
 };
 
+export const useSecretAccessLog = (id: number, days = 30, enabled = true) => {
+    return useQuery({
+        queryKey: [...queryKeys.secrets.detail(id), 'access-log', days],
+        queryFn: () => secretsApi.accessLog(id, days),
+        enabled,
+        staleTime: 60 * 1000,
+    });
+};
+
 export const useSuspendSecret = (id: number) => {
     return useMutation({
         mutationFn: (reason?: string) => secretsApi.suspend(id, reason),
