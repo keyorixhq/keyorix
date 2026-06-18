@@ -3,6 +3,26 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.58.0 — 2026-06-18
+
+Incident response: suspend/resume a secret.
+
+### Added
+- **Suspend / resume a secret** — freeze value reads of a suspected-compromised
+  secret without deleting it (versions, shares, and audit trail are preserved);
+  reversible. A suspended secret refuses reads on every value path, even for the
+  owner, while metadata/listing/management stay available. `POST /secrets/{id}/suspend`
+  (optional reason) and `/resume` (scoped `secrets.write`, audited
+  `secret.suspended` / `secret.resumed`), plus `keyorix secret suspend|resume`. ([#313], [#314])
+
+### Fixed
+- The secret-value quality policy is now enforced on `UpdateSecret` too, not just
+  create and rotate — closing a path where a weak value could be set via update. ([#312])
+
+[#312]: https://github.com/keyorixhq/keyorix/pull/312
+[#313]: https://github.com/keyorixhq/keyorix/pull/313
+[#314]: https://github.com/keyorixhq/keyorix/pull/314
+
 ## v0.57.0 — 2026-06-18
 
 Secret governance: ownership transfer, value policy, access inspector, HTTP render.
