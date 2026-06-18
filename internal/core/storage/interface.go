@@ -525,6 +525,10 @@ type SecretFilter struct {
 	// IncludeDeleted, when true, also returns soft-deleted secrets (ADR-033) —
 	// for a restore UI. Default false: GORM auto-scopes deleted_at IS NULL.
 	IncludeDeleted bool
+	// DeletedOnly, when true, returns ONLY soft-deleted secrets (deleted_at IS NOT
+	// NULL) — the recycle-bin / restore view. Implies reaching past GORM's
+	// soft-delete scope. Takes precedence over IncludeDeleted.
+	DeletedOnly bool
 }
 
 // DriftSecretRow is one secret's drift-relevant projection: which environment it
