@@ -31,6 +31,31 @@ func (h *CatalogHandler) ListMachineIdentities(w http.ResponseWriter, r *http.Re
 	sendSuccess(w, map[string]interface{}{"machine_identities": identities}, "")
 }
 
+// ListStaleMachineIdentities handles GET /api/v1/projects/{id}/machine-identities/stale?days=N
+// — active machine identities not seen within the window (default 90, capped 3650).
+func (h *CatalogHandler) ListStaleMachineIdentities(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	days := 90
+	if v := r.URL.Query().Get("days"); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil && n > 0 {
+			days = n
+		}
+	}
+	if days > 3650 {
+		days = 3650
+	}
+	identities, err := h.coreService.ListStaleMachineIdentities(r.Context(), uint(id), time.Duration(days)*24*time.Hour)
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"machine_identities": identities, "total": len(identities)}, "")
+}
+
 // CreateMachineIdentity handles POST /api/v1/projects/{id}/machine-identities.
 func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)

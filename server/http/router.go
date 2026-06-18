@@ -285,6 +285,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
 		// Machine identities (ADR-023): non-human members, segmented from humans.
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities", catalogHandler.ListMachineIdentities)
+		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities/stale", catalogHandler.ListStaleMachineIdentities)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities", catalogHandler.CreateMachineIdentity)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/machine-identities/{machineId}", catalogHandler.TransitionMachineIdentity)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/classification", catalogHandler.ClassifyMachineIdentity)
