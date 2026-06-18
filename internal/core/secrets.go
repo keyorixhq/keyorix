@@ -136,6 +136,13 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	if err := c.validateUpdateSecretRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
+	// An update that changes the value writes a new version, so it must clear the
+	// value policy too (otherwise a weak value bypasses the create/rotate gate).
+	if len(req.Value) > 0 {
+		if err := c.secretValuePolicy.Validate(req.Value); err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		}
+	}
 	secret, err := c.storage.GetSecret(ctx, req.ID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
