@@ -3,6 +3,28 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.60.0 — 2026-06-18
+
+Secret audit trail and a recycle bin for deleted secrets.
+
+### Added
+- **Per-secret audit trail** — `GET /secrets/{id}/audit?limit=N` lists a secret's
+  lifecycle events (created, rotated, rolled-back, suspended/resumed, shared,
+  owner-transferred, reclassified) newest-first, completing the investigation triad
+  alongside the access inspector and access history. Metadata only — never a value. ([#321])
+- **CLI `secret audit`** — `keyorix secret audit --id <id> [--limit N]` prints a
+  secret's lifecycle events. ([#322])
+- **Recycle bin** — `GET /projects/{id}/secrets/deleted?limit=N` lists a project's
+  soft-deleted (restorable) secrets, newest-deleted first, so an operator can find
+  what to restore (the existing restore route needs the secret's ID). ([#323])
+- **CLI `secret trash` / `secret restore`** — `keyorix secret trash --project <id>`
+  lists restorable secrets and `keyorix secret restore --id <id>` brings one back. ([#324])
+
+[#321]: https://github.com/keyorixhq/keyorix/pull/321
+[#322]: https://github.com/keyorixhq/keyorix/pull/322
+[#323]: https://github.com/keyorixhq/keyorix/pull/323
+[#324]: https://github.com/keyorixhq/keyorix/pull/324
+
 ## v0.59.0 — 2026-06-18
 
 Secret investigation, project-wide incident response, and machine-identity hygiene.
