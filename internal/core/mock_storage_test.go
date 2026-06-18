@@ -1095,6 +1095,14 @@ func (m *MockStorage) ListPersonalAccessTokensByUser(ctx context.Context, userID
 	return args.Get(0).([]*models.PersonalAccessToken), args.Error(1)
 }
 
+func (m *MockStorage) ListActivePersonalAccessTokens(ctx context.Context) ([]*models.PersonalAccessToken, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.PersonalAccessToken), args.Error(1)
+}
+
 func (m *MockStorage) GetPersonalAccessTokenByID(ctx context.Context, id uint) (*models.PersonalAccessToken, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {

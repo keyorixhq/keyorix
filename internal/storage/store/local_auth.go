@@ -201,6 +201,19 @@ func (ls *LocalStorage) ListPersonalAccessTokensByUser(ctx context.Context, user
 	return tokens, nil
 }
 
+// ListActivePersonalAccessTokens returns every non-revoked PAT, newest first — the
+// deployment-wide token-hygiene view.
+func (ls *LocalStorage) ListActivePersonalAccessTokens(ctx context.Context) ([]*models.PersonalAccessToken, error) {
+	var tokens []*models.PersonalAccessToken
+	if err := ls.db.WithContext(ctx).
+		Where("revoked = ?", false).
+		Order("created_at DESC").
+		Find(&tokens).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return tokens, nil
+}
+
 func (ls *LocalStorage) GetPersonalAccessTokenByID(ctx context.Context, id uint) (*models.PersonalAccessToken, error) {
 	var t models.PersonalAccessToken
 	if err := ls.db.WithContext(ctx).First(&t, id).Error; err != nil {

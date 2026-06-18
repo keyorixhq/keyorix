@@ -86,6 +86,51 @@ func (h *PATHandler) ListPATs(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, out, "")
 }
 
+// patHygieneResponse is one flagged token in the admin hygiene view: the safe PAT DTO
+// (no hash) plus the owner and the reasons it was flagged.
+type patHygieneResponse struct {
+	patResponse
+	UserID  uint `json:"user_id"`
+	Expired bool `json:"expired"`
+	Stale   bool `json:"stale"`
+}
+
+// PATHygiene handles GET /api/v1/pat-hygiene?days=N — the deployment-wide list of
+// non-revoked tokens that are expired-but-active or stale (unused for the window), so
+// an admin can revoke token sprawl. Global system.read is enforced by the router.
+// days defaults to 90 and is capped at 3650.
+func (h *PATHandler) PATHygiene(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	days := 90
+	if v := r.URL.Query().Get("days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			days = n
+		}
+	}
+	if days > 3650 {
+		days = 3650
+	}
+
+	entries, err := h.coreService.ListPATHygiene(r.Context(), time.Duration(days)*24*time.Hour)
+	if err != nil {
+		sendError(w, "InternalError", "Failed to list token hygiene", http.StatusInternalServerError, nil)
+		return
+	}
+	out := make([]patHygieneResponse, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, patHygieneResponse{
+			patResponse: toPATResponse(e.Token),
+			UserID:      e.Token.UserID,
+			Expired:     e.Expired,
+			Stale:       e.Stale,
+		})
+	}
+	sendSuccess(w, map[string]interface{}{"tokens": out, "total": len(out)}, "")
+}
+
 type createPATRequestBody struct {
 	Name      string  `json:"name"`
 	ExpiresAt *string `json:"expires_at"` // RFC3339; omit/null for a non-expiring token
