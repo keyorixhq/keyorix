@@ -399,6 +399,42 @@ func (ls *LocalStorage) ListOrphanedSecrets(ctx context.Context, projectID uint)
 	return secrets, nil
 }
 
+// GetSecretTags returns the secret's tag names, sorted.
+func (ls *LocalStorage) GetSecretTags(ctx context.Context, secretID uint) ([]string, error) {
+	var names []string
+	err := ls.db.WithContext(ctx).
+		Model(&models.Tag{}).
+		Joins("JOIN secret_tags ON secret_tags.tag_id = tags.id").
+		Where("secret_tags.secret_node_id = ?", secretID).
+		Order("tags.name ASC").
+		Pluck("tags.name", &names).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return names, nil
+}
+
+// SetSecretTags replaces the secret's tag associations with exactly tagNames,
+// upserting any new Tag rows by name. Runs in a transaction so the secret never
+// observes a partial tag set.
+func (ls *LocalStorage) SetSecretTags(ctx context.Context, secretID uint, tagNames []string) error {
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("secret_node_id = ?", secretID).Delete(&models.SecretTag{}).Error; err != nil {
+			return fmt.Errorf("clear tags: %w", err)
+		}
+		for _, name := range tagNames {
+			var tag models.Tag
+			if err := tx.Where(models.Tag{Name: name}).FirstOrCreate(&tag).Error; err != nil {
+				return fmt.Errorf("upsert tag %q: %w", name, err)
+			}
+			if err := tx.Create(&models.SecretTag{SecretNodeID: secretID, TagID: tag.ID}).Error; err != nil {
+				return fmt.Errorf("link tag %q: %w", name, err)
+			}
+		}
+		return nil
+	})
+}
+
 // --- Versions ---
 
 // CreateSecretVersion creates a new version of a secret.

@@ -476,6 +476,19 @@ func (m *MockStorage) ListProjectSecretsForDrift(ctx context.Context, projectID 
 	return args.Get(0).([]storage.DriftSecretRow), args.Error(1)
 }
 
+func (m *MockStorage) GetSecretTags(ctx context.Context, secretID uint) ([]string, error) {
+	args := m.Called(ctx, secretID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
+func (m *MockStorage) SetSecretTags(ctx context.Context, secretID uint, tagNames []string) error {
+	args := m.Called(ctx, secretID, tagNames)
+	return args.Error(0)
+}
+
 func (m *MockStorage) GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error) {
 	args := m.Called(ctx, secretID)
 	if args.Get(0) == nil {

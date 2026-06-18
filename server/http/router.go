@@ -332,6 +332,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/access", secretHandler.ListAccessors)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/access-log", secretHandler.AccessHistory)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/audit", secretHandler.AuditTrail)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/tags", secretHandler.GetTags)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}/tags", secretHandler.SetTags)
 
 			// Create: authorized inside the handler (scope comes from the body).
 			r.Post("/", secretHandler.CreateSecret)
