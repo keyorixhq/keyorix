@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -20,16 +21,16 @@ func TestApplySecretFilters_Classification(t *testing.T) {
 	}
 
 	restricted := "restricted"
-	got := c.applySecretFilters(in, &models.SecretListFilter{Classification: &restricted})
+	got := c.applySecretFilters(context.Background(), in, &models.SecretListFilter{Classification: &restricted})
 	assert.Len(t, got, 1)
 	assert.Equal(t, "r1", got[0].Name)
 
 	unclassified := "unclassified"
-	got = c.applySecretFilters(in, &models.SecretListFilter{Classification: &unclassified})
+	got = c.applySecretFilters(context.Background(), in, &models.SecretListFilter{Classification: &unclassified})
 	assert.Len(t, got, 1)
 	assert.Equal(t, "u1", got[0].Name, "'unclassified' matches the empty label")
 
 	// No classification filter → all pass through.
-	got = c.applySecretFilters(in, &models.SecretListFilter{})
+	got = c.applySecretFilters(context.Background(), in, &models.SecretListFilter{})
 	assert.Len(t, got, 3)
 }

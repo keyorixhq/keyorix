@@ -35,7 +35,7 @@ func (c *KeyorixCore) ListSecretsInScope(ctx context.Context, filter *models.Sec
 	for _, secret := range secrets {
 		all = append(all, &models.SecretWithSharingInfo{SecretNode: secret})
 	}
-	all = c.applySecretFilters(all, filter)
+	all = c.applySecretFilters(ctx, all, filter)
 	c.sortSecrets(all, filter.SortBy, filter.SortOrder)
 
 	total := int64(len(all))
@@ -112,7 +112,7 @@ func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uin
 	}
 
 	// Apply post-fetch filters (search, type, shared-only)
-	all = c.applySecretFilters(all, filter)
+	all = c.applySecretFilters(ctx, all, filter)
 
 	// Sort
 	c.sortSecrets(all, filter.SortBy, filter.SortOrder)
@@ -225,10 +225,17 @@ func (c *KeyorixCore) getSharedSecretsWithSharingInfo(ctx context.Context, userI
 	return result, nil
 }
 
-func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo, filter *models.SecretListFilter) []*models.SecretWithSharingInfo {
+func (c *KeyorixCore) applySecretFilters(ctx context.Context, secrets []*models.SecretWithSharingInfo, filter *models.SecretListFilter) []*models.SecretWithSharingInfo {
+	// Tag filter: require every requested tag (AND). Resolved per secret only when a
+	// tag filter is present, so the common no-tag list path does no extra queries.
+	want := normalizeTagFilter(filter.Tags)
+
 	var out []*models.SecretWithSharingInfo
 	for _, s := range secrets {
 		if filter.ShowSharedOnly && !s.IsShared {
+			continue
+		}
+		if len(want) > 0 && !c.secretHasAllTags(ctx, s.ID, want) {
 			continue
 		}
 		if filter.Search != nil && *filter.Search != "" {
@@ -256,6 +263,41 @@ func (c *KeyorixCore) applySecretFilters(secrets []*models.SecretWithSharingInfo
 		out = append(out, s)
 	}
 	return out
+}
+
+// normalizeTagFilter trims/lowercases/de-duplicates requested tag filters (matching
+// how tags are stored), dropping empties.
+func normalizeTagFilter(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		t := strings.ToLower(strings.TrimSpace(raw))
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// secretHasAllTags reports whether the secret carries every tag in want. A storage
+// error is treated as "no match" (fail closed — the secret is excluded).
+func (c *KeyorixCore) secretHasAllTags(ctx context.Context, secretID uint, want []string) bool {
+	have, err := c.storage.GetSecretTags(ctx, secretID)
+	if err != nil {
+		return false
+	}
+	set := make(map[string]bool, len(have))
+	for _, t := range have {
+		set[t] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			return false
+		}
+	}
+	return true
 }
 
 // sortSecrets sorts the secret list by name, created_at, updated_at, or owner.

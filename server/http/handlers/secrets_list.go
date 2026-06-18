@@ -78,6 +78,15 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		// with no label (handled in the storage layer).
 		filter.Classification = &cls
 	}
+	// Tag filter: repeatable ?tag=a&tag=b or a single comma-separated ?tag=a,b.
+	// A secret must carry every requested tag (AND).
+	for _, raw := range r.URL.Query()["tag"] {
+		for _, part := range strings.Split(raw, ",") {
+			if t := strings.TrimSpace(part); t != "" {
+				filter.Tags = append(filter.Tags, t)
+			}
+		}
+	}
 	if projectStr := r.URL.Query().Get("project_id"); projectStr != "" {
 		if pID, err := strconv.ParseUint(projectStr, 10, 32); err == nil {
 			pIDUint := uint(pID)
