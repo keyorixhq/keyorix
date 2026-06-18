@@ -308,21 +308,23 @@ func TestSharingHTTPIntegration(t *testing.T) {
 			err = json.NewDecoder(resp.Body).Decode(&response)
 			require.NoError(t, err)
 
+			// GET /api/v1/shares returns a paginated list of enriched ShareViews
+			// (camelCase): {data: [...], total, page, pageSize, totalPages} (#288).
 			data := response["data"].(map[string]interface{})
-			shares := data["shares"].([]interface{})
+			shares := data["data"].([]interface{})
 			assert.GreaterOrEqual(t, len(shares), 1)
 
 			// Find our share
 			var foundShare map[string]interface{}
 			for _, s := range shares {
 				share := s.(map[string]interface{})
-				if uint(share["ID"].(float64)) == shareID {
+				if uint(share["id"].(float64)) == shareID {
 					foundShare = share
 					break
 				}
 			}
 			require.NotNil(t, foundShare)
-			assert.Equal(t, "write", foundShare["Permission"])
+			assert.Equal(t, "write", foundShare["permission"])
 		})
 
 		// Step 7: Revoke the share
