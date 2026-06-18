@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '../../services/client';
 import { adminApi } from '../../services/admin';
 import { usersApi, type ProjectAssignment } from '../../services/users';
 import { queryKeys } from '../../lib/queryClient';
@@ -174,6 +175,32 @@ export const useStaleAccounts = (days = 7) =>
     useQuery({
         queryKey: ['stale-accounts', days],
         queryFn: () => usersApi.getStale({ state: 'pending_first_login', days }),
+        retry: false,
+        staleTime: 60 * 1000,
+    });
+
+// PATHygieneToken is one flagged personal access token from GET /pat-hygiene
+// (admin, system.read). Never carries the token secret — only the display prefix.
+export interface PATHygieneToken {
+    id: number;
+    name: string;
+    token_prefix: string;
+    user_id: number;
+    expires_at?: string | null;
+    last_used_at?: string | null;
+    expired: boolean;
+    stale: boolean;
+}
+
+// useStalePATs lists deployment-wide stale / expired-but-active tokens (#330).
+// admin-only; a 403 yields no rows (retry:false), so non-admins render nothing.
+export const useStalePATs = (days = 90) =>
+    useQuery({
+        queryKey: ['pat-hygiene', days],
+        queryFn: async (): Promise<PATHygieneToken[]> => {
+            const res = await apiClient.get('/api/v1/pat-hygiene', { params: { days } });
+            return res?.data?.data?.tokens ?? [];
+        },
         retry: false,
         staleTime: 60 * 1000,
     });
