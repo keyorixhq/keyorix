@@ -3,6 +3,37 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.61.0 — 2026-06-18
+
+Offboarding & incident response: cut off a departing or compromised user across
+all three credential types they hold — owned secrets, personal access tokens, and
+live sessions.
+
+### Added
+- **Orphaned-secret detection** — `GET /projects/{id}/secrets/orphaned` lists a
+  project's secrets whose owner is no longer a live user (offboarding), plus
+  `keyorix secret orphaned` and a project-settings alert in the web UI. ([#326], [#327])
+- **Bulk owner reassignment** — `POST /projects/{id}/secrets/reassign-owner`
+  re-homes every secret a departed user owned to a new owner in one call (each
+  re-authorized and audited individually), plus `keyorix secret reassign-owner`
+  and a per-former-owner "Reassign all" web action. ([#328], [#329])
+- **Personal-access-token hygiene** — `GET /pat-hygiene?days=N` surfaces the
+  deployment-wide non-revoked tokens that are expired-but-active or stale (token
+  sprawl), plus `keyorix pat hygiene` and an admin web panel. ([#330], [#331])
+- **Admin force-logout** — `POST /users/{id}/revoke-sessions` terminates all of a
+  user's active sessions without changing their account state (suspected session/
+  token theft), plus `keyorix user revoke-sessions` and a "Force log out" action
+  on the user detail page. ([#332], [#333])
+
+[#326]: https://github.com/keyorixhq/keyorix/pull/326
+[#327]: https://github.com/keyorixhq/keyorix/pull/327
+[#328]: https://github.com/keyorixhq/keyorix/pull/328
+[#329]: https://github.com/keyorixhq/keyorix/pull/329
+[#330]: https://github.com/keyorixhq/keyorix/pull/330
+[#331]: https://github.com/keyorixhq/keyorix/pull/331
+[#332]: https://github.com/keyorixhq/keyorix/pull/332
+[#333]: https://github.com/keyorixhq/keyorix/pull/333
+
 ## v0.60.0 — 2026-06-18
 
 Secret audit trail and a recycle bin for deleted secrets.
