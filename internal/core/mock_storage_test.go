@@ -460,6 +460,14 @@ func (m *MockStorage) ListSecrets(ctx context.Context, filter *storage.SecretFil
 	return args.Get(0).([]*models.SecretNode), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *MockStorage) ListOrphanedSecrets(ctx context.Context, projectID uint) ([]*models.SecretNode, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.SecretNode), args.Error(1)
+}
+
 func (m *MockStorage) ListProjectSecretsForDrift(ctx context.Context, projectID uint) ([]storage.DriftSecretRow, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {

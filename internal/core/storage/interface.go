@@ -186,6 +186,10 @@ type Storage interface {
 	// so the restore route can resolve a deleted secret's scope (ADR-033).
 	GetSecretIncludingDeleted(ctx context.Context, id uint) (*models.SecretNode, error)
 	ListSecrets(ctx context.Context, filter *SecretFilter) ([]*models.SecretNode, int64, error)
+	// ListOrphanedSecrets returns a project's live secrets whose owner is no longer
+	// a live user (the owner was deleted/soft-deleted) — offboarding hygiene, so an
+	// admin can re-assign ownership. Scoped to the project via the environment JOIN.
+	ListOrphanedSecrets(ctx context.Context, projectID uint) ([]*models.SecretNode, error)
 	// ListProjectSecretsForDrift returns one lightweight row per secret in the
 	// project (folders excluded, secrets in soft-deleted environments excluded),
 	// carrying just the fields cross-environment drift detection pivots on:
