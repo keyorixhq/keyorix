@@ -35,6 +35,7 @@ export const secretsApi = {
             Expiration: s.Expiration ?? null,
             lastRotatedAt: s.LastRotatedAt ?? null,
             classification: s.Classification ?? s.classification ?? '',
+            status: s.Status ?? s.status ?? 'active',
         }));
         return {
             data: mappedSecrets,
@@ -84,6 +85,16 @@ export const secretsApi = {
     // requires the caller to be the current owner (or the owner to be gone).
     async transferOwnership(id: number, newOwnerId: number) {
         const response = await apiClient.post(`/api/v1/secrets/${id}/transfer-ownership`, { new_owner_id: newOwnerId });
+        return response.data;
+    },
+
+    // suspend freezes value reads of the secret (incident response); resume restores.
+    async suspend(id: number, reason?: string) {
+        const response = await apiClient.post(`/api/v1/secrets/${id}/suspend`, reason ? { reason } : {});
+        return response.data;
+    },
+    async resume(id: number) {
+        const response = await apiClient.post(`/api/v1/secrets/${id}/resume`, {});
         return response.data;
     },
 

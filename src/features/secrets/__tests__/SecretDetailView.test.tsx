@@ -5,6 +5,8 @@ import { Secret } from '../../../types';
 
 const mockClassifyMutate = vi.fn();
 const mockRollbackMutate = vi.fn();
+const mockSuspendMutate = vi.fn();
+const mockResumeMutate = vi.fn();
 let mockVersions: { EncryptedValue: string; VersionNumber: number; CreatedAt: string }[] = [];
 let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
 
@@ -13,6 +15,8 @@ vi.mock('../api', () => ({
     useRotateSecret: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
     useRollbackSecret: () => ({ mutate: mockRollbackMutate, isPending: false, isError: false }),
     useTransferOwnership: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
+    useSuspendSecret: () => ({ mutate: mockSuspendMutate, isPending: false }),
+    useResumeSecret: () => ({ mutate: mockResumeMutate, isPending: false }),
     useSecretAccessors: () => ({ data: mockAccessors }),
     useSecretRisk: () => ({ data: null }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
@@ -119,5 +123,29 @@ describe('SecretDetailView access list', () => {
         mockAccessors = [];
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.queryByText('Who can access')).not.toBeInTheDocument();
+    });
+});
+
+describe('SecretDetailView suspend/resume', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+    });
+
+    it('shows Suspend for an active secret and calls suspend on confirm', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        render(<SecretDetailView secret={makeSecret({ status: 'active' })} />);
+        expect(screen.queryByTestId('suspended-badge')).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: /^Suspend$/i }));
+        expect(mockSuspendMutate).toHaveBeenCalled();
+        confirmSpy.mockRestore();
+    });
+
+    it('shows a Suspended badge and a Resume action for a suspended secret', () => {
+        render(<SecretDetailView secret={makeSecret({ status: 'suspended' })} />);
+        expect(screen.getByTestId('suspended-badge')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: /^Resume$/i }));
+        expect(mockResumeMutate).toHaveBeenCalled();
     });
 });

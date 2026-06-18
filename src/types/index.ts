@@ -47,6 +47,8 @@ export interface Secret {
     lastRotatedAt?: string | null;
     // Data-sensitivity label (ISO 27001 A.5.12). '' / undefined = unclassified.
     classification?: SecretClassification | '';
+    // Lifecycle status: 'active' or 'suspended' (value reads blocked while suspended).
+    status?: string;
 }
 
 export type SecretType = 'text' | 'password' | 'api_key' | 'certificate' | 'json';

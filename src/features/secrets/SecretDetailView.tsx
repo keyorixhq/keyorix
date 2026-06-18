@@ -15,7 +15,7 @@ import {
     ShieldExclamationIcon,
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSuspendSecret, useResumeSecret } from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
@@ -70,6 +70,18 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const [rotateValue, setRotateValue] = useState('');
 
     const [classification, setClassification] = useState<string>(secret.classification ?? '');
+    const [status, setStatus] = useState<string>(secret.status ?? 'active');
+    const suspendMutation = useSuspendSecret(secret.id);
+    const resumeMutation = useResumeSecret(secret.id);
+    const suspended = status === 'suspended';
+    const handleToggleSuspend = () => {
+        if (suspended) {
+            resumeMutation.mutate(undefined, { onSuccess: () => setStatus('active') });
+        } else {
+            if (!window.confirm('Suspend this secret? Value reads will be blocked until you resume it.')) return;
+            suspendMutation.mutate(undefined, { onSuccess: () => setStatus('suspended') });
+        }
+    };
 
     const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
     const rotateMutation = useRotateSecret(secret.id);
@@ -170,6 +182,15 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             <ShieldCheckIcon className="h-3.5 w-3.5 mr-1" />
                             {classificationMeta(classification).label}
                         </span>
+                        {suspended && (
+                            <span
+                                data-testid="suspended-badge"
+                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300"
+                                title="Value reads are blocked while suspended"
+                            >
+                                Suspended
+                            </span>
+                        )}
                     </div>
 
                     <div className="mt-2 flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
@@ -238,6 +259,15 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     >
                         <ShareIcon className="h-4 w-4 mr-2" />
                         Share
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleToggleSuspend}
+                        disabled={suspendMutation.isPending || resumeMutation.isPending}
+                        className={suspended ? '' : 'text-amber-600 hover:text-amber-700'}
+                    >
+                        {suspended ? 'Resume' : 'Suspend'}
                     </Button>
                     <Button
                         variant="outline"

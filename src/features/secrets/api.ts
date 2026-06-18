@@ -106,6 +106,26 @@ export const useSecretAccessors = (id: number, enabled = true) => {
     });
 };
 
+export const useSuspendSecret = (id: number) => {
+    return useMutation({
+        mutationFn: (reason?: string) => secretsApi.suspend(id, reason),
+        onSuccess: () => {
+            invalidateQueries.secrets.detail(id);
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
+export const useResumeSecret = (id: number) => {
+    return useMutation({
+        mutationFn: () => secretsApi.resume(id),
+        onSuccess: () => {
+            invalidateQueries.secrets.detail(id);
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
 export const useTransferOwnership = (id: number) => {
     return useMutation({
         mutationFn: (newOwnerId: number) => secretsApi.transferOwnership(id, newOwnerId),
