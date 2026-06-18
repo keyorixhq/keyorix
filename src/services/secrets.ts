@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore } from '../types';
+import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 export const secretsApi = {
@@ -85,6 +85,13 @@ export const secretsApi = {
     async transferOwnership(id: number, newOwnerId: number) {
         const response = await apiClient.post(`/api/v1/secrets/${id}/transfer-ownership`, { new_owner_id: newOwnerId });
         return response.data;
+    },
+
+    // accessList returns the users who can read the secret (owner + direct + group
+    // shares, members expanded) — GET /secrets/{id}/access.
+    async accessList(id: number): Promise<SecretAccessor[]> {
+        const response = await apiClient.get(`/api/v1/secrets/${id}/access`);
+        return response.data.data?.accessors ?? [];
     },
 
     async mostAccessed(params?: { days?: number; limit?: number; projectId?: number }): Promise<SecretUsageStat[]> {

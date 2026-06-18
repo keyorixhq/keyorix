@@ -15,7 +15,7 @@ import {
     ShieldExclamationIcon,
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors } from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
@@ -74,6 +74,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
     const rotateMutation = useRotateSecret(secret.id);
     const rollbackMutation = useRollbackSecret(secret.id);
+    const { data: accessors } = useSecretAccessors(secret.id);
     const { data: risk } = useSecretRisk(secret.id);
     const classifyMutation = useClassifySecret(secret.id);
 
@@ -366,6 +367,36 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                                         {rollbackMutation.isPending ? 'Rolling back…' : 'Roll back'}
                                     </Button>
                                 )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Who can access — effective access list */}
+            {accessors && accessors.length > 0 && (
+                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Who can access</h3>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                        Users who can read this secret (admins with a role grant are not listed).
+                    </p>
+                    <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                        {accessors.map((a) => (
+                            <div key={a.user_id} className="flex items-center justify-between py-2.5 text-sm">
+                                <div className="flex items-center gap-2">
+                                    <UserIcon className="h-4 w-4 text-gray-400" />
+                                    <span className="font-medium text-gray-900 dark:text-white">{a.username}</span>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">{a.source}</span>
+                                </div>
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                    a.permission === 'owner'
+                                        ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300'
+                                        : a.permission === 'write'
+                                            ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                                            : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
+                                }`}>
+                                    {a.permission}
+                                </span>
                             </div>
                         ))}
                     </div>

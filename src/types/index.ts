@@ -88,6 +88,14 @@ export interface ShareFormData {
     expiresAt?: string;
 }
 
+// SecretAccessor is one user who can read a secret, from GET /secrets/{id}/access.
+export interface SecretAccessor {
+    user_id: number;
+    username: string;
+    permission: string; // read | write | owner
+    source: string;     // owner | direct_share | group_share:<group>
+}
+
 export interface Recipient {
     id: number;
     name: string;

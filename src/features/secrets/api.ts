@@ -97,6 +97,15 @@ export const useRollbackSecret = (id: number) => {
     });
 };
 
+export const useSecretAccessors = (id: number, enabled = true) => {
+    return useQuery({
+        queryKey: [...queryKeys.secrets.detail(id), 'access'],
+        queryFn: () => secretsApi.accessList(id),
+        enabled,
+        staleTime: 60 * 1000,
+    });
+};
+
 export const useTransferOwnership = (id: number) => {
     return useMutation({
         mutationFn: (newOwnerId: number) => secretsApi.transferOwnership(id, newOwnerId),

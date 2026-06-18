@@ -6,12 +6,14 @@ import { Secret } from '../../../types';
 const mockClassifyMutate = vi.fn();
 const mockRollbackMutate = vi.fn();
 let mockVersions: { EncryptedValue: string; VersionNumber: number; CreatedAt: string }[] = [];
+let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
 
 vi.mock('../api', () => ({
     useSecretVersions: () => ({ data: mockVersions, isLoading: false, error: null }),
     useRotateSecret: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
     useRollbackSecret: () => ({ mutate: mockRollbackMutate, isPending: false, isError: false }),
     useTransferOwnership: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
+    useSecretAccessors: () => ({ data: mockAccessors }),
     useSecretRisk: () => ({ data: null }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
 }));
@@ -36,6 +38,7 @@ describe('SecretDetailView classification', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockVersions = [];
+        mockAccessors = [];
     });
 
     it('shows the current classification level as a badge', () => {
@@ -91,5 +94,30 @@ describe('SecretDetailView version rollback', () => {
         fireEvent.click(screen.getByRole('button', { name: /Roll back/i }));
         expect(mockRollbackMutate).not.toHaveBeenCalled();
         confirmSpy.mockRestore();
+    });
+});
+
+describe('SecretDetailView access list', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [
+            { user_id: 1, username: 'owner', permission: 'owner', source: 'owner' },
+            { user_id: 2, username: 'alice', permission: 'write', source: 'direct_share' },
+            { user_id: 3, username: 'bob', permission: 'read', source: 'group_share:platform' },
+        ];
+    });
+
+    it('renders the effective access list with permissions and sources', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Who can access')).toBeInTheDocument();
+        expect(screen.getByText('bob')).toBeInTheDocument(); // unique to the access list
+        expect(screen.getByText('group_share:platform')).toBeInTheDocument();
+    });
+
+    it('omits the section when there are no accessors', () => {
+        mockAccessors = [];
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.queryByText('Who can access')).not.toBeInTheDocument();
     });
 });
