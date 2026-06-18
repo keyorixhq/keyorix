@@ -130,6 +130,16 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         },
     });
 
+    // Orphaned secrets: live secrets whose owner is no longer a live user (server #326).
+    interface OrphanedSecret { id: number; name: string; type: string; classification?: string; owner_id: number; }
+    const { data: orphanedSecrets = [] } = useQuery<OrphanedSecret[]>({
+        queryKey: ['project-orphaned-secrets', projectId],
+        queryFn: async () => {
+            const res = await apiClient.get(`/api/v1/projects/${projectId}/secrets/orphaned`);
+            return res?.data?.data?.orphaned ?? [];
+        },
+    });
+
     if (projectLoading) {
         return (
             <div className="space-y-3 animate-pulse">
@@ -328,6 +338,38 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                     </div>
                 </div>
             </section>
+
+            {/* ── Orphaned secrets ── (only when present; it's an alert) */}
+            {orphanedSecrets.length > 0 && (
+                <section>
+                    <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Orphaned secrets</h2>
+                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                        These secrets are owned by a user who no longer exists (offboarded). Open each and
+                        transfer ownership so it has an accountable owner.
+                    </p>
+                    <div className="rounded-lg border"
+                        style={{ borderColor: 'var(--warning, #a16207)', backgroundColor: 'var(--warning-subtle, #fef9c3)' }}>
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                            {orphanedSecrets.map(s => (
+                                <li key={s.id} className="flex items-center justify-between px-4 py-3">
+                                    <div className="min-w-0">
+                                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
+                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
+                                            {s.type} · former owner #{s.owner_id}
+                                        </span>
+                                    </div>
+                                    {s.classification && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
+                                            style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
+                                            {s.classification}
+                                        </span>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </section>
+            )}
 
             {/* ── Recycle bin ── */}
             <section>
