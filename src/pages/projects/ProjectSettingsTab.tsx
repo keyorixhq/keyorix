@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
-import { TrashIcon, PlusIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
+import { TrashIcon, PlusIcon, ArrowPathIcon, ArrowUpOnSquareIcon } from '@heroicons/react/24/outline';
 import { useProject, useProjectEnvironments, useRestoreEnvironment, PROJECT_KEYS } from '../../features/projects/api';
 import { apiClient } from '../../services/client';
 import { Button } from '../../components/ui/Button';
@@ -82,6 +82,42 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         setEnvToDelete(null);
         setDeleteEnvError('');
         deleteEnvMutation.reset();
+    };
+
+    // Promote: bulk-copy every secret from one environment into another, same project
+    // (e.g. seed production from staging). Name clashes are skipped, never clobbered (server #363).
+    const [promoteMsg, setPromoteMsg] = useState('');
+    const promoteEnvMutation = useMutation({
+        mutationFn: (vars: { sourceId: number; targetId: number }) =>
+            apiClient.post(`/api/v1/projects/${projectId}/environments/${vars.sourceId}/copy-secrets`, {
+                target_environment_id: vars.targetId,
+            }),
+        onSuccess: (res: any) => {
+            const d = res?.data?.data ?? {};
+            setPromoteMsg(`Promoted: ${d.copied ?? 0} copied, ${d.skipped ?? 0} skipped (name clashes).`);
+            queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+        },
+        onError: (err: any) => {
+            setPromoteMsg(err?.response?.data?.error ?? err?.response?.data?.message ?? 'Failed to promote environment.');
+        },
+    });
+
+    const handlePromote = (source: Env) => {
+        const raw = window.prompt(
+            `Promote all secrets from "${source.name}" into which environment?\nEnter the target environment ID (same project):`
+        );
+        if (raw == null) return;
+        const targetId = parseInt(raw.trim(), 10);
+        if (!Number.isInteger(targetId) || targetId <= 0) {
+            setPromoteMsg('Enter a valid environment ID.');
+            return;
+        }
+        if (targetId === source.id) {
+            setPromoteMsg('Source and target environments must differ.');
+            return;
+        }
+        setPromoteMsg('');
+        promoteEnvMutation.mutate({ sourceId: source.id, targetId });
     };
 
     // ── Project deletion ──────────────────────────────────────────────────
@@ -317,15 +353,27 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                                 <ArrowPathIcon className="h-4 w-4" />Restore
                                             </button>
                                         ) : (
-                                            <button
-                                                type="button"
-                                                onClick={() => { setDeleteEnvError(''); setEnvToDelete(env); }}
-                                                className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
-                                                style={{ color: 'var(--error)' }}
-                                                title="Delete environment"
-                                            >
-                                                <TrashIcon className="h-4 w-4" />
-                                            </button>
+                                            <div className="flex items-center gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handlePromote(env)}
+                                                    disabled={promoteEnvMutation.isPending}
+                                                    className="flex items-center gap-1 px-1.5 py-1 rounded-sm text-xs opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                                                    style={{ color: 'var(--accent)' }}
+                                                    title="Promote — copy every secret in this environment into another"
+                                                >
+                                                    <ArrowUpOnSquareIcon className="h-4 w-4" />Promote
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setDeleteEnvError(''); setEnvToDelete(env); }}
+                                                    className="p-1.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
+                                                    style={{ color: 'var(--error)' }}
+                                                    title="Delete environment"
+                                                >
+                                                    <TrashIcon className="h-4 w-4" />
+                                                </button>
+                                            </div>
                                         )}
                                     </li>
                                 );
@@ -335,6 +383,9 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
 
                     {/* Add environment */}
                     <div className="border-t px-4 py-3" style={{ borderColor: 'var(--border)' }}>
+                        {promoteMsg && (
+                            <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>{promoteMsg}</p>
+                        )}
                         {addEnvError && (
                             <p className="text-xs mb-2" style={{ color: 'var(--error)' }}>{addEnvError}</p>
                         )}
