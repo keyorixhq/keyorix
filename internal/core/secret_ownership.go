@@ -25,6 +25,19 @@ const EventSecretOwnerTransferred = "secret.owner_transferred"
 // longer exists) — so an active owner's secret can't be taken from under them, while a
 // departed owner's secrets can be recovered. newOwnerID must be an existing user.
 func (c *KeyorixCore) TransferSecretOwnership(ctx context.Context, secretID, newOwnerID, actorID uint) (*models.SecretNode, error) {
+	updated, err := c.transferOwnership(ctx, secretID, newOwnerID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	// Tell the new owner they now own it (single transfer). Bulk reassignment uses
+	// transferOwnership directly and sends one summary instead. Best-effort.
+	c.notifySecretOwnershipTransferred(ctx, updated, newOwnerID, actorID)
+	return updated, nil
+}
+
+// transferOwnership performs the validated, audited ownership change without the
+// new-owner notification — the shared primitive for single and bulk transfer.
+func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerID, actorID uint) (*models.SecretNode, error) {
 	if secretID == 0 || newOwnerID == 0 || actorID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID, new owner ID and actor ID are required")
 	}
