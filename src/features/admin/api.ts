@@ -232,6 +232,49 @@ export const useStaleMachineTokens = (days = 90) =>
         staleTime: 60 * 1000,
     });
 
+// HygieneCounts is the 5 cleanup signals counted for a scope (a project, or the
+// whole deployment). Counts only — never secret names or values.
+export interface HygieneCounts {
+    orphaned_secrets: number;
+    unused_secrets: number;
+    expiring_secrets: number;
+    stale_machine_identities: number;
+    rotation_overdue: number;
+}
+
+export interface ProjectHygieneBreakdown extends HygieneCounts {
+    project_id: number;
+    project_name: string;
+}
+
+// DeploymentHygiene is the install-wide rollup from GET /hygiene (#365): totals
+// summed across every project + a per-project breakdown of the projects with debt.
+export interface DeploymentHygiene {
+    totals: HygieneCounts;
+    projects: ProjectHygieneBreakdown[];
+}
+
+const ZERO_HYGIENE: HygieneCounts = {
+    orphaned_secrets: 0,
+    unused_secrets: 0,
+    expiring_secrets: 0,
+    stale_machine_identities: 0,
+    rotation_overdue: 0,
+};
+
+// useDeploymentHygiene fetches the deployment-wide secret-hygiene rollup (#365).
+// admin-only; a 403 yields the empty rollup (retry:false), so non-admins render nothing.
+export const useDeploymentHygiene = () =>
+    useQuery({
+        queryKey: ['deployment-hygiene'],
+        queryFn: async (): Promise<DeploymentHygiene> => {
+            const res = await apiClient.get('/api/v1/hygiene');
+            return res?.data?.data ?? { totals: ZERO_HYGIENE, projects: [] };
+        },
+        retry: false,
+        staleTime: 60 * 1000,
+    });
+
 export const useUserRoles = (userId: number | null) => {
     return useQuery({
         queryKey: ['user-roles', userId],
