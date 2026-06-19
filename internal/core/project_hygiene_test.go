@@ -23,6 +23,7 @@ func TestProjectHygieneSummary(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Project{},
 		&models.Environment{}, &models.SecretAccessLog{}, &models.MachineIdentity{}, &models.AuditEvent{},
+		&models.RotationPolicy{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "leaver", Email: "l@t.com"}).Error)
@@ -71,6 +72,27 @@ func TestProjectHygieneSummary(t *testing.T) {
 		assert.Equal(t, 1, h.ExpiringSecrets, "only 'expiring' within 30d")
 		assert.Equal(t, 1, h.StaleMachineIdentities, "only 'ci-old'")
 		assert.Equal(t, 3, h.UnusedSecrets, "kept + orphan + expiring; fresh-read excluded")
+		assert.Equal(t, 0, h.RotationOverdue, "no rotation policies yet")
+	})
+
+	t.Run("counts secrets overdue for rotation once a policy applies", func(t *testing.T) {
+		// A project-scoped policy with a 1-day interval — every secret (all created
+		// 'now', none rotated) is past due by the time we look... actually daysSince=0,
+		// so make the interval 0 to force overdue, or use an already-old secret.
+		require.NoError(t, c.storage.CreateRotationPolicy(ctx, &models.RotationPolicy{
+			Name: "30-day", Scope: "project", ProjectID: &p.ID, IntervalDays: 1, AlertDaysBefore: 1,
+			IsActive: true, CreatedBy: "owner",
+		}))
+		old := now.Add(-10 * 24 * time.Hour)
+		_, err := c.storage.CreateSecret(ctx, &models.SecretNode{
+			Name: "stale-rot", ProjectID: p.ID, EnvironmentID: e.ID, Type: "password", OwnerID: 1,
+			IsSecret: true, CreatedAt: old, UpdatedAt: old,
+		})
+		require.NoError(t, err)
+
+		h, err := c.ProjectHygieneSummary(ctx, p.ID, 90, 30, 90)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, h.RotationOverdue, 1, "the 10-day-old secret is overdue under a 1-day policy")
 	})
 
 	t.Run("a project ID of zero is rejected", func(t *testing.T) {
