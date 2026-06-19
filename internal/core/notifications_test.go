@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -117,4 +118,45 @@ func TestNotificationSelfScopedDelegations(t *testing.T) {
 	require.NoError(t, c.MarkNotificationRead(ctx, 5, 2))
 	require.NoError(t, c.MarkAllNotificationsRead(ctx, 2))
 	store.AssertExpectations(t)
+}
+
+func TestNotifySecretShared(t *testing.T) {
+	mkCore := func(store *MockStorage) *KeyorixCore {
+		return &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
+	}
+	secret := &models.SecretNode{ID: 7, Name: "db", ProjectID: 3}
+
+	t.Run("notifies the recipient with type, message and link", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		ctx := context.Background()
+		var got *models.Notification
+		store.On("CreateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
+			got = n
+			return n.UserID == 2 && n.Type == NotificationSecretShared
+		})).Return(&models.Notification{ID: 1}, nil)
+
+		c.notifySecretShared(ctx, secret, 2, 1, "read")
+		store.AssertExpectations(t)
+		require.NotNil(t, got)
+		assert.Contains(t, got.Message, "read access")
+		assert.Contains(t, got.Message, "db")
+		assert.Equal(t, "/secrets/7", got.Link)
+		require.NotNil(t, got.ProjectID)
+		assert.Equal(t, uint(3), *got.ProjectID)
+	})
+
+	t.Run("skips a self-share (recipient == sharer)", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		c.notifySecretShared(context.Background(), secret, 1, 1, "read")
+		store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+	})
+
+	t.Run("skips a zero recipient", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		c.notifySecretShared(context.Background(), secret, 0, 1, "read")
+		store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+	})
 }

@@ -86,6 +86,9 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 		c.LogGroupShareCreated(ctx, auditCtx)
 	} else {
 		c.LogShareCreated(ctx, auditCtx)
+		// Tell the recipient they've been granted access (direct shares only —
+		// a group share has no single user to notify). Best-effort.
+		c.notifySecretShared(ctx, secret, req.RecipientID, req.SharedBy, req.Permission)
 	}
 
 	return createdShare, nil

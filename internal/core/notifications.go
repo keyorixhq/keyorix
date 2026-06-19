@@ -20,6 +20,7 @@ const (
 	NotificationAccessRequested     = "access_request.created"
 	NotificationAccessApproved      = "access_request.approved"
 	NotificationAccessRejected      = "access_request.rejected"
+	NotificationSecretShared        = "secret.shared"
 )
 
 // approverRoleNames are the project/system roles whose holders can approve access
@@ -133,6 +134,24 @@ func (c *KeyorixCore) notifyAccessResolved(ctx context.Context, req *models.Acce
 		"Access request rejected",
 		fmt.Sprintf("Your request for access to %s was rejected.", label),
 		&pid, link)
+}
+
+// notifySecretShared tells a recipient a secret was shared with them directly. Group
+// shares are skipped (the grant is to the group, not an identifiable user to notify);
+// self-shares are skipped. Best-effort — failure never blocks the share.
+func (c *KeyorixCore) notifySecretShared(ctx context.Context, secret *models.SecretNode, recipientID, sharedBy uint, permission string) {
+	if secret == nil || recipientID == 0 || recipientID == sharedBy {
+		return
+	}
+	var pid *uint
+	if secret.ProjectID != 0 {
+		p := secret.ProjectID
+		pid = &p
+	}
+	c.notify(ctx, recipientID, NotificationSecretShared,
+		"Secret shared with you",
+		fmt.Sprintf("You were granted %s access to secret %q.", permission, secret.Name),
+		pid, fmt.Sprintf("/secrets/%d", secret.ID))
 }
 
 // ── Self-scoped reads/writes (the authenticated user) ───────────────────────
