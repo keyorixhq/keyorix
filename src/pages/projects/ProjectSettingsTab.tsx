@@ -123,6 +123,16 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         },
     });
 
+    // Expiring secrets: expiring/expired within the window, soonest-first (server #343).
+    interface ExpiringSecret { id: number; name: string; type: string; expiration?: string; expired: boolean; }
+    const { data: expiringSecrets = [] } = useQuery<ExpiringSecret[]>({
+        queryKey: ['project-expiring-secrets', projectId],
+        queryFn: async () => {
+            const res = await apiClient.get(`/api/v1/projects/${projectId}/secrets/expiring`);
+            return res?.data?.data?.expiring ?? [];
+        },
+    });
+
     // Recycle bin: soft-deleted (restorable) secrets in this project (server #323).
     interface DeletedSecret { id: number; name: string; type: string; classification?: string; deleted_at?: string; }
     const { data: deletedSecrets = [] } = useQuery<DeletedSecret[]>({
@@ -446,6 +456,37 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                 </button>
                             ))}
                         </div>
+                    </div>
+                </section>
+            )}
+
+            {/* ── Expiring secrets ── (only when present) */}
+            {expiringSecrets.length > 0 && (
+                <section>
+                    <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Expiring secrets</h2>
+                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                        Secrets expiring soon or already expired — renew or rotate them before they lapse.
+                    </p>
+                    <div className="rounded-lg border"
+                        style={{ borderColor: 'var(--warning, #a16207)', backgroundColor: 'var(--warning-subtle, #fef9c3)' }}>
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                            {expiringSecrets.map(s => (
+                                <li key={s.id} className="flex items-center justify-between px-4 py-3">
+                                    <div className="min-w-0">
+                                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
+                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>
+                                            {s.type}{s.expiration ? ` · ${new Date(s.expiration).toLocaleDateString()}` : ''}
+                                        </span>
+                                    </div>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded-sm font-semibold uppercase tracking-wide"
+                                        style={s.expired
+                                            ? { backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }
+                                            : { backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
+                                        {s.expired ? 'expired' : 'expiring'}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
                     </div>
                 </section>
             )}
