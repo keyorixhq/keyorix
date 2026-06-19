@@ -256,6 +256,8 @@ func TestKeyorixCore_RevokeShare(t *testing.T) {
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
 	mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(nil)
 	mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
+	// Revoking a direct share notifies the recipient (best-effort).
+	mockStorage.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{}, nil)
 
 	// Execute
 	err := core.RevokeShare(ctx, 1, 1)

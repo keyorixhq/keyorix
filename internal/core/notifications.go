@@ -21,6 +21,7 @@ const (
 	NotificationAccessApproved             = "access_request.approved"
 	NotificationAccessRejected             = "access_request.rejected"
 	NotificationSecretShared               = "secret.shared"
+	NotificationSecretShareRevoked         = "secret.share_revoked"
 	NotificationSecretOwnershipTransferred = "secret.ownership_transferred"
 )
 
@@ -152,6 +153,24 @@ func (c *KeyorixCore) notifySecretShared(ctx context.Context, secret *models.Sec
 	c.notify(ctx, recipientID, NotificationSecretShared,
 		"Secret shared with you",
 		fmt.Sprintf("You were granted %s access to secret %q.", permission, secret.Name),
+		pid, fmt.Sprintf("/secrets/%d", secret.ID))
+}
+
+// notifySecretShareRevoked tells a recipient their access to a secret was revoked.
+// Direct shares only (a group share has no single user); skips the actor revoking
+// their own share. Best-effort.
+func (c *KeyorixCore) notifySecretShareRevoked(ctx context.Context, secret *models.SecretNode, recipientID, revokedBy uint) {
+	if secret == nil || recipientID == 0 || recipientID == revokedBy {
+		return
+	}
+	var pid *uint
+	if secret.ProjectID != 0 {
+		p := secret.ProjectID
+		pid = &p
+	}
+	c.notify(ctx, recipientID, NotificationSecretShareRevoked,
+		"Secret access revoked",
+		fmt.Sprintf("Your access to secret %q was revoked.", secret.Name),
 		pid, fmt.Sprintf("/secrets/%d", secret.ID))
 }
 

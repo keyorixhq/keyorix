@@ -181,6 +181,10 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 	if err := c.storage.DeleteShareRecord(ctx, shareID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// Tell the recipient their access was revoked (direct shares only). Best-effort.
+	if !shareRecord.IsGroup {
+		c.notifySecretShareRevoked(ctx, secret, shareRecord.RecipientID, revokedBy)
+	}
 	return nil
 }
 
