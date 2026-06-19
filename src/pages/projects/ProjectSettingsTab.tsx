@@ -114,12 +114,12 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     });
 
     // Hygiene posture: one-call counts of the project's cleanup signals (server #338).
-    interface Hygiene { orphaned_secrets: number; unused_secrets: number; expiring_secrets: number; stale_machine_identities: number; }
+    interface Hygiene { orphaned_secrets: number; unused_secrets: number; expiring_secrets: number; stale_machine_identities: number; rotation_overdue: number; }
     const { data: hygiene } = useQuery<Hygiene>({
         queryKey: ['project-hygiene', projectId],
         queryFn: async () => {
             const res = await apiClient.get(`/api/v1/projects/${projectId}/hygiene`);
-            return res?.data?.data ?? { orphaned_secrets: 0, unused_secrets: 0, expiring_secrets: 0, stale_machine_identities: 0 };
+            return res?.data?.data ?? { orphaned_secrets: 0, unused_secrets: 0, expiring_secrets: 0, stale_machine_identities: 0, rotation_overdue: 0 };
         },
     });
 
@@ -192,12 +192,13 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                     <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                         Outstanding cleanup signals for this project. Zero across the board is healthy.
                     </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                         {([
                             ['Orphaned secrets', hygiene.orphaned_secrets],
                             ['Unused secrets', hygiene.unused_secrets],
                             ['Expiring secrets', hygiene.expiring_secrets],
                             ['Stale machine IDs', hygiene.stale_machine_identities],
+                            ['Rotation overdue', hygiene.rotation_overdue],
                         ] as [string, number][]).map(([label, count]) => (
                             <div
                                 key={label}
