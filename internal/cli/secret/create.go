@@ -30,6 +30,7 @@ var (
 	createValue         string
 	createFromFile      string
 	createInteractive   bool
+	createDescription   string
 )
 
 var createCmd = &cobra.Command{
@@ -48,6 +49,7 @@ func init() {
 	createCmd.Flags().StringVar(&createValue, "value", "", "Secret value")
 	createCmd.Flags().StringVar(&createFromFile, "from-file", "", "Read secret value from file")
 	createCmd.Flags().BoolVar(&createInteractive, "interactive", false, "Interactive mode")
+	createCmd.Flags().StringVar(&createDescription, "description", "", "Optional free-text note about the secret")
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
@@ -85,6 +87,9 @@ func runCreateRemote(ctx context.Context, rc *common.RemoteClient, req *core.Cre
 	}
 	if req.Expiration != nil {
 		body["expiration"] = req.Expiration.Format(time.RFC3339)
+	}
+	if req.Description != "" {
+		body["description"] = req.Description
 	}
 
 	var secret models.SecretNode
@@ -157,6 +162,7 @@ func buildCreateRequest() (*core.CreateSecretRequest, error) {
 		Type:          createType,
 		ProjectID:     createProjectID,
 		EnvironmentID: createEnvironmentID,
+		Description:   createDescription,
 		CreatedBy:     "cli-user",
 	}
 
