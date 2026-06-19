@@ -228,3 +228,26 @@ func TestExport_Validation(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid --since")
 	})
 }
+
+func TestExport_CSV(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"events":[{"id":1,"event_type":"secret.created","timestamp":"2026-06-19T10:00:00Z","actor":"alice","actor_type":"user","user_id":7,"project_id":5,"ip_address":"10.0.0.1","success":true,"description":"created db"}],"count":1,"next_cursor":null}}`))
+	}))
+	defer srv.Close()
+	setRemote(t, srv.URL)
+
+	var out, errOut bytes.Buffer
+	exportCmd.SetOut(&out)
+	exportCmd.SetErr(&errOut)
+	flagSince, flagAfterID, flagLimit, flagAll, flagCSV = "", 0, 100, false, true
+	defer func() { flagCSV = false }()
+	require.NoError(t, exportCmd.RunE(exportCmd, nil))
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 2, "header + one event row")
+	assert.Equal(t, "id,event_time,event_type,actor,actor_type,user_id,project_id,secret_id,ip_address,success,description", lines[0])
+	assert.Contains(t, lines[1], "secret.created")
+	assert.Contains(t, lines[1], "alice")
+	assert.Contains(t, lines[1], "created db")
+	assert.Contains(t, lines[1], "1,2026-06-19T10:00:00Z")
+}

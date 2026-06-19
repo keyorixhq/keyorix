@@ -12,6 +12,7 @@ package audit
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -34,6 +35,7 @@ var (
 	flagAfterID uint
 	flagLimit   int
 	flagAll     bool
+	flagCSV     bool
 
 	// logs filters
 	logEventType string
@@ -51,6 +53,7 @@ func init() {
 	exportCmd.Flags().UintVar(&flagAfterID, "after-id", 0, "Resume after this event id (exclusive cursor)")
 	exportCmd.Flags().IntVar(&flagLimit, "limit", 100, "Events per page (1–1000)")
 	exportCmd.Flags().BoolVar(&flagAll, "all", false, "Follow the cursor to the end, emitting every event")
+	exportCmd.Flags().BoolVar(&flagCSV, "csv", false, "Emit CSV (header + one row per event) instead of NDJSON")
 
 	logsCmd.Flags().StringVar(&logEventType, "event-type", "", "Filter by event type (e.g. secret.read, secret.deleted)")
 	logsCmd.Flags().UintVar(&logUserID, "user-id", 0, "Filter by actor user id")
@@ -144,6 +147,28 @@ type exportPage struct {
 	NextCursor *uint             `json:"next_cursor"`
 }
 
+// csvEventRow is the subset of an exported audit event projected into CSV columns.
+type csvEventRow struct {
+	ID          uint   `json:"id"`
+	EventType   string `json:"event_type"`
+	Timestamp   string `json:"timestamp"`
+	Actor       string `json:"actor"`
+	ActorType   string `json:"actor_type"`
+	UserID      *uint  `json:"user_id"`
+	ProjectID   *uint  `json:"project_id"`
+	SecretID    *uint  `json:"secret_id"`
+	IPAddress   string `json:"ip_address"`
+	Success     bool   `json:"success"`
+	Description string `json:"description"`
+}
+
+func uintPtrStr(p *uint) string {
+	if p == nil {
+		return ""
+	}
+	return strconv.FormatUint(uint64(*p), 10)
+}
+
 var exportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Stream the audit feed as NDJSON (one event per line) for SIEM pull",
@@ -168,6 +193,15 @@ since a point in time with --since --all.`,
 			return err
 		}
 
+		var cw *csv.Writer
+		if flagCSV {
+			cw = csv.NewWriter(cmd.OutOrStdout())
+			_ = cw.Write([]string{
+				"id", "event_time", "event_type", "actor", "actor_type",
+				"user_id", "project_id", "secret_id", "ip_address", "success", "description",
+			})
+		}
+
 		after := flagAfterID
 		total := 0
 		var lastCursor *uint
@@ -186,6 +220,18 @@ since a point in time with --since --all.`,
 				return err
 			}
 			for _, e := range page.Events {
+				if cw != nil {
+					var row csvEventRow
+					if err := json.Unmarshal(e, &row); err != nil {
+						continue
+					}
+					_ = cw.Write([]string{
+						strconv.FormatUint(uint64(row.ID), 10), row.Timestamp, row.EventType,
+						row.Actor, row.ActorType, uintPtrStr(row.UserID), uintPtrStr(row.ProjectID),
+						uintPtrStr(row.SecretID), row.IPAddress, strconv.FormatBool(row.Success), row.Description,
+					})
+					continue
+				}
 				// json.RawMessage from the server is already compact (no newlines) → NDJSON.
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), string(e))
 			}
@@ -196,6 +242,9 @@ since a point in time with --since --all.`,
 				break
 			}
 			after = *page.NextCursor
+		}
+		if cw != nil {
+			cw.Flush()
 		}
 
 		if lastCursor != nil {
