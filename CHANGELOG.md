@@ -3,6 +3,26 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.63.0 — 2026-06-19
+
+Secret descriptions and hygiene triage.
+
+### Added
+- **Secret description** — a free-text note on a secret (what it's for, its
+  upstream, who to contact): settable at creation and via
+  `PATCH /secrets/{id}/description`, plus `keyorix secret create --description`,
+  `keyorix secret description`, and a description editor on the web detail view. ([#341], [#342])
+- **List a project's expiring secrets** — `GET /projects/{id}/secrets/expiring?days=N`
+  lists secrets expiring (or already expired) within the window, soonest-first,
+  making the hygiene summary's expiring count actionable for renewal triage. ([#343])
+- **CLI `project hygiene`** — `keyorix project hygiene <id>` prints a project's
+  cleanup counts (orphaned / unused / expiring secrets, stale machine identities). ([#340])
+
+[#340]: https://github.com/keyorixhq/keyorix/pull/340
+[#341]: https://github.com/keyorixhq/keyorix/pull/341
+[#342]: https://github.com/keyorixhq/keyorix/pull/342
+[#343]: https://github.com/keyorixhq/keyorix/pull/343
+
 ## v0.62.0 — 2026-06-19
 
 Secret tags and a project hygiene summary.
