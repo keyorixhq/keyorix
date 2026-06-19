@@ -124,6 +124,17 @@ export const useSecretAuditTrail = (id: number, limit = 50, enabled = true) => {
     });
 };
 
+// useSecretPolicy fetches the active create-time policies once, for the create form's
+// convention hint + client-side pre-validation. Cached generously (rarely changes).
+export const useSecretPolicy = () => {
+    return useQuery({
+        queryKey: ['secret-policy'],
+        queryFn: () => secretsApi.policy(),
+        staleTime: 5 * 60 * 1000,
+        retry: false,
+    });
+};
+
 export const useCopySecret = (id: number) => {
     return useMutation({
         mutationFn: (vars: { environmentId: number; name?: string }) =>

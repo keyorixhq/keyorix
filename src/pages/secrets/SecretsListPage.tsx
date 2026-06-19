@@ -12,7 +12,7 @@ import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
 import { apiErrorMessage } from '../../services/client';
-import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow, useBulkClassifySecrets, useSetAutoRotate } from '../../features/secrets';
+import { SecretDetailView, useSecretsList, useSecretReveal, SecretTableRow, useBulkClassifySecrets, useSetAutoRotate, useSecretPolicy } from '../../features/secrets';
 import { ShareSecretModal } from '../../features/sharing';
 import { useProjects, useProjectEnvironments } from '../../features/projects';
 
@@ -71,6 +71,30 @@ export const SecretsListPage: React.FC = () => {
     const [createProjectId, setCreateProjectId] = React.useState(0);
     const [createEnvId, setCreateEnvId] = React.useState(0);
     const { data: createProjects } = useProjects();
+
+    // Active secret-name policy, for a create-time hint + client-side pre-validation.
+    const { data: secretPolicy } = useSecretPolicy();
+    const namePolicy = secretPolicy?.name;
+    const nameHint = !namePolicy?.enabled ? '' :
+        [namePolicy.pattern ? `must match ${namePolicy.pattern}` : '',
+         namePolicy.max_length ? `max ${namePolicy.max_length} chars` : '']
+            .filter(Boolean).join('; ');
+    // secretNameError returns a client-side validation message, or '' when ok. The
+    // server re-validates regardless — this just gives faster feedback.
+    const secretNameError = (name: string): string => {
+        if (!namePolicy?.enabled) return '';
+        if (namePolicy.max_length && name.length > namePolicy.max_length) {
+            return `Name exceeds the ${namePolicy.max_length}-character maximum.`;
+        }
+        if (namePolicy.pattern) {
+            try {
+                if (!new RegExp(namePolicy.pattern).test(name)) {
+                    return `Name must match the pattern ${namePolicy.pattern}.`;
+                }
+            } catch { /* invalid client-side regex: defer to the server */ }
+        }
+        return '';
+    };
     const { data: createEnvironments } = useProjectEnvironments(createProjectId);
     // Default the project to the first available once projects load.
     React.useEffect(() => {
@@ -403,11 +427,12 @@ export const SecretsListPage: React.FC = () => {
             </Modal>
 
             <Modal isOpen={list.activeModal === 'create-secret'} onClose={() => { list.closeModal(); setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }} title="Create New Secret" size="md">
-                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); if (!createProjectId || !createEnvId) { setCreateError('Select a project and environment for the new secret.'); return; } list.createMutation.mutate({ name: createName, value: createValue, type: createType, project_id: createProjectId, environment_id: createEnvId } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }, onError: (err) => setCreateError(apiErrorMessage(err)) }); }} className="space-y-4">
+                <form onSubmit={(e) => { e.preventDefault(); setCreateError(''); if (!createProjectId || !createEnvId) { setCreateError('Select a project and environment for the new secret.'); return; } const nameErr = secretNameError(createName); if (nameErr) { setCreateError(nameErr); return; } list.createMutation.mutate({ name: createName, value: createValue, type: createType, project_id: createProjectId, environment_id: createEnvId } as any, { onSuccess: () => { setCreateName(''); setCreateValue(''); setCreateType('text'); setCreateError(''); }, onError: (err) => setCreateError(apiErrorMessage(err)) }); }} className="space-y-4">
                     {createError && <Alert type="error" title="Failed to create secret" message={createError} />}
                     <div>
                         <label className="block text-sm font-medium text-base-secondary dark:text-base-muted mb-1">Name <span className="text-red-500">*</span></label>
                         <input type="text" required value={createName} onChange={(e) => setCreateName(e.target.value)} className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-surface  px-3 py-2 text-sm text-base-primary  focus:outline-hidden focus:ring-2 focus:ring-blue-500" />
+                        {nameHint && <p className="mt-1 text-xs text-base-muted">Naming policy: {nameHint}.</p>}
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-1">

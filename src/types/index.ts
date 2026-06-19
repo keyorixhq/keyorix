@@ -113,6 +113,12 @@ export interface SecretAuditEntry {
     success: boolean;
 }
 
+// SecretPolicy is the active create-time policy set, from GET /secrets/policy.
+export interface SecretPolicy {
+    name: { enabled: boolean; pattern?: string; max_length?: number };
+    value: { enabled: boolean; min_length?: number; reject_common?: boolean };
+}
+
 // SecretAccessor is one user who can read a secret, from GET /secrets/{id}/access.
 export interface SecretAccessor {
     user_id: number;

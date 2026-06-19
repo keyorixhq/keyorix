@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor, SecretAccessLogEntry, SecretAuditEntry } from '../types';
+import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor, SecretAccessLogEntry, SecretAuditEntry, SecretPolicy } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
 export const secretsApi = {
@@ -130,6 +130,13 @@ export const secretsApi = {
     // setDescription sets/clears the note — PATCH /secrets/{id}/description.
     async setDescription(id: number, description: string): Promise<void> {
         await apiClient.patch(`/api/v1/secrets/${id}/description`, { description });
+    },
+
+    // policy returns the active create-time secret policies (naming + value), so the
+    // create form can show conventions and pre-validate — GET /secrets/policy.
+    async policy(): Promise<SecretPolicy> {
+        const response = await apiClient.get('/api/v1/secrets/policy');
+        return response.data.data ?? { name: { enabled: false }, value: { enabled: false } };
     },
 
     // copy promotes a secret's value + metadata into another environment of the
