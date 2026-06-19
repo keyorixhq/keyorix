@@ -51,6 +51,20 @@ func (ls *LocalStorage) ListMachineIdentityCredentials(ctx context.Context, mach
 	return rows, nil
 }
 
+// ListActiveMachineIdentityCredentials returns every non-revoked machine credential,
+// newest first — the deployment-wide token-hygiene view.
+func (ls *LocalStorage) ListActiveMachineIdentityCredentials(ctx context.Context) ([]*models.MachineIdentityCredential, error) {
+	var rows []*models.MachineIdentityCredential
+	err := ls.db.WithContext(ctx).
+		Where("revoked = ?", false).
+		Order("created_at DESC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
+}
+
 func (ls *LocalStorage) UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error {
 	if err := ls.db.WithContext(ctx).Save(c).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

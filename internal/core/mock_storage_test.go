@@ -1409,6 +1409,14 @@ func (m *MockStorage) ListMachineIdentityCredentials(ctx context.Context, machin
 	return args.Get(0).([]*models.MachineIdentityCredential), args.Error(1)
 }
 
+func (m *MockStorage) ListActiveMachineIdentityCredentials(ctx context.Context) ([]*models.MachineIdentityCredential, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.MachineIdentityCredential), args.Error(1)
+}
+
 func (m *MockStorage) UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error {
 	args := m.Called(ctx, c)
 	return args.Error(0)
