@@ -305,6 +305,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/orphaned", secretHandler.OrphanedSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/hygiene", secretHandler.ProjectHygiene)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/expiring", secretHandler.ExpiringSecrets)
+		// Asset inventory (ISO 27001 A.5.9) — CSV metadata manifest of the project's
+		// secrets (no values) for compliance hand-off.
+		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/inventory.csv", secretHandler.SecretsInventoryCSV)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/suspend-all", secretHandler.SuspendProjectSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/resume-all", secretHandler.ResumeProjectSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/reassign-owner", secretHandler.ReassignOwner)
