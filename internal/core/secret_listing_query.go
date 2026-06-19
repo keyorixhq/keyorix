@@ -239,7 +239,7 @@ func (c *KeyorixCore) applySecretFilters(ctx context.Context, secrets []*models.
 			continue
 		}
 		if filter.Search != nil && *filter.Search != "" {
-			if !strings.Contains(strings.ToLower(s.Name), strings.ToLower(*filter.Search)) {
+			if !c.secretMatchesSearch(ctx, s, strings.ToLower(*filter.Search)) {
 				continue
 			}
 		}
@@ -298,6 +298,29 @@ func (c *KeyorixCore) secretHasAllTags(ctx context.Context, secretID uint, want 
 		}
 	}
 	return true
+}
+
+// secretMatchesSearch reports whether the secret matches the (lower-cased) search
+// query by name, description, or any tag. Name/description are in-memory; tags are
+// looked up only when neither already matched (so the common name-hit costs nothing
+// extra). A tag-lookup error just means tags don't contribute to the match.
+func (c *KeyorixCore) secretMatchesSearch(ctx context.Context, s *models.SecretWithSharingInfo, q string) bool {
+	if strings.Contains(strings.ToLower(s.Name), q) {
+		return true
+	}
+	if s.Description != "" && strings.Contains(strings.ToLower(s.Description), q) {
+		return true
+	}
+	tags, err := c.storage.GetSecretTags(ctx, s.ID)
+	if err != nil {
+		return false
+	}
+	for _, t := range tags { // stored tags are already lower-cased
+		if strings.Contains(t, q) {
+			return true
+		}
+	}
+	return false
 }
 
 // sortSecrets sorts the secret list by name, created_at, updated_at, or owner.
