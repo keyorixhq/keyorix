@@ -48,6 +48,10 @@ func (rs *RemoteStorage) ListMachineIdentityCredentials(_ context.Context, _ uin
 	return nil, remoteUnsupported("ListMachineIdentityCredentials")
 }
 
+func (rs *RemoteStorage) ListActiveMachineIdentityCredentials(_ context.Context) ([]*models.MachineIdentityCredential, error) {
+	return nil, remoteUnsupported("ListActiveMachineIdentityCredentials")
+}
+
 func (rs *RemoteStorage) UpdateMachineIdentityCredential(_ context.Context, _ *models.MachineIdentityCredential) error {
 	return remoteUnsupported("UpdateMachineIdentityCredential")
 }

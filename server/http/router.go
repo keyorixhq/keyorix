@@ -534,6 +534,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Personal-access-token hygiene — deployment-wide stale / expired-but-active
 		// tokens an admin should revoke (token sprawl).
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/pat-hygiene", patHandler.PATHygiene)
+		// Machine-token hygiene — deployment-wide stale / expired-but-active machine
+		// credentials an admin should revoke (non-human token sprawl).
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/machine-token-hygiene", catalogHandler.MachineTokenHygiene)
 
 		// Compliance posture — deployment-wide controls snapshot for auditors.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)

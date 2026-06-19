@@ -125,6 +125,10 @@ type Storage interface {
 	GetMachineIdentityCredentialByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, error)
 	GetMachineIdentityCredentialByID(ctx context.Context, id uint) (*models.MachineIdentityCredential, error)
 	ListMachineIdentityCredentials(ctx context.Context, machineID uint) ([]*models.MachineIdentityCredential, error)
+	// ListActiveMachineIdentityCredentials returns every non-revoked machine
+	// credential across all identities — the deployment-wide view for token-hygiene
+	// auditing (stale / expired-but-active).
+	ListActiveMachineIdentityCredentials(ctx context.Context) ([]*models.MachineIdentityCredential, error)
 	UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error
 	RevokeMachineIdentityCredential(ctx context.Context, id uint) error
 	// CountMachineIdentityCredentialsByClassification returns install-wide counts
