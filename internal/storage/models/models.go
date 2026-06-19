@@ -426,9 +426,12 @@ type SecretNode struct {
 	Name          string `gorm:"not null"`
 	IsSecret      bool   `gorm:"default:false"`
 	Type          string
-	MaxReads      *int
-	Expiration    *time.Time
-	Metadata      JSON
+	// Description is an optional free-text note about the secret — what it is, which
+	// upstream it belongs to, who to contact. Metadata only; never the value.
+	Description string
+	MaxReads    *int
+	Expiration  *time.Time
+	Metadata    JSON
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives
 	// the classification posture and lets a review find high-sensitivity secrets.

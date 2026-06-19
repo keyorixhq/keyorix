@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -32,6 +33,8 @@ type CreateSecretRequest struct {
 	// Classification is an optional data-sensitivity label (A.5.12): "" or one of
 	// public|internal|confidential|restricted.
 	Classification string `json:"classification,omitempty"`
+	// Description is an optional free-text note (≤maxSecretDescriptionLen chars).
+	Description string `json:"description,omitempty"`
 }
 
 // UpdateSecretRequest represents a request to update an existing secret.
@@ -58,6 +61,9 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	if err := c.secretValuePolicy.Validate(req.Value); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
+	if len(strings.TrimSpace(req.Description)) > maxSecretDescriptionLen {
+		return nil, fmt.Errorf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
+	}
 
 	// Verify the environment belongs to the stated project.
 	env, err := c.storage.GetEnvironment(ctx, req.EnvironmentID)
@@ -82,6 +88,7 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		ProjectID:      req.ProjectID,
 		EnvironmentID:  req.EnvironmentID,
 		Type:           req.Type,
+		Description:    strings.TrimSpace(req.Description),
 		MaxReads:       req.MaxReads,
 		Expiration:     req.Expiration,
 		Classification: req.Classification,
