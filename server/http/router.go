@@ -342,6 +342,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}", secretHandler.UpdateSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Patch("/{id}/classification", secretHandler.ClassifySecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Patch("/{id}/description", secretHandler.DescribeSecret)
+			// Copy into another environment: read the source ({id}); the handler also
+			// authorizes secrets.write at the target environment's scope.
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Post("/{id}/copy", secretHandler.CopySecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/rotate", secretHandler.RotateSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/rollback", secretHandler.RollbackSecret)
