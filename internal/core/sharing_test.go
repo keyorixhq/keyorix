@@ -59,6 +59,8 @@ func TestKeyorixCore_ShareSecret(t *testing.T) {
 	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
 	mockStorage.On("CreateShareRecord", ctx, mock.AnythingOfType("*models.ShareRecord")).Return(shareRecord, nil)
 	mockStorage.On("LogAuditEvent", ctx, mock.AnythingOfType("*models.AuditEvent")).Return(nil)
+	// A direct share notifies the recipient (best-effort).
+	mockStorage.On("CreateNotification", ctx, mock.AnythingOfType("*models.Notification")).Return(&models.Notification{}, nil)
 
 	// Execute
 	result, err := core.ShareSecret(ctx, req)
