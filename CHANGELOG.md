@@ -3,6 +3,37 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.64.0 — 2026-06-19
+
+Audit CSV export, access-change notifications, and secret promote/copy.
+
+### Added
+- **Audit log CSV export** — `GET /audit/export.csv` (and `keyorix audit export --csv`)
+  download audit events as CSV for compliance hand-off, distinct from the JSON
+  SIEM feed. ([#345], [#346])
+- **Access-change notifications** — the affected user is now notified when a secret
+  is shared with them, when ownership is transferred to them (with a single summary
+  for bulk reassignment), and when their share is revoked — fanned out to group
+  members for group shares. ([#347], [#348], [#349], [#350])
+- **Copy a secret to another environment** — `POST /secrets/{id}/copy` (and
+  `keyorix secret copy`) promote a secret's value and metadata into another
+  environment of the same project (e.g. staging → production), with two-sided
+  authorization. ([#353], [#354])
+- **`keyorix secret expiring`** — list a project's expiring/expired secrets for
+  renewal triage. ([#351])
+- **`keyorix secret info`** — one-shot secret metadata summary (no value). ([#352])
+
+[#345]: https://github.com/keyorixhq/keyorix/pull/345
+[#346]: https://github.com/keyorixhq/keyorix/pull/346
+[#347]: https://github.com/keyorixhq/keyorix/pull/347
+[#348]: https://github.com/keyorixhq/keyorix/pull/348
+[#349]: https://github.com/keyorixhq/keyorix/pull/349
+[#350]: https://github.com/keyorixhq/keyorix/pull/350
+[#351]: https://github.com/keyorixhq/keyorix/pull/351
+[#352]: https://github.com/keyorixhq/keyorix/pull/352
+[#353]: https://github.com/keyorixhq/keyorix/pull/353
+[#354]: https://github.com/keyorixhq/keyorix/pull/354
+
 ## v0.63.0 — 2026-06-19
 
 Secret descriptions and hygiene triage.
