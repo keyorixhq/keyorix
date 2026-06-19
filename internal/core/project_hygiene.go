@@ -20,6 +20,7 @@ type ProjectHygiene struct {
 	UnusedSecrets          int `json:"unused_secrets"`
 	ExpiringSecrets        int `json:"expiring_secrets"` // expiring within the window, or already expired
 	StaleMachineIdentities int `json:"stale_machine_identities"`
+	RotationOverdue        int `json:"rotation_overdue"` // secrets past their rotation policy's interval
 }
 
 // Hygiene-summary default windows (days). Each is overridable by the caller.
@@ -75,6 +76,17 @@ func (c *KeyorixCore) ProjectHygieneSummary(ctx context.Context, projectID uint,
 		return nil, fmt.Errorf("stale machine identities: %w", err)
 	}
 	out.StaleMachineIdentities = len(staleMI)
+
+	// Secrets past their rotation policy's interval (reuses the rotation-status eval).
+	statuses, err := c.GetRotationStatus(ctx, &projectID)
+	if err != nil {
+		return nil, fmt.Errorf("rotation status: %w", err)
+	}
+	for _, s := range statuses {
+		if s.Status == RotationStatusOverdue {
+			out.RotationOverdue++
+		}
+	}
 
 	return out, nil
 }

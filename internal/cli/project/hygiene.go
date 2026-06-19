@@ -15,6 +15,7 @@ type hygieneSummary struct {
 	UnusedSecrets          int `json:"unused_secrets"`
 	ExpiringSecrets        int `json:"expiring_secrets"`
 	StaleMachineIdentities int `json:"stale_machine_identities"`
+	RotationOverdue        int `json:"rotation_overdue"`
 }
 
 var hygieneCmd = &cobra.Command{
@@ -43,6 +44,7 @@ identities. Requires secrets.read at the project scope.`,
 		fmt.Printf("  unused secrets           %d\n", h.UnusedSecrets)
 		fmt.Printf("  expiring/expired secrets %d\n", h.ExpiringSecrets)
 		fmt.Printf("  stale machine identities %d\n", h.StaleMachineIdentities)
+		fmt.Printf("  rotation overdue         %d\n", h.RotationOverdue)
 		return nil
 	},
 }
