@@ -206,6 +206,32 @@ export const useStalePATs = (days = 90) =>
         staleTime: 60 * 1000,
     });
 
+// MachineTokenHygieneToken is one flagged machine credential from
+// GET /machine-token-hygiene (admin, system.read). Never carries the token secret.
+export interface MachineTokenHygieneToken {
+    id: number;
+    machine_identity_id: number;
+    name: string;
+    token_prefix: string;
+    expires_at?: string | null;
+    last_used_at?: string | null;
+    expired: boolean;
+    stale: boolean;
+}
+
+// useStaleMachineTokens lists deployment-wide stale / expired-but-active machine
+// credentials (#359). admin-only; a 403 yields no rows (retry:false).
+export const useStaleMachineTokens = (days = 90) =>
+    useQuery({
+        queryKey: ['machine-token-hygiene', days],
+        queryFn: async (): Promise<MachineTokenHygieneToken[]> => {
+            const res = await apiClient.get('/api/v1/machine-token-hygiene', { params: { days } });
+            return res?.data?.data?.tokens ?? [];
+        },
+        retry: false,
+        staleTime: 60 * 1000,
+    });
+
 export const useUserRoles = (userId: number | null) => {
     return useQuery({
         queryKey: ['user-roles', userId],
