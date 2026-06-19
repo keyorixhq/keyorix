@@ -84,10 +84,11 @@ func (c *KeyorixCore) ShareSecret(ctx context.Context, req *ShareSecretRequest) 
 	}
 	if req.IsGroup {
 		c.LogGroupShareCreated(ctx, auditCtx)
+		// Fan the "shared with you" notice out to each group member. Best-effort.
+		c.notifyGroupSecretShared(ctx, secret, req.RecipientID, req.SharedBy, req.Permission)
 	} else {
 		c.LogShareCreated(ctx, auditCtx)
-		// Tell the recipient they've been granted access (direct shares only —
-		// a group share has no single user to notify). Best-effort.
+		// Tell the recipient they've been granted access. Best-effort.
 		c.notifySecretShared(ctx, secret, req.RecipientID, req.SharedBy, req.Permission)
 	}
 
@@ -181,8 +182,10 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 	if err := c.storage.DeleteShareRecord(ctx, shareID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	// Tell the recipient their access was revoked (direct shares only). Best-effort.
-	if !shareRecord.IsGroup {
+	// Tell the affected user(s) their access was revoked. Best-effort.
+	if shareRecord.IsGroup {
+		c.notifyGroupSecretShareRevoked(ctx, secret, shareRecord.RecipientID, revokedBy)
+	} else {
 		c.notifySecretShareRevoked(ctx, secret, shareRecord.RecipientID, revokedBy)
 	}
 	return nil
