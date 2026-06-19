@@ -508,6 +508,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission("audit.read"))
 			r.Get("/logs", auditHandler.GetAuditLogs)
 			r.Get("/export", auditHandler.ExportAuditLogs)
+			r.Get("/export.csv", auditHandler.ExportAuditLogsCSV)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
 			r.Get("/retention", auditHandler.GetAuditRetention)
 			r.Get("/verify", auditHandler.VerifyAuditChain)
