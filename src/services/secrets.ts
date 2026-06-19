@@ -132,6 +132,15 @@ export const secretsApi = {
         await apiClient.patch(`/api/v1/secrets/${id}/description`, { description });
     },
 
+    // copy promotes a secret's value + metadata into another environment of the
+    // same project — POST /secrets/{id}/copy. Returns the created secret.
+    async copy(id: number, environmentId: number, name?: string): Promise<any> {
+        const body: Record<string, unknown> = { environment_id: environmentId };
+        if (name) body.name = name;
+        const response = await apiClient.post(`/api/v1/secrets/${id}/copy`, body);
+        return response.data.data;
+    },
+
     // tags returns the secret's tags — GET /secrets/{id}/tags.
     async tags(id: number): Promise<string[]> {
         const response = await apiClient.get(`/api/v1/secrets/${id}/tags`);

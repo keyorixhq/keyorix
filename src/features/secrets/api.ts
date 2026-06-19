@@ -124,6 +124,16 @@ export const useSecretAuditTrail = (id: number, limit = 50, enabled = true) => {
     });
 };
 
+export const useCopySecret = (id: number) => {
+    return useMutation({
+        mutationFn: (vars: { environmentId: number; name?: string }) =>
+            secretsApi.copy(id, vars.environmentId, vars.name),
+        onSuccess: () => {
+            invalidateQueries.secrets.lists();
+        },
+    });
+};
+
 export const useSecretDescription = (id: number, enabled = true) => {
     return useQuery({
         queryKey: [...queryKeys.secrets.detail(id), 'description'],

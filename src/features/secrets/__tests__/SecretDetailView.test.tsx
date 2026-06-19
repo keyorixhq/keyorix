@@ -30,6 +30,7 @@ vi.mock('../api', () => ({
     useSetSecretTags: () => ({ mutate: setTagsMutate, isPending: false }),
     useSecretDescription: () => ({ data: mockDescription }),
     useSetSecretDescription: () => ({ mutate: setDescriptionMutate, isPending: false }),
+    useCopySecret: () => ({ mutate: vi.fn(), isPending: false }),
     useSecretRisk: () => ({ data: null }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
 }));

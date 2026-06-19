@@ -15,7 +15,7 @@ import {
     ShieldExclamationIcon,
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSecretTags, useSetSecretTags, useSecretDescription, useSetSecretDescription, useSuspendSecret, useResumeSecret } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSecretTags, useSetSecretTags, useSecretDescription, useSetSecretDescription, useCopySecret, useSuspendSecret, useResumeSecret } from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
@@ -92,6 +92,23 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const [status, setStatus] = useState<string>(secret.status ?? 'active');
     const suspendMutation = useSuspendSecret(secret.id);
     const resumeMutation = useResumeSecret(secret.id);
+    const copyMutation = useCopySecret(secret.id);
+    const [copyMsg, setCopyMsg] = useState('');
+
+    const handleCopy = () => {
+        const envInput = window.prompt('Copy to which environment? Enter the target environment ID (same project):');
+        const envId = Number(envInput);
+        if (!envInput || !Number.isInteger(envId) || envId <= 0) return;
+        const name = window.prompt('Name for the copy (leave blank to keep the same name):') || undefined;
+        setCopyMsg('');
+        copyMutation.mutate(
+            { environmentId: envId, ...(name ? { name } : {}) },
+            {
+                onSuccess: () => setCopyMsg(`Copied to environment ${envId}.`),
+                onError: (err: any) => setCopyMsg(err?.response?.data?.message ?? err?.response?.data?.error ?? 'Copy failed.'),
+            }
+        );
+    };
     const suspended = status === 'suspended';
     const handleToggleSuspend = () => {
         if (suspended) {
@@ -290,6 +307,16 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     <Button
                         variant="outline"
                         size="sm"
+                        onClick={handleCopy}
+                        disabled={copyMutation.isPending}
+                        title="Copy this secret into another environment (same project)"
+                    >
+                        <DocumentDuplicateIcon className="h-4 w-4 mr-2" />
+                        Copy
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
                         onClick={handleToggleSuspend}
                         disabled={suspendMutation.isPending || resumeMutation.isPending}
                         className={suspended ? '' : 'text-amber-600 hover:text-amber-700'}
@@ -307,6 +334,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     </Button>
                 </div>
             </div>
+
+            {copyMsg && (
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{copyMsg}</p>
+            )}
 
             {/* Secret Value */}
             <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
