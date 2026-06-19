@@ -324,6 +324,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		secretScope := customMiddleware.ScopeFromSecretParam("id")
 		r.Route("/secrets", func(r chi.Router) {
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/", secretHandler.ListSecrets)
+			// Active create-time policies (naming/value) — any authenticated caller.
+			r.Get("/policy", secretHandler.SecretPolicy)
 			// Usage analytics (static paths, before /{id}).
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/usage/most-accessed", secretHandler.UsageMostAccessed)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/usage/unused", secretHandler.UsageUnused)
