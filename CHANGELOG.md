@@ -3,6 +3,32 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.65.0 — 2026-06-19
+
+Secret naming governance, machine-token hygiene, and richer search.
+
+### Added
+- **Secret naming policy** — an optional, operator-configured naming convention
+  (regex + max length) enforced at create, plus `GET /secrets/policy` so clients
+  can show the convention and pre-validate (surfaced as a hint in the web create
+  form). Off by default. ([#357], [#358])
+- **Machine-token hygiene** — `GET /machine-token-hygiene` (and
+  `keyorix machine token-hygiene`) surface deployment-wide machine credentials
+  that are expired-but-active or stale, with an admin web panel — completing
+  credential hygiene across PATs, sessions, and machine tokens. ([#359], [#360])
+- **Rotation-overdue in the project hygiene summary** — secrets past their
+  rotation policy's interval are now counted in `GET /projects/{id}/hygiene`
+  (and the CLI / web posture card). ([#356])
+- **Richer secret search** — the secret list `?search=` now matches a secret's
+  description and tags, not just its name. ([#361])
+
+[#356]: https://github.com/keyorixhq/keyorix/pull/356
+[#357]: https://github.com/keyorixhq/keyorix/pull/357
+[#358]: https://github.com/keyorixhq/keyorix/pull/358
+[#359]: https://github.com/keyorixhq/keyorix/pull/359
+[#360]: https://github.com/keyorixhq/keyorix/pull/360
+[#361]: https://github.com/keyorixhq/keyorix/pull/361
+
 ## v0.64.0 — 2026-06-19
 
 Audit CSV export, access-change notifications, and secret promote/copy.
