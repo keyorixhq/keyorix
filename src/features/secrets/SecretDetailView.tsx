@@ -15,7 +15,7 @@ import {
     ShieldExclamationIcon,
     ShieldCheckIcon
 } from '@heroicons/react/24/outline';
-import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSecretTags, useSetSecretTags, useSuspendSecret, useResumeSecret } from './api';
+import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSecretTags, useSetSecretTags, useSecretDescription, useSetSecretDescription, useSuspendSecret, useResumeSecret } from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
@@ -111,6 +111,9 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     const { data: secretTags = [] } = useSecretTags(secret.id);
     const setTags = useSetSecretTags(secret.id);
     const [tagDraft, setTagDraft] = useState('');
+    const { data: description = '' } = useSecretDescription(secret.id);
+    const setDescription = useSetSecretDescription(secret.id);
+    const [descDraft, setDescDraft] = useState<string | null>(null);
     const { data: risk } = useSecretRisk(secret.id);
     const classifyMutation = useClassifySecret(secret.id);
 
@@ -483,6 +486,44 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     )}
                 </div>
             )}
+
+            {/* Description — free-text note (editable) */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Description</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                    A free-text note — what this secret is for, its upstream, who to contact.
+                </p>
+                <textarea
+                    value={descDraft ?? description}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    disabled={setDescription.isPending}
+                    rows={3}
+                    maxLength={1024}
+                    placeholder="No description."
+                    className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-white disabled:opacity-50"
+                />
+                {descDraft !== null && descDraft !== description && (
+                    <div className="mt-2 flex justify-end gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setDescDraft(null)}
+                            disabled={setDescription.isPending}
+                            className="px-3 py-1 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 disabled:opacity-50"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setDescription.mutate(descDraft, { onSuccess: () => setDescDraft(null) })}
+                            disabled={setDescription.isPending}
+                            className="px-3 py-1 rounded-md text-sm font-medium text-white disabled:opacity-50"
+                            style={{ backgroundColor: 'var(--accent, #2563eb)' }}
+                        >
+                            {setDescription.isPending ? 'Saving…' : 'Save'}
+                        </button>
+                    </div>
+                )}
+            </div>
 
             {/* Tags — free-form organization labels (editable) */}
             <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">

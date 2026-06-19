@@ -13,6 +13,8 @@ let mockAccessLog: { AccessedBy: string; AccessTime: string; Action: string; IPA
 let mockAuditTrail: { id: number; event_type: string; timestamp: string; actor_type: string; description: string; success: boolean }[] = [];
 let mockTags: string[] = [];
 const setTagsMutate = vi.fn();
+let mockDescription = '';
+const setDescriptionMutate = vi.fn();
 
 vi.mock('../api', () => ({
     useSecretVersions: () => ({ data: mockVersions, isLoading: false, error: null }),
@@ -26,6 +28,8 @@ vi.mock('../api', () => ({
     useSecretAuditTrail: () => ({ data: mockAuditTrail }),
     useSecretTags: () => ({ data: mockTags }),
     useSetSecretTags: () => ({ mutate: setTagsMutate, isPending: false }),
+    useSecretDescription: () => ({ data: mockDescription }),
+    useSetSecretDescription: () => ({ mutate: setDescriptionMutate, isPending: false }),
     useSecretRisk: () => ({ data: null }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
 }));
@@ -240,5 +244,29 @@ describe('SecretDetailView tags', () => {
         fireEvent.click(screen.getByRole('button', { name: /remove tag prod/i }));
         expect(setTagsMutate).toHaveBeenCalledTimes(1);
         expect(setTagsMutate.mock.calls[0][0]).toEqual(['tier1']);
+    });
+});
+
+describe('SecretDetailView description', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+        mockAccessLog = [];
+        mockAuditTrail = [];
+        mockTags = [];
+        mockDescription = 'the prod DB';
+        setDescriptionMutate.mockClear();
+    });
+
+    it('shows the current description and saves an edit', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        const box = screen.getByDisplayValue('the prod DB');
+        // No Save until the value changes.
+        expect(screen.queryByRole('button', { name: /^Save$/i })).not.toBeInTheDocument();
+        fireEvent.change(box, { target: { value: 'the prod DB — contact dba@' } });
+        fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
+        expect(setDescriptionMutate).toHaveBeenCalledTimes(1);
+        expect(setDescriptionMutate.mock.calls[0][0]).toBe('the prod DB — contact dba@');
     });
 });

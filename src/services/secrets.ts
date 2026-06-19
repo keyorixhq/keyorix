@@ -119,6 +119,19 @@ export const secretsApi = {
         return response.data.data?.audit ?? [];
     },
 
+    // description reads the secret's free-text note. The GET returns the raw model
+    // (PascalCase Description); tolerate either casing.
+    async description(id: number): Promise<string> {
+        const response = await apiClient.get(API_ENDPOINTS.SECRETS.GET(id));
+        const s = response.data.data ?? {};
+        return s.Description ?? s.description ?? '';
+    },
+
+    // setDescription sets/clears the note — PATCH /secrets/{id}/description.
+    async setDescription(id: number, description: string): Promise<void> {
+        await apiClient.patch(`/api/v1/secrets/${id}/description`, { description });
+    },
+
     // tags returns the secret's tags — GET /secrets/{id}/tags.
     async tags(id: number): Promise<string[]> {
         const response = await apiClient.get(`/api/v1/secrets/${id}/tags`);
