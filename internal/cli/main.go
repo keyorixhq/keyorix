@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/dynamic"
 	"github.com/keyorixhq/keyorix/internal/cli/encryption"
 	"github.com/keyorixhq/keyorix/internal/cli/group"
+	"github.com/keyorixhq/keyorix/internal/cli/hygiene"
 	"github.com/keyorixhq/keyorix/internal/cli/invite"
 	"github.com/keyorixhq/keyorix/internal/cli/legalhold"
 	"github.com/keyorixhq/keyorix/internal/cli/machine"
@@ -75,6 +76,7 @@ func init() {
 	rootCmd.AddCommand(breakglass.BreakGlassCmd)
 	rootCmd.AddCommand(compliance.ComplianceCmd)
 	rootCmd.AddCommand(sodcli.SoDCmd)
+	rootCmd.AddCommand(hygiene.HygieneCmd)
 }
 
 // Execute runs the root command
