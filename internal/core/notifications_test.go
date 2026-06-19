@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -251,4 +252,33 @@ func TestNotifySecretShareRevoked(t *testing.T) {
 		c.notifySecretShareRevoked(context.Background(), secret, 1, 1)
 		store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
 	})
+}
+
+func TestNotifyGroupSecretShared(t *testing.T) {
+	store := new(MockStorage)
+	c := &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
+	ctx := context.Background()
+	secret := &models.SecretNode{ID: 7, Name: "db", ProjectID: 3}
+
+	// Group 9 has members 1 (the sharer), 2, 3.
+	store.On("ListGroupMembers", ctx, uint(9)).Return([]*models.User{{ID: 1}, {ID: 2}, {ID: 3}}, nil)
+	notified := map[uint]bool{}
+	store.On("CreateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
+		notified[n.UserID] = true
+		return n.Type == NotificationSecretShared
+	})).Return(&models.Notification{ID: 1}, nil)
+
+	c.notifyGroupSecretShared(ctx, secret, 9, 1, "read")
+
+	assert.True(t, notified[2] && notified[3], "members 2 and 3 notified")
+	assert.False(t, notified[1], "the sharer is not notified of their own grant")
+}
+
+func TestNotifyGroupSecretShared_LookupErrorIsNoOp(t *testing.T) {
+	store := new(MockStorage)
+	c := &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
+	ctx := context.Background()
+	store.On("ListGroupMembers", ctx, uint(9)).Return(nil, errors.New("boom"))
+	c.notifyGroupSecretShared(ctx, &models.SecretNode{ID: 7}, 9, 1, "read")
+	store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
 }

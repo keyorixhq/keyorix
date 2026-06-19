@@ -138,9 +138,8 @@ func (c *KeyorixCore) notifyAccessResolved(ctx context.Context, req *models.Acce
 		&pid, link)
 }
 
-// notifySecretShared tells a recipient a secret was shared with them directly. Group
-// shares are skipped (the grant is to the group, not an identifiable user to notify);
-// self-shares are skipped. Best-effort — failure never blocks the share.
+// notifySecretShared tells a recipient a secret was shared with them directly. Self-
+// shares are skipped. Best-effort — failure never blocks the share.
 func (c *KeyorixCore) notifySecretShared(ctx context.Context, secret *models.SecretNode, recipientID, sharedBy uint, permission string) {
 	if secret == nil || recipientID == 0 || recipientID == sharedBy {
 		return
@@ -154,6 +153,22 @@ func (c *KeyorixCore) notifySecretShared(ctx context.Context, secret *models.Sec
 		"Secret shared with you",
 		fmt.Sprintf("You were granted %s access to secret %q.", permission, secret.Name),
 		pid, fmt.Sprintf("/secrets/%d", secret.ID))
+}
+
+// notifyGroupSecretShared fans the "shared with you" notification out to every member
+// of a group a secret was shared with (excluding the sharer). Best-effort — a member
+// lookup failure just means no fan-out.
+func (c *KeyorixCore) notifyGroupSecretShared(ctx context.Context, secret *models.SecretNode, groupID, sharedBy uint, permission string) {
+	if secret == nil {
+		return
+	}
+	members, err := c.storage.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return
+	}
+	for _, m := range members {
+		c.notifySecretShared(ctx, secret, m.ID, sharedBy, permission)
+	}
 }
 
 // notifySecretShareRevoked tells a recipient their access to a secret was revoked.
@@ -172,6 +187,21 @@ func (c *KeyorixCore) notifySecretShareRevoked(ctx context.Context, secret *mode
 		"Secret access revoked",
 		fmt.Sprintf("Your access to secret %q was revoked.", secret.Name),
 		pid, fmt.Sprintf("/secrets/%d", secret.ID))
+}
+
+// notifyGroupSecretShareRevoked fans the revoke notification out to every member of a
+// group whose share was revoked (excluding the actor). Best-effort.
+func (c *KeyorixCore) notifyGroupSecretShareRevoked(ctx context.Context, secret *models.SecretNode, groupID, revokedBy uint) {
+	if secret == nil {
+		return
+	}
+	members, err := c.storage.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return
+	}
+	for _, m := range members {
+		c.notifySecretShareRevoked(ctx, secret, m.ID, revokedBy)
+	}
 }
 
 // notifySecretOwnershipTransferred tells a user they are now the owner of a secret.
