@@ -160,3 +160,64 @@ func TestNotifySecretShared(t *testing.T) {
 		store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
 	})
 }
+
+func TestNotifySecretOwnershipTransferred(t *testing.T) {
+	mkCore := func(store *MockStorage) *KeyorixCore {
+		return &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
+	}
+	secret := &models.SecretNode{ID: 7, Name: "db", ProjectID: 3}
+
+	t.Run("notifies the new owner", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		ctx := context.Background()
+		var got *models.Notification
+		store.On("CreateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
+			got = n
+			return n.UserID == 2 && n.Type == NotificationSecretOwnershipTransferred
+		})).Return(&models.Notification{ID: 1}, nil)
+
+		c.notifySecretOwnershipTransferred(ctx, secret, 2, 1)
+		store.AssertExpectations(t)
+		require.NotNil(t, got)
+		assert.Contains(t, got.Message, "owner of secret")
+		assert.Equal(t, "/secrets/7", got.Link)
+	})
+
+	t.Run("skips a self-transfer (new owner == actor)", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		c.notifySecretOwnershipTransferred(context.Background(), secret, 1, 1)
+		store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+	})
+}
+
+func TestNotifySecretsReassigned(t *testing.T) {
+	mkCore := func(store *MockStorage) *KeyorixCore {
+		return &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
+	}
+
+	t.Run("one summary notification with the count", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		ctx := context.Background()
+		var got *models.Notification
+		store.On("CreateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
+			got = n
+			return n.UserID == 3
+		})).Return(&models.Notification{ID: 1}, nil)
+
+		c.notifySecretsReassigned(ctx, 3, 1, 5, 4)
+		store.AssertExpectations(t)
+		require.NotNil(t, got)
+		assert.Contains(t, got.Message, "4 secret(s)")
+		assert.Equal(t, NotificationSecretOwnershipTransferred, got.Type)
+	})
+
+	t.Run("skips when nothing was reassigned", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		c.notifySecretsReassigned(context.Background(), 3, 1, 5, 0)
+		store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+	})
+}

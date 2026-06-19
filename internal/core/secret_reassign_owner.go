@@ -41,10 +41,13 @@ func (c *KeyorixCore) ReassignOwnedSecrets(ctx context.Context, projectID, fromO
 		if s.OwnerID != fromOwnerID {
 			continue
 		}
-		if _, err := c.TransferSecretOwnership(ctx, s.ID, toOwnerID, actorID); err != nil {
+		// Use the primitive (no per-secret notification) — one summary is sent below.
+		if _, err := c.transferOwnership(ctx, s.ID, toOwnerID, actorID); err != nil {
 			continue // skip per-secret failures; keep going
 		}
 		reassigned++
 	}
+	// One "N secrets reassigned to you" notification instead of one per secret.
+	c.notifySecretsReassigned(ctx, toOwnerID, actorID, projectID, reassigned)
 	return reassigned, nil
 }

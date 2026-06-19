@@ -16,11 +16,12 @@ import (
 
 // Notification types.
 const (
-	NotificationMembershipActivated = "membership.activated"
-	NotificationAccessRequested     = "access_request.created"
-	NotificationAccessApproved      = "access_request.approved"
-	NotificationAccessRejected      = "access_request.rejected"
-	NotificationSecretShared        = "secret.shared"
+	NotificationMembershipActivated        = "membership.activated"
+	NotificationAccessRequested            = "access_request.created"
+	NotificationAccessApproved             = "access_request.approved"
+	NotificationAccessRejected             = "access_request.rejected"
+	NotificationSecretShared               = "secret.shared"
+	NotificationSecretOwnershipTransferred = "secret.ownership_transferred"
 )
 
 // approverRoleNames are the project/system roles whose holders can approve access
@@ -152,6 +153,40 @@ func (c *KeyorixCore) notifySecretShared(ctx context.Context, secret *models.Sec
 		"Secret shared with you",
 		fmt.Sprintf("You were granted %s access to secret %q.", permission, secret.Name),
 		pid, fmt.Sprintf("/secrets/%d", secret.ID))
+}
+
+// notifySecretOwnershipTransferred tells a user they are now the owner of a secret.
+// Skipped when the actor transferred it to themselves. Best-effort.
+func (c *KeyorixCore) notifySecretOwnershipTransferred(ctx context.Context, secret *models.SecretNode, newOwnerID, actorID uint) {
+	if secret == nil || newOwnerID == 0 || newOwnerID == actorID {
+		return
+	}
+	var pid *uint
+	if secret.ProjectID != 0 {
+		p := secret.ProjectID
+		pid = &p
+	}
+	c.notify(ctx, newOwnerID, NotificationSecretOwnershipTransferred,
+		"You are now a secret owner",
+		fmt.Sprintf("You were made the owner of secret %q.", secret.Name),
+		pid, fmt.Sprintf("/secrets/%d", secret.ID))
+}
+
+// notifySecretsReassigned tells a new owner that a batch of secrets was re-homed to
+// them (bulk offboarding) — one summary instead of one-per-secret. Best-effort.
+func (c *KeyorixCore) notifySecretsReassigned(ctx context.Context, newOwnerID, actorID, projectID uint, count int) {
+	if newOwnerID == 0 || newOwnerID == actorID || count == 0 {
+		return
+	}
+	var pid *uint
+	if projectID != 0 {
+		p := projectID
+		pid = &p
+	}
+	c.notify(ctx, newOwnerID, NotificationSecretOwnershipTransferred,
+		"Secrets reassigned to you",
+		fmt.Sprintf("%d secret(s) in %s were reassigned to you.", count, c.projectLabel(ctx, projectID)),
+		pid, fmt.Sprintf("/projects/%d", projectID))
 }
 
 // ── Self-scoped reads/writes (the authenticated user) ───────────────────────
