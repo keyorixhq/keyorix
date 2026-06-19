@@ -221,3 +221,34 @@ func TestNotifySecretsReassigned(t *testing.T) {
 		store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
 	})
 }
+
+func TestNotifySecretShareRevoked(t *testing.T) {
+	mkCore := func(store *MockStorage) *KeyorixCore {
+		return &KeyorixCore{storage: store, now: func() time.Time { return time.Unix(0, 0) }}
+	}
+	secret := &models.SecretNode{ID: 7, Name: "db", ProjectID: 3}
+
+	t.Run("notifies the recipient their access was revoked", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		ctx := context.Background()
+		var got *models.Notification
+		store.On("CreateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
+			got = n
+			return n.UserID == 2 && n.Type == NotificationSecretShareRevoked
+		})).Return(&models.Notification{ID: 1}, nil)
+
+		c.notifySecretShareRevoked(ctx, secret, 2, 1)
+		store.AssertExpectations(t)
+		require.NotNil(t, got)
+		assert.Contains(t, got.Message, "access to secret")
+		assert.Equal(t, "/secrets/7", got.Link)
+	})
+
+	t.Run("skips when the actor revokes their own share", func(t *testing.T) {
+		store := new(MockStorage)
+		c := mkCore(store)
+		c.notifySecretShareRevoked(context.Background(), secret, 1, 1)
+		store.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+	})
+}
