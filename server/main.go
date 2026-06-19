@@ -298,6 +298,18 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			svp.MinLength, svp.RejectCommon, len(svp.ExtraDenylist))
 	}
 
+	// Apply the optional secret naming convention (regex / max-length on names).
+	if snp := cfg.SecretNamePolicy; snp.Enabled {
+		if err := coreService.SetSecretNamePolicy(core.SecretNamePolicy{
+			Enabled:   true,
+			Pattern:   snp.Pattern,
+			MaxLength: snp.MaxLength,
+		}); err != nil {
+			log.Fatalf("Invalid secret_name_policy: %v", err)
+		}
+		log.Printf("Secret-name policy enabled (pattern=%q, max_length=%d)", snp.Pattern, snp.MaxLength)
+	}
+
 	// Apply per-account login lockout if enabled (brute-force protection, distinct
 	// from the per-IP rate limiter).
 	if ll := cfg.Security.LoginLockout; ll.Enabled {

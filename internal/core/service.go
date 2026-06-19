@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -50,6 +51,8 @@ type KeyorixCore struct {
 	now               func() time.Time // For testability
 	passwordPolicy    PasswordPolicy
 	secretValuePolicy SecretValuePolicy  // optional quality gate on secret values (off by default)
+	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
+	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
 	loginLockout      LoginLockoutPolicy // per-account login lockout (disabled by default)
 	auditForwarder    AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
@@ -277,6 +280,19 @@ func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
 // default). The server calls this at startup when secret_value_policy.enabled is set.
 func (c *KeyorixCore) SetSecretValuePolicy(p SecretValuePolicy) {
 	c.secretValuePolicy = p
+}
+
+// SetSecretNamePolicy enables/configures the secret naming convention (off by
+// default). The server calls this at startup when secret_name_policy.enabled is set.
+// Returns an error (and leaves the policy disabled) if Pattern is not a valid regex.
+func (c *KeyorixCore) SetSecretNamePolicy(p SecretNamePolicy) error {
+	re, err := compileNamePattern(p.Pattern)
+	if err != nil {
+		return err
+	}
+	c.secretNamePolicy = p
+	c.secretNameRe = re
+	return nil
 }
 
 // SetLoginLockoutPolicy enables/configures per-account login lockout. The server

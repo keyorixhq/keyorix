@@ -95,6 +95,10 @@ type Config struct {
 	// placeholder values at create/rotate). Disabled (zero value) by default.
 	SecretValuePolicy SecretValuePolicyConfig `yaml:"secret_value_policy"`
 
+	// SecretNamePolicy is an optional naming convention on secret NAMES (regex /
+	// max-length, enforced at create). Disabled (zero value) by default.
+	SecretNamePolicy SecretNamePolicyConfig `yaml:"secret_name_policy"`
+
 	// PasswordPolicy is optional. When the block is absent (zero value), the
 	// server keeps its conservative built-in defaults (see core.DefaultPasswordPolicy);
 	// when present, the install's values fully replace them.
@@ -1269,4 +1273,12 @@ type SecretValuePolicyConfig struct {
 	MinLength     int      `yaml:"min_length"`     // reject values shorter than this (0 = no minimum)
 	RejectCommon  bool     `yaml:"reject_common"`  // reject a built-in denylist of weak/placeholder values
 	ExtraDenylist []string `yaml:"extra_denylist"` // additional rejected values (case-insensitive)
+}
+
+// SecretNamePolicyConfig configures the opt-in secret naming convention
+// (core.SecretNamePolicy). Disabled unless Enabled is true.
+type SecretNamePolicyConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Pattern   string `yaml:"pattern"`    // RE2 regex the name must match (anchor with ^…$); empty = no regex check
+	MaxLength int    `yaml:"max_length"` // reject names longer than this (0 = no maximum)
 }

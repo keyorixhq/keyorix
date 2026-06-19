@@ -61,6 +61,9 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	if err := c.secretValuePolicy.Validate(req.Value); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
+	if err := c.validateSecretName(req.Name); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
 	if len(strings.TrimSpace(req.Description)) > maxSecretDescriptionLen {
 		return nil, fmt.Errorf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
 	}
