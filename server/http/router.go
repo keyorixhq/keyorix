@@ -253,6 +253,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/access-review/campaigns/{campaignId}", catalogHandler.GetAccessReviewCampaign)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide", catalogHandler.DecideAccessReviewCampaignItem)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/access-review/campaigns/{campaignId}/close", catalogHandler.CloseAccessReviewCampaign)
+		// CSV export of a campaign's items + decisions — the auditor's signed-off
+		// recertification record (ISO 27001 A.5.18). Read-only, roles.read (project).
+		r.With(customMiddleware.RequireScopedPermission("roles.read", projectScope)).Get("/projects/{id}/access-review/campaigns/{campaignId}/export.csv", catalogHandler.ExportAccessReviewCampaignCSV)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/members", catalogHandler.AddProjectMember)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/members/{userId}", catalogHandler.UpdateProjectMember)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/members/{userId}", catalogHandler.RemoveProjectMember)
