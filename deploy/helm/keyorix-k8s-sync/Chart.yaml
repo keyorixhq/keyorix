@@ -3,9 +3,9 @@ name: keyorix-k8s-sync
 description: Keyorix Kubernetes sync agent — materialises Keyorix secrets into native Kubernetes Secrets
 type: application
 # Chart version — tracks the Keyorix release version (published in lockstep).
-version: 0.67.0
+version: 0.68.0
 # The keyorix-k8s-sync image tag this chart deploys by default.
-appVersion: "0.67.0"
+appVersion: "0.68.0"
 home: https://github.com/keyorixhq/keyorix
 sources:
   - https://github.com/keyorixhq/keyorix
