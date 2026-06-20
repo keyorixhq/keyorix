@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '../../../test/test-utils';
+import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { ProjectAccessReviewCampaigns } from '../ProjectAccessReviewCampaigns';
 
 const mockUseCampaigns = vi.fn();
@@ -7,6 +7,7 @@ const mockUseCampaign = vi.fn();
 const mockOpenMutate = vi.fn();
 const mockDecideMutate = vi.fn();
 const mockCloseMutate = vi.fn();
+const mockGet = vi.fn();
 
 vi.mock('../../../features/projects/api', () => ({
     useAccessReviewCampaigns: () => mockUseCampaigns(),
@@ -14,6 +15,10 @@ vi.mock('../../../features/projects/api', () => ({
     useOpenCampaign: () => ({ mutate: mockOpenMutate, isPending: false }),
     useDecideCampaignItem: () => ({ mutate: mockDecideMutate, isPending: false }),
     useCloseCampaign: () => ({ mutate: mockCloseMutate, isPending: false }),
+}));
+
+vi.mock('../../../services/client', () => ({
+    apiClient: { get: (...args: any[]) => mockGet(...args) },
 }));
 
 const campaigns = [
@@ -36,6 +41,9 @@ describe('ProjectAccessReviewCampaigns', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockUseCampaign.mockReturnValue({ data: detail, isLoading: false });
+        // jsdom has no object-URL API; stub it for the CSV download.
+        (URL as any).createObjectURL = vi.fn(() => 'blob:mock');
+        (URL as any).revokeObjectURL = vi.fn();
     });
 
     it('lists campaigns with state and progress', () => {
@@ -71,5 +79,21 @@ describe('ProjectAccessReviewCampaigns', () => {
         mockUseCampaigns.mockReturnValue({ data: [], isLoading: false });
         render(<ProjectAccessReviewCampaigns projectId={2} />);
         expect(screen.getByText(/No campaigns yet/i)).toBeInTheDocument();
+    });
+
+    it('downloads the campaign CSV as a blob when Download CSV is clicked', async () => {
+        mockGet.mockResolvedValue({ data: new Blob(['principal\n'], { type: 'text/csv' }) });
+        mockUseCampaigns.mockReturnValue({ data: campaigns, isLoading: false });
+        render(<ProjectAccessReviewCampaigns projectId={2} />);
+        fireEvent.click(screen.getByText('Review'));
+        fireEvent.click(screen.getByRole('button', { name: /download csv/i }));
+
+        await waitFor(() =>
+            expect(mockGet).toHaveBeenCalledWith(
+                '/api/v1/projects/2/access-review/campaigns/1/export.csv',
+                { responseType: 'blob' },
+            ),
+        );
+        expect((URL as any).createObjectURL).toHaveBeenCalled();
     });
 });

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { PlusIcon, CheckIcon, NoSymbolIcon, ClipboardDocumentCheckIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, CheckIcon, NoSymbolIcon, ClipboardDocumentCheckIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import {
     useAccessReviewCampaigns,
     useAccessReviewCampaign,
@@ -8,6 +8,7 @@ import {
     useCloseCampaign,
 } from '../../features/projects/api';
 import { CampaignProgress, AccessReviewItem } from '../../services/projects';
+import { apiClient } from '../../services/client';
 
 interface Props {
     projectId: number;
@@ -155,6 +156,7 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
     const decide = useDecideCampaignItem(projectId, campaignId);
     const close = useCloseCampaign(projectId);
     const [confirmItem, setConfirmItem] = useState<number | null>(null);
+    const [csvBusy, setCsvBusy] = useState(false);
 
     if (isLoading || !data) {
         return <div className="mt-3 h-10 rounded-sm animate-pulse" style={{ backgroundColor: 'var(--bg-muted)' }} />;
@@ -166,6 +168,30 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
         decide.mutate({ itemId, action }, { onSuccess: () => setConfirmItem(null), onError });
     };
     const onClose = (force: boolean) => close.mutate({ campaignId, force }, { onError });
+
+    // Download the campaign as a CSV recertification record (server #373) — available for
+    // open or closed campaigns so an auditor can archive the signed-off evidence.
+    const onDownloadCsv = async () => {
+        setCsvBusy(true);
+        try {
+            const res = await apiClient.get(
+                `/api/v1/projects/${projectId}/access-review/campaigns/${campaignId}/export.csv`,
+                { responseType: 'blob' },
+            );
+            const url = URL.createObjectURL(res.data as Blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `access-review-campaign-${campaignId}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (err: any) {
+            onError(err);
+        } finally {
+            setCsvBusy(false);
+        }
+    };
 
     return (
         <div className="mt-3 rounded-lg border" style={{ borderColor: 'var(--border)' }}>
@@ -221,26 +247,33 @@ const CampaignDetail: React.FC<DetailProps> = ({ projectId, campaignId, onError 
                     })}
                 </ul>
             )}
-            {open && (
-                <div className="flex items-center justify-end gap-2 px-3 py-2 border-t" style={{ borderColor: 'var(--border)' }}>
-                    <span className="text-xs mr-auto" style={{ color: 'var(--text-muted)' }}>
-                        {pending > 0 ? `${pending} item(s) still pending` : 'All items decided'}
-                    </span>
-                    {pending > 0 ? (
-                        <button onClick={() => onClose(true)} disabled={close.isPending}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                            style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-                            Close anyway
-                        </button>
-                    ) : (
-                        <button onClick={() => onClose(false)} disabled={close.isPending}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                            style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>
-                            Close campaign
-                        </button>
-                    )}
-                </div>
-            )}
+            <div className="flex items-center gap-2 px-3 py-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                <button onClick={onDownloadCsv} disabled={csvBusy || data.items.length === 0}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+                    style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                    <ArrowDownTrayIcon className="h-3.5 w-3.5" />{csvBusy ? 'Exporting…' : 'Download CSV'}
+                </button>
+                {open && (
+                    <div className="ml-auto flex items-center gap-2">
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {pending > 0 ? `${pending} item(s) still pending` : 'All items decided'}
+                        </span>
+                        {pending > 0 ? (
+                            <button onClick={() => onClose(true)} disabled={close.isPending}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+                                style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                                Close anyway
+                            </button>
+                        ) : (
+                            <button onClick={() => onClose(false)} disabled={close.isPending}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+                                style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>
+                                Close campaign
+                            </button>
+                        )}
+                    </div>
+                )}
+            </div>
         </div>
     );
 };
