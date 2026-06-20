@@ -342,6 +342,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// project's secrets, metadata only (no values). Deployment-wide system.read;
 			// static path, before /{id}.
 			r.With(customMiddleware.RequirePermission("system.read")).Get("/inventory.csv", secretHandler.DeploymentSecretsInventoryCSV)
+			// Org-wide naming-policy conformance — every project's secrets whose names
+			// violate the current (global) policy. Deployment-wide system.read; static
+			// path, before /{id}.
+			r.With(customMiddleware.RequirePermission("system.read")).Get("/name-conformance", secretHandler.DeploymentSecretNameConformance)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}", secretHandler.GetSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/versions", secretHandler.GetSecretVersions)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/risk", secretHandler.GetSecretRisk)
