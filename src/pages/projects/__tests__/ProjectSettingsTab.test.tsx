@@ -71,6 +71,24 @@ describe('ProjectSettingsTab — promote environment', () => {
         promptSpy.mockRestore();
     });
 
+    it('POSTs extend-expiring when "Extend all" is clicked', async () => {
+        // Surface the Expiring-secrets section by returning one expiring secret.
+        mockGet.mockImplementation((url: string) =>
+            url.includes('/secrets/expiring')
+                ? Promise.resolve({ data: { data: { expiring: [{ id: 9, name: 'db', type: 'password', expired: true }] } } })
+                : Promise.resolve({ data: { data: {} } })
+        );
+        mockPost.mockResolvedValue({ data: { data: { extended: 1 } } });
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(await screen.findByRole('button', { name: /extend all/i }));
+
+        await waitFor(() =>
+            expect(mockPost).toHaveBeenCalledWith('/api/v1/projects/1/secrets/extend-expiring', {})
+        );
+        expect(await screen.findByText(/renewed 1 secret/i)).toBeInTheDocument();
+    });
+
     it('fetches the inventory CSV as a blob when Export inventory is clicked', async () => {
         mockGet.mockResolvedValue({ data: new Blob(['id,name\n'], { type: 'text/csv' }) });
 

@@ -192,6 +192,17 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             return res?.data?.data?.expiring ?? [];
         },
     });
+    // Bulk-renew: push out the expiry of every expiring/expired secret in one call (server #368).
+    const [extendMsg, setExtendMsg] = useState('');
+    const extendExpiringMutation = useMutation({
+        mutationFn: () => apiClient.post(`/api/v1/projects/${projectId}/secrets/extend-expiring`, {}),
+        onSuccess: (res: any) => {
+            setExtendMsg(`Renewed ${res?.data?.data?.extended ?? 0} secret(s) for 90 days.`);
+            queryClient.invalidateQueries({ queryKey: ['project-expiring-secrets', projectId] });
+            queryClient.invalidateQueries({ queryKey: ['project-hygiene', projectId] });
+            queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+        },
+    });
 
     // Recycle bin: soft-deleted (restorable) secrets in this project (server #323).
     interface DeletedSecret { id: number; name: string; type: string; classification?: string; deleted_at?: string; }
@@ -558,10 +569,16 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
             {/* ── Expiring secrets ── (only when present) */}
             {expiringSecrets.length > 0 && (
                 <section>
-                    <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Expiring secrets</h2>
+                    <div className="flex items-center justify-between mb-1">
+                        <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Expiring secrets</h2>
+                        <Button size="sm" variant="outline" onClick={() => { setExtendMsg(''); extendExpiringMutation.mutate(); }} disabled={extendExpiringMutation.isPending}>
+                            <ArrowPathIcon className="h-4 w-4 mr-1" />{extendExpiringMutation.isPending ? 'Renewing…' : 'Extend all (90d)'}
+                        </Button>
+                    </div>
                     <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                         Secrets expiring soon or already expired — renew or rotate them before they lapse.
                     </p>
+                    {extendMsg && <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>{extendMsg}</p>}
                     <div className="rounded-lg border"
                         style={{ borderColor: 'var(--warning, #a16207)', backgroundColor: 'var(--warning-subtle, #fef9c3)' }}>
                         <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
