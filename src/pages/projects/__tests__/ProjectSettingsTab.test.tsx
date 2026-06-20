@@ -14,6 +14,12 @@ vi.mock('../../../services/client', () => ({
     },
 }));
 
+beforeEach(() => {
+    // jsdom has no object-URL API; stub it for the inventory download.
+    (URL as any).createObjectURL = vi.fn(() => 'blob:mock');
+    (URL as any).revokeObjectURL = vi.fn();
+});
+
 vi.mock('../../../features/projects/api', () => ({
     PROJECT_KEYS: { all: ['projects'] },
     useProject: () => ({ data: { id: 1, name: 'web', description: '' }, isLoading: false }),
@@ -63,5 +69,20 @@ describe('ProjectSettingsTab — promote environment', () => {
         expect(mockPost).not.toHaveBeenCalled();
         expect(screen.getByText(/must differ/i)).toBeInTheDocument();
         promptSpy.mockRestore();
+    });
+
+    it('fetches the inventory CSV as a blob when Export inventory is clicked', async () => {
+        mockGet.mockResolvedValue({ data: new Blob(['id,name\n'], { type: 'text/csv' }) });
+
+        render(<ProjectSettingsTab projectId={1} />);
+        fireEvent.click(screen.getByRole('button', { name: /export inventory/i }));
+
+        await waitFor(() =>
+            expect(mockGet).toHaveBeenCalledWith(
+                '/api/v1/projects/1/secrets/inventory.csv',
+                { responseType: 'blob' }
+            )
+        );
+        expect((URL as any).createObjectURL).toHaveBeenCalled();
     });
 });

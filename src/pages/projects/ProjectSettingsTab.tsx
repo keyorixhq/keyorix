@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
-import { TrashIcon, PlusIcon, ArrowPathIcon, ArrowUpOnSquareIcon } from '@heroicons/react/24/outline';
+import { TrashIcon, PlusIcon, ArrowPathIcon, ArrowUpOnSquareIcon, ArrowDownTrayIcon } from '@heroicons/react/24/outline';
 import { useProject, useProjectEnvironments, useRestoreEnvironment, PROJECT_KEYS } from '../../features/projects/api';
 import { apiClient } from '../../services/client';
 import { Button } from '../../components/ui/Button';
@@ -118,6 +118,30 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         }
         setPromoteMsg('');
         promoteEnvMutation.mutate({ sourceId: source.id, targetId });
+    };
+
+    // Compliance: download the project's secret asset inventory as CSV (metadata only,
+    // never values — ISO 27001 A.5.9). Authed blob fetch → object URL → download (server #367).
+    const [inventoryMsg, setInventoryMsg] = useState('');
+    const [inventoryBusy, setInventoryBusy] = useState(false);
+    const handleExportInventory = async () => {
+        setInventoryMsg('');
+        setInventoryBusy(true);
+        try {
+            const res = await apiClient.get(`/api/v1/projects/${projectId}/secrets/inventory.csv`, { responseType: 'blob' });
+            const url = URL.createObjectURL(res.data as Blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `secret-inventory-project-${projectId}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (err: any) {
+            setInventoryMsg(err?.response?.data?.message ?? err?.response?.data?.error ?? 'Failed to export inventory.');
+        } finally {
+            setInventoryBusy(false);
+        }
     };
 
     // ── Project deletion ──────────────────────────────────────────────────
@@ -415,6 +439,25 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                             </Button>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            {/* ── Compliance ── */}
+            <section>
+                <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Compliance</h2>
+                <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                    Export an asset inventory of this project's secrets (metadata only — names, environments,
+                    classification, owners, timestamps; never values) for audit hand-off (ISO 27001 A.5.9).
+                </p>
+                <div className="rounded-lg border p-4 flex items-center justify-between gap-3"
+                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <div className="min-w-0">
+                        <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Secret inventory (CSV)</p>
+                        {inventoryMsg && <p className="text-xs mt-0.5" style={{ color: 'var(--error)' }}>{inventoryMsg}</p>}
+                    </div>
+                    <Button size="sm" variant="outline" onClick={handleExportInventory} disabled={inventoryBusy}>
+                        <ArrowDownTrayIcon className="h-4 w-4 mr-1" />{inventoryBusy ? 'Exporting…' : 'Export inventory'}
+                    </Button>
                 </div>
             </section>
 
