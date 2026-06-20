@@ -204,6 +204,20 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
         },
     });
 
+    // Naming-policy conformance: live secrets whose names violate the current naming
+    // policy (server #371). The policy is enforced only at create, so tightening it
+    // later leaves stragglers — surface them for renaming. Empty when policy is off.
+    interface NameViolation { id: number; name: string; type: string; reason: string; }
+    interface NameConformance { policy_enabled: boolean; total_secrets: number; violations: NameViolation[]; }
+    const { data: nameConformance } = useQuery<NameConformance>({
+        queryKey: ['project-name-conformance', projectId],
+        queryFn: async () => {
+            const res = await apiClient.get(`/api/v1/projects/${projectId}/secrets/name-conformance`);
+            return res?.data?.data ?? { policy_enabled: false, total_secrets: 0, violations: [] };
+        },
+    });
+    const nameViolations = nameConformance?.violations ?? [];
+
     // Recycle bin: soft-deleted (restorable) secrets in this project (server #323).
     interface DeletedSecret { id: number; name: string; type: string; classification?: string; deleted_at?: string; }
     const { data: deletedSecrets = [] } = useQuery<DeletedSecret[]>({
@@ -596,6 +610,31 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                                             : { backgroundColor: 'var(--bg-subtle)', color: 'var(--text-muted)' }}>
                                         {s.expired ? 'expired' : 'expiring'}
                                     </span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </section>
+            )}
+
+            {/* ── Naming-policy violations ── (only when the policy flags existing names) */}
+            {nameViolations.length > 0 && (
+                <section>
+                    <h2 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Naming-policy violations</h2>
+                    <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+                        These secret names don't match the current naming policy. The policy is enforced when a
+                        secret is created, so names from before it was added or tightened need renaming to conform.
+                    </p>
+                    <div className="rounded-lg border"
+                        style={{ borderColor: 'var(--warning, #a16207)', backgroundColor: 'var(--warning-subtle, #fef9c3)' }}>
+                        <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                            {nameViolations.map(v => (
+                                <li key={v.id} className="flex items-center justify-between px-4 py-3">
+                                    <div className="min-w-0">
+                                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{v.name}</span>
+                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>{v.type}</span>
+                                    </div>
+                                    <span className="text-xs ml-3 truncate" style={{ color: 'var(--error)' }}>{v.reason}</span>
                                 </li>
                             ))}
                         </ul>

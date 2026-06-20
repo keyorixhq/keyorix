@@ -103,4 +103,28 @@ describe('ProjectSettingsTab — promote environment', () => {
         );
         expect((URL as any).createObjectURL).toHaveBeenCalled();
     });
+
+    it('shows naming-policy violations with their reason when the policy flags a name', async () => {
+        mockGet.mockImplementation((url: string) =>
+            url.includes('/secrets/name-conformance')
+                ? Promise.resolve({ data: { data: { policy_enabled: true, total_secrets: 2, violations: [{ id: 8, name: 'db-pass', type: 'password', reason: 'secret name does not match the required pattern' }] } } })
+                : Promise.resolve({ data: { data: {} } })
+        );
+
+        render(<ProjectSettingsTab projectId={1} />);
+
+        expect(await screen.findByText('Naming-policy violations')).toBeInTheDocument();
+        expect(screen.getByText('db-pass')).toBeInTheDocument();
+        expect(screen.getByText(/does not match the required pattern/i)).toBeInTheDocument();
+    });
+
+    it('hides the naming-policy section when there are no violations', async () => {
+        mockGet.mockResolvedValue({ data: { data: { policy_enabled: false, total_secrets: 0, violations: [] } } });
+
+        render(<ProjectSettingsTab projectId={1} />);
+
+        // The recycle-bin section always renders, so the page is settled.
+        expect(await screen.findByText('Recycle bin')).toBeInTheDocument();
+        expect(screen.queryByText('Naming-policy violations')).not.toBeInTheDocument();
+    });
 });
