@@ -308,6 +308,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Asset inventory (ISO 27001 A.5.9) — CSV metadata manifest of the project's
 		// secrets (no values) for compliance hand-off.
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/inventory.csv", secretHandler.SecretsInventoryCSV)
+		// Naming-policy conformance — live secrets whose names violate the current naming
+		// policy (enforced only at create, so a tightened policy leaves stragglers).
+		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/secrets/name-conformance", secretHandler.SecretNameConformance)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/suspend-all", secretHandler.SuspendProjectSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/resume-all", secretHandler.ResumeProjectSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/reassign-owner", secretHandler.ReassignOwner)
