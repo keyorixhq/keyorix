@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '../../../test/test-utils';
+import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { CompliancePage } from '../CompliancePage';
 import { complianceApi } from '../../../services/compliance';
 
@@ -10,6 +10,11 @@ vi.mock('../../../services/compliance', () => ({
         placeLegalHold: vi.fn(), liftLegalHold: vi.fn(),
         getRiskExceptions: vi.fn(), createRiskException: vi.fn(), revokeRiskException: vi.fn(),
     },
+}));
+
+const mockGet = vi.fn();
+vi.mock('../../../services/client', () => ({
+    apiClient: { get: (...args: any[]) => mockGet(...args) },
 }));
 
 const emptyMatrix = { generatedAt: '2026-06-14T10:00:00Z', summary: { total: 0, pass: 0, gap: 0, notConfigured: 0 }, controls: [] };
@@ -35,6 +40,9 @@ describe('CompliancePage posture panel', () => {
         (complianceApi.getRiskExceptions as any).mockResolvedValue([]);
         // Digest hidden by default (403-like); the digest test overrides this.
         (complianceApi.getDigest as any).mockRejectedValue({ response: { status: 403 } });
+        // jsdom has no object-URL API; stub it for the CSV download.
+        (URL as any).createObjectURL = vi.fn(() => 'blob:mock');
+        (URL as any).revokeObjectURL = vi.fn();
     });
 
     it('renders the live posture tiles when the report loads', async () => {
@@ -97,6 +105,25 @@ describe('CompliancePage posture panel', () => {
         expect(screen.getByText('1 pass · 1 gap · 0 n/a')).toBeInTheDocument();
         expect(screen.getByText(/Separation of duties/)).toBeInTheDocument();
         expect(screen.getByText('ISO A.5.3 · SOC2 CC5.1 · DORA Art.5')).toBeInTheDocument();
+    });
+
+    it('downloads the control matrix as a CSV blob', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue(posture);
+        (complianceApi.getControls as any).mockResolvedValue({
+            generatedAt: '2026-06-14T10:00:00Z',
+            summary: { total: 1, pass: 1, gap: 0, notConfigured: 0 },
+            controls: [
+                { id: 'mfa', name: 'Second-factor coverage', area: 'Identity', status: 'pass', detail: 'ok', frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [] } },
+            ],
+        });
+        mockGet.mockResolvedValue({ data: new Blob(['id,name\n'], { type: 'text/csv' }) });
+        render(<CompliancePage />);
+
+        fireEvent.click(await screen.findByRole('button', { name: /download csv/i }));
+        await waitFor(() =>
+            expect(mockGet).toHaveBeenCalledWith('/api/v1/compliance/controls.csv', { responseType: 'blob' }),
+        );
+        expect((URL as any).createObjectURL).toHaveBeenCalled();
     });
 
     it('renders the on-demand compliance digest with a copy button', async () => {

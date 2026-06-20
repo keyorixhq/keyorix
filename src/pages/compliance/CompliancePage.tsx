@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { complianceApi } from '../../services/compliance';
+import { apiClient } from '../../services/client';
 
 // LegalHoldBanner surfaces the deployment legal-hold state (A.5.34) and lets an
 // admin place or lift it. Reads status from the shared posture query; mutations
@@ -275,7 +276,26 @@ const ControlMatrixPanel: React.FC = () => {
         staleTime: 60_000,
         retry: false,
     });
+    const [csvBusy, setCsvBusy] = useState(false);
     if (isError || !m) return null; // 403/unavailable — the posture panel already notes admin-only
+
+    // Download the control matrix as a CSV for an auditor's spreadsheet (server #376).
+    const onDownloadCsv = async () => {
+        setCsvBusy(true);
+        try {
+            const res = await apiClient.get('/api/v1/compliance/controls.csv', { responseType: 'blob' });
+            const url = URL.createObjectURL(res.data as Blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'compliance-controls.csv';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } finally {
+            setCsvBusy(false);
+        }
+    };
 
     const refLine = (c: typeof m.controls[number]): string => {
         const parts: string[] = [];
@@ -292,9 +312,20 @@ const ControlMatrixPanel: React.FC = () => {
                 <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>
                     Control matrix (ISO 27001 / SOC 2 / NIS2 / DORA)
                 </h2>
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {m.summary.pass} pass · {m.summary.gap} gap · {m.summary.notConfigured} n/a
-                </span>
+                <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {m.summary.pass} pass · {m.summary.gap} gap · {m.summary.notConfigured} n/a
+                    </span>
+                    <button
+                        type="button"
+                        onClick={onDownloadCsv}
+                        disabled={csvBusy}
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                    >
+                        {csvBusy ? 'Exporting…' : 'Download CSV'}
+                    </button>
+                </div>
             </div>
             <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                 {m.controls.map(c => {
