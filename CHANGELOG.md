@@ -3,6 +3,26 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.68.0 — 2026-06-20
+
+Compliance read surface: an on-demand digest and a control-matrix export.
+
+### Added
+- **On-demand compliance digest** — `GET /compliance/digest` returns the
+  human-readable compliance summary (controls pass/gap, overdue recertifications,
+  rotation gaps, unclassified secrets, open anomalies, risk exceptions, legal
+  hold) that is otherwise broadcast to the notification channels on a schedule,
+  so an admin can pull a point-in-time report; shown with a copy button on the
+  Compliance page. ([#375])
+- **Control-matrix CSV export** — `GET /compliance/controls.csv` downloads the
+  control matrix (each control mapped to ISO 27001 / SOC 2 / NIS2 / DORA clauses
+  with its live pass/gap status) for an auditor's spreadsheet, with a download
+  button on the Compliance page. Completes the compliance-export family beside
+  the audit-log, asset-inventory, and access-recertification CSVs. ([#376])
+
+[#375]: https://github.com/keyorixhq/keyorix/pull/375
+[#376]: https://github.com/keyorixhq/keyorix/pull/376
+
 ## v0.67.0 — 2026-06-20
 
 Secret-name governance and an access-recertification export.
