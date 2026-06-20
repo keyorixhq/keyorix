@@ -7,4 +7,5 @@ export * from './PATHygieneSection';
 export * from './MachineTokenHygieneSection';
 export * from './DeploymentHygieneSection';
 export * from './OrgInventoryExport';
+export * from './OrgNameConformanceSection';
 export * from './ProjectAssignmentsPicker';

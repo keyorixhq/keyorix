@@ -275,6 +275,40 @@ export const useDeploymentHygiene = () =>
         staleTime: 60 * 1000,
     });
 
+// NameConformanceViolation is one secret whose name violates the current naming policy,
+// tagged with its project (org-wide report). Never a value.
+export interface NameConformanceViolation {
+    id: number;
+    name: string;
+    type: string;
+    reason: string;
+    project_id: number;
+    project_name: string;
+}
+
+// DeploymentNameConformance is the org-wide naming-policy conformance report from
+// GET /secrets/name-conformance (keyorix #372): the install-wide policy state plus every
+// violating secret across all projects.
+export interface DeploymentNameConformance {
+    policy_enabled: boolean;
+    total_secrets: number;
+    violations: NameConformanceViolation[];
+}
+
+// useDeploymentNameConformance fetches the org-wide naming-policy conformance report
+// (#372). admin-only (system.read); a 403 yields an empty report (retry:false), so
+// non-admins render nothing.
+export const useDeploymentNameConformance = () =>
+    useQuery({
+        queryKey: ['deployment-name-conformance'],
+        queryFn: async (): Promise<DeploymentNameConformance> => {
+            const res = await apiClient.get('/api/v1/secrets/name-conformance');
+            return res?.data?.data ?? { policy_enabled: false, total_secrets: 0, violations: [] };
+        },
+        retry: false,
+        staleTime: 60 * 1000,
+    });
+
 export const useUserRoles = (userId: number | null) => {
     return useQuery({
         queryKey: ['user-roles', userId],
