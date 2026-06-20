@@ -31,7 +31,7 @@ import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
 import type { SetupLinkResult, ProjectAssignment } from '../../services/users';
 import { SYSTEM_ROLES } from '../../services/users';
-import { AccountStateBadge, StaleAccountsSection, PATHygieneSection, MachineTokenHygieneSection, DeploymentHygieneSection, ProjectAssignmentsPicker } from '../../features/admin';
+import { AccountStateBadge, StaleAccountsSection, PATHygieneSection, MachineTokenHygieneSection, DeploymentHygieneSection, OrgInventoryExport, ProjectAssignmentsPicker } from '../../features/admin';
 import { GlobalInviteUserModal } from '../../features/invitations/GlobalInviteUserModal';
 
 // "system_auditor" → "Auditor"; the leading "system_" is stripped since the
@@ -393,6 +393,7 @@ export const AdminPage: React.FC = () => {
                 <PATHygieneSection />
                 <MachineTokenHygieneSection />
                 <DeploymentHygieneSection />
+                <OrgInventoryExport />
 
                 {filterInactive && (
                     <div className="flex items-center justify-between px-4 py-2.5 mb-4 rounded-lg border"

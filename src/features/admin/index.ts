@@ -6,4 +6,5 @@ export * from './StaleAccountsSection';
 export * from './PATHygieneSection';
 export * from './MachineTokenHygieneSection';
 export * from './DeploymentHygieneSection';
+export * from './OrgInventoryExport';
 export * from './ProjectAssignmentsPicker';
