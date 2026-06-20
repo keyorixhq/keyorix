@@ -3,6 +3,31 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.67.0 — 2026-06-20
+
+Secret-name governance and an access-recertification export.
+
+### Added
+- **Secret naming-policy conformance** — the optional naming policy is enforced
+  only at create time, so this surfaces existing secrets whose names violate the
+  current policy (e.g. after it's added or tightened), per project
+  (`GET /projects/{id}/secrets/name-conformance`, `keyorix secret
+  name-conformance --project <id>`) and deployment-wide
+  (`GET /secrets/name-conformance`, the same CLI command with `--project`
+  omitted), with web panels on Project Settings and the Admin page. Each
+  violation carries the exact reason create-time enforcement would give.
+  ([#371], [#372])
+- **Access-review campaign CSV export** — download a recertification campaign
+  (ISO 27001 A.5.18) as a CSV record of every reviewed grant and its
+  attest/revoke decision, for an auditor to archive
+  (`GET /projects/{id}/access-review/campaigns/{campaignId}/export.csv`).
+  Extends the compliance-export family beside the audit-log and asset-inventory
+  CSVs. ([#373])
+
+[#371]: https://github.com/keyorixhq/keyorix/pull/371
+[#372]: https://github.com/keyorixhq/keyorix/pull/372
+[#373]: https://github.com/keyorixhq/keyorix/pull/373
+
 ## v0.66.0 — 2026-06-20
 
 Bulk environment promotion, deployment-wide hygiene, and a secret asset register.
