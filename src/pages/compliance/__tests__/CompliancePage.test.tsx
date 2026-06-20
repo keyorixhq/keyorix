@@ -6,6 +6,7 @@ import { complianceApi } from '../../../services/compliance';
 vi.mock('../../../services/compliance', () => ({
     complianceApi: {
         getPosture: vi.fn(), getControls: vi.fn(), getSoDViolations: vi.fn(),
+        getDigest: vi.fn(),
         placeLegalHold: vi.fn(), liftLegalHold: vi.fn(),
         getRiskExceptions: vi.fn(), createRiskException: vi.fn(), revokeRiskException: vi.fn(),
     },
@@ -32,6 +33,8 @@ describe('CompliancePage posture panel', () => {
         (complianceApi.getSoDViolations as any).mockResolvedValue([]);
         (complianceApi.getControls as any).mockResolvedValue(emptyMatrix);
         (complianceApi.getRiskExceptions as any).mockResolvedValue([]);
+        // Digest hidden by default (403-like); the digest test overrides this.
+        (complianceApi.getDigest as any).mockRejectedValue({ response: { status: 403 } });
     });
 
     it('renders the live posture tiles when the report loads', async () => {
@@ -94,6 +97,24 @@ describe('CompliancePage posture panel', () => {
         expect(screen.getByText('1 pass · 1 gap · 0 n/a')).toBeInTheDocument();
         expect(screen.getByText(/Separation of duties/)).toBeInTheDocument();
         expect(screen.getByText('ISO A.5.3 · SOC2 CC5.1 · DORA Art.5')).toBeInTheDocument();
+    });
+
+    it('renders the on-demand compliance digest with a copy button', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue(posture);
+        (complianceApi.getDigest as any).mockResolvedValue({
+            title: 'Keyorix compliance digest — 1 gap across 11 controls',
+            body: 'Controls: 10 pass, 1 gap (of 11).\nClassification: 0 of 12 secrets unclassified.',
+        });
+        const writeText = vi.fn();
+        Object.assign(navigator, { clipboard: { writeText } });
+        render(<CompliancePage />);
+
+        expect(await screen.findByText('Compliance digest')).toBeInTheDocument();
+        expect(screen.getByText(/1 gap across 11 controls/)).toBeInTheDocument();
+        expect(screen.getByText(/10 pass, 1 gap/)).toBeInTheDocument();
+
+        screen.getByRole('button', { name: /copy/i }).click();
+        expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Keyorix compliance digest'));
     });
 
     it('lists active risk exceptions in the register', async () => {

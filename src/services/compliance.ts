@@ -211,6 +211,13 @@ export interface RiskExceptionInput {
     expiresAt: string; // RFC3339
 }
 
+// The on-demand compliance digest (GET /compliance/digest): the human-readable
+// summary otherwise broadcast to the notification channels on a schedule.
+export interface ComplianceDigest {
+    title: string;
+    body: string;
+}
+
 export const complianceApi = {
     async getPosture(): Promise<CompliancePosture> {
         const response = await apiClient.get('/api/v1/compliance/posture');
@@ -226,6 +233,12 @@ export const complianceApi = {
         const response = await apiClient.get('/api/v1/risk-exceptions');
         const list = response.data.data?.exceptions ?? response.data.exceptions ?? [];
         return list.map(normalizeException);
+    },
+
+    async getDigest(): Promise<ComplianceDigest> {
+        const response = await apiClient.get('/api/v1/compliance/digest');
+        const d = response.data.data ?? response.data;
+        return { title: d.title ?? '', body: d.body ?? '' };
     },
 
     async createRiskException(input: RiskExceptionInput): Promise<void> {

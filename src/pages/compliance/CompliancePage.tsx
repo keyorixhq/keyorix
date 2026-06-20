@@ -164,6 +164,48 @@ const PosturePanel: React.FC = () => {
 // record type is retained indefinitely).
 const retentionWindow = (days: number): string => (days > 0 ? `${days}d` : 'Keep');
 
+// DigestPanel surfaces the on-demand compliance digest (GET /compliance/digest) — the
+// same human-readable summary otherwise broadcast to the notification channels — so an
+// admin can read or copy a point-in-time report. Needs system.read; hidden on 403/error.
+const DigestPanel: React.FC = () => {
+    const { data, isError } = useQuery({
+        queryKey: ['compliance', 'digest'],
+        queryFn: () => complianceApi.getDigest(),
+        staleTime: 60_000,
+        retry: false,
+    });
+    const [copied, setCopied] = useState(false);
+
+    if (isError || !data || !data.body) return null; // 403/unavailable — posture panel already notes admin-only
+
+    const onCopy = () => {
+        const text = `${data.title}\n\n${data.body}`;
+        void navigator.clipboard?.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+        <div className="rounded-xl border mb-8 overflow-hidden" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+            <div className="px-6 py-4 border-b flex items-center justify-between gap-3" style={{ borderColor: 'var(--border)' }}>
+                <h2 className="text-sm font-semibold uppercase tracking-widest" style={{ color: 'var(--text-muted)' }}>Compliance digest</h2>
+                <button
+                    type="button"
+                    onClick={onCopy}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium shrink-0"
+                    style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                >
+                    {copied ? 'Copied' : 'Copy'}
+                </button>
+            </div>
+            <div className="px-6 py-5">
+                <p className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>{data.title}</p>
+                <pre className="text-xs whitespace-pre-wrap font-sans" style={{ color: 'var(--text-secondary)' }}>{data.body}</pre>
+            </div>
+        </div>
+    );
+};
+
 // SoDViolationsSection lists the separation-of-duties violations (principals
 // holding a forbidden permission pair). Needs system.read; hidden on 403/empty.
 const SoDViolationsSection: React.FC = () => {
@@ -393,6 +435,7 @@ export const CompliancePage: React.FC = () => (
 
         <LegalHoldBanner />
         <PosturePanel />
+        <DigestPanel />
         <ControlMatrixPanel />
         <RiskRegisterPanel />
         <SoDViolationsSection />
