@@ -45,3 +45,31 @@ func TestFetchNameConformance_NotFound(t *testing.T) {
 	_, err := fetchNameConformance(context.Background(), rc, 999)
 	require.Error(t, err)
 }
+
+func deploymentNameConformanceStub(t *testing.T) (*common.RemoteClient, func()) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/secrets/name-conformance" {
+			_, _ = w.Write([]byte(`{"data":{"policy_enabled":true,"pattern":"^[A-Z][A-Z0-9_]*$","max_length":0,"total_secrets":5,"violations":[{"id":8,"name":"db-pass","type":"password","environment_id":2,"reason":"secret name does not match the required pattern","project_name":"alpha"}]}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "tok")
+	rc, ok := common.NewRemoteClient()
+	require.True(t, ok)
+	return rc, srv.Close
+}
+
+func TestFetchDeploymentNameConformance(t *testing.T) {
+	rc, done := deploymentNameConformanceStub(t)
+	defer done()
+	rep, err := fetchDeploymentNameConformance(context.Background(), rc)
+	require.NoError(t, err)
+	assert.True(t, rep.PolicyEnabled)
+	assert.Equal(t, 5, rep.TotalSecrets)
+	require.Len(t, rep.Violations, 1)
+	assert.Equal(t, "db-pass", rep.Violations[0].Name)
+	assert.Equal(t, "alpha", rep.Violations[0].ProjectName)
+}
