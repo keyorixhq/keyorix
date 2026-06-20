@@ -102,8 +102,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Get("/auth/sso/{provider}/login", authHandler.BeginSSO)
 	r.Get("/auth/sso/{provider}/callback", authHandler.CompleteSSO)
 
-	// Health check endpoint
+	// Health check endpoint — lightweight liveness signal (does not touch the DB, so a
+	// transient DB outage won't get the pod restarted).
 	r.Get("/health", handlers.HealthCheck)
+
+	// Readiness probe — verifies the database is reachable before routing traffic to
+	// this replica. Unauthenticated, like /health (k8s probes are unauthenticated).
+	r.Get("/readyz", handlers.ReadinessCheck(coreService))
 
 	// Prometheus metrics — unauthenticated by design (standard for scraping); keep
 	// it inside your perimeter. Exposes HTTP request metrics + Go runtime/process.
