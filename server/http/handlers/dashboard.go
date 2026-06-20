@@ -48,6 +48,19 @@ func (h *DashboardHandler) GetCompliancePosture(w http.ResponseWriter, r *http.R
 	sendSuccess(w, posture, "")
 }
 
+// GetComplianceDigest handles GET /api/v1/compliance/digest — the on-demand,
+// human-readable compliance digest (the same title + body otherwise broadcast on a
+// schedule to the notification channels), so an admin can pull a point-in-time
+// summary without waiting for the scheduled send. Gated by system.read in the router.
+func (h *DashboardHandler) GetComplianceDigest(w http.ResponseWriter, r *http.Request) {
+	title, body, err := h.coreService.BuildComplianceDigest(r.Context())
+	if err != nil {
+		sendError(w, "InternalServerError", "Failed to build compliance digest", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, map[string]string{"title": title, "body": body}, "")
+}
+
 // VerifyComplianceEvidence handles POST /api/v1/compliance/evidence/verify — checks
 // a previously-exported evidence pack against its detached signature. The pack bytes
 // are base64-encoded in the request so arbitrary JSON can ride in a JSON envelope.
