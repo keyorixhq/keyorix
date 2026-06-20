@@ -3,6 +3,38 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.66.0 — 2026-06-20
+
+Bulk environment promotion, deployment-wide hygiene, and a secret asset register.
+
+### Added
+- **Bulk environment promotion** — copy all of an environment's secrets into
+  another environment in one call
+  (`POST /projects/{id}/environments/{envId}/copy-secrets` and
+  `keyorix secret copy-environment`), instead of promoting each secret by hand.
+  ([#363], [#364])
+- **Deployment-wide secret-hygiene rollup** — `GET /hygiene` (and
+  `keyorix hygiene`) aggregate every project's hygiene posture
+  (orphaned / recycle-bin / expiring / rotation-overdue counts) into a single
+  deployment-wide view for admins. ([#365], [#366])
+- **Secret asset inventory (CSV)** — a metadata-only asset register for auditors
+  (ISO 27001 A.5.9): `GET /projects/{id}/secrets/inventory.csv` per project and
+  `GET /secrets/inventory.csv` org-wide, exported from the web UI. Lists every
+  live secret's metadata (name, environment, type, classification, owner,
+  timestamps) and never reads or returns a value. ([#367], [#369])
+- **Bulk-renew expiring secrets** — `POST /projects/{id}/secrets/extend-expiring`
+  pushes the expiration of all soon-to-expire secrets out to a new window
+  (default 90 days), surfaced as an "Extend all" button on the project's
+  expiring-secrets panel. Only ever extends, never shortens. ([#368])
+
+[#363]: https://github.com/keyorixhq/keyorix/pull/363
+[#364]: https://github.com/keyorixhq/keyorix/pull/364
+[#365]: https://github.com/keyorixhq/keyorix/pull/365
+[#366]: https://github.com/keyorixhq/keyorix/pull/366
+[#367]: https://github.com/keyorixhq/keyorix/pull/367
+[#368]: https://github.com/keyorixhq/keyorix/pull/368
+[#369]: https://github.com/keyorixhq/keyorix/pull/369
+
 ## v0.65.0 — 2026-06-19
 
 Secret naming governance, machine-token hygiene, and richer search.
