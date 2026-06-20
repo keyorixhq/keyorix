@@ -335,6 +335,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Usage analytics (static paths, before /{id}).
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/usage/most-accessed", secretHandler.UsageMostAccessed)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/usage/unused", secretHandler.UsageUnused)
+			// Org-wide secret asset inventory (ISO 27001 A.5.9) — CSV manifest of every
+			// project's secrets, metadata only (no values). Deployment-wide system.read;
+			// static path, before /{id}.
+			r.With(customMiddleware.RequirePermission("system.read")).Get("/inventory.csv", secretHandler.DeploymentSecretsInventoryCSV)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}", secretHandler.GetSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/versions", secretHandler.GetSecretVersions)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/risk", secretHandler.GetSecretRisk)
