@@ -3,6 +3,29 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.72.0 — 2026-06-21
+
+Access visibility and operator controls over HTTP.
+
+### Added
+- **Group access visibility** — `GET /api/v1/groups/{id}/shared-secrets` lists the
+  live secrets a group can reach via shares (skipping expired time-bound shares),
+  the group counterpart to the per-user permissions view. ([#392])
+- **User→machine migration over HTTP** —
+  `POST /api/v1/projects/{id}/machine-identities/migrate-from-user` converts a
+  service-account-shaped human user into a project machine identity and (unless
+  `keep_user` is set) suspends the source user, so the conversion can be driven
+  from automation or the dashboard, not just the CLI. Requires `roles.assign`
+  (project) and `users.write`. ([#393])
+- **On-demand job triggers** — a new `/api/v1/admin/jobs` group (`system.write`)
+  dispatches the scheduled notification/alert jobs immediately instead of waiting
+  for the next tick: `anomaly-alerts`, `rotation-reminders`,
+  `expiry-reminders?lead_days=N`, and `compliance-digest`. ([#394])
+
+[#392]: https://github.com/keyorixhq/keyorix/pull/392
+[#393]: https://github.com/keyorixhq/keyorix/pull/393
+[#394]: https://github.com/keyorixhq/keyorix/pull/394
+
 ## v0.71.0 — 2026-06-21
 
 Just-in-time access, RBAC visibility, and naming-policy remediation.
