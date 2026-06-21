@@ -2,9 +2,11 @@ package rbac
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/stretchr/testify/assert"
@@ -106,11 +108,43 @@ func TestRemoteCommandWrappers(t *testing.T) {
 	require.NoError(t, runListPermissionsRemote(ctx, rc, "alice@test.com"))
 	require.NoError(t, runCheckPermissionRemote(ctx, rc, "alice@test.com", "secrets.read"))
 	require.NoError(t, runCheckPermissionRemote(ctx, rc, "alice@test.com", "secrets.write")) // not held → ❌, still nil err
-	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin"))
+	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 0))
 	require.NoError(t, runRemoveRoleRemote(ctx, rc, "alice@test.com", "admin"))
 
 	// A malformed permission name is rejected before any request.
 	require.Error(t, runCheckPermissionRemote(ctx, rc, "alice@test.com", "notvalid"))
+}
+
+// A time-bound grant (--ttl) sends an expires_at in the future; a permanent grant
+// omits it entirely.
+func TestRunAssignRoleRemote_TimeBound(t *testing.T) {
+	var lastBody map[string]interface{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/roles", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"roles":[{"id":1,"name":"admin","description":""}]}}`))
+	})
+	mux.HandleFunc("/api/v1/users", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"users":[{"id":5,"email":"alice@test.com"}]}}`))
+	})
+	mux.HandleFunc("/api/v1/user-roles", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&lastBody)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"data":{"user_id":5,"role_id":1}}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	rc := remoteClientFor(t, srv)
+	ctx := context.Background()
+
+	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 4*time.Hour))
+	require.Contains(t, lastBody, "expires_at")
+	exp, err := time.Parse(time.RFC3339, lastBody["expires_at"].(string))
+	require.NoError(t, err)
+	assert.True(t, exp.After(time.Now()), "expiry must be in the future")
+
+	lastBody = nil
+	require.NoError(t, runAssignRoleRemote(ctx, rc, "alice@test.com", "admin", 0))
+	assert.NotContains(t, lastBody, "expires_at", "a permanent grant omits expires_at")
 }
 
 func TestRunAuditLogsRemote(t *testing.T) {
