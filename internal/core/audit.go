@@ -19,6 +19,10 @@ const (
 	EventRoleGroupRemoved  = "role.group_removed"  // #nosec G101 -- audit event type, not a credential
 	EventPermissionAdded   = "permission.assigned" // #nosec G101 -- audit event type, not a credential
 	EventPermissionRemoved = "permission.removed"  // #nosec G101 -- audit event type, not a credential
+	// Role-definition lifecycle (the role itself, not an assignment of it).
+	EventRoleCreated = "role.created"
+	EventRoleUpdated = "role.updated"
+	EventRoleDeleted = "role.deleted"
 )
 
 // rbacAuditEventTypes is the set of event types that make up the RBAC audit log.
@@ -26,6 +30,7 @@ var rbacAuditEventTypes = []string{
 	EventRoleAssigned, EventRoleRemoved, EventRoleExpired,
 	EventRoleGroupAssigned, EventRoleGroupRemoved,
 	EventPermissionAdded, EventPermissionRemoved,
+	EventRoleCreated, EventRoleUpdated, EventRoleDeleted,
 }
 
 // rbacAuditDetail is the structured payload stored in an RBAC event's Diff field,
@@ -96,6 +101,27 @@ func (c *KeyorixCore) logPermissionChange(ctx context.Context, eventType, verb s
 		RoleID:       roleID,
 		PermissionID: permissionID,
 	})
+}
+
+// LogRoleCreated / LogRoleUpdated / LogRoleDeleted record a change to a role
+// DEFINITION (distinct from assigning a role to a principal). Role definitions are
+// global, so no scope. actorID is the admin who made the change (0 = no
+// authenticated principal). They surface in the RBAC audit log alongside grants.
+func (c *KeyorixCore) LogRoleCreated(ctx context.Context, actorID, roleID uint, name string) {
+	c.logRoleDefinitionChange(ctx, EventRoleCreated, "created", actorID, roleID, name)
+}
+
+func (c *KeyorixCore) LogRoleUpdated(ctx context.Context, actorID, roleID uint, name string) {
+	c.logRoleDefinitionChange(ctx, EventRoleUpdated, "updated", actorID, roleID, name)
+}
+
+func (c *KeyorixCore) LogRoleDeleted(ctx context.Context, actorID, roleID uint, name string) {
+	c.logRoleDefinitionChange(ctx, EventRoleDeleted, "deleted", actorID, roleID, name)
+}
+
+func (c *KeyorixCore) logRoleDefinitionChange(ctx context.Context, eventType, verb string, actorID, roleID uint, name string) {
+	desc := fmt.Sprintf("role %q (id %d) %s", name, roleID, verb)
+	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{RoleID: roleID})
 }
 
 // writeRBACAudit is the shared writer for RBAC audit events: actor as UserID,
