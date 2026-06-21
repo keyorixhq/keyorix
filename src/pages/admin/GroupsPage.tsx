@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { PlusIcon, PencilSquareIcon, TrashIcon, UsersIcon } from '@heroicons/react/24/outline';
+import { PlusIcon, PencilSquareIcon, TrashIcon, UsersIcon, KeyIcon } from '@heroicons/react/24/outline';
 import { Button, Modal, Input, Spinner, Select } from '../../components/ui';
 import {
-    useGroups, useGroupRoles, useRoles,
+    useGroups, useGroupRoles, useGroupSharedSecrets, useRoles,
     useCreateGroup, useUpdateGroup, useDeleteGroup,
     useAssignRoleToGroup, useRemoveRoleFromGroup,
 } from '../../features/admin';
@@ -19,9 +19,10 @@ interface GroupRowProps {
     onEdit: (group: Group) => void;
     onDelete: (group: Group) => void;
     onManageRoles: (group: Group) => void;
+    onViewSecrets: (group: Group) => void;
 }
 
-const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRoles }) => {
+const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRoles, onViewSecrets }) => {
     const { data: groupRoles } = useGroupRoles(group.id);
     const roles = groupRoles?.roles ?? [];
 
@@ -77,6 +78,17 @@ const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRo
                     </button>
                     <button
                         type="button"
+                        onClick={() => onViewSecrets(group)}
+                        className="p-1.5 rounded-md transition-colors"
+                        style={{ color: 'var(--text-muted)' }}
+                        title="Shared secrets"
+                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
+                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
+                    >
+                        <KeyIcon className="h-4 w-4" />
+                    </button>
+                    <button
+                        type="button"
                         onClick={() => onEdit(group)}
                         className="p-1.5 rounded-md transition-colors"
                         style={{ color: 'var(--text-muted)' }}
@@ -109,6 +121,8 @@ export const GroupsPage: React.FC = () => {
     const [editGroup, setEditGroup] = useState<Group | null>(null);
     const [deleteGroup, setDeleteGroup] = useState<Group | null>(null);
     const [manageGroupId, setManageGroupId] = useState<number | null>(null);
+    const [secretsGroup, setSecretsGroup] = useState<Group | null>(null);
+    const { data: sharedSecrets, isLoading: sharedSecretsLoading } = useGroupSharedSecrets(secretsGroup?.id ?? null);
     // Duration preset applied to the NEXT role granted in the Manage Roles modal.
     const [roleTtl, setRoleTtl] = useState('never');
 
@@ -238,6 +252,7 @@ export const GroupsPage: React.FC = () => {
                                 onEdit={openEdit}
                                 onDelete={openDelete}
                                 onManageRoles={g => { setRoleTtl('never'); setManageGroupId(g.id); }}
+                                onViewSecrets={g => setSecretsGroup(g)}
                             />
                         ))}
                     </tbody>
@@ -424,6 +439,37 @@ export const GroupsPage: React.FC = () => {
                             Delete
                         </Button>
                     </div>
+                </div>
+            </Modal>
+
+            {/* Shared secrets — what this group can reach via shares (server #392) */}
+            <Modal
+                isOpen={secretsGroup !== null}
+                onClose={() => setSecretsGroup(null)}
+                title={secretsGroup ? `Secrets shared with ${secretsGroup.name}` : 'Shared secrets'}
+                size="sm"
+            >
+                {sharedSecretsLoading ? (
+                    <div className="flex justify-center py-8"><Spinner /></div>
+                ) : (sharedSecrets ?? []).length === 0 ? (
+                    <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>
+                        No secrets are shared with this group.
+                    </p>
+                ) : (
+                    <ul className="space-y-1 max-h-[55vh] overflow-y-auto pr-1">
+                        {(sharedSecrets ?? []).map(s => (
+                            <li key={s.id} className="flex items-center justify-between rounded-md px-3 py-2.5"
+                                style={{ backgroundColor: 'var(--bg-subtle)' }}>
+                                <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
+                                {s.type && (
+                                    <span className="text-xs ml-3 shrink-0" style={{ color: 'var(--text-muted)' }}>{s.type}</span>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                )}
+                <div className="flex justify-end pt-4 mt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                    <Button variant="secondary" onClick={() => setSecretsGroup(null)}>Close</Button>
                 </div>
             </Modal>
         </div>

@@ -1,6 +1,6 @@
 import { apiClient } from './client';
 import { ApiResponse } from '../types';
-import { Permission, Role, RoleWithPermissions, GroupRoles, Group } from '../types/rbac';
+import { Permission, Role, RoleWithPermissions, GroupRoles, GroupSharedSecret, Group } from '../types/rbac';
 
 // Normalize a role object — handles both mock (lowercase) and real DB
 // (Go-serialized uppercase) field names from the backend.
@@ -84,6 +84,18 @@ export const rbacApi = {
     async getGroupRoles(groupId: number): Promise<GroupRoles> {
         const res = await apiClient.get<ApiResponse<GroupRoles>>(`/api/v1/groups/${groupId}/roles`);
         return res.data.data;
+    },
+
+    // Live secrets a group can reach via shares. The server returns SecretNode rows,
+    // which serialize with Go field names (PascalCase) — normalize to id/name/type.
+    async getGroupSharedSecrets(groupId: number): Promise<GroupSharedSecret[]> {
+        const res = await apiClient.get(`/api/v1/groups/${groupId}/shared-secrets`);
+        const list = res.data?.data?.secrets ?? [];
+        return (Array.isArray(list) ? list : []).map((s: any) => ({
+            id: s.id ?? s.ID ?? 0,
+            name: s.name ?? s.Name ?? '',
+            type: s.type ?? s.Type ?? '',
+        }));
     },
 
     async assignRoleToGroup(groupId: number, roleId: number, expiresAt?: string): Promise<void> {

@@ -29,6 +29,13 @@ export interface GroupRoles {
     roles: GroupRoleGrant[];
 }
 
+// A secret a group can reach via shares (normalized from the server's SecretNode).
+export interface GroupSharedSecret {
+    id: number;
+    name: string;
+    type: string;
+}
+
 export interface UserRoleAssignment {
     user_id: number;
     username: string;

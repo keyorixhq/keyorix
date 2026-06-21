@@ -87,6 +87,14 @@ export const useGroupRoles = (groupId: number | null) =>
         staleTime: 5 * 60 * 1000,
     });
 
+export const useGroupSharedSecrets = (groupId: number | null) =>
+    useQuery({
+        queryKey: ['rbac', 'group-shared-secrets', groupId],
+        queryFn: () => rbacApi.getGroupSharedSecrets(groupId!),
+        enabled: groupId !== null,
+        staleTime: 5 * 60 * 1000,
+    });
+
 export const useAssignRoleToGroup = () => {
     const queryClient = useQueryClient();
     return useMutation({
