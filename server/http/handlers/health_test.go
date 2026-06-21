@@ -1,0 +1,33 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestHealthCheck(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	HealthCheck(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
+
+	// Liveness signal + the keys the probe/consumers rely on.
+	assert.Equal(t, "healthy", body["status"])
+	assert.Contains(t, body, "timestamp")
+	assert.Contains(t, body, "uptime")
+	assert.Contains(t, body, "version")
+
+	// The old handler fabricated dependency health (always "healthy" db/storage/
+	// encryption) — that lie is gone. Liveness must not claim DB health (see /readyz).
+	assert.NotContains(t, body, "checks")
+	assert.NotContains(t, w.Body.String(), "free_space")
+}
