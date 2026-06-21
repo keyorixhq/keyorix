@@ -24,7 +24,9 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 	if displayName == "" {
 		return nil, fmt.Errorf("displayName is required")
 	}
-	group, err := c.CreateGroup(ctx, &CreateGroupRequest{Name: displayName})
+	// Storage-direct: the SCIM path emits its own scim.group_provisioned event below,
+	// so it must not also fire the generic group.created from CreateGroup.
+	group, err := c.storage.CreateGroup(ctx, &models.Group{Name: displayName})
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +111,9 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 // DeprovisionSCIMGroup handles a SCIM DELETE — removes the group (membership links
 // go with it).
 func (c *KeyorixCore) DeprovisionSCIMGroup(ctx context.Context, actorID, groupID uint) error {
-	if err := c.DeleteGroup(ctx, groupID); err != nil {
+	// Storage-direct: the SCIM path emits scim.group_deprovisioned below, not the
+	// generic group.deleted. storage.DeleteGroup still errors on a missing group.
+	if err := c.storage.DeleteGroup(ctx, groupID); err != nil {
 		return err
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupDeprovisioned, actorPtr(actorID), nil,

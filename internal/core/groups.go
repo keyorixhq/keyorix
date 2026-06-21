@@ -13,8 +13,17 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// CreateGroup creates a new group.
-func (c *KeyorixCore) CreateGroup(ctx context.Context, req *CreateGroupRequest) (*models.Group, error) {
+// Group lifecycle audit event types (API/CLI-driven; the SCIM provisioning path
+// has its own scim.group_* events). Surfaced in the audit log like other mutations.
+const (
+	EventGroupCreated = "group.created"
+	EventGroupUpdated = "group.updated"
+	EventGroupDeleted = "group.deleted"
+)
+
+// CreateGroup creates a new group. actorID is the admin performing it (0 = no
+// authenticated principal, e.g. a local CLI invocation).
+func (c *KeyorixCore) CreateGroup(ctx context.Context, actorID uint, req *CreateGroupRequest) (*models.Group, error) {
 	if err := c.validateCreateGroupRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
@@ -23,6 +32,8 @@ func (c *KeyorixCore) CreateGroup(ctx context.Context, req *CreateGroupRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.writeAuditEvent(ctx, EventGroupCreated, actorPtr(actorID), nil,
+		fmt.Sprintf("group %q (id %d) created", created.Name, created.ID))
 	return created, nil
 }
 
@@ -38,8 +49,8 @@ func (c *KeyorixCore) GetGroup(ctx context.Context, id uint) (*models.Group, err
 	return group, nil
 }
 
-// UpdateGroup updates an existing group.
-func (c *KeyorixCore) UpdateGroup(ctx context.Context, req *UpdateGroupRequest) (*models.Group, error) {
+// UpdateGroup updates an existing group. See CreateGroup for actorID semantics.
+func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *UpdateGroupRequest) (*models.Group, error) {
 	if err := c.validateUpdateGroupRequest(req); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
@@ -57,20 +68,25 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, req *UpdateGroupRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.writeAuditEvent(ctx, EventGroupUpdated, actorPtr(actorID), nil,
+		fmt.Sprintf("group %q (id %d) updated", updated.Name, updated.ID))
 	return updated, nil
 }
 
-// DeleteGroup deletes a group by ID.
-func (c *KeyorixCore) DeleteGroup(ctx context.Context, id uint) error {
+// DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics.
+func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
 	}
-	if _, err := c.storage.GetGroup(ctx, id); err != nil {
+	group, err := c.storage.GetGroup(ctx, id)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	if err := c.storage.DeleteGroup(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.writeAuditEvent(ctx, EventGroupDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("group %q (id %d) deleted", group.Name, id))
 	return nil
 }
 
