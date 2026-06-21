@@ -169,6 +169,18 @@ func (c *KeyorixCore) GetUserRolesByID(ctx context.Context, userID uint) ([]*mod
 	return roles, nil
 }
 
+// GetUserPermissionsByID returns a user's effective permission set — the
+// de-duplicated union of permissions across every role assigned to the user. This
+// is the "what can this user do" view for dashboards and access reviews; the CLI's
+// list-permissions assembles the same set client-side. Empty for an unknown user.
+func (c *KeyorixCore) GetUserPermissionsByID(ctx context.Context, userID uint) ([]*storage.Permission, error) {
+	perms, err := c.storage.GetUserPermissions(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return perms, nil
+}
+
 // SetUserRoles does a full replacement of the roles assigned to a user at the
 // given scope. Only assignments at exactly that scope are considered: roles
 // present there but not in roleIDs are removed; roles in roleIDs not already

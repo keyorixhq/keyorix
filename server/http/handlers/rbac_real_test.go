@@ -373,6 +373,46 @@ func TestRBACReal_AssignRoleToGroup_TimeBound(t *testing.T) {
 	require.NotNil(t, gr.ExpiresAt, "the group grant must carry the expiry")
 }
 
+// GET /users/{id}/permissions returns the effective permission set (union across the
+// user's roles) and excludes permissions granted only through an EXPIRED time-bound role.
+func TestRBACReal_GetUserPermissionsForUser(t *testing.T) {
+	db := openTestDB(t)
+	handler := NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	user := &models.User{Username: "perm-user", Email: "perm@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(user).Error)
+	role := mustCreateRole(t, db, "reader")
+	expiredRole := mustCreateRole(t, db, "temp-writer")
+	readPerm := &models.Permission{Name: "secrets.read", Description: "read secrets", Resource: "secrets", Action: "read"}
+	writePerm := &models.Permission{Name: "secrets.write", Description: "write secrets", Resource: "secrets", Action: "write"}
+	require.NoError(t, db.Create(readPerm).Error)
+	require.NoError(t, db.Create(writePerm).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: role.ID, PermissionID: readPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: expiredRole.ID, PermissionID: writePerm.ID}).Error)
+	// A live grant of the reader role, plus an already-expired grant of temp-writer.
+	past := time.Now().Add(-1 * time.Hour)
+	require.NoError(t, db.Create(&models.UserRole{UserID: user.ID, RoleID: role.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: user.ID, RoleID: expiredRole.ID, ExpiresAt: &past}).Error)
+
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/users/%d/permissions", user.ID), nil),
+		"id", fmt.Sprintf("%d", user.ID)))
+	w := httptest.NewRecorder()
+
+	handler.GetUserPermissionsForUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	perms := resp["data"].(map[string]interface{})["permissions"].([]interface{})
+	names := make([]string, 0, len(perms))
+	for _, p := range perms {
+		names = append(names, p.(map[string]interface{})["name"].(string))
+	}
+	assert.Contains(t, names, "secrets.read")
+	assert.NotContains(t, names, "secrets.write", "an expired time-bound grant confers no permissions")
+}
+
 func TestRBACReal_Unauthorized(t *testing.T) {
 	handler, _, _ := setupRBACTestWithDB(t)
 

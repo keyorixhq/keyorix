@@ -459,6 +459,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// Credential-delivery resend (ADR-028): reissue + redeliver a setup link.
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/resend-setup-link", handlers.ResendSetupLink)
 			r.Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
+			// Effective permission set (union across the user's roles) — a read, gated
+			// by the group-wide users.read like the roles view above.
+			r.Get("/{id}/permissions", usersRolesHandler.GetUserPermissionsForUser)
 			// Replacing a user's roles is a privilege grant — gate on roles.assign,
 			// not the group-wide users.read (which many non-admin roles hold).
 			r.With(customMiddleware.RequirePermission("roles.assign")).Put("/{id}/roles", usersRolesHandler.UpdateUserRoles)
