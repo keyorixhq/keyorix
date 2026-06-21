@@ -92,12 +92,30 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		// Environments, when non-empty, seeds the project with exactly these
+		// environments instead of the default development/staging/production set —
+		// one call for infrastructure-as-code provisioning. Blank entries are dropped.
+		Environments []string `json:"environments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
 		return
 	}
-	project, err := h.coreService.CreateProject(r.Context(), body.Name, body.Description)
+
+	envs := make([]string, 0, len(body.Environments))
+	for _, e := range body.Environments {
+		if e = strings.TrimSpace(e); e != "" {
+			envs = append(envs, e)
+		}
+	}
+
+	var project *models.Project
+	var err error
+	if len(envs) > 0 {
+		project, err = h.coreService.CreateProjectWithEnvs(r.Context(), body.Name, body.Description, envs)
+	} else {
+		project, err = h.coreService.CreateProject(r.Context(), body.Name, body.Description)
+	}
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
 		return
