@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { PlusIcon, PencilSquareIcon, TrashIcon, UsersIcon } from '@heroicons/react/24/outline';
-import { Button, Modal, Input, Spinner } from '../../components/ui';
+import { Button, Modal, Input, Spinner, Select } from '../../components/ui';
 import {
     useGroups, useGroupRoles, useRoles,
     useCreateGroup, useUpdateGroup, useDeleteGroup,
     useAssignRoleToGroup, useRemoveRoleFromGroup,
 } from '../../features/admin';
 import type { Group, Role } from '../../types/rbac';
+import { EXPIRY_OPTIONS, expiresAtFromPreset } from '../../lib/expiry';
 
 interface GroupFormData {
     name: string;
@@ -108,6 +109,8 @@ export const GroupsPage: React.FC = () => {
     const [editGroup, setEditGroup] = useState<Group | null>(null);
     const [deleteGroup, setDeleteGroup] = useState<Group | null>(null);
     const [manageGroupId, setManageGroupId] = useState<number | null>(null);
+    // Duration preset applied to the NEXT role granted in the Manage Roles modal.
+    const [roleTtl, setRoleTtl] = useState('never');
 
     const { data: groupsData, isLoading: groupsLoading, error: groupsError } = useGroups();
     const { data: allRoles, isLoading: rolesLoading } = useRoles();
@@ -161,7 +164,9 @@ export const GroupsPage: React.FC = () => {
         if (assignedRoleIds.has(role.id)) {
             removeMutation.mutate({ groupId: manageGroupId, roleId: role.id });
         } else {
-            assignMutation.mutate({ groupId: manageGroupId, roleId: role.id });
+            // A non-permanent preset makes this a time-bound (JIT) grant.
+            const expiresAt = expiresAtFromPreset(roleTtl);
+            assignMutation.mutate({ groupId: manageGroupId, roleId: role.id, ...(expiresAt ? { expiresAt } : {}) });
         }
     };
 
@@ -228,7 +233,7 @@ export const GroupsPage: React.FC = () => {
                                 group={group}
                                 onEdit={openEdit}
                                 onDelete={openDelete}
-                                onManageRoles={g => setManageGroupId(g.id)}
+                                onManageRoles={g => { setRoleTtl('never'); setManageGroupId(g.id); }}
                             />
                         ))}
                     </tbody>
@@ -326,6 +331,16 @@ export const GroupsPage: React.FC = () => {
                 title="Manage Roles"
                 size="sm"
             >
+                <div className="mb-3">
+                    <Select
+                        label="Grant duration"
+                        options={EXPIRY_OPTIONS}
+                        value={roleTtl}
+                        onChange={e => setRoleTtl(e.target.value)}
+                        helperText="Applied to the next role you check. Time-bound grants expire automatically."
+                        fullWidth
+                    />
+                </div>
                 {rolesLoading ? (
                     <div className="flex justify-center py-8">
                         <Spinner />

@@ -90,8 +90,9 @@ export const useGroupRoles = (groupId: number | null) =>
 export const useAssignRoleToGroup = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ groupId, roleId }: { groupId: number; roleId: number }) =>
-            rbacApi.assignRoleToGroup(groupId, roleId),
+        // expiresAt (ISO), when set, makes the grant time-bound (just-in-time access).
+        mutationFn: ({ groupId, roleId, expiresAt }: { groupId: number; roleId: number; expiresAt?: string }) =>
+            rbacApi.assignRoleToGroup(groupId, roleId, expiresAt),
         onSuccess: (_data, { groupId }) =>
             queryClient.invalidateQueries({ queryKey: ['rbac', 'group-roles', groupId] }),
     });

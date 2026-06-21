@@ -86,8 +86,12 @@ export const rbacApi = {
         return res.data.data;
     },
 
-    async assignRoleToGroup(groupId: number, roleId: number): Promise<void> {
-        await apiClient.post(`/api/v1/groups/${groupId}/roles`, { role_id: roleId });
+    async assignRoleToGroup(groupId: number, roleId: number, expiresAt?: string): Promise<void> {
+        // expiresAt (ISO) makes the grant time-bound; omit it for a permanent grant.
+        await apiClient.post(`/api/v1/groups/${groupId}/roles`, {
+            role_id: roleId,
+            ...(expiresAt ? { expires_at: expiresAt } : {}),
+        });
     },
 
     async removeRoleFromGroup(groupId: number, roleId: number): Promise<void> {
