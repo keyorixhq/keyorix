@@ -230,6 +230,47 @@ func TestKeyorixCore_ListGroupShares_ValidationError(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestKeyorixCore_ListGroupSharedSecrets(t *testing.T) {
+	require.NoError(t, i18n.Initialize(&config.Config{
+		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
+	}))
+	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	ms := new(MockStorage)
+	c := &KeyorixCore{storage: ms, now: func() time.Time { return now }}
+	ctx := context.Background()
+
+	past := now.Add(-1 * time.Hour)
+	future := now.Add(1 * time.Hour)
+	shares := []*models.ShareRecord{
+		{ID: 1, SecretID: 1, RecipientID: 2, IsGroup: true, Permission: "read"},                     // live
+		{ID: 2, SecretID: 1, RecipientID: 2, IsGroup: true, Permission: "write"},                    // dup secret → deduped
+		{ID: 3, SecretID: 2, RecipientID: 2, IsGroup: true, Permission: "read", ExpiresAt: &past},   // expired → excluded
+		{ID: 4, SecretID: 3, RecipientID: 2, IsGroup: true, Permission: "read", ExpiresAt: &future}, // live time-bound
+		{ID: 5, SecretID: 4, RecipientID: 2, IsGroup: true, Permission: "read"},                     // secret gone → skipped
+	}
+	ms.On("ListSharesByGroup", ctx, uint(2)).Return(shares, nil)
+	ms.On("GetSecret", ctx, uint(1)).Return(&models.SecretNode{ID: 1, Name: "alpha"}, nil)
+	ms.On("GetSecret", ctx, uint(3)).Return(&models.SecretNode{ID: 3, Name: "gamma"}, nil)
+	ms.On("GetSecret", ctx, uint(4)).Return((*models.SecretNode)(nil), errors.New("not found"))
+
+	result, err := c.ListGroupSharedSecrets(ctx, 2)
+	require.NoError(t, err)
+
+	ids := make([]uint, 0, len(result))
+	for _, s := range result {
+		ids = append(ids, s.ID)
+	}
+	assert.Equal(t, []uint{1, 3}, ids, "live + future shares only, deduped, missing skipped")
+	// The expired share's secret is never even loaded.
+	ms.AssertNotCalled(t, "GetSecret", ctx, uint(2))
+}
+
+func TestKeyorixCore_ListGroupSharedSecrets_ValidationError(t *testing.T) {
+	c := &KeyorixCore{storage: new(MockStorage), now: time.Now}
+	_, err := c.ListGroupSharedSecrets(context.Background(), 0)
+	assert.Error(t, err)
+}
+
 // Regression (security review): a non-owner must not be able to group-share a
 // secret they don't own, even with secrets.write — the owner check in
 // ShareSecretWithGroup enforces it (previously missing).

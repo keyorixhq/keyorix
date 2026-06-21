@@ -155,6 +155,33 @@ func (h *ShareHandler) ListSharedSecrets(w http.ResponseWriter, r *http.Request)
 	h.sendSuccess(w, map[string]interface{}{"secrets": secrets}, "")
 }
 
+// ListGroupSharedSecrets handles GET /api/v1/groups/{id}/shared-secrets — the live
+// secrets currently shared with a group (the "what can this group reach" view).
+func (h *ShareHandler) ListGroupSharedSecrets(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	groupID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		return
+	}
+
+	secrets, err := h.coreService.ListGroupSharedSecrets(r.Context(), uint(groupID))
+	if err != nil {
+		log.Printf("Error listing group shared secrets: %v", err)
+		h.sendError(w, "InternalError", "Failed to list group shared secrets", http.StatusInternalServerError, nil)
+		return
+	}
+	if secrets == nil {
+		secrets = []*models.SecretNode{}
+	}
+
+	h.sendSuccess(w, map[string]interface{}{"secrets": secrets}, "")
+}
+
 // GetSharingStatusWithIndicators handles GET /api/v1/secrets/{id}/sharing-status
 func (h *ShareHandler) GetSharingStatusWithIndicators(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

@@ -92,15 +92,40 @@ func (c *KeyorixCore) ListGroupShares(ctx context.Context, groupID uint) ([]*mod
 	return shares, nil
 }
 
-// ListGroupSharedSecrets lists all secrets shared with a group
+// ListGroupSharedSecrets lists the live secrets currently shared with a group — the
+// "what can this group reach via shares" view. Composes the group's share records
+// (ListSharesByGroup) with the secrets themselves, skipping expired time-bound shares
+// (which no longer authorize) and any share whose secret is gone, and de-duplicating
+// by secret. Never reads a value.
 func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, groupID uint) ([]*models.SecretNode, error) {
 	if groupID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
 	}
 
-	// This would require a new method in the storage interface
-	// For now, we'll just return an empty list
-	return []*models.SecretNode{}, nil
+	shares, err := c.storage.ListSharesByGroup(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+
+	now := c.now()
+	secrets := make([]*models.SecretNode, 0, len(shares))
+	seen := make(map[uint]bool, len(shares))
+	for _, s := range shares {
+		// An expired time-bound share no longer authorizes, so it must not surface here.
+		if s.ExpiresAt != nil && !s.ExpiresAt.After(now) {
+			continue
+		}
+		if seen[s.SecretID] {
+			continue
+		}
+		secret, err := c.storage.GetSecret(ctx, s.SecretID)
+		if err != nil || secret == nil {
+			continue // secret deleted/missing — skip it
+		}
+		seen[s.SecretID] = true
+		secrets = append(secrets, secret)
+	}
+	return secrets, nil
 }
 
 // CheckUserGroupPermission checks if a user has permission to access a secret via group membership
