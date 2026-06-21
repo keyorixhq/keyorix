@@ -4,39 +4,25 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/version"
 )
 
-// HealthResponse represents the health check response
-type HealthResponse struct {
-	Status    string            `json:"status"`
-	Timestamp time.Time         `json:"timestamp"`
-	Version   string            `json:"version"`
-	Services  map[string]string `json:"services"`
-}
+// processStart is captured when the package loads (≈ server start) so /health can report
+// a real uptime.
+var processStart = time.Now()
 
-// HealthCheck handles the health check endpoint
+// HealthCheck handles GET /health — a lightweight liveness signal: it reports that the
+// process is up and responsive. It deliberately does NOT check the database or other
+// dependencies (that is /readyz's job) — a transient dependency outage should not cause
+// the liveness probe to fail and restart the pod.
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now().Add(-5 * time.Minute) // Mock uptime
-
 	health := map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now().UTC(),
-		"uptime":    time.Since(startTime).String(),
-		"version":   "1.0.0",
-		"checks": map[string]interface{}{
-			"database": map[string]interface{}{
-				"status":  "healthy",
-				"latency": "2ms",
-			},
-			"encryption": map[string]interface{}{
-				"status":   "healthy",
-				"provider": "AES-256-GCM",
-			},
-			"storage": map[string]interface{}{
-				"status":     "healthy",
-				"free_space": "85%",
-			},
-		},
+		"uptime":    time.Since(processStart).String(),
+		"version":   version.Version,
+		"commit":    version.Commit,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

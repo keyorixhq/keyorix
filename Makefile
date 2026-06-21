@@ -2,7 +2,11 @@ BINARY_CLI=keyorix
 BINARY_SERVER=keyorix-server
 BUILD_DIR=./bin
 VERSION?=dev
-LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION)"
+GIT_COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+# Inject the build identity into both the CLI (internal/cli.version) and the shared
+# internal/version package (read by the server's /health + /system/info). Commit is
+# deterministic per source revision, so release builds stay reproducible (no build date).
+LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT)"
 
 .PHONY: build build-cli build-server build-ui install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release
 

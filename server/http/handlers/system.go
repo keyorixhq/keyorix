@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/version"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -135,9 +136,9 @@ func MakeSystemInfoHandler(cfg *config.Config) http.HandlerFunc {
 		grpcEnabled := cfg.Server.GRPC.Enabled
 
 		systemInfo := SystemInfo{
-			Version:     "0.1.0",
-			BuildTime:   "2026-05-06",
-			GitCommit:   "see git log",
+			Version:     version.Version,
+			BuildTime:   "unknown", // not injected — release builds stay byte-reproducible (commit identifies the source)
+			GitCommit:   version.Commit,
 			GoVersion:   runtime.Version(),
 			OS:          runtime.GOOS,
 			Arch:        runtime.GOARCH,
