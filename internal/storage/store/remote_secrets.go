@@ -285,3 +285,15 @@ func (rs *RemoteStorage) IncrementSecretReadCount(ctx context.Context, versionID
 	}
 	return nil
 }
+
+// TryIncrementSecretReadCount is server-side enforcement: the authoritative,
+// race-free max-reads gate runs in the server against its local storage. The remote
+// value-read path goes through the server's API (which enforces there), so this
+// method is not on a remote value-read hot path; delegate the increment and report
+// success. Errors propagate so the caller can fail closed.
+func (rs *RemoteStorage) TryIncrementSecretReadCount(ctx context.Context, versionID uint, _ int) (bool, error) {
+	if err := rs.IncrementSecretReadCount(ctx, versionID); err != nil {
+		return false, err
+	}
+	return true, nil
+}

@@ -207,10 +207,16 @@ func (c *KeyorixCore) GetSecretValueByVersionWithPermissionCheck(ctx context.Con
 // Shared by GetSecretValue and GetSecretValueWithPermissionCheck.
 func (c *KeyorixCore) readVersionValue(ctx context.Context, secret *models.SecretNode, version *models.SecretVersion) ([]byte, error) {
 	if secret.MaxReads != nil && *secret.MaxReads > 0 {
-		if version.ReadCount >= *secret.MaxReads {
+		// Atomic check-and-increment: the conditional UPDATE serializes concurrent
+		// reads on the row, so they can never collectively exceed the cap. Fail closed
+		// — if enforcement can't be confirmed, don't hand back the value.
+		ok, err := c.storage.TryIncrementSecretReadCount(ctx, version.ID, *secret.MaxReads)
+		if err != nil {
+			return nil, fmt.Errorf("max-reads enforcement failed: %w", err)
+		}
+		if !ok {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorMaxReadsExceeded", nil))
 		}
-		_ = c.storage.IncrementSecretReadCount(ctx, version.ID) // non-fatal; don't fail the read
 	}
 	if c.encryption != nil {
 		return c.encryption.RetrieveSecret(version.ID)

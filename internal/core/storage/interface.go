@@ -208,6 +208,12 @@ type Storage interface {
 	CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error)
 	GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error)
 	IncrementSecretReadCount(ctx context.Context, versionID uint) error
+	// TryIncrementSecretReadCount atomically increments a version's read count only
+	// while it is still below maxReads, in a single conditional UPDATE. Returns true
+	// when the increment happened (the read is within the cap), false when the cap is
+	// already reached (or the version is gone). This is the race-free gate for
+	// max-reads enforcement: concurrent reads can never collectively exceed the cap.
+	TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error)
 
 	// Secret Sharing Management
 	CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)
