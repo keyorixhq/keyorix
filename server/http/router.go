@@ -485,6 +485,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", groupHandler.UpdateGroup)
 			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", groupHandler.DeleteGroup)
 			r.Get("/{id}/members", groupHandler.GetGroupMembers)
+			// Secrets a group can reach via shares — reveals secret names, so it needs
+			// secrets.read on top of the group-level users.read above.
+			r.With(customMiddleware.RequirePermission("secrets.read")).Get("/{id}/shared-secrets", shareHandler.ListGroupSharedSecrets)
 			// Adding/removing a group member confers (or revokes) every role the group
 			// holds — the same blast radius as a role grant, so gate on roles.assign
 			// (matching the group's role-grant routes below), not users.read.
