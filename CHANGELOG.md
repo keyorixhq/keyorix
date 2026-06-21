@@ -3,6 +3,31 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.70.0 — 2026-06-21
+
+Per-secret usage visibility, and CLI commands that finally honor the configured
+storage backend.
+
+### Added
+- **Per-secret read statistics** — `GET /api/v1/secrets/{id}/stats?days=N`
+  returns a focused per-secret usage view: the durable lifetime read total and
+  version count, plus a configurable recent window (reads, unique readers, last
+  read time). Answers "is this secret actually used, and by whom lately?" in one
+  scoped (`secrets.read`) call, beside `/{id}/access-log` and `/{id}/risk`, and
+  never reveals the value. ([#382])
+
+### Fixed
+- **CLI commands honor `storage.type`** — ~17 `rbac`, `secret`, `share`, and
+  `encryption` subcommands opened the database directly and hardwired SQLite, so
+  against a Postgres deployment they silently operated on a stray local
+  `secrets.db` instead of the real store. They now obtain storage through the
+  factory (or a `*gorm.DB` helper that honors `storage.type`), so every command
+  talks to the configured backend; SQLite stays supported for embedded/air-gapped
+  use. ([#383])
+
+[#382]: https://github.com/keyorixhq/keyorix/pull/382
+[#383]: https://github.com/keyorixhq/keyorix/pull/383
+
 ## v0.69.0 — 2026-06-21
 
 Operability: a real readiness probe and honest build identity.
