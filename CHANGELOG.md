@@ -3,6 +3,29 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.69.0 — 2026-06-21
+
+Operability: a real readiness probe and honest build identity.
+
+### Added
+- **Readiness probe** — `GET /readyz` verifies the database is reachable (200
+  ready / 503 not-ready), so Kubernetes stops routing to a replica whose database
+  is down and restores it on recovery. The Helm chart's readiness probe now
+  targets `/readyz`; the liveness probe stays on `/health` (liveness must not
+  depend on the database). ([#378])
+- **`keyorix system info`** — a CLI command that shows the connected server's
+  version, commit, runtime, uptime, and feature/security configuration. ([#380])
+
+### Changed
+- **Honest build identity** — `/health` and `/system/info` now report the real
+  build version and commit (injected at build time) instead of hardcoded
+  placeholders, and `/health` is a lightweight liveness signal that no longer
+  fabricates dependency-health claims. ([#379])
+
+[#378]: https://github.com/keyorixhq/keyorix/pull/378
+[#379]: https://github.com/keyorixhq/keyorix/pull/379
+[#380]: https://github.com/keyorixhq/keyorix/pull/380
+
 ## v0.68.0 — 2026-06-20
 
 Compliance read surface: an on-demand digest and a control-matrix export.
