@@ -43,7 +43,17 @@ type RotationPolicyEvaluation struct {
 	IsApproaching bool       `json:"is_approaching"`
 }
 
-func (c *KeyorixCore) CreateRotationPolicy(ctx context.Context, req *CreateRotationPolicyRequest) (*models.RotationPolicy, error) {
+// Rotation-policy lifecycle audit event types. Like other governance mutations,
+// policy create/update/delete are recorded in the audit log.
+const (
+	EventRotationPolicyCreated = "rotation_policy.created"
+	EventRotationPolicyUpdated = "rotation_policy.updated"
+	EventRotationPolicyDeleted = "rotation_policy.deleted"
+)
+
+// CreateRotationPolicy creates a rotation policy. actorID is the admin performing it
+// (0 = no authenticated principal).
+func (c *KeyorixCore) CreateRotationPolicy(ctx context.Context, actorID uint, req *CreateRotationPolicyRequest) (*models.RotationPolicy, error) {
 	if req.Scope == "environment" && req.EnvironmentID == nil {
 		return nil, fmt.Errorf("environment_id is required when scope is 'environment'")
 	}
@@ -70,6 +80,8 @@ func (c *KeyorixCore) CreateRotationPolicy(ctx context.Context, req *CreateRotat
 	if err := c.storage.CreateRotationPolicy(ctx, policy); err != nil {
 		return nil, fmt.Errorf("failed to create rotation policy: %w", err)
 	}
+	c.writeAuditEvent(ctx, EventRotationPolicyCreated, actorPtr(actorID), nil,
+		fmt.Sprintf("rotation policy %q (id %d, %s scope) created", policy.Name, policy.ID, policy.Scope))
 	return policy, nil
 }
 
@@ -89,7 +101,8 @@ func (c *KeyorixCore) ListRotationPolicies(ctx context.Context, projectID *uint,
 	return policies, nil
 }
 
-func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, req *UpdateRotationPolicyRequest) (*models.RotationPolicy, error) {
+// UpdateRotationPolicy updates a rotation policy. See CreateRotationPolicy for actorID.
+func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, actorID uint, req *UpdateRotationPolicyRequest) (*models.RotationPolicy, error) {
 	if req.AlertDaysBefore >= req.IntervalDays {
 		return nil, fmt.Errorf("alert_days_before must be less than interval_days")
 	}
@@ -109,16 +122,22 @@ func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, req *UpdateRotat
 	if err := c.storage.UpdateRotationPolicy(ctx, policy); err != nil {
 		return nil, fmt.Errorf("failed to update rotation policy: %w", err)
 	}
+	c.writeAuditEvent(ctx, EventRotationPolicyUpdated, actorPtr(actorID), nil,
+		fmt.Sprintf("rotation policy %q (id %d) updated", policy.Name, policy.ID))
 	return policy, nil
 }
 
-func (c *KeyorixCore) DeleteRotationPolicy(ctx context.Context, id uint) error {
-	if _, err := c.storage.GetRotationPolicy(ctx, id); err != nil {
+// DeleteRotationPolicy deletes a rotation policy. See CreateRotationPolicy for actorID.
+func (c *KeyorixCore) DeleteRotationPolicy(ctx context.Context, actorID, id uint) error {
+	policy, err := c.storage.GetRotationPolicy(ctx, id)
+	if err != nil {
 		return fmt.Errorf("failed to get rotation policy: %w", err)
 	}
 	if err := c.storage.DeleteRotationPolicy(ctx, id); err != nil {
 		return fmt.Errorf("failed to delete rotation policy: %w", err)
 	}
+	c.writeAuditEvent(ctx, EventRotationPolicyDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("rotation policy %q (id %d) deleted", policy.Name, id))
 	return nil
 }
 

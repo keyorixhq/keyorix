@@ -118,7 +118,7 @@ func TestRotationPolicyDelete204(t *testing.T) {
 	handler, coreService := setupRotationPolicyTest(t)
 
 	projectID := uint(1)
-	policy, err := coreService.CreateRotationPolicy(context.Background(), &core.CreateRotationPolicyRequest{
+	policy, err := coreService.CreateRotationPolicy(context.Background(), 1, &core.CreateRotationPolicyRequest{
 		Name:            "To Delete",
 		Scope:           "project",
 		ProjectID:       &projectID,
