@@ -8,13 +8,16 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func openDatabase(cfg *config.Config) (*gorm.DB, error) {
-	return gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
+	// Honor cfg.Storage.Type via the storage package instead of hardwiring SQLite
+	// (ADR-049). OpenGormDB does not migrate — these auth-encryption commands run
+	// against an already-initialized database.
+	return storage.OpenGormDB(cfg)
 }
 
 func showAuthEncryptionStats(db *gorm.DB, encryptionEnabled bool) error {

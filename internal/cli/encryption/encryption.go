@@ -3,13 +3,11 @@ package encryption
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/spf13/cobra"
-	"gorm.io/driver/postgres"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -199,7 +197,12 @@ func rotateWithConfig(cfg *config.Config, confirm bool) error {
 	}
 	defer service.Shutdown()
 
-	db, err := openDBForRotation(cfg)
+	// RotateDEKWithSweep needs a raw *gorm.DB so it can own the re-encryption
+	// transaction (ADR-010), which the storage.Storage abstraction can't provide.
+	// OpenGormDB honors cfg.Storage.Type and keeps the driver selection inside the
+	// storage package rather than this CLI file (ADR-049). The remote-storage guard
+	// above means this only reaches the local sqlite/postgres branches.
+	db, err := storage.OpenGormDB(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database for rotation: %w", err)
 	}
@@ -213,53 +216,6 @@ func rotateWithConfig(cfg *config.Config, confirm bool) error {
 	fmt.Println("✅ DEK rotated successfully")
 	fmt.Printf("📋 New key version: %s\n", service.GetKeyVersion())
 	return nil
-}
-
-// openDBForRotation opens a *gorm.DB connection that mirrors the connection
-// logic in internal/storage/factory.go. We deliberately do not go through the
-// storage abstraction — RotateDEKWithSweep needs a raw *gorm.DB so it can own
-// the transaction. See the ADR-010 addendum for why this is a private CLI
-// helper rather than an accessor on storage.LocalStorage.
-func openDBForRotation(cfg *config.Config) (*gorm.DB, error) {
-	switch cfg.Storage.Type {
-	case "postgres", "postgresql":
-		dsn := config.BuildPostgresDSN(&cfg.Storage.Database)
-		if dsn == "" {
-			return nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
-		}
-		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to postgres: %w", err)
-		}
-		return applyDBPool(db, &cfg.Storage.Database)
-	default:
-		dbPath := cfg.Storage.Database.Path
-		if dbPath == "" {
-			dbPath = "./secrets.db"
-		}
-		db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to database: %w", err)
-		}
-		return applyDBPool(db, &cfg.Storage.Database)
-	}
-}
-
-func applyDBPool(db *gorm.DB, dbCfg *config.DatabaseConfig) (*gorm.DB, error) {
-	sqlDB, err := db.DB()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
-	}
-	if dbCfg.MaxOpenConns > 0 {
-		sqlDB.SetMaxOpenConns(dbCfg.MaxOpenConns)
-	}
-	if dbCfg.MaxIdleConns > 0 {
-		sqlDB.SetMaxIdleConns(dbCfg.MaxIdleConns)
-	}
-	if dbCfg.ConnMaxLifetimeMinutes > 0 {
-		sqlDB.SetConnMaxLifetime(time.Duration(dbCfg.ConnMaxLifetimeMinutes) * time.Minute)
-	}
-	return db, nil
 }
 
 func closeDB(db *gorm.DB) {

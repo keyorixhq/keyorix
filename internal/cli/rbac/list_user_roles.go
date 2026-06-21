@@ -5,13 +5,8 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
-	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/spf13/cobra"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 var listUserRolesCmd = &cobra.Command{
@@ -34,26 +29,14 @@ func runListUserRoles(cmd *cobra.Command, args []string) error {
 		return runListUserRolesRemote(ctx, rc, listUserEmail)
 	}
 
-	// Load configuration
-	cfg, err := config.LoadConfig()
+	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
+	st, err := common.InitializeStorage()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return err
 	}
 
-	// Connect to database
-	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Auto-migrate models
-	if err := db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Role{}); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	// Initialize storage and core service
-	storage := store.NewLocalStorage(db)
-	service := core.NewKeyorixCore(storage)
+	// Initialize core service
+	service := core.NewKeyorixCore(st)
 
 	roles, err := service.ListUserRolesByEmail(ctx, listUserEmail)
 	if err != nil {

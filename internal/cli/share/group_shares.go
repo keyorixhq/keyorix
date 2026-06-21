@@ -6,13 +6,9 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/spf13/cobra"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 var (
@@ -34,25 +30,12 @@ func init() {
 }
 
 func runGroupShares(cmd *cobra.Command, args []string) error {
-	// Load config and connect to database
-	cfg, err := config.Load("keyorix.yaml")
+	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
+	st, err := common.InitializeStorage()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return err
 	}
-
-	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Auto-migrate models (ensure tables exist)
-	if err := db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.ShareRecord{}, &models.Group{}, &models.UserGroup{}); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	// Initialize storage and service
-	storage := store.NewLocalStorage(db)
-	service := core.NewKeyorixCore(storage)
+	service := core.NewKeyorixCore(st)
 
 	// Call service
 	ctx := context.Background()
