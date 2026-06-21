@@ -218,6 +218,36 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
     });
     const nameViolations = nameConformance?.violations ?? [];
 
+    // Rename violators toward conformance (server #386). Each row gets an editable name
+    // input (prefilled with the current name); "Apply renames" POSTs only the edited
+    // rows. The server validates each new name against the policy and skips any that
+    // still don't conform (or collide), reporting a reason — surfaced back here.
+    const [renameInputs, setRenameInputs] = useState<Record<number, string>>({});
+    const [bulkRenameMsg, setBulkRenameMsg] = useState('');
+    const bulkRenameMutation = useMutation({
+        mutationFn: (renames: Array<{ id: number; new_name: string }>) =>
+            apiClient.post(`/api/v1/projects/${projectId}/secrets/bulk-rename`, { renames, dry_run: false }),
+        onSuccess: (res: any) => {
+            const d = res?.data?.data ?? {};
+            const skips = (d.outcomes ?? []).filter((o: any) => o.status === 'skipped');
+            const detail = skips.length
+                ? ` Skipped: ${skips.map((o: any) => `${o.old_name || o.id} (${o.reason})`).join('; ')}.`
+                : '';
+            setBulkRenameMsg(`Renamed ${d.renamed ?? 0} secret(s), ${d.skipped ?? 0} skipped.${detail}`);
+            setRenameInputs({});
+            queryClient.invalidateQueries({ queryKey: ['project-name-conformance', projectId] });
+            queryClient.invalidateQueries({ queryKey: ['project-secrets', projectId] });
+        },
+        onError: (err: any) => {
+            setBulkRenameMsg(`Error: ${err?.response?.data?.error ?? err?.message ?? 'Failed to rename.'}`);
+        },
+    });
+    // The rows whose name input has actually been changed to a non-empty new value.
+    const pendingRenames = nameViolations
+        .map(v => ({ id: v.id, old_name: v.name, new_name: (renameInputs[v.id] ?? v.name).trim() }))
+        .filter(r => r.new_name !== '' && r.new_name !== r.old_name)
+        .map(({ id, new_name }) => ({ id, new_name }));
+
     // Recycle bin: soft-deleted (restorable) secrets in this project (server #323).
     interface DeletedSecret { id: number; name: string; type: string; classification?: string; deleted_at?: string; }
     const { data: deletedSecrets = [] } = useQuery<DeletedSecret[]>({
@@ -629,16 +659,46 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                         style={{ borderColor: 'var(--warning, #a16207)', backgroundColor: 'var(--warning-subtle, #fef9c3)' }}>
                         <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                             {nameViolations.map(v => (
-                                <li key={v.id} className="flex items-center justify-between px-4 py-3">
-                                    <div className="min-w-0">
-                                        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{v.name}</span>
-                                        <span className="text-xs ml-2" style={{ color: 'var(--text-muted)' }}>{v.type}</span>
+                                <li key={v.id} className="px-4 py-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div className="min-w-0 flex items-center gap-2">
+                                            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{v.type}</span>
+                                            <input
+                                                type="text"
+                                                aria-label={`New name for ${v.name}`}
+                                                className="text-sm px-2 py-1 rounded-sm border w-56"
+                                                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-base)', color: 'var(--text-primary)' }}
+                                                value={renameInputs[v.id] ?? v.name}
+                                                onChange={e => setRenameInputs(prev => ({ ...prev, [v.id]: e.target.value }))}
+                                            />
+                                        </div>
+                                        <span className="text-xs ml-3 truncate" style={{ color: 'var(--error)' }}>{v.reason}</span>
                                     </div>
-                                    <span className="text-xs ml-3 truncate" style={{ color: 'var(--error)' }}>{v.reason}</span>
                                 </li>
                             ))}
                         </ul>
                     </div>
+                    <div className="flex items-center gap-3 mt-3">
+                        <Button
+                            variant="secondary"
+                            disabled={pendingRenames.length === 0 || bulkRenameMutation.isPending}
+                            onClick={() => bulkRenameMutation.mutate(pendingRenames)}
+                        >
+                            {bulkRenameMutation.isPending ? 'Renaming…' : `Apply renames (${pendingRenames.length})`}
+                        </Button>
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            Edit a name above, then apply. Names that still don't conform are skipped.
+                        </span>
+                    </div>
+                    {bulkRenameMsg && (
+                        <div className="mt-3">
+                            <Alert
+                                type={bulkRenameMsg.startsWith('Error') ? 'error' : 'success'}
+                                title={bulkRenameMsg.startsWith('Error') ? 'Rename failed' : 'Done'}
+                                message={bulkRenameMsg}
+                            />
+                        </div>
+                    )}
                 </section>
             )}
 
