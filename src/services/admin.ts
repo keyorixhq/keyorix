@@ -73,6 +73,24 @@ export const adminApi = {
         return Array.isArray(permissions) ? permissions : [];
     },
 
+    // On-demand triggers for the scheduled notification/alert jobs (system.write).
+    async runAnomalyAlerts(): Promise<{ alerted: number }> {
+        const response = await apiClient.post<ApiResponse<{ alerted: number }>>('/api/v1/admin/jobs/anomaly-alerts', {});
+        return response.data.data;
+    },
+    async runRotationReminders(): Promise<{ sent: number }> {
+        const response = await apiClient.post<ApiResponse<{ sent: number }>>('/api/v1/admin/jobs/rotation-reminders', {});
+        return response.data.data;
+    },
+    async runExpiryReminders(): Promise<{ sent: number }> {
+        const response = await apiClient.post<ApiResponse<{ sent: number }>>('/api/v1/admin/jobs/expiry-reminders', {});
+        return response.data.data;
+    },
+    async runComplianceDigest(): Promise<{ sent: boolean }> {
+        const response = await apiClient.post<ApiResponse<{ sent: boolean }>>('/api/v1/admin/jobs/compliance-digest', {});
+        return response.data.data;
+    },
+
     // Start impersonating a user. Returns a session token for the target user;
     // the caller swaps the active session to it (authStore.startImpersonation).
     async impersonate(userId: number): Promise<ImpersonationResponse> {

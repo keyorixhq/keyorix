@@ -325,6 +325,12 @@ export const useUserPermissions = (userId: number | null) => {
     });
 };
 
+// On-demand triggers for the scheduled notification/alert jobs (admin maintenance).
+export const useRunAnomalyAlerts = () => useMutation({ mutationFn: () => adminApi.runAnomalyAlerts() });
+export const useRunRotationReminders = () => useMutation({ mutationFn: () => adminApi.runRotationReminders() });
+export const useRunExpiryReminders = () => useMutation({ mutationFn: () => adminApi.runExpiryReminders() });
+export const useRunComplianceDigest = () => useMutation({ mutationFn: () => adminApi.runComplianceDigest() });
+
 export const useUpdateUserRoles = () => {
     const queryClient = useQueryClient();
     return useMutation({

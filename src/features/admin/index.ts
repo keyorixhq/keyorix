@@ -9,3 +9,4 @@ export * from './DeploymentHygieneSection';
 export * from './OrgInventoryExport';
 export * from './OrgNameConformanceSection';
 export * from './ProjectAssignmentsPicker';
+export * from './MaintenanceSection';
