@@ -13,4 +13,5 @@ func init() {
 	SystemCmd.AddCommand(InitCmd)
 	SystemCmd.AddCommand(auditCmd)
 	SystemCmd.AddCommand(validateCmd)
+	SystemCmd.AddCommand(infoCmd)
 }
