@@ -475,3 +475,17 @@ func (ls *LocalStorage) IncrementSecretReadCount(ctx context.Context, versionID 
 	}
 	return nil
 }
+
+// TryIncrementSecretReadCount atomically increments read_count only while it is
+// still below maxReads. The conditional WHERE makes check-and-increment a single
+// row-level-serialized UPDATE, so concurrent reads of a max-reads secret can never
+// collectively exceed the cap. RowsAffected==1 means this read is within the cap.
+func (ls *LocalStorage) TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretVersion{}).
+		Where("id = ? AND read_count < ?", versionID, maxReads).
+		UpdateColumn("read_count", gorm.Expr("read_count + 1"))
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
