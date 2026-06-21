@@ -3,6 +3,27 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.73.0 — 2026-06-21
+
+Complete audit coverage for governance mutations.
+
+### Added
+- **Role-definition changes are audited** — creating, updating, or deleting a role
+  now records `role.created` / `role.updated` / `role.deleted` in the RBAC audit
+  log, closing a gap where role definitions (which control what privileges exist)
+  changed without a trace, even though role assignments were already audited.
+  ([#396])
+- **Group changes are audited** — `group.created` / `group.updated` /
+  `group.deleted` on the API/CLI path, matching the SCIM provisioning path which
+  already audited. ([#397])
+- **Rotation-policy changes are audited** — `rotation_policy.created` /
+  `.updated` / `.deleted`, so changes to a policy's rotation/compliance posture
+  for its covered secrets are traceable. ([#398])
+
+[#396]: https://github.com/keyorixhq/keyorix/pull/396
+[#397]: https://github.com/keyorixhq/keyorix/pull/397
+[#398]: https://github.com/keyorixhq/keyorix/pull/398
+
 ## v0.72.0 — 2026-06-21
 
 Access visibility and operator controls over HTTP.
