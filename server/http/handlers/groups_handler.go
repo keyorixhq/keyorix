@@ -80,7 +80,7 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
-	created, err := h.coreService.CreateGroup(r.Context(), &core.CreateGroupRequest{
+	created, err := h.coreService.CreateGroup(r.Context(), userCtx.UserID, &core.CreateGroupRequest{
 		Name:        body.Name,
 		Description: body.Description,
 	})
@@ -148,7 +148,7 @@ func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
-	updated, err := h.coreService.UpdateGroup(r.Context(), &core.UpdateGroupRequest{
+	updated, err := h.coreService.UpdateGroup(r.Context(), userCtx.UserID, &core.UpdateGroupRequest{
 		ID:          uint(id),
 		Name:        body.Name,
 		Description: body.Description,
@@ -178,7 +178,7 @@ func (h *GroupHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.DeleteGroup(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.DeleteGroup(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error deleting group: %v", err)
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
 			sendError(w, "NotFound", "Group not found", http.StatusNotFound, nil)

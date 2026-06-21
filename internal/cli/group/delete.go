@@ -30,7 +30,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
-	if err := service.DeleteGroup(ctx, deleteGroupID); err != nil {
+	if err := service.DeleteGroup(ctx, 0, deleteGroupID); err != nil { // actorID 0: local/unauthenticated CLI
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
 	fmt.Printf("Group %d deleted.\n", deleteGroupID)
