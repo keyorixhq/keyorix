@@ -69,6 +69,46 @@ func (h *UsersRolesHandler) GetUserRolesForUser(w http.ResponseWriter, r *http.R
 	sendSuccess(w, map[string]interface{}{"roles": apiRoles}, "")
 }
 
+// apiPermission is one entry in a user's effective-permission view.
+type apiPermission struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Resource    string `json:"resource"`
+	Action      string `json:"action"`
+}
+
+// GetUserPermissionsForUser handles GET /api/v1/users/{id}/permissions — the user's
+// effective permission set (the de-duplicated union across all assigned roles). The
+// "what can this user do" view for the dashboard and access reviews.
+func (h *UsersRolesHandler) GetUserPermissionsForUser(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	userID, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	perms, err := h.coreService.GetUserPermissionsByID(r.Context(), userID)
+	if err != nil {
+		log.Printf("Error getting permissions for user %d: %v", userID, err)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
+		} else {
+			sendError(w, "InternalError", "Failed to get user permissions", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+
+	apiPerms := make([]apiPermission, 0, len(perms))
+	for _, p := range perms {
+		apiPerms = append(apiPerms, apiPermission{Name: p.Name, Description: p.Description, Resource: p.Resource, Action: p.Action})
+	}
+	sendSuccess(w, map[string]interface{}{"permissions": apiPerms}, "")
+}
+
 // apiUserMembership is one row of a user's project-assignments view (ADR-025).
 type apiUserMembership struct {
 	ProjectID   uint   `json:"project_id"`
