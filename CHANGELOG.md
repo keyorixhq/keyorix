@@ -3,6 +3,47 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.71.0 — 2026-06-21
+
+Just-in-time access, RBAC visibility, and naming-policy remediation.
+
+### Added
+- **Time-bound (JIT) role grants** — assigning a role now accepts an optional
+  `expires_at`, so a grant can expire automatically instead of becoming standing
+  privilege (emergency / contractor / on-call access). Works for users
+  (`POST /api/v1/user-roles`) and groups (`POST /api/v1/groups/{id}/roles`); a
+  set expiry must be in the future, persists on the grant, and is swept and
+  audited by the existing JIT scheduler. CLI: `keyorix rbac assign-role --ttl 4h`.
+  The group-roles response now carries each grant's expiry so clients can show
+  remaining time. ([#387], [#388])
+- **Bulk rename toward naming-policy conformance** —
+  `POST /api/v1/projects/{id}/secrets/bulk-rename` renames policy-violating
+  secrets in one call (the remediation for the name-conformance report). Each new
+  name must satisfy the policy and not collide; a dry run reports what would
+  change without touching anything; every rename is audited and never reveals a
+  value. CLI: `keyorix secret bulk-rename` (dry-run by default; `--apply` to
+  rename). ([#386])
+- **User effective permissions** — `GET /api/v1/users/{id}/permissions` returns
+  the de-duplicated permission set across a user's roles (excluding expired
+  time-bound grants) — the "what can this user do" view for dashboards and access
+  reviews. ([#389])
+- **Custom environments on project create** — `POST /api/v1/projects` accepts an
+  optional `environments` list to seed exactly those instead of the default
+  development/staging/production set, for one-call infrastructure-as-code
+  provisioning. ([#390])
+
+### Fixed
+- **CLI `project create --envs` honored in remote mode** — the flag posted a
+  field the server ignored, so against a server the custom environments were
+  silently dropped and the project got the default set. The CLI now sends the
+  field the handler reads. ([#390])
+
+[#386]: https://github.com/keyorixhq/keyorix/pull/386
+[#387]: https://github.com/keyorixhq/keyorix/pull/387
+[#388]: https://github.com/keyorixhq/keyorix/pull/388
+[#389]: https://github.com/keyorixhq/keyorix/pull/389
+[#390]: https://github.com/keyorixhq/keyorix/pull/390
+
 ## v0.70.0 — 2026-06-21
 
 Per-secret usage visibility, and CLI commands that finally honor the configured
