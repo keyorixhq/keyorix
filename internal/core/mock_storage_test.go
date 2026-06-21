@@ -1305,6 +1305,10 @@ func (m *MockStorage) GetGroupRoles(_ context.Context, _ uint) ([]*models.Role, 
 	return nil, nil
 }
 
+func (m *MockStorage) GetGroupRoleGrants(_ context.Context, _ uint) ([]*storage.GroupRoleGrant, error) {
+	return nil, nil
+}
+
 func (m *MockStorage) AssignRoleToGroup(_ context.Context, _, _ uint, _ storage.Scope) error {
 	return nil
 }

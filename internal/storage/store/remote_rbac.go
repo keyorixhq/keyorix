@@ -137,6 +137,12 @@ func (rs *RemoteStorage) AssignRole(ctx context.Context, userID, roleID uint, sc
 	return nil
 }
 
+// GetGroupRoleGrants is server-side only (the HTTP handler reads it from local
+// storage); the remote client uses GetGroupRoles for the role list.
+func (rs *RemoteStorage) GetGroupRoleGrants(_ context.Context, _ uint) ([]*storage.GroupRoleGrant, error) {
+	return nil, remoteUnsupported("GetGroupRoleGrants")
+}
+
 // AssignRoleWithExpiry is server-side only (the JIT grant happens during access-
 // request approval on the server); not driven over the remote client.
 func (rs *RemoteStorage) AssignRoleWithExpiry(_ context.Context, _, _ uint, _ storage.Scope, _ time.Time) error {

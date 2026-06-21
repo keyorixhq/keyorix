@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -80,6 +81,16 @@ func (c *KeyorixCore) GetGroupRoles(ctx context.Context, groupID uint) ([]*model
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return roles, nil
+}
+
+// GetGroupRoleGrants returns a group's roles each with its time-bound expiry
+// (nil = permanent), so the API can surface remaining time on a just-in-time grant.
+func (c *KeyorixCore) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*storage.GroupRoleGrant, error) {
+	grants, err := c.storage.GetGroupRoleGrants(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return grants, nil
 }
 
 // AssignRoleToGroup verifies both exist then assigns the role at scope and

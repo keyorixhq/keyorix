@@ -190,6 +190,40 @@ func TestRBACReal_GetGroupRoles200(t *testing.T) {
 	assert.Len(t, roles, 1)
 }
 
+// GetGroupRoles surfaces each grant's expiry: a permanent grant omits expires_at,
+// a time-bound grant carries it.
+func TestRBACReal_GetGroupRoles_CarriesExpiry(t *testing.T) {
+	handler, _, db := setupRBACTestWithDB(t)
+	group := mustCreateGroup(t, db, "exp-team")
+	permRole := mustCreateRole(t, db, "perm-role")
+	jitRole := mustCreateRole(t, db, "jit-role-g")
+	exp := time.Now().Add(2 * time.Hour)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: group.ID, RoleID: permRole.ID}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: group.ID, RoleID: jitRole.ID, ExpiresAt: &exp}).Error)
+
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/groups/%d/roles", group.ID), nil),
+		"id", fmt.Sprintf("%d", group.ID)))
+	w := httptest.NewRecorder()
+
+	handler.GetGroupRoles(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	roles := resp["data"].(map[string]interface{})["roles"].([]interface{})
+	require.Len(t, roles, 2)
+
+	byName := map[string]map[string]interface{}{}
+	for _, r := range roles {
+		m := r.(map[string]interface{})
+		byName[m["name"].(string)] = m
+	}
+	_, hasExpiry := byName["perm-role"]["expires_at"]
+	assert.False(t, hasExpiry, "a permanent grant omits expires_at")
+	assert.NotEmpty(t, byName["jit-role-g"]["expires_at"], "a time-bound grant carries expires_at")
+}
+
 func TestRBACReal_AssignRoleToGroup201(t *testing.T) {
 	handler, _, db := setupRBACTestWithDB(t)
 	group := mustCreateGroup(t, db, "ops-team")

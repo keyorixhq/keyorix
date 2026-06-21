@@ -356,6 +356,21 @@ func (ls *LocalStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mod
 	return roles, nil
 }
 
+// GetGroupRoleGrants is GetGroupRoles plus each grant's time-bound expiry, joined
+// from group_roles.expires_at (nil = permanent).
+func (ls *LocalStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*storage.GroupRoleGrant, error) {
+	var grants []*storage.GroupRoleGrant
+	err := ls.db.WithContext(ctx).Table("roles").
+		Select("roles.id, roles.name, roles.description, group_roles.expires_at").
+		Joins("JOIN group_roles ON roles.id = group_roles.role_id").
+		Where("group_roles.group_id = ?", groupID).
+		Scan(&grants).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return grants, nil
+}
+
 // AssignRoleToGroup assigns a permanent role to a group at scope; errors if
 // already assigned there.
 func (ls *LocalStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
