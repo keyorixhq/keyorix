@@ -317,6 +317,14 @@ export const useUserRoles = (userId: number | null) => {
     });
 };
 
+export const useUserPermissions = (userId: number | null) => {
+    return useQuery({
+        queryKey: ['user-permissions', userId],
+        queryFn: () => adminApi.getUserPermissions(userId!),
+        enabled: userId !== null,
+    });
+};
+
 export const useUpdateUserRoles = () => {
     const queryClient = useQueryClient();
     return useMutation({

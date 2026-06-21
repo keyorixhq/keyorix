@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from '../../../test/test-utils';
 import { UserDetailPage } from '../UserDetailPage';
 
 let userData: Record<string, unknown>;
+let permsData: Array<{ id: number; name: string; description: string; resource: string; action: string }>;
 const unlockMutate = vi.fn();
 const noop = { mutate: vi.fn(), isPending: false };
 
@@ -16,6 +17,7 @@ vi.mock('react-router-dom', async (orig) => ({
 vi.mock('../../../features/admin', () => ({
     useUserDetail: () => ({ data: userData, isLoading: false, isError: false }),
     useUserRoles: () => ({ data: [] }),
+    useUserPermissions: () => ({ data: permsData }),
     useUserMemberships: () => ({ data: [] }),
     useSuspendUser: () => noop,
     useReactivateUser: () => noop,
@@ -46,6 +48,7 @@ const baseUser = {
 beforeEach(() => {
     unlockMutate.mockClear();
     userData = { ...baseUser };
+    permsData = [];
 });
 
 describe('UserDetailPage — login lockout', () => {
@@ -70,5 +73,24 @@ describe('UserDetailPage — login lockout', () => {
         expect(screen.getByText('Clear login lockout')).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
         expect(unlockMutate).toHaveBeenCalledWith(5, expect.anything());
+    });
+});
+
+describe('UserDetailPage — effective permissions', () => {
+    it('lists the effective permissions when present', () => {
+        permsData = [
+            { id: 2, name: 'secrets.write', description: 'Write secrets', resource: 'secrets', action: 'write' },
+            { id: 1, name: 'secrets.read', description: 'Read secrets', resource: 'secrets', action: 'read' },
+        ];
+        render(<UserDetailPage />);
+        expect(screen.getByText('Effective permissions')).toBeInTheDocument();
+        expect(screen.getByText('secrets.read')).toBeInTheDocument();
+        expect(screen.getByText('secrets.write')).toBeInTheDocument();
+    });
+
+    it('shows an empty state when the user has no permissions', () => {
+        render(<UserDetailPage />);
+        expect(screen.getByText('Effective permissions')).toBeInTheDocument();
+        expect(screen.getByText('No permissions.')).toBeInTheDocument();
     });
 });

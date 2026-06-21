@@ -6,6 +6,7 @@ import {
     useUserDetail,
     useUserMemberships,
     useUserRoles,
+    useUserPermissions,
     useSuspendUser,
     useReactivateUser,
     useUnlockUser,
@@ -50,6 +51,7 @@ export const UserDetailPage: React.FC = () => {
 
     const { data: detail, isLoading, isError } = useUserDetail(userId);
     const { data: roles = [] } = useUserRoles(userId);
+    const { data: permissions = [] } = useUserPermissions(userId);
     const { data: memberships = [] } = useUserMemberships(userId);
 
     const suspend = useSuspendUser();
@@ -232,6 +234,25 @@ export const UserDetailPage: React.FC = () => {
                             {r.name}
                         </span>
                     ))
+                )}
+            </div>
+
+            {/* Effective permissions: what the user's roles actually grant (union,
+                excluding expired time-bound grants). Read-only, for audit/review. */}
+            <h2 className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Effective permissions</h2>
+            <div className="flex flex-wrap gap-1.5 mb-6">
+                {permissions.length === 0 ? (
+                    <span className="text-sm" style={{ color: 'var(--text-muted)' }}>No permissions.</span>
+                ) : (
+                    [...permissions]
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((p) => (
+                            <span key={p.id ?? p.name} title={p.description || undefined}
+                                className="px-2 py-0.5 rounded-full text-xs font-mono"
+                                style={{ backgroundColor: 'var(--bg-subtle)', color: 'var(--text-secondary)' }}>
+                                {p.name}
+                            </span>
+                        ))
                 )}
             </div>
 

@@ -1,5 +1,6 @@
 import { apiClient } from './client';
 import { ApiResponse, PaginatedResponse, User } from '../types';
+import type { Permission } from '../types/rbac';
 
 // Normalize role object — handles Go-serialized uppercase field names
 function normalizeRole(r: any): { id: number; name: string; description: string } {
@@ -61,6 +62,15 @@ export const adminApi = {
 
     async updateUserRoles(userId: number, roleIds: number[]): Promise<void> {
         await apiClient.put(`/api/v1/users/${userId}/roles`, { role_ids: roleIds });
+    },
+
+    // A user's effective permission set — the de-duplicated union across their roles
+    // (the server already excludes expired time-bound grants).
+    async getUserPermissions(userId: number): Promise<Permission[]> {
+        const response = await apiClient.get(`/api/v1/users/${userId}/permissions`);
+        const data = response.data.data;
+        const permissions = data?.permissions ?? data ?? [];
+        return Array.isArray(permissions) ? permissions : [];
     },
 
     // Start impersonating a user. Returns a session token for the target user;
