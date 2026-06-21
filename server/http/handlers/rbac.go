@@ -180,6 +180,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.coreService.LogRoleCreated(r.Context(), userCtx.UserID, role.ID, role.Name)
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, map[string]interface{}{"role": role, "permissions": assignedPerms}, "Role created successfully")
 }
@@ -253,6 +254,7 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InternalError", "Failed to update role", http.StatusInternalServerError, nil)
 		return
 	}
+	h.coreService.LogRoleUpdated(r.Context(), userCtx.UserID, role.ID, role.Name)
 
 	// Replace permissions if provided.
 	if req.Permissions != nil {
@@ -310,6 +312,7 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.coreService.LogRoleDeleted(r.Context(), userCtx.UserID, role.ID, role.Name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
