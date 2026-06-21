@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -98,6 +99,10 @@ type AssignRoleRequest struct {
 	// ProjectID/EnvironmentID scope the assignment (0 = global). See core.Scope.
 	ProjectID     uint `json:"project_id"`
 	EnvironmentID uint `json:"environment_id"`
+	// ExpiresAt, when set, makes the grant time-bound (just-in-time access): the
+	// grant stops authorizing the instant it passes and the JIT scheduler sweeps it.
+	// Omit for a permanent grant. Must be in the future. Mirrors share expiry.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // RemoveRoleRequest is the request body for removing a role.
@@ -308,6 +313,18 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// roleExpiryValid reports whether a time-bound grant's expiry is acceptable. A nil
+// expiry (permanent grant) is always valid; a set expiry must be in the future — an
+// already-past expiry would create a grant that never authorizes. On rejection it
+// writes a 400 and returns false (mirrors the share-expiry guard).
+func roleExpiryValid(w http.ResponseWriter, expiresAt *time.Time) bool {
+	if expiresAt != nil && !expiresAt.After(time.Now()) {
+		sendError(w, "ValidationError", "Role expiry must be in the future", http.StatusBadRequest, nil)
+		return false
+	}
+	return true
+}
+
 // AssignRole handles POST /api/v1/user-roles
 func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
@@ -326,10 +343,21 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !roleExpiryValid(w, req.ExpiresAt) {
+		return
+	}
+
 	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
 	// Through the audited core choke point (records role.assigned with the actor),
-	// not storage directly — keeps this endpoint in the RBAC audit trail.
-	if err := h.coreService.AssignUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope); err != nil {
+	// not storage directly — keeps this endpoint in the RBAC audit trail. A set
+	// expiry routes through the time-bound (JIT) path.
+	var err error
+	if req.ExpiresAt != nil {
+		err = h.coreService.AssignUserRoleWithExpiry(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope, *req.ExpiresAt)
+	} else {
+		err = h.coreService.AssignUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope)
+	}
+	if err != nil {
 		log.Printf("Error assigning role: %v", err)
 		if strings.Contains(err.Error(), "already assigned") {
 			sendError(w, "ConflictError", "Role already assigned to user", http.StatusConflict, nil)
@@ -340,7 +368,7 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"user_id": req.UserID, "role_id": req.RoleID}, "Role assigned successfully")
+	sendSuccess(w, map[string]interface{}{"user_id": req.UserID, "role_id": req.RoleID, "expires_at": req.ExpiresAt}, "Role assigned successfully")
 }
 
 // RemoveRole handles DELETE /api/v1/user-roles
@@ -569,9 +597,10 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var body struct {
-		RoleID        uint `json:"role_id" validate:"required"`
-		ProjectID     uint `json:"project_id"`
-		EnvironmentID uint `json:"environment_id"`
+		RoleID        uint       `json:"role_id" validate:"required"`
+		ProjectID     uint       `json:"project_id"`
+		EnvironmentID uint       `json:"environment_id"`
+		ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
@@ -581,9 +610,19 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "ValidationError", "Invalid request data", http.StatusBadRequest, err)
 		return
 	}
+	if !roleExpiryValid(w, body.ExpiresAt) {
+		return
+	}
 
 	scope := core.Scope{ProjectID: body.ProjectID, EnvironmentID: body.EnvironmentID}
-	if err := h.coreService.AssignRoleToGroup(r.Context(), userCtx.UserID, groupID, body.RoleID, scope); err != nil {
+	// A set expiry routes through the time-bound (JIT) path.
+	var err error
+	if body.ExpiresAt != nil {
+		err = h.coreService.AssignGroupRoleWithExpiry(r.Context(), userCtx.UserID, groupID, body.RoleID, scope, *body.ExpiresAt)
+	} else {
+		err = h.coreService.AssignRoleToGroup(r.Context(), userCtx.UserID, groupID, body.RoleID, scope)
+	}
+	if err != nil {
 		log.Printf("Error assigning role to group: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
@@ -596,7 +635,7 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	sendSuccess(w, map[string]interface{}{"group_id": groupID, "role_id": body.RoleID}, "Role assigned to group successfully")
+	sendSuccess(w, map[string]interface{}{"group_id": groupID, "role_id": body.RoleID, "expires_at": body.ExpiresAt}, "Role assigned to group successfully")
 }
 
 // RemoveRoleFromGroup handles DELETE /api/v1/groups/{id}/roles/{roleId}

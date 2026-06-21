@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 )
@@ -195,7 +196,7 @@ func runCheckPermissionRemote(ctx context.Context, rc *common.RemoteClient, emai
 	return nil
 }
 
-func runAssignRoleRemote(ctx context.Context, rc *common.RemoteClient, email, role string) error {
+func runAssignRoleRemote(ctx context.Context, rc *common.RemoteClient, email, role string, ttl time.Duration) error {
 	userID, err := resolveUserIDByEmail(ctx, rc, email)
 	if err != nil {
 		return err
@@ -204,12 +205,19 @@ func runAssignRoleRemote(ctx context.Context, rc *common.RemoteClient, email, ro
 	if err != nil {
 		return err
 	}
-	body := map[string]uint{"user_id": userID, "role_id": roleID}
+	body := map[string]interface{}{"user_id": userID, "role_id": roleID}
+	if ttl > 0 {
+		body["expires_at"] = time.Now().Add(ttl).UTC().Format(time.RFC3339)
+	}
 	var out map[string]interface{}
 	if err := rc.Post(ctx, "/api/v1/user-roles", body, &out); err != nil {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
-	fmt.Printf("✅ Successfully assigned role '%s' to user '%s'\n", role, email)
+	if ttl > 0 {
+		fmt.Printf("✅ Assigned role '%s' to user '%s' for %s (time-bound)\n", role, email, ttl)
+	} else {
+		fmt.Printf("✅ Successfully assigned role '%s' to user '%s'\n", role, email)
+	}
 	return nil
 }
 

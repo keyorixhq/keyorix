@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -270,6 +271,72 @@ func TestRBACReal_AssignRole_Conflict(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, doAssign().Code)
 	assert.Equal(t, http.StatusConflict, doAssign().Code)
+}
+
+// A time-bound user grant (expires_at in the future) is created and persists the
+// expiry on the UserRole row, so the JIT sweep can later reclaim it.
+func TestRBACReal_AssignRole_TimeBound(t *testing.T) {
+	handler, _, db := setupRBACTestWithDB(t)
+	user := &models.User{Username: "jit-user", Email: "jit@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(user).Error)
+	role := mustCreateRole(t, db, "jit-role")
+
+	expiry := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	body := fmt.Sprintf(`{"user_id":%d,"role_id":%d,"expires_at":%q}`, user.ID, role.ID, expiry)
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/user-roles", bytes.NewBufferString(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.AssignRole(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	var ur models.UserRole
+	require.NoError(t, db.Where("user_id = ? AND role_id = ?", user.ID, role.ID).First(&ur).Error)
+	require.NotNil(t, ur.ExpiresAt, "the grant must carry the expiry")
+	assert.True(t, ur.ExpiresAt.After(time.Now()))
+}
+
+// An already-past expiry is rejected before any grant is written.
+func TestRBACReal_AssignRole_PastExpiry_400(t *testing.T) {
+	handler, _, db := setupRBACTestWithDB(t)
+	user := &models.User{Username: "past-user", Email: "past@example.com", PasswordHash: "x"}
+	require.NoError(t, db.Create(user).Error)
+	role := mustCreateRole(t, db, "past-role")
+
+	expiry := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
+	body := fmt.Sprintf(`{"user_id":%d,"role_id":%d,"expires_at":%q}`, user.ID, role.ID, expiry)
+	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/user-roles", bytes.NewBufferString(body)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.AssignRole(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var n int64
+	require.NoError(t, db.Model(&models.UserRole{}).Count(&n).Error)
+	assert.Zero(t, n, "no grant should be written when the expiry is rejected")
+}
+
+// A time-bound group grant persists the expiry on the GroupRole row.
+func TestRBACReal_AssignRoleToGroup_TimeBound(t *testing.T) {
+	handler, _, db := setupRBACTestWithDB(t)
+	group := mustCreateGroup(t, db, "jit-team")
+	role := mustCreateRole(t, db, "jit-team-role")
+
+	expiry := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
+	body := fmt.Sprintf(`{"role_id":%d,"expires_at":%q}`, role.ID, expiry)
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/groups/%d/roles", group.ID), bytes.NewBufferString(body)),
+		"id", fmt.Sprintf("%d", group.ID)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.AssignRoleToGroup(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	var gr models.GroupRole
+	require.NoError(t, db.Where("group_id = ? AND role_id = ?", group.ID, role.ID).First(&gr).Error)
+	require.NotNil(t, gr.ExpiresAt, "the group grant must carry the expiry")
 }
 
 func TestRBACReal_Unauthorized(t *testing.T) {
