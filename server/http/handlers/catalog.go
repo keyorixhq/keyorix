@@ -9,7 +9,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// actorID returns the acting user's ID from the request context (0 when absent).
+func actorID(r *http.Request) uint {
+	if u := middleware.GetUserFromContext(r.Context()); u != nil {
+		return u.UserID
+	}
+	return 0
+}
 
 // CatalogHandler handles project and environment endpoints.
 type CatalogHandler struct {
@@ -42,7 +51,7 @@ func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) 
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RestoreProject(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.RestoreProject(r.Context(), actorID(r), uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
@@ -269,7 +278,7 @@ func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Reque
 		sendError(w, "InvalidParameter", "Invalid environment ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RestoreEnvironment(r.Context(), uint(projectID), uint(id)); err != nil {
+	if err := h.coreService.RestoreEnvironment(r.Context(), actorID(r), uint(projectID), uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
