@@ -95,6 +95,53 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 	sendSuccess(w, map[string]interface{}{"machine_identity": m}, "Machine identity created")
 }
 
+// MigrateUserToMachine handles POST /api/v1/projects/{id}/machine-identities/migrate-from-user
+// (ADR-023) — converts a service-account-shaped human user into a project machine
+// identity and, unless keep_user is set, suspends the source user so it can no longer log
+// in. The user is never deleted. Needs roles.assign (project) AND users.write (the suspend).
+func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	var body struct {
+		Username     string `json:"username"`
+		IdentityType string `json:"identity_type"`
+		Name         string `json:"name"`
+		// KeepUser leaves the source user able to log in; the default (false) suspends
+		// it so the human-login path is closed once the machine identity exists.
+		KeepUser bool `json:"keep_user"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	if body.Username == "" {
+		sendError(w, "ValidationError", "username is required", http.StatusBadRequest, nil)
+		return
+	}
+
+	m, err := h.coreService.MigrateUserToMachine(r.Context(), body.Username, uint(id), body.IdentityType, body.Name, actor.UserID, !body.KeepUser)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "not found") {
+			status = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "invalid identity_type") {
+			status = http.StatusBadRequest
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	sendSuccess(w, map[string]interface{}{"machine_identity": m}, "User migrated to machine identity")
+}
+
 // TransitionMachineIdentity handles PUT /api/v1/projects/{id}/machine-identities/{machineId}.
 // Body: {"action": "activate" | "suspend" | "revoke"}.
 func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *http.Request) {
