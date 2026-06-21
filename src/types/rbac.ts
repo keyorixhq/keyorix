@@ -18,9 +18,15 @@ export interface RoleWithPermissions extends Role {
     permissions: Permission[];
 }
 
+// A role granted to a group, with the grant's optional time-bound expiry
+// (absent = permanent).
+export interface GroupRoleGrant extends Role {
+    expires_at?: string;
+}
+
 export interface GroupRoles {
     group_id: number;
-    roles: Role[];
+    roles: GroupRoleGrant[];
 }
 
 export interface UserRoleAssignment {

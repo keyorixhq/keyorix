@@ -24,3 +24,17 @@ export const expiresAtFromPreset = (preset: string, now: number = Date.now()): s
     const ms = EXPIRY_MS[preset];
     return ms ? new Date(now + ms).toISOString() : undefined;
 };
+
+// formatRemaining renders a short label for a grant's remaining time, e.g.
+// "expires in 3d", "expires in 5h", "expires in 12m", "expires soon", or "expired".
+export const formatRemaining = (iso: string, now: number = Date.now()): string => {
+    const ms = Date.parse(iso) - now;
+    if (Number.isNaN(ms)) return '';
+    if (ms <= 0) return 'expired';
+    const mins = Math.floor(ms / 60000);
+    if (mins < 1) return 'expires soon';
+    if (mins < 60) return `expires in ${mins}m`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `expires in ${hours}h`;
+    return `expires in ${Math.floor(hours / 24)}d`;
+};

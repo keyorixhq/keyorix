@@ -7,7 +7,7 @@ import {
     useAssignRoleToGroup, useRemoveRoleFromGroup,
 } from '../../features/admin';
 import type { Group, Role } from '../../types/rbac';
-import { EXPIRY_OPTIONS, expiresAtFromPreset } from '../../lib/expiry';
+import { EXPIRY_OPTIONS, expiresAtFromPreset, formatRemaining } from '../../lib/expiry';
 
 interface GroupFormData {
     name: string;
@@ -123,6 +123,10 @@ export const GroupsPage: React.FC = () => {
 
     const groups = (groupsData?.data ?? []) as Group[];
     const assignedRoleIds = new Set((groupRolesData?.roles ?? []).map(r => r.id));
+    // Per-grant expiry (ISO) by role id, for the time-bound badge on assigned roles.
+    const roleExpiryById = new Map(
+        (groupRolesData?.roles ?? []).filter(r => r.expires_at).map(r => [r.id, r.expires_at as string]),
+    );
     const isMutatingRole = assignMutation.isPending || removeMutation.isPending;
 
     const openCreate = () => {
@@ -363,9 +367,16 @@ export const GroupsPage: React.FC = () => {
                                         className="h-4 w-4 rounded-sm accent-blue-600"
                                     />
                                     <div className="min-w-0">
-                                        <span className="text-sm font-medium block"
+                                        <span className="text-sm font-medium flex items-center gap-2"
                                             style={{ color: 'var(--text-primary)' }}>
                                             {role.name}
+                                            {assigned && roleExpiryById.has(role.id) && (
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                                                    style={{ backgroundColor: 'var(--warning-subtle, #fef9c3)', color: 'var(--warning, #a16207)' }}
+                                                    title={new Date(roleExpiryById.get(role.id) as string).toLocaleString()}>
+                                                    {formatRemaining(roleExpiryById.get(role.id) as string)}
+                                                </span>
+                                            )}
                                         </span>
                                         {role.description && (
                                             <span className="text-xs"
