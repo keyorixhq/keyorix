@@ -3,6 +3,19 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.73.1 — 2026-06-22
+
+Security fix.
+
+### Fixed
+- **max_reads is now enforced atomically** — a limited-use secret could be read
+  more than its `max_reads` cap under concurrent requests (a check-then-act race),
+  and a storage error on the read-counter update failed open. Reads are now gated
+  by a single atomic conditional update and fail closed, so concurrent reads can
+  never collectively exceed the cap. ([#400])
+
+[#400]: https://github.com/keyorixhq/keyorix/pull/400
+
 ## v0.73.0 — 2026-06-21
 
 Complete audit coverage for governance mutations.
