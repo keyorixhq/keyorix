@@ -15,11 +15,16 @@ import {
     useResendSetupLink,
     AccountStateBadge,
 } from '../../features/admin';
+import { useMigrateUserToMachine } from '../../features/admin';
 import { useAuth } from '../../features/auth';
+import { useProjects } from '../../features/projects/api';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
+import { Input } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
 import { Loading } from '../../components/ui/Loading';
+import { MACHINE_IDENTITY_TYPES } from '../../services/machineIdentities';
 import type { AdminUser, SetupLinkResult } from '../../services/users';
 
 function formatDate(iso?: string | null): string {
@@ -67,6 +72,15 @@ export const UserDetailPage: React.FC = () => {
     const [resentLink, setResentLink] = useState<SetupLinkResult | null>(null);
     const [linkCopied, setLinkCopied] = useState(false);
 
+    // Convert-to-machine-identity form modal (ADR-023).
+    const { data: projects = [] } = useProjects();
+    const migrate = useMigrateUserToMachine();
+    const [showMigrate, setShowMigrate] = useState(false);
+    const [migProjectId, setMigProjectId] = useState('');
+    const [migType, setMigType] = useState('service');
+    const [migName, setMigName] = useState('');
+    const [migKeepUser, setMigKeepUser] = useState(false);
+
     if (isLoading) return <Loading className="py-20" />;
     if (isError || !detail) {
         return (
@@ -95,6 +109,30 @@ export const UserDetailPage: React.FC = () => {
         else if (pending === 'unlock') unlock.mutate(userId, opts);
         else if (pending === 'revoke-sessions') revokeSessions.mutate(userId, opts);
         else requireReset.mutate(userId, opts);
+    };
+
+    const runMigrate = () => {
+        if (userId === null || !migProjectId) return;
+        setError('');
+        migrate.mutate(
+            {
+                projectId: Number(migProjectId),
+                userId,
+                body: {
+                    username: user.username,
+                    identity_type: migType,
+                    ...(migName.trim() ? { name: migName.trim() } : {}),
+                    keep_user: migKeepUser,
+                },
+            },
+            {
+                onSuccess: (d) => {
+                    setShowMigrate(false);
+                    setNote(`Created machine identity “${d?.machine_identity?.name ?? user.username}”${migKeepUser ? '' : '; source user suspended'}.`);
+                },
+                onError: (err: any) => surface(err, 'Migration failed.'),
+            },
+        );
     };
 
     const handleResend = () => {
@@ -202,6 +240,11 @@ export const UserDetailPage: React.FC = () => {
                                 {resend.isPending ? 'Resending…' : 'Resend setup link'}
                             </Button>
                         )}
+                        {state !== 'suspended' && (
+                            <Button variant="outline" size="sm" onClick={() => { setError(''); setMigProjectId(''); setMigType('service'); setMigName(''); setMigKeepUser(false); setShowMigrate(true); }}>
+                                Convert to machine identity
+                            </Button>
+                        )}
                     </div>
                     {isSelf && <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>You cannot run lifecycle actions on your own account.</p>}
                 </div>
@@ -295,6 +338,47 @@ export const UserDetailPage: React.FC = () => {
                         </div>
                     </div>
                 )}
+            </Modal>
+
+            {/* Convert to machine identity (ADR-023) */}
+            <Modal isOpen={showMigrate} onClose={() => setShowMigrate(false)} title="Convert to machine identity" size="sm">
+                <div className="space-y-4">
+                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        Create a project machine identity for <span className="font-medium">{user.username}</span>. Unless you keep the user, the source account is suspended so it can no longer log in (it is never deleted).
+                    </p>
+                    <Select
+                        label="Project"
+                        placeholder="Select a project"
+                        value={migProjectId}
+                        onChange={(e) => setMigProjectId(e.target.value)}
+                        options={projects.map((p) => ({ value: String(p.id), label: p.name }))}
+                        fullWidth
+                    />
+                    <Select
+                        label="Identity type"
+                        value={migType}
+                        onChange={(e) => setMigType(e.target.value)}
+                        options={MACHINE_IDENTITY_TYPES.map((t) => ({ value: t, label: t }))}
+                        fullWidth
+                    />
+                    <Input
+                        label="Name (optional)"
+                        placeholder={user.username}
+                        value={migName}
+                        onChange={(e) => setMigName(e.target.value)}
+                        fullWidth
+                    />
+                    <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        <input type="checkbox" checked={migKeepUser} onChange={(e) => setMigKeepUser(e.target.checked)} />
+                        Keep the source user active (don’t suspend)
+                    </label>
+                    <div className="flex justify-end gap-3 pt-2">
+                        <Button variant="ghost" onClick={() => setShowMigrate(false)}>Cancel</Button>
+                        <Button variant="primary" onClick={runMigrate} disabled={!migProjectId || migrate.isPending} loading={migrate.isPending}>
+                            Convert
+                        </Button>
+                    </div>
+                </div>
             </Modal>
         </div>
     );

@@ -91,6 +91,19 @@ export const adminApi = {
         return response.data.data;
     },
 
+    // Convert a service-account-shaped user into a project machine identity (ADR-023).
+    // Unless keep_user is set, the source user is suspended.
+    async migrateUserToMachine(
+        projectId: number,
+        body: { username: string; identity_type?: string; name?: string; keep_user?: boolean },
+    ): Promise<{ machine_identity: { id: number; name: string } }> {
+        const response = await apiClient.post(
+            `/api/v1/projects/${projectId}/machine-identities/migrate-from-user`,
+            body,
+        );
+        return response.data.data;
+    },
+
     // Start impersonating a user. Returns a session token for the target user;
     // the caller swaps the active session to it (authStore.startImpersonation).
     async impersonate(userId: number): Promise<ImpersonationResponse> {

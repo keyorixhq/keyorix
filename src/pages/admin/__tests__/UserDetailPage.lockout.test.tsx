@@ -6,6 +6,7 @@ import { UserDetailPage } from '../UserDetailPage';
 let userData: Record<string, unknown>;
 let permsData: Array<{ id: number; name: string; description: string; resource: string; action: string }>;
 const unlockMutate = vi.fn();
+const migrateMutate = vi.fn();
 const noop = { mutate: vi.fn(), isPending: false };
 
 vi.mock('react-router-dom', async (orig) => ({
@@ -25,7 +26,12 @@ vi.mock('../../../features/admin', () => ({
     useRequirePasswordReset: () => noop,
     useRevokeSessions: () => noop,
     useResendSetupLink: () => noop,
+    useMigrateUserToMachine: () => ({ mutate: migrateMutate, isPending: false }),
     AccountStateBadge: ({ state }: { state: string }) => <span>state:{state}</span>,
+}));
+
+vi.mock('../../../features/projects/api', () => ({
+    useProjects: () => ({ data: [{ id: 7, name: 'platform' }] }),
 }));
 
 vi.mock('../../../features/auth', () => ({
@@ -47,6 +53,7 @@ const baseUser = {
 
 beforeEach(() => {
     unlockMutate.mockClear();
+    migrateMutate.mockClear();
     userData = { ...baseUser };
     permsData = [];
 });
@@ -92,5 +99,31 @@ describe('UserDetailPage — effective permissions', () => {
         render(<UserDetailPage />);
         expect(screen.getByText('Effective permissions')).toBeInTheDocument();
         expect(screen.getByText('No permissions.')).toBeInTheDocument();
+    });
+});
+
+describe('UserDetailPage — convert to machine identity', () => {
+    it('opens the modal and migrates with the chosen project, type, and keep-user', () => {
+        render(<UserDetailPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'Convert to machine identity' }));
+
+        // Pick a project (required), keep the default type 'service', keep the user.
+        fireEvent.change(screen.getByLabelText('Project'), { target: { value: '7' } });
+        fireEvent.click(screen.getByLabelText(/Keep the source user active/i));
+        fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
+
+        expect(migrateMutate).toHaveBeenCalledTimes(1);
+        const [vars] = migrateMutate.mock.calls[0];
+        expect(vars).toMatchObject({
+            projectId: 7,
+            userId: 5,
+            body: { username: 'bob', identity_type: 'service', keep_user: true },
+        });
+    });
+
+    it('keeps Convert disabled until a project is selected', () => {
+        render(<UserDetailPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'Convert to machine identity' }));
+        expect(screen.getByRole('button', { name: 'Convert' })).toBeDisabled();
     });
 });

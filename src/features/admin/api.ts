@@ -331,6 +331,20 @@ export const useRunRotationReminders = () => useMutation({ mutationFn: () => adm
 export const useRunExpiryReminders = () => useMutation({ mutationFn: () => adminApi.runExpiryReminders() });
 export const useRunComplianceDigest = () => useMutation({ mutationFn: () => adminApi.runComplianceDigest() });
 
+// Convert a user into a project machine identity (ADR-023). Suspends the source
+// user (unless keep_user), so refresh that user's detail on success.
+export const useMigrateUserToMachine = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (vars: { projectId: number; userId: number; body: { username: string; identity_type?: string; name?: string; keep_user?: boolean } }) =>
+            adminApi.migrateUserToMachine(vars.projectId, vars.body),
+        onSuccess: (_data, { userId }) => {
+            queryClient.invalidateQueries({ queryKey: ['user-detail', userId] });
+            queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+        },
+    });
+};
+
 export const useUpdateUserRoles = () => {
     const queryClient = useQueryClient();
     return useMutation({
