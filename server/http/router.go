@@ -360,6 +360,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/shares", shareHandler.ListSecretShares)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/access", secretHandler.ListAccessors)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/access-log", secretHandler.AccessHistory)
+			// Per-secret read statistics — lifetime total + recent-window summary.
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/stats", secretHandler.GetSecretAccessStats)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/audit", secretHandler.AuditTrail)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/tags", secretHandler.GetTags)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}/tags", secretHandler.SetTags)
