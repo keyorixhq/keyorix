@@ -44,7 +44,10 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		if len(envList) == 0 {
 			return fmt.Errorf("--envs must not be empty")
 		}
-		body["envs"] = envList
+		// Field name must match the server's CreateProject handler ("environments");
+		// it previously sent "envs", which the server ignored — so --envs was silently
+		// dropped in remote mode and the project got the default environment set.
+		body["environments"] = envList
 	}
 
 	if rc, ok := common.NewRemoteClient(); ok {
