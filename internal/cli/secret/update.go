@@ -13,14 +13,10 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
-	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 var (
@@ -67,24 +63,12 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return runUpdateRemote(rc)
 	}
 
-	cfg, err := config.LoadConfig()
+	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
+	st, err := common.InitializeStorage()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return err
 	}
-
-	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Auto-migrate models (ensure tables exist)
-	if err := db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	// Initialize storage and core service
-	storageImpl := store.NewLocalStorage(db)
-	service := core.NewKeyorixCore(storageImpl)
+	service := core.NewKeyorixCore(st)
 
 	// Create context
 	ctx := context.Background()

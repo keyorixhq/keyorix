@@ -5,12 +5,7 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
-	"github.com/keyorixhq/keyorix/internal/config"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/spf13/cobra"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 var listRolesCmd = &cobra.Command{
@@ -26,29 +21,15 @@ func runListRoles(cmd *cobra.Command, args []string) error {
 		return runListRolesRemote(ctx, rc)
 	}
 
-	// Load configuration
-	cfg, err := config.LoadConfig()
+	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
+	st, err := common.InitializeStorage()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return err
 	}
-
-	// Connect to database
-	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Auto-migrate models
-	if err := db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Role{}); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
-	}
-
-	// Initialize storage
-	storage := store.NewLocalStorage(db)
 
 	// TODO: Implement ListRoles in core service
 	// For now, use storage directly
-	roles, err := storage.ListRoles(ctx)
+	roles, err := st.ListRoles(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list roles: %w", err)
 	}

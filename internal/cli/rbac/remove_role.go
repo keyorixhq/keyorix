@@ -5,12 +5,8 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
-	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/spf13/cobra"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 var removeRoleCmd = &cobra.Command{
@@ -39,23 +35,14 @@ func runRemoveRole(cmd *cobra.Command, args []string) error {
 		return runRemoveRoleRemote(ctx, rc, removeUserEmail, removeRoleName)
 	}
 
-	// Load configuration
-	cfg, err := config.LoadConfig()
+	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
+	st, err := common.InitializeStorage()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return err
 	}
-
-	// Initialize database
-	db, err := gorm.Open(sqlite.Open(cfg.Storage.Database.Path), &gorm.Config{})
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Create storage layer
-	storage := store.NewLocalStorage(db)
 
 	// Create core service
-	coreService := core.NewKeyorixCore(storage)
+	coreService := core.NewKeyorixCore(st)
 
 	// Use core service to remove role
 	err = coreService.RemoveRoleFromUser(ctx, removeUserEmail, removeRoleName)

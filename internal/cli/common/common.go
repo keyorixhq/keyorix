@@ -5,6 +5,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage"
@@ -57,6 +58,27 @@ func InitializeCoreService() (*core.KeyorixCore, error) {
 		svc.SetCredentialDelivery(nil, cd.BaseURL)
 	}
 	return svc, nil
+}
+
+// InitializeStorage builds a storage.Storage from the resolved configuration via
+// the storage factory, so the backend is selected by cfg.Storage.Type
+// (local/postgres/remote) instead of being hardwired. CLI commands that need
+// storage — directly, or wrapped in a core service via core.NewKeyorixCore — must
+// use this instead of opening the database with a GORM driver themselves
+// (ADR-049). Config is resolved through the same config.Load("") path
+// (KEYORIX_CONFIG_PATH-based) that the rest of the CLI and the server use, so a
+// command and the server read identical configuration.
+func InitializeStorage() (corestorage.Storage, error) {
+	cfg, err := config.Load("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	st, err := storage.NewStorageFactory().CreateStorage(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create storage: %w", err)
+	}
+	return st, nil
 }
 
 // PrintProvisionResult prints how a setup link was delivered (ADR-028). In out-of-band
