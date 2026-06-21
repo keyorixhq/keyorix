@@ -569,7 +569,9 @@ func (h *RBACHandler) GetGroupRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roles, err := h.coreService.GetGroupRoles(r.Context(), groupID)
+	// Grants carry each role's time-bound expiry (nil = permanent) so the UI can
+	// show remaining time on a JIT grant.
+	roles, err := h.coreService.GetGroupRoleGrants(r.Context(), groupID)
 	if err != nil {
 		log.Printf("Error getting group roles: %v", err)
 		if strings.Contains(err.Error(), "not found") {

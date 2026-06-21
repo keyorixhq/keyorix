@@ -334,6 +334,9 @@ type Storage interface {
 	// Group-Role assignments. Assign/Remove bind a role to a group at the given
 	// Scope (zero Scope = global).
 	GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error)
+	// GetGroupRoleGrants is GetGroupRoles plus each grant's time-bound expiry
+	// (nil = permanent), so callers can surface remaining time on a JIT grant.
+	GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*GroupRoleGrant, error)
 	AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
 	// AssignRoleToGroupWithExpiry binds a time-bound role to a group; see
 	// AssignRoleWithExpiry.
@@ -773,4 +776,14 @@ type RoleAssignment struct {
 	RoleID        uint   `json:"role_id"`
 	ProjectID     uint   `json:"project_id"`
 	EnvironmentID uint   `json:"environment_id"`
+}
+
+// GroupRoleGrant is a role assigned to a group together with the grant's optional
+// time-bound expiry (nil = permanent). Mirrors a models.Role plus expires_at so the
+// group-roles API can show remaining time on a just-in-time grant.
+type GroupRoleGrant struct {
+	ID          uint       `json:"id"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 }
