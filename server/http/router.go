@@ -70,6 +70,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	usersRolesHandler := handlers.NewUsersRolesHandler(coreService)
 	notificationHandler := handlers.NewNotificationHandler(coreService)
 	connectHandler := handlers.NewConnectHandler(coreService)
+	adminJobsHandler := handlers.NewAdminJobsHandler(coreService)
 
 	// Auth endpoints (no authentication middleware)
 	r.Post("/auth/login", authHandler.Login)
@@ -608,6 +609,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/sod/policies", catalogHandler.CreateSoDPolicy)
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/sod/policies/{id}", catalogHandler.DeleteSoDPolicy)
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/sod/violations", catalogHandler.ListSoDViolations)
+
+		// On-demand triggers for the notification/alert jobs that otherwise run only on
+		// their background schedulers — dispatch immediately after an incident or config
+		// change. Deployment-wide admin actions, gated by system.write.
+		r.Route("/admin/jobs", func(r chi.Router) {
+			r.Use(customMiddleware.RequirePermission("system.write"))
+			r.Post("/anomaly-alerts", adminJobsHandler.RunAnomalyAlerts)
+			r.Post("/rotation-reminders", adminJobsHandler.RunRotationReminders)
+			r.Post("/expiry-reminders", adminJobsHandler.RunExpiryReminders)
+			r.Post("/compliance-digest", adminJobsHandler.RunComplianceDigest)
+		})
 	})
 
 	// Swagger UI (optional, based on config)
