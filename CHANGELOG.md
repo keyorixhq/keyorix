@@ -12,9 +12,9 @@ All notable changes to Keyorix are documented here. This project follows
   (RD 311/2022) measure (`op.acc.*` / `op.exp.*` / `mp.info.*` / …) alongside ISO 27001
   / SOC 2 / NIS2 / DORA, with the same live pass/gap/not-configured status. Lets an ENS
   auditor pull the secret-management control set mapped to RD 311/2022 with its current
-  state. Mappings are consistent with `docs/compliance/ENS-CONTROLS.md`. (ADR-051) ([#410])
+  state. Mappings are consistent with `docs/compliance/ENS-CONTROLS.md`. (ADR-051) ([#411])
 
-[#410]: https://github.com/keyorixhq/keyorix/pull/410
+[#411]: https://github.com/keyorixhq/keyorix/pull/411
 
 ## v0.74.0 — 2026-06-22
 
