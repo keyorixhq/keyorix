@@ -3,7 +3,11 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## v0.75.0 — 2026-06-23
+
+A large security release: anomaly-detection ML, ENS compliance mapping, the full
+secret dependency graph (tracking, impact, rotation order) across HTTP/CLI/gRPC/UI,
+automated rotation planning, certificate inspection, plus observability and CLI parity.
 
 ### Added
 - **Automated rotation planning** — `GET /api/v1/projects/{id}/rotation-plan` composes
@@ -31,18 +35,6 @@ All notable changes to Keyorix are documented here. This project follows
   (only `CERTIFICATE` blocks are parsed), does **not** count against `max_reads`,
   respects suspension, and is audited (`secret.certificate_inspected`). Scoped
   `secrets.read`. (ADR-054) ([#416])
-
-[#413]: https://github.com/keyorixhq/keyorix/pull/413
-[#414]: https://github.com/keyorixhq/keyorix/pull/414
-[#415]: https://github.com/keyorixhq/keyorix/pull/415
-[#416]: https://github.com/keyorixhq/keyorix/pull/416
-
-## v0.75.0 — 2026-06-22
-
-Anomaly-detection ML, ENS compliance mapping, secret dependency tracking, plus
-observability and CLI parity.
-
-### Added
 - **ML anomaly detection (Isolation Forest)** — an opt-in machine-learning pass that
   complements the existing rule-based access-anomaly detection. Each scan trains a
   per-secret Isolation Forest on the secret's 30-day access baseline and flags
@@ -86,6 +78,10 @@ observability and CLI parity.
 [#410]: https://github.com/keyorixhq/keyorix/pull/410
 [#411]: https://github.com/keyorixhq/keyorix/pull/411
 [#412]: https://github.com/keyorixhq/keyorix/pull/412
+[#413]: https://github.com/keyorixhq/keyorix/pull/413
+[#414]: https://github.com/keyorixhq/keyorix/pull/414
+[#415]: https://github.com/keyorixhq/keyorix/pull/415
+[#416]: https://github.com/keyorixhq/keyorix/pull/416
 
 ## v0.74.0 — 2026-06-22
 
