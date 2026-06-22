@@ -35,9 +35,15 @@ All notable changes to Keyorix are documented here. This project follows
   cycles are rejected). Metadata only — no secret value is read. This is the
   prerequisite for automated rotation planning; the topological order is the
   deterministic core of that. (ADR-052) ([#412])
+- **CLI for the secret dependency graph** — `keyorix secret deps list|add|rm|impact`
+  and `keyorix rotation order <project-id>` bring the ADR-052 dependency graph to the
+  terminal: declare/list/remove edges, see a secret's rotation blast radius, and print
+  a project's safe rotation order. Thin REST clients over the existing endpoints,
+  scoped server-side. ([#414])
 
 [#410]: https://github.com/keyorixhq/keyorix/pull/410
 [#411]: https://github.com/keyorixhq/keyorix/pull/411
+[#414]: https://github.com/keyorixhq/keyorix/pull/414
 [#412]: https://github.com/keyorixhq/keyorix/pull/412
 
 ## v0.74.0 — 2026-06-22
