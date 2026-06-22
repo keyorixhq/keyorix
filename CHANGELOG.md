@@ -18,9 +18,9 @@ All notable changes to Keyorix are documented here. This project follows
   and the graph is kept acyclic (self-edges, duplicates, cross-project/-environment, and
   cycles are rejected). Metadata only — no
   secret value is read. This is the prerequisite for automated rotation planning; the
-  topological order is the deterministic core of that. (ADR-052) ([#411])
+  topological order is the deterministic core of that. (ADR-052) ([#412])
 
-[#411]: https://github.com/keyorixhq/keyorix/pull/411
+[#412]: https://github.com/keyorixhq/keyorix/pull/412
 
 ## v0.74.0 — 2026-06-22
 
