@@ -149,6 +149,7 @@ const (
 	schedLockLoginPrune   int64 = 0x4B455953_4C474E50 // "KEYSLGNP"
 	schedLockRotationRmdr int64 = 0x4B455953_524F5452 // "KEYSROTR"
 	schedLockExpiryRmdr   int64 = 0x4B455953_45585052 // "KEYSEXPR"
+	schedLockCertExpiry   int64 = 0x4B455953_43455254 // "KEYSCERT"
 	schedLockAutoRotate   int64 = 0x4B455953_4155544F // "KEYSAUTO"
 	schedLockAuditCkpt    int64 = 0x4B455953_41434B50 // "KEYSACKP"
 	schedLockJITExpiry    int64 = 0x4B455953_4A495445 // "KEYSJITE"
@@ -911,6 +912,43 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				select {
 				case <-ticker.C:
 					runExpiry()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Start the certificate-expiry scan — opt-in (ADR-055). Parses certificate-typed
+	// secrets and notifies project admins of certs expired/expiring within the window.
+	// Single-replica-gated (ADR-039).
+	if cfg.CertificateExpiry.Enabled {
+		interval := cfg.CertificateExpiry.GetInterval()
+		leadDays := cfg.CertificateExpiry.LeadDays
+		log.Printf("Certificate-expiry scan enabled: every %s (lead %dd)", interval, leadDays)
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			runCertScan := func() {
+				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockCertExpiry, func() error {
+					n, rerr := coreService.ScanCertificateExpiry(ctx, leadDays)
+					if rerr != nil {
+						log.Printf("Certificate-expiry scan error: %v", rerr)
+						return rerr
+					}
+					if n > 0 {
+						log.Printf("Certificate-expiry scan: sent %d notification(s)", n)
+					}
+					return nil
+				}); err != nil {
+					log.Printf("Certificate-expiry scheduler error: %v", err)
+				}
+			}
+			runCertScan() // run once on startup
+			for {
+				select {
+				case <-ticker.C:
+					runCertScan()
 				case <-ctx.Done():
 					return
 				}

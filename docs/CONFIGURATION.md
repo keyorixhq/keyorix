@@ -618,6 +618,23 @@ rotation_reminders:
   schedule: "24h"         # Go duration between reminder runs (default 24h)
 ```
 
+## certificate_expiry
+
+An opt-in background scan (ADR-055) that parses **certificate-typed** secrets and
+notifies project admins (in-app) of certificates that are **expired or expiring**
+within `lead_days`, using the certificate's *real* `notAfter` (not the manually-set
+`expiration` field, which cert secrets usually leave unset). One standing reminder per
+project per admin, de-duplicated like the rotation reminder; single-replica-gated
+(ADR-039). The scan reads certificate values to extract the expiry only — it never
+exposes the value or any private key, and skips suspended secrets. Opt-in (default off).
+
+```yaml
+certificate_expiry:
+  enabled: true
+  schedule: "24h"         # Go duration between scans (default 24h)
+  lead_days: 30           # warn this many days before notAfter (default 30)
+```
+
 ## audit_checkpoints
 
 An opt-in background scheduler that signs the audit hash-chain head (ADR-029) so

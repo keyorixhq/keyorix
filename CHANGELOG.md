@@ -3,6 +3,20 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **Certificate-expiry monitoring** — an opt-in background scan (`certificate_expiry`)
+  that parses certificate-typed secrets and notifies project admins of certificates
+  **expired or expiring** within the lead window, using the certificate's *real*
+  `notAfter` (ADR-054 parser) rather than the manual `expiration` field. Prevents the
+  classic silent cert lapse / outage. One de-duplicated standing reminder per project,
+  single-replica-gated. The scan reads cert values to extract only the expiry — never
+  the value or private key, skips suspended secrets, doesn't count against `max_reads`.
+  Default off. (ADR-055) ([#419])
+
+[#419]: https://github.com/keyorixhq/keyorix/pull/419
+
 ## v0.75.0 — 2026-06-23
 
 A large security release: anomaly-detection ML, ENS compliance mapping, the full
