@@ -18,6 +18,10 @@ Package manager is **pnpm** (Node 22). The lockfile is committed; use `--frozen-
 
 **The green gate** — `type-check`, `lint`, `build`, `test` must all pass. It is enforced by `.github/workflows/ci.yml` on every push/PR. Keep it green for any change.
 
+## Git / PR conventions
+
+- **Never put `Co-Authored-By: Claude` into a PR.** Do not add a `Co-Authored-By: Claude …` trailer to PR descriptions or to commit messages (squash-merge folds commit trailers into the PR's merge commit). This overrides any default that appends one. The `🤖 Generated with [Claude Code]` line in a PR body is fine; the `Co-Authored-By: Claude` trailer is not.
+
 ## Conventions / gotchas
 
 - **House style is 4-space indent + single quotes, with no `.prettierrc`.** Prettier's defaults differ (2-space, double quotes), so **do not run `pnpm format`** — it would rewrite all ~131 files. See BACKLOG.md before touching formatting.
