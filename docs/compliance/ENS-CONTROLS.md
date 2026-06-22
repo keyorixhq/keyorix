@@ -55,7 +55,7 @@ for the secrets it manages:
 
 **Status:** Shipped.
 
-### Marco operacional — Registro de la actividad (`op.exp.8`)
+### Marco operacional — Registro de la actividad y su protección (`op.exp.8`, `op.exp.10`)
 
 **Keyorix provides** (full treatment in [`AUDIT-LOG-PROVISIONS.md`](./AUDIT-LOG-PROVISIONS.md)):
 - A complete activity log of every security-relevant event (secret CRUD, sharing,
@@ -63,10 +63,10 @@ for the secrets it manages:
   impersonation start/end), each carrying **actor identity, timestamp, and
   outcome** — the core ENS *registro de actividad* requirement, with proportionate
   detail for higher categorías.
-- **Tamper-evidence** — a SHA-256 **hash chain** over audit events makes any
-  modification, deletion, insertion, or reorder detectable
-  (`GET /api/v1/audit/verify`), supporting integridad/trazabilidad of the log
-  itself.
+- **Tamper-evidence (op.exp.10 — protección de los registros de actividad)** — a
+  SHA-256 **hash chain** over audit events makes any modification, deletion,
+  insertion, or reorder detectable (`GET /api/v1/audit/verify`), supporting
+  integridad/trazabilidad of the log itself.
 - **Actor attribution** including delegated actions (`impersonated_by`/
   `acting_as`), and **SIEM** export (Splunk / Datadog / webhook + pull export).
 
@@ -75,7 +75,7 @@ for the secrets it manages:
 ### Marco operacional — Protección de claves criptográficas & monitorización
 
 **Keyorix provides:**
-- **Protección de claves criptográficas** — envelope encryption: a Data
+- **Protección de claves criptográficas (op.exp.11)** — envelope encryption: a Data
   Encryption Key (DEK) wrapped by a passphrase-derived Key Encryption Key (KEK,
   PBKDF2, 600k iterations); the wrapped DEK and KEK salt live on a dedicated
   persisted volume; KEK bytes are wiped from memory after unwrap. Operator-driven
@@ -94,6 +94,13 @@ for the secrets it manages:
   rest with **AES-256-GCM**; Additional Authenticated Data binds each ciphertext
   to its `secretID:projectID:version`, preventing ciphertext substitution between
   secrets.
+- **Calificación de la información (mp.info.2)** — per-secret data classification,
+  surfaced as a posture control so an operator can evidence that managed secrets are
+  classified.
+- **Datos de carácter personal / storage limitation (mp.info.1)** — a configurable
+  data-retention scheduler ages out compliance records past their window (respecting
+  legal hold), and a **litigation/legal hold (mp.info.6)** blocks purges to preserve
+  records under investigation.
 - **No plaintext exposure** — no secret values, passphrases, key bytes, or raw
   tokens are written to logs (audited across every sink); reusable credentials are
   SHA-256-hashed at rest and never compared in plaintext.
@@ -133,6 +140,16 @@ audit trail that evidences that the operator's procedures are followed.
 | `mp.info.3` — Cifrado | C, I | AES-256-GCM at rest, AAD-bound | Shipped |
 | `mp.com` — Comunicaciones | C, A, I | TLS in transit; signed/validated federation | Shipped (TLS operator-configured) |
 | `org.*` — Marco organizativo | — | Supported operationally; operator-defined | Operator |
+
+## Live in the product
+
+These ENS measure codes are not just documentation: the running product's **compliance
+control matrix** (`GET /api/v1/compliance/controls`, its gRPC equivalent, and the
+`compliance-controls.csv` auditor export) now carries an `ens` reference on every
+control alongside ISO 27001 / SOC 2 / NIS2 / DORA, each with a **live pass / gap /
+not-configured status** derived from the deployment's current posture (ADR-051). An
+ENS auditor can therefore pull the secret-management control set, mapped to RD 311/2022
+measures, with its current state — rather than reconciling this document by hand.
 
 > The technical-control evidence behind these claims — the security audits
 > performed and the issues found and fixed — is recorded in

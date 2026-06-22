@@ -1070,6 +1070,8 @@ message FrameworkRefs {
   repeated string soc2 = 2;
   repeated string nis2 = 3;
   repeated string dora = 4;
+  // ENS — Spain's Esquema Nacional de Seguridad (RD 311/2022) measure codes.
+  repeated string ens = 5;
 }
 
 message ControlState {
