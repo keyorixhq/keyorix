@@ -63,6 +63,9 @@ func (c *KeyorixCore) CreateRotationPolicy(ctx context.Context, actorID uint, re
 	if req.AlertDaysBefore >= req.IntervalDays {
 		return nil, fmt.Errorf("alert_days_before must be less than interval_days")
 	}
+	if err := validateDescription(req.Description); err != nil {
+		return nil, err
+	}
 
 	policy := &models.RotationPolicy{
 		Name:            req.Name,
@@ -105,6 +108,9 @@ func (c *KeyorixCore) ListRotationPolicies(ctx context.Context, projectID *uint,
 func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, actorID uint, req *UpdateRotationPolicyRequest) (*models.RotationPolicy, error) {
 	if req.AlertDaysBefore >= req.IntervalDays {
 		return nil, fmt.Errorf("alert_days_before must be less than interval_days")
+	}
+	if err := validateDescription(req.Description); err != nil {
+		return nil, err
 	}
 
 	policy, err := c.storage.GetRotationPolicy(ctx, req.ID)

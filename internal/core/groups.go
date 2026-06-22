@@ -139,12 +139,12 @@ func (c *KeyorixCore) validateCreateGroupRequest(req *CreateGroupRequest) error 
 	if req.Name == "" {
 		return fmt.Errorf("group name is required")
 	}
-	return nil
+	return validateDescription(req.Description)
 }
 
 func (c *KeyorixCore) validateUpdateGroupRequest(req *UpdateGroupRequest) error {
 	if req.ID == 0 {
 		return fmt.Errorf("group ID is required")
 	}
-	return nil
+	return validateDescription(req.Description)
 }
