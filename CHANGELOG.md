@@ -3,6 +3,23 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.75.0 — 2026-06-22
+
+Observability and CLI parity.
+
+### Added
+- **gRPC metrics on `/metrics`** — gRPC request volume, outcomes, and cumulative
+  handler time are now exported to Prometheus (`keyorix_grpc_requests_total{status}`
+  and `keyorix_grpc_request_duration_seconds_total`) on the same endpoint as the
+  HTTP metrics, instead of being reachable only via an authenticated RPC. ([#407])
+- **CLI for dynamic-secret config classification and inspection** —
+  `keyorix dynamic-secret get-config <id>` shows a single config (backend, TTLs,
+  classification) and `keyorix dynamic-secret classify <id> --level <level>` sets
+  its classification, matching the HTTP/gRPC surfaces. ([#408])
+
+[#407]: https://github.com/keyorixhq/keyorix/pull/407
+[#408]: https://github.com/keyorixhq/keyorix/pull/408
+
 ## v0.74.0 — 2026-06-22
 
 Group lifecycle, audit completeness, and a few correctness fixes.
