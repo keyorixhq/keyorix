@@ -3,6 +3,21 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **Automated rotation planning** — `GET /api/v1/projects/{id}/rotation-plan` composes
+  rotation status, secret risk, and the dependency graph (ADR-052) into an ordered,
+  dependency-respecting **plan**: the project's overdue/due-soon secrets, batched into
+  parallel-safe **waves** (each secret rotates after anything it depends on) and
+  prioritised by **urgency** within a wave (overdue beats due-soon; more days past due +
+  higher risk rank higher). Each entry carries human-readable reasons ("30 days
+  overdue", "high risk", "rotate after db-password"). Deterministic and explainable —
+  appropriate for an air-gapped security operation; an LLM advisor can later sit on top
+  of the structured plan. (ADR-053) ([#413])
+
+[#413]: https://github.com/keyorixhq/keyorix/pull/413
+
 ## v0.75.0 — 2026-06-22
 
 Anomaly-detection ML, ENS compliance mapping, secret dependency tracking, plus

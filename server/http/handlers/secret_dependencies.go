@@ -153,3 +153,24 @@ func (h *SecretHandler) GetProjectRotationOrder(w http.ResponseWriter, r *http.R
 	}
 	h.sendSuccess(w, order, "")
 }
+
+// GetProjectRotationPlan handles GET /api/v1/projects/{id}/rotation-plan (ADR-053):
+// an ordered, dependency-respecting plan of the project's secrets that are overdue or
+// due soon, batched into parallel-safe waves and prioritised by urgency.
+func (h *SecretHandler) GetProjectRotationPlan(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	plan, err := h.coreService.GenerateRotationPlan(r.Context(), uint(id))
+	if err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
+	h.sendSuccess(w, plan, "")
+}
