@@ -1,6 +1,6 @@
 // control_framework.go — the compliance control matrix (ISO 27001 / SOC 2 / NIS2 /
-// DORA). Where GetCompliancePosture reports raw figures, GetComplianceControls maps
-// each control Keyorix enforces to its clause references across the regimes an
+// DORA / ENS). Where GetCompliancePosture reports raw figures, GetComplianceControls
+// maps each control Keyorix enforces to its clause references across the regimes an
 // auditor cares about, and evaluates a live status (pass / gap / not-configured)
 // from the posture. It turns the scattered A.5.x tiles into one auditor-ready
 // framework map. Read-only; gated by system.read.
@@ -27,6 +27,10 @@ type FrameworkRefs struct {
 	SOC2     []string `json:"soc2,omitempty"`      // Trust Services Criteria, e.g. "CC6.1"
 	NIS2     []string `json:"nis2,omitempty"`      // article refs, e.g. "Art.21(2)(i)"
 	DORA     []string `json:"dora,omitempty"`      // article refs, e.g. "Art.9"
+	// ENS maps to the security measures of Spain's Esquema Nacional de Seguridad
+	// (Real Decreto 311/2022, Anexo II), e.g. "op.acc.4". Codes name the measure in
+	// the org.* (organisational) / op.* (operational) / mp.* (protection) frameworks.
+	ENS []string `json:"ens,omitempty"`
 }
 
 // ControlState is one control's evaluated posture for the framework matrix.
@@ -94,67 +98,67 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			ID: "audit-trail-integrity", Name: "Tamper-evident audit trail", Area: "Audit & accountability",
 			Status:     gapIf(!p.AuditIntegrity.ChainVerified),
 			Detail:     fmt.Sprintf("chain verified=%t, checkpointed=%t, %d events", p.AuditIntegrity.ChainVerified, p.AuditIntegrity.Checkpointed, p.AuditIntegrity.ChainedEvents),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.28", "A.8.15"}, SOC2: []string{"CC7.2", "CC4.1"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.28", "A.8.15"}, SOC2: []string{"CC7.2", "CC4.1"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}, ENS: []string{"op.exp.8", "op.exp.10"}},
 		},
 		{
 			ID: "access-recertification", Name: "Access recertification at planned intervals", Area: "Access governance",
 			Status:     gapIf(ag.ProjectsOverdue > 0 || ag.ProjectsNeverReviewed > 0),
 			Detail:     fmt.Sprintf("%d overdue, %d never reviewed, %d pending items", ag.ProjectsOverdue, ag.ProjectsNeverReviewed, ag.PendingItems),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18"}, SOC2: []string{"CC6.2", "CC6.3"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18"}, SOC2: []string{"CC6.2", "CC6.3"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.4"}},
 		},
 		{
 			ID: "dormant-access", Name: "No dormant standing access", Area: "Access governance",
 			Status:     gapIf(ag.DormantRoleGrants > 0),
 			Detail:     fmt.Sprintf("%d dormant role grant(s)", ag.DormantRoleGrants),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18", "A.8.2"}, SOC2: []string{"CC6.1"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18", "A.8.2"}, SOC2: []string{"CC6.1"}, ENS: []string{"op.acc.2", "op.acc.4"}},
 		},
 		{
 			ID: "separation-of-duties", Name: "Separation of duties (no toxic combinations)", Area: "Access governance",
 			Status:     gapIf(ag.SoDViolations > 0),
 			Detail:     fmt.Sprintf("%d SoD violation(s)", ag.SoDViolations),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.3"}, SOC2: []string{"CC5.1"}, DORA: []string{"Art.5"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.3"}, SOC2: []string{"CC5.1"}, DORA: []string{"Art.5"}, ENS: []string{"op.acc.3"}},
 		},
 		{
 			ID: "second-factor", Name: "Second-factor coverage", Area: "Identity",
 			Status:     gapIf(p.Identity.SecondFactorPercent < 100),
 			Detail:     fmt.Sprintf("%d%% of active users have a second factor", p.Identity.SecondFactorPercent),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.17", "A.8.5"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(j)"}, DORA: []string{"Art.9"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.17", "A.8.5"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(j)"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.5", "op.acc.6"}},
 		},
 		{
 			ID: "secret-rotation", Name: "Secret-rotation hygiene", Area: "Cryptography",
 			Status:     gapIf(p.Rotation.Overdue > 0),
 			Detail:     fmt.Sprintf("%d overdue, %d due soon of %d covered", p.Rotation.Overdue, p.Rotation.DueSoon, p.Rotation.CoveredSecrets),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
 		},
 		{
 			ID: "data-classification", Name: "Secret data classification", Area: "Asset management",
 			Status:     gapIf(p.Classification.Unclassified > 0),
 			Detail:     fmt.Sprintf("%d of %d secrets unclassified", p.Classification.Unclassified, p.Classification.TotalSecrets),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.12", "A.5.13"}, SOC2: []string{"CC3.2"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.12", "A.5.13"}, SOC2: []string{"CC3.2"}, ENS: []string{"mp.info.2"}},
 		},
 		{
 			ID: "anomaly-detection", Name: "Access-anomaly detection & response", Area: "Detection",
 			Status:     gapIf(p.Anomalies.HighSeverityOpen > 0),
 			Detail:     fmt.Sprintf("%d open anomalies (%d high severity)", p.Anomalies.Unacknowledged, p.Anomalies.HighSeverityOpen),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.8.16"}, SOC2: []string{"CC7.2", "CC7.3"}, NIS2: []string{"Art.21(2)(b)"}, DORA: []string{"Art.10"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.8.16"}, SOC2: []string{"CC7.2", "CC7.3"}, NIS2: []string{"Art.21(2)(b)"}, DORA: []string{"Art.10"}, ENS: []string{"op.mon.1", "op.exp.7"}},
 		},
 		{
 			ID: "emergency-access", Name: "Governed emergency (break-glass) access", Area: "Access governance",
 			Status:     ControlStatusPass, // presence of the register is the control; usage is informational
 			Detail:     fmt.Sprintf("%d active, %d total activations (all audited)", p.EmergencyAccess.ActiveActivations, p.EmergencyAccess.TotalActivations),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15"}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15"}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.4", "op.exp.7"}},
 		},
 		{
 			ID: "data-retention", Name: "Data-retention / storage limitation", Area: "Data governance",
 			Status:     statusFromBool(p.Retention.Enabled),
 			Detail:     retentionDetail(p.Retention),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.33"}, SOC2: []string{"CC3.2"}, DORA: []string{"Art.12"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.33"}, SOC2: []string{"CC3.2"}, DORA: []string{"Art.12"}, ENS: []string{"mp.info.1"}},
 		},
 		{
 			ID: "legal-hold", Name: "Litigation/investigation legal hold", Area: "Data governance",
 			Status:     ControlStatusPass, // capability present; active state is informational
 			Detail:     legalHoldDetail(p.LegalHold),
-			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.34"}, DORA: []string{"Art.12"}},
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.34"}, DORA: []string{"Art.12"}, ENS: []string{"mp.info.6"}},
 		},
 	}
 }

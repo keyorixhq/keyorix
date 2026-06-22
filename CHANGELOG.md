@@ -15,8 +15,16 @@ All notable changes to Keyorix are documented here. This project follows
   dependencies; metadata only (no secret value is examined); deterministic (seeded).
   Flagged accesses emit an `ml_outlier` alert through the existing alert pipeline.
   Config-gated under `anomaly_alerts.ml` (default off). (ADR-050) ([#410])
+- **ENS in the compliance control matrix** — every control in the live control matrix
+  (`GET /api/v1/compliance/controls`, gRPC, and the `compliance-controls.csv` auditor
+  export) now carries an `ens` reference to its Spanish *Esquema Nacional de Seguridad*
+  (RD 311/2022) measure (`op.acc.*` / `op.exp.*` / `mp.info.*` / …) alongside ISO 27001
+  / SOC 2 / NIS2 / DORA, with the same live pass/gap/not-configured status. Lets an ENS
+  auditor pull the secret-management control set mapped to RD 311/2022 with its current
+  state. Mappings are consistent with `docs/compliance/ENS-CONTROLS.md`. (ADR-051) ([#411])
 
 [#410]: https://github.com/keyorixhq/keyorix/pull/410
+[#411]: https://github.com/keyorixhq/keyorix/pull/411
 
 ## v0.74.0 — 2026-06-22
 
