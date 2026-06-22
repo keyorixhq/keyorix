@@ -3,7 +3,10 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## v0.75.0 — 2026-06-22
+
+Anomaly-detection ML, ENS compliance mapping, secret dependency tracking, plus
+observability and CLI parity.
 
 ### Added
 - **ML anomaly detection (Isolation Forest)** — an opt-in machine-learning pass that
@@ -35,7 +38,17 @@ All notable changes to Keyorix are documented here. This project follows
   cycles are rejected). Metadata only — no secret value is read. This is the
   prerequisite for automated rotation planning; the topological order is the
   deterministic core of that. (ADR-052) ([#412])
+- **gRPC metrics on `/metrics`** — gRPC request volume, outcomes, and cumulative
+  handler time are now exported to Prometheus (`keyorix_grpc_requests_total{status}`
+  and `keyorix_grpc_request_duration_seconds_total`) on the same endpoint as the
+  HTTP metrics, instead of being reachable only via an authenticated RPC. ([#407])
+- **CLI for dynamic-secret config classification and inspection** —
+  `keyorix dynamic-secret get-config <id>` shows a single config (backend, TTLs,
+  classification) and `keyorix dynamic-secret classify <id> --level <level>` sets
+  its classification, matching the HTTP/gRPC surfaces. ([#408])
 
+[#407]: https://github.com/keyorixhq/keyorix/pull/407
+[#408]: https://github.com/keyorixhq/keyorix/pull/408
 [#410]: https://github.com/keyorixhq/keyorix/pull/410
 [#411]: https://github.com/keyorixhq/keyorix/pull/411
 [#412]: https://github.com/keyorixhq/keyorix/pull/412
