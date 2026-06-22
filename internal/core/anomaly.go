@@ -8,10 +8,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// AnomalyDetector detects anomalous secret access patterns using statistical baselines.
-// Operates on metadata only — secret values are never examined.
+// AnomalyDetector detects anomalous secret access patterns using statistical baselines
+// and, when enabled, an Isolation Forest (ADR-050). Operates on metadata only — secret
+// values are never examined.
 type AnomalyDetector struct {
 	storage StorageInterface
+	ml      MLConfig // ML pass; disabled by default (see SetMLConfig)
 }
 
 // StorageInterface is satisfied by *storage.LocalStorage and *storage.RemoteStorage.
@@ -22,9 +24,17 @@ type StorageInterface = interface {
 	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
 }
 
-// NewAnomalyDetector creates a new AnomalyDetector.
+// NewAnomalyDetector creates a new AnomalyDetector with the ML pass disabled.
 func NewAnomalyDetector(storage StorageInterface) *AnomalyDetector {
 	return &AnomalyDetector{storage: storage}
+}
+
+// SetMLConfig enables (or reconfigures) the Isolation Forest pass. Defaults are
+// applied per-pass, so passing a zero-valued config with Enabled=true uses the
+// recommended parameters. With Enabled=false (the zero value) only the statistical
+// rules run.
+func (d *AnomalyDetector) SetMLConfig(cfg MLConfig) {
+	d.ml = cfg
 }
 
 // accessBaseline holds statistical baseline for a secret's access patterns.
@@ -69,6 +79,15 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		// baseline (one alert per secret per pass, not per access).
 		if alert := volumeSpikeAlert(secret, len(recentLogs), baseline, now); alert != nil {
 			_ = d.storage.CreateAnomalyAlert(ctx, alert)
+		}
+
+		// ML pass (opt-in): score this window's accesses against an Isolation Forest
+		// trained on the secret's full 30-day baseline, catching multivariate outliers
+		// the single-signal rules above miss.
+		if d.ml.Enabled {
+			for _, alert := range mlOutlierAlerts(secret, baselineLogs, recentLogs, d.ml, now) {
+				_ = d.storage.CreateAnomalyAlert(ctx, &alert)
+			}
 		}
 	}
 	return nil

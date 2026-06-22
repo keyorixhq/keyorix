@@ -1,5 +1,5 @@
 // compliance_evidence.go — an auditor evidence pack (ISO 27001 / SOC 2 / NIS2 /
-// DORA). Where GetCompliancePosture (compliance_posture.go) is the at-a-glance
+// DORA / ENS). Where GetCompliancePosture (compliance_posture.go) is the at-a-glance
 // summary, GenerateComplianceEvidence bundles the posture together with the
 // supporting records that substantiate it — the tamper-evidence audit anchor, the
 // access-recertification campaigns, the break-glass register, and the overdue
@@ -53,7 +53,7 @@ type EvidenceRotation struct {
 type ComplianceEvidence struct {
 	GeneratedAt     time.Time                      `json:"generated_at"`
 	Posture         *CompliancePosture             `json:"posture"`
-	Controls        []ControlState                 `json:"controls"` // framework matrix (ISO/SOC2/NIS2/DORA)
+	Controls        []ControlState                 `json:"controls"` // framework matrix (ISO/SOC2/NIS2/DORA/ENS)
 	AuditAnchor     AuditAnchor                    `json:"audit_anchor"`
 	Campaigns       []EvidenceCampaign             `json:"campaigns"`
 	BreakGlass      []*models.BreakGlassActivation `json:"break_glass"`
