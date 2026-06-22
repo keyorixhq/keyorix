@@ -1064,6 +1064,23 @@ func (c BreakGlassConfig) GetMaxTTL() time.Duration {
 type AnomalyAlertsConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
+	// ML configures the optional Isolation Forest detection pass (ADR-050). It is
+	// independent of Enabled (which gates alert *push*): ML.Enabled gates whether the
+	// detection scan additionally scores accesses for multivariate outliers.
+	ML AnomalyMLConfig `yaml:"ml"`
+}
+
+// AnomalyMLConfig configures the Isolation Forest anomaly-detection pass (ADR-050).
+// Opt-in (default off). When enabled, each detection scan trains a per-secret forest
+// on the secret's 30-day access baseline and flags recent accesses whose joint
+// feature vector (hour, IP novelty, user novelty) is a multivariate outlier — the
+// single-signal statistical rules miss these. Metadata only; no secret values.
+type AnomalyMLConfig struct {
+	Enabled    bool    `yaml:"enabled"`
+	Threshold  float64 `yaml:"threshold"`   // anomaly-score cutoff (0.5,1.0); default 0.60
+	NumTrees   int     `yaml:"num_trees"`   // ensemble size; default 100
+	SampleSize int     `yaml:"sample_size"` // per-tree subsample (psi); default 256
+	Seed       int64   `yaml:"seed"`        // RNG seed for reproducible scoring; default 1
 }
 
 // GetInterval returns the anomaly scan/alert interval (Go duration); defaults to 1h.

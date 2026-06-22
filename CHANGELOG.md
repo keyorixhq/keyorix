@@ -3,6 +3,21 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- **ML anomaly detection (Isolation Forest)** — an opt-in machine-learning pass that
+  complements the existing rule-based access-anomaly detection. Each scan trains a
+  per-secret Isolation Forest on the secret's 30-day access baseline and flags
+  accesses whose joint pattern (hour, IP rarity, user rarity) is a multivariate
+  outlier — catching what the binary rules miss: a **known-but-rare** actor or IP, and
+  **combinations** that are unremarkable signal-by-signal. Pure-Go, no new
+  dependencies; metadata only (no secret value is examined); deterministic (seeded).
+  Flagged accesses emit an `ml_outlier` alert through the existing alert pipeline.
+  Config-gated under `anomaly_alerts.ml` (default off). (ADR-050) ([#409])
+
+[#409]: https://github.com/keyorixhq/keyorix/pull/409
+
 ## v0.74.0 — 2026-06-22
 
 Group lifecycle, audit completeness, and a few correctness fixes.

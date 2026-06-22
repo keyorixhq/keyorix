@@ -686,6 +686,16 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	// anomalies to project admins + the audit/SIEM pipeline.
 	go func() {
 		detector := core.NewAnomalyDetector(coreService.Storage())
+		if mlc := cfg.AnomalyAlerts.ML; mlc.Enabled {
+			detector.SetMLConfig(core.MLConfig{
+				Enabled:    true,
+				Threshold:  mlc.Threshold,
+				NumTrees:   mlc.NumTrees,
+				SampleSize: mlc.SampleSize,
+				Seed:       mlc.Seed,
+			})
+			log.Printf("Anomaly ML (Isolation Forest) detection enabled")
+		}
 		alertsEnabled := cfg.AnomalyAlerts.Enabled
 		interval := cfg.AnomalyAlerts.GetInterval()
 		if alertsEnabled {
