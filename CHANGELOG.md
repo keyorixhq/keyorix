@@ -6,6 +6,24 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Added
+- **Automated rotation planning** — `GET /api/v1/projects/{id}/rotation-plan` composes
+  rotation status, secret risk, and the dependency graph (ADR-052) into an ordered,
+  dependency-respecting **plan**: the project's overdue/due-soon secrets, batched into
+  parallel-safe **waves** (each secret rotates after anything it depends on) and
+  prioritised by **urgency** within a wave (overdue beats due-soon; more days past due +
+  higher risk rank higher). Each entry carries human-readable reasons ("30 days
+  overdue", "high risk", "rotate after db-password"). Deterministic and explainable —
+  appropriate for an air-gapped security operation; an LLM advisor can later sit on top
+  of the structured plan. (ADR-053) ([#413])
+
+[#413]: https://github.com/keyorixhq/keyorix/pull/413
+
+## v0.75.0 — 2026-06-22
+
+Anomaly-detection ML, ENS compliance mapping, secret dependency tracking, plus
+observability and CLI parity.
+
+### Added
 - **ML anomaly detection (Isolation Forest)** — an opt-in machine-learning pass that
   complements the existing rule-based access-anomaly detection. Each scan trains a
   per-secret Isolation Forest on the secret's 30-day access baseline and flags
@@ -35,20 +53,20 @@ All notable changes to Keyorix are documented here. This project follows
   cycles are rejected). Metadata only — no secret value is read. This is the
   prerequisite for automated rotation planning; the topological order is the
   deterministic core of that. (ADR-052) ([#412])
-- **Automated rotation planning** — `GET /api/v1/projects/{id}/rotation-plan` composes
-  rotation status, secret risk, and the dependency graph (ADR-052) into an ordered,
-  dependency-respecting **plan**: the project's overdue/due-soon secrets, batched into
-  parallel-safe **waves** (each secret rotates after anything it depends on) and
-  prioritised by **urgency** within a wave (overdue beats due-soon; more days past due +
-  higher risk rank higher). Each entry carries human-readable reasons ("30 days
-  overdue", "high risk", "rotate after db-password"). Deterministic and explainable —
-  appropriate for an air-gapped security operation; an LLM advisor can later sit on top
-  of the structured plan. (ADR-053) ([#413])
+- **gRPC metrics on `/metrics`** — gRPC request volume, outcomes, and cumulative
+  handler time are now exported to Prometheus (`keyorix_grpc_requests_total{status}`
+  and `keyorix_grpc_request_duration_seconds_total`) on the same endpoint as the
+  HTTP metrics, instead of being reachable only via an authenticated RPC. ([#407])
+- **CLI for dynamic-secret config classification and inspection** —
+  `keyorix dynamic-secret get-config <id>` shows a single config (backend, TTLs,
+  classification) and `keyorix dynamic-secret classify <id> --level <level>` sets
+  its classification, matching the HTTP/gRPC surfaces. ([#408])
 
+[#407]: https://github.com/keyorixhq/keyorix/pull/407
+[#408]: https://github.com/keyorixhq/keyorix/pull/408
 [#410]: https://github.com/keyorixhq/keyorix/pull/410
 [#411]: https://github.com/keyorixhq/keyorix/pull/411
 [#412]: https://github.com/keyorixhq/keyorix/pull/412
-[#413]: https://github.com/keyorixhq/keyorix/pull/413
 
 ## v0.74.0 — 2026-06-22
 
