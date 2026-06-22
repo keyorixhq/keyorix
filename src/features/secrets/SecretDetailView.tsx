@@ -18,6 +18,7 @@ import {
 import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSecretTags, useSetSecretTags, useSecretDescription, useSetSecretDescription, useCopySecret, useSuspendSecret, useResumeSecret } from './api';
 import { TransferOwnership } from './TransferOwnership';
 import { SecretDependenciesSection } from './SecretDependenciesSection';
+import { CertificatePanel } from './CertificatePanel';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
 const formatDate = (d: string | Date) =>
@@ -428,6 +429,9 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     </div>
                 )}
             </div>
+
+            {/* Certificate metadata (ADR-054) — for certificate-typed secrets */}
+            {secret.type === 'certificate' && <CertificatePanel secretId={secret.id} />}
 
             {/* Version History */}
             {versions && versions.length > 1 && latestVersion && (

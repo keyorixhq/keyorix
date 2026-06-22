@@ -29,6 +29,25 @@ export interface SecretImpact {
     affected: ImpactedSecret[]; // transitive dependents (blast radius)
 }
 
+// Public X.509 metadata of a certificate-valued secret (ADR-054). Never includes the
+// certificate value or any private key.
+export interface CertificateInfo {
+    secret_id: number;
+    secret_name: string;
+    subject: string;
+    issuer: string;
+    serial_number: string;
+    not_before: string;
+    not_after: string;
+    days_until_expiry: number;
+    is_expired: boolean;
+    is_ca: boolean;
+    self_signed: boolean;
+    dns_names?: string[];
+    signature_algorithm: string;
+    public_key_algorithm: string;
+}
+
 export const secretsApi = {
     async list(params?: {
         page?: number;
@@ -251,6 +270,12 @@ export const secretsApi = {
     },
 
     // impact returns the blast radius of rotating this secret (transitive dependents).
+    // certificate returns the public X.509 metadata of a certificate-valued secret.
+    async certificate(id: number): Promise<CertificateInfo> {
+        const response = await apiClient.get<ApiResponse<CertificateInfo>>(`/api/v1/secrets/${id}/certificate`);
+        return response.data.data;
+    },
+
     async impact(id: number): Promise<SecretImpact> {
         const response = await apiClient.get<ApiResponse<SecretImpact>>(`/api/v1/secrets/${id}/impact`);
         return response.data.data;

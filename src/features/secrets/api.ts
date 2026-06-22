@@ -201,6 +201,17 @@ export const useSecretImpact = (id: number, enabled = true) => {
     });
 };
 
+// Certificate metadata (ADR-054) — only fetched for certificate-typed secrets.
+export const useSecretCertificate = (id: number, enabled = true) => {
+    return useQuery({
+        queryKey: [...queryKeys.secrets.detail(id), 'certificate'],
+        queryFn: () => secretsApi.certificate(id),
+        enabled,
+        staleTime: 60 * 1000,
+        retry: false, // a non-certificate value 400s — don't retry
+    });
+};
+
 // invalidateSecretGraph refreshes both the dependency and impact views after a change.
 const invalidateSecretGraph = (queryClient: ReturnType<typeof useQueryClient>, id: number) => {
     queryClient.invalidateQueries({ queryKey: [...queryKeys.secrets.detail(id), 'dependencies'] });

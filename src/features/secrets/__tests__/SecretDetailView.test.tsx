@@ -39,6 +39,8 @@ vi.mock('../api', () => ({
     useSecrets: () => ({ data: { data: [], total: 0, page: 1, pageSize: 20, totalPages: 1 } }),
     useAddSecretDependency: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
     useRemoveSecretDependency: () => ({ mutate: vi.fn(), isPending: false }),
+    // Certificate panel (ADR-054) — only rendered for certificate-typed secrets.
+    useSecretCertificate: () => ({ data: undefined, isLoading: false, isError: true }),
 }));
 
 const makeSecret = (overrides: Partial<Secret> = {}): Secret => ({
