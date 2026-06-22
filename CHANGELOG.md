@@ -3,6 +3,34 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.74.0 — 2026-06-22
+
+Group lifecycle, audit completeness, and a few correctness fixes.
+
+### Added
+- **Groups can be soft-deleted and restored** — `DELETE /api/v1/groups/{id}` now
+  soft-deletes (reversible) and `POST /api/v1/groups/{id}/restore` brings the
+  group back with its prior role grants and memberships. A soft-deleted group
+  authorizes nothing (role inheritance and group shares both exclude it), and its
+  name is freed for reuse via a partial unique index. Audited as `group.deleted` /
+  `group.restored`. ([#405])
+- **Restore operations are audited** — restoring a secret, project, or environment
+  now records `secret.restored` / `project.restored` / `environment.restored`, the
+  inverse of the delete events. ([#402])
+
+### Fixed
+- **A secret's share list excludes expired shares** — `ListSecretShares` returned
+  expired time-bound shares that no longer authorized, disagreeing with
+  enforcement; it now filters them like every authorization path. ([#403])
+- **Description length is bounded** — project, group, and rotation-policy
+  descriptions are now capped (like secret descriptions) at the create/update
+  choke points. ([#404])
+
+[#402]: https://github.com/keyorixhq/keyorix/pull/402
+[#403]: https://github.com/keyorixhq/keyorix/pull/403
+[#404]: https://github.com/keyorixhq/keyorix/pull/404
+[#405]: https://github.com/keyorixhq/keyorix/pull/405
+
 ## v0.73.1 — 2026-06-22
 
 Security fix.
