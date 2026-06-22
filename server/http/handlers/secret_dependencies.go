@@ -1,0 +1,155 @@
+// secret_dependencies.go — per-secret dependency-graph handlers (ADR-052).
+//
+// Routes (under /api/v1/secrets, project-scoped from the {id} secret):
+//
+//	GET    /{id}/dependencies            — the secret's direct dependencies + dependents
+//	POST   /{id}/dependencies            — declare that {id} depends on another secret
+//	DELETE /{id}/dependencies/{depId}    — remove one dependency edge
+//	GET    /{id}/impact                  — blast radius (transitive dependents)
+//
+// Plus, under /api/v1/projects (project-scoped):
+//
+//	GET    /{id}/rotation-order          — a safe rotation sequence for the project graph
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/server/middleware"
+)
+
+// dependencyErrorStatus maps a core dependency error to an HTTP status by its message,
+// matching the convention used across the secret handlers.
+func dependencyErrorStatus(msg string) int {
+	switch {
+	case strings.Contains(msg, "not found"):
+		return http.StatusNotFound
+	case strings.Contains(msg, "cannot depend on itself"),
+		strings.Contains(msg, "same project"),
+		strings.Contains(msg, "already exists"),
+		strings.Contains(msg, "cycle"),
+		strings.Contains(msg, "is not a secret"):
+		return http.StatusBadRequest
+	case strings.Contains(msg, "permission"), strings.Contains(msg, "not authorized"):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// ListSecretDependencies handles GET /api/v1/secrets/{id}/dependencies
+func (h *SecretHandler) ListSecretDependencies(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	deps, err := h.coreService.ListSecretDependencies(r.Context(), uint(id))
+	if err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
+	h.sendSuccess(w, deps, "")
+}
+
+// AddSecretDependency handles POST /api/v1/secrets/{id}/dependencies
+func (h *SecretHandler) AddSecretDependency(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	var reqBody struct {
+		DependsOnID uint   `json:"depends_on_id"`
+		Note        string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		h.sendError(w, "InvalidJSON", "Invalid JSON in request body", http.StatusBadRequest, nil)
+		return
+	}
+	if reqBody.DependsOnID == 0 {
+		h.sendError(w, "InvalidParameter", "depends_on_id is required", http.StatusBadRequest, nil)
+		return
+	}
+	dep, err := h.coreService.AddSecretDependency(r.Context(), userCtx.UserID, uint(id), reqBody.DependsOnID, reqBody.Note)
+	if err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
+	h.sendSuccess(w, dep, "Dependency added")
+}
+
+// RemoveSecretDependency handles DELETE /api/v1/secrets/{id}/dependencies/{depId}
+func (h *SecretHandler) RemoveSecretDependency(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	depID, err := strconv.ParseUint(chi.URLParam(r, "depId"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid dependency ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.RemoveSecretDependency(r.Context(), userCtx.UserID, uint(id), uint(depID)); err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
+	h.sendSuccess(w, map[string]bool{"removed": true}, "Dependency removed")
+}
+
+// GetSecretImpact handles GET /api/v1/secrets/{id}/impact
+func (h *SecretHandler) GetSecretImpact(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid secret ID", http.StatusBadRequest, nil)
+		return
+	}
+	impact, err := h.coreService.GetSecretImpact(r.Context(), uint(id))
+	if err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
+	h.sendSuccess(w, impact, "")
+}
+
+// GetProjectRotationOrder handles GET /api/v1/projects/{id}/rotation-order
+func (h *SecretHandler) GetProjectRotationOrder(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		h.sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
+		return
+	}
+	order, err := h.coreService.GetProjectRotationOrder(r.Context(), uint(id))
+	if err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
+	h.sendSuccess(w, order, "")
+}

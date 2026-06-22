@@ -308,6 +308,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	riskExceptionExists := tableExists(db, "risk_exceptions")
 	ssoLoginStateExists := tableExists(db, "sso_login_states")
 	sodExists := tableExists(db, "sod_policies")
+	secretDepExists := tableExists(db, "secret_dependencies")
 	pwHistExists := tableExists(db, "password_histories")
 	machineExists := tableExists(db, "machine_identities")
 	machineCredExists := tableExists(db, "machine_identity_credentials")
@@ -511,6 +512,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if !sodExists {
 		if err := db.AutoMigrate(&models.SoDPolicy{}); err != nil {
 			return fmt.Errorf("failed to migrate sod_policies table: %w", err)
+		}
+	}
+
+	// Create the secret-dependency edge table if missing (ADR-052, additive).
+	if !secretDepExists {
+		if err := db.AutoMigrate(&models.SecretDependency{}); err != nil {
+			return fmt.Errorf("failed to migrate secret_dependencies table: %w", err)
 		}
 	}
 
