@@ -490,6 +490,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/{id}", groupHandler.GetGroup)
 			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", groupHandler.UpdateGroup)
 			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", groupHandler.DeleteGroup)
+			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/restore", groupHandler.RestoreGroup)
 			r.Get("/{id}/members", groupHandler.GetGroupMembers)
 			// Secrets a group can reach via shares — reveals secret names, so it needs
 			// secrets.read on top of the group-level users.read above.

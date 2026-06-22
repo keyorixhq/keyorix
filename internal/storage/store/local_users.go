@@ -250,18 +250,29 @@ func (ls *LocalStorage) DeleteGroup(ctx context.Context, id uint) error {
 	if _, err := ls.GetGroup(ctx, id); err != nil {
 		return err
 	}
-	if err := ls.db.WithContext(ctx).Where("group_id = ?", id).Delete(&models.GroupRole{}).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	if err := ls.db.WithContext(ctx).Where("group_id = ?", id).Delete(&models.UserGroup{}).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
+	// Soft-delete the group (DeletedAt), keeping its role grants and memberships so a
+	// restore brings the group back intact. A soft-deleted group authorizes nothing:
+	// the role-inheritance and group-share enforcement queries exclude deleted groups.
 	result := ls.db.WithContext(ctx).Delete(&models.Group{}, id)
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("%s", i18n.T("ErrorGroupNotFound", nil))
+	}
+	return nil
+}
+
+// RestoreGroup clears a soft-deleted group's deleted_at, bringing it back with the
+// role grants and memberships it had at deletion.
+func (ls *LocalStorage) RestoreGroup(ctx context.Context, id uint) error {
+	result := ls.db.WithContext(ctx).Unscoped().Model(&models.Group{}).
+		Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("group not found or not deleted")
 	}
 	return nil
 }

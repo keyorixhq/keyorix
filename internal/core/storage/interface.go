@@ -286,6 +286,8 @@ type Storage interface {
 	GetGroup(ctx context.Context, id uint) (*models.Group, error)
 	UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error)
 	DeleteGroup(ctx context.Context, id uint) error
+	// RestoreGroup clears a soft-deleted group's deleted_at (with its grants/members).
+	RestoreGroup(ctx context.Context, id uint) error
 	ListGroups(ctx context.Context) ([]*models.Group, error)
 	AddUserToGroup(ctx context.Context, userID, groupID uint) error
 	RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error

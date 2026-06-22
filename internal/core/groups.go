@@ -16,9 +16,10 @@ import (
 // Group lifecycle audit event types (API/CLI-driven; the SCIM provisioning path
 // has its own scim.group_* events). Surfaced in the audit log like other mutations.
 const (
-	EventGroupCreated = "group.created"
-	EventGroupUpdated = "group.updated"
-	EventGroupDeleted = "group.deleted"
+	EventGroupCreated  = "group.created"
+	EventGroupUpdated  = "group.updated"
+	EventGroupDeleted  = "group.deleted"
+	EventGroupRestored = "group.restored"
 )
 
 // CreateGroup creates a new group. actorID is the admin performing it (0 = no
@@ -87,6 +88,19 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	}
 	c.writeAuditEvent(ctx, EventGroupDeleted, actorPtr(actorID), nil,
 		fmt.Sprintf("group %q (id %d) deleted", group.Name, id))
+	return nil
+}
+
+// RestoreGroup reverses a soft-delete, bringing the group back with the role grants
+// and memberships it had at deletion. See CreateGroup for actorID semantics.
+func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) error {
+	if id == 0 {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+	}
+	if err := c.storage.RestoreGroup(ctx, id); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.writeAuditEvent(ctx, EventGroupRestored, actorPtr(actorID), nil, fmt.Sprintf("group %d restored", id))
 	return nil
 }
 

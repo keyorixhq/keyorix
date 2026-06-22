@@ -189,3 +189,28 @@ func (h *GroupHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// RestoreGroup handles POST /api/v1/groups/{id}/restore — reverses a soft-delete,
+// bringing the group back with its prior role grants and memberships.
+func (h *GroupHandler) RestoreGroup(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid group ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.RestoreGroup(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		log.Printf("Error restoring group: %v", err)
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not deleted") {
+			sendError(w, "NotFound", "Group not found or not deleted", http.StatusNotFound, nil)
+			return
+		}
+		sendError(w, "InternalError", "Failed to restore group", http.StatusInternalServerError, nil)
+		return
+	}
+	sendSuccess(w, nil, "Group restored")
+}

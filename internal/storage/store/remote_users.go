@@ -210,6 +210,10 @@ func (rs *RemoteStorage) DeleteGroup(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteGroup")
 }
 
+func (rs *RemoteStorage) RestoreGroup(_ context.Context, _ uint) error {
+	return remoteUnsupported("RestoreGroup")
+}
+
 func (rs *RemoteStorage) ListGroups(_ context.Context) ([]*models.Group, error) {
 	return nil, remoteUnsupported("ListGroups")
 }

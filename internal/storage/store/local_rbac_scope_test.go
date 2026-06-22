@@ -26,7 +26,7 @@ func newRBACScopeTestStore(t *testing.T) *LocalStorage {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.UserRole{}, &models.GroupRole{}, &models.UserGroup{}, &models.Role{},
+		&models.UserRole{}, &models.GroupRole{}, &models.UserGroup{}, &models.Role{}, &models.Group{},
 	))
 	return NewLocalStorage(db)
 }
@@ -100,6 +100,8 @@ func TestGetUserGroupRoleIDsAt_ScopeBoundary(t *testing.T) {
 	ls := newRBACScopeTestStore(t)
 	ctx := context.Background()
 	// user 1 ∈ group 100; group 100 grants role 50 project-5/env-9, role 60 global.
+	// A live (non-deleted) group is required — the authz query excludes deleted groups.
+	require.NoError(t, ls.db.Create(&models.Group{ID: 100, Name: "g100"}).Error)
 	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 1, GroupID: 100}).Error)
 	require.NoError(t, ls.db.Create(&models.GroupRole{GroupID: 100, RoleID: 50, ProjectID: 5, EnvironmentID: 9}).Error)
 	require.NoError(t, ls.db.Create(&models.GroupRole{GroupID: 100, RoleID: 60, ProjectID: 0, EnvironmentID: 0}).Error)
