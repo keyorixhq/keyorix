@@ -37,6 +37,7 @@ var (
 	flagEnvID     int
 	flagTTL       int
 	flagYes       bool
+	flagLevel     string
 )
 
 func init() {
@@ -45,8 +46,69 @@ func init() {
 	issueCmd.Flags().IntVar(&flagTTL, "ttl", 0, "Lease TTL in seconds (0 = the config default)")
 	renewCmd.Flags().IntVar(&flagTTL, "ttl", 0, "Renewal TTL in seconds (0 = the config default)")
 	revokeAllCmd.Flags().BoolVar(&flagYes, "yes", false, "Skip the confirmation prompt")
+	classifyCmd.Flags().StringVar(&flagLevel, "level", "", "Classification level (required)")
+	_ = classifyCmd.MarkFlagRequired("level")
 
-	DynamicSecretCmd.AddCommand(listCmd, issueCmd, leasesCmd, renewCmd, revokeCmd, revokeAllCmd)
+	DynamicSecretCmd.AddCommand(listCmd, getConfigCmd, issueCmd, leasesCmd, renewCmd, revokeCmd, revokeAllCmd, classifyCmd)
+}
+
+// printConfig renders a single config's details.
+func printConfig(cfg configView) {
+	fmt.Printf("ID:             %d\n", cfg.ID)
+	fmt.Printf("Name:           %s\n", cfg.Name)
+	fmt.Printf("Project ID:     %d\n", cfg.ProjectID)
+	fmt.Printf("Environment ID: %d\n", cfg.EnvironmentID)
+	fmt.Printf("Backend:        %s\n", cfg.BackendType)
+	fmt.Printf("Default TTL:    %ds\n", cfg.DefaultTTLSeconds)
+	fmt.Printf("Max TTL:        %ds\n", cfg.MaxTTLSeconds)
+	if cfg.Classification != "" {
+		fmt.Printf("Classification: %s\n", cfg.Classification)
+	}
+}
+
+var getConfigCmd = &cobra.Command{
+	Use:   "get-config <config-id>",
+	Short: "Show a dynamic-secret config's details",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		c, err := client()
+		if err != nil {
+			return err
+		}
+		id, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid config id: %s", args[0])
+		}
+		var cfg configView
+		if err := c.Get(context.Background(), fmt.Sprintf("/api/v1/dynamic-secrets/configs/%d", id), &cfg); err != nil {
+			return err
+		}
+		printConfig(cfg)
+		return nil
+	},
+}
+
+var classifyCmd = &cobra.Command{
+	Use:   "classify <config-id>",
+	Short: "Set a dynamic-secret config's classification level",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		c, err := client()
+		if err != nil {
+			return err
+		}
+		id, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid config id: %s", args[0])
+		}
+		var cfg configView
+		body := map[string]string{"classification": flagLevel}
+		if err := c.Patch(context.Background(), fmt.Sprintf("/api/v1/dynamic-secrets/configs/%d/classification", id), body, &cfg); err != nil {
+			return err
+		}
+		fmt.Printf("✅ Classification set to %q for config %d.\n", flagLevel, id)
+		return nil
+	},
 }
 
 func client() (*common.RemoteClient, error) {
@@ -65,6 +127,7 @@ type configView struct {
 	BackendType       string `json:"backend_type"`
 	DefaultTTLSeconds int    `json:"default_ttl_seconds"`
 	MaxTTLSeconds     int    `json:"max_ttl_seconds"`
+	Classification    string `json:"classification"`
 }
 
 type issuedLease struct {

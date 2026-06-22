@@ -18,9 +18,10 @@ func TestCommandWiring(t *testing.T) {
 	for _, sub := range DynamicSecretCmd.Commands() {
 		names[sub.Name()] = true
 	}
-	for _, want := range []string{"list", "issue", "leases", "renew", "revoke", "revoke-all", "create"} {
+	for _, want := range []string{"list", "issue", "leases", "renew", "revoke", "revoke-all", "create", "get-config", "classify"} {
 		assert.True(t, names[want], "missing subcommand %q", want)
 	}
+	assert.NotNil(t, classifyCmd.Flags().Lookup("level"))
 	assert.Contains(t, DynamicSecretCmd.Aliases, "dyn")
 	assert.NotNil(t, issueCmd.Flags().Lookup("ttl"))
 	assert.NotNil(t, listCmd.Flags().Lookup("project-id"))
@@ -127,6 +128,50 @@ func TestRevokeAllAgainstMockServer(t *testing.T) {
 	assert.Equal(t, http.MethodPost, gotMethod)
 	assert.Equal(t, "/api/v1/dynamic-secrets/configs/7/revoke-all", gotPath)
 	assert.Contains(t, out, "revoked 3")
+}
+
+func TestGetConfigAgainstMockServer(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"id":7,"name":"app-db","backend_type":"postgres","default_ttl_seconds":3600,"max_ttl_seconds":7200,"classification":"restricted"}}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+
+	out := captureStdout(t, func() {
+		require.NoError(t, getConfigCmd.RunE(getConfigCmd, []string{"7"}))
+	})
+	assert.Equal(t, http.MethodGet, gotMethod)
+	assert.Equal(t, "/api/v1/dynamic-secrets/configs/7", gotPath)
+	assert.Contains(t, out, "app-db")
+	assert.Contains(t, out, "restricted")
+}
+
+func TestClassifyAgainstMockServer(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"data":{"id":7,"name":"app-db","classification":"restricted"}}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KEYORIX_SERVER", srv.URL)
+	t.Setenv("KEYORIX_TOKEN", "test-token")
+	flagLevel = "restricted"
+	t.Cleanup(func() { flagLevel = "" })
+
+	out := captureStdout(t, func() {
+		require.NoError(t, classifyCmd.RunE(classifyCmd, []string{"7"}))
+	})
+	assert.Equal(t, http.MethodPatch, gotMethod)
+	assert.Equal(t, "/api/v1/dynamic-secrets/configs/7/classification", gotPath)
+	assert.Equal(t, "restricted", gotBody["classification"])
+	assert.Contains(t, out, "restricted")
 }
 
 func TestIssueRejectsBadConfigID(t *testing.T) {
