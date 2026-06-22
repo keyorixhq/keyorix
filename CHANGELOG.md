@@ -14,9 +14,9 @@ All notable changes to Keyorix are documented here. This project follows
   **combinations** that are unremarkable signal-by-signal. Pure-Go, no new
   dependencies; metadata only (no secret value is examined); deterministic (seeded).
   Flagged accesses emit an `ml_outlier` alert through the existing alert pipeline.
-  Config-gated under `anomaly_alerts.ml` (default off). (ADR-050) ([#409])
+  Config-gated under `anomaly_alerts.ml` (default off). (ADR-050) ([#410])
 
-[#409]: https://github.com/keyorixhq/keyorix/pull/409
+[#410]: https://github.com/keyorixhq/keyorix/pull/410
 
 ## v0.74.0 — 2026-06-22
 
