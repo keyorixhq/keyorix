@@ -298,6 +298,7 @@ func TestKeyorixCore_ListSecretShares(t *testing.T) {
 	mockStorage := new(MockStorage)
 	core := &KeyorixCore{
 		storage: mockStorage,
+		now:     time.Now,
 	}
 	ctx := context.Background()
 
@@ -323,6 +324,32 @@ func TestKeyorixCore_ListSecretShares(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, shares, result)
 	mockStorage.AssertExpectations(t)
+}
+
+// ListSecretShares must drop expired time-bound shares so the list matches what
+// actually authorizes (the enforcement paths filter the same way).
+func TestKeyorixCore_ListSecretShares_FiltersExpired(t *testing.T) {
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-1 * time.Hour)
+	future := now.Add(1 * time.Hour)
+	mockStorage := new(MockStorage)
+	core := &KeyorixCore{storage: mockStorage, now: func() time.Time { return now }}
+	ctx := context.Background()
+
+	mockStorage.On("GetSecret", ctx, uint(1)).Return(&models.SecretNode{ID: 1, OwnerID: 1}, nil)
+	mockStorage.On("ListSharesBySecret", ctx, uint(1)).Return([]*models.ShareRecord{
+		{ID: 1, SecretID: 1, RecipientID: 2, Permission: "read"},                     // permanent
+		{ID: 2, SecretID: 1, RecipientID: 3, Permission: "read", ExpiresAt: &past},   // expired → dropped
+		{ID: 3, SecretID: 1, RecipientID: 4, Permission: "read", ExpiresAt: &future}, // live time-bound
+	}, nil)
+
+	result, err := core.ListSecretShares(ctx, 1)
+	require.NoError(t, err)
+	ids := make([]uint, 0, len(result))
+	for _, s := range result {
+		ids = append(ids, s.ID)
+	}
+	assert.Equal(t, []uint{1, 3}, ids, "the expired share is excluded")
 }
 
 func TestKeyorixCore_ListSharesByUser(t *testing.T) {
