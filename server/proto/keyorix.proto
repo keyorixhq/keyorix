@@ -33,6 +33,12 @@ service SecretService {
   // Enable/disable automated rotation for a secret and set its generated-value shape
   // (ADR-046). Requires scoped secrets.write.
   rpc SetSecretAutoRotate(SetSecretAutoRotateRequest) returns (google.protobuf.Empty);
+
+  // Secret dependency graph (ADR-052), read-only. Both require scoped secrets.read.
+  // List a secret's direct dependencies and dependents.
+  rpc ListSecretDependencies(GetSecretRequest) returns (SecretDependencies);
+  // The blast radius of rotating a secret (its transitive dependents).
+  rpc GetSecretImpact(GetSecretRequest) returns (SecretImpact);
 }
 
 // Share service for managing secret sharing
@@ -237,6 +243,43 @@ message SecretVersion {
 
 message GetSecretVersionsResponse {
   repeated SecretVersion versions = 1;
+}
+
+// --- Secret dependency graph (ADR-052) ---
+
+message DependencyEdge {
+  uint32 id = 1; // the edge id (for removal via HTTP/CLI)
+  uint32 secret_id = 2; // the other secret in the edge
+  string secret_name = 3;
+  string note = 4;
+}
+
+message SecretDependencies {
+  uint32 secret_id = 1;
+  repeated DependencyEdge depends_on = 2; // secrets this one depends on
+  repeated DependencyEdge dependents = 3; // secrets that depend on this one
+}
+
+message ImpactedSecret {
+  uint32 secret_id = 1;
+  string secret_name = 2;
+  int32 depth = 3; // hop distance from the rotated secret
+}
+
+message SecretImpact {
+  uint32 secret_id = 1;
+  string secret_name = 2;
+  repeated ImpactedSecret affected = 3; // transitive dependents
+}
+
+message RotationStep {
+  uint32 secret_id = 1;
+  string secret_name = 2;
+}
+
+message RotationOrder {
+  uint32 project_id = 1;
+  repeated RotationStep order = 2; // rotate top to bottom (dependencies first)
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +689,10 @@ service ProjectService {
 
   // Delete a project (soft delete; force also removes its secrets).
   rpc DeleteProject(DeleteProjectRequest) returns (google.protobuf.Empty);
+
+  // Safe rotation order for the project's secret dependency graph (ADR-052),
+  // read-only. Requires scoped secrets.read.
+  rpc GetProjectRotationOrder(GetProjectRequest) returns (RotationOrder);
 
   // List a project's environments.
   rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);

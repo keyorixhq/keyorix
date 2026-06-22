@@ -35,10 +35,15 @@ All notable changes to Keyorix are documented here. This project follows
   cycles are rejected). Metadata only — no secret value is read. This is the
   prerequisite for automated rotation planning; the topological order is the
   deterministic core of that. (ADR-052) ([#412])
+- **gRPC surface for the secret dependency graph** — `SecretService.ListSecretDependencies`
+  / `GetSecretImpact` and `ProjectService.GetProjectRotationOrder` expose the ADR-052
+  dependency graph over gRPC (read-only), mirroring the HTTP/CLI surfaces with the same
+  scoped `secrets.read` authorization. ([#415])
 
 [#410]: https://github.com/keyorixhq/keyorix/pull/410
 [#411]: https://github.com/keyorixhq/keyorix/pull/411
 [#412]: https://github.com/keyorixhq/keyorix/pull/412
+[#415]: https://github.com/keyorixhq/keyorix/pull/415
 
 ## v0.74.0 — 2026-06-22
 

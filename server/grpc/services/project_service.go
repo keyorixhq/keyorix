@@ -79,6 +79,26 @@ func (s *ProjectGRPCService) GetProject(ctx context.Context, req *pb.GetProjectR
 	return projectToProto(project), nil
 }
 
+// GetProjectRotationOrder returns a safe rotation sequence for the project's secret
+// dependency graph (ADR-052). Requires scoped secrets.read on the project.
+func (s *ProjectGRPCService) GetProjectRotationOrder(ctx context.Context, req *pb.GetProjectRequest) (*pb.RotationOrder, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+	if err := authorizeScoped(ctx, s.core, user, "secrets.read", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
+		return nil, err
+	}
+	order, err := s.core.GetProjectRotationOrder(ctx, uint(req.GetId()))
+	if err != nil {
+		return nil, mapProjectError(err)
+	}
+	return rotationOrderToProto(order), nil
+}
+
 func (s *ProjectGRPCService) CreateProject(ctx context.Context, req *pb.CreateProjectRequest) (*pb.Project, error) {
 	user, err := requireUser(ctx)
 	if err != nil {

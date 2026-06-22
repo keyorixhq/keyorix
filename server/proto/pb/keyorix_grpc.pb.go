@@ -20,14 +20,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SecretService_CreateSecret_FullMethodName        = "/keyorix.v1.SecretService/CreateSecret"
-	SecretService_GetSecret_FullMethodName           = "/keyorix.v1.SecretService/GetSecret"
-	SecretService_GetSecretValue_FullMethodName      = "/keyorix.v1.SecretService/GetSecretValue"
-	SecretService_UpdateSecret_FullMethodName        = "/keyorix.v1.SecretService/UpdateSecret"
-	SecretService_DeleteSecret_FullMethodName        = "/keyorix.v1.SecretService/DeleteSecret"
-	SecretService_ListSecrets_FullMethodName         = "/keyorix.v1.SecretService/ListSecrets"
-	SecretService_GetSecretVersions_FullMethodName   = "/keyorix.v1.SecretService/GetSecretVersions"
-	SecretService_SetSecretAutoRotate_FullMethodName = "/keyorix.v1.SecretService/SetSecretAutoRotate"
+	SecretService_CreateSecret_FullMethodName           = "/keyorix.v1.SecretService/CreateSecret"
+	SecretService_GetSecret_FullMethodName              = "/keyorix.v1.SecretService/GetSecret"
+	SecretService_GetSecretValue_FullMethodName         = "/keyorix.v1.SecretService/GetSecretValue"
+	SecretService_UpdateSecret_FullMethodName           = "/keyorix.v1.SecretService/UpdateSecret"
+	SecretService_DeleteSecret_FullMethodName           = "/keyorix.v1.SecretService/DeleteSecret"
+	SecretService_ListSecrets_FullMethodName            = "/keyorix.v1.SecretService/ListSecrets"
+	SecretService_GetSecretVersions_FullMethodName      = "/keyorix.v1.SecretService/GetSecretVersions"
+	SecretService_SetSecretAutoRotate_FullMethodName    = "/keyorix.v1.SecretService/SetSecretAutoRotate"
+	SecretService_ListSecretDependencies_FullMethodName = "/keyorix.v1.SecretService/ListSecretDependencies"
+	SecretService_GetSecretImpact_FullMethodName        = "/keyorix.v1.SecretService/GetSecretImpact"
 )
 
 // SecretServiceClient is the client API for SecretService service.
@@ -53,6 +55,11 @@ type SecretServiceClient interface {
 	// Enable/disable automated rotation for a secret and set its generated-value shape
 	// (ADR-046). Requires scoped secrets.write.
 	SetSecretAutoRotate(ctx context.Context, in *SetSecretAutoRotateRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Secret dependency graph (ADR-052), read-only. Both require scoped secrets.read.
+	// List a secret's direct dependencies and dependents.
+	ListSecretDependencies(ctx context.Context, in *GetSecretRequest, opts ...grpc.CallOption) (*SecretDependencies, error)
+	// The blast radius of rotating a secret (its transitive dependents).
+	GetSecretImpact(ctx context.Context, in *GetSecretRequest, opts ...grpc.CallOption) (*SecretImpact, error)
 }
 
 type secretServiceClient struct {
@@ -143,6 +150,26 @@ func (c *secretServiceClient) SetSecretAutoRotate(ctx context.Context, in *SetSe
 	return out, nil
 }
 
+func (c *secretServiceClient) ListSecretDependencies(ctx context.Context, in *GetSecretRequest, opts ...grpc.CallOption) (*SecretDependencies, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SecretDependencies)
+	err := c.cc.Invoke(ctx, SecretService_ListSecretDependencies_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *secretServiceClient) GetSecretImpact(ctx context.Context, in *GetSecretRequest, opts ...grpc.CallOption) (*SecretImpact, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SecretImpact)
+	err := c.cc.Invoke(ctx, SecretService_GetSecretImpact_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SecretServiceServer is the server API for SecretService service.
 // All implementations must embed UnimplementedSecretServiceServer
 // for forward compatibility.
@@ -166,6 +193,11 @@ type SecretServiceServer interface {
 	// Enable/disable automated rotation for a secret and set its generated-value shape
 	// (ADR-046). Requires scoped secrets.write.
 	SetSecretAutoRotate(context.Context, *SetSecretAutoRotateRequest) (*emptypb.Empty, error)
+	// Secret dependency graph (ADR-052), read-only. Both require scoped secrets.read.
+	// List a secret's direct dependencies and dependents.
+	ListSecretDependencies(context.Context, *GetSecretRequest) (*SecretDependencies, error)
+	// The blast radius of rotating a secret (its transitive dependents).
+	GetSecretImpact(context.Context, *GetSecretRequest) (*SecretImpact, error)
 	mustEmbedUnimplementedSecretServiceServer()
 }
 
@@ -199,6 +231,12 @@ func (UnimplementedSecretServiceServer) GetSecretVersions(context.Context, *GetS
 }
 func (UnimplementedSecretServiceServer) SetSecretAutoRotate(context.Context, *SetSecretAutoRotateRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetSecretAutoRotate not implemented")
+}
+func (UnimplementedSecretServiceServer) ListSecretDependencies(context.Context, *GetSecretRequest) (*SecretDependencies, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSecretDependencies not implemented")
+}
+func (UnimplementedSecretServiceServer) GetSecretImpact(context.Context, *GetSecretRequest) (*SecretImpact, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSecretImpact not implemented")
 }
 func (UnimplementedSecretServiceServer) mustEmbedUnimplementedSecretServiceServer() {}
 func (UnimplementedSecretServiceServer) testEmbeddedByValue()                       {}
@@ -365,6 +403,42 @@ func _SecretService_SetSecretAutoRotate_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SecretService_ListSecretDependencies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSecretRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretServiceServer).ListSecretDependencies(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SecretService_ListSecretDependencies_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretServiceServer).ListSecretDependencies(ctx, req.(*GetSecretRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SecretService_GetSecretImpact_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSecretRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretServiceServer).GetSecretImpact(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SecretService_GetSecretImpact_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretServiceServer).GetSecretImpact(ctx, req.(*GetSecretRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SecretService_ServiceDesc is the grpc.ServiceDesc for SecretService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -403,6 +477,14 @@ var SecretService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetSecretAutoRotate",
 			Handler:    _SecretService_SetSecretAutoRotate_Handler,
+		},
+		{
+			MethodName: "ListSecretDependencies",
+			Handler:    _SecretService_ListSecretDependencies_Handler,
+		},
+		{
+			MethodName: "GetSecretImpact",
+			Handler:    _SecretService_GetSecretImpact_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -1754,12 +1836,13 @@ var SystemService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	ProjectService_ListProjects_FullMethodName     = "/keyorix.v1.ProjectService/ListProjects"
-	ProjectService_GetProject_FullMethodName       = "/keyorix.v1.ProjectService/GetProject"
-	ProjectService_CreateProject_FullMethodName    = "/keyorix.v1.ProjectService/CreateProject"
-	ProjectService_UpdateProject_FullMethodName    = "/keyorix.v1.ProjectService/UpdateProject"
-	ProjectService_DeleteProject_FullMethodName    = "/keyorix.v1.ProjectService/DeleteProject"
-	ProjectService_ListEnvironments_FullMethodName = "/keyorix.v1.ProjectService/ListEnvironments"
+	ProjectService_ListProjects_FullMethodName            = "/keyorix.v1.ProjectService/ListProjects"
+	ProjectService_GetProject_FullMethodName              = "/keyorix.v1.ProjectService/GetProject"
+	ProjectService_CreateProject_FullMethodName           = "/keyorix.v1.ProjectService/CreateProject"
+	ProjectService_UpdateProject_FullMethodName           = "/keyorix.v1.ProjectService/UpdateProject"
+	ProjectService_DeleteProject_FullMethodName           = "/keyorix.v1.ProjectService/DeleteProject"
+	ProjectService_GetProjectRotationOrder_FullMethodName = "/keyorix.v1.ProjectService/GetProjectRotationOrder"
+	ProjectService_ListEnvironments_FullMethodName        = "/keyorix.v1.ProjectService/ListEnvironments"
 )
 
 // ProjectServiceClient is the client API for ProjectService service.
@@ -1780,6 +1863,9 @@ type ProjectServiceClient interface {
 	UpdateProject(ctx context.Context, in *UpdateProjectRequest, opts ...grpc.CallOption) (*Project, error)
 	// Delete a project (soft delete; force also removes its secrets).
 	DeleteProject(ctx context.Context, in *DeleteProjectRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Safe rotation order for the project's secret dependency graph (ADR-052),
+	// read-only. Requires scoped secrets.read.
+	GetProjectRotationOrder(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*RotationOrder, error)
 	// List a project's environments.
 	ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error)
 }
@@ -1842,6 +1928,16 @@ func (c *projectServiceClient) DeleteProject(ctx context.Context, in *DeleteProj
 	return out, nil
 }
 
+func (c *projectServiceClient) GetProjectRotationOrder(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*RotationOrder, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RotationOrder)
+	err := c.cc.Invoke(ctx, ProjectService_GetProjectRotationOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *projectServiceClient) ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListEnvironmentsResponse)
@@ -1870,6 +1966,9 @@ type ProjectServiceServer interface {
 	UpdateProject(context.Context, *UpdateProjectRequest) (*Project, error)
 	// Delete a project (soft delete; force also removes its secrets).
 	DeleteProject(context.Context, *DeleteProjectRequest) (*emptypb.Empty, error)
+	// Safe rotation order for the project's secret dependency graph (ADR-052),
+	// read-only. Requires scoped secrets.read.
+	GetProjectRotationOrder(context.Context, *GetProjectRequest) (*RotationOrder, error)
 	// List a project's environments.
 	ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error)
 	mustEmbedUnimplementedProjectServiceServer()
@@ -1896,6 +1995,9 @@ func (UnimplementedProjectServiceServer) UpdateProject(context.Context, *UpdateP
 }
 func (UnimplementedProjectServiceServer) DeleteProject(context.Context, *DeleteProjectRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteProject not implemented")
+}
+func (UnimplementedProjectServiceServer) GetProjectRotationOrder(context.Context, *GetProjectRequest) (*RotationOrder, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProjectRotationOrder not implemented")
 }
 func (UnimplementedProjectServiceServer) ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEnvironments not implemented")
@@ -2011,6 +2113,24 @@ func _ProjectService_DeleteProject_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProjectService_GetProjectRotationOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProjectServiceServer).GetProjectRotationOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProjectService_GetProjectRotationOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProjectServiceServer).GetProjectRotationOrder(ctx, req.(*GetProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProjectService_ListEnvironments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListEnvironmentsRequest)
 	if err := dec(in); err != nil {
@@ -2055,6 +2175,10 @@ var ProjectService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteProject",
 			Handler:    _ProjectService_DeleteProject_Handler,
+		},
+		{
+			MethodName: "GetProjectRotationOrder",
+			Handler:    _ProjectService_GetProjectRotationOrder_Handler,
 		},
 		{
 			MethodName: "ListEnvironments",
