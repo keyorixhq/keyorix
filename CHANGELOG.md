@@ -22,9 +22,23 @@ All notable changes to Keyorix are documented here. This project follows
   / SOC 2 / NIS2 / DORA, with the same live pass/gap/not-configured status. Lets an ENS
   auditor pull the secret-management control set mapped to RD 311/2022 with its current
   state. Mappings are consistent with `docs/compliance/ENS-CONTROLS.md`. (ADR-051) ([#411])
+- **Secret dependency tracking** — declare that one secret depends on another (e.g. an
+  app token derived from a DB password, or a cert chain) and Keyorix maintains the
+  per-project dependency graph. Answers two questions before a rotation: **impact /
+  blast radius** (`GET /api/v1/secrets/{id}/impact` — the transitive dependents that
+  break if you rotate it) and **rotation order** (`GET /api/v1/projects/{id}/rotation-order`
+  — a safe sequence where each secret precedes anything depending on it). Manage edges
+  via `GET/POST /secrets/{id}/dependencies` + `DELETE /secrets/{id}/dependencies/{depId}`,
+  gated by scoped `secrets.read`/`secrets.write` and audited. Edges are confined to a
+  single project + environment (matching Keyorix's environment-granular authorization)
+  and the graph is kept acyclic (self-edges, duplicates, cross-project/-environment, and
+  cycles are rejected). Metadata only — no secret value is read. This is the
+  prerequisite for automated rotation planning; the topological order is the
+  deterministic core of that. (ADR-052) ([#412])
 
 [#410]: https://github.com/keyorixhq/keyorix/pull/410
 [#411]: https://github.com/keyorixhq/keyorix/pull/411
+[#412]: https://github.com/keyorixhq/keyorix/pull/412
 
 ## v0.74.0 — 2026-06-22
 

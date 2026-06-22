@@ -271,6 +271,35 @@ func (m *MockStorage) DeleteSoDPolicy(ctx context.Context, id uint) error {
 	return args.Error(0)
 }
 
+func (m *MockStorage) CreateSecretDependency(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
+	args := m.Called(ctx, d)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SecretDependency), args.Error(1)
+}
+
+func (m *MockStorage) GetSecretDependency(ctx context.Context, id uint) (*models.SecretDependency, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SecretDependency), args.Error(1)
+}
+
+func (m *MockStorage) ListSecretDependenciesForProject(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.SecretDependency), args.Error(1)
+}
+
+func (m *MockStorage) DeleteSecretDependency(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 func (m *MockStorage) CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error) {
 	args := m.Called(ctx, h)
 	if args.Get(0) == nil {
