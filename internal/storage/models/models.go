@@ -397,9 +397,15 @@ type ConnectRefGrant struct {
 }
 
 type Group struct {
-	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"unique;not null"`
+	ID uint `gorm:"primaryKey"`
+	// Name uniqueness is enforced by a PARTIAL unique index (name WHERE deleted_at
+	// IS NULL), created in migrateDatabase — not the plain `unique` tag — so a
+	// soft-deleted group's name is freed for reuse while it stays restorable.
+	Name        string `gorm:"not null"`
 	Description string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	DeletedAt   gorm.DeletedAt `gorm:"index"` // soft delete (restorable)
 }
 
 type UserGroup struct {

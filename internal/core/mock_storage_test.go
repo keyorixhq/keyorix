@@ -766,6 +766,11 @@ func (m *MockStorage) DeleteGroup(ctx context.Context, id uint) error {
 	return args.Error(0)
 }
 
+func (m *MockStorage) RestoreGroup(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 func (m *MockStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {

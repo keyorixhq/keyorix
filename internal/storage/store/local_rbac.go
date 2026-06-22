@@ -250,6 +250,9 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 	var ids []uint
 	err := ls.db.WithContext(ctx).Table("group_roles").
 		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		// A soft-deleted group confers no roles, even though its membership/grant rows
+		// are kept for restore — exclude deleted groups from authorization.
+		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
 		Where("user_groups.user_id = ?", userID).
 		Where("group_roles.project_id = 0 OR group_roles.project_id = ?", scope.ProjectID).
 		Where("group_roles.environment_id = 0 OR group_roles.environment_id = ?", scope.EnvironmentID).

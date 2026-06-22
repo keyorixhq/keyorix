@@ -51,6 +51,16 @@ func TestGroupCRUDAudit(t *testing.T) {
 	require.NoError(t, c.DeleteGroup(ctx, 42, g.ID))
 	n, _ = lastActor(EventGroupDeleted)
 	assert.Equal(t, int64(1), n)
+
+	require.NoError(t, c.RestoreGroup(ctx, 42, g.ID))
+	n, actor = lastActor(EventGroupRestored)
+	assert.Equal(t, int64(1), n)
+	require.NotNil(t, actor)
+	assert.Equal(t, uint(42), *actor)
+	// The restored group is retrievable again.
+	restored, err := c.GetGroup(ctx, g.ID)
+	require.NoError(t, err)
+	assert.Equal(t, g.ID, restored.ID)
 }
 
 // A CLI invocation (actorID 0) still audits, with no actor recorded.

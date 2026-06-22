@@ -326,6 +326,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	loginAttemptExists := tableExists(db, "login_attempts")
 	auditCkptExists := tableExists(db, "audit_checkpoints")
 	connectRefGrantExists := tableExists(db, "connect_ref_grants")
+	groupsExists := tableExists(db, "groups")
 
 	// Create rotation_policies if missing (additive, safe on existing DBs).
 	if !rotationExists {
@@ -584,11 +585,25 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
+	// Groups gained soft-delete (DeletedAt) + a partial unique index on name. On an
+	// existing DB add the column and swap the plain unique index for the partial one
+	// (additive, idempotent); the full AutoMigrate below covers fresh DBs.
+	if groupsExists {
+		if m := db.Migrator(); !m.HasColumn(&models.Group{}, "DeletedAt") {
+			if err := m.AddColumn(&models.Group{}, "DeletedAt"); err != nil {
+				return fmt.Errorf("failed to add groups.deleted_at column: %w", err)
+			}
+		}
+		if err := ensureGroupNameIndex(db); err != nil {
+			return err
+		}
+	}
+
 	// Skip full AutoMigrate if already initialised (projects table present).
 	if projectsExists {
 		return nil
 	}
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&models.Project{},
 		&models.Environment{},
 		&models.User{},
@@ -630,5 +645,25 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		// feature). Including it here too made the full AutoMigrate re-inspect
 		// the already-created rotation_policies table, tripping the pgx
 		// "insufficient arguments" bug on a fresh DB's first boot.
-	)
+	); err != nil {
+		return err
+	}
+	// The Group model carries no plain unique tag on name; enforce uniqueness only
+	// among live groups via a partial index (so a soft-deleted name can be reused).
+	return ensureGroupNameIndex(db)
+}
+
+// ensureGroupNameIndex replaces any plain unique index on groups.name with a
+// partial unique index scoped to non-deleted rows, so a soft-deleted group's name
+// is freed for reuse while the group stays restorable. Idempotent; works on both
+// SQLite and Postgres (both support partial indexes and IF [NOT] EXISTS).
+func ensureGroupNameIndex(db *gorm.DB) error {
+	// Drop the legacy plain unique index from the old `unique` tag, if present.
+	if err := db.Exec("DROP INDEX IF EXISTS uni_groups_name").Error; err != nil {
+		return fmt.Errorf("failed to drop legacy groups name index: %w", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_groups_name_active ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
+		return fmt.Errorf("failed to create partial groups name index: %w", err)
+	}
+	return nil
 }

@@ -44,6 +44,7 @@ func setupRotationPolicyTest(t *testing.T) (*RotationPolicyHandler, *core.Keyori
 		&models.Permission{},
 		&models.RolePermission{},
 		&models.UserRole{},
+		&models.Group{},
 		&models.UserGroup{},
 		&models.GroupRole{},
 	)
