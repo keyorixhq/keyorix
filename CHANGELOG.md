@@ -6,6 +6,15 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Added
+- **ML anomaly detection (Isolation Forest)** — an opt-in machine-learning pass that
+  complements the existing rule-based access-anomaly detection. Each scan trains a
+  per-secret Isolation Forest on the secret's 30-day access baseline and flags
+  accesses whose joint pattern (hour, IP rarity, user rarity) is a multivariate
+  outlier — catching what the binary rules miss: a **known-but-rare** actor or IP, and
+  **combinations** that are unremarkable signal-by-signal. Pure-Go, no new
+  dependencies; metadata only (no secret value is examined); deterministic (seeded).
+  Flagged accesses emit an `ml_outlier` alert through the existing alert pipeline.
+  Config-gated under `anomaly_alerts.ml` (default off). (ADR-050) ([#410])
 - **ENS in the compliance control matrix** — every control in the live control matrix
   (`GET /api/v1/compliance/controls`, gRPC, and the `compliance-controls.csv` auditor
   export) now carries an `ens` reference to its Spanish *Esquema Nacional de Seguridad*
@@ -14,6 +23,7 @@ All notable changes to Keyorix are documented here. This project follows
   auditor pull the secret-management control set mapped to RD 311/2022 with its current
   state. Mappings are consistent with `docs/compliance/ENS-CONTROLS.md`. (ADR-051) ([#411])
 
+[#410]: https://github.com/keyorixhq/keyorix/pull/410
 [#411]: https://github.com/keyorixhq/keyorix/pull/411
 
 ## v0.74.0 — 2026-06-22

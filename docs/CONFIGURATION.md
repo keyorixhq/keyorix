@@ -743,6 +743,33 @@ anomaly_alerts:
   schedule: "1h"          # Go duration between scan+alert passes (default 1h)
 ```
 
+### anomaly_alerts.ml — Isolation Forest detection (ADR-050)
+
+An optional **machine-learning** detection pass that complements the statistical rules
+above. Each scan trains a per-secret [Isolation Forest](https://en.wikipedia.org/wiki/Isolation_forest)
+on the secret's 30-day access baseline and flags accesses whose joint pattern (hour,
+IP rarity, user rarity) is a multivariate outlier — catching two things the binary
+rules miss: a **known-but-rare** actor or IP (the new-user/new-IP rules only see
+"known"), and **combinations** that are unremarkable signal-by-signal. Flagged accesses
+emit an `ml_outlier` anomaly alert that flows through the same list / acknowledge /
+alert / retention paths as every other alert. Metadata only — no secret value is ever
+examined.
+
+`ml.enabled` is **independent** of `anomaly_alerts.enabled`: it gates whether the scan
+additionally runs the ML pass; `anomaly_alerts.enabled` gates whether detected
+anomalies are pushed out. Opt-in (default off).
+
+```yaml
+anomaly_alerts:
+  enabled: true
+  ml:
+    enabled: true
+    threshold: 0.60       # anomaly-score cutoff in (0.5,1.0); higher = fewer alerts (default 0.60)
+    num_trees: 100        # forest size (default 100)
+    sample_size: 256      # per-tree subsample ψ (default 256)
+    seed: 1               # RNG seed; fixed so scoring is reproducible (default 1)
+```
+
 ## audit.siem
 
 Native push of audit events to a SIEM. The token is read from `KEYORIX_SIEM_TOKEN`
