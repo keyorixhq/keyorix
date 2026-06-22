@@ -243,6 +243,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("secrets.delete", projectScope)).Delete("/projects/{id}", catalogHandler.DeleteProject)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/restore", catalogHandler.RestoreProject)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/drift", catalogHandler.GetProjectDrift)
+		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/rotation-order", secretHandler.GetProjectRotationOrder)
 		// Project membership (ADR-021 two-tier model). Read = project members may
 		// view the roster; mutations require roles.assign at the project scope, so
 		// a project_admin can manage their own project's members.
@@ -373,6 +374,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/audit", secretHandler.AuditTrail)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/tags", secretHandler.GetTags)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}/tags", secretHandler.SetTags)
+
+			// Secret dependency graph (ADR-052).
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/dependencies", secretHandler.ListSecretDependencies)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
+			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/impact", secretHandler.GetSecretImpact)
 
 			// Create: authorized inside the handler (scope comes from the body).
 			r.Post("/", secretHandler.CreateSecret)

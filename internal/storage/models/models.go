@@ -473,6 +473,26 @@ type SecretNode struct {
 	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
+// SecretDependency is a directed edge in a project's secret dependency graph:
+// the secret DependentSecretID "depends on" DependsOnSecretID — i.e. rotating the
+// dependency may require updating or re-issuing the dependent (e.g. an application
+// token derived from a database password, or a config value that embeds another
+// secret). Metadata only; never the secret values. The graph drives impact analysis
+// ("what breaks if I rotate this?") and rotation ordering (ADR-052). Both endpoints
+// are secrets in the same project AND environment (authorization is environment-
+// granular, so an edge is confined to one environment); self-edges, duplicates,
+// cross-environment edges, and cycles are rejected at create so the graph stays a DAG.
+type SecretDependency struct {
+	ID        uint `gorm:"primaryKey" json:"id"`
+	ProjectID uint `gorm:"index;not null" json:"project_id"` // denormalised from the endpoints (same for both)
+	// DependentSecretID depends on DependsOnSecretID. The pair is unique.
+	DependentSecretID uint      `gorm:"not null;uniqueIndex:idx_secret_dep_edge" json:"dependent_secret_id"`
+	DependsOnSecretID uint      `gorm:"not null;uniqueIndex:idx_secret_dep_edge" json:"depends_on_secret_id"`
+	Note              string    `json:"note,omitempty"`
+	CreatedBy         uint      `json:"created_by,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
 type SecretVersion struct {
 	ID                 uint `gorm:"primaryKey"`
 	SecretNodeID       uint
@@ -888,7 +908,7 @@ type AnomalyAlert struct {
 	ID           uint `gorm:"primaryKey"`
 	SecretNodeID uint `gorm:"index"`
 	SecretName   string
-	AlertType    string // off_hours, new_ip, frequency_spike, new_user
+	AlertType    string // off_hours, new_ip, frequency_spike, new_user, ml_outlier
 	Severity     string // low, medium, high
 	Description  string
 	AccessedBy   string

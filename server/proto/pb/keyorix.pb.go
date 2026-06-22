@@ -7686,11 +7686,13 @@ func (x *CompliancePosture) GetRisk() *RiskPosture {
 }
 
 type FrameworkRefs struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Iso_27001     []string               `protobuf:"bytes,1,rep,name=iso_27001,json=iso27001,proto3" json:"iso_27001,omitempty"`
-	Soc2          []string               `protobuf:"bytes,2,rep,name=soc2,proto3" json:"soc2,omitempty"`
-	Nis2          []string               `protobuf:"bytes,3,rep,name=nis2,proto3" json:"nis2,omitempty"`
-	Dora          []string               `protobuf:"bytes,4,rep,name=dora,proto3" json:"dora,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Iso_27001 []string               `protobuf:"bytes,1,rep,name=iso_27001,json=iso27001,proto3" json:"iso_27001,omitempty"`
+	Soc2      []string               `protobuf:"bytes,2,rep,name=soc2,proto3" json:"soc2,omitempty"`
+	Nis2      []string               `protobuf:"bytes,3,rep,name=nis2,proto3" json:"nis2,omitempty"`
+	Dora      []string               `protobuf:"bytes,4,rep,name=dora,proto3" json:"dora,omitempty"`
+	// ENS — Spain's Esquema Nacional de Seguridad (RD 311/2022) measure codes.
+	Ens           []string `protobuf:"bytes,5,rep,name=ens,proto3" json:"ens,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7749,6 +7751,13 @@ func (x *FrameworkRefs) GetNis2() []string {
 func (x *FrameworkRefs) GetDora() []string {
 	if x != nil {
 		return x.Dora
+	}
+	return nil
+}
+
+func (x *FrameworkRefs) GetEns() []string {
+	if x != nil {
+		return x.Ens
 	}
 	return nil
 }
@@ -9131,12 +9140,13 @@ const file_keyorix_proto_rawDesc = "" +
 	"legal_hold\x18\t \x01(\v2\x1c.keyorix.v1.LegalHoldPostureR\tlegalHold\x12:\n" +
 	"\tretention\x18\n" +
 	" \x01(\v2\x1c.keyorix.v1.RetentionPostureR\tretention\x12+\n" +
-	"\x04risk\x18\v \x01(\v2\x17.keyorix.v1.RiskPostureR\x04risk\"h\n" +
+	"\x04risk\x18\v \x01(\v2\x17.keyorix.v1.RiskPostureR\x04risk\"z\n" +
 	"\rFrameworkRefs\x12\x1b\n" +
 	"\tiso_27001\x18\x01 \x03(\tR\biso27001\x12\x12\n" +
 	"\x04soc2\x18\x02 \x03(\tR\x04soc2\x12\x12\n" +
 	"\x04nis2\x18\x03 \x03(\tR\x04nis2\x12\x12\n" +
-	"\x04dora\x18\x04 \x03(\tR\x04dora\"\xb1\x01\n" +
+	"\x04dora\x18\x04 \x03(\tR\x04dora\x12\x10\n" +
+	"\x03ens\x18\x05 \x03(\tR\x03ens\"\xb1\x01\n" +
 	"\fControlState\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +

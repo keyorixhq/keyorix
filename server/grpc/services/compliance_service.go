@@ -160,6 +160,7 @@ func complianceControlsToProto(c *core.ComplianceControls) *pb.ComplianceControl
 				Soc2:      ctl.Frameworks.SOC2,
 				Nis2:      ctl.Frameworks.NIS2,
 				Dora:      ctl.Frameworks.DORA,
+				Ens:       ctl.Frameworks.ENS,
 			},
 		})
 	}

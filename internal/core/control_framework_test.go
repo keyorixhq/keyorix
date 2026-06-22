@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,7 @@ func TestEvaluateControls_HealthyPosture(t *testing.T) {
 	for _, c := range controls {
 		assert.NotEqual(t, ControlStatusGap, c.Status, "healthy posture has no gaps: %s", c.ID)
 		assert.NotEmpty(t, c.Frameworks.ISO27001, "control %s maps to an ISO 27001 clause", c.ID)
+		assert.NotEmpty(t, c.Frameworks.ENS, "control %s maps to an ENS measure", c.ID)
 		assert.NotEmpty(t, c.Name)
 	}
 	// Retention enabled → pass.
@@ -67,6 +69,27 @@ func TestEvaluateControls_GapsFromPosture(t *testing.T) {
 	assert.Equal(t, ControlStatusGap, findControl(t, controls, "anomaly-detection").Status)
 	// Retention unconfigured is "not configured", not a hard gap.
 	assert.Equal(t, ControlStatusNotConfigured, findControl(t, controls, "data-retention").Status)
+}
+
+// Every ENS reference is a well-formed RD 311/2022 measure code: it names one of the
+// three measure frameworks (org. / op. / mp.) so the matrix can't carry a typo'd or
+// stray code that an auditor would reject.
+func TestEvaluateControls_ENSMeasureCodesWellFormed(t *testing.T) {
+	controls := EvaluateControls(&CompliancePosture{})
+	validPrefix := func(code string) bool {
+		for _, p := range []string{"org.", "op.", "mp."} {
+			if strings.HasPrefix(code, p) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, c := range controls {
+		for _, code := range c.Frameworks.ENS {
+			assert.True(t, validPrefix(code),
+				"control %s has ENS code %q outside the org./op./mp. frameworks", c.ID, code)
+		}
+	}
 }
 
 func TestGetComplianceControls_SummaryTallies(t *testing.T) {

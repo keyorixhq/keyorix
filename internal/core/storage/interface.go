@@ -86,6 +86,12 @@ type Storage interface {
 	ListSoDPolicies(ctx context.Context) ([]*models.SoDPolicy, error)
 	DeleteSoDPolicy(ctx context.Context, id uint) error
 
+	// Secret dependency edges (ADR-052) — the per-project secret dependency graph.
+	CreateSecretDependency(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error)
+	GetSecretDependency(ctx context.Context, id uint) (*models.SecretDependency, error)
+	ListSecretDependenciesForProject(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
+	DeleteSecretDependency(ctx context.Context, id uint) error
+
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.
 	CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error)

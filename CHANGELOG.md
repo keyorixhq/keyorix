@@ -5,9 +5,39 @@ All notable changes to Keyorix are documented here. This project follows
 
 ## v0.75.0 — 2026-06-22
 
-Observability and CLI parity.
+Anomaly-detection ML, ENS compliance mapping, secret dependency tracking, plus
+observability and CLI parity.
 
 ### Added
+- **ML anomaly detection (Isolation Forest)** — an opt-in machine-learning pass that
+  complements the existing rule-based access-anomaly detection. Each scan trains a
+  per-secret Isolation Forest on the secret's 30-day access baseline and flags
+  accesses whose joint pattern (hour, IP rarity, user rarity) is a multivariate
+  outlier — catching what the binary rules miss: a **known-but-rare** actor or IP, and
+  **combinations** that are unremarkable signal-by-signal. Pure-Go, no new
+  dependencies; metadata only (no secret value is examined); deterministic (seeded).
+  Flagged accesses emit an `ml_outlier` alert through the existing alert pipeline.
+  Config-gated under `anomaly_alerts.ml` (default off). (ADR-050) ([#410])
+- **ENS in the compliance control matrix** — every control in the live control matrix
+  (`GET /api/v1/compliance/controls`, gRPC, and the `compliance-controls.csv` auditor
+  export) now carries an `ens` reference to its Spanish *Esquema Nacional de Seguridad*
+  (RD 311/2022) measure (`op.acc.*` / `op.exp.*` / `mp.info.*` / …) alongside ISO 27001
+  / SOC 2 / NIS2 / DORA, with the same live pass/gap/not-configured status. Lets an ENS
+  auditor pull the secret-management control set mapped to RD 311/2022 with its current
+  state. Mappings are consistent with `docs/compliance/ENS-CONTROLS.md`. (ADR-051) ([#411])
+- **Secret dependency tracking** — declare that one secret depends on another (e.g. an
+  app token derived from a DB password, or a cert chain) and Keyorix maintains the
+  per-project dependency graph. Answers two questions before a rotation: **impact /
+  blast radius** (`GET /api/v1/secrets/{id}/impact` — the transitive dependents that
+  break if you rotate it) and **rotation order** (`GET /api/v1/projects/{id}/rotation-order`
+  — a safe sequence where each secret precedes anything depending on it). Manage edges
+  via `GET/POST /secrets/{id}/dependencies` + `DELETE /secrets/{id}/dependencies/{depId}`,
+  gated by scoped `secrets.read`/`secrets.write` and audited. Edges are confined to a
+  single project + environment (matching Keyorix's environment-granular authorization)
+  and the graph is kept acyclic (self-edges, duplicates, cross-project/-environment, and
+  cycles are rejected). Metadata only — no secret value is read. This is the
+  prerequisite for automated rotation planning; the topological order is the
+  deterministic core of that. (ADR-052) ([#412])
 - **gRPC metrics on `/metrics`** — gRPC request volume, outcomes, and cumulative
   handler time are now exported to Prometheus (`keyorix_grpc_requests_total{status}`
   and `keyorix_grpc_request_duration_seconds_total`) on the same endpoint as the
@@ -19,6 +49,9 @@ Observability and CLI parity.
 
 [#407]: https://github.com/keyorixhq/keyorix/pull/407
 [#408]: https://github.com/keyorixhq/keyorix/pull/408
+[#410]: https://github.com/keyorixhq/keyorix/pull/410
+[#411]: https://github.com/keyorixhq/keyorix/pull/411
+[#412]: https://github.com/keyorixhq/keyorix/pull/412
 
 ## v0.74.0 — 2026-06-22
 
