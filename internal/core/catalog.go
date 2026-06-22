@@ -32,6 +32,9 @@ func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, descript
 	if name == "" {
 		return nil, fmt.Errorf("project name is required")
 	}
+	if err := validateDescription(description); err != nil {
+		return nil, err
+	}
 	project, err := c.storage.GetProject(ctx, id)
 	if err != nil {
 		return nil, err
@@ -123,6 +126,9 @@ func (c *KeyorixCore) CreateProject(ctx context.Context, name, description strin
 	if name == "" {
 		return nil, fmt.Errorf("project name is required")
 	}
+	if err := validateDescription(description); err != nil {
+		return nil, err
+	}
 	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create project: %w", err)
@@ -164,6 +170,9 @@ func (c *KeyorixCore) GetEnvironment(ctx context.Context, id uint) (*models.Envi
 func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, description string, envNames []string) (*models.Project, error) {
 	if name == "" {
 		return nil, fmt.Errorf("project name is required")
+	}
+	if err := validateDescription(description); err != nil {
+		return nil, err
 	}
 	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
 	if err != nil {

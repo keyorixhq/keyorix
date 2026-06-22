@@ -16,6 +16,16 @@ import (
 // maxSecretDescriptionLen bounds the free-text note.
 const maxSecretDescriptionLen = 1024
 
+// validateDescription bounds a free-text description for governance entities
+// (projects, groups, rotation policies), matching the secret-description cap, so a
+// metadata field can't be used to bloat storage. Empty is allowed.
+func validateDescription(description string) error {
+	if len(strings.TrimSpace(description)) > maxSecretDescriptionLen {
+		return fmt.Errorf("description exceeds %d characters", maxSecretDescriptionLen)
+	}
+	return nil
+}
+
 // SetSecretDescription sets (or clears, with "") the secret's description. The actor
 // must be able to write the secret. The note is trimmed and length-bounded. Audited.
 func (c *KeyorixCore) SetSecretDescription(ctx context.Context, actorID, secretID uint, description string) (*models.SecretNode, error) {
