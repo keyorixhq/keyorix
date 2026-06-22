@@ -19,6 +19,9 @@ import (
 // tokens against the shared core service. Service registration is wired in a
 // later phase; until then the server runs with interceptors only.
 func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server, error) {
+	// Surface the gRPC interceptor metrics on the shared Prometheus /metrics endpoint.
+	interceptors.RegisterPrometheusMetrics()
+
 	// Create server options
 	opts := []grpc.ServerOption{
 		grpc.ChainUnaryInterceptor(
