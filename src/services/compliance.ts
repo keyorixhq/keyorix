@@ -146,7 +146,7 @@ export interface ControlState {
     area: string;
     status: 'pass' | 'gap' | 'not_configured';
     detail: string;
-    frameworks: { iso27001: string[]; soc2: string[]; nis2: string[]; dora: string[] };
+    frameworks: { iso27001: string[]; soc2: string[]; nis2: string[]; dora: string[]; ens: string[] };
 }
 
 export interface ControlMatrix {
@@ -166,6 +166,7 @@ const normalizeControl = (c: any): ControlState => ({
         soc2: c.frameworks?.soc2 ?? [],
         nis2: c.frameworks?.nis2 ?? [],
         dora: c.frameworks?.dora ?? [],
+        ens: c.frameworks?.ens ?? [],
     },
 });
 

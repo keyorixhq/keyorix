@@ -303,6 +303,7 @@ const ControlMatrixPanel: React.FC = () => {
         if (c.frameworks.soc2.length) parts.push(`SOC2 ${c.frameworks.soc2.join(', ')}`);
         if (c.frameworks.nis2.length) parts.push(`NIS2 ${c.frameworks.nis2.join(', ')}`);
         if (c.frameworks.dora.length) parts.push(`DORA ${c.frameworks.dora.join(', ')}`);
+        if (c.frameworks.ens.length) parts.push(`ENS ${c.frameworks.ens.join(', ')}`);
         return parts.join(' · ');
     };
 

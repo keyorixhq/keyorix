@@ -17,6 +17,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useSecretVersions, useRotateSecret, useSecretRisk, useClassifySecret, useRollbackSecret, useSecretAccessors, useSecretAccessLog, useSecretAuditTrail, useSecretTags, useSetSecretTags, useSecretDescription, useSetSecretDescription, useCopySecret, useSuspendSecret, useResumeSecret } from './api';
 import { TransferOwnership } from './TransferOwnership';
+import { SecretDependenciesSection } from './SecretDependenciesSection';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
 const formatDate = (d: string | Date) =>
@@ -667,6 +668,9 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                     </div>
                 </div>
             )}
+
+            {/* Dependency graph (ADR-052) */}
+            <SecretDependenciesSection secret={secret} />
 
             {/* Tags */}
             {secret.tags.length > 0 && (

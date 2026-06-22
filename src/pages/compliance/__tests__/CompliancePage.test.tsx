@@ -95,8 +95,8 @@ describe('CompliancePage posture panel', () => {
             generatedAt: '2026-06-14T10:00:00Z',
             summary: { total: 2, pass: 1, gap: 1, notConfigured: 0 },
             controls: [
-                { id: 'sep', name: 'Separation of duties', area: 'Access governance', status: 'gap', detail: '1 SoD violation', frameworks: { iso27001: ['A.5.3'], soc2: ['CC5.1'], nis2: [], dora: ['Art.5'] } },
-                { id: 'mfa', name: 'Second-factor coverage', area: 'Identity', status: 'pass', detail: '100% covered', frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [] } },
+                { id: 'sep', name: 'Separation of duties', area: 'Access governance', status: 'gap', detail: '1 SoD violation', frameworks: { iso27001: ['A.5.3'], soc2: ['CC5.1'], nis2: [], dora: ['Art.5'], ens: ['op.acc.3'] } },
+                { id: 'mfa', name: 'Second-factor coverage', area: 'Identity', status: 'pass', detail: '100% covered', frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [], ens: [] } },
             ],
         });
         render(<CompliancePage />);
@@ -104,7 +104,7 @@ describe('CompliancePage posture panel', () => {
         expect(await screen.findByText(/Control matrix/i)).toBeInTheDocument();
         expect(screen.getByText('1 pass · 1 gap · 0 n/a')).toBeInTheDocument();
         expect(screen.getByText(/Separation of duties/)).toBeInTheDocument();
-        expect(screen.getByText('ISO A.5.3 · SOC2 CC5.1 · DORA Art.5')).toBeInTheDocument();
+        expect(screen.getByText('ISO A.5.3 · SOC2 CC5.1 · DORA Art.5 · ENS op.acc.3')).toBeInTheDocument();
     });
 
     it('downloads the control matrix as a CSV blob', async () => {
@@ -113,7 +113,7 @@ describe('CompliancePage posture panel', () => {
             generatedAt: '2026-06-14T10:00:00Z',
             summary: { total: 1, pass: 1, gap: 0, notConfigured: 0 },
             controls: [
-                { id: 'mfa', name: 'Second-factor coverage', area: 'Identity', status: 'pass', detail: 'ok', frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [] } },
+                { id: 'mfa', name: 'Second-factor coverage', area: 'Identity', status: 'pass', detail: 'ok', frameworks: { iso27001: ['A.5.17'], soc2: [], nis2: [], dora: [], ens: [] } },
             ],
         });
         mockGet.mockResolvedValue({ data: new Blob(['id,name\n'], { type: 'text/csv' }) });

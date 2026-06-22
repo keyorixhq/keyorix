@@ -2,6 +2,33 @@ import { apiClient } from './client';
 import { ApiResponse, PaginatedResponse, Secret, SecretFormData, SecretUsageStat, UnusedSecretStat, SecretRiskScore, SecretAccessor, SecretAccessLogEntry, SecretAuditEntry, SecretPolicy } from '../types';
 import { API_ENDPOINTS } from '../constants';
 
+// Secret dependency graph (ADR-052). An edge means the focal secret and the linked
+// secret are related such that rotating one affects the other.
+export interface DependencyEdge {
+    id: number; // the edge id (for removal)
+    secret_id: number; // the other secret in the edge
+    secret_name: string;
+    note?: string;
+}
+
+export interface SecretDependencies {
+    secret_id: number;
+    depends_on: DependencyEdge[]; // secrets this one depends on
+    dependents: DependencyEdge[]; // secrets that depend on this one
+}
+
+export interface ImpactedSecret {
+    secret_id: number;
+    secret_name: string;
+    depth: number; // hop distance from the rotated secret
+}
+
+export interface SecretImpact {
+    secret_id: number;
+    secret_name: string;
+    affected: ImpactedSecret[]; // transitive dependents (blast radius)
+}
+
 export const secretsApi = {
     async list(params?: {
         page?: number;
@@ -203,5 +230,29 @@ export const secretsApi = {
             backend: opts.backend ?? '',
             ref: opts.ref ?? '',
         });
+    },
+
+    // --- secret dependency graph (ADR-052) ---
+
+    // dependencies returns the secret's direct dependencies and dependents.
+    async dependencies(id: number): Promise<SecretDependencies> {
+        const response = await apiClient.get<ApiResponse<SecretDependencies>>(`/api/v1/secrets/${id}/dependencies`);
+        return response.data.data;
+    },
+
+    // addDependency declares that this secret depends on dependsOnId.
+    async addDependency(id: number, dependsOnId: number, note?: string): Promise<void> {
+        await apiClient.post(`/api/v1/secrets/${id}/dependencies`, { depends_on_id: dependsOnId, note: note ?? '' });
+    },
+
+    // removeDependency deletes one dependency edge by its id.
+    async removeDependency(id: number, edgeId: number): Promise<void> {
+        await apiClient.delete(`/api/v1/secrets/${id}/dependencies/${edgeId}`);
+    },
+
+    // impact returns the blast radius of rotating this secret (transitive dependents).
+    async impact(id: number): Promise<SecretImpact> {
+        const response = await apiClient.get<ApiResponse<SecretImpact>>(`/api/v1/secrets/${id}/impact`);
+        return response.data.data;
     },
 };

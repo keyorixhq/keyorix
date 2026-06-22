@@ -181,6 +181,48 @@ export const useSetSecretTags = (id: number) => {
     });
 };
 
+// --- secret dependency graph (ADR-052) ---
+
+export const useSecretDependencies = (id: number, enabled = true) => {
+    return useQuery({
+        queryKey: [...queryKeys.secrets.detail(id), 'dependencies'],
+        queryFn: () => secretsApi.dependencies(id),
+        enabled,
+        staleTime: 60 * 1000,
+    });
+};
+
+export const useSecretImpact = (id: number, enabled = true) => {
+    return useQuery({
+        queryKey: [...queryKeys.secrets.detail(id), 'impact'],
+        queryFn: () => secretsApi.impact(id),
+        enabled,
+        staleTime: 60 * 1000,
+    });
+};
+
+// invalidateSecretGraph refreshes both the dependency and impact views after a change.
+const invalidateSecretGraph = (queryClient: ReturnType<typeof useQueryClient>, id: number) => {
+    queryClient.invalidateQueries({ queryKey: [...queryKeys.secrets.detail(id), 'dependencies'] });
+    queryClient.invalidateQueries({ queryKey: [...queryKeys.secrets.detail(id), 'impact'] });
+};
+
+export const useAddSecretDependency = (id: number) => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (vars: { dependsOnId: number; note?: string }) => secretsApi.addDependency(id, vars.dependsOnId, vars.note),
+        onSuccess: () => invalidateSecretGraph(queryClient, id),
+    });
+};
+
+export const useRemoveSecretDependency = (id: number) => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (edgeId: number) => secretsApi.removeDependency(id, edgeId),
+        onSuccess: () => invalidateSecretGraph(queryClient, id),
+    });
+};
+
 export const useSuspendSecret = (id: number) => {
     return useMutation({
         mutationFn: (reason?: string) => secretsApi.suspend(id, reason),

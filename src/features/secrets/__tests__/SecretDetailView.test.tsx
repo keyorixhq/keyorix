@@ -33,6 +33,12 @@ vi.mock('../api', () => ({
     useCopySecret: () => ({ mutate: vi.fn(), isPending: false }),
     useSecretRisk: () => ({ data: null }),
     useClassifySecret: () => ({ mutate: mockClassifyMutate, isPending: false }),
+    // Secret dependency graph (ADR-052) — rendered by SecretDependenciesSection.
+    useSecretDependencies: () => ({ data: { secret_id: 1, depends_on: [], dependents: [] } }),
+    useSecretImpact: () => ({ data: { secret_id: 1, secret_name: 'db-password', affected: [] } }),
+    useSecrets: () => ({ data: { data: [], total: 0, page: 1, pageSize: 20, totalPages: 1 } }),
+    useAddSecretDependency: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+    useRemoveSecretDependency: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 const makeSecret = (overrides: Partial<Secret> = {}): Secret => ({
