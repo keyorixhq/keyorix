@@ -125,6 +125,48 @@ func sharingInfoToProto(s *models.SecretWithSharingInfo) *pb.Secret {
 	return out
 }
 
+// --- Secret dependency graph (ADR-052) ---
+
+func dependencyEdgeToProto(e core.DependencyEdge) *pb.DependencyEdge {
+	return &pb.DependencyEdge{
+		Id:         intToU32(int(e.ID)),
+		SecretId:   intToU32(int(e.SecretID)),
+		SecretName: e.SecretName,
+		Note:       e.Note,
+	}
+}
+
+func secretDependenciesToProto(d *core.SecretDependencies) *pb.SecretDependencies {
+	out := &pb.SecretDependencies{SecretId: intToU32(int(d.SecretID))}
+	for _, e := range d.DependsOn {
+		out.DependsOn = append(out.DependsOn, dependencyEdgeToProto(e))
+	}
+	for _, e := range d.Dependents {
+		out.Dependents = append(out.Dependents, dependencyEdgeToProto(e))
+	}
+	return out
+}
+
+func secretImpactToProto(im *core.SecretImpact) *pb.SecretImpact {
+	out := &pb.SecretImpact{SecretId: intToU32(int(im.SecretID)), SecretName: im.SecretName}
+	for _, a := range im.Affected {
+		out.Affected = append(out.Affected, &pb.ImpactedSecret{
+			SecretId:   intToU32(int(a.SecretID)),
+			SecretName: a.SecretName,
+			Depth:      intToI32(a.Depth), // depth is a small non-negative hop count
+		})
+	}
+	return out
+}
+
+func rotationOrderToProto(o *core.RotationOrder) *pb.RotationOrder {
+	out := &pb.RotationOrder{ProjectId: intToU32(int(o.ProjectID))}
+	for _, s := range o.Order {
+		out.Order = append(out.Order, &pb.RotationStep{SecretId: intToU32(int(s.SecretID)), SecretName: s.SecretName})
+	}
+	return out
+}
+
 func metadataToMap(raw models.JSON) map[string]string {
 	if len(raw) == 0 {
 		return map[string]string{}

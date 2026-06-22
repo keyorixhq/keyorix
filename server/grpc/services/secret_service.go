@@ -82,6 +82,40 @@ func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequ
 	return secretNodeToProto(secret), nil
 }
 
+// ListSecretDependencies returns a secret's direct dependencies and dependents
+// (ADR-052). Requires scoped secrets.read on the secret's project/environment.
+func (s *SecretGRPCService) ListSecretDependencies(ctx context.Context, req *pb.GetSecretRequest) (*pb.SecretDependencies, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
+		return nil, err
+	}
+	deps, err := s.core.ListSecretDependencies(ctx, uint(req.GetId()))
+	if err != nil {
+		return nil, mapSecretError(err)
+	}
+	return secretDependenciesToProto(deps), nil
+}
+
+// GetSecretImpact returns the blast radius of rotating a secret — its transitive
+// dependents (ADR-052). Requires scoped secrets.read.
+func (s *SecretGRPCService) GetSecretImpact(ctx context.Context, req *pb.GetSecretRequest) (*pb.SecretImpact, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.read"); err != nil {
+		return nil, err
+	}
+	impact, err := s.core.GetSecretImpact(ctx, uint(req.GetId()))
+	if err != nil {
+		return nil, mapSecretError(err)
+	}
+	return secretImpactToProto(impact), nil
+}
+
 // GetSecretValue returns a secret's decrypted value (counts toward max_reads).
 // version_number/read_count are not populated here — use GetSecretVersions for
 // version history.

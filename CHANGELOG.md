@@ -20,9 +20,14 @@ All notable changes to Keyorix are documented here. This project follows
   terminal: declare/list/remove edges, see a secret's rotation blast radius, and print
   a project's safe rotation order. Thin REST clients over the existing endpoints,
   scoped server-side. ([#414])
+- **gRPC surface for the secret dependency graph** — `SecretService.ListSecretDependencies`
+  / `GetSecretImpact` and `ProjectService.GetProjectRotationOrder` expose the ADR-052
+  dependency graph over gRPC (read-only), mirroring the HTTP/CLI surfaces with the same
+  scoped `secrets.read` authorization. ([#415])
 
 [#413]: https://github.com/keyorixhq/keyorix/pull/413
 [#414]: https://github.com/keyorixhq/keyorix/pull/414
+[#415]: https://github.com/keyorixhq/keyorix/pull/415
 
 ## v0.75.0 — 2026-06-22
 
