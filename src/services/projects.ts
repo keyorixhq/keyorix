@@ -209,6 +209,56 @@ const normalizeDrift = (d: any): ProjectDrift => ({
     },
 });
 
+// Automated rotation planning (ADR-053). The project's overdue/due-soon secrets,
+// batched into dependency-respecting waves and prioritised by urgency.
+export interface PlannedRotation {
+    secretId: number;
+    secretName: string;
+    status: string; // overdue | due_soon
+    daysOverdue: number; // positive = overdue, negative = days remaining
+    riskScore: number;
+    riskBand: string; // low | medium | high
+    urgency: number;
+    autoRotate: boolean;
+    afterSecretIds: number[];
+    reasons: string[];
+}
+
+export interface RotationWave {
+    index: number;
+    secrets: PlannedRotation[];
+}
+
+export interface RotationPlan {
+    projectId: number;
+    totalSecrets: number;
+    overdueCount: number;
+    dueSoonCount: number;
+    waves: RotationWave[];
+}
+
+const normalizeRotationPlan = (d: any): RotationPlan => ({
+    projectId: d.project_id ?? d.projectId ?? 0,
+    totalSecrets: d.total_secrets ?? 0,
+    overdueCount: d.overdue_count ?? 0,
+    dueSoonCount: d.due_soon_count ?? 0,
+    waves: (d.waves ?? []).map((w: any) => ({
+        index: w.index ?? 0,
+        secrets: (w.secrets ?? []).map((s: any) => ({
+            secretId: s.secret_id ?? 0,
+            secretName: s.secret_name ?? '',
+            status: s.status ?? '',
+            daysOverdue: s.days_overdue ?? 0,
+            riskScore: s.risk_score ?? 0,
+            riskBand: s.risk_band ?? '',
+            urgency: s.urgency ?? 0,
+            autoRotate: s.auto_rotate ?? false,
+            afterSecretIds: s.after_secret_ids ?? [],
+            reasons: s.reasons ?? [],
+        })),
+    })),
+});
+
 // ADR-021 project roles offered in the Members tab.
 export const PROJECT_ROLES = ['project_admin', 'project_developer', 'project_viewer', 'project_auditor'] as const;
 
@@ -302,6 +352,11 @@ export const projectsApi = {
     async drift(projectId: number): Promise<ProjectDrift> {
         const response = await apiClient.get(`/api/v1/projects/${projectId}/drift`);
         return normalizeDrift(response.data.data ?? response.data);
+    },
+
+    async rotationPlan(projectId: number): Promise<RotationPlan> {
+        const response = await apiClient.get(`/api/v1/projects/${projectId}/rotation-plan`);
+        return normalizeRotationPlan(response.data.data ?? response.data);
     },
 
     async accessReview(projectId: number): Promise<AccessReviewEntry[]> {

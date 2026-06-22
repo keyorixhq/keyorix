@@ -5,6 +5,7 @@ import { useProject } from '../../features/projects/api';
 import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ProjectMembersTab } from './ProjectMembersTab';
 import { ProjectDriftTab } from './ProjectDriftTab';
+import { ProjectRotationPlanTab } from './ProjectRotationPlanTab';
 import { ProjectActivityTab } from './ProjectActivityTab';
 import { ProjectAccessReviewTab } from './ProjectAccessReviewTab';
 import { ProjectSettingsTab } from './ProjectSettingsTab';
@@ -19,6 +20,7 @@ const TABS: Tab[] = [
     { id: 'secrets',  label: 'Secrets',  path: '' },
     { id: 'members',  label: 'Members',  path: '/members' },
     { id: 'drift',    label: 'Drift',    path: '/drift' },
+    { id: 'rotation-plan', label: 'Rotation Plan', path: '/rotation-plan' },
     { id: 'activity', label: 'Activity', path: '/activity' },
     { id: 'access-review', label: 'Access Review', path: '/access-review' },
     { id: 'settings', label: 'Settings', path: '/settings' },
@@ -127,6 +129,7 @@ export const ProjectDetailPage: React.FC = () => {
                 <Route index element={<ProjectSecretsTab projectId={projectId} />} />
                 <Route path="members" element={<ProjectMembersTab projectId={projectId} />} />
                 <Route path="drift" element={<ProjectDriftTab projectId={projectId} />} />
+                <Route path="rotation-plan" element={<ProjectRotationPlanTab projectId={projectId} />} />
                 <Route path="activity" element={<ProjectActivityTab projectId={projectId} />} />
                 <Route path="access-review" element={<ProjectAccessReviewTab projectId={projectId} />} />
                 <Route path="settings" element={<ProjectSettingsTab projectId={projectId} />} />

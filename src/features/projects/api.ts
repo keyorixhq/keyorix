@@ -9,6 +9,7 @@ export const PROJECT_KEYS = {
         [...PROJECT_KEYS.all, 'environments', id, { includeDeleted }] as const,
     members: (id: number) => [...PROJECT_KEYS.all, 'members', id] as const,
     drift: (id: number) => [...PROJECT_KEYS.all, 'drift', id] as const,
+    rotationPlan: (id: number) => [...PROJECT_KEYS.all, 'rotation-plan', id] as const,
     accessReview: (id: number) => [...PROJECT_KEYS.all, 'access-review', id] as const,
 };
 
@@ -16,6 +17,15 @@ export function useProjectDrift(projectId: number) {
     return useQuery({
         queryKey: PROJECT_KEYS.drift(projectId),
         queryFn: () => projectsApi.drift(projectId),
+        enabled: !!projectId,
+        staleTime: 60_000,
+    });
+}
+
+export function useProjectRotationPlan(projectId: number) {
+    return useQuery({
+        queryKey: PROJECT_KEYS.rotationPlan(projectId),
+        queryFn: () => projectsApi.rotationPlan(projectId),
         enabled: !!projectId,
         staleTime: 60_000,
     });
