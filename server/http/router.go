@@ -382,6 +382,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/impact", secretHandler.GetSecretImpact)
 
+			// Certificate inspection (ADR-054) — public X.509 metadata, no value/key.
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/certificate", secretHandler.GetSecretCertificate)
+
 			// Create: authorized inside the handler (scope comes from the body).
 			r.Post("/", secretHandler.CreateSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Put("/{id}", secretHandler.UpdateSecret)
