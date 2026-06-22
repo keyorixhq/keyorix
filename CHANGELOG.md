@@ -24,10 +24,18 @@ All notable changes to Keyorix are documented here. This project follows
   / `GetSecretImpact` and `ProjectService.GetProjectRotationOrder` expose the ADR-052
   dependency graph over gRPC (read-only), mirroring the HTTP/CLI surfaces with the same
   scoped `secrets.read` authorization. ([#415])
+- **Certificate inspection** — `GET /api/v1/secrets/{id}/certificate` and
+  `keyorix secret cert <id>` parse a certificate-valued secret's leaf X.509 cert and
+  return its **public** metadata (subject, issuer, real `notAfter`/expiry, SANs, is-CA,
+  self-signed, algorithms) for PKI hygiene. Never returns the value or any private key
+  (only `CERTIFICATE` blocks are parsed), does **not** count against `max_reads`,
+  respects suspension, and is audited (`secret.certificate_inspected`). Scoped
+  `secrets.read`. (ADR-054) ([#416])
 
 [#413]: https://github.com/keyorixhq/keyorix/pull/413
 [#414]: https://github.com/keyorixhq/keyorix/pull/414
 [#415]: https://github.com/keyorixhq/keyorix/pull/415
+[#416]: https://github.com/keyorixhq/keyorix/pull/416
 
 ## v0.75.0 — 2026-06-22
 
