@@ -15,8 +15,14 @@ All notable changes to Keyorix are documented here. This project follows
   overdue", "high risk", "rotate after db-password"). Deterministic and explainable —
   appropriate for an air-gapped security operation; an LLM advisor can later sit on top
   of the structured plan. (ADR-053) ([#413])
+- **CLI for the secret dependency graph** — `keyorix secret deps list|add|rm|impact`
+  and `keyorix rotation order <project-id>` bring the ADR-052 dependency graph to the
+  terminal: declare/list/remove edges, see a secret's rotation blast radius, and print
+  a project's safe rotation order. Thin REST clients over the existing endpoints,
+  scoped server-side. ([#414])
 
 [#413]: https://github.com/keyorixhq/keyorix/pull/413
+[#414]: https://github.com/keyorixhq/keyorix/pull/414
 
 ## v0.75.0 — 2026-06-22
 
