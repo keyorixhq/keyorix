@@ -256,14 +256,18 @@ func (c *KeyorixCore) DeleteSecretWithPermissionCheck(ctx context.Context, id, u
 }
 
 // RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033), bringing it
-// back within the retention window.
-func (c *KeyorixCore) RestoreSecret(ctx context.Context, id uint) error {
+// back within the retention window. actorID is the admin performing it (0 = no
+// authenticated principal). Audited as secret.restored — the inverse of the
+// secret.deleted event, so a deleted secret reappearing leaves a trail.
+func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
 	}
 	if err := c.storage.RestoreSecret(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	sid := id
+	c.writeAuditEvent(ctx, "secret.restored", actorPtr(actorID), &sid, fmt.Sprintf("secret %d restored", id))
 	return nil
 }
 

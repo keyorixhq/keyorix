@@ -90,9 +90,15 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 }
 
 // RestoreProject reverses a soft-delete, bringing back the project and the
-// environments and secrets that were removed with it.
-func (c *KeyorixCore) RestoreProject(ctx context.Context, id uint) error {
-	return c.storage.RestoreProject(ctx, id)
+// environments and secrets that were removed with it. actorID is the acting admin
+// (0 = none). Audited as project.restored.
+func (c *KeyorixCore) RestoreProject(ctx context.Context, actorID, id uint) error {
+	if err := c.storage.RestoreProject(ctx, id); err != nil {
+		return err
+	}
+	pid := id
+	c.writeAuditEventFull(ctx, "project.restored", actorPtr(actorID), nil, &pid, "", fmt.Sprintf("project %d restored", id))
+	return nil
 }
 
 // DeleteEnvironment deletes an environment by ID.
@@ -102,8 +108,14 @@ func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 
 // RestoreEnvironment clears the soft-delete on an environment, scoped to
 // projectID so a caller authorized for one project cannot restore another's.
-func (c *KeyorixCore) RestoreEnvironment(ctx context.Context, projectID, id uint) error {
-	return c.storage.RestoreEnvironment(ctx, projectID, id)
+// actorID is the acting admin (0 = none). Audited as environment.restored.
+func (c *KeyorixCore) RestoreEnvironment(ctx context.Context, actorID, projectID, id uint) error {
+	if err := c.storage.RestoreEnvironment(ctx, projectID, id); err != nil {
+		return err
+	}
+	pid := projectID
+	c.writeAuditEventFull(ctx, "environment.restored", actorPtr(actorID), nil, &pid, "", fmt.Sprintf("environment %d restored in project %d", id, projectID))
+	return nil
 }
 
 // CreateProject creates a new project and seeds it with default environments.
