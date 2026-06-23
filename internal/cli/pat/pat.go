@@ -8,8 +8,10 @@ package pat
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -53,6 +55,7 @@ type patView struct {
 	Name             string   `json:"name"`
 	TokenPrefix      string   `json:"token_prefix"`
 	Revoked          bool     `json:"revoked"`
+	CreatedAt        string   `json:"created_at"`
 	ExpiresAt        *string  `json:"expires_at"`
 	LastUsedAt       *string  `json:"last_used_at"`
 	Scopes           []string `json:"scopes"`
@@ -122,12 +125,29 @@ var listCmd = &cobra.Command{
 			fmt.Println("You have no personal access tokens.")
 			return nil
 		}
-		fmt.Printf("%-5s %-22s %-14s %-9s %s\n", "ID", "NAME", "PREFIX", "REVOKED", "SCOPE")
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "ID\tNAME\tPREFIX\tCREATED\tLAST USED\tEXPIRES\tREVOKED\tSCOPE") //nolint:errcheck
 		for _, t := range tokens {
-			fmt.Printf("%-5d %-22s %-14s %-9t %s\n", t.ID, t.Name, t.TokenPrefix+"…", t.Revoked, describeScope(t))
+			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%t\t%s\n", //nolint:errcheck
+				t.ID, t.Name, t.TokenPrefix+"…",
+				patDate(&t.CreatedAt), patDate(t.LastUsedAt), patDate(t.ExpiresAt),
+				t.Revoked, describeScope(t))
 		}
+		_ = w.Flush() // #nosec G104
 		return nil
 	},
+}
+
+// patDate renders an optional RFC3339 timestamp as a compact date for the list, or
+// "never" when absent (a token never used / non-expiring).
+func patDate(s *string) string {
+	if s == nil || *s == "" {
+		return "never"
+	}
+	if t, err := time.Parse(time.RFC3339, *s); err == nil {
+		return t.Format("2006-01-02")
+	}
+	return *s
 }
 
 var revokeCmd = &cobra.Command{
