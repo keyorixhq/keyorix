@@ -99,6 +99,26 @@ func (s *ProjectGRPCService) GetProjectRotationOrder(ctx context.Context, req *p
 	return rotationOrderToProto(order), nil
 }
 
+// GetProjectRotationPlan returns the project's automated rotation plan (ADR-053).
+// Requires scoped secrets.read on the project.
+func (s *ProjectGRPCService) GetProjectRotationPlan(ctx context.Context, req *pb.GetProjectRequest) (*pb.RotationPlan, error) {
+	user, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+	if err := authorizeScoped(ctx, s.core, user, "secrets.read", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
+		return nil, err
+	}
+	plan, err := s.core.GenerateRotationPlan(ctx, uint(req.GetId()))
+	if err != nil {
+		return nil, mapProjectError(err)
+	}
+	return rotationPlanToProto(plan), nil
+}
+
 func (s *ProjectGRPCService) CreateProject(ctx context.Context, req *pb.CreateProjectRequest) (*pb.Project, error) {
 	user, err := requireUser(ctx)
 	if err != nil {
