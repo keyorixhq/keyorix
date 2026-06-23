@@ -3,7 +3,11 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## v0.76.0 — 2026-06-23
+
+Certificate lifecycle hardening — expiry monitoring and a hygiene control in the
+compliance posture — rotation-plan parity across CLI and gRPC, and per-scheduler
+health metrics for the background jobs.
 
 ### Added
 - **Certificate-expiry monitoring** — an opt-in background scan (`certificate_expiry`)
@@ -29,11 +33,20 @@ All notable changes to Keyorix are documented here. This project follows
 - **gRPC for the rotation plan** — `ProjectService.GetProjectRotationPlan` exposes the
   automated rotation plan (ADR-053) over gRPC (read-only, scoped `secrets.read`),
   completing its surface parity with HTTP / CLI / web. ([#422])
+- **Per-scheduler health metrics** — the ~14 background schedulers (anomaly detection,
+  retention purge, auto-rotation, certificate-expiry scan, audit checkpoints, …) each
+  export their outcome to Prometheus: `keyorix_scheduler_runs_total{scheduler,outcome}`
+  (success / failure / **skipped**), a run-duration histogram, and last-run /
+  last-success timestamp gauges, on the same `/metrics` endpoint. `skipped` (an HA
+  follower not holding the single-writer lock, or a legal-hold stand-down) is tracked
+  distinctly from `failure` so a follower replica never reads as broken — alert on
+  `time() - keyorix_scheduler_last_success_timestamp_seconds{...}`. ([#423])
 
 [#419]: https://github.com/keyorixhq/keyorix/pull/419
 [#420]: https://github.com/keyorixhq/keyorix/pull/420
 [#421]: https://github.com/keyorixhq/keyorix/pull/421
 [#422]: https://github.com/keyorixhq/keyorix/pull/422
+[#423]: https://github.com/keyorixhq/keyorix/pull/423
 
 ## v0.75.0 — 2026-06-23
 
