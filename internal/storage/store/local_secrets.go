@@ -13,6 +13,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -273,6 +274,16 @@ func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretN
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return secret, nil
+}
+
+// SetSecretCertNotAfter caches a certificate-typed secret's parsed leaf expiry — a
+// targeted single-column update that touches nothing else (ADR-056).
+func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint, notAfter *time.Time) error {
+	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("id = ?", secretID).Update("cert_not_after", notAfter).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
 }
 
 // DeleteSecret deletes a secret by ID.

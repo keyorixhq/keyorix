@@ -131,6 +131,12 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
 		},
 		{
+			ID: "certificate-hygiene", Name: "Certificate expiry hygiene", Area: "Cryptography",
+			Status:     gapIf(p.Certificates.Expired > 0),
+			Detail:     fmt.Sprintf("%d expired, %d expiring soon of %d certificate(s) (%d not yet evaluated)", p.Certificates.Expired, p.Certificates.ExpiringSoon, p.Certificates.TotalCertificates, p.Certificates.NotEvaluated),
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
+		},
+		{
 			ID: "data-classification", Name: "Secret data classification", Area: "Asset management",
 			Status:     gapIf(p.Classification.Unclassified > 0),
 			Detail:     fmt.Sprintf("%d of %d secrets unclassified", p.Classification.Unclassified, p.Classification.TotalSecrets),

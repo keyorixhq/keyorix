@@ -112,6 +112,43 @@ func TestScanCertificateExpiry_SuspendedSkipped(t *testing.T) {
 	assert.NotContains(t, notes[0].Message, "expired") // the only expired cert was suspended
 }
 
+func TestCertificatePosture(t *testing.T) {
+	ctx := context.Background()
+	c, db, _ := newCertExpiryCore(t)
+
+	// Before any scan/inspection, no cert has a cached expiry → all "not evaluated".
+	pre := c.certificatePosture(ctx)
+	assert.Equal(t, 4, pre.TotalCertificates)
+	assert.Equal(t, 4, pre.NotEvaluated)
+	assert.Equal(t, 0, pre.Expired)
+
+	// The scan caches notAfter as a side-effect; the posture then reports hygiene with
+	// no decryption. expired(10)+soon(11)+far(12) parse; broken(13) stays unevaluated.
+	_, err := c.ScanCertificateExpiry(ctx, 30)
+	require.NoError(t, err)
+
+	post := c.certificatePosture(ctx)
+	assert.Equal(t, 4, post.TotalCertificates)
+	assert.Equal(t, 1, post.Expired)
+	assert.Equal(t, 1, post.ExpiringSoon)
+	assert.Equal(t, 1, post.NotEvaluated) // only the unparseable "broken" cert
+
+	// The cache was actually written for a parseable cert.
+	var s models.SecretNode
+	require.NoError(t, db.First(&s, 10).Error)
+	require.NotNil(t, s.CertNotAfter)
+}
+
+func TestCertificateHygieneControl(t *testing.T) {
+	// An expired certificate flips the control to a gap; none → pass.
+	gap := findControl(t, EvaluateControls(&CompliancePosture{Certificates: CertificatePosture{TotalCertificates: 2, Expired: 1}}), "certificate-hygiene")
+	assert.Equal(t, ControlStatusGap, gap.Status)
+	assert.NotEmpty(t, gap.Frameworks.ENS)
+
+	ok := findControl(t, EvaluateControls(&CompliancePosture{Certificates: CertificatePosture{TotalCertificates: 2, ExpiringSoon: 1}}), "certificate-hygiene")
+	assert.Equal(t, ControlStatusPass, ok.Status, "expiring-soon is a warning in the detail, not a hard gap")
+}
+
 func TestCertificateExpiryMessage(t *testing.T) {
 	assert.Contains(t, certificateExpiryMessage("p", 2, 3), "2 certificate(s) expired and 3 expiring soon")
 	assert.Contains(t, certificateExpiryMessage("p", 2, 0), "2 certificate(s) have expired")

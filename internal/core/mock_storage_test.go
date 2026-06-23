@@ -542,6 +542,10 @@ func (m *MockStorage) GetLatestSecretVersion(ctx context.Context, secretID uint)
 	return args.Get(0).(*models.SecretVersion), args.Error(1)
 }
 
+func (m *MockStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint, notAfter *time.Time) error {
+	return m.Called(ctx, secretID, notAfter).Error(0)
+}
+
 func (m *MockStorage) IncrementSecretReadCount(ctx context.Context, versionID uint) error {
 	args := m.Called(ctx, versionID)
 	return args.Error(0)

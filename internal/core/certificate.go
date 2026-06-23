@@ -92,6 +92,11 @@ func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID 
 		PublicKeyAlgorithm: cert.PublicKeyAlgorithm.String(),
 	}
 
+	// Cache the parsed expiry so the compliance posture can report certificate hygiene
+	// without decrypting on the read path (ADR-056). Best-effort — a cache failure must
+	// not fail the inspection.
+	_ = c.storage.SetSecretCertNotAfter(ctx, secretID, &cert.NotAfter)
+
 	sid := secretID
 	c.writeAuditEvent(ctx, EventSecretCertificateInspected, actorPtr(actorID), &sid,
 		fmt.Sprintf("inspected certificate %q (issuer %q, expires %s)", secret.Name, info.Issuer, info.NotAfter.UTC().Format("2006-01-02")))
