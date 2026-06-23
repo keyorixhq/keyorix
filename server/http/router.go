@@ -28,6 +28,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(middleware.RealIP)
 	r.Use(customMiddleware.Logger())
 	r.Use(customMiddleware.Recovery())
+	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
 	r.Use(customMiddleware.PrometheusMiddleware)
 	r.Use(middleware.Timeout(60 * time.Second))
 
