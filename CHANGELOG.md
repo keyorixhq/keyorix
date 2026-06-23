@@ -3,6 +3,40 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.83.0 — 2026-06-24
+
+Offline commercial-license validation — the second air-gap mechanism, fail-safe by design —
+plus secret-encryption chunk-ordering hardening.
+
+### Added
+- **Offline license validation (`keyorix license issue` / `install` / `status` + server
+  enforcement)** — a paid air-gap tier needs entitlement that validates **with no
+  phone-home**. A license is a compact `ed25519`-signed token (licensee, plan, features,
+  expiry, optional deployment binding) verified locally against a public key embedded at
+  build time. Enforcement is the deliberate **inverse of update bundles**: bundles are
+  fail-closed, a license is **fail-safe** — a missing, expired, or invalid license degrades
+  to the AGPL community baseline (no commercial features) with an admin warning and an audit
+  event; it never denies access to existing secrets or stops the server, because
+  availability is itself a security property for a secrets manager. The server loads the
+  configured license at startup (a bad file never blocks boot), evaluates it freshly on
+  every check, records the state as a startup audit event, and serves `GET
+  /api/v1/license/status`. No shipped feature is gated on it — the gate is ready for future
+  commercial-only capabilities. (ADR-065, ADR-062 Phase 2) ([#485], [#487])
+
+### Security
+- **Chunk position is authenticated in secret-value encryption** — chunked secret values now
+  bind each chunk's position into its AEAD additional data, so a stored ciphertext can't be
+  reordered, spliced, or truncated without detection. ([#484])
+
+### Internal
+- A regression test that DEK rotation preserves the AAD transplant binding (a rewrapped
+  value stays bound to its identity). ([#486])
+
+[#484]: https://github.com/keyorixhq/keyorix/pull/484
+[#485]: https://github.com/keyorixhq/keyorix/pull/485
+[#486]: https://github.com/keyorixhq/keyorix/pull/486
+[#487]: https://github.com/keyorixhq/keyorix/pull/487
+
 ## v0.82.0 — 2026-06-24
 
 Air-gapped, cryptographically-verifiable update bundles — the first build-on of the Phase 0
