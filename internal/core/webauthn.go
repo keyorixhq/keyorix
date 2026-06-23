@@ -38,8 +38,8 @@ func (u *webauthnUser) WebAuthnID() []byte {
 	binary.BigEndian.PutUint64(b, uint64(u.user.ID))
 	return b
 }
-func (u *webauthnUser) WebAuthnName() string                   { return u.user.Username }
-func (u *webauthnUser) WebAuthnDisplayName() string            { return u.user.Username }
+func (u *webauthnUser) WebAuthnName() string                       { return u.user.Username }
+func (u *webauthnUser) WebAuthnDisplayName() string                { return u.user.Username }
 func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential { return u.creds }
 
 func (c *KeyorixCore) loadWebAuthnUser(ctx context.Context, userID uint) (*webauthnUser, error) {
