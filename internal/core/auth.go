@@ -179,6 +179,15 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if session.ExpiresAt != nil && c.now().After(*session.ExpiresAt) {
 		return nil, nil, fmt.Errorf("session expired")
 	}
+	// Enforce the hard absolute-lifetime ceiling at the validation boundary, not only via
+	// the clamp RefreshSession/mintSession apply to ExpiresAt. The clamp makes an expired
+	// ceiling imply an expired access window in normal operation, but the ceiling must not
+	// DEPEND on every issuer having clamped correctly — a session whose access window is
+	// still open yet whose ceiling has passed (a future non-clamping path, or a tampered
+	// row) is rejected here. Self-checking invariant.
+	if session.AbsoluteExpiresAt != nil && c.now().After(*session.AbsoluteExpiresAt) {
+		return nil, nil, fmt.Errorf("session lifetime exceeded")
+	}
 	// Best-effort, throttled last-seen stamp for the My Account sessions view.
 	// Only writes when the stored value is older than sessionTouchInterval, so the
 	// auth hot path is not turned into a write per request. Never fails the request.
