@@ -408,6 +408,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/suspend", secretHandler.SuspendSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/resume", secretHandler.ResumeSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.write", secretScope)).Post("/{id}/share", shareHandler.ShareSecret)
+			// Self-service: a recipient removes their OWN direct share. No scoped
+			// permission — the action is on the caller's own grant (core only removes a
+			// share whose RecipientID == the caller), so it needs just authentication.
+			r.Delete("/{id}/self-share", shareHandler.RemoveSelfFromShare)
 
 			r.With(customMiddleware.RequireScopedPermission("secrets.delete", secretScope)).Delete("/{id}", secretHandler.DeleteSecret)
 			// Restore resolves scope from the (soft-deleted) secret via the unscoped resolver.

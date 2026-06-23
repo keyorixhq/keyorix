@@ -18,4 +18,5 @@ func init() {
 	ShareCmd.AddCommand(updateCmd)
 	ShareCmd.AddCommand(revokeCmd)
 	ShareCmd.AddCommand(sharedSecretsCmd)
+	ShareCmd.AddCommand(selfRemoveCmd)
 }
