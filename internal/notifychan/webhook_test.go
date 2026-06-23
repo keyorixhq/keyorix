@@ -97,8 +97,8 @@ func TestWebhookSink_RetriesTransientThenSucceeds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	delivBefore := testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeDelivered))
-	retryBefore := testutil.ToFloat64(webhookRetries)
+	delivBefore := testutil.ToFloat64(notifyDeliveries.WithLabelValues("webhook", outcomeDelivered))
+	retryBefore := testutil.ToFloat64(notifyRetries.WithLabelValues("webhook"))
 
 	sink, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
 	require.NoError(t, err)
@@ -108,11 +108,11 @@ func TestWebhookSink_RetriesTransientThenSucceeds(t *testing.T) {
 	// Wait for the terminal "delivered" outcome before asserting — Close() would
 	// abort an in-flight retry, so we must not race it against the backoff.
 	require.Eventually(t, func() bool {
-		return testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeDelivered))-delivBefore == 1
+		return testutil.ToFloat64(notifyDeliveries.WithLabelValues("webhook", outcomeDelivered))-delivBefore == 1
 	}, 2*time.Second, 5*time.Millisecond)
 
 	assert.Equal(t, int32(3), hits.Load(), "should have taken 2 retries (3 attempts)")
-	assert.Equal(t, 2.0, testutil.ToFloat64(webhookRetries)-retryBefore)
+	assert.Equal(t, 2.0, testutil.ToFloat64(notifyRetries.WithLabelValues("webhook"))-retryBefore)
 }
 
 func TestWebhookSink_PermanentErrorNotRetried(t *testing.T) {
@@ -123,8 +123,8 @@ func TestWebhookSink_PermanentErrorNotRetried(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	failedBefore := testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeFailed))
-	retryBefore := testutil.ToFloat64(webhookRetries)
+	failedBefore := testutil.ToFloat64(notifyDeliveries.WithLabelValues("webhook", outcomeFailed))
+	retryBefore := testutil.ToFloat64(notifyRetries.WithLabelValues("webhook"))
 
 	sink, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
 	require.NoError(t, err)
@@ -132,8 +132,8 @@ func TestWebhookSink_PermanentErrorNotRetried(t *testing.T) {
 	sink.Close() // no retry backoff for a permanent error, so Close cleanly drains it
 
 	assert.Equal(t, int32(1), hits.Load(), "a 4xx must not be retried")
-	assert.Equal(t, 1.0, testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeFailed))-failedBefore)
-	assert.Equal(t, 0.0, testutil.ToFloat64(webhookRetries)-retryBefore)
+	assert.Equal(t, 1.0, testutil.ToFloat64(notifyDeliveries.WithLabelValues("webhook", outcomeFailed))-failedBefore)
+	assert.Equal(t, 0.0, testutil.ToFloat64(notifyRetries.WithLabelValues("webhook"))-retryBefore)
 }
 
 func TestWebhookSink_DropsAndCountsWhenQueueFull(t *testing.T) {
@@ -144,7 +144,7 @@ func TestWebhookSink_DropsAndCountsWhenQueueFull(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	droppedBefore := testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeDropped))
+	droppedBefore := testutil.ToFloat64(notifyDeliveries.WithLabelValues("webhook", outcomeDropped))
 
 	sink, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
 	require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestWebhookSink_DropsAndCountsWhenQueueFull(t *testing.T) {
 	for i := 0; i < webhookQueueSize+5; i++ {
 		sink.Deliver(core.NotificationEvent{UserID: 1, Type: "x"})
 	}
-	dropped := testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeDropped)) - droppedBefore
+	dropped := testutil.ToFloat64(notifyDeliveries.WithLabelValues("webhook", outcomeDropped)) - droppedBefore
 	assert.GreaterOrEqual(t, dropped, 1.0, "events past the queue capacity should be dropped and counted")
 
 	close(release)
