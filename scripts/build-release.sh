@@ -33,7 +33,7 @@ for platform in "${PLATFORMS[@]}"; do
     GOOS="$os" GOARCH="$arch" go build \
         -ldflags="${LDFLAGS}" \
         -o "${DIST_DIR}/keyorix-server_${os}_${arch}" \
-        ./server/main.go
+        ./server
 done
 
 # Checksums

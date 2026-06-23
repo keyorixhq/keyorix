@@ -34,7 +34,7 @@ build-cli:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CLI) .
 
 build-server:
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server/main.go
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server
 
 # Path to the keyorix-web checkout (override: make build-ui KEYORIX_WEB_DIR=/path).
 KEYORIX_WEB_DIR ?= ../keyorix-web
@@ -51,7 +51,7 @@ build-ui:
 	rm -rf server/webui/dist
 	mkdir -p server/webui/dist
 	cp -R "$(KEYORIX_WEB_DIR)"/dist/. server/webui/dist/
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server/main.go
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SERVER) ./server
 	@git checkout -- server/webui/dist/index.html 2>/dev/null || true
 	@echo "Built $(BUILD_DIR)/$(BINARY_SERVER) with the web UI embedded."
 
@@ -66,7 +66,7 @@ install: install-cli install-server
 # Run the server locally against the docker-compose Postgres, using the
 # committed dev config. `db-up` ensures Postgres is running first.
 run: db-up
-	KEYORIX_CONFIG_PATH=configs/dev.yaml KEYORIX_DB_PASSWORD=keyorix123 KEYORIX_MASTER_PASSWORD=keyorix123 go run server/main.go
+	KEYORIX_CONFIG_PATH=configs/dev.yaml KEYORIX_DB_PASSWORD=keyorix123 KEYORIX_MASTER_PASSWORD=keyorix123 go run ./server
 
 # Start only the Postgres service (not the full stack — `make run` runs the
 # server on :8080 itself, so we don't want the compose server container too).
@@ -88,10 +88,10 @@ release:
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_linux_arm64    .
 	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_amd64   .
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_CLI)_darwin_arm64   .
-	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_amd64  ./server/main.go
-	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server/main.go
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server/main.go
-	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server/main.go
+	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_amd64  ./server
+	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_linux_arm64  ./server
+	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_amd64 ./server
+	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build $(LDFLAGS) -trimpath -o dist/$(BINARY_SERVER)_darwin_arm64 ./server
 	@cd dist && (sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt)
 	@echo "✅ Release binaries in dist/"
 
