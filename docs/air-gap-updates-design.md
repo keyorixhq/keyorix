@@ -196,8 +196,13 @@ behaviour until built.
      internal registry and the Helm upgrade stay the operator's own steps by design.
    - **1b remaining:** CI wiring (`bundle build` in `release.yml`, bundle published as a
      release asset) and an optional server-side audit event when an import runs.
-3. **Phase 2 — licensing:** offline license verification, the commercial feature gate
-   (fail-safe), `license install|status`, and compliance/audit surfacing.
+3. **Phase 2 — licensing:**
+   - **2a (done, [ADR-065](adr-065-offline-license-validation.md)):** the signed license
+     token, `internal/license` offline **fail-safe** evaluation (degrade-to-baseline, never
+     deny), the `Status.HasFeature` gate, and `keyorix license issue|install|status`.
+   - **2b:** wire `HasFeature` into commercial-feature call sites, validate at server
+     startup + on a periodic timer, and surface license state in the dashboard, audit log,
+     and admin notifications.
 4. **Phase 3 — hardening:** HSM-backed signing, key rotation drill, reproducible-bundle
    verification, and a documented operator runbook.
 
