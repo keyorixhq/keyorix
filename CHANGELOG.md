@@ -3,6 +3,78 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.80.0 — 2026-06-23
+
+SAML 2.0 single sign-on (Service Provider) lands as a working login path, three more
+subsystems reach gRPC parity (audit-chain verify, break-glass, group management), SCIM
+deprovisioning becomes atomic, and the HTTP surface gets response-cache and method
+hardening — over a broad authorization- and concurrency-boundary test sweep.
+
+### Added
+- **SAML 2.0 single sign-on (Service Provider)** — Keyorix can now authenticate users
+  against a SAML IdP, alongside the existing OIDC SSO. The SP is built on the vetted
+  `crewjam/saml` + `goxmldsig` stack (no hand-rolled XML-DSig); the
+  `/auth/saml/{provider}/{metadata,login,acs}` routes mirror the OIDC ones, and a SAML
+  assertion maps to a user through the same identity-source-agnostic provisioning,
+  group/role reconcile, and session path as OIDC. Opt-in and config-gated — no behaviour
+  change without a SAML provider configured. (ADR-063; design [#446], SP core [#447],
+  login flow + routes [#461])
+- **Audit-chain verify, checkpoint & retention over gRPC** — the tamper-evident audit
+  log's verify / checkpoint / retention operations are now first-class gRPC RPCs, matching
+  the HTTP surface for programmatic compliance tooling. ([#443])
+- **Break-glass emergency access over gRPC** — the break-glass request / approve / use flow
+  is now available over gRPC. ([#445])
+- **Group management over gRPC** — group CRUD and membership management reach gRPC parity.
+  ([#448])
+- **`WithTransaction` storage primitive; atomic SCIM deprovision** — a transaction
+  primitive in the storage layer, used to make SCIM deprovisioning atomic so a partial
+  failure can no longer leave a user half-removed. ([#454])
+
+### Fixed
+- **Expired time-bound shares no longer grant access** — `ListUserPermissions` now excludes
+  time-bound shares past their expiry, closing a window where an expired share could still
+  be enumerated as a live permission. ([#449])
+- **Auth cache evicts the old token on refresh** — refreshing a token now evicts the prior
+  entry from the auth cache, so a rotated token can't linger as a cached credential. ([#451])
+
+### Security
+- **`Cache-Control: no-store` on all API and SCIM responses** — secret material and
+  directory data are never written to shared or intermediary caches. ([#469])
+- **Web-UI static assets and the SPA fallback are GET/HEAD only** — mutating methods against
+  static paths no longer fall through to the SPA handler. ([#470])
+
+### Internal
+- A broad authorization- and concurrency-boundary test sweep: cross-tenant and
+  permission-granularity authorization ([#457], [#459]), HTTP↔gRPC authorization parity for
+  secrets and sharing ([#462], [#463]), machine-identity no-admin-bypass ([#464]), and
+  `-race` invariants for max-reads burn-after-read, the audit hash-chain, and the login
+  rate-limiter ([#465], [#466], [#472]) — plus by-reference cross-project scope denial
+  ([#471]), the group-share self-removal guard ([#467]), and a fix for two long-standing
+  local-only `server/http` test flakes ([#468]).
+
+[#443]: https://github.com/keyorixhq/keyorix/pull/443
+[#445]: https://github.com/keyorixhq/keyorix/pull/445
+[#446]: https://github.com/keyorixhq/keyorix/pull/446
+[#447]: https://github.com/keyorixhq/keyorix/pull/447
+[#448]: https://github.com/keyorixhq/keyorix/pull/448
+[#449]: https://github.com/keyorixhq/keyorix/pull/449
+[#451]: https://github.com/keyorixhq/keyorix/pull/451
+[#454]: https://github.com/keyorixhq/keyorix/pull/454
+[#457]: https://github.com/keyorixhq/keyorix/pull/457
+[#459]: https://github.com/keyorixhq/keyorix/pull/459
+[#461]: https://github.com/keyorixhq/keyorix/pull/461
+[#462]: https://github.com/keyorixhq/keyorix/pull/462
+[#463]: https://github.com/keyorixhq/keyorix/pull/463
+[#464]: https://github.com/keyorixhq/keyorix/pull/464
+[#465]: https://github.com/keyorixhq/keyorix/pull/465
+[#466]: https://github.com/keyorixhq/keyorix/pull/466
+[#467]: https://github.com/keyorixhq/keyorix/pull/467
+[#468]: https://github.com/keyorixhq/keyorix/pull/468
+[#469]: https://github.com/keyorixhq/keyorix/pull/469
+[#470]: https://github.com/keyorixhq/keyorix/pull/470
+[#471]: https://github.com/keyorixhq/keyorix/pull/471
+[#472]: https://github.com/keyorixhq/keyorix/pull/472
+
 ## v0.79.0 — 2026-06-23
 
 CLI ergonomics (machine-identity OIDC bindings, by-reference secret reads, richer
