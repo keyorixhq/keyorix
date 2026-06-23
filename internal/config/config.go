@@ -28,6 +28,10 @@ type Config struct {
 	// ExpiryReminders configures the opt-in background scheduler that notifies project
 	// admins of secrets that have expired or are approaching their expiration.
 	ExpiryReminders ExpiryRemindersConfig `yaml:"expiry_reminders"`
+	// CertificateExpiry configures the opt-in background scan (ADR-055) that parses
+	// certificate-typed secrets and notifies project admins of certificates expired or
+	// expiring within the lead window (using the real cert notAfter).
+	CertificateExpiry CertificateExpiryConfig `yaml:"certificate_expiry"`
 	// AutoRotation configures the opt-in background scheduler that actually rotates
 	// auto-rotate-enabled secrets overdue under a policy (ADR-046), regenerating their
 	// value. Distinct from rotation_reminders, which only notifies.
@@ -918,6 +922,26 @@ type ExpiryRemindersConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
 	LeadDays int    `yaml:"lead_days"` // notify this many days before expiry (0 = default 14)
+}
+
+// CertificateExpiryConfig configures the opt-in certificate-expiry monitoring scan
+// (ADR-055). It parses certificate-typed secrets and notifies project admins of certs
+// expired or expiring within LeadDays (using the certificate's real notAfter).
+type CertificateExpiryConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+	LeadDays int    `yaml:"lead_days"` // notify this many days before notAfter (0 = default 30)
+}
+
+// GetInterval returns the certificate-expiry scan interval (Go duration, e.g. "24h");
+// defaults to 24h when unset or unparseable.
+func (c CertificateExpiryConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
 }
 
 // GetInterval returns the expiry-reminder run interval (Go duration, e.g. "24h");
