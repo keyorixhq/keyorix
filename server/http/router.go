@@ -670,17 +670,33 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 func registerWebUI(r chi.Router, fsys http.FileSystem) {
 	fileServer := http.FileServer(fsys)
 
-	r.With(setCacheHeaders).Handle("/assets/*", fileServer)
-	r.With(setCacheHeaders).Handle("/static/*", fileServer)
-	r.Handle("/sw.js", fileServer)
-	r.Handle("/manifest.json", fileServer)
-	r.Handle("/favicon.ico", fileServer)
+	// Static assets are read-only: register GET+HEAD only, so a mutating method
+	// (DELETE/PUT/POST/PATCH) on an asset gets a 405 from chi rather than the file
+	// served with a 200 (http.FileServer ignores the method). Cleaner semantics and a
+	// smaller surface for a security product.
+	serveStatic := func(pattern string, mws ...func(http.Handler) http.Handler) {
+		rr := r.With(mws...)
+		rr.Method(http.MethodGet, pattern, fileServer)
+		rr.Method(http.MethodHead, pattern, fileServer)
+	}
+	serveStatic("/assets/*", setCacheHeaders)
+	serveStatic("/static/*", setCacheHeaders)
+	serveStatic("/sw.js")
+	serveStatic("/manifest.json")
+	serveStatic("/favicon.ico")
 
 	// SPA fallback: serve index.html for any non-API route that didn't match a
-	// registered handler, so client-side routes (e.g. /admin/users) resolve.
+	// registered handler, so client-side routes (e.g. /admin/users) resolve. Only for
+	// GET/HEAD — a mutating method to an unmatched path is not a page load.
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		// An unmatched API path is a 404 regardless of method.
 		if strings.HasPrefix(req.URL.Path, "/api/") {
 			http.NotFound(w, req)
+			return
+		}
+		// A mutating method to a non-API, unmatched path is not a page load.
+		if req.Method != http.MethodGet && req.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		f, err := fsys.Open("index.html")
