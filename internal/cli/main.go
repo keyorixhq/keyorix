@@ -19,6 +19,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/hygiene"
 	"github.com/keyorixhq/keyorix/internal/cli/invite"
 	"github.com/keyorixhq/keyorix/internal/cli/legalhold"
+	licensecli "github.com/keyorixhq/keyorix/internal/cli/license"
 	"github.com/keyorixhq/keyorix/internal/cli/machine"
 	"github.com/keyorixhq/keyorix/internal/cli/migrate"
 	"github.com/keyorixhq/keyorix/internal/cli/pat"
@@ -81,6 +82,7 @@ func init() {
 	rootCmd.AddCommand(hygiene.HygieneCmd)
 	rootCmd.AddCommand(trustcli.TrustCmd)
 	rootCmd.AddCommand(bundlecli.BundleCmd)
+	rootCmd.AddCommand(licensecli.LicenseCmd)
 }
 
 // Execute runs the root command
