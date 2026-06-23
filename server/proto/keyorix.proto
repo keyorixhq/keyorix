@@ -117,6 +117,18 @@ service AuditService {
 
   // Stream audit events as they occur
   rpc StreamAuditLogs(StreamAuditLogsRequest) returns (stream AuditLog);
+
+  // Verify the tamper-evidence hash chain (ADR-029): re-walk the chain and report
+  // whether the trail is intact, naming the first divergent event on failure.
+  rpc VerifyAuditChain(google.protobuf.Empty) returns (VerifyAuditChainResponse);
+
+  // Write a signed checkpoint of the verified audit-chain head on demand (ADR-029).
+  // Requires encryption (the signing key is DEK-derived) and a chain that verifies.
+  rpc WriteAuditCheckpoint(google.protobuf.Empty) returns (WriteAuditCheckpointResponse);
+
+  // Report the audit trail's retention coverage (total events, oldest/newest, and
+  // whether it demonstrably covers the NIS2 12-month window).
+  rpc GetAuditRetention(google.protobuf.Empty) returns (GetAuditRetentionResponse);
 }
 
 // System service for health, info, and metrics
@@ -566,6 +578,42 @@ message StreamAuditLogsRequest {
   // Omit (or 0) to tail only new events from the current head. Lets a disconnected
   // SIEM consumer reconnect from its last-seen id without losing the gap.
   optional uint32 after_id = 4;
+}
+
+// VerifyAuditChainResponse reports the tamper-evidence hash-chain verification
+// (ADR-029). Record (chained_events, head_hash) off-box to detect tail-truncation
+// that an on-box re-walk alone cannot catch.
+message VerifyAuditChainResponse {
+  bool valid = 1;
+  int64 chained_events = 2;
+  int64 unchained_events = 3; // leading legacy rows skipped before the chain begins
+  string head_hash = 4;
+  uint32 head_id = 5;
+  bool checkpointed = 6; // chain also verified against a signed in-DB checkpoint
+  optional uint32 first_broken_id = 7; // set only when !valid
+  string reason = 8; // set only when !valid
+  string checkpoint_reason = 9; // non-fatal notes (e.g. checkpoint under a prior key)
+}
+
+// WriteAuditCheckpointResponse is the signed checkpoint that was written.
+message WriteAuditCheckpointResponse {
+  uint32 id = 1;
+  int64 chained_events = 2;
+  uint32 head_id = 3;
+  string head_hash = 4;
+  string key_version = 5;
+  optional google.protobuf.Timestamp anchored_at = 6; // external-notary anchor, if any
+  string anchor_provider = 7;
+}
+
+// GetAuditRetentionResponse reports the audit trail's retention coverage.
+message GetAuditRetentionResponse {
+  string retention_policy = 1; // always "unlimited" — Keyorix applies no audit cap
+  int64 total_events = 2;
+  optional google.protobuf.Timestamp oldest_event = 3;
+  optional google.protobuf.Timestamp newest_event = 4;
+  int64 coverage_days = 5;
+  bool meets_nis2_12_month = 6;
 }
 
 // ---------------------------------------------------------------------------

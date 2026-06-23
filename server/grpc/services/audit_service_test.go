@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -66,6 +67,39 @@ func TestAuditService_GetAuditLogs_Unauthenticated(t *testing.T) {
 	_, err := svc.GetAuditLogs(context.Background(), &pb.GetAuditLogsRequest{})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+func TestAuditService_VerifyAuditChain(t *testing.T) {
+	svc := newAuditService(t)
+	resp, err := svc.VerifyAuditChain(auditCtx(), &emptypb.Empty{})
+	require.NoError(t, err)
+	// The seeded events are legacy (no hash chain), so the chained suffix is empty
+	// and the trail verifies as intact.
+	assert.True(t, resp.GetValid())
+}
+
+func TestAuditService_VerifyAuditChain_Unauthenticated(t *testing.T) {
+	svc := newAuditService(t)
+	_, err := svc.VerifyAuditChain(context.Background(), &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+func TestAuditService_GetAuditRetention(t *testing.T) {
+	svc := newAuditService(t)
+	resp, err := svc.GetAuditRetention(auditCtx(), &emptypb.Empty{})
+	require.NoError(t, err)
+	assert.Equal(t, "unlimited", resp.GetRetentionPolicy())
+	assert.GreaterOrEqual(t, resp.GetTotalEvents(), int64(1))
+}
+
+func TestAuditService_WriteAuditCheckpoint_RequiresEncryption(t *testing.T) {
+	svc := newAuditService(t)
+	// The test core has no encryption configured, so the DEK-derived signing key is
+	// unavailable and a checkpoint cannot be written — a precondition failure.
+	_, err := svc.WriteAuditCheckpoint(auditCtx(), &emptypb.Empty{})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
 func TestAuditService_GetAuditLogs_PermissionDenied(t *testing.T) {
