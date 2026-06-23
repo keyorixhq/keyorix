@@ -14,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -138,6 +139,10 @@ type KeyorixCore struct {
 	// nil = signing unavailable (encryption disabled). Set via SetEvidenceSignKey.
 	evidenceSignKey        []byte
 	evidenceSignKeyVersion string
+	// licenseGate evaluates the installed offline commercial license (ADR-065). nil =
+	// no license configured → the community baseline. Evaluation is fail-safe (it never
+	// denies access or stops the server) and fresh on every call. Set via SetLicenseGate.
+	licenseGate *license.Gate
 }
 
 // AuditForwarder ships persisted audit events to an external sink (e.g. a SIEM).
@@ -152,6 +157,44 @@ type AuditForwarder interface {
 // when the install configures an audit.siem block. nil disables forwarding.
 func (c *KeyorixCore) SetAuditForwarder(f AuditForwarder) {
 	c.auditForwarder = f
+}
+
+// SetLicenseGate wires the offline-license feature gate built at startup from the
+// installed token. nil = no license (community baseline). Safe to leave unset.
+func (c *KeyorixCore) SetLicenseGate(g *license.Gate) {
+	c.licenseGate = g
+}
+
+// LicenseStatus returns the freshly-evaluated license entitlement. It never errors; an
+// unset gate or a degraded license reports the community baseline with a reason. The gate
+// is nil-safe, so this is valid even when no license is configured.
+func (c *KeyorixCore) LicenseStatus() license.Status {
+	return c.licenseGate.Status()
+}
+
+// HasLicensedFeature reports whether commercial feature f is currently granted. This is the
+// single gate a future commercial-only capability checks; it is false under any degraded,
+// expired, missing, or unconfigured license.
+func (c *KeyorixCore) HasLicensedFeature(f string) bool {
+	return c.licenseGate.HasFeature(f)
+}
+
+// AuditLicenseState records the current license state as an audit event. The server calls
+// it once at startup so the evaluated entitlement (and any degrade reason) is on the record.
+func (c *KeyorixCore) AuditLicenseState(ctx context.Context) {
+	st := c.LicenseStatus()
+	desc := "License evaluated at startup: " + string(st.State)
+	if st.Reason != "" {
+		desc += " — " + st.Reason
+	}
+	ok := true
+	c.emitAudit(ctx, &models.AuditEvent{
+		EventType:   "license.evaluated",
+		Description: desc,
+		Success:     &ok,
+		ActorType:   "system",
+		EventTime:   time.Now(),
+	})
 }
 
 // emitAudit persists an audit event and forwards it to the configured sink.

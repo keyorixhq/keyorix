@@ -66,6 +66,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	catalogHandler := handlers.NewCatalogHandler(coreService)
 	dashboardHandler := handlers.NewDashboardHandler(coreService)
 	auditHandler := handlers.NewAuditHandler(coreService)
+	licenseHandler := handlers.NewLicenseHandler(coreService)
 	rotationPolicyHandler := handlers.NewRotationPolicyHandler(coreService)
 	dynamicSecretHandler := handlers.NewDynamicSecretHandler(coreService)
 	rbacHandler := handlers.NewRBACHandler(coreService)
@@ -595,6 +596,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/info", handlers.MakeSystemInfoHandler(cfg))
 			r.Get("/metrics", handlers.GetMetrics)
 		})
+
+		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/license/status", licenseHandler.GetLicenseStatus)
 
 		// Personal-access-token hygiene — deployment-wide stale / expired-but-active
 		// tokens an admin should revoke (token sprawl).

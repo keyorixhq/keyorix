@@ -4,9 +4,11 @@
 
 Accepted. Implements the **licensing** mechanism of
 [ADR-062](adr-062-air-gap-updates.md); see [air-gap-updates-design.md](air-gap-updates-design.md)
-§4. Builds on the Phase 0 trust foundation (`internal/trust`, `PurposeLicense`). Phase 2a
-(this) is the token + offline evaluation + CLI; server-startup wiring, the periodic
-re-check, and compliance/admin surfacing are Phase 2b.
+§4. Builds on the Phase 0 trust foundation (`internal/trust`, `PurposeLicense`). Phase 2a is
+the token + offline evaluation + CLI; **Phase 2b** (this revision) wires it into the server:
+startup load, a nil-safe fresh-evaluating gate on the core, a startup audit event, and
+`GET /api/v1/license/status`. Gating an actual commercial feature, dashboard surfacing, and
+transition notifications are 2c.
 
 ## Context
 
@@ -70,9 +72,15 @@ baseline — and still exits cleanly, never denying.
 
 ## Consequences
 
-- Additive and behaviour-neutral: nothing in the server reads license state yet (Phase 2b),
-  and a non-release build trusts no license key, so evaluation is always baseline.
-- `Status.HasFeature` is the one gate Phase 2b wires into commercial-feature call sites; the
+- Additive and behaviour-neutral: the server now evaluates the license at startup and serves
+  its status, but no feature is gated on it yet (2c), and a non-release build trusts no
+  license key, so evaluation is always baseline.
+- The design's "validate on a periodic timer" is realised by the gate evaluating **freshly
+  on every call** rather than caching a status and re-checking on a timer — a license that
+  lapses while the server runs is observed on the next `Status()`/`HasFeature` call, with no
+  goroutine to manage. `Evaluate` is cheap (one ed25519 verify), so per-call cost is
+  negligible. A separate transition-notification path (2c) can still watch for state changes.
+- `core.HasLicensedFeature` is the one gate 2c wires into commercial-feature call sites; the
   fail-safe semantics live entirely in `Evaluate`, so call sites stay trivial.
 - Issuing real licenses is an operational step gated on embedding the production license
   public key (and keeping its private key offline), mirroring the update-signing key.

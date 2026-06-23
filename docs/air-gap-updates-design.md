@@ -200,9 +200,16 @@ behaviour until built.
    - **2a (done, [ADR-065](adr-065-offline-license-validation.md)):** the signed license
      token, `internal/license` offline **fail-safe** evaluation (degrade-to-baseline, never
      deny), the `Status.HasFeature` gate, and `keyorix license issue|install|status`.
-   - **2b:** wire `HasFeature` into commercial-feature call sites, validate at server
-     startup + on a periodic timer, and surface license state in the dashboard, audit log,
-     and admin notifications.
+   - **2b (server wiring done, [ADR-065](adr-065-offline-license-validation.md)):** the
+     server loads the configured license at startup (fail-safe — a missing/unreadable/
+     invalid file degrades to baseline, never blocks boot), builds a nil-safe `license.Gate`
+     on the core that evaluates **freshly on every call** (so a lapse is observed without a
+     restart or a background timer), records the evaluated state as a startup audit event,
+     and serves `GET /api/v1/license/status` (admin-gated). `core.HasLicensedFeature` is the
+     single gate ready for commercial features.
+   - **2c remaining:** designate the first commercial-only feature and gate it on
+     `HasLicensedFeature`; surface license state in the web dashboard; and emit admin
+     notifications on state transitions (expiring-soon / expired).
 4. **Phase 3 — hardening:** HSM-backed signing, key rotation drill, reproducible-bundle
    verification, and a documented operator runbook.
 
