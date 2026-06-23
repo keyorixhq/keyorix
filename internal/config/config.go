@@ -869,7 +869,12 @@ type SSOConfig struct {
 // the issuer's /.well-known/openid-configuration at startup, so only the issuer +
 // client credentials + redirect URL are required.
 type SSOProviderConfig struct {
-	Name         string   `yaml:"name"`          // operator label + URL slug (e.g. "okta")
+	Name string `yaml:"name"` // operator label + URL slug (e.g. "okta")
+	// Type is "oidc" (default) or "saml"; it selects which block below is used.
+	Type string `yaml:"type"`
+	// SAML config (when type=saml). OIDC fields below are ignored for SAML providers.
+	SAML *SAMLProviderConfig `yaml:"saml"`
+
 	Issuer       string   `yaml:"issuer"`        // OIDC issuer URL
 	ClientID     string   `yaml:"client_id"`     // the OAuth client id registered at the IdP
 	ClientSecret string   `yaml:"client_secret"` // prefer KEYORIX_SSO_<NAME>_CLIENT_SECRET
@@ -907,6 +912,23 @@ type SSOProviderConfig struct {
 // env var KEYORIX_SSO_<NAME>_CLIENT_SECRET (name upper-cased).
 func (p *SSOProviderConfig) GetClientSecret() string {
 	return resolveSecret("KEYORIX_SSO_"+strings.ToUpper(p.Name)+"_CLIENT_SECRET", p.ClientSecret)
+}
+
+// SAMLProviderConfig is one configured SAML 2.0 IdP (when the provider's type=saml).
+// The IdP metadata supplies the entityID, SSO URL, and signing certificate; provide it
+// inline (idp_metadata_xml) or as a file path (idp_metadata_file).
+type SAMLProviderConfig struct {
+	IDPMetadataXML  string `yaml:"idp_metadata_xml"`
+	IDPMetadataFile string `yaml:"idp_metadata_file"`
+	SPEntityID      string `yaml:"sp_entity_id"` // our SP entity ID (conventionally the metadata URL)
+	ACSURL          string `yaml:"acs_url"`      // <public-host>/auth/saml/<name>/acs
+	// AllowIDPInitiated permits responses with no InResponseTo (loses CSRF/replay
+	// protection). Off by default — enable only for IdPs that require it.
+	AllowIDPInitiated bool `yaml:"allow_idp_initiated"`
+	// Attribute names to read from the assertion (empty → common Azure AD/ADFS defaults).
+	EmailAttribute  string `yaml:"email_attribute"`
+	NameAttribute   string `yaml:"name_attribute"`
+	GroupsAttribute string `yaml:"groups_attribute"`
 }
 
 // RotationRemindersConfig configures the rotation-reminder scheduler: a background
