@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,10 +25,22 @@ import (
 	"gorm.io/gorm"
 )
 
+// memDBSeq makes each in-memory test DB name unique.
+var memDBSeq atomic.Int64
+
+// uniqueMemDSN returns a uniquely-named shared-cache in-memory SQLite DSN. A fixed-name
+// "file::memory:?cache=shared" is ONE database for the whole process, so tests that use
+// it collide (e.g. one test's rows leak into another's), which makes them pass alone but
+// fail when run together. A unique name per call isolates each test's DB while keeping it
+// consistent across the connection pool. extra carries extra pragmas (e.g. "&_timeout=…").
+func uniqueMemDSN(extra string) string {
+	return fmt.Sprintf("file:kxtest_%d?mode=memory&cache=shared%s", memDBSeq.Add(1), extra)
+}
+
 // newTestCore creates a minimal *core.KeyorixCore backed by an in-memory SQLite DB.
 func newTestCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_timeout=30000&_journal_mode=WAL"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -118,21 +131,21 @@ func TestHTTPServerIntegration(t *testing.T) {
 		},
 	}
 
-	// Create router
-	router, err := NewRouter(cfg, newTestCore(t))
-	require.NoError(t, err)
+	// One core backs both test servers — the workflow below uses `server` and `server2`
+	// interchangeably with the same validToken, so they must share a database. (Each test
+	// FUNCTION still gets its own isolated DB via newTestCore's unique DSN.)
+	testCore := newTestCore(t)
+	validToken := createTestToken(t, testCore)
 
-	// Create test server
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	// Create a dedicated core + server for authenticated tests with a real token
-	testCore := newTestCore(t)
 	router2, err2 := NewRouter(cfg, testCore)
 	require.NoError(t, err2)
 	server2 := httptest.NewServer(router2)
 	defer server2.Close()
-	validToken := createTestToken(t, testCore)
 
 	// Test cases for complete workflow
 	t.Run("Complete Secret Management Workflow", func(t *testing.T) {
