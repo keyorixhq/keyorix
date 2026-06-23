@@ -35,6 +35,7 @@ func TestResolveShareExpiry(t *testing.T) {
 		}
 		if got == nil {
 			t.Fatal("got nil, want a time ~2h out")
+			return // unreachable after Fatal, but tells staticcheck got is non-nil below
 		}
 		// Allow a wide window so the test never clock-bombs.
 		delta := got.Sub(before)
