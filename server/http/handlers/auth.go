@@ -116,9 +116,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			// Tell the client which second factors this account can complete, so it
 			// can offer the right step (TOTP code entry vs. a passkey prompt).
 			sendSuccess(w, map[string]interface{}{
-				"mfa_required":      true,
-				"mfa_challenge":     challenge,
-				"totp_available":    user.MFAEnabled,
+				"mfa_required":       true,
+				"mfa_challenge":      challenge,
+				"totp_available":     user.MFAEnabled,
 				"webauthn_available": user.WebAuthnEnabled,
 			}, "MFA required")
 			return
@@ -285,6 +285,13 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Unauthorized", "Session not found or expired", http.StatusUnauthorized, nil)
 		return
 	}
+
+	// Token rotation: evict the OLD token from the auth cache immediately, like Logout
+	// and ChangePassword. Without this, the just-validated old token lingers in the 30s
+	// positive cache and keeps passing auth (a cache hit skips the DB) even though its
+	// session row was deleted — so it stays usable for up to validTokenTTL after being
+	// rotated away.
+	middleware.InvalidateTokenCache(token)
 
 	resp := map[string]interface{}{
 		"token": session.SessionToken,
