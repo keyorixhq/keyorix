@@ -3,6 +3,41 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.82.0 — 2026-06-24
+
+Air-gapped, cryptographically-verifiable update bundles — the first build-on of the Phase 0
+trust foundation — plus a security-test sweep over per-reference RBAC and secret-encryption
+tamper-resistance.
+
+### Added
+- **Air-gap update bundles (`keyorix bundle build` / `verify` / `import`)** — a single,
+  signed, offline-verifiable artifact for carrying a Keyorix release into an air-gapped or
+  regulated environment (defence, finance, government; NIS2/DORA supply-chain integrity). A
+  bundle is a gzip-tar whose `manifest.json` pins every component (images, charts, CRDs,
+  binaries, migrations) by sha256, with a detached `ed25519` `manifest.sig`. `build` signs
+  with an offline key; `verify` and `import` check the signature **offline** against the
+  public key embedded in the binary at build time — trust follows a pinned chain, never a
+  key shipped inside the bundle — then verify every component's digest. `import`
+  additionally enforces **no-downgrade / `min_upgrade_from`** before staging the verified
+  artifacts atomically, and prints the operator-controlled rollout steps (loading images
+  into the internal registry and the Helm upgrade stay the operator's own steps). Everything
+  **fails closed**: a plain (non-release) build embeds no keys, so verification refuses.
+  Reads are size-bounded (decompression-bomb guard). Builds on the Phase 0 trust registry
+  (`internal/trust`). (ADR-064, ADR-062 Phase 1) ([#479], [#482])
+
+### Internal
+- Security-boundary test sweep: Keyorix Connect per-reference RBAC has no admin bypass and
+  no bare-prefix segment-boundary footgun ([#477], [#478], ADR-045); and the secret-
+  encryption AEAD is tamper- and transplant-resistant, with no legacy-AAD downgrade bypass
+  of the transplant binding ([#480], [#481]).
+
+[#477]: https://github.com/keyorixhq/keyorix/pull/477
+[#478]: https://github.com/keyorixhq/keyorix/pull/478
+[#479]: https://github.com/keyorixhq/keyorix/pull/479
+[#480]: https://github.com/keyorixhq/keyorix/pull/480
+[#481]: https://github.com/keyorixhq/keyorix/pull/481
+[#482]: https://github.com/keyorixhq/keyorix/pull/482
+
 ## v0.81.0 — 2026-06-23
 
 A security-hardening release: the HTTP edge gets global security headers, a request
