@@ -30,6 +30,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(customMiddleware.Recovery())
 	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
 	r.Use(customMiddleware.PrometheusMiddleware)
+	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
 
 	// CORS configuration - updated for web dashboard
