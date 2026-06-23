@@ -5,8 +5,13 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# Injected at build time so the agent reports its real release version (mirrors the
+# Makefile LDFLAGS). Defaults keep ad-hoc `docker build` working; docker-publish
+# passes the git tag + sha.
+ARG VERSION=dev
+ARG GIT_COMMIT=none
 RUN CGO_ENABLED=0 go build \
-    -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=dev" \
+    -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" \
     -trimpath -o /out/keyorix-k8s-sync ./cmd/keyorix-k8s-sync
 
 # Runtime stage — minimal, non-root. ca-certificates lets the agent reach the

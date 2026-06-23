@@ -5,7 +5,12 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=dev" \
+# Injected at build time so the image reports its real release version at runtime
+# (e.g. /health, /system/info). Defaults keep ad-hoc `docker build` working; the
+# docker-publish workflow passes the git tag + sha. Mirrors the Makefile LDFLAGS.
+ARG VERSION=dev
+ARG GIT_COMMIT=none
+RUN go build -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" \
     -o bin/keyorix-server ./server
 
 # Runtime stage
