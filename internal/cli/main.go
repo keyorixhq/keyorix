@@ -9,6 +9,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cli/audit"
 	"github.com/keyorixhq/keyorix/internal/cli/auth"
 	"github.com/keyorixhq/keyorix/internal/cli/breakglass"
+	bundlecli "github.com/keyorixhq/keyorix/internal/cli/bundle"
 	"github.com/keyorixhq/keyorix/internal/cli/compliance"
 	"github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/cli/connect"
@@ -79,6 +80,7 @@ func init() {
 	rootCmd.AddCommand(sodcli.SoDCmd)
 	rootCmd.AddCommand(hygiene.HygieneCmd)
 	rootCmd.AddCommand(trustcli.TrustCmd)
+	rootCmd.AddCommand(bundlecli.BundleCmd)
 }
 
 // Execute runs the root command
