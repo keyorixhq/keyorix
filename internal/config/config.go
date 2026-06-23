@@ -187,10 +187,28 @@ type ServerInstanceConfig struct {
 	RateLimit         RateLimitConfig `yaml:"ratelimit"`
 	SwaggerEnabled    bool            `yaml:"swagger_enabled,omitempty"`
 	ReflectionEnabled bool            `yaml:"reflection_enabled,omitempty"`
+	// MaxRequestBodyBytes caps each request body to mitigate memory-exhaustion DoS from
+	// an oversized payload. 0 uses a generous default (10 MiB — well above any normal
+	// JSON request); a negative value disables the cap (for endpoints that legitimately
+	// accept very large bodies).
+	MaxRequestBodyBytes int64 `yaml:"max_request_body_bytes,omitempty"`
 	// Web dashboard specific settings (HTTP only)
 	WebAssetsPath  string   `yaml:"web_assets_path,omitempty"`
 	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
 	Domain         string   `yaml:"domain,omitempty"`
+}
+
+// defaultMaxRequestBodyBytes is the request-body cap when none is configured.
+const defaultMaxRequestBodyBytes = 10 << 20 // 10 MiB
+
+// EffectiveMaxRequestBodyBytes returns the request-body cap to enforce: the configured
+// value, or a 10 MiB default when unset (0). A negative value is returned as-is and
+// disables the cap at the middleware.
+func (s ServerInstanceConfig) EffectiveMaxRequestBodyBytes() int64 {
+	if s.MaxRequestBodyBytes == 0 {
+		return defaultMaxRequestBodyBytes
+	}
+	return s.MaxRequestBodyBytes
 }
 
 type TLSConfig struct {
