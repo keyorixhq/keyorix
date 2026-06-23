@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -47,6 +48,44 @@ func TestListUserPermissions_IncludesGroupShares(t *testing.T) {
 	assert.Equal(t, uint(5), *g.GroupID)
 	require.NotNil(t, g.ShareID)
 	assert.Equal(t, uint(30), *g.ShareID)
+}
+
+func TestListUserPermissions_ExcludesExpiredShares(t *testing.T) {
+	ctx := context.Background()
+	const userID = uint(9)
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+
+	past := time.Now().Add(-1 * time.Hour)
+	future := time.Now().Add(1 * time.Hour)
+
+	ms.On("ListSecrets", ctx, mock.AnythingOfType("*storage.SecretFilter")).
+		Return([]*models.SecretNode{}, int64(0), nil)
+	// One active direct share (#2) and one expired direct share (#3).
+	ms.On("ListSharesByUser", ctx, userID).
+		Return([]*models.ShareRecord{
+			{ID: 20, SecretID: 2, Permission: "read"},
+			{ID: 21, SecretID: 3, Permission: "read", ExpiresAt: &past},
+		}, nil)
+	// Group #5: one active group share (#4) and one expired (#5).
+	ms.On("GetUserGroups", ctx, userID).Return([]*models.Group{{ID: 5}}, nil)
+	ms.On("ListSharesByGroup", ctx, uint(5)).
+		Return([]*models.ShareRecord{
+			{ID: 30, SecretID: 4, Permission: "write", IsGroup: true, RecipientID: 5, ExpiresAt: &future},
+			{ID: 31, SecretID: 5, Permission: "write", IsGroup: true, RecipientID: 5, ExpiresAt: &past},
+		}, nil)
+
+	perms, err := c.ListUserPermissions(ctx, userID)
+	require.NoError(t, err)
+
+	secrets := map[uint]bool{}
+	for _, p := range perms {
+		secrets[p.SecretID] = true
+	}
+	assert.True(t, secrets[2], "active direct share should be listed")
+	assert.True(t, secrets[4], "non-expired group share should be listed")
+	assert.False(t, secrets[3], "expired direct share must NOT be listed")
+	assert.False(t, secrets[5], "expired group share must NOT be listed")
 }
 
 func TestListUserPermissions_NoGroups(t *testing.T) {

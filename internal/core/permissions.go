@@ -242,11 +242,19 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 		})
 	}
 
+	// A time-bound share stops granting access the instant it expires, so it must
+	// not appear in the access listing either — same filter the read-path
+	// authorization (CheckSecretPermission via activeShares) applies.
+	now := c.now()
+
 	directShares, err := c.storage.ListSharesByUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, share := range directShares {
+		if !shareActive(share, now) {
+			continue
+		}
 		permissions = append(permissions, &models.UserSecretPermission{
 			SecretID:   share.SecretID,
 			UserID:     userID,
@@ -267,6 +275,9 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 		}
 		for _, share := range groupShares {
+			if !shareActive(share, now) {
+				continue
+			}
 			groupID := group.ID
 			permissions = append(permissions, &models.UserSecretPermission{
 				SecretID:   share.SecretID,
