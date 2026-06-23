@@ -51,6 +51,7 @@ import (
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
+	"github.com/keyorixhq/keyorix/server/middleware"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/oauth2"
 )
@@ -685,7 +686,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	// replicas don't emit N copies of each alert. When anomaly_alerts is enabled,
 	// each detection pass is followed by an alerting pass that pushes newly detected
 	// anomalies to project admins + the audit/SIEM pipeline.
-	go func() {
+	{
 		detector := core.NewAnomalyDetector(coreService.Storage())
 		if mlc := cfg.AnomalyAlerts.ML; mlc.Enabled {
 			detector.SetMLConfig(core.MLConfig{
@@ -702,10 +703,8 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		if alertsEnabled {
 			log.Printf("Anomaly alerting enabled: scan + alert every %s", interval)
 		}
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		runDetect := func() {
-			if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockAnomaly, func() error {
+		runScheduler(ctx, "anomaly_detection", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockAnomaly, "Anomaly detection", func() error {
 				if derr := detector.RunDetection(ctx, coreService.ListActiveSecrets(ctx)); derr != nil {
 					return derr
 				}
@@ -717,20 +716,9 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 					}
 				}
 				return nil
-			}); err != nil {
-				log.Printf("Anomaly detection scheduler error: %v", err)
-			}
-		}
-		runDetect() // run once immediately on startup
-		for {
-			select {
-			case <-ticker.C:
-				runDetect()
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+			})
+		})
+	}
 
 	// legalHoldBlocks reports whether a deployment-wide legal hold (ISO A.5.34)
 	// should block a hard-delete purge job this tick. Fails SAFE: if the hold status
@@ -755,40 +743,25 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		retentionDays := cfg.SoftDelete.GetRetentionDays()
 		interval := cfg.Purge.GetInterval()
 		log.Printf("Retention purge scheduler enabled: every %s, %d-day retention", interval, retentionDays)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runPurge := func() {
-				if legalHoldBlocks("Retention purge") {
-					return
-				}
-				// Single-replica-gated (ADR-039): only one replica runs the purge.
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockPurge, func() error {
-					cutoff := time.Now().AddDate(0, 0, -retentionDays)
-					res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff)
-					if err != nil {
-						log.Printf("Retention purge error: %v", err)
-						return err
-					}
-					if res.Total() > 0 {
-						log.Printf("Retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d, secrets=%d)",
-							res.Total(), res.Users, res.Projects, res.Environments, res.Secrets)
-					}
-					return nil
-				}); err != nil {
-					log.Printf("Retention purge scheduler error: %v", err)
-				}
+		runScheduler(ctx, "retention_purge", interval, func() middleware.SchedulerOutcome {
+			if legalHoldBlocks("Retention purge") {
+				return middleware.SchedulerSkipped
 			}
-			runPurge() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runPurge()
-				case <-ctx.Done():
-					return
+			// Single-replica-gated (ADR-039): only one replica runs the purge.
+			return lockedRun(ctx, coreService.Storage(), schedLockPurge, "Retention purge", func() error {
+				cutoff := time.Now().AddDate(0, 0, -retentionDays)
+				res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff)
+				if err != nil {
+					log.Printf("Retention purge error: %v", err)
+					return err
 				}
-			}
-		}()
+				if res.Total() > 0 {
+					log.Printf("Retention purge removed %d soft-deleted records (users=%d, projects=%d, environments=%d, secrets=%d)",
+						res.Total(), res.Users, res.Projects, res.Environments, res.Secrets)
+				}
+				return nil
+			})
+		})
 	}
 
 	// Start the data-retention scheduler (ISO A.5.33 / GDPR / DORA) — opt-in.
@@ -809,39 +782,24 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			interval := cfg.DataRetention.GetInterval()
 			log.Printf("Data-retention scheduler enabled: every %s (anomaly_alerts=%dd, closed_reviews=%dd, break_glass=%dd, access_requests=%dd; 0=keep)",
 				interval, policy.AnomalyAlertsDays, policy.ClosedAccessReviewsDays, policy.BreakGlassDays, policy.ResolvedAccessRequestsDays)
-			go func() {
-				ticker := time.NewTicker(interval)
-				defer ticker.Stop()
-				runRetention := func() {
-					if legalHoldBlocks("Data-retention purge") {
-						return
-					}
-					if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockRetention, func() error {
-						res, err := coreService.PurgeExpiredComplianceRecords(ctx, time.Now(), policy)
-						if err != nil {
-							log.Printf("Data-retention purge error: %v", err)
-							return err
-						}
-						if res.Total() > 0 {
-							log.Printf("Data-retention purge removed %d records (anomaly_alerts=%d, closed_campaigns=%d, review_items=%d, break_glass=%d, access_requests=%d, approvals=%d)",
-								res.Total(), res.AnomalyAlerts, res.ClosedAccessReviews, res.AccessReviewItems,
-								res.BreakGlass, res.ResolvedAccessRequests, res.AccessRequestApprovals)
-						}
-						return nil
-					}); err != nil {
-						log.Printf("Data-retention scheduler error: %v", err)
-					}
+			runScheduler(ctx, "data_retention", interval, func() middleware.SchedulerOutcome {
+				if legalHoldBlocks("Data-retention purge") {
+					return middleware.SchedulerSkipped
 				}
-				runRetention() // run once on startup
-				for {
-					select {
-					case <-ticker.C:
-						runRetention()
-					case <-ctx.Done():
-						return
+				return lockedRun(ctx, coreService.Storage(), schedLockRetention, "Data-retention", func() error {
+					res, err := coreService.PurgeExpiredComplianceRecords(ctx, time.Now(), policy)
+					if err != nil {
+						log.Printf("Data-retention purge error: %v", err)
+						return err
 					}
-				}
-			}()
+					if res.Total() > 0 {
+						log.Printf("Data-retention purge removed %d records (anomaly_alerts=%d, closed_campaigns=%d, review_items=%d, break_glass=%d, access_requests=%d, approvals=%d)",
+							res.Total(), res.AnomalyAlerts, res.ClosedAccessReviews, res.AccessReviewItems,
+							res.BreakGlass, res.ResolvedAccessRequests, res.AccessRequestApprovals)
+					}
+					return nil
+				})
+			})
 		}
 	}
 
@@ -852,34 +810,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	if cfg.RotationReminders.Enabled {
 		interval := cfg.RotationReminders.GetInterval()
 		log.Printf("Rotation-reminder scheduler enabled: every %s", interval)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runReminders := func() {
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockRotationRmdr, func() error {
-					n, rerr := coreService.SendRotationReminders(ctx)
-					if rerr != nil {
-						log.Printf("Rotation-reminder error: %v", rerr)
-						return rerr
-					}
-					if n > 0 {
-						log.Printf("Rotation reminders: sent %d notification(s)", n)
-					}
-					return nil
-				}); err != nil {
-					log.Printf("Rotation-reminder scheduler error: %v", err)
+		runScheduler(ctx, "rotation_reminder", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockRotationRmdr, "Rotation-reminder", func() error {
+				n, rerr := coreService.SendRotationReminders(ctx)
+				if rerr != nil {
+					log.Printf("Rotation-reminder error: %v", rerr)
+					return rerr
 				}
-			}
-			runReminders() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runReminders()
-				case <-ctx.Done():
-					return
+				if n > 0 {
+					log.Printf("Rotation reminders: sent %d notification(s)", n)
 				}
-			}
-		}()
+				return nil
+			})
+		})
 	}
 
 	// Start the secret-expiry reminder scheduler — opt-in. Notifies project admins of
@@ -889,34 +832,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		interval := cfg.ExpiryReminders.GetInterval()
 		leadDays := cfg.ExpiryReminders.LeadDays
 		log.Printf("Expiry-reminder scheduler enabled: every %s (lead %dd)", interval, leadDays)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runExpiry := func() {
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockExpiryRmdr, func() error {
-					n, rerr := coreService.SendExpiryReminders(ctx, leadDays)
-					if rerr != nil {
-						log.Printf("Expiry-reminder error: %v", rerr)
-						return rerr
-					}
-					if n > 0 {
-						log.Printf("Expiry reminders: sent %d notification(s)", n)
-					}
-					return nil
-				}); err != nil {
-					log.Printf("Expiry-reminder scheduler error: %v", err)
+		runScheduler(ctx, "expiry_reminder", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockExpiryRmdr, "Expiry-reminder", func() error {
+				n, rerr := coreService.SendExpiryReminders(ctx, leadDays)
+				if rerr != nil {
+					log.Printf("Expiry-reminder error: %v", rerr)
+					return rerr
 				}
-			}
-			runExpiry() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runExpiry()
-				case <-ctx.Done():
-					return
+				if n > 0 {
+					log.Printf("Expiry reminders: sent %d notification(s)", n)
 				}
-			}
-		}()
+				return nil
+			})
+		})
 	}
 
 	// Start the certificate-expiry scan — opt-in (ADR-055). Parses certificate-typed
@@ -926,34 +854,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		interval := cfg.CertificateExpiry.GetInterval()
 		leadDays := cfg.CertificateExpiry.LeadDays
 		log.Printf("Certificate-expiry scan enabled: every %s (lead %dd)", interval, leadDays)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runCertScan := func() {
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockCertExpiry, func() error {
-					n, rerr := coreService.ScanCertificateExpiry(ctx, leadDays)
-					if rerr != nil {
-						log.Printf("Certificate-expiry scan error: %v", rerr)
-						return rerr
-					}
-					if n > 0 {
-						log.Printf("Certificate-expiry scan: sent %d notification(s)", n)
-					}
-					return nil
-				}); err != nil {
-					log.Printf("Certificate-expiry scheduler error: %v", err)
+		runScheduler(ctx, "certificate_expiry", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockCertExpiry, "Certificate-expiry", func() error {
+				n, rerr := coreService.ScanCertificateExpiry(ctx, leadDays)
+				if rerr != nil {
+					log.Printf("Certificate-expiry scan error: %v", rerr)
+					return rerr
 				}
-			}
-			runCertScan() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runCertScan()
-				case <-ctx.Done():
-					return
+				if n > 0 {
+					log.Printf("Certificate-expiry scan: sent %d notification(s)", n)
 				}
-			}
-		}()
+				return nil
+			})
+		})
 	}
 
 	// Start the automated-rotation scheduler — opt-in (ADR-046). Rotates auto-rotate-
@@ -963,34 +876,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	if cfg.AutoRotation.Enabled {
 		interval := cfg.AutoRotation.GetInterval()
 		log.Printf("Auto-rotation scheduler enabled: every %s", interval)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runAutoRotation := func() {
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockAutoRotate, func() error {
-					n, rerr := coreService.RunAutoRotation(ctx)
-					if rerr != nil {
-						log.Printf("Auto-rotation error: %v", rerr)
-						return rerr
-					}
-					if n > 0 {
-						log.Printf("Auto-rotation: rotated %d secret(s)", n)
-					}
-					return nil
-				}); err != nil {
-					log.Printf("Auto-rotation scheduler error: %v", err)
+		runScheduler(ctx, "auto_rotation", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockAutoRotate, "Auto-rotation", func() error {
+				n, rerr := coreService.RunAutoRotation(ctx)
+				if rerr != nil {
+					log.Printf("Auto-rotation error: %v", rerr)
+					return rerr
 				}
-			}
-			runAutoRotation() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runAutoRotation()
-				case <-ctx.Done():
-					return
+				if n > 0 {
+					log.Printf("Auto-rotation: rotated %d secret(s)", n)
 				}
-			}
-		}()
+				return nil
+			})
+		})
 	}
 
 	// Start the compliance-digest scheduler — opt-in. Periodically broadcasts a
@@ -1000,34 +898,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	if cfg.ComplianceDigest.Enabled {
 		interval := cfg.ComplianceDigest.GetInterval()
 		log.Printf("Compliance-digest scheduler enabled: every %s", interval)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runDigest := func() {
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockDigest, func() error {
-					sent, derr := coreService.SendComplianceDigest(ctx)
-					if derr != nil {
-						log.Printf("Compliance-digest error: %v", derr)
-						return derr
-					}
-					if !sent {
-						log.Printf("Compliance digest: no notification channel configured; nothing sent")
-					}
-					return nil
-				}); err != nil {
-					log.Printf("Compliance-digest scheduler error: %v", err)
+		runScheduler(ctx, "compliance_digest", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockDigest, "Compliance-digest", func() error {
+				sent, derr := coreService.SendComplianceDigest(ctx)
+				if derr != nil {
+					log.Printf("Compliance-digest error: %v", derr)
+					return derr
 				}
-			}
-			runDigest() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runDigest()
-				case <-ctx.Done():
-					return
+				if !sent {
+					log.Printf("Compliance digest: no notification channel configured; nothing sent")
 				}
-			}
-		}()
+				return nil
+			})
+		})
 	}
 
 	// Start the scheduled access-recertification scheduler (ISO 27001 A.5.18) —
@@ -1041,34 +924,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		cadence := cfg.Recertification.CadenceDays
 		autoOpen := cfg.Recertification.AutoOpen
 		log.Printf("Recertification scheduler enabled: every %s (cadence %dd, auto_open=%t)", interval, cadence, autoOpen)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runRecert := func() {
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockRecertify, func() error {
-					res, rerr := coreService.RunScheduledRecertification(ctx, cadence, autoOpen)
-					if rerr != nil {
-						log.Printf("Recertification error: %v", rerr)
-						return rerr
-					}
-					if res.Opened > 0 || res.Reminded > 0 {
-						log.Printf("Recertification: opened %d campaign(s), sent %d reminder(s)", res.Opened, res.Reminded)
-					}
-					return nil
-				}); err != nil {
-					log.Printf("Recertification scheduler error: %v", err)
+		runScheduler(ctx, "recertification", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockRecertify, "Recertification", func() error {
+				res, rerr := coreService.RunScheduledRecertification(ctx, cadence, autoOpen)
+				if rerr != nil {
+					log.Printf("Recertification error: %v", rerr)
+					return rerr
 				}
-			}
-			runRecert() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runRecert()
-				case <-ctx.Done():
-					return
+				if res.Opened > 0 || res.Reminded > 0 {
+					log.Printf("Recertification: opened %d campaign(s), sent %d reminder(s)", res.Opened, res.Reminded)
 				}
-			}
-		}()
+				return nil
+			})
+		})
 	}
 
 	// Start the scheduled compliance-evidence delivery (ISO 27001 / SOC 2) — opt-in.
@@ -1083,32 +951,17 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			outputDir := cfg.EvidenceDelivery.OutputDir
 			interval := cfg.EvidenceDelivery.GetInterval()
 			log.Printf("Evidence-delivery scheduler enabled: every %s (dir=%q, webhook=%t)", interval, outputDir, cfg.EvidenceDelivery.Webhook.Enabled)
-			go func() {
-				ticker := time.NewTicker(interval)
-				defer ticker.Stop()
-				runExport := func() {
-					if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockEvidence, func() error {
-						res, err := coreService.ExportComplianceEvidence(ctx, outputDir)
-						if err != nil {
-							log.Printf("Evidence-delivery error: %v", err)
-							return err
-						}
-						log.Printf("Evidence pack exported: %d bytes → %v", res.Bytes, res.Targets)
-						return nil
-					}); err != nil {
-						log.Printf("Evidence-delivery scheduler error: %v", err)
+			runScheduler(ctx, "evidence_delivery", interval, func() middleware.SchedulerOutcome {
+				return lockedRun(ctx, coreService.Storage(), schedLockEvidence, "Evidence-delivery", func() error {
+					res, err := coreService.ExportComplianceEvidence(ctx, outputDir)
+					if err != nil {
+						log.Printf("Evidence-delivery error: %v", err)
+						return err
 					}
-				}
-				runExport() // run once on startup
-				for {
-					select {
-					case <-ticker.C:
-						runExport()
-					case <-ctx.Done():
-						return
-					}
-				}
-			}()
+					log.Printf("Evidence pack exported: %d bytes → %v", res.Bytes, res.Targets)
+					return nil
+				})
+			})
 		}
 	}
 
@@ -1122,34 +975,19 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		} else {
 			interval := cfg.AuditCheckpoints.GetInterval()
 			log.Printf("Audit-checkpoint scheduler enabled: every %s", interval)
-			go func() {
-				ticker := time.NewTicker(interval)
-				defer ticker.Stop()
-				writeCheckpoint := func() {
-					if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockAuditCkpt, func() error {
-						cp, written, werr := coreService.WriteAuditCheckpoint(ctx)
-						if werr != nil {
-							log.Printf("Audit-checkpoint error: %v", werr)
-							return werr
-						}
-						if written {
-							log.Printf("Audit checkpoint written: #%d head=%d events=%d", cp.ID, cp.HeadID, cp.ChainedEvents)
-						}
-						return nil
-					}); err != nil {
-						log.Printf("Audit-checkpoint scheduler error: %v", err)
+			runScheduler(ctx, "audit_checkpoint", interval, func() middleware.SchedulerOutcome {
+				return lockedRun(ctx, coreService.Storage(), schedLockAuditCkpt, "Audit-checkpoint", func() error {
+					cp, written, werr := coreService.WriteAuditCheckpoint(ctx)
+					if werr != nil {
+						log.Printf("Audit-checkpoint error: %v", werr)
+						return werr
 					}
-				}
-				writeCheckpoint() // run once on startup
-				for {
-					select {
-					case <-ticker.C:
-						writeCheckpoint()
-					case <-ctx.Done():
-						return
+					if written {
+						log.Printf("Audit checkpoint written: #%d head=%d events=%d", cp.ID, cp.HeadID, cp.ChainedEvents)
 					}
-				}
-			}()
+					return nil
+				})
+			})
 		}
 	}
 
@@ -1160,51 +998,36 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	if cfg.JITAccessExpiry.Enabled {
 		interval := cfg.JITAccessExpiry.GetInterval()
 		log.Printf("JIT access-expiry sweeper enabled: every %s", interval)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runSweep := func() {
-				// A legal hold preserves the grant rows (the auth queries still deny
-				// expired grants immediately, so blocking the sweep loses no security).
-				if legalHoldBlocks("JIT access-expiry sweep") {
-					return
-				}
-				// Single-replica-gated (ADR-039): one replica sweeps per tick.
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockJITExpiry, func() error {
-					now := time.Now()
-					n, rerr := coreService.RemoveExpiredRoleGrants(ctx, now)
-					if rerr != nil {
-						log.Printf("JIT access-expiry sweep error: %v", rerr)
-						return rerr
-					}
-					if n > 0 {
-						log.Printf("JIT access-expiry sweep removed %d expired grant(s)", n)
-					}
-					// The same sweep reclaims expired time-bound secret shares (both already
-					// stop authorizing immediately; this keeps the tables clean + audited).
-					sn, serr := coreService.RemoveExpiredShares(ctx, now)
-					if serr != nil {
-						log.Printf("JIT access-expiry share-sweep error: %v", serr)
-						return serr
-					}
-					if sn > 0 {
-						log.Printf("JIT access-expiry sweep removed %d expired share(s)", sn)
-					}
-					return nil
-				}); err != nil {
-					log.Printf("JIT access-expiry scheduler error: %v", err)
-				}
+		runScheduler(ctx, "jit_access_expiry", interval, func() middleware.SchedulerOutcome {
+			// A legal hold preserves the grant rows (the auth queries still deny
+			// expired grants immediately, so blocking the sweep loses no security).
+			if legalHoldBlocks("JIT access-expiry sweep") {
+				return middleware.SchedulerSkipped
 			}
-			runSweep() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runSweep()
-				case <-ctx.Done():
-					return
+			// Single-replica-gated (ADR-039): one replica sweeps per tick.
+			return lockedRun(ctx, coreService.Storage(), schedLockJITExpiry, "JIT access-expiry", func() error {
+				now := time.Now()
+				n, rerr := coreService.RemoveExpiredRoleGrants(ctx, now)
+				if rerr != nil {
+					log.Printf("JIT access-expiry sweep error: %v", rerr)
+					return rerr
 				}
-			}
-		}()
+				if n > 0 {
+					log.Printf("JIT access-expiry sweep removed %d expired grant(s)", n)
+				}
+				// The same sweep reclaims expired time-bound secret shares (both already
+				// stop authorizing immediately; this keeps the tables clean + audited).
+				sn, serr := coreService.RemoveExpiredShares(ctx, now)
+				if serr != nil {
+					log.Printf("JIT access-expiry share-sweep error: %v", serr)
+					return serr
+				}
+				if sn > 0 {
+					log.Printf("JIT access-expiry sweep removed %d expired share(s)", sn)
+				}
+				return nil
+			})
+		})
 	}
 
 	// Start the dynamic-secrets auto-revoke sweeper (ADR-035) — opt-in. Revokes
@@ -1212,65 +1035,35 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	if cfg.DynamicSecrets.SweepEnabled {
 		interval := cfg.DynamicSecrets.GetSweepInterval()
 		log.Printf("Dynamic-secrets auto-revoke sweeper enabled: every %s", interval)
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			runSweep := func() {
-				// Single-replica-gated (ADR-039): one replica revokes per tick, so
-				// replicas don't storm the target DBs revoking the same leases.
-				if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockDynamicSweep, func() error {
-					n, rerr := coreService.RevokeExpiredLeases(ctx, time.Now())
-					if rerr != nil {
-						log.Printf("Dynamic-secrets sweep error: %v", rerr)
-						return rerr
-					}
-					if n > 0 {
-						log.Printf("Dynamic-secrets sweep revoked %d expired lease(s)", n)
-					}
-					return nil
-				}); err != nil {
-					log.Printf("Dynamic-secrets sweep scheduler error: %v", err)
+		runScheduler(ctx, "dynamic_secret_sweep", interval, func() middleware.SchedulerOutcome {
+			// Single-replica-gated (ADR-039): one replica revokes per tick, so
+			// replicas don't storm the target DBs revoking the same leases.
+			return lockedRun(ctx, coreService.Storage(), schedLockDynamicSweep, "Dynamic-secrets sweep", func() error {
+				n, rerr := coreService.RevokeExpiredLeases(ctx, time.Now())
+				if rerr != nil {
+					log.Printf("Dynamic-secrets sweep error: %v", rerr)
+					return rerr
 				}
-			}
-			runSweep() // run once on startup
-			for {
-				select {
-				case <-ticker.C:
-					runSweep()
-				case <-ctx.Done():
-					return
+				if n > 0 {
+					log.Printf("Dynamic-secrets sweep revoked %d expired lease(s)", n)
 				}
-			}
-		}()
+				return nil
+			})
+		})
 	}
 
 	// Prune expired login-attempt records hourly (ADR-040). Single-replica-gated;
 	// always on (the limiter table needs bounded growth regardless of the purge
 	// scheduler). Rows past the rate-limit window are never read again.
-	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		runPrune := func() {
-			if legalHoldBlocks("Login-attempt prune") {
-				return
-			}
-			if _, err := coreService.Storage().WithSchedulerLock(ctx, schedLockLoginPrune, func() error {
-				_, perr := coreService.PruneLoginAttempts(ctx)
-				return perr
-			}); err != nil {
-				log.Printf("Login-attempt prune error: %v", err)
-			}
+	runScheduler(ctx, "login_attempt_prune", 1*time.Hour, func() middleware.SchedulerOutcome {
+		if legalHoldBlocks("Login-attempt prune") {
+			return middleware.SchedulerSkipped
 		}
-		runPrune() // run once on startup
-		for {
-			select {
-			case <-ticker.C:
-				runPrune()
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+		return lockedRun(ctx, coreService.Storage(), schedLockLoginPrune, "Login-attempt prune", func() error {
+			_, perr := coreService.PruneLoginAttempts(ctx)
+			return perr
+		})
+	})
 
 	// Create HTTP server
 	server := &http.Server{
