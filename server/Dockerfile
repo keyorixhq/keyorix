@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=dev" \
-    -o bin/keyorix-server ./server/main.go
+    -o bin/keyorix-server ./server
 
 # Runtime stage
 FROM alpine:latest
