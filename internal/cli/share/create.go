@@ -15,6 +15,8 @@ var (
 	createRecipientID uint
 	createIsGroup     bool
 	createPermission  string
+	createExpires     string
+	createTTL         string
 )
 
 var createCmd = &cobra.Command{
@@ -28,6 +30,8 @@ func init() {
 	createCmd.Flags().UintVar(&createRecipientID, "recipient-id", 0, "Recipient ID (required)")
 	createCmd.Flags().BoolVar(&createIsGroup, "is-group", false, "Whether the recipient is a group")
 	createCmd.Flags().StringVar(&createPermission, "permission", "read", "Permission level (read or write)")
+	createCmd.Flags().StringVar(&createExpires, "expires", "", "Make the share time-bound: absolute expiry (RFC3339, e.g. 2026-07-01T15:00:00Z)")
+	createCmd.Flags().StringVar(&createTTL, "ttl", "", "Make the share time-bound: lifetime from now (Go duration, e.g. 24h, 30m); mutually exclusive with --expires")
 
 	_ = createCmd.MarkFlagRequired("secret-id")    // #nosec G104
 	_ = createCmd.MarkFlagRequired("recipient-id") // #nosec G104
@@ -37,6 +41,12 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	// Validate permission
 	if createPermission != "read" && createPermission != "write" {
 		return fmt.Errorf("invalid permission: %s (must be 'read' or 'write')", createPermission)
+	}
+
+	// Resolve the optional time-bound expiry (nil = permanent share).
+	expiresAt, err := resolveShareExpiry(createExpires, createTTL)
+	if err != nil {
+		return err
 	}
 
 	// Obtain storage via the factory so the backend honors cfg.Storage.Type (ADR-049).
@@ -59,6 +69,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			GroupID:    createRecipientID,
 			Permission: createPermission,
 			SharedBy:   1, // CLI user ID
+			ExpiresAt:  expiresAt,
 		}
 
 		// Call service for group sharing
@@ -74,6 +85,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 			IsGroup:     false,
 			Permission:  createPermission,
 			SharedBy:    1, // CLI user ID
+			ExpiresAt:   expiresAt,
 		}
 
 		// Call service for user sharing
@@ -92,6 +104,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Is Group: %t\n", shareRecord.IsGroup)
 	fmt.Printf("Permission: %s\n", shareRecord.Permission)
 	fmt.Printf("Created At: %s\n", shareRecord.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("Expires At: %s\n", formatShareExpiry(shareRecord.ExpiresAt))
 
 	return nil
 }
