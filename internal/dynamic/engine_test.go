@@ -26,7 +26,7 @@ func TestNew_Backends(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "redis", rd.BackendType())
 
-	for _, bt := range []string{"aws-sts", "gcp", "azure"} {
+	for _, bt := range []string{"aws-sts", "gcp", "azure", "kubernetes"} {
 		eng, err := New(bt)
 		require.NoError(t, err)
 		assert.Equal(t, bt, eng.BackendType())

@@ -36,15 +36,19 @@ short-lived users — is read from the ` + adminDSNEnv + ` environment variable,
 prompted for with hidden input. It is never accepted as a flag (so it cannot land
 in shell history); the server encrypts it at rest and never returns it.
 
-For the cloud-IAM backends (aws-sts, gcp, azure) the "admin DSN" is instead a
-small JSON config and the issued credential is a short-lived cloud token, not a
-username/password:
-  aws-sts: {"role_arn":"...","region":"...","duration_seconds":3600} (optional
-           creation template = an inline STS session policy)
-  gcp:     {"service_account":"sa@project.iam.gserviceaccount.com","scopes":[...]}
-  azure:   {"scopes":["https://management.azure.com/.default"]}
+For the cloud-IAM backends (aws-sts, gcp, azure, kubernetes) the "admin DSN" is
+instead a small JSON config and the issued credential is a short-lived cloud token,
+not a username/password:
+  aws-sts:    {"role_arn":"...","region":"...","duration_seconds":3600} (optional
+              creation template = an inline STS session policy)
+  gcp:        {"service_account":"sa@project.iam.gserviceaccount.com","scopes":[...]}
+  azure:      {"scopes":["https://management.azure.com/.default"]}
+  kubernetes: {"namespace":"app","service_account":"my-app","audiences":["https://svc"]}
+              (mints a ServiceAccount token via TokenRequest; add
+              "api_server"/"ca_cert"/"token" to target an out-of-cluster API server)
 Cloud credentials for the mint call come from the ambient identity (AWS chain /
-GCP ADC / Azure DefaultAzureCredential), never from Keyorix config.
+GCP ADC / Azure DefaultAzureCredential / in-cluster ServiceAccount), never from
+Keyorix config.
 
 Examples:
   keyorix dynamic-secret create --name app-db --project-id 1 --backend postgres \
@@ -53,7 +57,8 @@ Examples:
     --creation-template '~app:* +@read'
   # cloud: paste the JSON config at the hidden prompt
   keyorix dynamic-secret create --name aws-readonly --project-id 1 --backend aws-sts
-  keyorix dynamic-secret create --name gcp-token   --project-id 1 --backend gcp`,
+  keyorix dynamic-secret create --name gcp-token   --project-id 1 --backend gcp
+  keyorix dynamic-secret create --name k8s-token   --project-id 1 --backend kubernetes`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if cfgName == "" || cfgProjectID == 0 || cfgBackend == "" {
 			return fmt.Errorf("--name, --project-id and --backend are required")
@@ -110,7 +115,7 @@ func init() {
 	f.StringVar(&cfgName, "name", "", "Config name (required)")
 	f.IntVar(&cfgProjectID, "project-id", 0, "Project ID (required)")
 	f.IntVar(&cfgEnvID, "environment-id", 0, "Environment ID (0 = project-wide)")
-	f.StringVar(&cfgBackend, "backend", "", "Backend: postgres | mysql | mongodb | redis | aws-sts | gcp | azure (required)")
+	f.StringVar(&cfgBackend, "backend", "", "Backend: postgres | mysql | mongodb | redis | aws-sts | gcp | azure | kubernetes (required)")
 	f.StringVar(&cfgTemplate, "creation-template", "", "Backend-specific grant/role/ACL template ({{name}} for SQL)")
 	f.IntVar(&cfgDefaultTTL, "default-ttl", 0, "Default lease TTL in seconds (0 = server default)")
 	f.IntVar(&cfgMaxTTL, "max-ttl", 0, "Max lease TTL ceiling in seconds (0 = no ceiling)")

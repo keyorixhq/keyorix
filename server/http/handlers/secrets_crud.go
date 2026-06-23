@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -247,6 +248,58 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	go h.coreService.LogSecretReadWithProject(core.DetachedAuditContext(r.Context()), uid, sID, secret.ProjectID, uname, sname, ip, ua) // #nosec G118
 
 	h.sendSuccess(w, response, "")
+}
+
+// GetSecretValueByRef handles GET /api/v1/secrets/value?ref=project/environment/name —
+// reads a secret's value resolved by a human-readable reference instead of a numeric
+// ID, for integrations (e.g. the External Secrets Operator) that template a key string.
+// It reuses the exact by-id read path: the route's scoped-permission gate
+// (ScopeFromRefQuery) authorizes the caller against the resolved secret's scope, and the
+// value is read through the same max-reads / suspension / audit machinery as GetSecret.
+func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+
+	secret, err := h.coreService.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
+	if err != nil {
+		switch {
+		case errors.Is(err, core.ErrSecretRefInvalid):
+			h.sendError(w, "InvalidParameter", "ref must be \"project/environment/name\"", http.StatusBadRequest, nil)
+		case errors.Is(err, core.ErrSecretRefNotFound):
+			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
+		default:
+			h.sendError(w, "InternalError", "Failed to resolve secret", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+
+	// Machine principals are already authorized at the secret's scope by the route gate
+	// (ScopeFromRefQuery); the per-user owner/sharing check applies to users only.
+	isMachine := userCtx.MachineIdentityID != nil
+	var value []byte
+	if isMachine {
+		value, err = h.coreService.GetSecretValue(r.Context(), secret.ID)
+	} else {
+		value, err = h.coreService.GetSecretValueWithPermissionCheck(r.Context(), secret.ID, userCtx.UserID)
+	}
+	if err != nil {
+		log.Printf("Error getting secret value by ref: %v", err)
+		if strings.Contains(err.Error(), "permission denied") {
+			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
+		} else {
+			h.sendError(w, "InternalError", "Failed to get secret value", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+
+	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
+	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	go h.coreService.LogSecretReadWithProject(core.DetachedAuditContext(r.Context()), uid, sID, secret.ProjectID, uname, sname, ip, ua) // #nosec G118
+
+	h.sendSuccess(w, map[string]interface{}{"secret": secret, "value": string(value)}, "")
 }
 
 // RestoreSecret handles POST /api/v1/secrets/{id}/restore — clears a
