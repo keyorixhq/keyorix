@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -42,13 +44,26 @@ const (
 	ssoDefaultGroupClaim = "groups"
 )
 
-// SSOProvider is a resolved OIDC provider whose endpoints have been discovered.
+// SAMLAuthn is the slice of a SAML Service Provider the SSO flow needs (satisfied by
+// *saml.Provider). It is an interface so the SAML login path is unit-tested without a
+// live IdP or a signed response.
+type SAMLAuthn interface {
+	AuthnRequest(relayState string) (redirectURL, requestID string, err error)
+	ParseResponse(r *http.Request, possibleRequestIDs []string) (*samlpkg.AssertionInfo, error)
+	Metadata() ([]byte, error)
+}
+
+// SSOProvider is a resolved SSO provider. Type is "oidc" (the default) or "saml"; the
+// type-specific fields (OAuth/JWKS for OIDC, SAML for SAML) are set accordingly, while
+// the provisioning + group/role-mapping fields below are shared by both.
 type SSOProvider struct {
 	Name        string
+	Type        string // "oidc" (default) | "saml"
 	Issuer      string
 	ClientID    string
-	OAuth       *oauth2.Config // ClientID/Secret + discovered Auth/Token endpoints + redirect
+	OAuth       *oauth2.Config // OIDC: ClientID/Secret + discovered Auth/Token endpoints + redirect
 	CompleteURL string         // <redirect origin>/auth/sso/complete — where the browser lands
+	SAML        SAMLAuthn      // SAML: the Service Provider (nil for OIDC providers)
 
 	AutoProvision bool   // JIT-create an account on first login for an unknown identity
 	DefaultRole   string // baseline role for JIT-provisioned users ("" → system_viewer)
@@ -188,6 +203,120 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	return session, user, st.ReturnTo, nil
 }
 
+// samlProvider resolves a configured SAML provider by name.
+func (c *KeyorixCore) samlProvider(name string) (*SSOProvider, error) {
+	p, ok := c.ssoProviders[name]
+	if !ok || p.Type != "saml" || p.SAML == nil {
+		return nil, fmt.Errorf("unknown SAML provider")
+	}
+	return p, nil
+}
+
+// SAMLMetadata returns the SP metadata XML for a provider (served at the metadata route).
+func (c *KeyorixCore) SAMLMetadata(name string) ([]byte, error) {
+	p, err := c.samlProvider(name)
+	if err != nil {
+		return nil, err
+	}
+	return p.SAML.Metadata()
+}
+
+// BeginSAML starts an SP-initiated login: it builds a signed-or-unsigned AuthnRequest,
+// stores the login state (RelayState key + the request ID for InResponseTo matching),
+// and returns the IdP redirect URL. Mirrors BeginSSO for OIDC.
+func (c *KeyorixCore) BeginSAML(ctx context.Context, name, returnTo string) (string, error) {
+	p, err := c.samlProvider(name)
+	if err != nil {
+		return "", err
+	}
+	relayState, err := randToken()
+	if err != nil {
+		return "", err
+	}
+	redirectURL, requestID, err := p.SAML.AuthnRequest(relayState)
+	if err != nil {
+		return "", fmt.Errorf("build SAML request: %w", err)
+	}
+	// Reuse the SSO login-state row: State is the RelayState lookup key, Nonce carries
+	// the AuthnRequest ID (matched against InResponseTo at the ACS).
+	if err := c.storage.CreateSSOLoginState(ctx, &models.SSOLoginState{
+		State:     relayState,
+		Nonce:     requestID,
+		Provider:  name,
+		ReturnTo:  sanitizeReturnTo(returnTo),
+		ExpiresAt: c.now().Add(ssoStateTTL),
+		CreatedAt: c.now(),
+	}); err != nil {
+		return "", err
+	}
+	return redirectURL, nil
+}
+
+// CompleteSAML consumes the RelayState, validates the SAMLResponse on r (signature,
+// audience, recipient, time, InResponseTo — via the vetted library), maps the assertion
+// to a user, reconciles groups/roles, and mints a session. Mirrors CompleteSSO.
+func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Request, relayState, userAgent, ip string) (*models.Session, *models.User, string, error) {
+	p, err := c.samlProvider(name)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	st, err := c.storage.ConsumeSSOLoginState(ctx, relayState)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("invalid or expired login state")
+	}
+	if st.Provider != name {
+		return nil, nil, "", fmt.Errorf("login state does not match the callback provider")
+	}
+	if c.now().After(st.ExpiresAt) {
+		return nil, nil, "", fmt.Errorf("login state expired")
+	}
+
+	info, err := p.SAML.ParseResponse(r, []string{st.Nonce})
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if strings.TrimSpace(info.Subject) == "" && strings.TrimSpace(info.Email) == "" {
+		return nil, nil, "", fmt.Errorf("the assertion carried no subject or email")
+	}
+
+	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if user == nil {
+		if !p.AutoProvision {
+			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
+		}
+		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, info.Name); err != nil {
+			return nil, nil, "", err
+		}
+	}
+	if AccountLoginBlocked(user.AccountState) {
+		return nil, nil, "", fmt.Errorf("account suspended")
+	}
+
+	// Reconcile only when the assertion actually carried groups — an IdP that omits the
+	// groups attribute must not strip a user's memberships/roles (matches the OIDC
+	// absent-claim no-op).
+	if len(info.Groups) > 0 {
+		if p.GroupSync {
+			c.reconcileSSOGroups(ctx, p, user.ID, info.Groups)
+		}
+		if len(p.GroupRoleMap) > 0 {
+			c.reconcileSSORoles(ctx, p, user.ID, info.Groups)
+		}
+	}
+
+	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
+	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
+		fmt.Sprintf("SAML login via %s (subject=%s)", name, info.Subject))
+	return session, user, st.ReturnTo, nil
+}
+
 // resolveSSOUser maps the IdP identity to a Keyorix user: the SCIM externalId
 // (subject) first, then email. Returns (nil, nil) when neither matches — the caller
 // decides whether to refuse the login or JIT-provision the account.
@@ -284,6 +413,12 @@ func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID 
 	if !present {
 		return // IdP did not assert groups in the id_token — leave memberships untouched.
 	}
+	c.reconcileSSOGroups(ctx, p, userID, asserted)
+}
+
+// reconcileSSOGroups reconciles native group memberships to match the asserted group
+// names — shared by the OIDC (id_token claim) and SAML (assertion attribute) paths.
+func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, userID uint, asserted []string) {
 	assertedSet := make(map[string]bool, len(asserted))
 	for _, g := range asserted {
 		if g = strings.TrimSpace(g); g != "" {
@@ -349,6 +484,13 @@ func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID u
 	if !present {
 		return // IdP did not assert groups in the id_token — leave roles untouched.
 	}
+	c.reconcileSSORoles(ctx, p, userID, asserted)
+}
+
+// reconcileSSORoles reconciles the user's grants of the MAPPED roles to match the roles
+// their asserted groups map to — shared by the OIDC and SAML paths. Authoritative only
+// over roles named in GroupRoleMap (manual grants survive).
+func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, userID uint, asserted []string) {
 	assertedSet := make(map[string]bool, len(asserted))
 	for _, g := range asserted {
 		if g = strings.TrimSpace(g); g != "" {
