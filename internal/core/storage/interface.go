@@ -24,6 +24,15 @@ type Storage interface {
 	// when another replica holds the lock — the caller should simply skip this tick.
 	WithSchedulerLock(ctx context.Context, key int64, fn func() error) (ran bool, err error)
 
+	// WithTransaction runs fn inside a single storage transaction: every mutation fn
+	// performs through the provided Storage commits together, or rolls back together if
+	// fn returns an error. The backing store decides the semantics — the local (DB)
+	// store opens a real transaction and hands fn a transaction-scoped Storage; the
+	// remote store runs fn directly against itself (each remote call is already atomic
+	// server-side, so there is no client-side transaction to open). Use it for
+	// multi-step mutations that must not half-apply (e.g. a suspend + delete pair).
+	WithTransaction(ctx context.Context, fn func(Storage) error) error
+
 	// Project / Environment management
 	CreateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	GetProject(ctx context.Context, id uint) (*models.Project, error)

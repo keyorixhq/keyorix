@@ -197,11 +197,17 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	user.IsActive = false
 	user.AccountState = AccountSuspended
 	user.UpdatedAt = c.now()
-	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	_ = c.storage.DeleteSessionsForUserExcept(ctx, id, 0)
-	if err := c.storage.DeleteUser(ctx, id); err != nil {
+	// Suspend + terminate sessions + soft-delete atomically: a SCIM DELETE either fully
+	// deprovisions or leaves the account untouched, so a mid-way storage failure can't
+	// leave it half-deprovisioned (suspended but not deleted), which would make retries
+	// non-idempotent.
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if _, err := tx.UpdateUser(ctx, user); err != nil {
+			return err
+		}
+		_ = tx.DeleteSessionsForUserExcept(ctx, id, 0)
+		return tx.DeleteUser(ctx, id)
+	}); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.writeAuditEvent(ctx, EventSCIMUserDeprovisioned, actorPtr(actorID), nil,

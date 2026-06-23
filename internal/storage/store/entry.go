@@ -76,10 +76,13 @@ type LocalStorage struct {
 	// auditChainMu serializes audit-event appends so the read-chain-head +
 	// insert critical section is atomic within this process (ADR-029). The
 	// PostgreSQL advisory lock in LogAuditEvent extends this across processes.
-	auditChainMu sync.Mutex
+	// A pointer so a transaction-scoped LocalStorage (see WithTransaction) shares the
+	// SAME mutex as its parent — otherwise an audit append inside a transaction would
+	// not serialize against concurrent appends on the base store.
+	auditChainMu *sync.Mutex
 }
 
 // NewLocalStorage creates a LocalStorage backed by the given *gorm.DB.
 func NewLocalStorage(db *gorm.DB) *LocalStorage {
-	return &LocalStorage{db: db}
+	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}}
 }

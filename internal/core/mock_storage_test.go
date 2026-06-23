@@ -19,6 +19,11 @@ func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() er
 	return true, fn()
 }
 
+// WithTransaction runs fn directly against the mock (no real transaction in tests).
+func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
+	return fn(m)
+}
+
 // Login rate-limiting stubs (core rate-limit logic is tested against real SQLite).
 func (m *MockStorage) RecordLoginAttempt(_ context.Context, _ string, _ time.Time) error { return nil }
 func (m *MockStorage) CountRecentLoginAttempts(_ context.Context, _ string, _ time.Time) (int64, error) {
