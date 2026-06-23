@@ -161,3 +161,48 @@ func TestRefreshSession_NoCeilingRefreshesForever(t *testing.T) {
 	require.Equal(t, sessionTestNow.Add(24*time.Hour), *captured.ExpiresAt)
 	require.Nil(t, captured.AbsoluteExpiresAt)
 }
+
+// TestValidateSessionToken_AbsoluteCeilingEnforcedAtBoundary pins that the hard
+// absolute-lifetime ceiling is enforced when a session is VALIDATED, independently of the
+// clamp RefreshSession/mintSession apply to ExpiresAt. The clamp makes an expired ceiling
+// imply an expired access window in normal operation (see the RefreshSession tests above),
+// but the ceiling must not DEPEND on every issuer clamping correctly: a session whose access
+// window is still open yet whose ceiling has passed (a future non-clamping path, or a
+// tampered row) must be rejected at the validation boundary. Self-checking invariant.
+func TestValidateSessionToken_AbsoluteCeilingEnforcedAtBoundary(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("past ceiling is rejected even with an open access window", func(t *testing.T) {
+		store := new(MockStorage)
+		c := newSessionCore(store, time.Hour, 12*time.Hour)
+		accessOpen := sessionTestNow.Add(time.Hour)   // access window still valid
+		ceilingPast := sessionTestNow.Add(-time.Hour) // absolute ceiling already passed
+		store.On("GetSession", ctx, "tok").Return(&models.Session{
+			ID: 7, UserID: 2, ExpiresAt: &accessOpen, AbsoluteExpiresAt: &ceilingPast,
+		}, nil)
+
+		_, _, err := c.ValidateSessionToken(ctx, "tok")
+		require.ErrorContains(t, err, "lifetime exceeded")
+		// Fails fast at the boundary — no last-seen write or user lookup for a dead session.
+		store.AssertNotCalled(t, "TouchSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "GetUser", mock.Anything, mock.Anything)
+	})
+
+	t.Run("a future ceiling still validates", func(t *testing.T) {
+		store := new(MockStorage)
+		c := newSessionCore(store, time.Hour, 12*time.Hour)
+		accessOpen := sessionTestNow.Add(time.Hour)
+		ceilingFuture := sessionTestNow.Add(6 * time.Hour)
+		store.On("GetSession", ctx, "tok").Return(&models.Session{
+			ID: 7, UserID: 2, ExpiresAt: &accessOpen, AbsoluteExpiresAt: &ceilingFuture,
+		}, nil)
+		store.On("TouchSession", ctx, uint(7), mock.Anything, mock.Anything).Return(nil)
+		store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, IsActive: true, AccountState: AccountActive}, nil)
+		store.On("GetUserRoles", ctx, uint(2)).Return([]*models.Role{{Name: "viewer"}}, nil)
+
+		user, roles, err := c.ValidateSessionToken(ctx, "tok")
+		require.NoError(t, err)
+		require.Equal(t, uint(2), user.ID)
+		require.Equal(t, []string{"viewer"}, roles)
+	})
+}
