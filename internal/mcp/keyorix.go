@@ -1,0 +1,121 @@
+// Package mcp implements a Model Context Protocol (MCP) server that exposes read-only
+// Keyorix secret access to an AI agent over stdio (ADR-061). It is a thin, audited proxy
+// in front of the Keyorix API: every call carries a least-privilege machine-identity
+// token and is subject to Keyorix's scoped permission, max_reads, suspension, and audit.
+// Secret values are never logged.
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// KeyorixClient reads secrets from a Keyorix server with a bearer (machine-identity)
+// token. It satisfies SecretReader.
+type KeyorixClient struct {
+	baseURL string
+	token   string
+	hc      *http.Client
+}
+
+// NewKeyorixClient builds a client for the given Keyorix base URL and bearer token.
+func NewKeyorixClient(baseURL, token string) *KeyorixClient {
+	return &KeyorixClient{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
+		hc:      &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// SecretInfo is a discovery entry: a usable reference plus minimal metadata (no value).
+type SecretInfo struct {
+	Ref  string `json:"ref"`
+	Type string `json:"type,omitempty"`
+}
+
+// GetSecret returns the value of the secret referenced by "project/environment/name"
+// via the by-reference read endpoint (ADR-059).
+func (c *KeyorixClient) GetSecret(ctx context.Context, ref string) (string, error) {
+	q := url.Values{}
+	q.Set("ref", ref)
+	var body struct {
+		Value string `json:"value"`
+	}
+	if err := c.getJSON(ctx, "/api/v1/secrets/value?"+q.Encode(), &body); err != nil {
+		return "", err
+	}
+	return body.Value, nil
+}
+
+// ListSecrets returns the references the token can see, optionally filtered to one
+// environment. Metadata only — no values are read. Capped at one page (100).
+func (c *KeyorixClient) ListSecrets(ctx context.Context, environment string) ([]SecretInfo, error) {
+	var body struct {
+		Secrets []struct {
+			Name            string `json:"Name"`
+			Type            string `json:"Type"`
+			ProjectName     string `json:"project_name"`
+			EnvironmentName string `json:"environment_name"`
+		} `json:"secrets"`
+	}
+	if err := c.getJSON(ctx, "/api/v1/secrets?page_size=100", &body); err != nil {
+		return nil, err
+	}
+	out := make([]SecretInfo, 0, len(body.Secrets))
+	for _, s := range body.Secrets {
+		if environment != "" && !strings.EqualFold(s.EnvironmentName, environment) {
+			continue
+		}
+		if s.ProjectName == "" || s.EnvironmentName == "" || s.Name == "" {
+			continue // can't form an unambiguous ref without all three parts
+		}
+		out = append(out, SecretInfo{
+			Ref:  s.ProjectName + "/" + s.EnvironmentName + "/" + s.Name,
+			Type: s.Type,
+		})
+	}
+	return out, nil
+}
+
+// getJSON performs an authenticated GET and decodes the {"data": …} envelope into out.
+func (c *KeyorixClient) getJSON(ctx context.Context, path string, out interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("not authorized (HTTP %d) — check the token and its secrets.read permission", resp.StatusCode)
+	case resp.StatusCode == http.StatusNotFound:
+		return fmt.Errorf("not found")
+	case resp.StatusCode == http.StatusBadRequest:
+		return fmt.Errorf("invalid request (want a project/environment/name reference)")
+	case resp.StatusCode >= 400:
+		return fmt.Errorf("server returned HTTP %d", resp.StatusCode)
+	}
+
+	var env struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	if env.Data == nil {
+		return fmt.Errorf("empty data in response")
+	}
+	return json.Unmarshal(env.Data, out)
+}
