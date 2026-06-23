@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,7 +31,12 @@ type EncryptionMetadata struct {
 	Iterations  int       `json:"iterations,omitempty"`
 	ChunkIndex  int       `json:"chunk_index,omitempty"`
 	TotalChunks int       `json:"total_chunks,omitempty"`
-	AADVersion  string    `json:"aad_version,omitempty"` // "v2" = secretID:projectID:versionNumber; absent = legacy (no AAD). ("v1" was the pre-migration secretID:namespaceID:versionNumber scheme; no longer produced.)
+	// ChunkStreamID is a random per-encryption identifier shared by every chunk of one
+	// chunked secret. With ChunkIndex/TotalChunks it is folded into each chunk's AAD
+	// (chunkAAD), so a chunk cannot be reordered, dropped, or spliced in from another
+	// chunked secret without failing the GCM tag check on decryption.
+	ChunkStreamID string `json:"chunk_stream_id,omitempty"`
+	AADVersion    string `json:"aad_version,omitempty"` // "v2" = secretID:projectID:versionNumber; absent = legacy (no AAD). ("v1" was the pre-migration secretID:namespaceID:versionNumber scheme; no longer produced.)
 }
 
 // EncryptedData represents encrypted content with metadata
@@ -178,6 +184,16 @@ func (es *EncryptionService) EncryptChunked(plaintext []byte, chunkSize int, key
 		chunkSize = 64 * 1024 // Default 64KB chunks
 	}
 
+	// A random per-call stream ID binds every chunk to THIS encryption. Together with the
+	// chunk index and total, folded into each chunk's AAD, it makes reorder, truncation,
+	// and cross-stream splice all fail the GCM tag check on decryption — the chunk index
+	// and total in the (unauthenticated) metadata alone could otherwise be edited freely.
+	streamIDBytes := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, streamIDBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate chunk stream id: %w", err)
+	}
+	streamID := hex.EncodeToString(streamIDBytes)
+
 	var chunks []*EncryptedData
 	totalChunks := (len(plaintext) + chunkSize - 1) / chunkSize
 
@@ -187,15 +203,17 @@ func (es *EncryptionService) EncryptChunked(plaintext []byte, chunkSize int, key
 			end = len(plaintext)
 		}
 
-		chunk := plaintext[i:end]
-		encryptedChunk, err := es.Encrypt(chunk, keyVersion)
+		idx := len(chunks)
+		encryptedChunk, err := es.EncryptWithAAD(plaintext[i:end], keyVersion, chunkAAD(streamID, idx, totalChunks))
 		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt chunk %d: %w", len(chunks), err)
+			return nil, fmt.Errorf("failed to encrypt chunk %d: %w", idx, err)
 		}
 
-		// Add chunk metadata
-		encryptedChunk.Metadata.ChunkIndex = len(chunks)
+		// Add chunk metadata. These values are also bound into the AAD above, so any
+		// tampering with them is caught by DecryptWithAAD, not trusted blindly.
+		encryptedChunk.Metadata.ChunkIndex = idx
 		encryptedChunk.Metadata.TotalChunks = totalChunks
+		encryptedChunk.Metadata.ChunkStreamID = streamID
 
 		chunks = append(chunks, encryptedChunk)
 	}
@@ -203,35 +221,55 @@ func (es *EncryptionService) EncryptChunked(plaintext []byte, chunkSize int, key
 	return chunks, nil
 }
 
-// DecryptChunked decrypts chunked data and reassembles it
+// chunkAAD binds a chunk to its stream, position, and count. Reconstructed identically on
+// decryption from the chunk's claimed metadata, so a reordered, truncated, or spliced-in
+// chunk yields a different AAD than it was sealed with and fails the AES-GCM tag check.
+func chunkAAD(streamID string, index, total int) []byte {
+	return []byte(fmt.Sprintf("keyorix:chunk:v1:%s:%d:%d", streamID, index, total))
+}
+
+// DecryptChunked decrypts chunked data and reassembles it. Every chunk must belong to the
+// same stream and agree on the total; the per-chunk AAD (stream+index+total) is the
+// cryptographic backstop, so reorder, truncation, duplication, and cross-secret splice all
+// fail closed rather than reassembling an attacker-chosen plaintext.
 func (es *EncryptionService) DecryptChunked(chunks []*EncryptedData) ([]byte, error) {
 	if len(chunks) == 0 {
 		return nil, fmt.Errorf("no chunks provided")
 	}
 
-	// Verify chunk integrity
 	totalChunks := chunks[0].Metadata.TotalChunks
+	streamID := chunks[0].Metadata.ChunkStreamID
 	if len(chunks) != totalChunks {
 		return nil, fmt.Errorf("expected %d chunks, got %d", totalChunks, len(chunks))
 	}
 
-	// Sort chunks by index (in case they're out of order)
+	// Sort chunks by index (they may arrive out of order), rejecting any inconsistency
+	// before decryption; the AAD check below re-verifies the same facts cryptographically.
 	sortedChunks := make([]*EncryptedData, totalChunks)
 	for _, chunk := range chunks {
-		if chunk.Metadata.ChunkIndex >= totalChunks {
+		if chunk.Metadata.ChunkStreamID != streamID {
+			return nil, fmt.Errorf("chunk stream id mismatch (chunk spliced from another secret?)")
+		}
+		if chunk.Metadata.TotalChunks != totalChunks {
+			return nil, fmt.Errorf("inconsistent total chunks across the set")
+		}
+		if chunk.Metadata.ChunkIndex < 0 || chunk.Metadata.ChunkIndex >= totalChunks {
 			return nil, fmt.Errorf("invalid chunk index %d", chunk.Metadata.ChunkIndex)
+		}
+		if sortedChunks[chunk.Metadata.ChunkIndex] != nil {
+			return nil, fmt.Errorf("duplicate chunk index %d", chunk.Metadata.ChunkIndex)
 		}
 		sortedChunks[chunk.Metadata.ChunkIndex] = chunk
 	}
 
-	// Decrypt and reassemble
+	// Decrypt and reassemble, binding each chunk to its position via the AAD.
 	var result []byte
 	for i, chunk := range sortedChunks {
 		if chunk == nil {
 			return nil, fmt.Errorf("missing chunk at index %d", i)
 		}
 
-		decrypted, err := es.Decrypt(chunk)
+		decrypted, err := es.DecryptWithAAD(chunk, chunkAAD(streamID, i, totalChunks))
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt chunk %d: %w", i, err)
 		}
