@@ -45,11 +45,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -654,6 +656,35 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("WebAuthn enabled (RP ID %q, %d origin(s))", wa.RPID, len(wa.RPOrigins))
 	}
 
+	// Wire the offline-license feature gate (ADR-065). Fail-safe throughout: a missing,
+	// unreadable, or invalid license never blocks startup — the gate degrades to the
+	// community baseline. A non-release build embeds no license key, so any token evaluates
+	// to the baseline anyway. The gate evaluates the token freshly on every call.
+	reg, terr := trust.DefaultRegistry()
+	if terr != nil {
+		// A malformed embedded key spec is a build/release misconfiguration; surface it,
+		// but still run (no trusted keys → baseline).
+		log.Printf("WARNING: trusted-key registry: %v (running community baseline)", terr)
+		reg = nil
+	}
+	var token string
+	if p := strings.TrimSpace(cfg.License.Path); p != "" {
+		b, rerr := os.ReadFile(p) // #nosec G304 -- operator-configured license path
+		if rerr != nil {
+			log.Printf("WARNING: license file %q unreadable: %v (running community baseline)", p, rerr)
+		} else {
+			token = strings.TrimSpace(string(b))
+		}
+	}
+	gate := license.NewGate(token, reg, cfg.License.DeploymentID, cfg.LicenseGrace())
+	coreService.SetLicenseGate(gate)
+	st := gate.Status()
+	if st.Grants() {
+		log.Printf("License: %s (%s) — state %s", st.Licensee, st.Plan, st.State)
+	} else {
+		log.Printf("License: community baseline (state %s)", st.State)
+	}
+
 	return coreService, encSvc, nil
 }
 
@@ -676,6 +707,10 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	if encSvc != nil {
 		defer encSvc.Shutdown()
 	}
+
+	// Record the evaluated license state once at startup (ADR-065), so the entitlement
+	// (and any degrade reason) is on the audit record.
+	coreService.AuditLicenseState(ctx)
 
 	// Create HTTP router
 	router, err := httpServer.NewRouter(cfg, coreService)
