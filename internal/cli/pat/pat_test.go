@@ -101,3 +101,13 @@ func TestDescribeScope(t *testing.T) {
 	assert.Equal(t, "secrets.read,secrets.write",
 		describeScope(patView{Scopes: []string{"secrets.read", "secrets.write"}}))
 }
+
+func TestPatDate(t *testing.T) {
+	assert.Equal(t, "never", patDate(nil), "absent timestamp")
+	empty := ""
+	assert.Equal(t, "never", patDate(&empty), "empty timestamp")
+	ts := "2026-06-20T10:30:00Z"
+	assert.Equal(t, "2026-06-20", patDate(&ts), "RFC3339 rendered as a compact date")
+	bad := "not-a-time"
+	assert.Equal(t, "not-a-time", patDate(&bad), "unparseable value passed through")
+}
