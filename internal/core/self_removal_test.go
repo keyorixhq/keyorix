@@ -98,6 +98,46 @@ func TestRemoveSelfFromShare_ShareNotFound(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
+// TestRemoveSelfFromShare_GroupShareNotSelfRemovable locks in the `!share.IsGroup`
+// guard: a share whose RecipientID matches the caller but is a GROUP share grants
+// access via group membership, not a direct user share. Self-remove must skip it and
+// return "share not found" — deleting it would remove the secret for the whole group.
+func TestRemoveSelfFromShare_GroupShareNotSelfRemovable(t *testing.T) {
+	err := i18n.InitializeForTesting()
+	require.NoError(t, err)
+
+	mockStorage := new(MockStorage)
+	core := &KeyorixCore{
+		storage: mockStorage,
+	}
+
+	ctx := context.Background()
+	secretID := uint(1)
+	userID := uint(2)
+
+	// The only share has RecipientID == userID but is a GROUP share.
+	shares := []*models.ShareRecord{
+		{
+			ID:          9,
+			SecretID:    1,
+			RecipientID: 2,
+			IsGroup:     true,
+			Permission:  "read",
+			CreatedAt:   time.Now(),
+		},
+	}
+
+	mockStorage.On("ListSharesBySecret", ctx, secretID).Return(shares, nil)
+
+	err = core.RemoveSelfFromShare(ctx, secretID, userID)
+
+	// The group share must be skipped (not found) and never deleted.
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "Share not found")
+	mockStorage.AssertNotCalled(t, "DeleteShareRecord", mock.Anything, mock.Anything)
+	mockStorage.AssertExpectations(t)
+}
+
 func TestRemoveSelfFromShare_ValidationErrors(t *testing.T) {
 	// Initialize i18n for testing
 	err := i18n.InitializeForTesting()
