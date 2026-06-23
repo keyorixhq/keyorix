@@ -1,8 +1,8 @@
 // chat.go — Slack / Microsoft Teams notification channels. Both accept an incoming
 // webhook URL that carries its own secret token; the only per-platform difference is
-// the JSON payload shape (Slack: {text}; Teams: a MessageCard). Like the other sinks
-// it delivers asynchronously off a bounded queue so a slow chat endpoint never blocks
-// the triggering action.
+// the JSON payload shape (Slack: {text}; Teams: a MessageCard). Delivery, retry, and
+// metrics are handled by the shared engine (delivery.go); the channel label is the
+// platform (slack|teams).
 package notifychan
 
 import (
@@ -10,10 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -41,17 +39,19 @@ type ChatConfig struct {
 
 // ChatSink delivers notifications to a Slack or Teams incoming webhook.
 type ChatSink struct {
-	cfg     ChatConfig
-	client  *http.Client
-	queue   chan core.NotificationEvent
-	wg      sync.WaitGroup
-	mu      sync.Mutex
-	dropped int
+	cfg    ChatConfig
+	client *http.Client
+	d      *deliverer
 }
 
 // NewChat builds a chat sink and starts its worker. The kind must be slack|teams and
 // the webhook URL is required. Close() drains in-flight events at shutdown.
 func NewChat(cfg ChatConfig) (*ChatSink, error) {
+	return newChat(cfg, deliveryBaseBackoff)
+}
+
+// newChat is the constructor with an injectable retry backoff for tests.
+func newChat(cfg ChatConfig, baseBackoff time.Duration) (*ChatSink, error) {
 	switch cfg.Kind {
 	case ChatSlack, ChatTeams:
 	default:
@@ -63,57 +63,41 @@ func NewChat(cfg ChatConfig) (*ChatSink, error) {
 	s := &ChatSink{
 		cfg:    cfg,
 		client: &http.Client{Timeout: chatTimeout},
-		queue:  make(chan core.NotificationEvent, chatQueueSize),
 	}
-	s.wg.Add(1)
-	go s.worker()
+	s.d = newDeliverer(string(cfg.Kind), chatQueueSize, baseBackoff, s.send)
 	return s, nil
 }
 
-// Deliver enqueues the event. Non-blocking; drops (and counts) when the queue is full.
+// Deliver enqueues the event. Non-blocking; a full queue drops and counts it.
 func (s *ChatSink) Deliver(ev core.NotificationEvent) {
 	if s == nil {
 		return
 	}
-	select {
-	case s.queue <- ev:
-	default:
-		s.mu.Lock()
-		s.dropped++
-		dropped := s.dropped
-		s.mu.Unlock()
-		log.Printf("notifychan: %s queue full, dropped notification (total dropped: %d)", s.cfg.Kind, dropped)
-	}
+	s.d.enqueue(ev)
 }
 
-func (s *ChatSink) worker() {
-	defer s.wg.Done()
-	for ev := range s.queue {
-		if err := s.send(context.Background(), ev); err != nil {
-			log.Printf("notifychan: %s delivery failed: %v", s.cfg.Kind, err)
-		}
-	}
-}
-
-func (s *ChatSink) send(ctx context.Context, ev core.NotificationEvent) error {
+// send POSTs the platform payload once. retryable reports whether a non-nil err is
+// transient (5xx/429/transport) versus permanent (4xx / marshalling).
+func (s *ChatSink) send(ctx context.Context, ev core.NotificationEvent) (retryable bool, err error) {
 	body, err := json.Marshal(chatPayload(s.cfg.Kind, ev))
 	if err != nil {
-		return fmt.Errorf("marshal %s payload: %w", s.cfg.Kind, err)
+		return false, fmt.Errorf("marshal %s payload: %w", s.cfg.Kind, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.WebhookURL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return true, err // transport / timeout — transient
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s webhook returned %s", s.cfg.Kind, strings.TrimSpace(resp.Status))
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return false, nil
 	}
-	return nil
+	retryable = resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
+	return retryable, fmt.Errorf("%s webhook returned %s", s.cfg.Kind, strings.TrimSpace(resp.Status))
 }
 
 // chatText renders the notification as a single plain-text message (no remote
@@ -150,11 +134,10 @@ func chatPayload(kind ChatKind, ev core.NotificationEvent) interface{} {
 	return map[string]string{"text": text}
 }
 
-// Close stops the worker after draining queued events.
+// Close stops the worker after draining queued events. Idempotent.
 func (s *ChatSink) Close() {
 	if s == nil {
 		return
 	}
-	close(s.queue)
-	s.wg.Wait()
+	s.d.close()
 }

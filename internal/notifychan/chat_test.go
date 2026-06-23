@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -66,4 +69,30 @@ func TestNewChat_Validation(t *testing.T) {
 	require.Error(t, err)
 	_, err = NewChat(ChatConfig{Kind: ChatSlack})
 	require.Error(t, err)
+}
+
+func TestChatSink_RetriesTransientThenSucceeds(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable) // transient — retried by the shared engine
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	delivBefore := testutil.ToFloat64(notifyDeliveries.WithLabelValues("slack", outcomeDelivered))
+	retryBefore := testutil.ToFloat64(notifyRetries.WithLabelValues("slack"))
+
+	sink, err := newChat(ChatConfig{Kind: ChatSlack, WebhookURL: srv.URL}, time.Millisecond)
+	require.NoError(t, err)
+	defer sink.Close()
+	sink.Deliver(core.NotificationEvent{Title: "x"})
+
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(notifyDeliveries.WithLabelValues("slack", outcomeDelivered))-delivBefore == 1
+	}, 2*time.Second, 5*time.Millisecond)
+	assert.Equal(t, int32(3), hits.Load(), "should retry the two 503s then succeed")
+	assert.Equal(t, 2.0, testutil.ToFloat64(notifyRetries.WithLabelValues("slack"))-retryBefore)
 }

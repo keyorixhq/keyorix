@@ -1,16 +1,13 @@
 // email.go — the SMTP notification channel. Like the credential-delivery mailer
 // (ADR-028) it delegates TLS correctness to wneessen/go-mail rather than hand-
-// rolling net/smtp. Sending is asynchronous (a bounded queue drained by a worker)
-// so Deliver never blocks the triggering action; events without a recipient email
-// are skipped.
+// rolling net/smtp. Delivery, retry, and metrics are handled by the shared engine
+// (delivery.go); events without a recipient email are dropped before they enqueue.
 package notifychan
 
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
-	"sync"
 	"time"
 
 	mail "github.com/wneessen/go-mail"
@@ -35,16 +32,18 @@ type EmailConfig struct {
 
 // EmailSink delivers notifications as plaintext email via the operator's SMTP relay.
 type EmailSink struct {
-	cfg     EmailConfig
-	queue   chan core.NotificationEvent
-	wg      sync.WaitGroup
-	mu      sync.Mutex
-	dropped int
+	cfg EmailConfig
+	d   *deliverer
 }
 
 // NewEmail validates the SMTP settings and starts the delivery worker. Host and
 // From are required. Close() drains in-flight events at shutdown.
 func NewEmail(cfg EmailConfig) (*EmailSink, error) {
+	return newEmail(cfg, deliveryBaseBackoff)
+}
+
+// newEmail is the constructor with an injectable retry backoff for tests.
+func newEmail(cfg EmailConfig, baseBackoff time.Duration) (*EmailSink, error) {
 	if cfg.Host == "" {
 		return nil, fmt.Errorf("notifychan: email smtp host is required")
 	}
@@ -56,58 +55,43 @@ func NewEmail(cfg EmailConfig) (*EmailSink, error) {
 	default:
 		return nil, fmt.Errorf("notifychan: unknown smtp tls mode %q (want starttls|implicit|none)", cfg.TLS)
 	}
-	s := &EmailSink{cfg: cfg, queue: make(chan core.NotificationEvent, emailQueueSize)}
-	s.wg.Add(1)
-	go s.worker()
+	s := &EmailSink{cfg: cfg}
+	s.d = newDeliverer("email", emailQueueSize, baseBackoff, s.send)
 	return s, nil
 }
 
-// Deliver enqueues the event. Non-blocking; drops (and counts) when the queue is
-// full so a wedged relay never stalls the caller.
+// Deliver enqueues the event. Non-blocking; a full queue drops and counts it. Events
+// without a recipient address are dropped here (nothing to send), not enqueued.
 func (s *EmailSink) Deliver(ev core.NotificationEvent) {
-	if s == nil {
+	if s == nil || ev.Email == "" {
 		return
 	}
-	select {
-	case s.queue <- ev:
-	default:
-		s.mu.Lock()
-		s.dropped++
-		dropped := s.dropped
-		s.mu.Unlock()
-		log.Printf("notifychan: email queue full, dropped notification (total dropped: %d)", dropped)
-	}
+	s.d.enqueue(ev)
 }
 
-func (s *EmailSink) worker() {
-	defer s.wg.Done()
-	for ev := range s.queue {
-		if ev.Email == "" {
-			continue // no address to send to
-		}
-		if err := s.send(context.Background(), ev); err != nil {
-			log.Printf("notifychan: email delivery to %s failed: %v", ev.Email, err)
-		}
-	}
-}
-
-func (s *EmailSink) send(ctx context.Context, ev core.NotificationEvent) error {
+// send mails the event once. retryable reports whether a non-nil err is transient: a
+// bad from/to address or misconfiguration is permanent; an SMTP dial/relay error is
+// transient and worth retrying.
+func (s *EmailSink) send(ctx context.Context, ev core.NotificationEvent) (retryable bool, err error) {
 	subject, body := renderEmail(ev)
 	msg := mail.NewMsg()
-	if err := msg.From(s.cfg.From); err != nil {
-		return fmt.Errorf("invalid from address %q: %w", s.cfg.From, err)
+	if ferr := msg.From(s.cfg.From); ferr != nil {
+		return false, fmt.Errorf("invalid from address %q: %w", s.cfg.From, ferr)
 	}
-	if err := msg.To(ev.Email); err != nil {
-		return fmt.Errorf("invalid recipient %q: %w", ev.Email, err)
+	if terr := msg.To(ev.Email); terr != nil {
+		return false, fmt.Errorf("invalid recipient %q: %w", ev.Email, terr)
 	}
 	msg.Subject(subject)
 	msg.SetBodyString(mail.TypeTextPlain, body)
 
 	client, err := s.newClient()
 	if err != nil {
-		return err
+		return false, err // misconfiguration — permanent
 	}
-	return client.DialAndSendWithContext(ctx, msg)
+	if err := client.DialAndSendWithContext(ctx, msg); err != nil {
+		return true, err // SMTP relay / network error — transient
+	}
+	return false, nil
 }
 
 // newClient builds a go-mail client from the SMTP settings, selecting the TLS
@@ -155,11 +139,10 @@ func renderEmail(ev core.NotificationEvent) (subject, body string) {
 	return subject, b.String()
 }
 
-// Close stops the worker after draining queued events.
+// Close stops the worker after draining queued events. Idempotent.
 func (s *EmailSink) Close() {
 	if s == nil {
 		return
 	}
-	close(s.queue)
-	s.wg.Wait()
+	s.d.close()
 }
