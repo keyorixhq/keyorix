@@ -269,6 +269,11 @@ func joinRefs(refs ...[]string) string {
 	return out
 }
 
+var (
+	controlsCSV    bool
+	controlsOutput string
+)
+
 var controlsCmd = &cobra.Command{
 	Use:          "controls",
 	Short:        "Control matrix — controls mapped to ISO 27001 / SOC 2 / NIS2 / DORA with status",
@@ -277,6 +282,14 @@ var controlsCmd = &cobra.Command{
 		c, ok := common.NewRemoteClient()
 		if !ok {
 			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+		}
+		// --csv downloads the server's canonical controls.csv (the same artifact the
+		// dashboard exports); the default prints the human-readable matrix.
+		if controlsCSV {
+			return emitCSV(c, "/api/v1/compliance/controls.csv", controlsOutput, "Control matrix CSV")
+		}
+		if controlsOutput != "" {
+			return fmt.Errorf("--output is only valid together with --csv")
 		}
 		var m controlMatrix
 		if err := c.Get(context.Background(), "/api/v1/compliance/controls", &m); err != nil {
@@ -352,6 +365,8 @@ not been modified. Requires server-side encryption (the signing key is DEK-deriv
 
 func init() {
 	exportCmd.Flags().StringVar(&exportOutput, "output", "", "Write the evidence pack to a file instead of stdout")
+	controlsCmd.Flags().BoolVar(&controlsCSV, "csv", false, "Download the control matrix as CSV instead of the text report")
+	controlsCmd.Flags().StringVar(&controlsOutput, "output", "", "With --csv, write to a file instead of stdout")
 	verifyCmd.Flags().StringVar(&verifyFile, "file", "", "Path to the evidence pack JSON to verify (required)")
 	verifyCmd.Flags().StringVar(&verifySig, "sig", "", "Path to the signature file (default <file>.sig)")
 	ComplianceCmd.AddCommand(reportCmd, controlsCmd, exportCmd, verifyCmd)

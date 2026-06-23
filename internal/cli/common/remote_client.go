@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 
@@ -94,6 +95,33 @@ func (c *RemoteClient) Get(ctx context.Context, path string, out interface{}) er
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
 	}
 	return decodeEnvelope(resp, out, path)
+}
+
+// GetRaw performs a GET and returns the raw, un-enveloped response body. Used for
+// endpoints that serve a non-JSON artifact directly (e.g. the text/csv compliance and
+// inventory exports), where the dashboard downloads the same bytes.
+func (c *RemoteClient) GetRaw(ctx context.Context, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Accept", "text/csv, */*")
+
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response from %s: %w", path, err)
+	}
+	return body, nil
 }
 
 // Post serialises body as JSON, POSTs to path, strips the envelope, and decodes into out.
