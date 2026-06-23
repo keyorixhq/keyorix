@@ -49,7 +49,8 @@ sso:
 1. Hand your IdP admin the SP metadata (`…/metadata`), or register the SP manually with
    the `sp_entity_id` + `acs_url` above.
 2. Put the IdP's metadata at `idp_metadata_file` (or paste it inline).
-3. Send users to `/auth/saml/corp/login`.
+3. Send users to `/auth/saml/corp/login`. Add `?return_to=<in-app path>` to land them on a
+   specific page after sign-in (the path is carried through as RelayState).
 
 ## Security
 
