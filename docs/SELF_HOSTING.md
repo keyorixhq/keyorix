@@ -187,6 +187,21 @@ permanent and not retried. A rising `failed`/`dropped` rate means the endpoint i
 unhealthy or too slow to keep up — alert on
 `rate(keyorix_webhook_deliveries_total{outcome=~"failed|dropped"}[5m]) > 0`.
 
+### SIEM audit forwarding
+
+When SIEM forwarding is enabled, the audit-event forwarder (Splunk HEC / Datadog /
+webhook) exports the same delivery health — losing audit events silently is a SOC 2 /
+ISO 27001 finding, so a wedged or failing SIEM should page:
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `keyorix_siem_forwards_total{outcome}` | counter | Forwards by terminal outcome: `delivered`, `failed` (a 4xx or retries exhausted), or `dropped` (the bounded queue was full). |
+| `keyorix_siem_forward_retries_total` | counter | Forwards retried after a transient (5xx / 429 / transport) failure. |
+
+Transient failures retry with exponential backoff; `4xx` is permanent. Alert on
+`rate(keyorix_siem_forwards_total{outcome=~"failed|dropped"}[5m]) > 0` — a SIEM that is
+dropping or failing audit events is a compliance gap.
+
 ## 9. Troubleshooting
 
 | Symptom | Cause / fix |

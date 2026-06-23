@@ -8,11 +8,27 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+// eventually polls cond until true or a deadline, for asserting on async delivery
+// without racing the retry backoff.
+func eventually(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition not met within deadline")
+}
 
 func sampleEvent() *models.AuditEvent {
 	t := true
@@ -73,7 +89,7 @@ func TestSend_SplunkFormat(t *testing.T) {
 	}
 	t.Cleanup(f.Close)
 
-	if err := f.send(context.Background(), sampleEvent()); err != nil {
+	if _, err := f.send(context.Background(), sampleEvent()); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	if got := cap.headers.Get("Authorization"); got != "Splunk hec-tok" {
@@ -100,7 +116,7 @@ func TestSend_DatadogHeader(t *testing.T) {
 	f, _ := New(Config{Enabled: true, Provider: ProviderDatadog, Endpoint: srv.URL, Token: "dd-key"})
 	t.Cleanup(f.Close)
 
-	if err := f.send(context.Background(), sampleEvent()); err != nil {
+	if _, err := f.send(context.Background(), sampleEvent()); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	if got := cap.headers.Get("DD-API-KEY"); got != "dd-key" {
@@ -113,7 +129,7 @@ func TestSend_WebhookBearer(t *testing.T) {
 	f, _ := New(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: srv.URL, Token: "bear"})
 	t.Cleanup(f.Close)
 
-	if err := f.send(context.Background(), sampleEvent()); err != nil {
+	if _, err := f.send(context.Background(), sampleEvent()); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	if got := cap.headers.Get("Authorization"); got != "Bearer bear" {
@@ -132,7 +148,7 @@ func TestSend_Non2xxIsError(t *testing.T) {
 	srv, _ := newCaptureServer(t, http.StatusInternalServerError)
 	f, _ := New(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: srv.URL})
 	t.Cleanup(f.Close)
-	if err := f.send(context.Background(), sampleEvent()); err == nil {
+	if _, err := f.send(context.Background(), sampleEvent()); err == nil {
 		t.Error("expected an error on a 500 response")
 	}
 }
@@ -151,6 +167,85 @@ func TestForward_AsyncDeliversThenClose(t *testing.T) {
 	if hits != 2 {
 		t.Errorf("expected 2 delivered events, got %d", hits)
 	}
+}
+
+func TestForward_RetriesTransientThenSucceeds(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable) // transient — retried
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	delivBefore := testutil.ToFloat64(siemForwards.WithLabelValues(outcomeDelivered))
+	retryBefore := testutil.ToFloat64(siemRetries)
+
+	f, err := newForwarder(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: srv.URL}, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	f.Forward(sampleEvent())
+
+	eventually(t, func() bool {
+		return testutil.ToFloat64(siemForwards.WithLabelValues(outcomeDelivered))-delivBefore == 1
+	})
+	if got := hits.Load(); got != 3 {
+		t.Errorf("hits = %d, want 3 (two retries then success)", got)
+	}
+	if got := testutil.ToFloat64(siemRetries) - retryBefore; got != 2 {
+		t.Errorf("retries = %v, want 2", got)
+	}
+}
+
+func TestForward_PermanentErrorNotRetried(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusBadRequest) // 4xx — permanent
+	}))
+	defer srv.Close()
+
+	failedBefore := testutil.ToFloat64(siemForwards.WithLabelValues(outcomeFailed))
+	f, err := newForwarder(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: srv.URL}, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Forward(sampleEvent())
+	f.Close() // no retry backoff for a permanent error, so Close cleanly drains it
+
+	if got := hits.Load(); got != 1 {
+		t.Errorf("hits = %d, want 1 (a 4xx must not be retried)", got)
+	}
+	if got := testutil.ToFloat64(siemForwards.WithLabelValues(outcomeFailed)) - failedBefore; got != 1 {
+		t.Errorf("failed delta = %v, want 1", got)
+	}
+}
+
+func TestForward_DropsAndCountsWhenQueueFull(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release // wedge the worker so the queue backs up
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	droppedBefore := testutil.ToFloat64(siemForwards.WithLabelValues(outcomeDropped))
+	f, err := newForwarder(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: srv.URL}, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < queueSize+5; i++ {
+		f.Forward(sampleEvent())
+	}
+	if got := testutil.ToFloat64(siemForwards.WithLabelValues(outcomeDropped)) - droppedBefore; got < 1 {
+		t.Errorf("dropped delta = %v, want >= 1 (events past queue capacity are dropped)", got)
+	}
+	close(release)
+	f.Close()
 }
 
 // containsValueLeak reports whether the JSON appears to carry a plaintext value
