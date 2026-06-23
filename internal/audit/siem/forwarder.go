@@ -48,14 +48,22 @@ type Config struct {
 const (
 	queueSize   = 1024
 	httpTimeout = 5 * time.Second
+	// A transient failure (5xx/429/transport) is retried with exponential backoff so a
+	// brief SIEM outage doesn't silently lose an audit event. 4 attempts at a 500ms
+	// base ≈ 0.5s+1s+2s of backoff before giving up.
+	maxAttempts        = 4
+	defaultBaseBackoff = 500 * time.Millisecond
 )
 
 // Forwarder ships audit events to a configured SIEM asynchronously.
 type Forwarder struct {
-	cfg    Config
-	client *http.Client
-	queue  chan *models.AuditEvent
-	wg     sync.WaitGroup
+	cfg         Config
+	client      *http.Client
+	queue       chan *models.AuditEvent
+	baseBackoff time.Duration
+	closing     chan struct{} // closed by Close to abort in-flight retry backoff
+	closeOnce   sync.Once
+	wg          sync.WaitGroup
 
 	mu      sync.Mutex
 	dropped int64
@@ -68,6 +76,12 @@ func New(cfg Config) (*Forwarder, error) {
 	if !cfg.Enabled {
 		return nil, nil
 	}
+	return newForwarder(cfg, defaultBaseBackoff)
+}
+
+// newForwarder is the constructor with an injectable retry backoff so tests don't
+// sleep for real seconds. New is the production entry point.
+func newForwarder(cfg Config, baseBackoff time.Duration) (*Forwarder, error) {
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("siem: endpoint is required when enabled")
 	}
@@ -82,9 +96,11 @@ func New(cfg Config) (*Forwarder, error) {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 — operator opt-in for self-signed SIEM
 	}
 	f := &Forwarder{
-		cfg:    cfg,
-		client: &http.Client{Timeout: httpTimeout, Transport: transport},
-		queue:  make(chan *models.AuditEvent, queueSize),
+		cfg:         cfg,
+		client:      &http.Client{Timeout: httpTimeout, Transport: transport},
+		queue:       make(chan *models.AuditEvent, queueSize),
+		baseBackoff: baseBackoff,
+		closing:     make(chan struct{}),
 	}
 	f.wg.Add(1)
 	go f.worker()
@@ -104,6 +120,7 @@ func (f *Forwarder) Forward(event *models.AuditEvent) {
 		f.dropped++
 		dropped := f.dropped
 		f.mu.Unlock()
+		siemForwards.WithLabelValues(outcomeDropped).Inc()
 		log.Printf("siem: audit forward queue full, dropped event (total dropped: %d)", dropped)
 	}
 }
@@ -118,21 +135,51 @@ func (f *Forwarder) Dropped() int64 {
 	return f.dropped
 }
 
-// Close stops accepting events and waits for the in-flight queue to drain.
+// Close stops accepting events and waits for the in-flight queue to drain, abandoning
+// any in-flight retry backoff so shutdown stays bounded. Idempotent.
 func (f *Forwarder) Close() {
 	if f == nil {
 		return
 	}
-	close(f.queue)
+	f.closeOnce.Do(func() {
+		close(f.closing)
+		close(f.queue)
+	})
 	f.wg.Wait()
 }
 
 func (f *Forwarder) worker() {
 	defer f.wg.Done()
 	for event := range f.queue {
-		if err := f.send(context.Background(), event); err != nil {
-			log.Printf("siem: failed to forward audit event %d: %v", event.ID, err)
+		f.deliver(event)
+	}
+}
+
+// deliver forwards one event, retrying transient failures with exponential backoff up
+// to maxAttempts and recording the terminal outcome. A permanent failure (4xx) is not
+// retried; backoff is abandoned promptly when closing so shutdown stays bounded.
+func (f *Forwarder) deliver(event *models.AuditEvent) {
+	backoff := f.baseBackoff
+	for attempt := 1; ; attempt++ {
+		retryable, err := f.send(context.Background(), event)
+		if err == nil {
+			siemForwards.WithLabelValues(outcomeDelivered).Inc()
+			return
 		}
+		if !retryable || attempt >= maxAttempts {
+			siemForwards.WithLabelValues(outcomeFailed).Inc()
+			log.Printf("siem: failed to forward audit event %d after %d attempt(s): %v", event.ID, attempt, err)
+			return
+		}
+		siemRetries.Inc()
+		select {
+		case <-time.After(backoff):
+		case <-f.closing:
+			siemForwards.WithLabelValues(outcomeFailed).Inc()
+			log.Printf("siem: forward of audit event %d abandoned on shutdown after %d attempt(s): %v", event.ID, attempt, err)
+			return
+		}
+		backoff *= 2
 	}
 }
 
@@ -227,18 +274,22 @@ func (f *Forwarder) buildRequest(ctx context.Context, e *models.AuditEvent) (*ht
 	return req, nil
 }
 
-func (f *Forwarder) send(ctx context.Context, e *models.AuditEvent) error {
+// send forwards the event once. retryable reports whether a non-nil err is transient
+// (a 5xx, 429, or transport/timeout error) and worth retrying; a 4xx or a payload-build
+// error is permanent.
+func (f *Forwarder) send(ctx context.Context, e *models.AuditEvent) (retryable bool, err error) {
 	req, err := f.buildRequest(ctx, e)
 	if err != nil {
-		return err
+		return false, err
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return err
+		return true, err // transport / timeout — transient
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("siem endpoint returned %s", strings.TrimSpace(resp.Status))
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return false, nil
 	}
-	return nil
+	retryable = resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
+	return retryable, fmt.Errorf("siem endpoint returned %s", strings.TrimSpace(resp.Status))
 }
