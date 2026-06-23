@@ -286,3 +286,105 @@ func TestParsePrivateKeyPEM_RoundTrip(t *testing.T) {
 		t.Fatal("want error for non-PEM input")
 	}
 }
+
+func TestExtract_StagesVerifiedComponents(t *testing.T) {
+	files := map[string]string{
+		"images/keyorix-server.tar":    "image-bytes",
+		"charts/keyorix-0.82.0.tgz":    "chart-bytes",
+		"crds/secrets.keyorix.io.yaml": "crd-bytes",
+	}
+	raw, reg, _ := signedBundle(t, files, "v0.82.0", "update-2026", "v0.80.0")
+
+	dest := t.TempDir()
+	m, err := Extract(bytes.NewReader(raw), reg, dest, "v0.81.0")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if m.Version != "v0.82.0" {
+		t.Fatalf("version: %s", m.Version)
+	}
+	for rel, want := range files {
+		got, err := os.ReadFile(filepath.Join(dest, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("staged file %s missing: %v", rel, err)
+		}
+		if string(got) != want {
+			t.Fatalf("staged %s = %q, want %q", rel, got, want)
+		}
+	}
+}
+
+func TestExtract_NoDowngrade_StagesNothing(t *testing.T) {
+	raw, reg, _ := signedBundle(t, map[string]string{"images/a.tar": "x"}, "v0.82.0", "update-2026", "")
+	dest := t.TempDir()
+	// Installed is newer than the bundle → must refuse, before writing anything.
+	_, err := Extract(bytes.NewReader(raw), reg, dest, "v0.83.0")
+	if !errors.Is(err, ErrNotUpgrade) {
+		t.Fatalf("want ErrNotUpgrade, got %v", err)
+	}
+	assertDirEmpty(t, dest)
+}
+
+func TestExtract_TamperedComponent_StagesNothing(t *testing.T) {
+	// Same-length tamper as the verify test, but through Extract: the digest mismatch must
+	// abort and leave no poisoned file on disk.
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	dir := srcDirWith(t, map[string]string{"images/a.tar": "AAAA"})
+	m, _ := BuildManifest(dir, "v1.0.0", "update-2026", "", time.Unix(1_700_000_000, 0))
+	sig, _ := Sign(m, priv)
+	manifestBytes, _ := m.MarshalCanonical()
+	raw := writeRawBundle(t, manifestBytes, sig, [][2]string{{"images/a.tar", "BBBB"}})
+
+	reg := trust.NewRegistry()
+	_ = reg.Add(trust.PurposeUpdate, "update-2026", pub)
+	dest := t.TempDir()
+	if _, err := Extract(bytes.NewReader(raw), reg, dest, ""); !errors.Is(err, ErrDigestMismatch) {
+		t.Fatalf("want ErrDigestMismatch, got %v", err)
+	}
+	assertDirEmpty(t, dest)
+}
+
+func TestExtract_FailsClosed_Untrusted_StagesNothing(t *testing.T) {
+	raw, _, _ := signedBundle(t, map[string]string{"images/a.tar": "x"}, "v1.0.0", "update-2026", "")
+	dest := t.TempDir()
+	// Empty registry → fail closed, nothing written.
+	if _, err := Extract(bytes.NewReader(raw), trust.NewRegistry(), dest, ""); !errors.Is(err, trust.ErrNoKeys) {
+		t.Fatalf("want ErrNoKeys, got %v", err)
+	}
+	assertDirEmpty(t, dest)
+}
+
+func TestExtract_Idempotent(t *testing.T) {
+	raw, reg, _ := signedBundle(t, map[string]string{"images/a.tar": "x"}, "v1.0.0", "update-2026", "")
+	dest := t.TempDir()
+	if _, err := Extract(bytes.NewReader(raw), reg, dest, ""); err != nil {
+		t.Fatalf("first extract: %v", err)
+	}
+	// Re-extracting the same bundle overwrites identical verified content and succeeds.
+	if _, err := Extract(bytes.NewReader(raw), reg, dest, ""); err != nil {
+		t.Fatalf("second extract (idempotent): %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dest, "images", "a.tar"))
+	if string(got) != "x" {
+		t.Fatalf("staged content = %q", got)
+	}
+}
+
+// assertDirEmpty fails if dir contains any regular file (temp files included), proving a
+// fail-closed Extract staged nothing.
+func assertDirEmpty(t *testing.T, dir string) {
+	t.Helper()
+	var found []string
+	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			found = append(found, p)
+		}
+		return nil
+	})
+	if len(found) > 0 {
+		t.Fatalf("expected no staged files, found: %v", found)
+	}
+}

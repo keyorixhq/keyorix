@@ -4,8 +4,10 @@
 
 Accepted. Implements the **bundle** half of [ADR-062](adr-062-air-gap-updates.md) Phase 1;
 see [air-gap-updates-design.md](air-gap-updates-design.md) §3. Builds on the Phase 0 trust
-foundation (`internal/trust`). The `import` half (registry load + chart/CRD staging) is a
-follow-up phase (1b).
+foundation (`internal/trust`). Phase 1a added the format + `build`/`verify`; Phase 1b adds
+`import` — verified, no-downgrade-gated, atomic **staging** of the components to a
+directory. Loading images into the internal registry and the Helm upgrade stay the
+operator's own steps by design; CI publication of the bundle is the remaining 1b piece.
 
 ## Context
 
@@ -74,10 +76,13 @@ newer than what is installed, and enforces `min_upgrade_from` (anti-skip). A fir
 - Additive and behaviour-neutral: no caller verifies bundles at runtime yet, and a non-
   release build embeds no keys (every verify fails closed). Producing signed bundles is an
   operational step gated on embedding the production update key.
-- The `import` path (load images into an internal registry, stage charts/CRDs/binaries,
-  enforce `CheckUpgrade` against the live install, emit an audit event) is Phase 1b and
-  reuses `Verify` + `CheckUpgrade` unchanged.
-- CI wiring (`bundle build` as a `release.yml` step publishing the bundle as a release
-  asset) follows once a production update-signing key is embedded.
+- `import` stages verified components to disk through one streaming pass shared with
+  `verify` (`process`), gating no-downgrade *before* any write and writing each component
+  atomically (temp + rename) so a digest failure never leaves a poisoned file. Loading the
+  staged images into an internal registry and the Helm upgrade stay operator-controlled —
+  the CLI prints those steps rather than performing them.
+- Remaining 1b work: CI wiring (`bundle build` as a `release.yml` step publishing the
+  bundle as a release asset) once a production update-signing key is embedded, and an
+  optional server-side audit event when an import runs.
 - Maps to a future "supply-chain integrity" compliance control (NIS2 Art. 21, DORA ICT
   third-party risk, ENS `op.exp.*`).

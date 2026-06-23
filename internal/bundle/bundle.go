@@ -6,9 +6,11 @@
 // pinned chain (the key never travels with the bundle), not a self-described signature.
 //
 // This package is the cryptographic and structural core: build a manifest, sign it, write
-// the bundle, and verify a bundle (signature first, then every component digest, fail
-// closed). It deliberately does not load images into a registry or stage charts — that is
-// `bundle import` (Phase 1b), which builds on Verify here.
+// the bundle, verify it (signature first, then every component digest, fail closed), and
+// Extract it — staging the verified components to disk, gated on no-downgrade, atomically.
+// It deliberately stops at staging: loading images into an internal registry and running
+// the Helm upgrade stay the operator's own steps (an air-gap tool must not seize control of
+// the registry), so the CLI prints those next steps rather than performing them.
 package bundle
 
 import (
@@ -231,7 +233,32 @@ func Sign(m *Manifest, priv ed25519.PrivateKey) ([]byte, error) {
 // embedded key for its key-id, then every component's digest. It is memory-bounded (it
 // hashes component bytes as they stream; it does not buffer images) and fails closed on
 // any mismatch, unlisted file, or missing component. On success it returns the manifest.
+// Verify only reads — it stages nothing; see Extract.
 func Verify(r io.Reader, reg *trust.KeyRegistry) (*Manifest, error) {
+	return process(r, reg, nil)
+}
+
+// Extract verifies a bundle (exactly as Verify) and, only after the signature and the
+// no-downgrade gate pass, stages every verified component under destDir — preserving the
+// component's relative path, contained within destDir, written atomically (temp + rename)
+// so a digest failure never leaves a poisoned file in place. installedVersion enforces
+// no-downgrade / min_upgrade_from *before* any component is written. Re-running it
+// overwrites identical verified content, so import is idempotent.
+func Extract(r io.Reader, reg *trust.KeyRegistry, destDir, installedVersion string) (*Manifest, error) {
+	return process(r, reg, &extractOpts{destDir: destDir, installedVersion: installedVersion})
+}
+
+// extractOpts is the staging configuration for process; nil means verify-only.
+type extractOpts struct {
+	destDir          string
+	installedVersion string
+}
+
+// process is the single streaming pass shared by Verify and Extract. It reads the manifest
+// and signature first, verifies the signature against the embedded trusted key, optionally
+// runs the no-downgrade gate, then streams each component — hashing it against its pinned
+// digest and (when staging) writing it atomically. It fails closed on any mismatch.
+func process(r io.Reader, reg *trust.KeyRegistry, opts *extractOpts) (*Manifest, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("bundle: gzip: %w", err)
@@ -262,6 +289,19 @@ func Verify(r io.Reader, reg *trust.KeyRegistry) (*Manifest, error) {
 		return nil, fmt.Errorf("bundle: manifest signature: %w", err)
 	}
 
+	// When staging, gate on no-downgrade BEFORE writing any component, and prepare destDir.
+	if opts != nil {
+		if err := m.CheckUpgrade(opts.installedVersion); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(opts.destDir) == "" {
+			return nil, fmt.Errorf("bundle: extract destination is required")
+		}
+		if err := os.MkdirAll(opts.destDir, 0o750); err != nil {
+			return nil, fmt.Errorf("bundle: create destination: %w", err)
+		}
+	}
+
 	pinned := m.byPath()
 	seen := make(map[string]bool, len(pinned))
 	for {
@@ -283,19 +323,8 @@ func Verify(r io.Reader, reg *trust.KeyRegistry) (*Manifest, error) {
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrUnlistedComponent, name)
 		}
-		// Bound the read to the pinned size (+1 to detect an oversized entry). This both
-		// caps a decompression bomb and rejects any component larger than the manifest
-		// claims, before its digest is even compared.
-		h := sha256.New()
-		n, err := io.Copy(h, io.LimitReader(tr, comp.Size+1))
-		if err != nil {
-			return nil, fmt.Errorf("bundle: hash %s: %w", name, err)
-		}
-		if n != comp.Size {
-			return nil, fmt.Errorf("%w: %s (size %d, want %d)", ErrDigestMismatch, name, n, comp.Size)
-		}
-		if got := hex.EncodeToString(h.Sum(nil)); got != comp.SHA256 {
-			return nil, fmt.Errorf("%w: %s", ErrDigestMismatch, name)
+		if err := streamComponent(tr, comp, optsDest(opts)); err != nil {
+			return nil, err
 		}
 		seen[name] = true
 	}
@@ -305,6 +334,93 @@ func Verify(r io.Reader, reg *trust.KeyRegistry) (*Manifest, error) {
 		}
 	}
 	return &m, nil
+}
+
+func optsDest(opts *extractOpts) string {
+	if opts == nil {
+		return ""
+	}
+	return opts.destDir
+}
+
+// streamComponent reads exactly comp.Size bytes of the current tar entry, verifying the
+// sha256 digest. The read is bounded to size+1 (a decompression-bomb guard that also
+// rejects an oversized entry before its digest is compared). If destDir is non-empty the
+// bytes are written atomically to destDir/comp.Path (temp file + rename); on any digest
+// failure the temp file is removed, so a failed component never lands on disk.
+func streamComponent(tr io.Reader, comp Component, destDir string) error {
+	h := sha256.New()
+	dst := io.Writer(h)
+
+	var tmpPath, finalPath string
+	var tmp *os.File
+	if destDir != "" {
+		final, err := safeJoin(destDir, comp.Path)
+		if err != nil {
+			return err
+		}
+		finalPath = final
+		if err := os.MkdirAll(filepath.Dir(finalPath), 0o750); err != nil {
+			return fmt.Errorf("bundle: mkdir for %s: %w", comp.Path, err)
+		}
+		tmp, err = os.CreateTemp(filepath.Dir(finalPath), ".kxbundle-*")
+		if err != nil {
+			return fmt.Errorf("bundle: temp for %s: %w", comp.Path, err)
+		}
+		tmpPath = tmp.Name()
+		dst = io.MultiWriter(h, tmp)
+	}
+
+	n, copyErr := io.Copy(dst, io.LimitReader(tr, comp.Size+1))
+	if tmp != nil {
+		_ = tmp.Close()
+	}
+	cleanup := func() {
+		if tmpPath != "" {
+			_ = os.Remove(tmpPath)
+		}
+	}
+	if copyErr != nil {
+		cleanup()
+		return fmt.Errorf("bundle: read %s: %w", comp.Path, copyErr)
+	}
+	if n != comp.Size {
+		cleanup()
+		return fmt.Errorf("%w: %s (size %d, want %d)", ErrDigestMismatch, comp.Path, n, comp.Size)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != comp.SHA256 {
+		cleanup()
+		return fmt.Errorf("%w: %s", ErrDigestMismatch, comp.Path)
+	}
+	if tmpPath != "" {
+		if err := os.Rename(tmpPath, finalPath); err != nil {
+			cleanup()
+			return fmt.Errorf("bundle: stage %s: %w", comp.Path, err)
+		}
+	}
+	return nil
+}
+
+// safeJoin joins a validated relative component path onto destDir and confirms the result
+// stays within destDir (defence in depth atop cleanComponentPath).
+func safeJoin(destDir, rel string) (string, error) {
+	clean, err := cleanComponentPath(rel)
+	if err != nil {
+		return "", err
+	}
+	joined := filepath.Join(destDir, filepath.FromSlash(clean))
+	rootAbs, err := filepath.Abs(destDir)
+	if err != nil {
+		return "", err
+	}
+	joinedAbs, err := filepath.Abs(joined)
+	if err != nil {
+		return "", err
+	}
+	if joinedAbs != rootAbs && !strings.HasPrefix(joinedAbs, rootAbs+string(os.PathSeparator)) {
+		return "", fmt.Errorf("bundle: component %q escapes destination", rel)
+	}
+	return joined, nil
 }
 
 // CheckUpgrade enforces the no-downgrade and anti-skip rules against the installed

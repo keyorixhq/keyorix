@@ -36,6 +36,8 @@ var (
 	buildMinFrom    string
 	buildReleased   string
 	verifyInstalled string
+	importDest      string
+	importInstalled string
 )
 
 var buildCmd = &cobra.Command{
@@ -130,6 +132,48 @@ var verifyCmd = &cobra.Command{
 	},
 }
 
+var importCmd = &cobra.Command{
+	Use:          "import <bundle>",
+	Short:        "Verify a bundle offline and stage its artifacts into a directory",
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, args []string) error {
+		if importDest == "" {
+			return fmt.Errorf("--dest is required")
+		}
+		reg, err := trust.DefaultRegistry()
+		if err != nil {
+			return fmt.Errorf("load trusted keys: %w", err)
+		}
+
+		f, err := os.Open(args[0]) // #nosec G304 -- operator-supplied bundle path
+		if err != nil {
+			return fmt.Errorf("open bundle: %w", err)
+		}
+		defer func() { _ = f.Close() }()
+
+		// Extract verifies the signature and the no-downgrade gate BEFORE writing anything,
+		// then stages each verified component atomically. It fails closed.
+		m, err := ibundle.Extract(f, reg, importDest, importInstalled)
+		if err != nil {
+			return fmt.Errorf("import failed (fail-closed, nothing staged on a verify failure): %w", err)
+		}
+
+		fmt.Printf("Imported %s ✓ — staged %d verified components under %s\n", m.Version, len(m.Components), importDest)
+		fmt.Printf("  signed by: key-id %s (trusted, embedded)\n", m.KeyID)
+		for _, c := range m.Components {
+			fmt.Printf("    - %s\n", c.Path)
+		}
+		fmt.Printf("\nNext (operator-controlled rollout — Keyorix never pushes to your registry):\n")
+		fmt.Printf("  1. Load images into your internal registry, e.g.:\n")
+		fmt.Printf("       for img in %s/images/*; do docker load -i \"$img\"; done\n", importDest)
+		fmt.Printf("  2. Apply CRDs and run the Helm upgrade from the staged charts:\n")
+		fmt.Printf("       kubectl apply -f %s/crds/   # if present\n", importDest)
+		fmt.Printf("       helm upgrade keyorix %s/charts/keyorix-*.tgz\n", importDest)
+		return nil
+	},
+}
+
 func init() {
 	buildCmd.Flags().StringVar(&buildSrc, "src", "", "directory of release artifacts to bundle (required)")
 	buildCmd.Flags().StringVar(&buildOut, "out", "", "output bundle file (required)")
@@ -146,6 +190,11 @@ func init() {
 
 	verifyCmd.Flags().StringVar(&verifyInstalled, "installed-version", "", "currently-installed version, to enforce no-downgrade / min-upgrade-from")
 
+	importCmd.Flags().StringVar(&importDest, "dest", "", "directory to stage verified artifacts into (required)")
+	importCmd.Flags().StringVar(&importInstalled, "installed-version", "", "currently-installed version, to enforce no-downgrade / min-upgrade-from")
+	_ = importCmd.MarkFlagRequired("dest")
+
 	BundleCmd.AddCommand(buildCmd)
 	BundleCmd.AddCommand(verifyCmd)
+	BundleCmd.AddCommand(importCmd)
 }

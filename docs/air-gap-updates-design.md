@@ -189,9 +189,13 @@ behaviour until built.
      `internal/bundle`, and `keyorix bundle build` (sign) + `verify` (offline, fail-closed,
      anti-downgrade) — the cryptographic + structural core, built on the Phase 0 trust
      registry.
-   - **1b:** `keyorix bundle import` (load images into an internal registry, stage
-     charts/CRDs/binaries, enforce no-downgrade against the live install, audit event) and
-     CI wiring (`bundle build` in `release.yml`, bundle published as a release asset).
+   - **1b (staging done, [ADR-064](adr-064-air-gap-update-bundles.md)):** `keyorix bundle
+     import` verifies offline, enforces no-downgrade *before* writing, and stages the
+     verified components to a directory atomically (a digest failure leaves nothing on
+     disk), then prints the operator-controlled rollout steps. Loading images into the
+     internal registry and the Helm upgrade stay the operator's own steps by design.
+   - **1b remaining:** CI wiring (`bundle build` in `release.yml`, bundle published as a
+     release asset) and an optional server-side audit event when an import runs.
 3. **Phase 2 — licensing:** offline license verification, the commercial feature gate
    (fail-safe), `license install|status`, and compliance/audit surfacing.
 4. **Phase 3 — hardening:** HSM-backed signing, key rotation drill, reproducible-bundle
