@@ -1456,9 +1456,12 @@ var RoleService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	AuditService_GetAuditLogs_FullMethodName     = "/keyorix.v1.AuditService/GetAuditLogs"
-	AuditService_GetRBACAuditLogs_FullMethodName = "/keyorix.v1.AuditService/GetRBACAuditLogs"
-	AuditService_StreamAuditLogs_FullMethodName  = "/keyorix.v1.AuditService/StreamAuditLogs"
+	AuditService_GetAuditLogs_FullMethodName         = "/keyorix.v1.AuditService/GetAuditLogs"
+	AuditService_GetRBACAuditLogs_FullMethodName     = "/keyorix.v1.AuditService/GetRBACAuditLogs"
+	AuditService_StreamAuditLogs_FullMethodName      = "/keyorix.v1.AuditService/StreamAuditLogs"
+	AuditService_VerifyAuditChain_FullMethodName     = "/keyorix.v1.AuditService/VerifyAuditChain"
+	AuditService_WriteAuditCheckpoint_FullMethodName = "/keyorix.v1.AuditService/WriteAuditCheckpoint"
+	AuditService_GetAuditRetention_FullMethodName    = "/keyorix.v1.AuditService/GetAuditRetention"
 )
 
 // AuditServiceClient is the client API for AuditService service.
@@ -1473,6 +1476,15 @@ type AuditServiceClient interface {
 	GetRBACAuditLogs(ctx context.Context, in *GetRBACAuditLogsRequest, opts ...grpc.CallOption) (*GetRBACAuditLogsResponse, error)
 	// Stream audit events as they occur
 	StreamAuditLogs(ctx context.Context, in *StreamAuditLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AuditLog], error)
+	// Verify the tamper-evidence hash chain (ADR-029): re-walk the chain and report
+	// whether the trail is intact, naming the first divergent event on failure.
+	VerifyAuditChain(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*VerifyAuditChainResponse, error)
+	// Write a signed checkpoint of the verified audit-chain head on demand (ADR-029).
+	// Requires encryption (the signing key is DEK-derived) and a chain that verifies.
+	WriteAuditCheckpoint(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*WriteAuditCheckpointResponse, error)
+	// Report the audit trail's retention coverage (total events, oldest/newest, and
+	// whether it demonstrably covers the NIS2 12-month window).
+	GetAuditRetention(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*GetAuditRetentionResponse, error)
 }
 
 type auditServiceClient struct {
@@ -1522,6 +1534,36 @@ func (c *auditServiceClient) StreamAuditLogs(ctx context.Context, in *StreamAudi
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AuditService_StreamAuditLogsClient = grpc.ServerStreamingClient[AuditLog]
 
+func (c *auditServiceClient) VerifyAuditChain(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*VerifyAuditChainResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VerifyAuditChainResponse)
+	err := c.cc.Invoke(ctx, AuditService_VerifyAuditChain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *auditServiceClient) WriteAuditCheckpoint(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*WriteAuditCheckpointResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WriteAuditCheckpointResponse)
+	err := c.cc.Invoke(ctx, AuditService_WriteAuditCheckpoint_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *auditServiceClient) GetAuditRetention(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*GetAuditRetentionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAuditRetentionResponse)
+	err := c.cc.Invoke(ctx, AuditService_GetAuditRetention_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AuditServiceServer is the server API for AuditService service.
 // All implementations must embed UnimplementedAuditServiceServer
 // for forward compatibility.
@@ -1534,6 +1576,15 @@ type AuditServiceServer interface {
 	GetRBACAuditLogs(context.Context, *GetRBACAuditLogsRequest) (*GetRBACAuditLogsResponse, error)
 	// Stream audit events as they occur
 	StreamAuditLogs(*StreamAuditLogsRequest, grpc.ServerStreamingServer[AuditLog]) error
+	// Verify the tamper-evidence hash chain (ADR-029): re-walk the chain and report
+	// whether the trail is intact, naming the first divergent event on failure.
+	VerifyAuditChain(context.Context, *emptypb.Empty) (*VerifyAuditChainResponse, error)
+	// Write a signed checkpoint of the verified audit-chain head on demand (ADR-029).
+	// Requires encryption (the signing key is DEK-derived) and a chain that verifies.
+	WriteAuditCheckpoint(context.Context, *emptypb.Empty) (*WriteAuditCheckpointResponse, error)
+	// Report the audit trail's retention coverage (total events, oldest/newest, and
+	// whether it demonstrably covers the NIS2 12-month window).
+	GetAuditRetention(context.Context, *emptypb.Empty) (*GetAuditRetentionResponse, error)
 	mustEmbedUnimplementedAuditServiceServer()
 }
 
@@ -1552,6 +1603,15 @@ func (UnimplementedAuditServiceServer) GetRBACAuditLogs(context.Context, *GetRBA
 }
 func (UnimplementedAuditServiceServer) StreamAuditLogs(*StreamAuditLogsRequest, grpc.ServerStreamingServer[AuditLog]) error {
 	return status.Error(codes.Unimplemented, "method StreamAuditLogs not implemented")
+}
+func (UnimplementedAuditServiceServer) VerifyAuditChain(context.Context, *emptypb.Empty) (*VerifyAuditChainResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyAuditChain not implemented")
+}
+func (UnimplementedAuditServiceServer) WriteAuditCheckpoint(context.Context, *emptypb.Empty) (*WriteAuditCheckpointResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WriteAuditCheckpoint not implemented")
+}
+func (UnimplementedAuditServiceServer) GetAuditRetention(context.Context, *emptypb.Empty) (*GetAuditRetentionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAuditRetention not implemented")
 }
 func (UnimplementedAuditServiceServer) mustEmbedUnimplementedAuditServiceServer() {}
 func (UnimplementedAuditServiceServer) testEmbeddedByValue()                      {}
@@ -1621,6 +1681,60 @@ func _AuditService_StreamAuditLogs_Handler(srv interface{}, stream grpc.ServerSt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AuditService_StreamAuditLogsServer = grpc.ServerStreamingServer[AuditLog]
 
+func _AuditService_VerifyAuditChain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuditServiceServer).VerifyAuditChain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuditService_VerifyAuditChain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuditServiceServer).VerifyAuditChain(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuditService_WriteAuditCheckpoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuditServiceServer).WriteAuditCheckpoint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuditService_WriteAuditCheckpoint_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuditServiceServer).WriteAuditCheckpoint(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AuditService_GetAuditRetention_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuditServiceServer).GetAuditRetention(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AuditService_GetAuditRetention_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuditServiceServer).GetAuditRetention(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AuditService_ServiceDesc is the grpc.ServiceDesc for AuditService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1635,6 +1749,18 @@ var AuditService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRBACAuditLogs",
 			Handler:    _AuditService_GetRBACAuditLogs_Handler,
+		},
+		{
+			MethodName: "VerifyAuditChain",
+			Handler:    _AuditService_VerifyAuditChain_Handler,
+		},
+		{
+			MethodName: "WriteAuditCheckpoint",
+			Handler:    _AuditService_WriteAuditCheckpoint_Handler,
+		},
+		{
+			MethodName: "GetAuditRetention",
+			Handler:    _AuditService_GetAuditRetention_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

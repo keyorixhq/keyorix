@@ -11,6 +11,7 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -103,6 +104,100 @@ func (s *AuditGRPCService) GetRBACAuditLogs(ctx context.Context, req *pb.GetRBAC
 		PageSize:   intToU32(pageSize),
 		TotalPages: intToU32(totalPages(int(total), pageSize)),
 	}, nil
+}
+
+// VerifyAuditChain re-walks the tamper-evidence hash chain (ADR-029) and reports
+// whether the trail is intact. Mirrors GET /api/v1/audit/verify; requires audit.read.
+func (s *AuditGRPCService) VerifyAuditChain(ctx context.Context, _ *emptypb.Empty) (*pb.VerifyAuditChainResponse, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+		return nil, err
+	}
+	v, err := s.core.VerifyAuditChain(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to verify audit chain")
+	}
+	resp := &pb.VerifyAuditChainResponse{
+		Valid:            v.Valid,
+		ChainedEvents:    v.ChainedEvents,
+		UnchainedEvents:  v.UnchainedEvents,
+		HeadHash:         v.HeadHash,
+		HeadId:           intToU32(int(v.HeadID)),
+		Checkpointed:     v.Checkpointed,
+		Reason:           v.Reason,
+		CheckpointReason: v.CheckpointReason,
+	}
+	if v.FirstBrokenID != nil {
+		resp.FirstBrokenId = ptrU32(*v.FirstBrokenID)
+	}
+	return resp, nil
+}
+
+// WriteAuditCheckpoint signs a checkpoint of the verified audit-chain head on demand
+// (ADR-029). Mirrors POST /api/v1/audit/checkpoint; privileged (system.write). Returns
+// FailedPrecondition when the chain does not verify or encryption is disabled.
+func (s *AuditGRPCService) WriteAuditCheckpoint(ctx context.Context, _ *emptypb.Empty) (*pb.WriteAuditCheckpointResponse, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeGlobal(ctx, s.core, actor, "system.write"); err != nil {
+		return nil, err
+	}
+	cp, written, err := s.core.WriteAuditCheckpoint(ctx)
+	if err != nil {
+		// The chain did not verify (broken, or a prior signed checkpoint proves a
+		// truncation) — refuse to notarise it. A precondition failure, not an error.
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
+	}
+	if !written {
+		return nil, status.Error(codes.FailedPrecondition,
+			"signed audit checkpoints require encryption to be enabled (the signing key is derived from the DEK)")
+	}
+	resp := &pb.WriteAuditCheckpointResponse{
+		Id:             intToU32(int(cp.ID)),
+		ChainedEvents:  cp.ChainedEvents,
+		HeadId:         intToU32(int(cp.HeadID)),
+		HeadHash:       cp.HeadHash,
+		KeyVersion:     cp.KeyVersion,
+		AnchorProvider: cp.AnchorProvider,
+	}
+	if cp.AnchoredAt != nil {
+		resp.AnchoredAt = timestamppb.New(*cp.AnchoredAt)
+	}
+	return resp, nil
+}
+
+// GetAuditRetention reports the audit trail's retention coverage (NIS2 12-month).
+// Mirrors GET /api/v1/audit/retention; requires audit.read.
+func (s *AuditGRPCService) GetAuditRetention(ctx context.Context, _ *emptypb.Empty) (*pb.GetAuditRetentionResponse, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+		return nil, err
+	}
+	cov, err := s.core.AuditRetentionCoverage(ctx)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to compute audit retention coverage")
+	}
+	resp := &pb.GetAuditRetentionResponse{
+		RetentionPolicy:   cov.RetentionPolicy,
+		TotalEvents:       cov.TotalEvents,
+		CoverageDays:      int64(cov.CoverageDays),
+		MeetsNis2_12Month: cov.MeetsNIS2TwelveMonth,
+	}
+	if cov.OldestEvent != nil {
+		resp.OldestEvent = timestamppb.New(*cov.OldestEvent)
+	}
+	if cov.NewestEvent != nil {
+		resp.NewestEvent = timestamppb.New(*cov.NewestEvent)
+	}
+	return resp, nil
 }
 
 func rbacEntryToProto(e *core.RBACAuditEntry) *pb.RBACAuditLog {
