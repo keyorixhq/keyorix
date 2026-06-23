@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,4 +84,79 @@ func TestWebhookSink_NoTokenOmitsAuthHeader(t *testing.T) {
 func TestNewWebhook_RequiresEndpoint(t *testing.T) {
 	_, err := NewWebhook(WebhookConfig{})
 	require.Error(t, err)
+}
+
+func TestWebhookSink_RetriesTransientThenSucceeds(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable) // transient — should be retried
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	delivBefore := testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeDelivered))
+	retryBefore := testutil.ToFloat64(webhookRetries)
+
+	sink, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
+	require.NoError(t, err)
+	defer sink.Close()
+	sink.Deliver(core.NotificationEvent{UserID: 1, Type: "x"})
+
+	// Wait for the terminal "delivered" outcome before asserting — Close() would
+	// abort an in-flight retry, so we must not race it against the backoff.
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeDelivered))-delivBefore == 1
+	}, 2*time.Second, 5*time.Millisecond)
+
+	assert.Equal(t, int32(3), hits.Load(), "should have taken 2 retries (3 attempts)")
+	assert.Equal(t, 2.0, testutil.ToFloat64(webhookRetries)-retryBefore)
+}
+
+func TestWebhookSink_PermanentErrorNotRetried(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusBadRequest) // 4xx — permanent, must not retry
+	}))
+	defer srv.Close()
+
+	failedBefore := testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeFailed))
+	retryBefore := testutil.ToFloat64(webhookRetries)
+
+	sink, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
+	require.NoError(t, err)
+	sink.Deliver(core.NotificationEvent{UserID: 1, Type: "x"})
+	sink.Close() // no retry backoff for a permanent error, so Close cleanly drains it
+
+	assert.Equal(t, int32(1), hits.Load(), "a 4xx must not be retried")
+	assert.Equal(t, 1.0, testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeFailed))-failedBefore)
+	assert.Equal(t, 0.0, testutil.ToFloat64(webhookRetries)-retryBefore)
+}
+
+func TestWebhookSink_DropsAndCountsWhenQueueFull(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release // wedge the worker so the queue backs up
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	droppedBefore := testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeDropped))
+
+	sink, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
+	require.NoError(t, err)
+
+	// One event wedges the worker; the buffered queue holds webhookQueueSize more;
+	// everything past that is dropped (and counted) rather than blocking the caller.
+	for i := 0; i < webhookQueueSize+5; i++ {
+		sink.Deliver(core.NotificationEvent{UserID: 1, Type: "x"})
+	}
+	dropped := testutil.ToFloat64(webhookDeliveries.WithLabelValues(outcomeDropped)) - droppedBefore
+	assert.GreaterOrEqual(t, dropped, 1.0, "events past the queue capacity should be dropped and counted")
+
+	close(release)
+	sink.Close()
 }
