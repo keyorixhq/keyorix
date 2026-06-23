@@ -136,12 +136,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		handlers.HealthCheck(w, r)
 	})
 
-	// Test route
-	r.Get("/test-route", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte("Test route working")) // #nosec G104
-	})
-
 	// Spanish status page endpoint
 	r.Get("/status-es", func(w http.ResponseWriter, r *http.Request) {
 		webDir := getWebAssetsPath(cfg)
