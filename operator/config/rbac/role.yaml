@@ -1,0 +1,39 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: keyorix-operator
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - secrets.keyorix.io
+  resources:
+  - keyorixsecrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - secrets.keyorix.io
+  resources:
+  - keyorixsecrets/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - secrets.keyorix.io
+  resources:
+  - keyorixsecrets/status
+  verbs:
+  - get
+  - patch
+  - update

@@ -59,6 +59,8 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           helm package deploy/helm/keyorix          --version "$version" --app-version "$version"
           helm package deploy/helm/keyorix-k8s-sync --version "$version" --app-version "$version"
+          helm package deploy/helm/keyorix-operator --version "$version" --app-version "$version"
           echo "$GH_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
           helm push "keyorix-${version}.tgz"          oci://ghcr.io/keyorixhq/charts
           helm push "keyorix-k8s-sync-${version}.tgz" oci://ghcr.io/keyorixhq/charts
+          helm push "keyorix-operator-${version}.tgz" oci://ghcr.io/keyorixhq/charts

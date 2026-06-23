@@ -1,0 +1,36 @@
+# keyorix-operator — deploys the Keyorix Kubernetes operator.
+#
+# The operator watches KeyorixSecret resources and materialises the referenced Keyorix
+# secrets into native Kubernetes Secrets, owned by the KeyorixSecret (so deleting the CR
+# garbage-collects the Secret). Each KeyorixSecret names its own Keyorix server and a
+# machine-identity token Secret; no credentials live in this chart.
+
+image:
+  repository: ghcr.io/keyorixhq/keyorix-operator
+  # tag defaults to the chart's appVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# replicas: keep at 1 unless leaderElection is enabled (only one replica reconciles).
+replicas: 1
+# leaderElection: enable to run more than one replica safely (HA standby). Requires the
+# leader-election Role this chart installs (leases in the release namespace).
+leaderElection: false
+
+# Ports the manager serves Prometheus metrics and health probes on.
+metricsPort: 8080
+healthPort: 8081
+
+serviceAccount:
+  create: true
+  # name overrides the generated ServiceAccount name.
+  name: ""
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+nameOverride: ""
+fullnameOverride: ""

@@ -1,0 +1,71 @@
+{{/*
+The operator needs cluster-wide read on KeyorixSecrets and read/write on the Secrets it
+materialises, plus a namespaced lease for leader election. The Secret verbs match the
+controller's generated RBAC (operator/config/rbac/role.yaml).
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kxop.fullname" . }}
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["secrets.keyorix.io"]
+    resources: ["keyorixsecrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["secrets.keyorix.io"]
+    resources: ["keyorixsecrets/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["secrets.keyorix.io"]
+    resources: ["keyorixsecrets/finalizers"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kxop.fullname" . }}
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kxop.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kxop.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Leader election (used when replicas > 1 / leaderElection=true) and event emission.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kxop.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kxop.fullname" . }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kxop.fullname" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kxop.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
