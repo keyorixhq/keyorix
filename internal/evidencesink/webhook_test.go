@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,14 +47,46 @@ func TestWebhook_PostsEvidenceWithAuth(t *testing.T) {
 	assert.Equal(t, "webhook", wh.Target())
 }
 
-func TestWebhook_ErrorsOnNon2xx(t *testing.T) {
+func TestWebhook_ErrorsOnNon2xxAfterRetries(t *testing.T) {
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError) // transient — retried, then surfaced
 	}))
 	defer srv.Close()
-	wh, err := NewWebhook(WebhookConfig{Endpoint: srv.URL})
+	wh, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
 	require.NoError(t, err)
 	require.Error(t, wh.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), ""))
+	assert.Equal(t, int32(maxAttempts), hits.Load(), "a 5xx should be retried up to maxAttempts")
+}
+
+func TestWebhook_RetriesTransientThenSucceeds(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	wh, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
+	require.NoError(t, err)
+	require.NoError(t, wh.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), ""))
+	assert.Equal(t, int32(3), hits.Load(), "should retry the two 503s then succeed")
+}
+
+func TestWebhook_PermanentErrorNotRetried(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusBadRequest) // 4xx — permanent
+	}))
+	defer srv.Close()
+	wh, err := newWebhook(WebhookConfig{Endpoint: srv.URL}, time.Millisecond)
+	require.NoError(t, err)
+	require.Error(t, wh.ForwardEvidence(context.Background(), "pack.json", []byte(`{}`), ""))
+	assert.Equal(t, int32(1), hits.Load(), "a 4xx must not be retried")
 }
 
 func TestNewWebhook_RequiresEndpoint(t *testing.T) {
