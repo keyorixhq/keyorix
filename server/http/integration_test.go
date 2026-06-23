@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,10 +25,22 @@ import (
 	"gorm.io/gorm"
 )
 
+// memDBSeq makes each in-memory test DB name unique.
+var memDBSeq atomic.Int64
+
+// uniqueMemDSN returns a uniquely-named shared-cache in-memory SQLite DSN. A fixed-name
+// "file::memory:?cache=shared" is ONE database for the whole process, so tests that use
+// it collide (e.g. one test's rows leak into another's), which makes them pass alone but
+// fail when run together. A unique name per call isolates each test's DB while keeping it
+// consistent across the connection pool. extra carries extra pragmas (e.g. "&_timeout=…").
+func uniqueMemDSN(extra string) string {
+	return fmt.Sprintf("file:kxtest_%d?mode=memory&cache=shared%s", memDBSeq.Add(1), extra)
+}
+
 // newTestCore creates a minimal *core.KeyorixCore backed by an in-memory SQLite DB.
 func newTestCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_timeout=30000&_journal_mode=WAL"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
@@ -118,21 +131,21 @@ func TestHTTPServerIntegration(t *testing.T) {
 		},
 	}
 
-	// Create router
-	router, err := NewRouter(cfg, newTestCore(t))
-	require.NoError(t, err)
+	// One core backs both test servers — the workflow below uses `server` and `server2`
+	// interchangeably with the same validToken, so they must share a database. (Each test
+	// FUNCTION still gets its own isolated DB via newTestCore's unique DSN.)
+	testCore := newTestCore(t)
+	validToken := createTestToken(t, testCore)
 
-	// Create test server
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	// Create a dedicated core + server for authenticated tests with a real token
-	testCore := newTestCore(t)
 	router2, err2 := NewRouter(cfg, testCore)
 	require.NoError(t, err2)
 	server2 := httptest.NewServer(router2)
 	defer server2.Close()
-	validToken := createTestToken(t, testCore)
 
 	// Test cases for complete workflow
 	t.Run("Complete Secret Management Workflow", func(t *testing.T) {
@@ -820,12 +833,17 @@ func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
 	}
 	// Self-service (own account) and public routes a read-only/unauthenticated
 	// caller may legitimately reach; everything else mutating must be denied.
-	// /secrets/render is a read operation behind a POST (it resolves secret refs the
-	// caller can already read, gated on secrets.read) — legitimately reachable by a
-	// read-only persona, like /system/init etc.
+	// /secrets/render and /compliance/evidence/verify are READ operations behind a POST
+	// (they only carry a payload; they mutate nothing and are gated on a *.read
+	// permission) — legitimately reachable by a read-only persona, like /system/init.
+	// /sw.js is the SPA service-worker static asset, served by the web handler for any
+	// method; serving the file for DELETE/PUT/etc. changes no state, so it's not an API
+	// mutation. These are the only exemptions; any other mutating route MUST be denied.
 	allowExact := map[string]bool{
 		"/system/init": true, "/health": true, "/metrics": true,
 		"/api/v1/projects/{id}/secrets/render": true,
+		"/api/v1/compliance/evidence/verify":   true, // read-only signature verify (system.read)
+		"/sw.js":                               true, // static service-worker asset, not an API route
 	}
 	allowPrefix := []string{"/auth/", "/api/v1/auth/", "/notifications", "/api/v1/notifications"}
 	allowed := func(route string) bool {

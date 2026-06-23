@@ -32,7 +32,7 @@ import (
 func TestAuthzParity_HTTPvsGRPC_Secrets(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_journal_mode=WAL"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_journal_mode=WAL")), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
