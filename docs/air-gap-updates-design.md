@@ -176,8 +176,14 @@ evidence/audit (different trust model, different purpose).
 Each phase is independently shippable and gets its own ADR; nothing here changes default
 behaviour until built.
 
-1. **Phase 0 (now):** this design + ADR-062. Generate the two `ed25519` keypairs; embed
-   the public keys at build time (`-ldflags`), no behaviour change.
+1. **Phase 0 (done):** this design + ADR-062, plus the verify-only **trust foundation** —
+   `internal/trust` (a purpose-scoped `ed25519` public-key registry that fails closed)
+   wired to embed the trusted public keys at build time via `-ldflags`
+   (`TRUST_UPDATE_KEYS` / `TRUST_LICENSE_KEYS` in the Makefile), and `keyorix trust keygen`
+   to mint a keypair and print the embed snippet. No behaviour change — the registry has
+   no callers until Phase 1, and a non-release build trusts no keys. Generating the
+   production keypairs and embedding their public keys is an operational step at first
+   release of a signed artifact.
 2. **Phase 1 — bundles:** `keyorix bundle build` (CI, extends `release.yml`) +
    `verify`/`import`; bundle published as a release asset for online customers to relay.
 3. **Phase 2 — licensing:** offline license verification, the commercial feature gate
