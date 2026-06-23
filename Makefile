@@ -3,10 +3,16 @@ BINARY_SERVER=keyorix-server
 BUILD_DIR=./bin
 VERSION?=dev
 GIT_COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+# Air-gap trust keys (ADR-062): embed the trusted update/license signing PUBLIC keys at
+# build time, each "keyID=base64pub". Empty by default → a dev build trusts no keys and
+# verification fails closed; release builds set these. `keyorix trust keygen` prints the
+# exact value to use.
+TRUST_UPDATE_KEYS?=
+TRUST_LICENSE_KEYS?=
 # Inject the build identity into both the CLI (internal/cli.version) and the shared
 # internal/version package (read by the server's /health + /system/info). Commit is
 # deterministic per source revision, so release builds stay reproducible (no build date).
-LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT)"
+LDFLAGS=-ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/internal/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)"
 
 .PHONY: build build-cli build-server build-ui install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release
 

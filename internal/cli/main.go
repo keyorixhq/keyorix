@@ -32,6 +32,7 @@ import (
 	sodcli "github.com/keyorixhq/keyorix/internal/cli/sod"
 	"github.com/keyorixhq/keyorix/internal/cli/status"
 	"github.com/keyorixhq/keyorix/internal/cli/system"
+	trustcli "github.com/keyorixhq/keyorix/internal/cli/trust"
 	"github.com/keyorixhq/keyorix/internal/cli/user"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/spf13/cobra"
@@ -77,6 +78,7 @@ func init() {
 	rootCmd.AddCommand(compliance.ComplianceCmd)
 	rootCmd.AddCommand(sodcli.SoDCmd)
 	rootCmd.AddCommand(hygiene.HygieneCmd)
+	rootCmd.AddCommand(trustcli.TrustCmd)
 }
 
 // Execute runs the root command
