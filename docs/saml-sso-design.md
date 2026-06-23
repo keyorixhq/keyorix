@@ -152,9 +152,11 @@ like other secrets, never inlined.
 Each phase its own ADR; nothing changes default behaviour until built (SSO stays
 opt-in/config-driven).
 
-1. **Phase 1 — SP core:** generalise `SSOProvider` with a type; add the SAML provider
-   (crewjam/saml), the metadata/login/ACS routes, signature/audience/time/replay
-   validation, and wire the existing provisioning + group/role mapping. SP-initiated only.
+1. **Phase 1 — SP core (done):** `SSOProvider` generalised with a type; the SAML provider
+   (`internal/saml`, crewjam/saml); the metadata/login/ACS routes; signature/audience/
+   time/`InResponseTo` validation (delegated to the vetted stack); and the existing
+   provisioning + group/role mapping reused. SP-initiated only. Configure per
+   [docs/saml-sso.md](saml-sso.md).
 2. **Phase 2 — hardening/parity:** encrypted assertions, IdP-initiated (opt-in), signed
    AuthnRequests, SP-key rotation, and metadata-URL refresh.
 3. **Phase 3 — ops:** admin UI/CLI to add/test a provider, a "test connection" assertion

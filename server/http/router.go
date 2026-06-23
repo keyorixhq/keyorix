@@ -102,6 +102,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Get("/auth/sso/providers", authHandler.ListSSOProviders)
 	r.Get("/auth/sso/{provider}/login", authHandler.BeginSSO)
 	r.Get("/auth/sso/{provider}/callback", authHandler.CompleteSSO)
+	// SAML 2.0 SP endpoints (ADR-063): metadata for the IdP admin, the login redirect
+	// (AuthnRequest), and the Assertion Consumer Service. Unauthenticated, like OIDC.
+	r.Get("/auth/saml/{provider}/metadata", authHandler.SAMLMetadata)
+	r.Get("/auth/saml/{provider}/login", authHandler.BeginSAML)
+	r.Post("/auth/saml/{provider}/acs", authHandler.CompleteSAML)
 
 	// Health check endpoint — lightweight liveness signal (does not touch the DB, so a
 	// transient DB outage won't get the pod restarted).

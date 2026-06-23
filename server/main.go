@@ -48,6 +48,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	"github.com/keyorixhq/keyorix/internal/rotation"
+	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
@@ -1248,8 +1249,31 @@ func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core
 	jwksURIs := map[string]string{}
 	for i := range sso.Providers {
 		pc := sso.Providers[i]
-		if pc.Name == "" || pc.Issuer == "" || pc.ClientID == "" || pc.RedirectURL == "" {
-			log.Printf("SSO provider %q misconfigured (name/issuer/client_id/redirect_url required); skipping", pc.Name)
+		if pc.Name == "" {
+			log.Printf("SSO provider with no name; skipping")
+			continue
+		}
+		// SAML providers are built from their own block (no OIDC discovery).
+		if strings.EqualFold(pc.Type, "saml") {
+			sp, err := buildSAMLProvider(pc)
+			if err != nil {
+				log.Printf("SSO provider %q (saml) misconfigured: %v; skipping", pc.Name, err)
+				continue
+			}
+			completeURL, err := ssoCompleteURL(pc.SAML.ACSURL)
+			if err != nil {
+				log.Printf("SSO provider %q (saml): %v; skipping", pc.Name, err)
+				continue
+			}
+			providers[pc.Name] = &core.SSOProvider{
+				Name: pc.Name, Type: "saml", SAML: sp, CompleteURL: completeURL,
+				AutoProvision: pc.AutoProvision, DefaultRole: pc.DefaultRole,
+				GroupSync: pc.GroupSync, GroupRoleMap: pc.GroupRoleMap,
+			}
+			continue
+		}
+		if pc.Issuer == "" || pc.ClientID == "" || pc.RedirectURL == "" {
+			log.Printf("SSO provider %q misconfigured (issuer/client_id/redirect_url required); skipping", pc.Name)
 			continue
 		}
 		disc, err := discoverOIDC(pc.Issuer)
@@ -1289,10 +1313,40 @@ func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core
 	if len(providers) == 0 {
 		return nil, nil, 0
 	}
+	// A JWKS resolver is only needed for OIDC providers; a SAML-only deployment has none.
+	if len(jwksURIs) == 0 {
+		return providers, nil, len(providers)
+	}
 	resolver, err := core.NewHTTPJWKSResolver(jwksURIs)
 	if err != nil {
 		log.Printf("SSO disabled: jwks resolver init failed: %v", err)
 		return nil, nil, 0
 	}
 	return providers, resolver, len(providers)
+}
+
+// buildSAMLProvider constructs a SAML Service Provider from its config block, reading
+// the IdP metadata inline or from a file.
+func buildSAMLProvider(pc config.SSOProviderConfig) (*samlpkg.Provider, error) {
+	if pc.SAML == nil {
+		return nil, fmt.Errorf("missing saml config block")
+	}
+	metaXML := []byte(pc.SAML.IDPMetadataXML)
+	if len(metaXML) == 0 && pc.SAML.IDPMetadataFile != "" {
+		b, err := os.ReadFile(pc.SAML.IDPMetadataFile) // #nosec G304 -- operator-provided metadata path
+		if err != nil {
+			return nil, fmt.Errorf("read idp_metadata_file: %w", err)
+		}
+		metaXML = b
+	}
+	return samlpkg.NewProvider(samlpkg.Config{
+		Name:              pc.Name,
+		IDPMetadataXML:    metaXML,
+		SPEntityID:        pc.SAML.SPEntityID,
+		ACSURL:            pc.SAML.ACSURL,
+		AllowIDPInitiated: pc.SAML.AllowIDPInitiated,
+		EmailAttr:         pc.SAML.EmailAttribute,
+		NameAttr:          pc.SAML.NameAttribute,
+		GroupsAttr:        pc.SAML.GroupsAttribute,
+	})
 }
