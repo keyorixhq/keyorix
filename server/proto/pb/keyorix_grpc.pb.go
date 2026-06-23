@@ -1842,6 +1842,7 @@ const (
 	ProjectService_UpdateProject_FullMethodName           = "/keyorix.v1.ProjectService/UpdateProject"
 	ProjectService_DeleteProject_FullMethodName           = "/keyorix.v1.ProjectService/DeleteProject"
 	ProjectService_GetProjectRotationOrder_FullMethodName = "/keyorix.v1.ProjectService/GetProjectRotationOrder"
+	ProjectService_GetProjectRotationPlan_FullMethodName  = "/keyorix.v1.ProjectService/GetProjectRotationPlan"
 	ProjectService_ListEnvironments_FullMethodName        = "/keyorix.v1.ProjectService/ListEnvironments"
 )
 
@@ -1866,6 +1867,9 @@ type ProjectServiceClient interface {
 	// Safe rotation order for the project's secret dependency graph (ADR-052),
 	// read-only. Requires scoped secrets.read.
 	GetProjectRotationOrder(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*RotationOrder, error)
+	// The project's automated rotation plan (ADR-053): overdue/due-soon secrets
+	// batched into dependency-safe waves, prioritised by urgency. Scoped secrets.read.
+	GetProjectRotationPlan(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*RotationPlan, error)
 	// List a project's environments.
 	ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error)
 }
@@ -1938,6 +1942,16 @@ func (c *projectServiceClient) GetProjectRotationOrder(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *projectServiceClient) GetProjectRotationPlan(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*RotationPlan, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RotationPlan)
+	err := c.cc.Invoke(ctx, ProjectService_GetProjectRotationPlan_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *projectServiceClient) ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListEnvironmentsResponse)
@@ -1969,6 +1983,9 @@ type ProjectServiceServer interface {
 	// Safe rotation order for the project's secret dependency graph (ADR-052),
 	// read-only. Requires scoped secrets.read.
 	GetProjectRotationOrder(context.Context, *GetProjectRequest) (*RotationOrder, error)
+	// The project's automated rotation plan (ADR-053): overdue/due-soon secrets
+	// batched into dependency-safe waves, prioritised by urgency. Scoped secrets.read.
+	GetProjectRotationPlan(context.Context, *GetProjectRequest) (*RotationPlan, error)
 	// List a project's environments.
 	ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error)
 	mustEmbedUnimplementedProjectServiceServer()
@@ -1998,6 +2015,9 @@ func (UnimplementedProjectServiceServer) DeleteProject(context.Context, *DeleteP
 }
 func (UnimplementedProjectServiceServer) GetProjectRotationOrder(context.Context, *GetProjectRequest) (*RotationOrder, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProjectRotationOrder not implemented")
+}
+func (UnimplementedProjectServiceServer) GetProjectRotationPlan(context.Context, *GetProjectRequest) (*RotationPlan, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProjectRotationPlan not implemented")
 }
 func (UnimplementedProjectServiceServer) ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEnvironments not implemented")
@@ -2131,6 +2151,24 @@ func _ProjectService_GetProjectRotationOrder_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProjectService_GetProjectRotationPlan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProjectServiceServer).GetProjectRotationPlan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProjectService_GetProjectRotationPlan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProjectServiceServer).GetProjectRotationPlan(ctx, req.(*GetProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ProjectService_ListEnvironments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListEnvironmentsRequest)
 	if err := dec(in); err != nil {
@@ -2179,6 +2217,10 @@ var ProjectService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetProjectRotationOrder",
 			Handler:    _ProjectService_GetProjectRotationOrder_Handler,
+		},
+		{
+			MethodName: "GetProjectRotationPlan",
+			Handler:    _ProjectService_GetProjectRotationPlan_Handler,
 		},
 		{
 			MethodName: "ListEnvironments",

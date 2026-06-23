@@ -159,6 +159,38 @@ func secretImpactToProto(im *core.SecretImpact) *pb.SecretImpact {
 	return out
 }
 
+func rotationPlanToProto(p *core.RotationPlan) *pb.RotationPlan {
+	out := &pb.RotationPlan{
+		ProjectId:    intToU32(int(p.ProjectID)),
+		TotalSecrets: intToI32(p.TotalSecrets),
+		OverdueCount: intToI32(p.OverdueCount),
+		DueSoonCount: intToI32(p.DueSoonCount),
+	}
+	for _, w := range p.Waves {
+		pw := &pb.RotationWave{Index: intToI32(w.Index)}
+		for _, s := range w.Secrets {
+			after := make([]uint32, 0, len(s.AfterSecretIDs))
+			for _, id := range s.AfterSecretIDs {
+				after = append(after, intToU32(int(id)))
+			}
+			pw.Secrets = append(pw.Secrets, &pb.PlannedRotation{
+				SecretId:       intToU32(int(s.SecretID)),
+				SecretName:     s.SecretName,
+				Status:         s.Status,
+				DaysOverdue:    intToI32(s.DaysOverdue),
+				RiskScore:      intToI32(s.RiskScore),
+				RiskBand:       s.RiskBand,
+				Urgency:        intToI32(s.Urgency),
+				AutoRotate:     s.AutoRotate,
+				AfterSecretIds: after,
+				Reasons:        s.Reasons,
+			})
+		}
+		out.Waves = append(out.Waves, pw)
+	}
+	return out
+}
+
 func rotationOrderToProto(o *core.RotationOrder) *pb.RotationOrder {
 	out := &pb.RotationOrder{ProjectId: intToU32(int(o.ProjectID))}
 	for _, s := range o.Order {

@@ -282,6 +282,34 @@ message RotationOrder {
   repeated RotationStep order = 2; // rotate top to bottom (dependencies first)
 }
 
+// --- Automated rotation plan (ADR-053) ---
+
+message PlannedRotation {
+  uint32 secret_id = 1;
+  string secret_name = 2;
+  string status = 3; // overdue | due_soon
+  int32 days_overdue = 4; // positive = overdue, negative = days remaining
+  int32 risk_score = 5;
+  string risk_band = 6; // low | medium | high
+  int32 urgency = 7;
+  bool auto_rotate = 8;
+  repeated uint32 after_secret_ids = 9; // in-plan dependencies that rotate first
+  repeated string reasons = 10;
+}
+
+message RotationWave {
+  int32 index = 1;
+  repeated PlannedRotation secrets = 2; // safe to rotate together
+}
+
+message RotationPlan {
+  uint32 project_id = 1;
+  int32 total_secrets = 2;
+  int32 overdue_count = 3;
+  int32 due_soon_count = 4;
+  repeated RotationWave waves = 5;
+}
+
 // ---------------------------------------------------------------------------
 // User messages
 // ---------------------------------------------------------------------------
@@ -693,6 +721,10 @@ service ProjectService {
   // Safe rotation order for the project's secret dependency graph (ADR-052),
   // read-only. Requires scoped secrets.read.
   rpc GetProjectRotationOrder(GetProjectRequest) returns (RotationOrder);
+
+  // The project's automated rotation plan (ADR-053): overdue/due-soon secrets
+  // batched into dependency-safe waves, prioritised by urgency. Scoped secrets.read.
+  rpc GetProjectRotationPlan(GetProjectRequest) returns (RotationPlan);
 
   // List a project's environments.
   rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);

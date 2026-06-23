@@ -26,10 +26,14 @@ All notable changes to Keyorix are documented here. This project follows
   (`SecretNode.cert_not_after`) populated as a side-effect of certificate inspection and
   the expiry scan — so the posture reports hygiene without decrypting on the dashboard
   path and without touching the create/rotate path. (ADR-056) ([#421])
+- **gRPC for the rotation plan** — `ProjectService.GetProjectRotationPlan` exposes the
+  automated rotation plan (ADR-053) over gRPC (read-only, scoped `secrets.read`),
+  completing its surface parity with HTTP / CLI / web. ([#422])
 
 [#419]: https://github.com/keyorixhq/keyorix/pull/419
 [#420]: https://github.com/keyorixhq/keyorix/pull/420
 [#421]: https://github.com/keyorixhq/keyorix/pull/421
+[#422]: https://github.com/keyorixhq/keyorix/pull/422
 
 ## v0.75.0 — 2026-06-23
 
