@@ -31,6 +31,7 @@ func main() {
 		"path to the sync config (YAML)")
 	once := flag.Bool("once", false, "run a single reconcile pass and exit (for CI / one-shot Jobs)")
 	dryRun := flag.Bool("dry-run", false, "report what would change without writing any Secret")
+	cleanup := flag.Bool("cleanup", false, "delete orphaned Secrets the agent owns whose mapping was removed")
 	flag.Parse()
 
 	cfg, err := k8ssync.LoadConfig(*configPath)
@@ -51,6 +52,11 @@ func main() {
 	var engineOpts []k8ssync.Option
 	if *dryRun {
 		engineOpts = append(engineOpts, k8ssync.WithDryRun())
+	}
+	// Cleanup is enabled by either the config file or the -cleanup flag; the flag lets a
+	// one-shot run preview/perform a reap without editing the mounted config.
+	if cfg.Cleanup || *cleanup {
+		engineOpts = append(engineOpts, k8ssync.WithCleanup())
 	}
 	engine := k8ssync.NewEngine(k8ssync.NewKeyorixFetcher(cfg.KeyorixURL, token), sink, engineOpts...)
 

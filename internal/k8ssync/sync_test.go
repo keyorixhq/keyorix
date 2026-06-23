@@ -3,6 +3,7 @@ package k8ssync
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,19 +28,28 @@ func (f *fakeFetcher) Fetch(_ context.Context, ref string) ([]byte, error) {
 }
 
 // fakeSink records applies and can simulate pre-existing Secrets and apply errors.
+// owned models the managed-by label: only owned Secrets are visible to List, and Apply
+// stamps the Secret it writes as owned (mirroring the real label).
 type fakeSink struct {
-	existing map[string]map[string][]byte // "ns/name" → data
-	applied  map[string]map[string][]byte // "ns/name" → last applied data
-	applyErr map[string]bool
-	getErr   map[string]bool
+	existing  map[string]map[string][]byte // "ns/name" → data
+	applied   map[string]map[string][]byte // "ns/name" → last applied data
+	owned     map[string]bool              // "ns/name" → carries the managed-by label
+	deleted   []string                     // "ns/name" deleted, in call order
+	applyErr  map[string]bool
+	getErr    map[string]bool
+	listErr   map[string]bool // namespace → List fails
+	deleteErr map[string]bool // "ns/name" → Delete fails
 }
 
 func newFakeSink() *fakeSink {
 	return &fakeSink{
-		existing: map[string]map[string][]byte{},
-		applied:  map[string]map[string][]byte{},
-		applyErr: map[string]bool{},
-		getErr:   map[string]bool{},
+		existing:  map[string]map[string][]byte{},
+		applied:   map[string]map[string][]byte{},
+		owned:     map[string]bool{},
+		applyErr:  map[string]bool{},
+		getErr:    map[string]bool{},
+		listErr:   map[string]bool{},
+		deleteErr: map[string]bool{},
 	}
 }
 
@@ -60,6 +70,34 @@ func (s *fakeSink) Apply(_ context.Context, ns, name string, data map[string][]b
 	}
 	s.applied[k] = data
 	s.existing[k] = data // reflect the write for subsequent comparisons
+	s.owned[k] = true    // an applied Secret carries the managed-by label
+	return nil
+}
+
+func (s *fakeSink) List(_ context.Context, ns string) ([]string, error) {
+	if s.listErr[ns] {
+		return nil, errors.New("list error")
+	}
+	var names []string
+	for k, isOwned := range s.owned {
+		if !isOwned {
+			continue
+		}
+		if kns, name, ok := strings.Cut(k, "/"); ok && kns == ns {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+func (s *fakeSink) Delete(_ context.Context, ns, name string) error {
+	k := s.key(ns, name)
+	if s.deleteErr[k] {
+		return errors.New("delete error")
+	}
+	s.deleted = append(s.deleted, k)
+	delete(s.existing, k)
+	delete(s.owned, k)
 	return nil
 }
 
@@ -197,4 +235,125 @@ func TestReconcile_InvalidAndDuplicateMappings(t *testing.T) {
 	assert.Equal(t, 3, res.Failed)
 	assert.Equal(t, 1, res.Created)
 	assert.Len(t, res.Errors, 3)
+}
+
+func TestReconcile_CleanupDeletesOrphan(t *testing.T) {
+	f := &fakeFetcher{values: map[string][]byte{"prod/db": []byte("v")}}
+	s := newFakeSink()
+	// An agent-owned Secret left over from a mapping that no longer exists.
+	s.owned["app/stale"] = true
+	s.existing["app/stale"] = map[string][]byte{"K": []byte("old")}
+	e := NewEngine(f, s, WithCleanup())
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Created)
+	assert.Equal(t, 1, res.Deleted)
+	assert.Equal(t, []string{"app/stale"}, s.deleted)
+	assert.NotContains(t, s.existing, "app/stale", "the orphan is gone")
+	assert.Contains(t, s.existing, "app/creds", "the live target remains")
+}
+
+func TestReconcile_CleanupDisabledByDefault(t *testing.T) {
+	f := &fakeFetcher{values: map[string][]byte{"prod/db": []byte("v")}}
+	s := newFakeSink()
+	s.owned["app/stale"] = true
+	s.existing["app/stale"] = map[string][]byte{"K": []byte("old")}
+	e := NewEngine(f, s) // no WithCleanup
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Deleted)
+	assert.Empty(t, s.deleted, "cleanup must be opt-in: nothing is deleted by default")
+	assert.Contains(t, s.existing, "app/stale")
+}
+
+func TestReconcile_CleanupDryRunReportsButDoesNotDelete(t *testing.T) {
+	f := &fakeFetcher{values: map[string][]byte{"prod/db": []byte("v")}}
+	s := newFakeSink()
+	s.owned["app/stale"] = true
+	s.existing["app/stale"] = map[string][]byte{"K": []byte("old")}
+	e := NewEngine(f, s, WithCleanup(), WithDryRun())
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Deleted, "dry-run reports the would-delete")
+	assert.Empty(t, s.deleted, "dry-run must not delete any Secret")
+	assert.Contains(t, s.existing, "app/stale")
+}
+
+func TestReconcile_CleanupKeepsDesiredTargetWhenFetchFails(t *testing.T) {
+	// A target still in the config whose upstream fetch fails this pass must NOT be
+	// reaped — a transient Keyorix error can't be allowed to delete a live Secret.
+	f := &fakeFetcher{fail: map[string]bool{"prod/db": true}}
+	s := newFakeSink()
+	s.owned["app/creds"] = true
+	s.existing["app/creds"] = map[string][]byte{"DB": []byte("live")}
+	e := NewEngine(f, s, WithCleanup())
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Failed)
+	assert.Equal(t, 0, res.Deleted)
+	assert.Empty(t, s.deleted)
+	assert.Contains(t, s.existing, "app/creds", "the still-desired target survives a fetch failure")
+}
+
+func TestReconcile_CleanupIgnoresUnownedSecrets(t *testing.T) {
+	// A foreign Secret (no managed-by label) in a managed namespace is invisible to
+	// List, so cleanup never touches it.
+	f := &fakeFetcher{values: map[string][]byte{"prod/db": []byte("v")}}
+	s := newFakeSink()
+	s.existing["app/foreign"] = map[string][]byte{"K": []byte("notours")} // present but not owned
+	e := NewEngine(f, s, WithCleanup())
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Deleted)
+	assert.Empty(t, s.deleted)
+	assert.Contains(t, s.existing, "app/foreign", "a Secret the agent never created is left alone")
+}
+
+func TestReconcile_CleanupListErrorIsRecorded(t *testing.T) {
+	f := &fakeFetcher{values: map[string][]byte{"prod/db": []byte("v")}}
+	s := newFakeSink()
+	s.listErr["app"] = true
+	e := NewEngine(f, s, WithCleanup())
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Created)
+	assert.Equal(t, 1, res.Failed, "a list failure is surfaced, not silently swallowed")
+	require.Len(t, res.Errors, 1)
+	assert.Contains(t, res.Errors[0], "list owned")
+}
+
+func TestReconcile_CleanupDeleteErrorIsRecorded(t *testing.T) {
+	f := &fakeFetcher{values: map[string][]byte{"prod/db": []byte("v")}}
+	s := newFakeSink()
+	s.owned["app/stale"] = true
+	s.existing["app/stale"] = map[string][]byte{"K": []byte("old")}
+	s.deleteErr["app/stale"] = true
+	e := NewEngine(f, s, WithCleanup())
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.Deleted)
+	assert.Equal(t, 1, res.Failed)
+	require.Len(t, res.Errors, 1)
+	assert.Contains(t, res.Errors[0], "delete orphan")
 }

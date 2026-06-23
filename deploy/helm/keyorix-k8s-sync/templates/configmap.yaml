@@ -10,6 +10,7 @@ data:
     keyorix_url: {{ required "keyorix.url is required" .Values.keyorix.url | quote }}
     interval: {{ .Values.keyorix.interval | default "5m" | quote }}
     health_port: {{ .Values.healthPort | default 8080 }}
+    cleanup: {{ .Values.cleanup | default false }}
     mappings:
     {{- if .Values.mappings }}
       {{- toYaml .Values.mappings | nindent 6 }}

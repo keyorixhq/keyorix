@@ -24,6 +24,13 @@ keyorix:
 # healthPort is where the agent serves /healthz, /readyz and /status (probes).
 healthPort: 8080
 
+# cleanup reaps orphaned Secrets: when a mapping is removed, the agent-owned Secret it
+# created (carrying app.kubernetes.io/managed-by=keyorix-sync) is deleted on the next
+# pass. Off by default — deleting Secrets is destructive. Assumes a single sync agent
+# owns each managed namespace; do not point two agents with different mappings at the
+# same namespace with cleanup on. Enabling it grants the agent list+delete on Secrets.
+cleanup: false
+
 # mappings: each copies one Keyorix secret ("<environment>/<name>") into one key of
 # one Kubernetes Secret. Several mappings may target the same Secret.
 #   - ref: production/db-password
