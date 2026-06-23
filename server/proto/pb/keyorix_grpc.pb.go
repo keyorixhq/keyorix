@@ -1962,6 +1962,196 @@ var SystemService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	BreakGlassService_ActivateBreakGlass_FullMethodName        = "/keyorix.v1.BreakGlassService/ActivateBreakGlass"
+	BreakGlassService_ListBreakGlassActivations_FullMethodName = "/keyorix.v1.BreakGlassService/ListBreakGlassActivations"
+	BreakGlassService_RevokeBreakGlass_FullMethodName          = "/keyorix.v1.BreakGlassService/RevokeBreakGlass"
+)
+
+// BreakGlassServiceClient is the client API for BreakGlassService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Break-glass emergency access (NIS2/DORA incident response).
+type BreakGlassServiceClient interface {
+	// Activate emergency access on a project. Self-service: any authenticated member
+	// may break the glass (it must work in an emergency); every activation is audited.
+	ActivateBreakGlass(ctx context.Context, in *ActivateBreakGlassRequest, opts ...grpc.CallOption) (*BreakGlassActivation, error)
+	// List a project's break-glass activations. Requires scoped roles.read.
+	ListBreakGlassActivations(ctx context.Context, in *ListBreakGlassActivationsRequest, opts ...grpc.CallOption) (*ListBreakGlassActivationsResponse, error)
+	// Revoke an active break-glass activation early. Requires scoped roles.assign.
+	RevokeBreakGlass(ctx context.Context, in *RevokeBreakGlassRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+}
+
+type breakGlassServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewBreakGlassServiceClient(cc grpc.ClientConnInterface) BreakGlassServiceClient {
+	return &breakGlassServiceClient{cc}
+}
+
+func (c *breakGlassServiceClient) ActivateBreakGlass(ctx context.Context, in *ActivateBreakGlassRequest, opts ...grpc.CallOption) (*BreakGlassActivation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BreakGlassActivation)
+	err := c.cc.Invoke(ctx, BreakGlassService_ActivateBreakGlass_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *breakGlassServiceClient) ListBreakGlassActivations(ctx context.Context, in *ListBreakGlassActivationsRequest, opts ...grpc.CallOption) (*ListBreakGlassActivationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBreakGlassActivationsResponse)
+	err := c.cc.Invoke(ctx, BreakGlassService_ListBreakGlassActivations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *breakGlassServiceClient) RevokeBreakGlass(ctx context.Context, in *RevokeBreakGlassRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, BreakGlassService_RevokeBreakGlass_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// BreakGlassServiceServer is the server API for BreakGlassService service.
+// All implementations must embed UnimplementedBreakGlassServiceServer
+// for forward compatibility.
+//
+// Break-glass emergency access (NIS2/DORA incident response).
+type BreakGlassServiceServer interface {
+	// Activate emergency access on a project. Self-service: any authenticated member
+	// may break the glass (it must work in an emergency); every activation is audited.
+	ActivateBreakGlass(context.Context, *ActivateBreakGlassRequest) (*BreakGlassActivation, error)
+	// List a project's break-glass activations. Requires scoped roles.read.
+	ListBreakGlassActivations(context.Context, *ListBreakGlassActivationsRequest) (*ListBreakGlassActivationsResponse, error)
+	// Revoke an active break-glass activation early. Requires scoped roles.assign.
+	RevokeBreakGlass(context.Context, *RevokeBreakGlassRequest) (*emptypb.Empty, error)
+	mustEmbedUnimplementedBreakGlassServiceServer()
+}
+
+// UnimplementedBreakGlassServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedBreakGlassServiceServer struct{}
+
+func (UnimplementedBreakGlassServiceServer) ActivateBreakGlass(context.Context, *ActivateBreakGlassRequest) (*BreakGlassActivation, error) {
+	return nil, status.Error(codes.Unimplemented, "method ActivateBreakGlass not implemented")
+}
+func (UnimplementedBreakGlassServiceServer) ListBreakGlassActivations(context.Context, *ListBreakGlassActivationsRequest) (*ListBreakGlassActivationsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBreakGlassActivations not implemented")
+}
+func (UnimplementedBreakGlassServiceServer) RevokeBreakGlass(context.Context, *RevokeBreakGlassRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeBreakGlass not implemented")
+}
+func (UnimplementedBreakGlassServiceServer) mustEmbedUnimplementedBreakGlassServiceServer() {}
+func (UnimplementedBreakGlassServiceServer) testEmbeddedByValue()                           {}
+
+// UnsafeBreakGlassServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to BreakGlassServiceServer will
+// result in compilation errors.
+type UnsafeBreakGlassServiceServer interface {
+	mustEmbedUnimplementedBreakGlassServiceServer()
+}
+
+func RegisterBreakGlassServiceServer(s grpc.ServiceRegistrar, srv BreakGlassServiceServer) {
+	// If the following call panics, it indicates UnimplementedBreakGlassServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&BreakGlassService_ServiceDesc, srv)
+}
+
+func _BreakGlassService_ActivateBreakGlass_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ActivateBreakGlassRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BreakGlassServiceServer).ActivateBreakGlass(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BreakGlassService_ActivateBreakGlass_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BreakGlassServiceServer).ActivateBreakGlass(ctx, req.(*ActivateBreakGlassRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BreakGlassService_ListBreakGlassActivations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBreakGlassActivationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BreakGlassServiceServer).ListBreakGlassActivations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BreakGlassService_ListBreakGlassActivations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BreakGlassServiceServer).ListBreakGlassActivations(ctx, req.(*ListBreakGlassActivationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BreakGlassService_RevokeBreakGlass_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeBreakGlassRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BreakGlassServiceServer).RevokeBreakGlass(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BreakGlassService_RevokeBreakGlass_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BreakGlassServiceServer).RevokeBreakGlass(ctx, req.(*RevokeBreakGlassRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// BreakGlassService_ServiceDesc is the grpc.ServiceDesc for BreakGlassService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var BreakGlassService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "keyorix.v1.BreakGlassService",
+	HandlerType: (*BreakGlassServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ActivateBreakGlass",
+			Handler:    _BreakGlassService_ActivateBreakGlass_Handler,
+		},
+		{
+			MethodName: "ListBreakGlassActivations",
+			Handler:    _BreakGlassService_ListBreakGlassActivations_Handler,
+		},
+		{
+			MethodName: "RevokeBreakGlass",
+			Handler:    _BreakGlassService_RevokeBreakGlass_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "keyorix.proto",
+}
+
+const (
 	ProjectService_ListProjects_FullMethodName            = "/keyorix.v1.ProjectService/ListProjects"
 	ProjectService_GetProject_FullMethodName              = "/keyorix.v1.ProjectService/GetProject"
 	ProjectService_CreateProject_FullMethodName           = "/keyorix.v1.ProjectService/CreateProject"

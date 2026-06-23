@@ -143,6 +143,19 @@ service SystemService {
   rpc GetMetrics(google.protobuf.Empty) returns (Metrics);
 }
 
+// Break-glass emergency access (NIS2/DORA incident response).
+service BreakGlassService {
+  // Activate emergency access on a project. Self-service: any authenticated member
+  // may break the glass (it must work in an emergency); every activation is audited.
+  rpc ActivateBreakGlass(ActivateBreakGlassRequest) returns (BreakGlassActivation);
+
+  // List a project's break-glass activations. Requires scoped roles.read.
+  rpc ListBreakGlassActivations(ListBreakGlassActivationsRequest) returns (ListBreakGlassActivationsResponse);
+
+  // Revoke an active break-glass activation early. Requires scoped roles.assign.
+  rpc RevokeBreakGlass(RevokeBreakGlassRequest) returns (google.protobuf.Empty);
+}
+
 // ---------------------------------------------------------------------------
 // Secret messages
 // ---------------------------------------------------------------------------
@@ -614,6 +627,40 @@ message GetAuditRetentionResponse {
   optional google.protobuf.Timestamp newest_event = 4;
   int64 coverage_days = 5;
   bool meets_nis2_12_month = 6;
+}
+
+// BreakGlassActivation is one emergency-access grant on a project.
+message BreakGlassActivation {
+  uint32 id = 1;
+  uint32 project_id = 2;
+  uint32 user_id = 3; // who activated it
+  uint32 role_id = 4;
+  string role_name = 5;
+  string justification = 6;
+  string state = 7; // active | expired | revoked
+  optional google.protobuf.Timestamp expires_at = 8;
+  google.protobuf.Timestamp created_at = 9;
+  optional uint32 revoked_by = 10; // set on early revoke
+  optional google.protobuf.Timestamp revoked_at = 11;
+}
+
+message ActivateBreakGlassRequest {
+  uint32 project_id = 1;
+  string justification = 2;
+  string ttl = 3; // optional override (e.g. "2h"); empty = policy default + cap
+}
+
+message ListBreakGlassActivationsRequest {
+  uint32 project_id = 1;
+}
+
+message ListBreakGlassActivationsResponse {
+  repeated BreakGlassActivation activations = 1;
+}
+
+message RevokeBreakGlassRequest {
+  uint32 project_id = 1;
+  uint32 activation_id = 2;
 }
 
 // ---------------------------------------------------------------------------
