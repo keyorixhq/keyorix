@@ -2152,6 +2152,434 @@ var BreakGlassService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	GroupService_ListGroups_FullMethodName        = "/keyorix.v1.GroupService/ListGroups"
+	GroupService_GetGroup_FullMethodName          = "/keyorix.v1.GroupService/GetGroup"
+	GroupService_CreateGroup_FullMethodName       = "/keyorix.v1.GroupService/CreateGroup"
+	GroupService_UpdateGroup_FullMethodName       = "/keyorix.v1.GroupService/UpdateGroup"
+	GroupService_DeleteGroup_FullMethodName       = "/keyorix.v1.GroupService/DeleteGroup"
+	GroupService_RestoreGroup_FullMethodName      = "/keyorix.v1.GroupService/RestoreGroup"
+	GroupService_GetGroupMembers_FullMethodName   = "/keyorix.v1.GroupService/GetGroupMembers"
+	GroupService_AddGroupMember_FullMethodName    = "/keyorix.v1.GroupService/AddGroupMember"
+	GroupService_RemoveGroupMember_FullMethodName = "/keyorix.v1.GroupService/RemoveGroupMember"
+)
+
+// GroupServiceClient is the client API for GroupService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Group service for managing groups and their membership (RBAC).
+type GroupServiceClient interface {
+	// List all groups. Requires users.read.
+	ListGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListGroupsResponse, error)
+	// Get a group by ID. Requires users.read.
+	GetGroup(ctx context.Context, in *GetGroupRequest, opts ...grpc.CallOption) (*Group, error)
+	// Create a group. Requires users.write.
+	CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*Group, error)
+	// Update a group's name/description. Requires users.write.
+	UpdateGroup(ctx context.Context, in *UpdateGroupRequest, opts ...grpc.CallOption) (*Group, error)
+	// Soft-delete a group (restorable). Requires users.write.
+	DeleteGroup(ctx context.Context, in *DeleteGroupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Restore a soft-deleted group. Requires users.write.
+	RestoreGroup(ctx context.Context, in *RestoreGroupRequest, opts ...grpc.CallOption) (*Group, error)
+	// List a group's members. Requires users.read.
+	GetGroupMembers(ctx context.Context, in *GetGroupMembersRequest, opts ...grpc.CallOption) (*GetGroupMembersResponse, error)
+	// Add a user to a group (confers the group's roles). Requires roles.assign.
+	AddGroupMember(ctx context.Context, in *GroupMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Remove a user from a group. Requires roles.assign.
+	RemoveGroupMember(ctx context.Context, in *GroupMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+}
+
+type groupServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewGroupServiceClient(cc grpc.ClientConnInterface) GroupServiceClient {
+	return &groupServiceClient{cc}
+}
+
+func (c *groupServiceClient) ListGroups(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListGroupsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListGroupsResponse)
+	err := c.cc.Invoke(ctx, GroupService_ListGroups_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *groupServiceClient) GetGroup(ctx context.Context, in *GetGroupRequest, opts ...grpc.CallOption) (*Group, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Group)
+	err := c.cc.Invoke(ctx, GroupService_GetGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *groupServiceClient) CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*Group, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Group)
+	err := c.cc.Invoke(ctx, GroupService_CreateGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *groupServiceClient) UpdateGroup(ctx context.Context, in *UpdateGroupRequest, opts ...grpc.CallOption) (*Group, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Group)
+	err := c.cc.Invoke(ctx, GroupService_UpdateGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *groupServiceClient) DeleteGroup(ctx context.Context, in *DeleteGroupRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, GroupService_DeleteGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *groupServiceClient) RestoreGroup(ctx context.Context, in *RestoreGroupRequest, opts ...grpc.CallOption) (*Group, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Group)
+	err := c.cc.Invoke(ctx, GroupService_RestoreGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *groupServiceClient) GetGroupMembers(ctx context.Context, in *GetGroupMembersRequest, opts ...grpc.CallOption) (*GetGroupMembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGroupMembersResponse)
+	err := c.cc.Invoke(ctx, GroupService_GetGroupMembers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *groupServiceClient) AddGroupMember(ctx context.Context, in *GroupMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, GroupService_AddGroupMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *groupServiceClient) RemoveGroupMember(ctx context.Context, in *GroupMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, GroupService_RemoveGroupMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GroupServiceServer is the server API for GroupService service.
+// All implementations must embed UnimplementedGroupServiceServer
+// for forward compatibility.
+//
+// Group service for managing groups and their membership (RBAC).
+type GroupServiceServer interface {
+	// List all groups. Requires users.read.
+	ListGroups(context.Context, *emptypb.Empty) (*ListGroupsResponse, error)
+	// Get a group by ID. Requires users.read.
+	GetGroup(context.Context, *GetGroupRequest) (*Group, error)
+	// Create a group. Requires users.write.
+	CreateGroup(context.Context, *CreateGroupRequest) (*Group, error)
+	// Update a group's name/description. Requires users.write.
+	UpdateGroup(context.Context, *UpdateGroupRequest) (*Group, error)
+	// Soft-delete a group (restorable). Requires users.write.
+	DeleteGroup(context.Context, *DeleteGroupRequest) (*emptypb.Empty, error)
+	// Restore a soft-deleted group. Requires users.write.
+	RestoreGroup(context.Context, *RestoreGroupRequest) (*Group, error)
+	// List a group's members. Requires users.read.
+	GetGroupMembers(context.Context, *GetGroupMembersRequest) (*GetGroupMembersResponse, error)
+	// Add a user to a group (confers the group's roles). Requires roles.assign.
+	AddGroupMember(context.Context, *GroupMemberRequest) (*emptypb.Empty, error)
+	// Remove a user from a group. Requires roles.assign.
+	RemoveGroupMember(context.Context, *GroupMemberRequest) (*emptypb.Empty, error)
+	mustEmbedUnimplementedGroupServiceServer()
+}
+
+// UnimplementedGroupServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedGroupServiceServer struct{}
+
+func (UnimplementedGroupServiceServer) ListGroups(context.Context, *emptypb.Empty) (*ListGroupsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListGroups not implemented")
+}
+func (UnimplementedGroupServiceServer) GetGroup(context.Context, *GetGroupRequest) (*Group, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGroup not implemented")
+}
+func (UnimplementedGroupServiceServer) CreateGroup(context.Context, *CreateGroupRequest) (*Group, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateGroup not implemented")
+}
+func (UnimplementedGroupServiceServer) UpdateGroup(context.Context, *UpdateGroupRequest) (*Group, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateGroup not implemented")
+}
+func (UnimplementedGroupServiceServer) DeleteGroup(context.Context, *DeleteGroupRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteGroup not implemented")
+}
+func (UnimplementedGroupServiceServer) RestoreGroup(context.Context, *RestoreGroupRequest) (*Group, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreGroup not implemented")
+}
+func (UnimplementedGroupServiceServer) GetGroupMembers(context.Context, *GetGroupMembersRequest) (*GetGroupMembersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGroupMembers not implemented")
+}
+func (UnimplementedGroupServiceServer) AddGroupMember(context.Context, *GroupMemberRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddGroupMember not implemented")
+}
+func (UnimplementedGroupServiceServer) RemoveGroupMember(context.Context, *GroupMemberRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveGroupMember not implemented")
+}
+func (UnimplementedGroupServiceServer) mustEmbedUnimplementedGroupServiceServer() {}
+func (UnimplementedGroupServiceServer) testEmbeddedByValue()                      {}
+
+// UnsafeGroupServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to GroupServiceServer will
+// result in compilation errors.
+type UnsafeGroupServiceServer interface {
+	mustEmbedUnimplementedGroupServiceServer()
+}
+
+func RegisterGroupServiceServer(s grpc.ServiceRegistrar, srv GroupServiceServer) {
+	// If the following call panics, it indicates UnimplementedGroupServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&GroupService_ServiceDesc, srv)
+}
+
+func _GroupService_ListGroups_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).ListGroups(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_ListGroups_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).ListGroups(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GroupService_GetGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).GetGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_GetGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).GetGroup(ctx, req.(*GetGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GroupService_CreateGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).CreateGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_CreateGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).CreateGroup(ctx, req.(*CreateGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GroupService_UpdateGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).UpdateGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_UpdateGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).UpdateGroup(ctx, req.(*UpdateGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GroupService_DeleteGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).DeleteGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_DeleteGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).DeleteGroup(ctx, req.(*DeleteGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GroupService_RestoreGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).RestoreGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_RestoreGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).RestoreGroup(ctx, req.(*RestoreGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GroupService_GetGroupMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGroupMembersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).GetGroupMembers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_GetGroupMembers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).GetGroupMembers(ctx, req.(*GetGroupMembersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GroupService_AddGroupMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).AddGroupMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_AddGroupMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).AddGroupMember(ctx, req.(*GroupMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GroupService_RemoveGroupMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GroupMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GroupServiceServer).RemoveGroupMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GroupService_RemoveGroupMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GroupServiceServer).RemoveGroupMember(ctx, req.(*GroupMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// GroupService_ServiceDesc is the grpc.ServiceDesc for GroupService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var GroupService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "keyorix.v1.GroupService",
+	HandlerType: (*GroupServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListGroups",
+			Handler:    _GroupService_ListGroups_Handler,
+		},
+		{
+			MethodName: "GetGroup",
+			Handler:    _GroupService_GetGroup_Handler,
+		},
+		{
+			MethodName: "CreateGroup",
+			Handler:    _GroupService_CreateGroup_Handler,
+		},
+		{
+			MethodName: "UpdateGroup",
+			Handler:    _GroupService_UpdateGroup_Handler,
+		},
+		{
+			MethodName: "DeleteGroup",
+			Handler:    _GroupService_DeleteGroup_Handler,
+		},
+		{
+			MethodName: "RestoreGroup",
+			Handler:    _GroupService_RestoreGroup_Handler,
+		},
+		{
+			MethodName: "GetGroupMembers",
+			Handler:    _GroupService_GetGroupMembers_Handler,
+		},
+		{
+			MethodName: "AddGroupMember",
+			Handler:    _GroupService_AddGroupMember_Handler,
+		},
+		{
+			MethodName: "RemoveGroupMember",
+			Handler:    _GroupService_RemoveGroupMember_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "keyorix.proto",
+}
+
+const (
 	ProjectService_ListProjects_FullMethodName            = "/keyorix.v1.ProjectService/ListProjects"
 	ProjectService_GetProject_FullMethodName              = "/keyorix.v1.ProjectService/GetProject"
 	ProjectService_CreateProject_FullMethodName           = "/keyorix.v1.ProjectService/CreateProject"
