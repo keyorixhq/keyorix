@@ -14,8 +14,14 @@ All notable changes to Keyorix are documented here. This project follows
   single-replica-gated. The scan reads cert values to extract only the expiry — never
   the value or private key, skips suspended secrets, doesn't count against `max_reads`.
   Default off. (ADR-055) ([#419])
+- **CLI for the rotation plan** — `keyorix rotation plan <project-id>` prints a
+  project's automated rotation plan (ADR-053) in the terminal: overdue/due-soon secrets
+  batched into dependency-safe waves, most urgent first, each annotated with why it's
+  due and what it must rotate after. Thin REST client over the existing endpoint.
+  ([#420])
 
 [#419]: https://github.com/keyorixhq/keyorix/pull/419
+[#420]: https://github.com/keyorixhq/keyorix/pull/420
 
 ## v0.75.0 — 2026-06-23
 
