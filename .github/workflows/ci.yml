@@ -72,6 +72,46 @@ jobs:
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
 
+  # The Kubernetes operator is a separate Go module (operator/) so its
+  # controller-runtime/client-go dependency tree stays out of the server/CLI build.
+  # It is therefore not covered by the root `go ./...` jobs above; gate it here.
+  operator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operator
+    env:
+      GOWORK: off
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: go vet + build
+        run: |
+          go vet ./...
+          go build ./...
+
+      - name: go test
+        run: go test -race -timeout 120s ./...
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (echo 'gofmt needed:'; gofmt -l .; exit 1)
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: operator
+
+      - name: gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
+          gosec -severity medium -exclude-generated ./...
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:
@@ -124,4 +164,12 @@ jobs:
           helm lint deploy/helm/keyorix-k8s-sync $K8S_SYNC_SET
           helm template kx deploy/helm/keyorix-k8s-sync $K8S_SYNC_SET \
             --set targetNamespaces='{app,web}' \
+            | ./kubeconform -strict -summary -kubernetes-version 1.29.0
+
+      - name: Lint + render keyorix-operator chart
+        run: |
+          helm lint deploy/helm/keyorix-operator
+          # CRDs ship under crds/ (not templated); validate the rendered controller
+          # resources. -skip the CRD-defined kind is unnecessary here (none rendered).
+          helm template kx deploy/helm/keyorix-operator --set leaderElection=true \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0

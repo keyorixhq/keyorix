@@ -1,0 +1,28 @@
+keyorix-operator is installed.
+
+The operator watches KeyorixSecret resources cluster-wide and materialises the
+referenced Keyorix secrets into native Kubernetes Secrets.
+
+1. Create a machine-identity token Secret in your app namespace:
+
+   kubectl -n <ns> create secret generic keyorix-token \
+     --from-literal=token="$KEYORIX_MACHINE_TOKEN"
+
+2. Create a KeyorixSecret (see deploy/helm/keyorix-operator/examples/keyorixsecret.yaml):
+
+   apiVersion: secrets.keyorix.io/v1alpha1
+   kind: KeyorixSecret
+   metadata: { name: db-creds, namespace: <ns> }
+   spec:
+     server: https://keyorix.internal
+     tokenSecretRef: { name: keyorix-token, key: token }
+     data:
+       - secretKey: DB_PASSWORD
+         ref: app/production/db-password
+
+3. Watch it reconcile:
+
+   kubectl get keyorixsecret -n <ns>
+   kubectl get secret db-creds -n <ns>
+
+Deleting the KeyorixSecret garbage-collects the Secret it created (owner reference).

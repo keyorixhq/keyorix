@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kxop.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kxop.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "kxop.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.metricsPort | default 8080 | quote }}
+        prometheus.io/path: /metrics
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "kxop.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "kxop.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532  # matches the distroless:nonroot image user
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: {{ include "kxop.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "-health-probe-bind-address=:{{ .Values.healthPort | default 8081 }}"
+            - "-metrics-bind-address=:{{ .Values.metricsPort | default 8080 }}"
+            - "-leader-elect={{ .Values.leaderElection | default false }}"
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metricsPort | default 8080 }}
+            - name: health
+              containerPort: {{ .Values.healthPort | default 8081 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
