@@ -146,6 +146,32 @@ runtime + process collectors and per-route HTTP metrics
 (`keyorix_http_requests_total`, `keyorix_http_request_duration_seconds`). Point
 your own Prometheus at `backend:8080/metrics`.
 
+### Background scheduler health
+
+The periodic jobs (anomaly detection, retention purge, auto-rotation,
+certificate-expiry scan, audit checkpoints, …) each export their own health, labelled
+by `scheduler`:
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `keyorix_scheduler_runs_total{scheduler,outcome}` | counter | Ticks by outcome: `success`, `failure`, or `skipped`. |
+| `keyorix_scheduler_run_duration_seconds{scheduler}` | histogram | Duration of ticks that actually ran (success or failure). |
+| `keyorix_scheduler_last_run_timestamp_seconds{scheduler}` | gauge | Unix time of the last tick that ran. |
+| `keyorix_scheduler_last_success_timestamp_seconds{scheduler}` | gauge | Unix time of the last **successful** tick. |
+
+`skipped` is normal, not an error: in an HA deployment only one replica holds the
+single-writer advisory lock (ADR-039) per tick, so the others skip — and a job can
+also stand itself down (e.g. an active legal hold pauses a purge). Alert on a job that
+has stopped *succeeding*, e.g.:
+
+```
+time() - keyorix_scheduler_last_success_timestamp_seconds{scheduler="auto_rotation"} > 3600
+```
+
+or, for a job that has never once succeeded since boot,
+`absent(keyorix_scheduler_last_success_timestamp_seconds{scheduler="auto_rotation"})`.
+Only enabled schedulers appear; the gauges are absent until a job first runs.
+
 ## 9. Troubleshooting
 
 | Symptom | Cause / fix |
