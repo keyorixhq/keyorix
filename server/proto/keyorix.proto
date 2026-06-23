@@ -156,6 +156,29 @@ service BreakGlassService {
   rpc RevokeBreakGlass(RevokeBreakGlassRequest) returns (google.protobuf.Empty);
 }
 
+// Group service for managing groups and their membership (RBAC).
+service GroupService {
+  // List all groups. Requires users.read.
+  rpc ListGroups(google.protobuf.Empty) returns (ListGroupsResponse);
+  // Get a group by ID. Requires users.read.
+  rpc GetGroup(GetGroupRequest) returns (Group);
+  // Create a group. Requires users.write.
+  rpc CreateGroup(CreateGroupRequest) returns (Group);
+  // Update a group's name/description. Requires users.write.
+  rpc UpdateGroup(UpdateGroupRequest) returns (Group);
+  // Soft-delete a group (restorable). Requires users.write.
+  rpc DeleteGroup(DeleteGroupRequest) returns (google.protobuf.Empty);
+  // Restore a soft-deleted group. Requires users.write.
+  rpc RestoreGroup(RestoreGroupRequest) returns (Group);
+
+  // List a group's members. Requires users.read.
+  rpc GetGroupMembers(GetGroupMembersRequest) returns (GetGroupMembersResponse);
+  // Add a user to a group (confers the group's roles). Requires roles.assign.
+  rpc AddGroupMember(GroupMemberRequest) returns (google.protobuf.Empty);
+  // Remove a user from a group. Requires roles.assign.
+  rpc RemoveGroupMember(GroupMemberRequest) returns (google.protobuf.Empty);
+}
+
 // ---------------------------------------------------------------------------
 // Secret messages
 // ---------------------------------------------------------------------------
@@ -661,6 +684,66 @@ message ListBreakGlassActivationsResponse {
 message RevokeBreakGlassRequest {
   uint32 project_id = 1;
   uint32 activation_id = 2;
+}
+
+// Group is an RBAC group: a named set of users that collectively hold the group's
+// roles. Soft-deletable (restorable).
+message Group {
+  uint32 id = 1;
+  string name = 2;
+  string description = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// GroupMember is a lightweight view of a user in a group's membership list.
+message GroupMember {
+  uint32 id = 1;
+  string username = 2;
+  string email = 3;
+  string display_name = 4;
+  bool active = 5;
+}
+
+message GetGroupRequest {
+  uint32 id = 1;
+}
+
+message CreateGroupRequest {
+  string name = 1;
+  string description = 2;
+}
+
+message UpdateGroupRequest {
+  uint32 id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message DeleteGroupRequest {
+  uint32 id = 1;
+}
+
+message RestoreGroupRequest {
+  uint32 id = 1;
+}
+
+message ListGroupsResponse {
+  repeated Group groups = 1;
+}
+
+message GetGroupMembersRequest {
+  uint32 id = 1;
+}
+
+message GetGroupMembersResponse {
+  repeated GroupMember members = 1;
+}
+
+// GroupMemberRequest identifies a (group, user) pair for add/remove.
+message GroupMemberRequest {
+  uint32 group_id = 1;
+  uint32 user_id = 2;
 }
 
 // ---------------------------------------------------------------------------
