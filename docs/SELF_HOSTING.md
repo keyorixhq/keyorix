@@ -172,6 +172,21 @@ or, for a job that has never once succeeded since boot,
 `absent(keyorix_scheduler_last_success_timestamp_seconds{scheduler="auto_rotation"})`.
 Only enabled schedulers appear; the gauges are absent until a job first runs.
 
+### Webhook notification delivery
+
+When a webhook notification channel is configured, its delivery health is exported so a
+wedged or failing endpoint is visible rather than buried in logs:
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `keyorix_webhook_deliveries_total{outcome}` | counter | Deliveries by terminal outcome: `delivered`, `failed` (a 4xx or retries exhausted), or `dropped` (the bounded queue was full). |
+| `keyorix_webhook_delivery_retries_total` | counter | Retries made after a transient (5xx / 429 / transport) failure. |
+
+Transient failures are retried with exponential backoff; `4xx` responses are treated as
+permanent and not retried. A rising `failed`/`dropped` rate means the endpoint is
+unhealthy or too slow to keep up — alert on
+`rate(keyorix_webhook_deliveries_total{outcome=~"failed|dropped"}[5m]) > 0`.
+
 ## 9. Troubleshooting
 
 | Symptom | Cause / fix |
