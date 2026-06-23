@@ -159,6 +159,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	if cfg.SCIM.Enabled {
 		scimHandler := handlers.NewSCIMHandler(coreService)
 		r.Route("/scim/v2", func(r chi.Router) {
+			r.Use(customMiddleware.NoStore)
 			r.Use(customMiddleware.SCIMToken(cfg.SCIM.GetToken()))
 			r.Get("/ServiceProviderConfig", scimHandler.GetServiceProviderConfig)
 			r.Get("/Users", scimHandler.ListUsers)
@@ -177,6 +178,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// Never let any API response (secret values, tokens, …) be cached by a browser or
+		// proxy. Before auth, so even a 401 carries it.
+		r.Use(customMiddleware.NoStore)
 		// Authentication middleware for API routes
 		r.Use(customMiddleware.Authentication(coreService))
 		// Confine restricted (must-change-password) sessions to the password-change
