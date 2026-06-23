@@ -63,6 +63,7 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 	pb.RegisterDynamicSecretServiceServer(server, services.NewDynamicSecretService(coreService))
 	pb.RegisterComplianceServiceServer(server, services.NewComplianceService(coreService))
 	pb.RegisterConnectServiceServer(server, services.NewConnectService(coreService))
+	pb.RegisterBreakGlassServiceServer(server, services.NewBreakGlassService(coreService))
 
 	// Enable reflection for development
 	if cfg.Server.GRPC.ReflectionEnabled {
@@ -70,7 +71,7 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		log.Println("gRPC reflection enabled")
 	}
 
-	log.Println("gRPC server configured (all 11 services registered)")
+	log.Println("gRPC server configured (all 12 services registered)")
 	return server, nil
 }
 
