@@ -3,6 +3,57 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.77.0 — 2026-06-23
+
+A Kubernetes release: the secret-sync workstreams (orphan cleanup, an External Secrets
+Operator integration, Kubernetes dynamic secrets, a by-reference read endpoint) and a
+native CRD-based **operator** — plus time-bound secret shares and correct version
+stamping in the published images.
+
+### Added
+- **Kubernetes sync orphan cleanup** — the `keyorix-k8s-sync` agent can now reap the
+  Secrets it created once their mapping is removed, instead of leaving stale values
+  behind forever. Opt-in (`cleanup: true` / `-cleanup`, **off by default**); ownership is
+  recorded on-cluster via an `app.kubernetes.io/managed-by=keyorix-sync` label, so cleanup
+  only ever lists/deletes Secrets the agent created and only in namespaces still in the
+  config. A still-desired target survives a fetch failure, so a transient upstream error
+  can't delete a live Secret. Adds a `deleted` outcome to the log line, `/status`, and the
+  metrics; chart RBAC gains `list`/`delete`. (ADR-057) ([#426])
+- **External Secrets Operator integration** — read Keyorix secrets into native Kubernetes
+  Secrets through ESO's generic **Webhook** provider — no custom controller. Ships
+  `deploy/eso/` manifests (`ClusterSecretStore`, `ExternalSecret`, token template) and a
+  `docs/k8s-eso.md` guide. Reads go through Keyorix's scoped `secrets.read`, `max_reads`,
+  suspension, and audit. ([#426])
+- **Kubernetes dynamic secrets** — a `kubernetes` dynamic-secret backend that mints
+  short-lived ServiceAccount tokens via the TokenRequest API (dependency-free `net/http`;
+  in-cluster or explicit `api_server` config). Ephemeral like AWS STS / GCP — native
+  expiry, `Revoke` is a no-op, `Renew` refused. (ADR-058) ([#426])
+- **By-reference secret read** — `GET /api/v1/secrets/value?ref=project/environment/name`
+  returns a secret's value by a human-readable reference (used by ESO and the operator),
+  reusing the exact by-id read path: a scope resolver feeds the standard scoped
+  `secrets.read` gate and the value is read through the same `max_reads` / suspension /
+  audit machinery. The three-level reference is unambiguous (project names are globally
+  unique). (ADR-059) ([#426])
+- **Kubernetes operator (KeyorixSecret CRD)** — a `controller-runtime` operator that
+  reconciles `KeyorixSecret` resources (`secrets.keyorix.io/v1alpha1`) into native
+  Kubernetes Secrets and keeps them current — the native, `kubectl apply`-able delivery
+  model alongside the sync agent and ESO. The target Secret is owned by the CR, so
+  deleting it garbage-collects the Secret. Lives in its own Go module (`operator/`) so
+  `controller-runtime`/`client-go` stay out of the server/CLI build; ships a Helm chart
+  (`deploy/helm/keyorix-operator`) and a distroless image. (ADR-060) ([#429])
+- **Time-bound secret shares** — a share can be given an expiry so access auto-lapses
+  without manual revocation. ([#428])
+
+### Fixed
+- **Real version in container images** — the published images now embed the actual
+  release version and commit (`VERSION`/`GIT_COMMIT` build args), so `keyorix --version`
+  reports the tag from inside an image rather than `dev`. ([#427])
+
+[#426]: https://github.com/keyorixhq/keyorix/pull/426
+[#427]: https://github.com/keyorixhq/keyorix/pull/427
+[#428]: https://github.com/keyorixhq/keyorix/pull/428
+[#429]: https://github.com/keyorixhq/keyorix/pull/429
+
 ## v0.76.0 — 2026-06-23
 
 Certificate lifecycle hardening — expiry monitoring and a hygiene control in the
