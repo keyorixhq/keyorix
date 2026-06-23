@@ -3,6 +3,7 @@ package secret
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 var (
 	getID        uint
 	getName      string
+	getRef       string
 	getShowValue bool
 	getProject   uint
 	getEnv       uint
@@ -23,26 +25,45 @@ var (
 var getCmd = &cobra.Command{
 	Use:   "get",
 	Short: "Get a secret",
-	Long: `Retrieve a secret by ID or name.
+	Long: `Retrieve a secret by ID, by name, or by a project/environment/name reference.
+
+--ref reads the secret's value by a human-readable "project/environment/name"
+reference (ADR-059) — handy for scripts and automation. It always reads the value
+(so it counts toward max_reads and is audited like any value read).
 
 Examples:
   keyorix secret get --id 123
   keyorix secret get --name "db-password" --project 1 --environment 1
-  keyorix secret get --id 123 --show-value  # Show decrypted value`,
+  keyorix secret get --id 123 --show-value          # show decrypted value
+  keyorix secret get --ref app/production/db-password`,
 	RunE: runGet,
 }
 
 func init() {
 	getCmd.Flags().UintVar(&getID, "id", 0, "Secret ID")
 	getCmd.Flags().StringVar(&getName, "name", "", "Secret name")
+	getCmd.Flags().StringVar(&getRef, "ref", "", "Reference: project/environment/name (reads the value)")
 	getCmd.Flags().UintVar(&getProject, "project", 1, "Project ID (required with --name)")
 	getCmd.Flags().UintVar(&getEnv, "environment", 1, "Environment ID (required with --name)")
 	getCmd.Flags().BoolVar(&getShowValue, "show-value", false, "Show decrypted secret value")
 }
 
 func runGet(cmd *cobra.Command, args []string) error {
-	if getID == 0 && getName == "" {
-		return fmt.Errorf("either --id or --name is required")
+	selectors := 0
+	for _, set := range []bool{getID != 0, getName != "", getRef != ""} {
+		if set {
+			selectors++
+		}
+	}
+	if selectors == 0 {
+		return fmt.Errorf("one of --id, --name, or --ref is required")
+	}
+	if selectors > 1 {
+		return fmt.Errorf("--id, --name, and --ref are mutually exclusive")
+	}
+	// A reference read is value-oriented (it resolves to one secret and returns its value).
+	if getRef != "" {
+		getShowValue = true
 	}
 
 	ctx := context.Background()
@@ -58,6 +79,20 @@ func runGet(cmd *cobra.Command, args []string) error {
 func runGetRemote(ctx context.Context, rc *common.RemoteClient) error {
 	var secret *models.SecretNode
 	var value string
+
+	if getRef != "" {
+		q := url.Values{}
+		q.Set("ref", getRef)
+		var body struct {
+			Secret *models.SecretNode `json:"secret"`
+			Value  string             `json:"value"`
+		}
+		if err := rc.Get(ctx, "/api/v1/secrets/value?"+q.Encode(), &body); err != nil {
+			return fmt.Errorf("get secret by ref: %w", err)
+		}
+		displaySecret(body.Secret, body.Value)
+		return nil
+	}
 
 	if getID != 0 {
 		if getShowValue {
@@ -125,6 +160,19 @@ func runGetEmbedded(ctx context.Context) error {
 	service, err := common.InitializeCoreService()
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
+	}
+
+	if getRef != "" {
+		secret, err := service.ResolveSecretRef(ctx, getRef)
+		if err != nil {
+			return fmt.Errorf("resolve ref %q: %w", getRef, err)
+		}
+		val, err := service.GetSecretValue(ctx, secret.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get secret value: %w", err)
+		}
+		displaySecret(secret, string(val))
+		return nil
 	}
 
 	var secret *models.SecretNode
