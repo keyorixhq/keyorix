@@ -66,6 +66,51 @@ func TestRESTSink_ApplyServerSideApply(t *testing.T) {
 	// Value is base64-encoded in the Secret's data map.
 	data := gotBody["data"].(map[string]interface{})
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("p4ss")), data["DB"])
+	// The Secret is stamped with the managed-by label so cleanup can find it.
+	meta := gotBody["metadata"].(map[string]interface{})
+	labels := meta["labels"].(map[string]interface{})
+	assert.Equal(t, "keyorix-sync", labels["app.kubernetes.io/managed-by"])
+}
+
+func TestRESTSink_ListOwnedScopesByLabel(t *testing.T) {
+	var gotSelector string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/namespaces/app/secrets", r.URL.Path)
+		gotSelector = r.URL.Query().Get("labelSelector")
+		_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"creds"}},{"metadata":{"name":"stale"}}]}`))
+	}))
+	defer srv.Close()
+
+	names, err := testSink(srv).List(context.Background(), "app")
+	require.NoError(t, err)
+	assert.Equal(t, "app.kubernetes.io/managed-by=keyorix-sync", gotSelector,
+		"List must scope to owned Secrets so foreign Secrets are never seen")
+	assert.ElementsMatch(t, []string{"creds", "stale"}, names)
+}
+
+func TestRESTSink_DeleteHitsDeleteVerb(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"kind":"Status"}`))
+	}))
+	defer srv.Close()
+
+	err := testSink(srv).Delete(context.Background(), "app", "stale")
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodDelete, gotMethod)
+	assert.Equal(t, "/api/v1/namespaces/app/secrets/stale", gotPath)
+}
+
+func TestRESTSink_DeleteAbsentIsNotAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	err := testSink(srv).Delete(context.Background(), "app", "gone")
+	require.NoError(t, err, "deleting an already-absent Secret meets the goal state")
 }
 
 func TestRESTSink_ApplyError(t *testing.T) {

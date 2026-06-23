@@ -116,9 +116,15 @@ func (s *RESTSink) Apply(ctx context.Context, namespace, name string, data map[s
 	payload := map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "Secret",
-		"metadata":   map[string]string{"name": name, "namespace": namespace},
-		"type":       "Opaque",
-		"data":       encoded,
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+			// Stamp ownership so orphan cleanup can find Secrets this agent created
+			// (and only those) via a label selector.
+			"labels": map[string]string{managedByLabel: managedByValue},
+		},
+		"type": "Opaque",
+		"data": encoded,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -143,6 +149,63 @@ func (s *RESTSink) Apply(ctx context.Context, namespace, name string, data map[s
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("apply secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
+	}
+	return nil
+}
+
+// List returns the names of agent-owned Secrets in the namespace — those carrying the
+// managed-by label. Used by orphan cleanup; the label selector scopes the listing so
+// the agent never sees (and so can never delete) Secrets it did not create.
+func (s *RESTSink) List(ctx context.Context, namespace string) ([]string, error) {
+	q := url.Values{}
+	q.Set("labelSelector", managedByLabel+"="+managedByValue)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets?%s", url.PathEscape(namespace), q.Encode())
+	req, err := s.newRequest(ctx, http.MethodGet, path, "", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("list secrets in %s: HTTP %d", namespace, resp.StatusCode)
+	}
+	var body struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode secret list for %s: %w", namespace, err)
+	}
+	names := make([]string, 0, len(body.Items))
+	for _, it := range body.Items {
+		names = append(names, it.Metadata.Name)
+	}
+	return names, nil
+}
+
+// Delete removes the named Secret. A 404 is treated as success — the goal state (gone)
+// is already met, so a concurrent delete or an already-reaped Secret is not an error.
+func (s *RESTSink) Delete(ctx context.Context, namespace, name string) error {
+	req, err := s.newRequest(ctx, http.MethodDelete, s.secretPath(namespace, name), "", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("delete secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
 	}
 	return nil
 }

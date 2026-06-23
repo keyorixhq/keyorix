@@ -38,6 +38,7 @@ helm install kx-sync deploy/helm/keyorix-k8s-sync \
 | --- | --- |
 | `keyorix.url` | Keyorix server base URL (**required**) |
 | `keyorix.interval` | Reconcile cadence (Go duration; default `5m`) |
+| `cleanup` | Reap orphaned owned Secrets when a mapping is removed (default `false`) |
 | `keyorix.tokenSecret.name` | Existing Secret holding the Keyorix token (**required**) |
 | `keyorix.tokenSecret.key` | Key within that Secret (default `token`) |
 | `mappings` | List of `{ref, namespace, name, key}` — Keyorix secret → Kubernetes Secret key |
@@ -48,7 +49,9 @@ helm install kx-sync deploy/helm/keyorix-k8s-sync \
 
 ## RBAC
 
-The chart creates a `ClusterRole` (`secrets`: `get`/`create`/`patch`) and a namespaced
-`RoleBinding` in each `targetNamespaces` entry — least privilege, no cluster-wide
-Secret access. The agent uses Server-Side Apply (field manager `keyorix-sync`), so it
-owns the Secret `data` it writes and prunes keys it no longer maps.
+The chart creates a `ClusterRole` (`secrets`: `get`/`list`/`create`/`patch`/`delete`)
+and a namespaced `RoleBinding` in each `targetNamespaces` entry — least privilege, no
+cluster-wide Secret access. The agent uses Server-Side Apply (field manager
+`keyorix-sync`), so it owns the Secret `data` it writes and prunes keys it no longer
+maps. `list`/`delete` are exercised only when `cleanup: true` (orphan reaping); see
+[docs/k8s-sync.md](../../../docs/k8s-sync.md#orphan-cleanup-cleanup).

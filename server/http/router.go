@@ -364,6 +364,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// violate the current (global) policy. Deployment-wide system.read; static
 			// path, before /{id}.
 			r.With(customMiddleware.RequirePermission("system.read")).Get("/name-conformance", secretHandler.DeploymentSecretNameConformance)
+			// By-reference value read (ESO etc.): resolve project/environment/name → the
+			// secret's value. Scoped to the resolved secret; static path, before /{id}.
+			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromRefQuery)).Get("/value", secretHandler.GetSecretValueByRef)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}", secretHandler.GetSecret)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/versions", secretHandler.GetSecretVersions)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", secretScope)).Get("/{id}/risk", secretHandler.GetSecretRisk)

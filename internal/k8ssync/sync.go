@@ -32,19 +32,25 @@ type Fetcher interface {
 }
 
 // Sink reads and writes Kubernetes Secrets. Get returns (nil, nil) when the Secret
-// does not exist. Apply creates or replaces the Secret's data.
+// does not exist. Apply creates or replaces the Secret's data. List returns the names
+// of agent-owned Secrets in a namespace (those carrying the managed-by label) and
+// Delete removes one — both used only by orphan cleanup.
 type Sink interface {
 	Get(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	Apply(ctx context.Context, namespace, name string, data map[string][]byte) error
+	List(ctx context.Context, namespace string) ([]string, error)
+	Delete(ctx context.Context, namespace, name string) error
 }
 
 // Result summarises one reconcile pass. Created/Updated/Unchanged count target
-// Secrets (not individual keys); Failed counts targets skipped due to an error.
+// Secrets (not individual keys); Failed counts targets skipped due to an error;
+// Deleted counts orphaned Secrets reaped by cleanup (or that WOULD be, in dry-run).
 type Result struct {
 	Created   int
 	Updated   int
 	Unchanged int
 	Failed    int
+	Deleted   int
 	Errors    []string
 }
 
@@ -116,7 +122,69 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 			res.Updated++
 		}
 	}
+
+	// With cleanup enabled, reap Secrets the agent previously created (carrying its
+	// managed-by label) whose target is no longer in the config — otherwise a removed
+	// mapping leaves a stale Secret behind forever. Runs after the apply loop so the
+	// desired set reflects everything this config still wants.
+	if e.cleanup {
+		e.cleanupOrphans(ctx, grouped, &res)
+	}
 	return res, nil
+}
+
+// managedByLabel marks every Secret the agent owns; cleanup only ever lists and
+// deletes Secrets carrying it, so operator- or other-tool-created Secrets are never
+// touched. Mirrors the Server-Side Apply field manager (keyorix-sync).
+const (
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByValue = "keyorix-sync"
+)
+
+// cleanupOrphans lists agent-owned Secrets in every namespace the config still
+// references and deletes those whose target is no longer desired. It is scoped to the
+// managed-by label (never touches foreign Secrets) and to namespaces present in the
+// config — dropping a namespace from the config entirely leaves its Secrets unreaped
+// (documented). A target still in the config is kept even if its fetch failed this
+// pass, so a transient upstream error can't trigger a delete.
+func (e *Engine) cleanupOrphans(ctx context.Context, grouped map[target][]SecretMapping, res *Result) {
+	desired := make(map[target]bool, len(grouped))
+	nsSet := make(map[string]struct{})
+	for t := range grouped {
+		desired[t] = true
+		nsSet[t.namespace] = struct{}{}
+	}
+	namespaces := make([]string, 0, len(nsSet))
+	for ns := range nsSet {
+		namespaces = append(namespaces, ns)
+	}
+	sort.Strings(namespaces)
+
+	for _, ns := range namespaces {
+		owned, err := e.sink.List(ctx, ns)
+		if err != nil {
+			res.Failed++
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: list owned: %v", ns, err))
+			continue
+		}
+		sort.Strings(owned) // deterministic order for logs/tests
+		for _, name := range owned {
+			t := target{namespace: ns, name: name}
+			if desired[t] {
+				continue
+			}
+			if e.dryRun {
+				res.Deleted++ // report the would-delete without removing anything
+				continue
+			}
+			if derr := e.sink.Delete(ctx, ns, name); derr != nil {
+				res.Failed++
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: delete orphan: %v", t, derr))
+				continue
+			}
+			res.Deleted++
+		}
+	}
 }
 
 // Engine reconciles Keyorix secrets into Kubernetes Secrets via a Fetcher and Sink.
@@ -124,6 +192,7 @@ type Engine struct {
 	fetcher Fetcher
 	sink    Sink
 	dryRun  bool
+	cleanup bool
 }
 
 // Option configures an Engine.
@@ -133,6 +202,13 @@ type Option func(*Engine)
 // writing any Secret — for config validation and safe previews.
 func WithDryRun() Option {
 	return func(e *Engine) { e.dryRun = true }
+}
+
+// WithCleanup makes the engine reap orphaned Secrets — agent-owned Secrets whose
+// target is no longer in the config. Off by default: deleting Secrets is destructive,
+// so it must be opted into explicitly. Combines with WithDryRun to preview deletions.
+func WithCleanup() Option {
+	return func(e *Engine) { e.cleanup = true }
 }
 
 // NewEngine constructs an Engine over the given Fetcher and Sink.

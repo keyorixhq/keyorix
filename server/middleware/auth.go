@@ -424,6 +424,22 @@ func ScopeFromSecretParam(param string) ScopeResolver {
 	}
 }
 
+// ScopeFromRefQuery resolves scope from a "?ref=project/environment/name" query param,
+// for the by-reference value read. It locates the referenced secret (no value read, no
+// read-count side effect) and returns its project/environment scope, so the standard
+// scoped-permission gate authorizes the caller against the secret's real scope — a
+// caller scoped to another project is denied exactly as for the by-id route.
+func ScopeFromRefQuery(r *http.Request, cs *core.KeyorixCore) (core.Scope, error) {
+	secret, err := cs.ResolveSecretRef(r.Context(), r.URL.Query().Get("ref"))
+	if err != nil {
+		if errors.Is(err, core.ErrSecretRefInvalid) {
+			return core.Scope{}, errInvalidTarget
+		}
+		return core.Scope{}, errTargetNotFound
+	}
+	return core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}, nil
+}
+
 // ScopeFromDeletedSecretParam resolves the scope of a secret that may be
 // soft-deleted (loads it Unscoped). Used by the restore route, where the target
 // secret is by definition soft-deleted and unloadable via the normal path.

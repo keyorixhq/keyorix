@@ -17,8 +17,8 @@ func Sync(ctx context.Context, e *Engine, mappings []SecretMapping, logf Logf) R
 		logf("k8s-sync: reconcile error: %v", err)
 		return res
 	}
-	logf("k8s-sync: created=%d updated=%d unchanged=%d failed=%d",
-		res.Created, res.Updated, res.Unchanged, res.Failed)
+	logf("k8s-sync: created=%d updated=%d unchanged=%d deleted=%d failed=%d",
+		res.Created, res.Updated, res.Unchanged, res.Deleted, res.Failed)
 	for _, e := range res.Errors {
 		logf("k8s-sync: %s", e)
 	}

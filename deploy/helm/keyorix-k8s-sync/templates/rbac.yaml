@@ -13,7 +13,9 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "patch"]
+    # list + delete are needed only for orphan cleanup (cleanup: true); they are
+    # harmless when cleanup is off, and keeping one role avoids a conditional rule.
+    verbs: ["get", "list", "create", "patch", "delete"]
 ---
 {{- $ns := .Values.targetNamespaces | default (list .Release.Namespace) }}
 {{- $root := . }}

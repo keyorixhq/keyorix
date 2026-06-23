@@ -17,6 +17,7 @@ type Config struct {
 	KeyorixURL string          `yaml:"keyorix_url"`
 	Interval   string          `yaml:"interval"`    // Go duration (e.g. "5m"); default 5m
 	HealthPort int             `yaml:"health_port"` // probe/status HTTP port; default 8080
+	Cleanup    bool            `yaml:"cleanup"`     // reap orphaned owned Secrets; default false
 	Mappings   []SecretMapping `yaml:"mappings"`
 }
 
