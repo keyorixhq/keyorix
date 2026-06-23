@@ -3,9 +3,9 @@ name: keyorix-operator
 description: Keyorix Kubernetes operator — reconciles KeyorixSecret resources into native Kubernetes Secrets
 type: application
 # Chart version — tracks the Keyorix release version (published in lockstep).
-version: 0.77.0
+version: 0.78.0
 # The keyorix-operator image tag this chart deploys by default.
-appVersion: "0.77.0"
+appVersion: "0.78.0"
 home: https://github.com/keyorixhq/keyorix
 sources:
   - https://github.com/keyorixhq/keyorix
