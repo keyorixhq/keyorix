@@ -3,6 +3,43 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.79.0 — 2026-06-23
+
+CLI ergonomics (machine-identity OIDC bindings, by-reference secret reads, richer
+token listing), more reliable compliance-evidence delivery, and the cryptographic
+foundation for air-gapped signing.
+
+### Added
+- **Machine-identity OIDC federation bindings in the CLI** — manage the bindings that
+  map an external `(issuer, subject)` to a machine identity (ADR-031), so a workload can
+  authenticate with a platform-issued JWT (e.g. a Kubernetes projected SA token) instead
+  of a stored credential. The binding existed over HTTP and gRPC but had no CLI; operators
+  can now wire it from the terminal. ([#438])
+- **Read a secret by reference from the CLI** — `keyorix secret get --ref
+  project/environment/name` reads a secret's value by a human-readable reference (ADR-059),
+  completing CLI parity with the HTTP endpoint. Handy for scripts and automation; the read
+  is scoped, counts toward `max_reads`, and is audited like any value read. ([#442])
+- **`keyorix pat list` shows created / last-used / expiry** — the token list now surfaces
+  `created_at`, `last_used_at`, and `expires_at`, so "which of my tokens are stale or about
+  to expire?" is answerable from the CLI instead of the web UI or raw API. ([#440])
+- **Air-gap signing trust foundation** — `internal/trust`, a verify-only, purpose-scoped
+  `ed25519` public-key registry (fails closed) with trusted keys embedded at build time,
+  plus `keyorix trust keygen` to mint a keypair and print the embed snippet. The base for
+  air-gapped update bundles and offline licenses (ADR-062 Phase 0). No behaviour change —
+  no callers yet, and a non-release build trusts no keys. ([#441])
+
+### Fixed
+- **Compliance evidence-pack delivery retries transient failures** — the daily
+  evidence-pack webhook (ISO 27001 / SOC 2 continuous evidence) previously POSTed once and
+  lost the pack on a brief receiver outage; it now retries transient failures, closing a
+  gap in the continuous-evidence guarantee. ([#439])
+
+[#438]: https://github.com/keyorixhq/keyorix/pull/438
+[#439]: https://github.com/keyorixhq/keyorix/pull/439
+[#440]: https://github.com/keyorixhq/keyorix/pull/440
+[#441]: https://github.com/keyorixhq/keyorix/pull/441
+[#442]: https://github.com/keyorixhq/keyorix/pull/442
+
 ## v0.78.0 — 2026-06-23
 
 A read-only **MCP server** so AI agents can use Keyorix secrets safely, reliable
