@@ -184,8 +184,14 @@ behaviour until built.
    no callers until Phase 1, and a non-release build trusts no keys. Generating the
    production keypairs and embedding their public keys is an operational step at first
    release of a signed artifact.
-2. **Phase 1 — bundles:** `keyorix bundle build` (CI, extends `release.yml`) +
-   `verify`/`import`; bundle published as a release asset for online customers to relay.
+2. **Phase 1 — bundles:**
+   - **1a (done, [ADR-064](adr-064-air-gap-update-bundles.md)):** the bundle format,
+     `internal/bundle`, and `keyorix bundle build` (sign) + `verify` (offline, fail-closed,
+     anti-downgrade) — the cryptographic + structural core, built on the Phase 0 trust
+     registry.
+   - **1b:** `keyorix bundle import` (load images into an internal registry, stage
+     charts/CRDs/binaries, enforce no-downgrade against the live install, audit event) and
+     CI wiring (`bundle build` in `release.yml`, bundle published as a release asset).
 3. **Phase 2 — licensing:** offline license verification, the commercial feature gate
    (fail-safe), `license install|status`, and compliance/audit surfacing.
 4. **Phase 3 — hardening:** HSM-backed signing, key rotation drill, reproducible-bundle
