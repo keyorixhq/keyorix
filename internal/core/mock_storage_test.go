@@ -663,6 +663,11 @@ func (m *MockStorage) GetUser(ctx context.Context, id uint) (*models.User, error
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
+// LockUserForUpdate has no row lock in the mock; it reuses the GetUser expectation.
+func (m *MockStorage) LockUserForUpdate(ctx context.Context, id uint) (*models.User, error) {
+	return m.GetUser(ctx, id)
+}
+
 func (m *MockStorage) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
 	args := m.Called(ctx, email)
 	if args.Get(0) == nil {

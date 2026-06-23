@@ -19,6 +19,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // --- Users ---
@@ -63,6 +64,26 @@ func (ls *LocalStorage) GetUser(ctx context.Context, id uint) (*models.User, err
 		if err == gorm.ErrRecordNotFound {
 			// Wrap the typed sentinel so callers can distinguish "absent" from a
 			// transient failure (e.g. ownership-transfer recovery must fail closed).
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &user, nil
+}
+
+// LockUserForUpdate re-reads a user, adding SELECT … FOR UPDATE on Postgres so a
+// read-modify-write inside a transaction serializes against concurrent writers of the
+// same row (the login-lockout failed-attempt counter relies on this — see
+// recordFailedLogin). SQLite has no row-level lock, so the clause is omitted there and
+// the caller serializes in-process; SQLite is always single-process, so that suffices.
+func (ls *LocalStorage) LockUserForUpdate(ctx context.Context, id uint) (*models.User, error) {
+	q := ls.db.WithContext(ctx)
+	if ls.db.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var user models.User
+	if err := q.First(&user, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
