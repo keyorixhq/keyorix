@@ -256,6 +256,15 @@ type Storage interface {
 	// persisted.
 	CreateUserWithRoleGrants(ctx context.Context, user *models.User, grants []RoleGrant) (*models.User, error)
 	GetUser(ctx context.Context, id uint) (*models.User, error)
+	// LockUserForUpdate re-reads a user by ID inside a WithTransaction, taking a
+	// row-level write lock on backends that support one (Postgres: SELECT … FOR
+	// UPDATE) so a read-modify-write on the row serializes against concurrent writers
+	// across replicas. On backends without row locks (SQLite) it is a plain read, and
+	// the caller is responsible for its own process-level serialization. Returns the
+	// typed ErrUserNotFound when the user is absent. Use this — not GetUser — whenever
+	// a transaction increments or conditionally mutates per-user counters (e.g. the
+	// login-lockout failed-attempt count) that must not lose updates under concurrency.
+	LockUserForUpdate(ctx context.Context, id uint) (*models.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
 	UpdateUser(ctx context.Context, user *models.User) (*models.User, error)
 	// UpdateLastLogin stamps the user's last_login_at column without touching any

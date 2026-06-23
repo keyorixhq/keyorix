@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -54,7 +55,12 @@ type KeyorixCore struct {
 	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
 	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
 	loginLockout      LoginLockoutPolicy // per-account login lockout (disabled by default)
-	auditForwarder    AuditForwarder
+	// loginFailureMu serializes the per-account failed-login read-increment-write in
+	// recordFailedLogin so concurrent failures can't lose an increment. Combined with
+	// the row lock LockUserForUpdate takes on Postgres, the lockout counter stays
+	// correct across replicas. Zero value is ready to use. See login_lockout.go.
+	loginFailureMu sync.Mutex
+	auditForwarder AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).

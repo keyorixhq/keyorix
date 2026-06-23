@@ -55,6 +55,13 @@ func (rs *RemoteStorage) GetUser(ctx context.Context, id uint) (*models.User, er
 	return &result, nil
 }
 
+// LockUserForUpdate has no row lock to take over HTTP — each remote API call is already
+// atomic server-side, and the server's own LocalStorage takes the real FOR UPDATE lock
+// when it runs the lockout accounting. So this is a plain read.
+func (rs *RemoteStorage) LockUserForUpdate(ctx context.Context, id uint) (*models.User, error) {
+	return rs.GetUser(ctx, id)
+}
+
 // GetUserByEmail retrieves a user by email via remote API.
 func (rs *RemoteStorage) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
 	path := fmt.Sprintf("/api/v1/users/by-email/%s", email)
