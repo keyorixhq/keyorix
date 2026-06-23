@@ -257,6 +257,12 @@ func (rs *RemoteStorage) GetSecretVersions(ctx context.Context, secretID uint) (
 }
 
 // GetLatestSecretVersion retrieves the most recent version of a secret via remote API.
+// SetSecretCertNotAfter is a server-side concern (the certificate scan runs on the
+// server); the remote client never invokes it.
+func (rs *RemoteStorage) SetSecretCertNotAfter(_ context.Context, _ uint, _ *time.Time) error {
+	return remoteUnsupported("SetSecretCertNotAfter")
+}
+
 func (rs *RemoteStorage) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
 	path := fmt.Sprintf("/api/v1/secrets/%d/versions/latest", secretID)
 	resp, err := rs.client.Get(ctx, path)

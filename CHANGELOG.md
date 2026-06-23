@@ -14,8 +14,16 @@ All notable changes to Keyorix are documented here. This project follows
   single-replica-gated. The scan reads cert values to extract only the expiry — never
   the value or private key, skips suspended secrets, doesn't count against `max_reads`.
   Default off. (ADR-055) ([#419])
+- **Certificate hygiene in the compliance posture** — the control matrix gains a
+  **Certificate expiry hygiene** control (a gap when any certificate is expired; mapped
+  to ISO 27001 / SOC 2 / NIS2 / ENS `op.exp.11`) plus a `certificates` posture figure
+  (expired / expiring-soon / total / not-yet-evaluated). Fed by a cached cert `notAfter`
+  (`SecretNode.cert_not_after`) populated as a side-effect of certificate inspection and
+  the expiry scan — so the posture reports hygiene without decrypting on the dashboard
+  path and without touching the create/rotate path. (ADR-056) ([#421])
 
 [#419]: https://github.com/keyorixhq/keyorix/pull/419
+[#421]: https://github.com/keyorixhq/keyorix/pull/421
 
 ## v0.75.0 — 2026-06-23
 

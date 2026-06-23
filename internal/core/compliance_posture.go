@@ -138,6 +138,16 @@ type RiskPosture struct {
 	ExpiringSoon     int `json:"expiring_soon"` // active exceptions expiring within the soon window
 }
 
+// CertificatePosture reports certificate hygiene from the cached cert expiry (ADR-056).
+// NotEvaluated counts certificate-typed secrets whose certificate hasn't been parsed
+// yet (no inspection/scan) — full coverage needs the certificate-expiry scan enabled.
+type CertificatePosture struct {
+	TotalCertificates int `json:"total_certificates"`
+	Expired           int `json:"expired"`
+	ExpiringSoon      int `json:"expiring_soon"` // within the 30-day window
+	NotEvaluated      int `json:"not_evaluated"`
+}
+
 // CompliancePosture is the deployment's control posture at a point in time.
 type CompliancePosture struct {
 	GeneratedAt      time.Time               `json:"generated_at"`
@@ -151,6 +161,7 @@ type CompliancePosture struct {
 	LegalHold        LegalHoldPosture        `json:"legal_hold"`
 	Retention        RetentionPosture        `json:"retention"`
 	Risk             RiskPosture             `json:"risk"`
+	Certificates     CertificatePosture      `json:"certificates"`
 }
 
 // riskExpiringSoonWindow is how far ahead an active exception counts as "expiring
@@ -231,6 +242,9 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	if active, soon, err := c.CountActiveRiskExceptions(ctx, riskExpiringSoonWindow); err == nil {
 		p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon}
 	}
+
+	// Certificate hygiene from the cached cert expiry (ADR-056).
+	p.Certificates = c.certificatePosture(ctx)
 
 	// Data-retention windows (A.5.33).
 	rp := c.retentionPolicy

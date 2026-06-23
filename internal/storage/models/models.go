@@ -466,6 +466,12 @@ type SecretNode struct {
 	// DB role) before storing it. Empty RotationBackend = regenerate in Keyorix only.
 	RotationBackend string `gorm:"not null;default:''"`
 	RotationRef     string `gorm:"not null;default:''"`
+	// CertNotAfter caches the parsed leaf-certificate expiry for certificate-typed
+	// secrets (ADR-056). Populated as a side-effect of certificate inspection /
+	// expiry scans (which already decrypt + parse the value), so the compliance
+	// posture can report certificate hygiene without decrypting on the read path.
+	// Nil = not yet evaluated (or not a certificate). Metadata only — never the value.
+	CertNotAfter *time.Time `gorm:"index"`
 	// DeletedAt enables soft delete (ADR-033). DELETE stamps it; restore clears
 	// it; the purge scheduler hard-deletes rows past the retention window. GORM
 	// auto-scopes `deleted_at IS NULL` on model-based queries — raw/Table/Joins
