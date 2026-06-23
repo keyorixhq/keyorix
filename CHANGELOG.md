@@ -3,6 +3,49 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.81.0 — 2026-06-23
+
+A security-hardening release: the HTTP edge gets global security headers, a request
+body-size cap, no panic-internals leakage, and the debug route removed from production;
+per-account login lockout is now atomic under concurrency; and share self-removal works
+end-to-end.
+
+### Added
+- **Share self-removal works end-to-end** — a recipient can now remove themselves from a
+  secret share via `DELETE /api/v1/secrets/{id}/self-share` and the corresponding CLI
+  command. The CLI command previously shipped as a non-functional placeholder; it is now a
+  registered remote-only command backed by a real route, and the operation only removes the
+  caller's own direct share (never a group share, never someone else's). ([#458])
+
+### Security
+- **Global security-headers middleware** — every response now carries `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and HSTS when TLS is
+  enabled. ([#455])
+- **Request body-size cap (DoS mitigation)** — requests are bounded by
+  `http.MaxBytesReader` (10 MiB default, configurable), so an oversized or slow body can't
+  exhaust server memory. ([#456])
+- **Panic internals never reach the client** — the recovery middleware no longer has a
+  development branch that could return the panic value or stack trace in the response; it
+  always responds with a generic 500. ([#453])
+- **Debug `/test-route` removed from the production router** — a leftover debug route is no
+  longer registered. ([#460])
+
+### Fixed
+- **Per-account login lockout is atomic under concurrency** — failed-login counting now uses
+  an atomic update, so concurrent attempts can't race past the lockout threshold. ([#474])
+
+### Internal
+- Group-inherited grant lifecycle boundary tests — expiry and membership transitions for
+  permissions inherited through group shares. ([#475])
+
+[#453]: https://github.com/keyorixhq/keyorix/pull/453
+[#455]: https://github.com/keyorixhq/keyorix/pull/455
+[#456]: https://github.com/keyorixhq/keyorix/pull/456
+[#458]: https://github.com/keyorixhq/keyorix/pull/458
+[#460]: https://github.com/keyorixhq/keyorix/pull/460
+[#474]: https://github.com/keyorixhq/keyorix/pull/474
+[#475]: https://github.com/keyorixhq/keyorix/pull/475
+
 ## v0.80.0 — 2026-06-23
 
 SAML 2.0 single sign-on (Service Provider) lands as a working login path, three more
