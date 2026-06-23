@@ -3,6 +3,45 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.78.0 — 2026-06-23
+
+A read-only **MCP server** so AI agents can use Keyorix secrets safely, reliable
+delivery for all operational-alert channels, CLI CSV export for auditors, and a design
+for air-gapped updates + offline licensing.
+
+### Added
+- **MCP server for AI agents** — `keyorix-mcp`, a read-only Model Context Protocol server
+  (stdio JSON-RPC 2.0) that lets an AI agent (Claude Desktop/Code, etc.) read Keyorix
+  secrets through a least-privilege machine token. Tools: `keyorix_get_secret(ref)` (value
+  by `project/environment/name`, via the by-reference endpoint) and
+  `keyorix_list_secrets(environment?)` (references only, no values). No write tools, no
+  network surface; every read goes through the usual scoped `secrets.read` / `max_reads` /
+  suspension / audit, and values are never logged. Ships a Docker image and a configuration
+  guide. (ADR-061) ([#433])
+- **Reliable notification delivery for every channel** — the webhook, chat (Slack/Teams),
+  and email (SMTP) operational-alert sinks (anomalies, break-glass, rotation/recert
+  reminders — ISO 27001 A.5.5) now run on a shared delivery engine that **retries
+  transient failures with exponential backoff** (permanent `4xx` not retried), is
+  shutdown-aware, and exports Prometheus metrics so drops/failures are alertable. Replaces
+  the previous fire-and-forget that silently lost an alert on a brief endpoint blip or a
+  full queue. ([#432], [#434])
+- **Compliance & inventory CSV export in the CLI** — `keyorix compliance controls --csv`
+  (the control matrix) and `keyorix compliance inventory [--project <id>]` (the secret
+  asset inventory, metadata only — no values) give auditors CLI parity with the dashboard
+  for an air-gapped hand-off, instead of falling back to the raw HTTP API. ([#430])
+
+### Design
+- **Air-gapped updates & offline license validation** — a design (no behaviour change) for
+  cryptographically-verifiable offline update bundles and fail-safe offline license
+  validation (both `ed25519` with embedded pinned public keys), ready to build on the first
+  air-gap prospect. (ADR-062) ([#435])
+
+[#430]: https://github.com/keyorixhq/keyorix/pull/430
+[#432]: https://github.com/keyorixhq/keyorix/pull/432
+[#433]: https://github.com/keyorixhq/keyorix/pull/433
+[#434]: https://github.com/keyorixhq/keyorix/pull/434
+[#435]: https://github.com/keyorixhq/keyorix/pull/435
+
 ## v0.77.0 — 2026-06-23
 
 A Kubernetes release: the secret-sync workstreams (orphan cleanup, an External Secrets
