@@ -469,15 +469,35 @@ func (ls *LocalStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleID
 	return nil
 }
 
-// GetUserPermissions retrieves all distinct permissions for userID via role membership.
+// GetUserPermissions retrieves a user's EFFECTIVE distinct permissions — the union of
+// permissions granted by their directly-assigned roles AND roles inherited through group
+// membership. Both grant paths are what Authorize honours (direct + group role ids), so
+// the "what can this user do" view (dashboards, access reviews, SoD detection) must count
+// both; a direct-only set silently under-reports — and would miss a separation-of-duties
+// violation whose two permissions are held one directly and one via a group. Expired
+// grants and soft-deleted groups are excluded, matching the role-resolution path.
 func (ls *LocalStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
+	now := time.Now()
+	// Role ids granted directly to the user (unexpired).
+	directRoleIDs := ls.db.Table("user_roles").
+		Select("role_id").
+		Where("user_id = ?", userID).
+		Where("expires_at IS NULL OR expires_at > ?", now)
+	// Role ids inherited via group membership (active groups, unexpired grants) —
+	// mirrors GetUserGroupRoleIDsAt's join, minus the scope filter (this set is the
+	// user's permissions anywhere, like the direct set above).
+	groupRoleIDs := ls.db.Table("group_roles").
+		Select("group_roles.role_id").
+		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Where("user_groups.user_id = ?", userID).
+		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", now)
+
 	var permissions []*storage.Permission
 	err := ls.db.WithContext(ctx).Table("permissions").
 		Select("permissions.id, permissions.name, permissions.description, permissions.resource, permissions.action").
 		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
-		Joins("JOIN user_roles ON role_permissions.role_id = user_roles.role_id").
-		Where("user_roles.user_id = ?", userID).
-		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", time.Now()).
+		Where("role_permissions.role_id IN (?) OR role_permissions.role_id IN (?)", directRoleIDs, groupRoleIDs).
 		Group("permissions.id").
 		Find(&permissions).Error
 	if err != nil {

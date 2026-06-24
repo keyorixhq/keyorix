@@ -40,6 +40,37 @@ func TestDetectSoDViolations(t *testing.T) {
 	assert.NotContains(t, users, "bob", "bob (viewer) lacks secrets.write")
 }
 
+// A toxic pair held with one permission DIRECT and the other inherited via a GROUP is a
+// real SoD violation and must be flagged — effective permissions include group-inherited
+// roles, not just directly-assigned ones.
+func TestDetectSoDViolations_GroupInheritedPermission(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
+	ctx := context.Background()
+
+	// carol holds users.read directly (viewer, role 4) and secrets.write ONLY via a group
+	// (editor, role 3). Neither side alone is a violation; together they are.
+	h.CreateTestUser(t, "carol", 12)
+	h.AssignUserRole(t, 12, 4, nil) // viewer (direct) → users.read (+ secrets.read)
+	h.CreateTestGroup(t, "writers", "", 5)
+	h.AssignGroupRole(t, 5, 3, nil) // editor on the group → secrets.write
+	h.AssignUserToGroup(t, 12, 5)   // carol joins → inherits secrets.write
+
+	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-useradmin", "", "secrets.write", "users.read")
+	require.NoError(t, err)
+
+	violations, err := h.CoreService.DetectSoDViolations(ctx)
+	require.NoError(t, err)
+
+	var users []string
+	for _, v := range violations {
+		users = append(users, v.Username)
+	}
+	assert.Contains(t, users, "carol",
+		"carol holds users.read directly and secrets.write via a group — a group-inherited SoD violation")
+}
+
 // With no policies, there are no violations.
 func TestDetectSoDViolations_NoPolicies(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
