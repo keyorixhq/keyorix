@@ -230,6 +230,25 @@ func (rs *RemoteStorage) GetUserPermissions(ctx context.Context, userID uint) ([
 	return result, nil
 }
 
+// GetUserGroupPermissions retrieves a user's group-inherited permissions via the
+// remote API. The server resolves direct and group permissions on its own storage;
+// this client path exists to satisfy the Storage interface.
+func (rs *RemoteStorage) GetUserGroupPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
+	path := fmt.Sprintf("/api/v1/users/%d/group-permissions", userID)
+	resp, err := rs.client.Get(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user group permissions: %w", err)
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("get user group permissions failed: %s", resp.Error.Error())
+	}
+	var result []*storage.Permission
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
 // --- Permission management (not supported in remote mode) ---
 
 // CreatePermission is not supported in remote storage.

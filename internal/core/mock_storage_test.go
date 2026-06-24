@@ -967,6 +967,14 @@ func (m *MockStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*s
 	return args.Get(0).([]*storage.Permission), args.Error(1)
 }
 
+func (m *MockStorage) GetUserGroupPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*storage.Permission), args.Error(1)
+}
+
 // Audit Logging
 
 func (m *MockStorage) LogAuditEvent(ctx context.Context, event *models.AuditEvent) error {

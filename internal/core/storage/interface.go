@@ -351,6 +351,13 @@ type Storage interface {
 	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
+	// GetUserGroupPermissions returns the permissions a user holds via GROUP
+	// membership (group → group_roles → role_permissions), scope-agnostically and
+	// across all of the user's groups — the counterpart to GetUserPermissions, which
+	// covers only direct user_roles. Callers that need a user's full effective
+	// permission set (e.g. SoD conflict detection) must union both, mirroring how
+	// Authorize unions direct and group-inherited roles.
+	GetUserGroupPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 
 	// Permission queries
 	ListPermissions(ctx context.Context) ([]*models.Permission, error)
