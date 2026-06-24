@@ -43,6 +43,11 @@ The first commercial-licensed feature, plus session-lifetime hardening.
   rejected once it passes its absolute lifetime cap even if the access token itself has not
   expired, closing a window where a long-lived refresh chain could outlive the configured
   ceiling. ([#489])
+- **A suspended account can no longer authenticate via a personal access token** — `SuspendUser`
+  changes the account state and terminates the user's sessions but intentionally leaves
+  `is_active` set, so a suspended user's existing PATs continued to authenticate. PAT validation
+  now also rejects a blocked account state (mirroring session validation), so suspension
+  immediately revokes access through every credential type, not only sessions. ([#492])
 
 ### Internal
 - A regression test pinning that the SIEM-pull audit export carries the ADR-029 hash-chain
@@ -51,6 +56,7 @@ The first commercial-licensed feature, plus session-lifetime hardening.
 [#489]: https://github.com/keyorixhq/keyorix/pull/489
 [#490]: https://github.com/keyorixhq/keyorix/pull/490
 [#491]: https://github.com/keyorixhq/keyorix/pull/491
+[#492]: https://github.com/keyorixhq/keyorix/pull/492
 
 ## v0.83.0 — 2026-06-24
 
