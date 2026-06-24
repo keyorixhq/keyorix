@@ -66,6 +66,22 @@ func TestPasswordPolicy_Relaxed(t *testing.T) {
 	assert.False(t, strings.Contains(err.Error(), "uppercase"), "disabled checks not reported")
 }
 
+// A policy with a non-positive MinLength (the fail-open shape produced by a partial
+// password_policy config block, which zeroes every unset field) must NOT accept an
+// empty or trivially-short password — Validate falls back to the conservative
+// built-in length floor rather than disabling it.
+func TestPasswordPolicy_ZeroMinLengthFallsBackToDefaultFloor(t *testing.T) {
+	p := PasswordPolicy{RejectCommonPasswords: true} // MinLength defaults to 0
+
+	for _, pw := range []string{"", "a", "short", "Passw0rd!"} { // all < 16
+		err := p.Validate(pw, nil)
+		require.Errorf(t, err, "a %d-char password must be rejected when MinLength collapsed to 0", len(pw))
+		assert.Contains(t, err.Error(), "at least 16 characters")
+	}
+	// A password meeting the default floor still passes.
+	assert.NoError(t, p.Validate("ThisIsLongEnough16+", nil))
+}
+
 // The common-password rule rejects denylisted passwords (case-insensitive) and
 // is independent of the complexity checks.
 func TestPasswordPolicy_RejectsCommonPasswords(t *testing.T) {
