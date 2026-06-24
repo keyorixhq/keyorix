@@ -13,6 +13,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/trust"
 )
 
 // dormantThreshold is how long without a secret access marks a standing grant
@@ -162,6 +163,23 @@ type CompliancePosture struct {
 	Retention        RetentionPosture        `json:"retention"`
 	Risk             RiskPosture             `json:"risk"`
 	Certificates     CertificatePosture      `json:"certificates"`
+	SupplyChain      SupplyChainPosture      `json:"supply_chain"`
+}
+
+// SupplyChainPosture reports software-supply-chain integrity: whether this deployment
+// verifies updates against a pinned signing key (ADR-062/064) and the offline-entitlement
+// state (ADR-065). A signed-release deployment embeds the update-signing key, so every
+// update bundle is verified offline against it before it can be staged.
+type SupplyChainPosture struct {
+	// UpdateSigningTrusted is true when at least one update-signing key is pinned into this
+	// build — i.e. update bundles are verified against a trusted key (a signed release).
+	UpdateSigningTrusted bool `json:"update_signing_trusted"`
+	// TrustedUpdateKeys is how many update-signing key-ids are pinned (≥1 in a release).
+	TrustedUpdateKeys int `json:"trusted_update_keys"`
+	// LicenseState is the offline-license state ("active"/"expiring_soon"/.../"none").
+	LicenseState string `json:"license_state"`
+	// LicenseValid is true when the license currently grants commercial features.
+	LicenseValid bool `json:"license_valid"`
 }
 
 // riskExpiringSoonWindow is how far ahead an active exception counts as "expiring
@@ -255,6 +273,20 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 		BreakGlassDays:             rp.BreakGlassDays,
 		ResolvedAccessRequestsDays: rp.ResolvedAccessRequestsDays,
 	}
+
+	// Supply-chain integrity (ADR-062/064/065): signed, offline-verifiable updates plus
+	// offline entitlement. A non-release/source build pins no keys (control not in force).
+	sc := SupplyChainPosture{}
+	if reg, rerr := trust.DefaultRegistry(); rerr == nil && reg != nil {
+		ids := reg.KeyIDs(trust.PurposeUpdate)
+		sc.TrustedUpdateKeys = len(ids)
+		sc.UpdateSigningTrusted = len(ids) > 0
+	}
+	ls := c.LicenseStatus()
+	sc.LicenseState = string(ls.State)
+	sc.LicenseValid = ls.Grants()
+	p.SupplyChain = sc
+
 	return p, nil
 }
 

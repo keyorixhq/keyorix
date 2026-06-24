@@ -100,3 +100,21 @@ func TestGetComplianceControls_SummaryTallies(t *testing.T) {
 	assert.Equal(t, got.Summary.Total, got.Summary.Pass+got.Summary.Gap+got.Summary.NotConfigured)
 	assert.False(t, got.GeneratedAt.IsZero())
 }
+
+// The supply-chain-integrity control reflects whether updates are verified against a
+// pinned signing key: a signed release passes; an unsigned/source build is "not
+// configured" (the control doesn't apply), never a gap.
+func TestEvaluateControls_SupplyChainIntegrity(t *testing.T) {
+	signed := EvaluateControls(&CompliancePosture{
+		SupplyChain: SupplyChainPosture{UpdateSigningTrusted: true, TrustedUpdateKeys: 1, LicenseState: "active", LicenseValid: true},
+	})
+	sc := findControl(t, signed, "supply-chain-integrity")
+	assert.Equal(t, ControlStatusPass, sc.Status)
+	assert.Contains(t, sc.Detail, "1 pinned signing key")
+	assert.Contains(t, sc.Frameworks.NIS2, "Art.21(2)(d)")
+
+	unsigned := EvaluateControls(&CompliancePosture{SupplyChain: SupplyChainPosture{}})
+	scu := findControl(t, unsigned, "supply-chain-integrity")
+	assert.Equal(t, ControlStatusNotConfigured, scu.Status)
+	assert.NotEqual(t, ControlStatusGap, scu.Status)
+}

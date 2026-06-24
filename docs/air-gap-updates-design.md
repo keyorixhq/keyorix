@@ -226,5 +226,9 @@ behaviour until built.
 
 Supply-chain integrity and provenance (NIS2 Art. 21, DORA ICT third-party risk,
 ENS `op.exp.*`), data-sovereignty / no-egress operation, and verifiable update control.
-These map cleanly onto the existing control framework (ADR-051) and can be added to the
-compliance posture as a "supply-chain integrity" control once Phase 1 lands.
+These map cleanly onto the existing control framework (ADR-051). **Shipped:** a
+`supply-chain-integrity` control in the compliance posture/matrix
+(`internal/core/control_framework.go`) — Pass when this deployment verifies updates against
+a pinned signing key (a signed release), "not configured" on an unsigned/source build —
+mapped to ISO 27001 A.5.19–A.5.21, SOC 2 CC8.1, NIS2 Art. 21(2)(d), DORA Art. 28, and ENS
+`op.pl.2`/`op.exp.2`, with the offline-license state reported alongside.
