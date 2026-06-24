@@ -135,3 +135,43 @@ func TestListBreakGlassActivations_ExpiredReconciliation(t *testing.T) {
 	require.Len(t, list, 1)
 	assert.Equal(t, core.BreakGlassExpired, list[0].State, "an active grant past expiry reads as expired")
 }
+
+// An expired break-glass grant must confer NO access at the authorization boundary — not
+// merely show as "expired" in the activation list. Break-glass self-grants a time-bound
+// emergency role; once it lapses, Authorize must deny, relying on the expires_at filter in
+// role resolution (GetUserRoleIDsAt). This drives the real activate → authorize → expire
+// flow end to end, rather than only the SQL filter in isolation.
+func TestBreakGlass_ExpiredGrantDeniesAuthorization(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour) // editor = role 3 (secrets.read + secrets.write)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+
+	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
+	require.NoError(t, err)
+
+	// While active, the emergency role authorizes a write at the project scope.
+	ok, err := h.CoreService.Authorize(ctx, 10, "secrets.write", core.Scope{ProjectID: proj})
+	require.NoError(t, err)
+	require.True(t, ok, "break-glass must grant the emergency permission while active")
+
+	// Simulate the grant lapsing: push its expiry into the past (equivalent to the TTL
+	// elapsing). Role resolution filters out expires_at <= now, so the role drops away.
+	require.NoError(t, h.DB.Model(&models.UserRole{}).
+		Where("user_id = ? AND role_id = ?", 10, 3).
+		Update("expires_at", time.Now().Add(-time.Hour)).Error)
+
+	// The emergency role no longer resolves...
+	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})
+	require.NoError(t, err)
+	assert.NotContains(t, ids, uint(3), "an expired emergency role must drop out of role resolution")
+
+	// ...and Authorize denies the permission it used to grant.
+	ok, err = h.CoreService.Authorize(ctx, 10, "secrets.write", core.Scope{ProjectID: proj})
+	require.NoError(t, err)
+	assert.False(t, ok, "an expired break-glass grant must confer no access at the authorization boundary")
+}
