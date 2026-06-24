@@ -78,9 +78,14 @@ type AccessRequest struct {
 // N-of-M dual control (ISO 27001 A.5.3 / SOX): a request grants the role only once
 // RequiredApprovals distinct approvers (none of them the requester) have approved.
 type AccessRequestApproval struct {
-	ID         uint `gorm:"primaryKey"`
-	RequestID  uint `gorm:"index;not null"`
-	ApproverID uint `gorm:"not null"`
+	ID uint `gorm:"primaryKey"`
+	// (RequestID, ApproverID) is unique: one sign-off per distinct approver. The
+	// constraint is the race backstop for the M-of-K dual-control count — without it,
+	// concurrent approvals from the same approver could insert multiple rows and the
+	// row-count threshold would treat one person as several, defeating dual control.
+	// The composite index also covers RequestID lookups (leftmost column).
+	RequestID  uint `gorm:"not null;uniqueIndex:ux_access_request_approver"`
+	ApproverID uint `gorm:"not null;uniqueIndex:ux_access_request_approver"`
 	CreatedAt  time.Time
 }
 

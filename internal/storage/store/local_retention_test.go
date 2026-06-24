@@ -96,10 +96,10 @@ func TestDeleteResolvedAccessRequestsBefore_CascadesAndSkipsPending(t *testing.T
 	now := time.Now()
 	oldResolved := now.AddDate(0, 0, -200)
 
-	// Resolved request with 2 approvals — purged with its approvals.
+	// Resolved request with 2 approvals (from 2 distinct approvers) — purged with them.
 	require.NoError(t, ls.db.Create(&models.AccessRequest{ID: 1, State: "approved", ResolvedAt: &oldResolved}).Error)
-	require.NoError(t, ls.db.Create(&models.AccessRequestApproval{ID: 100, RequestID: 1}).Error)
-	require.NoError(t, ls.db.Create(&models.AccessRequestApproval{ID: 101, RequestID: 1}).Error)
+	require.NoError(t, ls.db.Create(&models.AccessRequestApproval{ID: 100, RequestID: 1, ApproverID: 11}).Error)
+	require.NoError(t, ls.db.Create(&models.AccessRequestApproval{ID: 101, RequestID: 1, ApproverID: 12}).Error)
 	// Pending request (resolved_at NULL) created long ago — never purged.
 	require.NoError(t, ls.db.Create(&models.AccessRequest{ID: 2, State: "pending", CreatedAt: oldResolved}).Error)
 
