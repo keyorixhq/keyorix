@@ -259,6 +259,13 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	if err != nil {
 		return nil, nil, err
 	}
+	// A second-factor WebAuthn login still mints a session, so a suspended or
+	// deactivated account must be refused — the challenge may have been issued just
+	// before suspension, with nothing rechecking state between steps. Mirrors the
+	// passwordless path's AccountLoginBlocked gate (and the password/session gates).
+	if !wu.user.IsActive || AccountLoginBlocked(wu.user.AccountState) {
+		return nil, nil, fmt.Errorf("account is not active")
+	}
 	cred, err := c.webauthnRP.ValidateLogin(wu, sd, parsed)
 	if err != nil {
 		c.auditWebAuthnFailed(ctx, ch.UserID, "login")

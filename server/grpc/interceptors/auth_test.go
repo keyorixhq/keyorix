@@ -65,7 +65,7 @@ func TestAuthInterceptor_ValidSessionPopulatesUserContext(t *testing.T) {
 	mintSessionForTest(t, h, 9001, "grpc-alice", "live-token", time.Now().Add(time.Hour))
 
 	var captured context.Context
-	interceptor := AuthInterceptor(h.CoreService)
+	interceptor := AuthInterceptor(h.CoreService, false)
 	resp, err := interceptor(bearerCtx("live-token"), nil,
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
 
@@ -84,7 +84,7 @@ func TestAuthInterceptor_LegacyBackdoorTokenRejected(t *testing.T) {
 	h := setupAuthHelper(t)
 	defer h.Cleanup()
 
-	interceptor := AuthInterceptor(h.CoreService)
+	interceptor := AuthInterceptor(h.CoreService, false)
 	for _, tok := range []string{"valid-token", "test-token"} {
 		_, err := interceptor(bearerCtx(tok), nil,
 			&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
@@ -98,7 +98,7 @@ func TestAuthInterceptor_ExpiredSessionRejected(t *testing.T) {
 	defer h.Cleanup()
 	mintSessionForTest(t, h, 9002, "grpc-bob", "stale-token", time.Now().Add(-time.Minute))
 
-	interceptor := AuthInterceptor(h.CoreService)
+	interceptor := AuthInterceptor(h.CoreService, false)
 	_, err := interceptor(bearerCtx("stale-token"), nil,
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
 	require.Error(t, err)
@@ -108,7 +108,7 @@ func TestAuthInterceptor_ExpiredSessionRejected(t *testing.T) {
 func TestAuthInterceptor_MissingAndMalformedCredentials(t *testing.T) {
 	h := setupAuthHelper(t)
 	defer h.Cleanup()
-	interceptor := AuthInterceptor(h.CoreService)
+	interceptor := AuthInterceptor(h.CoreService, false)
 	info := &grpc.UnaryServerInfo{FullMethod: secretMethod}
 
 	cases := map[string]context.Context{
@@ -129,7 +129,7 @@ func TestAuthInterceptor_MissingAndMalformedCredentials(t *testing.T) {
 
 // A nil core service must fail closed (never authenticate) rather than panic.
 func TestAuthInterceptor_NilCoreFailsClosed(t *testing.T) {
-	interceptor := AuthInterceptor(nil)
+	interceptor := AuthInterceptor(nil, false)
 	_, err := interceptor(bearerCtx("whatever"), nil,
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
 	require.Error(t, err)
@@ -138,7 +138,7 @@ func TestAuthInterceptor_NilCoreFailsClosed(t *testing.T) {
 
 // Public methods (health, reflection) bypass authentication entirely.
 func TestAuthInterceptor_PublicMethodBypassesAuth(t *testing.T) {
-	interceptor := AuthInterceptor(nil) // never consulted for public methods
+	interceptor := AuthInterceptor(nil, false) // never consulted for public methods
 	var captured context.Context
 	resp, err := interceptor(context.Background(), nil,
 		&grpc.UnaryServerInfo{FullMethod: "/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo"},
@@ -167,7 +167,7 @@ func TestAuthInterceptor_PATAuthenticatesAndEnforcesScope(t *testing.T) {
 	require.True(t, strings.HasPrefix(res.PlainToken, "kx_pat_"))
 
 	var captured context.Context
-	interceptor := AuthInterceptor(h.CoreService)
+	interceptor := AuthInterceptor(h.CoreService, false)
 	resp, err := interceptor(bearerCtx(res.PlainToken), nil,
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
 	require.NoError(t, err, "a kx_pat_ token must now authenticate over gRPC")
@@ -208,7 +208,7 @@ func TestAuthInterceptor_MachineTokenAuthenticatesAndUsesMachineRBAC(t *testing.
 	require.NoError(t, h.CoreService.AssignMachineRole(context.Background(), m.ID, 4, core.Scope{ProjectID: 2}, 1))
 
 	var captured context.Context
-	interceptor := AuthInterceptor(h.CoreService)
+	interceptor := AuthInterceptor(h.CoreService, false)
 	_, err = interceptor(bearerCtx(tok.PlainToken), nil,
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
 	require.NoError(t, err, "a kx_machine_ token must authenticate over gRPC")
@@ -242,7 +242,7 @@ func TestAuthInterceptor_InvalidPATRejected(t *testing.T) {
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.PersonalAccessToken{}))
 
-	interceptor := AuthInterceptor(h.CoreService)
+	interceptor := AuthInterceptor(h.CoreService, false)
 	_, err := interceptor(bearerCtx("kx_pat_bogus"), nil,
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
 	require.Error(t, err)
@@ -272,7 +272,7 @@ func TestAuthInterceptor_PATNetworkAllowlistOverGRPC(t *testing.T) {
 	res, err := h.CoreService.CreateOwnPAT(context.Background(), 9200, "ci-cidr", nil, nil, 0, 0, []string{"10.0.0.0/8"})
 	require.NoError(t, err)
 
-	interceptor := AuthInterceptor(h.CoreService)
+	interceptor := AuthInterceptor(h.CoreService, false)
 
 	_, err = interceptor(bearerCtxFromIP(res.PlainToken, "10.1.2.3"), nil,
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
@@ -282,4 +282,150 @@ func TestAuthInterceptor_PATNetworkAllowlistOverGRPC(t *testing.T) {
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
 	require.Error(t, err, "off-network source IP must be denied over gRPC")
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// setUserFields fetches a user by id, applies mutate, and persists — used to put a
+// test user into a restricted account state or flip its MFA flag.
+func setUserFields(t *testing.T, h *testhelper.RBACTestHelper, userID uint, mutate func(*models.User)) {
+	t.Helper()
+	var u models.User
+	require.NoError(t, h.DB.First(&u, userID).Error)
+	mutate(&u)
+	require.NoError(t, h.DB.Save(&u).Error)
+}
+
+// A restricted account (ADR-025 password_reset_required / pending_first_login) must
+// change its password first. HTTP confines it to the change-password allowlist; gRPC
+// has no such endpoint, so it is denied outright — otherwise the restriction would be
+// bypassable by switching transports.
+func TestAuthInterceptor_RestrictedAccountDeniedOverGRPC(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	mintSessionForTest(t, h, 9300, "grpc-reset", "reset-token", time.Now().Add(time.Hour))
+	setUserFields(t, h, 9300, func(u *models.User) { u.AccountState = core.AccountPasswordResetRequired })
+
+	interceptor := AuthInterceptor(h.CoreService, false)
+	_, err := interceptor(bearerCtx("reset-token"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
+	require.Error(t, err, "a restricted account must not access RPCs over gRPC")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// When the deployment mandates MFA (security.require_mfa), an interactive session
+// without MFA is confined to the enrolment endpoints on HTTP; gRPC has none, so it is
+// denied. A session with MFA is allowed, and a PAT is exempt (non-interactive) — both
+// matching the HTTP EnforceMFAEnrollment policy.
+func TestAuthInterceptor_MFAEnrolmentGateOverGRPC(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.PersonalAccessToken{}))
+
+	mintSessionForTest(t, h, 9400, "grpc-nomfa", "nomfa-token", time.Now().Add(time.Hour))
+	mintSessionForTest(t, h, 9401, "grpc-mfa", "mfa-token", time.Now().Add(time.Hour))
+	setUserFields(t, h, 9401, func(u *models.User) { u.MFAEnabled = true })
+
+	// A PAT owned by a user without MFA — non-interactive, so exempt from the gate.
+	h.CreateTestUser(t, "grpc-pat-nomfa", 9402)
+	res, err := h.CoreService.CreateOwnPAT(context.Background(), 9402, "ci", nil, nil, 0, 0, nil)
+	require.NoError(t, err)
+
+	mfaRequired := AuthInterceptor(h.CoreService, true)
+	info := &grpc.UnaryServerInfo{FullMethod: secretMethod}
+
+	_, err = mfaRequired(bearerCtx("nomfa-token"), nil, info, okHandler(nil))
+	require.Error(t, err, "session without MFA must be denied when the deployment requires MFA")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	_, err = mfaRequired(bearerCtx("mfa-token"), nil, info, okHandler(nil))
+	require.NoError(t, err, "session with MFA is allowed")
+
+	_, err = mfaRequired(bearerCtx(res.PlainToken), nil, info, okHandler(nil))
+	require.NoError(t, err, "a PAT is non-interactive and exempt from the MFA-enrolment gate")
+
+	// With the policy off, the same un-enrolled session authenticates fine.
+	_, err = AuthInterceptor(h.CoreService, false)(bearerCtx("nomfa-token"), nil, info, okHandler(nil))
+	require.NoError(t, err, "no MFA gate when the deployment does not require MFA")
+}
+
+// A machine-identity request over gRPC must produce audit events actored as a
+// machine (ADR-023/030), not silently defaulted to "user" — parity with HTTP's
+// buildRequestContext, which tags the request context the same way. Without the
+// interceptor tagging the context, switching transport to gRPC would mislabel
+// every machine action as a user action in the audit trail.
+func TestAuthInterceptor_MachineRequestStampsMachineActorInAudit(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}, &models.AuditEvent{}))
+
+	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", "", 1)
+	require.NoError(t, err)
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, "tok", nil, "", 1)
+	require.NoError(t, err)
+
+	var captured context.Context
+	interceptor := AuthInterceptor(h.CoreService, false)
+	_, err = interceptor(bearerCtx(tok.PlainToken), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
+	require.NoError(t, err)
+
+	// An audit event written downstream with the handler's context must be machine-actored.
+	h.CoreService.LogRoleAssigned(captured, 0, 1, 4, core.Scope{ProjectID: 2})
+	var ev models.AuditEvent
+	require.NoError(t, h.DB.Order("id desc").First(&ev).Error)
+	assert.Equal(t, core.ActorTypeMachine, ev.ActorType,
+		"a machine request over gRPC must stamp ActorType=machine_identity in audit")
+}
+
+// An impersonation session used over gRPC must keep the initiating admin
+// attributable: every audit event it writes records ImpersonatedBy and
+// Impersonation=true, exactly as on HTTP. Without resolving SessionImpersonator
+// and tagging the context, an admin acting through impersonation over gRPC would
+// be invisible in the audit trail — an accountability bypass by transport.
+func TestAuthInterceptor_ImpersonationSessionStampsAdminInAudit(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
+
+	const adminID, targetID uint = 7001, 7002
+	h.CreateTestUser(t, "imp-target", targetID)
+	exp := time.Now().Add(time.Hour)
+	admin := adminID
+	_, err := h.Storage.CreateSession(context.Background(), &models.Session{
+		UserID:         targetID,
+		SessionToken:   "imp-token",
+		ExpiresAt:      &exp,
+		ImpersonatedBy: &admin,
+	})
+	require.NoError(t, err)
+
+	var captured context.Context
+	interceptor := AuthInterceptor(h.CoreService, false)
+	_, err = interceptor(bearerCtx("imp-token"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
+	require.NoError(t, err)
+
+	// The token authenticates as the impersonated target, carrying the admin's id.
+	user := GetUserFromGRPCContext(captured)
+	require.NotNil(t, user)
+	assert.Equal(t, targetID, user.UserID)
+	require.NotNil(t, user.ImpersonatedBy, "impersonation must be resolved over gRPC")
+	assert.Equal(t, adminID, *user.ImpersonatedBy)
+
+	// An audit event written downstream records the initiating admin and the flag.
+	h.CoreService.LogRoleAssigned(captured, targetID, 1, 4, core.Scope{ProjectID: 2})
+	var ev models.AuditEvent
+	require.NoError(t, h.DB.Order("id desc").First(&ev).Error)
+	require.NotNil(t, ev.ImpersonatedBy, "audit over gRPC must record the impersonating admin")
+	assert.Equal(t, adminID, *ev.ImpersonatedBy)
+	assert.True(t, ev.Impersonation, "audit over gRPC must mark the event as impersonated")
+
+	// A non-impersonation session leaves the tag unset (no false positives).
+	mintSessionForTest(t, h, 7003, "plain-user", "plain-token", time.Now().Add(time.Hour))
+	var plainCtx context.Context
+	_, err = interceptor(bearerCtx("plain-token"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&plainCtx))
+	require.NoError(t, err)
+	assert.Nil(t, GetUserFromGRPCContext(plainCtx).ImpersonatedBy,
+		"an ordinary session must not be tagged as impersonation")
 }

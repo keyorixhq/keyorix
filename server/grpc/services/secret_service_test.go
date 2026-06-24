@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -34,6 +35,12 @@ func newSecretTestRig(t *testing.T) *secretTestRig {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// Serialize access to the in-memory DB: the audit logging the service fires runs
+	// in a detached goroutine (as on HTTP), so a single connection avoids SQLite
+	// "database is locked" races between it and the test's own queries.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
 		&models.SecretVersion{}, &models.User{}, &models.Role{}, &models.ShareRecord{},
@@ -114,6 +121,61 @@ func TestSecretService_CreateSecret_PermissionDenied(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// sessionCtx returns a context for an interactive session-authenticated user (as
+// the auth interceptor populates after validating a session token), with the
+// second-factor flag set explicitly. SessionAuth gates the per-project MFA policy.
+func sessionCtx(userID uint, username string, mfaEnabled bool, perms ...string) context.Context {
+	return context.WithValue(context.Background(), interceptors.GetUserContextKey(),
+		&interceptors.UserContext{
+			UserID: userID, Username: username, Permissions: perms,
+			SessionAuth: true, MFAEnabled: mfaEnabled,
+		})
+}
+
+// Per-project MFA policy (ADR-037) over gRPC: a project that requires MFA must
+// deny an interactive session WITHOUT a second factor, mirroring the HTTP
+// ProjectMFABlocked gate so the policy is not bypassable by switching transport.
+// A session WITH MFA is allowed; a PAT (non-interactive, SessionAuth=false) is
+// exempt; and a project that does not require MFA gates nobody.
+func TestSecretService_PerProjectMFAGateOverGRPC(t *testing.T) {
+	r := newSecretTestRig(t)
+	// Project 1 (seeded) now mandates a second factor; project 2 does not.
+	require.NoError(t, r.db.Model(&models.Project{}).Where("id = ?", 1).Update("require_mfa", true).Error)
+	require.NoError(t, r.db.Create(&models.Project{ID: 2, Name: "open"}).Error)
+	require.NoError(t, r.db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "development"}).Error)
+
+	create := func(ctx context.Context, name string, projectID, envID uint32) error {
+		_, err := r.svc.CreateSecret(ctx, &pb.CreateSecretRequest{
+			Name: name, Value: "v", ProjectId: projectID, EnvironmentId: envID, Type: "password",
+		})
+		return err
+	}
+
+	// Interactive session without MFA → denied on the MFA-required project, for both a
+	// mutation and a read (ListSecrets shares the gate).
+	noMFA := sessionCtx(1, "owner", false, "secrets.write", "secrets.read")
+	err := create(noMFA, "k1", 1, 1)
+	require.Error(t, err, "session without MFA must be denied on an MFA-required project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	_, err = r.svc.ListSecrets(noMFA, &pb.ListSecretsRequest{ProjectId: ptrU32(1), EnvironmentId: ptrU32(1)})
+	require.Error(t, err, "ListSecrets is gated by the per-project MFA policy too")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// Same session, but the project does not require MFA → allowed.
+	require.NoError(t, r.db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID, ProjectID: 2}).Error)
+	require.NoError(t, create(noMFA, "k2", 2, 2), "a project without an MFA requirement gates nobody")
+
+	// A session WITH a second factor is allowed on the MFA-required project.
+	withMFA := sessionCtx(1, "owner", true, "secrets.write", "secrets.read")
+	require.NoError(t, create(withMFA, "k3", 1, 1), "session with MFA is allowed")
+
+	// A PAT is non-interactive (SessionAuth=false) and exempt — automation must not
+	// break on an MFA-required project. authCtx leaves SessionAuth false.
+	pat := authCtx(1, "owner", "secrets.write", "secrets.read")
+	require.NoError(t, create(pat, "k4", 1, 1), "a PAT is exempt from the per-project MFA gate")
 }
 
 // Regression (gRPC scoped-authz hardening): CreateSecret must authorize
@@ -242,6 +304,73 @@ func TestSecretService_GetSecretValue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "the-value", val.GetValue())
 	assert.Equal(t, "token", val.GetName())
+}
+
+// A secret read over gRPC must land in the audit trail and the secret-access log,
+// exactly as the HTTP reveal handler records it. Without it, the anomaly detector
+// (which feeds on secret_access_logs) is blind to reads that arrive over gRPC, so
+// secrets could be exfiltrated over gRPC invisibly. The write is detached/async,
+// so poll for it.
+func TestSecretService_GetSecretValue_RecordsAccessLogAndAudit(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
+	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
+	created := r.createSecret(t, ctx, "token", "the-value")
+
+	_, err := r.svc.GetSecretValue(ctx, &pb.GetSecretRequest{Id: created.GetId()})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		var audits, logs int64
+		r.db.Model(&models.AuditEvent{}).
+			Where("event_type = ? AND secret_node_id = ?", "secret.read", created.GetId()).Count(&audits)
+		r.db.Model(&models.SecretAccessLog{}).
+			Where("secret_node_id = ? AND action = ?", created.GetId(), "read").Count(&logs)
+		return audits == 1 && logs == 1
+	}, 2*time.Second, 10*time.Millisecond,
+		"a gRPC secret read must write one secret.read audit event and one access-log row")
+
+	// The access-log row attributes the read to the caller, for forensics / anomaly.
+	var alog models.SecretAccessLog
+	require.NoError(t, r.db.Where("secret_node_id = ?", created.GetId()).First(&alog).Error)
+	assert.Equal(t, "owner", alog.AccessedBy)
+	assert.Equal(t, uint(created.GetId()), alog.SecretNodeID)
+}
+
+// Secret create/update/delete over gRPC must be audited exactly as on HTTP — the
+// core methods do not audit internally, the handler does. Without this, the entire
+// secret lifecycle was invisible in the audit trail when driven over gRPC.
+func TestSecretService_WriteOps_AuditedOverGRPC(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}))
+	ctx := authCtx(1, "owner", "secrets.write", "secrets.read", "secrets.delete")
+
+	created := r.createSecret(t, ctx, "lifecycle", "v1")
+
+	_, err := r.svc.UpdateSecret(ctx, &pb.UpdateSecretRequest{Id: created.GetId(), Value: strPtr("v2")})
+	require.NoError(t, err)
+
+	_, err = r.svc.DeleteSecret(ctx, &pb.DeleteSecretRequest{Id: created.GetId()})
+	require.NoError(t, err)
+
+	// Each op writes its audit event asynchronously; poll until all three landed.
+	countEvent := func(evType string) int64 {
+		var n int64
+		r.db.Model(&models.AuditEvent{}).
+			Where("event_type = ? AND secret_node_id = ?", evType, created.GetId()).Count(&n)
+		return n
+	}
+	require.Eventually(t, func() bool {
+		return countEvent("secret.created") == 1 &&
+			countEvent("secret.updated") == 1 &&
+			countEvent("secret.deleted") == 1
+	}, 2*time.Second, 10*time.Millisecond,
+		"create/update/delete over gRPC must each write one audit event")
+
+	// The update event carries a before/after diff (it records what changed).
+	var upd models.AuditEvent
+	require.NoError(t, r.db.Where("event_type = ? AND secret_node_id = ?", "secret.updated", created.GetId()).First(&upd).Error)
+	assert.NotEmpty(t, upd.Diff, "an update over gRPC must record a diff, like HTTP")
 }
 
 func TestSecretService_UpdateSecret(t *testing.T) {

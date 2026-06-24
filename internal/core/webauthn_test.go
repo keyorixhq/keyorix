@@ -184,6 +184,28 @@ func TestWebAuthn_PasswordlessFinishRejectsWrongPurposeSession(t *testing.T) {
 	require.Error(t, err)
 }
 
+// A suspended account must not complete WebAuthn second-factor login. The gate fires
+// after the user is loaded but before the assertion is validated, so a suspended
+// account is refused even with an otherwise-valid ceremony (nil assertion is never
+// reached). Mirrors the passwordless path's existing AccountLoginBlocked gate.
+func TestWebAuthn_FinishLoginRejectsSuspendedAccount(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: "x"})
+	require.NoError(t, err)
+
+	// Admin suspends the account after the ceremony began (challenge + session exist).
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("account_state", AccountSuspended).Error)
+
+	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "ua", "1.2.3.4", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not active")
+}
+
 func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()

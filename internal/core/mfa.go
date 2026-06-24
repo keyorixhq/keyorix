@@ -212,6 +212,14 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	if err != nil {
 		return nil, nil, fmt.Errorf("user not found")
 	}
+	// Completing a second factor still mints a login session, so a suspended or
+	// deactivated account must be refused here too — the challenge may have been
+	// issued (password step passed) just before an admin suspended the account, and
+	// nothing rechecks the state between the two steps. Mirrors the password,
+	// session, PAT, and passwordless-WebAuthn gates.
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+		return nil, nil, fmt.Errorf("account is not active")
+	}
 	verified, usedRecovery := false, false
 	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err == nil && c.validateTOTP(secret, code) {
 		verified = true

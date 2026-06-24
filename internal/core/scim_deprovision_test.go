@@ -30,7 +30,10 @@ func TestDeprovisionSCIMUser_RevokesSessionAndPAT(t *testing.T) {
 
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", IsActive: true, AccountState: AccountActive}).Error)
 	expiry := time.Now().Add(time.Hour)
-	require.NoError(t, db.Create(&models.Session{ID: 1, UserID: 1, SessionToken: "sess-tok", ExpiresAt: &expiry}).Error)
+	// Create through the storage layer so the session token is hashed at rest (raw
+	// db.Create would store the plaintext, which GetSession's hashed lookup won't match).
+	_, err = ls.CreateSession(ctx, &models.Session{UserID: 1, SessionToken: "sess-tok", ExpiresAt: &expiry})
+	require.NoError(t, err)
 	raw := patPrefix + "deprovision-regression-token"
 	require.NoError(t, db.Create(&models.PersonalAccessToken{ID: 1, UserID: 1, Name: "ci", TokenHash: sha256Hex(raw)}).Error)
 

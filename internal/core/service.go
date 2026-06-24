@@ -61,6 +61,13 @@ type KeyorixCore struct {
 	// the row lock LockUserForUpdate takes on Postgres, the lockout counter stays
 	// correct across replicas. Zero value is ready to use. See login_lockout.go.
 	loginFailureMu sync.Mutex
+	// setupResendMu serializes the count-then-issue window of the setup-link resend
+	// throttle (checkResendThrottle + IssueSetupToken) so two concurrent resends for
+	// the same (purpose, email) cannot both clear the per-day cap / min-interval
+	// before either token row exists. Held only across the throttle check and the
+	// token write — link delivery (SMTP) runs after release, so a slow send never
+	// serializes every other resend. Zero value is ready to use. See setup_delivery.go.
+	setupResendMu  sync.Mutex
 	auditForwarder AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
