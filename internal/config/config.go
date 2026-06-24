@@ -118,6 +118,10 @@ type Config struct {
 	// Enforcement is fail-safe: a missing/expired/invalid license never denies access or
 	// stops the server; it degrades to the baseline with an admin warning + audit event.
 	License LicenseConfig `yaml:"license"`
+
+	// LicenseExpiry configures the opt-in background reminder that notifies install-wide
+	// admins when the offline license is approaching or past expiry (ADR-065 Phase 2c).
+	LicenseExpiry LicenseExpiryConfig `yaml:"license_expiry"`
 }
 
 // LicenseConfig points at an installed offline license token and tunes its evaluation
@@ -1003,6 +1007,27 @@ type CertificateExpiryConfig struct {
 // GetInterval returns the certificate-expiry scan interval (Go duration, e.g. "24h");
 // defaults to 24h when unset or unparseable.
 func (c CertificateExpiryConfig) GetInterval() time.Duration {
+	if c.Schedule != "" {
+		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 24 * time.Hour
+}
+
+// LicenseExpiryConfig configures the opt-in background reminder that notifies install-wide
+// admins when the offline commercial license (ADR-065) is within LeadDays of expiry or has
+// expired. Disabled (zero value) = no reminder; the fail-safe gate and status endpoint are
+// unaffected.
+type LicenseExpiryConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule"`
+	LeadDays int    `yaml:"lead_days"` // notify this many days before expiry (0 = default 30)
+}
+
+// GetInterval returns the license-expiry reminder interval (Go duration, e.g. "24h");
+// defaults to 24h when unset or unparseable.
+func (c LicenseExpiryConfig) GetInterval() time.Duration {
 	if c.Schedule != "" {
 		if d, err := time.ParseDuration(c.Schedule); err == nil && d > 0 {
 			return d
