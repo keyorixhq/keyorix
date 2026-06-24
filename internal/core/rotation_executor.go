@@ -204,6 +204,19 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 			if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), "system:auto-rotation"); rerr != nil {
 				log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
 				failed[secret.ID] = fmt.Sprintf("%q: store new version: %v", secret.Name, rerr)
+				sid := secret.ID
+				if secret.RotationBackend != "" {
+					// The upstream credential was rotated but storing the new value failed:
+					// the live credential and Keyorix's record have now DRIFTED. Audit it
+					// distinctly (the backend-apply-failure path above is audited too) so an
+					// operator can reconcile — the live secret may no longer match Keyorix.
+					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+						fmt.Sprintf("auto-rotation DRIFT for secret %q: backend %q ref %q rotated upstream but storing the new value failed: %v — the live credential may no longer match Keyorix",
+							secret.Name, secret.RotationBackend, secret.RotationRef, rerr))
+				} else {
+					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+						fmt.Sprintf("auto-rotation FAILED to store new version for secret %q: %v", secret.Name, rerr))
+				}
 				continue
 			}
 			delete(failed, secret.ID) // rotated successfully (e.g. under a later policy)

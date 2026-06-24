@@ -404,3 +404,39 @@ func TestRunAutoRotation_NoFailuresNoNotify(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, sink.events)
 }
+
+// rotationDriftStore wraps LocalStorage and fails UpdateSecret, so RotateSecret errors AFTER
+// the backend executor has already applied the new credential upstream — the split-brain /
+// drift case.
+type rotationDriftStore struct {
+	*store.LocalStorage
+}
+
+func (s *rotationDriftStore) UpdateSecret(_ context.Context, _ *models.SecretNode) (*models.SecretNode, error) {
+	return nil, errors.New("simulated storage failure after upstream rotation")
+}
+
+// TestRunAutoRotation_BackendSucceedsStoreFails_AuditsDrift pins that the most dangerous
+// rotation outcome — the upstream credential is rotated but storing the new value in Keyorix
+// fails — is audited distinctly. Before the fix this path only logged + reported a generic
+// failure; the live credential could drift from Keyorix's record with no audit trail. The
+// backend-apply-FAILURE path was already audited; this closes the asymmetry.
+func TestRunAutoRotation_BackendSucceedsStoreFails_AuditsDrift(t *testing.T) {
+	fake := &fakeExecutor{name: "pg"}
+	c, db, fixed := backendPolicyCore(t, fake)
+	// Make the post-backend store fail: RotateSecret's final UpdateSecret errors.
+	c.storage = &rotationDriftStore{LocalStorage: c.storage.(*store.LocalStorage)}
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, n, "the rotation did not complete — the store failed")
+	require.True(t, fake.called, "the upstream backend WAS rotated (so the credential changed)")
+
+	// Exactly one auto-rotation audit event, and it flags the drift distinctly.
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretAutoRotated).Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0].Description, "DRIFT", "the backend-succeeded-store-failed case must be audited as drift")
+	assert.Contains(t, events[0].Description, "app_svc", "the audit must name the upstream ref to reconcile")
+}
