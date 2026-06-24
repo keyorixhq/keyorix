@@ -817,8 +817,8 @@ type APIClient struct {
 	Name                  string
 	Description           string
 	ClientID              string `gorm:"unique"`
-	ClientSecret          string // Deprecated: use EncryptedClientSecret
-	EncryptedClientSecret []byte
+	ClientSecret          string // SHA-256 hash of the client secret (never plaintext); the secret is shown once at creation
+	EncryptedClientSecret []byte // legacy/unused encrypt-at-rest column; creation now hashes into ClientSecret
 	ClientSecretMetadata  JSON
 	Scopes                string
 	IsActive              bool
@@ -829,8 +829,8 @@ type APIToken struct {
 	ID             uint `gorm:"primaryKey"`
 	ClientID       uint
 	UserID         *uint
-	Token          string `gorm:"unique"` // Deprecated: use EncryptedToken
-	EncryptedToken []byte
+	Token          string `gorm:"unique"` // SHA-256 hash of the token (never plaintext); the token is shown once at creation
+	EncryptedToken []byte // legacy/unused encrypt-at-rest column; creation now hashes into Token
 	TokenMetadata  JSON
 	Scope          string
 	Revoked        bool
