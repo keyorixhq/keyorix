@@ -372,6 +372,14 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	if lease.Status != "active" {
 		return time.Time{}, fmt.Errorf("lease is not active (status %s)", lease.Status)
 	}
+	// A lease whose expiry has already passed is logically dead even if the sweeper
+	// has not yet flipped its status (sweep disabled, or not run yet). Renewing it
+	// would push the backend credential's lifetime forward — resurrecting a
+	// credential that should be gone, violating the promised TTL — and would race the
+	// sweep that is about to revoke it. Refuse; the caller must issue a new lease.
+	if !c.now().Before(lease.ExpiresAt) {
+		return time.Time{}, fmt.Errorf("lease has expired; issue a new lease instead")
+	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("config not found")

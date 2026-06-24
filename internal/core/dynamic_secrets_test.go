@@ -258,6 +258,31 @@ func TestDynamicSecrets_RenewRejectsInactiveLease(t *testing.T) {
 	require.Error(t, err, "a revoked lease cannot be renewed")
 }
 
+// A lease whose expiry has already passed must not be renewable even while its status
+// is still "active" (the sweeper has not flipped it yet, or is disabled). Renewing it
+// would push the backend credential's lifetime forward and resurrect a credential that
+// should be dead, so RenewLease must refuse and must NOT call the engine.
+func TestDynamicSecrets_RenewRejectsExpiredLease(t *testing.T) {
+	c, _, fake, fixed := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	// Backdate the lease past its expiry while leaving status "active" (pre-sweep).
+	lease, err := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	require.NoError(t, err)
+	lease.ExpiresAt = fixed.Add(-time.Minute)
+	require.NoError(t, c.storage.UpdateDynamicSecretLease(ctx, lease))
+	require.Equal(t, "active", lease.Status)
+
+	_, err = c.RenewLease(ctx, issued.LeaseID, 1200, 7)
+	require.Error(t, err, "an expired lease cannot be renewed")
+	assert.Contains(t, err.Error(), "expired")
+	assert.NotContains(t, fake.Renewed, issued.Username, "the engine must not renew a dead credential")
+}
+
 // TestDynamicSecrets_RealFactoryValidatesBackend checks the real engine factory
 // (no fake): config creation accepts the supported backends and rejects others.
 func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
