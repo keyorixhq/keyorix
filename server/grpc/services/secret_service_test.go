@@ -116,6 +116,61 @@ func TestSecretService_CreateSecret_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// sessionCtx returns a context for an interactive session-authenticated user (as
+// the auth interceptor populates after validating a session token), with the
+// second-factor flag set explicitly. SessionAuth gates the per-project MFA policy.
+func sessionCtx(userID uint, username string, mfaEnabled bool, perms ...string) context.Context {
+	return context.WithValue(context.Background(), interceptors.GetUserContextKey(),
+		&interceptors.UserContext{
+			UserID: userID, Username: username, Permissions: perms,
+			SessionAuth: true, MFAEnabled: mfaEnabled,
+		})
+}
+
+// Per-project MFA policy (ADR-037) over gRPC: a project that requires MFA must
+// deny an interactive session WITHOUT a second factor, mirroring the HTTP
+// ProjectMFABlocked gate so the policy is not bypassable by switching transport.
+// A session WITH MFA is allowed; a PAT (non-interactive, SessionAuth=false) is
+// exempt; and a project that does not require MFA gates nobody.
+func TestSecretService_PerProjectMFAGateOverGRPC(t *testing.T) {
+	r := newSecretTestRig(t)
+	// Project 1 (seeded) now mandates a second factor; project 2 does not.
+	require.NoError(t, r.db.Model(&models.Project{}).Where("id = ?", 1).Update("require_mfa", true).Error)
+	require.NoError(t, r.db.Create(&models.Project{ID: 2, Name: "open"}).Error)
+	require.NoError(t, r.db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "development"}).Error)
+
+	create := func(ctx context.Context, name string, projectID, envID uint32) error {
+		_, err := r.svc.CreateSecret(ctx, &pb.CreateSecretRequest{
+			Name: name, Value: "v", ProjectId: projectID, EnvironmentId: envID, Type: "password",
+		})
+		return err
+	}
+
+	// Interactive session without MFA → denied on the MFA-required project, for both a
+	// mutation and a read (ListSecrets shares the gate).
+	noMFA := sessionCtx(1, "owner", false, "secrets.write", "secrets.read")
+	err := create(noMFA, "k1", 1, 1)
+	require.Error(t, err, "session without MFA must be denied on an MFA-required project")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	_, err = r.svc.ListSecrets(noMFA, &pb.ListSecretsRequest{ProjectId: ptrU32(1), EnvironmentId: ptrU32(1)})
+	require.Error(t, err, "ListSecrets is gated by the per-project MFA policy too")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// Same session, but the project does not require MFA → allowed.
+	require.NoError(t, r.db.Create(&models.UserRole{UserID: 1, RoleID: writerRoleID, ProjectID: 2}).Error)
+	require.NoError(t, create(noMFA, "k2", 2, 2), "a project without an MFA requirement gates nobody")
+
+	// A session WITH a second factor is allowed on the MFA-required project.
+	withMFA := sessionCtx(1, "owner", true, "secrets.write", "secrets.read")
+	require.NoError(t, create(withMFA, "k3", 1, 1), "session with MFA is allowed")
+
+	// A PAT is non-interactive (SessionAuth=false) and exempt — automation must not
+	// break on an MFA-required project. authCtx leaves SessionAuth false.
+	pat := authCtx(1, "owner", "secrets.write", "secrets.read")
+	require.NoError(t, create(pat, "k4", 1, 1), "a PAT is exempt from the per-project MFA gate")
+}
+
 // Regression (gRPC scoped-authz hardening): CreateSecret must authorize
 // secrets.write at the TARGET project/environment, not against the flat global
 // permission set. A user whose secrets.write is granted only in project 1 must

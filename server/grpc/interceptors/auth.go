@@ -34,6 +34,13 @@ type UserContext struct {
 	// (treated as a user). MachineIdentityID is the machine's id for that case.
 	ActorType         string `json:"actor_type,omitempty"`
 	MachineIdentityID uint   `json:"machine_identity_id,omitempty"`
+	// SessionAuth is true only for an interactive session token — false for PATs and
+	// machine tokens, which are non-interactive. MFAEnabled is true when the user has
+	// any second factor (TOTP or a passkey). Together they let the service layer apply
+	// the per-project MFA policy (ADR-037) the same way the HTTP ProjectMFABlocked gate
+	// does, so it is not bypassable by switching transport.
+	SessionAuth bool `json:"-"`
+	MFAEnabled  bool `json:"-"`
 }
 
 // ActorKind returns the principal's actor type ("user" or "machine_identity"),
@@ -237,6 +244,11 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		Email:       user.Email,
 		Roles:       identity.Roles,
 		Permissions: identity.Permissions,
+		// Carry the interactive-session and second-factor facts so the service layer can
+		// apply the per-project MFA policy (ADR-037). viaSession is false for a PAT, which
+		// stays exempt — exactly as the deployment-wide gate above and HTTP treat it.
+		SessionAuth: viaSession,
+		MFAEnabled:  user.MFAEnabled || user.WebAuthnEnabled,
 	}, restriction, nil
 }
 

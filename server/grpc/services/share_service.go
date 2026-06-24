@@ -208,7 +208,7 @@ func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, actor *inte
 	if allowed, err := s.core.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions for this share")
 	}
-	return nil
+	return enforceProjectMFA(ctx, s.core, actor, scope.ProjectID)
 }
 
 // mapShareError translates core sharing errors into gRPC status codes.

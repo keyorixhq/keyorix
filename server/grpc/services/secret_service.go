@@ -46,6 +46,9 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), "secrets.write", scope); err != nil || !allowed {
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets in this project")
 	}
+	if err := enforceProjectMFA(ctx, s.core, user, scope.ProjectID); err != nil {
+		return nil, err
+	}
 
 	secret, err := s.core.CreateSecret(ctx, &core.CreateSecretRequest{
 		Name:          req.GetName(),
@@ -229,6 +232,9 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecrets
 	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), "secrets.read", listScope); err != nil || !allowed {
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list secrets")
 	}
+	if err := enforceProjectMFA(ctx, s.core, user, listScope.ProjectID); err != nil {
+		return nil, err
+	}
 
 	page := int(req.GetPage())
 	if page < 1 {
@@ -317,7 +323,7 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions for this secret")
 	}
-	return nil
+	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
 }
 
 // mapSecretError translates core errors into gRPC status codes.
