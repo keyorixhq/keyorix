@@ -207,8 +207,13 @@ behaviour until built.
      restart or a background timer), records the evaluated state as a startup audit event,
      and serves `GET /api/v1/license/status` (admin-gated). `core.HasLicensedFeature` is the
      single gate ready for commercial features.
-   - **2c remaining:** designate the first commercial-only feature and gate it on
-     `HasLicensedFeature`; surface license state in the web dashboard; and emit admin
+   - **2c (first commercial feature done, [ADR-065](adr-065-offline-license-validation.md)):**
+     `airgap_updates` gates `keyorix bundle import` — the first license-gated capability.
+     Chosen because it strips nothing from community builds (import already needs the
+     embedded update key only release builds carry) and is the air-gap tier's flagship;
+     `bundle verify` stays free. The gate is fail-safe (no/degraded license → feature off →
+     import refused, never affecting a running deployment).
+   - **2c remaining:** surface license state in the web dashboard, and emit admin
      notifications on state transitions (expiring-soon / expired).
 4. **Phase 3 — hardening:** HSM-backed signing, key rotation drill, reproducible-bundle
    verification, and a documented operator runbook.

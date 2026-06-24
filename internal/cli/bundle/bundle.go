@@ -1,16 +1,19 @@
-// Package bundle provides `keyorix bundle` — air-gap update-bundle tooling (ADR-064,
-// ADR-062 Phase 1a). `build` assembles and signs a bundle from a directory of release
-// artifacts (the Keyorix/issuance side, with the offline signing key); `verify` checks a
-// bundle offline against the embedded, pinned public key and every component's digest (the
-// air-gapped operator side). `import` (registry/chart staging) is a later phase.
+// Package bundle provides `keyorix bundle` — air-gap update-bundle tooling (ADR-064).
+// `build` assembles and signs a bundle from a directory of release artifacts (the
+// Keyorix/issuance side, with the offline signing key); `verify` checks a bundle offline
+// against the embedded, pinned public key and every component's digest; `import` verifies
+// and stages the artifacts for an air-gapped rollout. `verify` is free; `import` is the
+// first license-gated commercial feature (ADR-065 Phase 2c, the airgap_updates feature).
 package bundle
 
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	ibundle "github.com/keyorixhq/keyorix/internal/bundle"
+	ilicense "github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/spf13/cobra"
 )
@@ -38,6 +41,7 @@ var (
 	verifyInstalled string
 	importDest      string
 	importInstalled string
+	importLicense   string
 )
 
 var buildCmd = &cobra.Command{
@@ -146,6 +150,16 @@ var importCmd = &cobra.Command{
 			return fmt.Errorf("load trusted keys: %w", err)
 		}
 
+		// Commercial gate (ADR-065 Phase 2c): `bundle import` — staging an update for an
+		// air-gapped rollout — is the first license-gated feature. `bundle verify` stays
+		// free. Fail-safe: a missing/expired/invalid license simply means the feature is
+		// off, so import is refused with a clear message (it never affects a running
+		// deployment). Gating strips nothing from community source builds, which can't
+		// import anyway (no embedded update key).
+		if err := requireAirgapUpdates(reg); err != nil {
+			return err
+		}
+
 		f, err := os.Open(args[0]) // #nosec G304 -- operator-supplied bundle path
 		if err != nil {
 			return fmt.Errorf("open bundle: %w", err)
@@ -174,6 +188,30 @@ var importCmd = &cobra.Command{
 	},
 }
 
+// requireAirgapUpdates enforces the commercial license gate for `bundle import`. It reads
+// the installed license token (if --license was given), evaluates it offline against the
+// embedded license key, and requires the airgap_updates feature. Fail-safe: any
+// missing/degraded license means the feature is simply off, and import is refused with a
+// clear, actionable message — it never affects a running deployment.
+func requireAirgapUpdates(reg *trust.KeyRegistry) error {
+	var token string
+	if importLicense != "" {
+		b, err := os.ReadFile(importLicense) // #nosec G304 -- operator-supplied license path
+		if err != nil {
+			return fmt.Errorf("read license: %w", err)
+		}
+		token = strings.TrimSpace(string(b))
+	}
+	st := ilicense.Evaluate(token, reg, "", time.Now(), 14*24*time.Hour)
+	if st.HasFeature(ilicense.FeatureAirgapUpdates) {
+		return nil
+	}
+	return fmt.Errorf("`bundle import` is a commercial feature (%q) and requires a valid license "+
+		"(current state: %s). Install one with `keyorix license install` and pass it via --license, "+
+		"or check `keyorix license status`. `bundle verify` remains available without a license",
+		ilicense.FeatureAirgapUpdates, st.State)
+}
+
 func init() {
 	buildCmd.Flags().StringVar(&buildSrc, "src", "", "directory of release artifacts to bundle (required)")
 	buildCmd.Flags().StringVar(&buildOut, "out", "", "output bundle file (required)")
@@ -192,6 +230,7 @@ func init() {
 
 	importCmd.Flags().StringVar(&importDest, "dest", "", "directory to stage verified artifacts into (required)")
 	importCmd.Flags().StringVar(&importInstalled, "installed-version", "", "currently-installed version, to enforce no-downgrade / min-upgrade-from")
+	importCmd.Flags().StringVar(&importLicense, "license", "", "path to the installed license token (bundle import is a commercial feature)")
 	_ = importCmd.MarkFlagRequired("dest")
 
 	BundleCmd.AddCommand(buildCmd)
