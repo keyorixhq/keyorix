@@ -5,10 +5,11 @@
 Accepted. Implements the **licensing** mechanism of
 [ADR-062](adr-062-air-gap-updates.md); see [air-gap-updates-design.md](air-gap-updates-design.md)
 §4. Builds on the Phase 0 trust foundation (`internal/trust`, `PurposeLicense`). Phase 2a is
-the token + offline evaluation + CLI; **Phase 2b** (this revision) wires it into the server:
-startup load, a nil-safe fresh-evaluating gate on the core, a startup audit event, and
-`GET /api/v1/license/status`. Gating an actual commercial feature, dashboard surfacing, and
-transition notifications are 2c.
+the token + offline evaluation + CLI; **Phase 2b** wired it into the server (startup load, a
+nil-safe fresh-evaluating gate on the core, a startup audit event, `GET
+/api/v1/license/status`); **Phase 2c** (this revision) designates the **first commercial
+feature** — `airgap_updates`, gating `keyorix bundle import`. Dashboard surfacing and
+transition notifications remain.
 
 ## Context
 
@@ -72,9 +73,14 @@ baseline — and still exits cleanly, never denying.
 
 ## Consequences
 
-- Additive and behaviour-neutral: the server now evaluates the license at startup and serves
-  its status, but no feature is gated on it yet (2c), and a non-release build trusts no
-  license key, so evaluation is always baseline.
+- The first commercial feature is `airgap_updates`, gating `keyorix bundle import` (2c).
+  It was chosen because it strips nothing from community source builds — import already
+  requires the embedded update-signing key only release builds carry — and it is the
+  air-gap tier's flagship by design (ADR-062). `bundle verify` stays free. The gate is
+  fail-safe: a missing/expired/invalid license simply means the feature is off and import
+  is refused with an actionable message; it never touches a running deployment.
+- A non-release build trusts no license key, so evaluation is always baseline; gating is a
+  no-op there (and import is impossible anyway without the embedded update key).
 - The design's "validate on a periodic timer" is realised by the gate evaluating **freshly
   on every call** rather than caching a status and re-checking on a timer — a license that
   lapses while the server runs is observed on the next `Status()`/`HasFeature` call, with no

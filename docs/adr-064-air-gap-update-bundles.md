@@ -80,7 +80,8 @@ newer than what is installed, and enforces `min_upgrade_from` (anti-skip). A fir
   `verify` (`process`), gating no-downgrade *before* any write and writing each component
   atomically (temp + rename) so a digest failure never leaves a poisoned file. Loading the
   staged images into an internal registry and the Helm upgrade stay operator-controlled —
-  the CLI prints those steps rather than performing them.
+  the CLI prints those steps rather than performing them. `import` is the first
+  license-gated commercial feature (`airgap_updates`, ADR-065 Phase 2c); `verify` is free.
 - Remaining 1b work: CI wiring (`bundle build` as a `release.yml` step publishing the
   bundle as a release asset) once a production update-signing key is embedded, and an
   optional server-side audit event when an import runs.
