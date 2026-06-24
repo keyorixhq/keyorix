@@ -163,3 +163,81 @@ func joinReasons(rs []string) string {
 	}
 	return out
 }
+
+func TestGenerateDeploymentRotationPlan(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	c, db := newPlannerCore(t, now)
+	daysAgo := func(d int) *time.Time { tt := now.Add(-time.Duration(d) * 24 * time.Hour); return &tt }
+
+	mkProject := func(id uint, name string) {
+		require.NoError(t, db.Create(&models.Project{ID: id, Name: name}).Error)
+		require.NoError(t, db.Create(&models.Environment{ID: id, ProjectID: id, Name: name + "-env"}).Error)
+		pid := id
+		require.NoError(t, db.Create(&models.RotationPolicy{
+			Name: name + "-90d", Scope: "project", ProjectID: &pid, IntervalDays: 90, AlertDaysBefore: 14, IsActive: true,
+		}).Error)
+	}
+	mkSecret := func(id, projID, envID uint, name string, last *time.Time) {
+		require.NoError(t, db.Create(&models.SecretNode{
+			ID: id, Name: name, ProjectID: projID, EnvironmentID: envID, IsSecret: true, Status: "active",
+			OwnerID: 1, LastRotatedAt: last,
+		}).Error)
+	}
+
+	mkProject(1, "prod")
+	mkSecret(1, 1, 1, "prod-db", daysAgo(200))  // 110 days overdue
+	mkSecret(2, 1, 1, "prod-app", daysAgo(120)) // 30 days overdue
+
+	mkProject(2, "staging")
+	mkSecret(3, 2, 2, "stg-key", daysAgo(80)) // 10 days remaining → due_soon
+
+	mkProject(3, "sandbox")
+	mkSecret(4, 3, 3, "sbx-healthy", daysAgo(5)) // ok → no work
+
+	dp, err := c.GenerateDeploymentRotationPlan(ctx)
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, dp.ProjectsScanned)
+	assert.Equal(t, 2, dp.ProjectsWithWork, "sandbox has nothing due → excluded from the list")
+	assert.Equal(t, 3, dp.TotalSecrets, "2 in prod + 1 in staging")
+	assert.Equal(t, 2, dp.OverdueCount)
+	assert.Equal(t, 1, dp.DueSoonCount)
+
+	// Only projects with work are listed, most-overdue first: prod (2 overdue) before staging (0).
+	require.Len(t, dp.Projects, 2)
+	assert.Equal(t, uint(1), dp.Projects[0].ProjectID)
+	assert.Equal(t, 2, dp.Projects[0].OverdueCount)
+	assert.Equal(t, uint(2), dp.Projects[1].ProjectID)
+	assert.Equal(t, 0, dp.Projects[1].OverdueCount)
+	assert.Equal(t, 1, dp.Projects[1].DueSoonCount)
+}
+
+func TestGenerateDeploymentRotationPlan_NothingDueAnywhere(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	c, db := newPlannerCore(t, now)
+	healthy := now.Add(-5 * 24 * time.Hour)
+
+	for _, p := range []struct {
+		id   uint
+		name string
+	}{{1, "alpha"}, {2, "beta"}} {
+		require.NoError(t, db.Create(&models.Project{ID: p.id, Name: p.name}).Error)
+		require.NoError(t, db.Create(&models.Environment{ID: p.id, ProjectID: p.id, Name: p.name + "-env"}).Error)
+		pid := p.id
+		require.NoError(t, db.Create(&models.RotationPolicy{
+			Name: "90d-" + p.name, Scope: "project", ProjectID: &pid, IntervalDays: 90, AlertDaysBefore: 14, IsActive: true,
+		}).Error)
+		require.NoError(t, db.Create(&models.SecretNode{
+			ID: p.id, Name: "healthy-" + p.name, ProjectID: p.id, EnvironmentID: p.id, IsSecret: true, Status: "active", OwnerID: 1, LastRotatedAt: &healthy,
+		}).Error)
+	}
+
+	dp, err := c.GenerateDeploymentRotationPlan(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, dp.ProjectsScanned)
+	assert.Equal(t, 0, dp.ProjectsWithWork)
+	assert.Equal(t, 0, dp.TotalSecrets)
+	assert.Empty(t, dp.Projects)
+}

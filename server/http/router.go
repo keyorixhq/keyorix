@@ -251,6 +251,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/drift", catalogHandler.GetProjectDrift)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/rotation-order", secretHandler.GetProjectRotationOrder)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/rotation-plan", secretHandler.GetProjectRotationPlan)
+		// Deployment-wide rotation plan (ADR-053): aggregates every project. Gated by
+		// GLOBAL secrets.read — the same access level as listing all projects — so it
+		// reveals no project the caller cannot already see.
+		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/rotation-plan", secretHandler.GetDeploymentRotationPlan)
 		// Project membership (ADR-021 two-tier model). Read = project members may
 		// view the roster; mutations require roles.assign at the project scope, so
 		// a project_admin can manage their own project's members.
