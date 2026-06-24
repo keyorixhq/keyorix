@@ -86,3 +86,41 @@ func TestVault_GetSecret_Errors(t *testing.T) {
 		assert.Contains(t, err.Error(), "not permitted")
 	})
 }
+
+// TestVault_GetSecret_RejectsTraversalAndInjection proves a caller cannot use a ref
+// that satisfies the allowed_refs HasPrefix check to climb to another Vault path via
+// `..` or to inject a query string — the ref is sanitized before the URL is built.
+func TestVault_GetSecret_RejectsTraversalAndInjection(t *testing.T) {
+	// The fake server records the raw request target and parsed query of every
+	// request, so we can prove the dangerous ref is never transmitted as sent.
+	type hit struct {
+		rawURI   string
+		rawQuery string
+	}
+	var hits []hit
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, hit{rawURI: r.RequestURI, rawQuery: r.URL.RawQuery})
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	// allowed_refs confines the connector to secret/data/team-a/.
+	c := NewVaultConnector("v", srv.URL, "tok", []string{"secret/data/team-a/"})
+
+	t.Run("path traversal is rejected before any request", func(t *testing.T) {
+		_, err := c.GetSecret(context.Background(), "secret/data/team-a/../../../sys/policies/acl")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "traversal")
+		assert.Empty(t, hits, "no request should reach Vault for a traversal ref")
+	})
+
+	t.Run("query injection is neutralized, not split into a query string", func(t *testing.T) {
+		hits = nil
+		// HasPrefix passes; without sanitization url.Parse would split the `?` into a
+		// query string sent to Vault. After escaping, the `?` is a literal path char.
+		_, _ = c.GetSecret(context.Background(), "secret/data/team-a/x?list=true")
+		require.Len(t, hits, 1)
+		assert.Empty(t, hits[0].rawQuery, "the injected ?list=true must not become a Vault query parameter")
+		assert.Contains(t, hits[0].rawURI, "%3F", "the ? is percent-escaped into the path")
+	})
+}

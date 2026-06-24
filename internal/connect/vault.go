@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -46,6 +47,33 @@ func NewVaultConnector(name, address, token string, allowedRefs []string) *Vault
 func (c *VaultConnector) Name() string { return c.name }
 func (c *VaultConnector) Type() string { return "vault" }
 
+// sanitizeVaultRef turns a caller-supplied Vault ref into a safe URL path. It
+// rejects path-traversal (`.`/`..`) segments and control characters, then
+// percent-escapes each remaining segment (neutralizing `?`, `#`, spaces, etc.) and
+// rejoins them with `/`. The result can only address the literal path the ref
+// names — it cannot climb out of an allowed_refs prefix or inject a query string.
+func sanitizeVaultRef(ref string) (string, error) {
+	clean := make([]string, 0, 8)
+	for _, seg := range strings.Split(strings.TrimLeft(ref, "/"), "/") {
+		if seg == "" {
+			continue // collapse empty/duplicate slashes
+		}
+		if seg == "." || seg == ".." {
+			return "", fmt.Errorf("vault: ref %q must not contain path-traversal segments", ref)
+		}
+		for _, r := range seg {
+			if r < 0x20 || r == 0x7f {
+				return "", fmt.Errorf("vault: ref %q contains a control character", ref)
+			}
+		}
+		clean = append(clean, url.PathEscape(seg))
+	}
+	if len(clean) == 0 {
+		return "", fmt.Errorf("vault: ref %q has no usable path", ref)
+	}
+	return strings.Join(clean, "/"), nil
+}
+
 func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, error) {
 	if ref == "" {
 		return "", fmt.Errorf("vault: secret reference (path) is required, e.g. secret/data/myapp")
@@ -60,8 +88,19 @@ func (c *VaultConnector) GetSecret(ctx context.Context, ref string) (string, err
 		return "", fmt.Errorf("vault: no token configured (set the connector's token_env)")
 	}
 
-	url := c.address + "/v1/" + strings.TrimLeft(ref, "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	// The ref is caller-supplied (the ?ref= query param / gRPC field). It is
+	// concatenated into the Vault API path, so it must be sanitized before building
+	// the URL: a prefix allowlist alone is a start-only HasPrefix check that does NOT
+	// stop `secret/team-a/../../sys/...` from climbing to another Vault path, nor
+	// `secret/x?list=true` from injecting a query string. Reject traversal/control
+	// characters and percent-escape each path segment so metacharacters become
+	// literals and the ref can only ever address the path the allowlist permitted.
+	safeRef, err := sanitizeVaultRef(ref)
+	if err != nil {
+		return "", err
+	}
+	reqURL := c.address + "/v1/" + safeRef
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("vault: new request: %w", err)
 	}
