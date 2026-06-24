@@ -55,6 +55,10 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 			return nil, status.Error(codes.Internal, "failed to assign permissions to role")
 		}
 	}
+	// Audit the role creation, mirroring the HTTP handler — Storage().CreateRole does
+	// not audit internally, so without this a role created over gRPC left no trail.
+	// (Permission grants are audited by AssignPermissionToRole itself.)
+	s.core.LogRoleCreated(ctx, actor.UserID, role.ID, role.Name)
 	return s.roleByID(ctx, role.ID)
 }
 
@@ -113,6 +117,9 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 		}
 	}
 
+	// Audit the role update, mirroring the HTTP handler — Storage().UpdateRole and the
+	// permission swap above do not emit a role.updated event on their own.
+	s.core.LogRoleUpdated(ctx, actor.UserID, role.ID, role.Name)
 	return s.roleByID(ctx, role.ID)
 }
 
@@ -128,9 +135,16 @@ func (s *RoleGRPCService) DeleteRole(ctx context.Context, req *pb.DeleteRoleRequ
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
+	// Resolve the name for the audit log before the row is gone (mirrors HTTP).
+	role, _, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
+	if err != nil {
+		return nil, mapRoleError(err)
+	}
 	if err := s.core.Storage().DeleteRole(ctx, uint(req.GetId())); err != nil {
 		return nil, mapRoleError(err)
 	}
+	// Audit the deletion — Storage().DeleteRole does not audit internally.
+	s.core.LogRoleDeleted(ctx, actor.UserID, role.ID, role.Name)
 	return &emptypb.Empty{}, nil
 }
 

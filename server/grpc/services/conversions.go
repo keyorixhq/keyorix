@@ -59,6 +59,28 @@ func authorizeScoped(ctx context.Context, cs *core.KeyorixCore, actor *intercept
 	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions")
 	}
+	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
+}
+
+// enforceProjectMFA applies the per-project MFA policy (ADR-037) over gRPC: an
+// interactive session WITHOUT a second factor is denied access to a project that
+// requires MFA. It mirrors the HTTP ProjectMFABlocked gate so the policy is not
+// bypassable by switching transport. Non-interactive callers (PAT / machine) are
+// exempt — SessionAuth is false for them — and a global-scoped operation (project
+// 0) is never gated. Called after the permission check at every project-scoped
+// authorization chokepoint. Fails closed only on a positive requirement; a lookup
+// error leaves the prior permission decision in force (matching HTTP).
+func enforceProjectMFA(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, projectID uint) error {
+	if projectID == 0 || cs == nil || actor == nil {
+		return nil
+	}
+	if !actor.SessionAuth || actor.MFAEnabled {
+		return nil
+	}
+	if required, err := cs.ProjectRequiresMFA(ctx, projectID); err == nil && required {
+		return status.Error(codes.PermissionDenied,
+			"this project requires multi-factor authentication; enrol a second factor to access it")
+	}
 	return nil
 }
 

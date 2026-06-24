@@ -34,6 +34,19 @@ type UserContext struct {
 	// (treated as a user). MachineIdentityID is the machine's id for that case.
 	ActorType         string `json:"actor_type,omitempty"`
 	MachineIdentityID uint   `json:"machine_identity_id,omitempty"`
+	// ImpersonatedBy is the initiating admin's id when this is an impersonation
+	// session (nil otherwise). Resolved once in authenticateRequest and tagged onto
+	// the request context by the interceptors (core.WithImpersonation) so audit
+	// events written over gRPC carry the same accountability HTTP records — the
+	// same definition HTTP's UserContext uses.
+	ImpersonatedBy *uint `json:"impersonated_by,omitempty"`
+	// SessionAuth is true only for an interactive session token — false for PATs and
+	// machine tokens, which are non-interactive. MFAEnabled is true when the user has
+	// any second factor (TOTP or a passkey). Together they let the service layer apply
+	// the per-project MFA policy (ADR-037) the same way the HTTP ProjectMFABlocked gate
+	// does, so it is not bypassable by switching transport.
+	SessionAuth bool `json:"-"`
+	MFAEnabled  bool `json:"-"`
 }
 
 // ActorKind returns the principal's actor type ("user" or "machine_identity"),
@@ -62,8 +75,10 @@ const (
 )
 
 // AuthInterceptor returns a unary server interceptor that authenticates each
-// request against a real session token via the core service.
-func AuthInterceptor(coreService *core.KeyorixCore) grpc.UnaryServerInterceptor {
+// request against a real session token via the core service. requireMFA mirrors
+// the deployment-wide security.require_mfa policy so the gRPC transport enforces
+// the same MFA-enrolment gate as the HTTP API.
+func AuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		// Skip authentication for certain methods
 		if isPublicMethod(info.FullMethod) {
@@ -71,13 +86,14 @@ func AuthInterceptor(coreService *core.KeyorixCore) grpc.UnaryServerInterceptor 
 		}
 
 		// Extract and validate token
-		userCtx, restriction, err := authenticateRequest(ctx, coreService)
+		userCtx, restriction, err := authenticateRequest(ctx, coreService, requireMFA)
 		if err != nil {
 			return nil, err
 		}
 
 		// Add user context to request context
 		newCtx := context.WithValue(ctx, userContextKey, userCtx)
+		newCtx = withAuditAttribution(newCtx, userCtx)
 		// Carry a PAT's least-privilege restriction (ADR-042) so core.Authorize
 		// enforces it on every authorization check this RPC makes.
 		if restriction != nil {
@@ -88,8 +104,9 @@ func AuthInterceptor(coreService *core.KeyorixCore) grpc.UnaryServerInterceptor 
 }
 
 // StreamAuthInterceptor returns a stream server interceptor that authenticates
-// each stream against a real session token via the core service.
-func StreamAuthInterceptor(coreService *core.KeyorixCore) grpc.StreamServerInterceptor {
+// each stream against a real session token via the core service. requireMFA
+// mirrors the deployment-wide security.require_mfa policy (see AuthInterceptor).
+func StreamAuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.StreamServerInterceptor {
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		// Skip authentication for certain methods
 		if isPublicMethod(info.FullMethod) {
@@ -97,13 +114,14 @@ func StreamAuthInterceptor(coreService *core.KeyorixCore) grpc.StreamServerInter
 		}
 
 		// Extract and validate token
-		userCtx, restriction, err := authenticateRequest(stream.Context(), coreService)
+		userCtx, restriction, err := authenticateRequest(stream.Context(), coreService, requireMFA)
 		if err != nil {
 			return err
 		}
 
-		// Create a new stream with user context (+ PAT restriction when present).
+		// Create a new stream with user context (+ audit attribution / PAT restriction).
 		streamCtx := context.WithValue(stream.Context(), userContextKey, userCtx)
+		streamCtx = withAuditAttribution(streamCtx, userCtx)
 		if restriction != nil {
 			streamCtx = core.WithPATRestriction(streamCtx, restriction)
 		}
@@ -126,6 +144,30 @@ func (w *wrappedServerStream) Context() context.Context {
 	return w.ctx
 }
 
+// withAuditAttribution tags ctx so audit events written downstream over gRPC carry
+// the same actor accountability the HTTP path records in buildRequestContext:
+//
+//   - a machine-identity request is actored as a machine (ADR-023/030) rather than
+//     defaulting to "user";
+//   - an impersonation session records the initiating admin (ImpersonatedBy /
+//     Impersonation=true), so an admin acting through impersonation stays
+//     attributable over gRPC just as on HTTP.
+//
+// Without this, switching transport to gRPC silently dropped both tags — machine
+// actions were logged as user actions and impersonated actions lost the admin.
+func withAuditAttribution(ctx context.Context, userCtx *UserContext) context.Context {
+	if userCtx == nil {
+		return ctx
+	}
+	if userCtx.ActorType == core.ActorTypeMachine {
+		ctx = core.WithActorType(ctx, core.ActorTypeMachine)
+	}
+	if userCtx.ImpersonatedBy != nil {
+		ctx = core.WithImpersonation(ctx, *userCtx.ImpersonatedBy)
+	}
+	return ctx
+}
+
 // authenticateRequest extracts the bearer token from the request metadata and
 // validates it against the core service — the same paths the HTTP API uses. A
 // kx_pat_ token authenticates as its owning user via ValidatePATToken and may
@@ -133,7 +175,7 @@ func (w *wrappedServerStream) Context() context.Context {
 // token. On success it returns the authenticated user's context (id, identity,
 // roles, permissions) and the PAT restriction (nil for sessions) for downstream
 // authorization.
-func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*UserContext, *core.PATRestriction, error) {
+func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, requireMFA bool) (*UserContext, *core.PATRestriction, error) {
 	if coreService == nil {
 		// Fail closed: a server wired without a core service must not authenticate.
 		return nil, nil, status.Errorf(codes.Internal, "authentication unavailable")
@@ -183,7 +225,8 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*U
 		restriction *core.PATRestriction
 		err         error
 	)
-	if strings.HasPrefix(token, patTokenPrefix) {
+	viaPAT := strings.HasPrefix(token, patTokenPrefix)
+	if viaPAT {
 		user, _, restriction, err = coreService.ValidatePATToken(ctx, token)
 	} else {
 		user, _, err = coreService.ValidateSessionToken(ctx, token)
@@ -192,13 +235,43 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*U
 		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
 	}
 
+	// Resolve impersonation for a real session token (a PAT is never an
+	// impersonation session). On HTTP the auth middleware tags the context so audit
+	// events record the initiating admin; mirror it here so that accountability is
+	// not lost by switching transport. A non-impersonation session returns nil.
+	var impersonatedBy *uint
+	if !viaPAT {
+		impersonatedBy = coreService.SessionImpersonator(ctx, token)
+	}
+
 	// Enforce a PAT's network allowlist on the gRPC transport too (ADR-066), so the IP
 	// restriction is not bypassable by switching from HTTP to gRPC. Fail-closed: an
 	// undeterminable peer IP outside the allowlist is denied.
 	if restriction != nil && len(restriction.AllowedCIDRs) > 0 {
-		if !core.IPInCIDRs(grpcPeerIP(ctx), restriction.AllowedCIDRs) {
+		if !core.IPInCIDRs(PeerIP(ctx), restriction.AllowedCIDRs) {
 			return nil, nil, status.Errorf(codes.PermissionDenied, "token not permitted from this network")
 		}
+	}
+
+	// Mirror the HTTP authed-group gates over gRPC so neither is bypassable by switching
+	// transport (the same class of gap ADR-066 closed for the IP allowlist):
+	//
+	//   - Account restriction (ADR-025): a pending_first_login / password_reset_required
+	//     account must change its password first. On HTTP it is confined to the
+	//     change-password allowlist; gRPC has no such endpoint, so it is denied outright.
+	//   - MFA enrolment (ADR-037): when the deployment mandates MFA, an interactive
+	//     session without MFA is confined to the enrolment endpoints on HTTP; again gRPC
+	//     has none, so deny. PATs and machine tokens are non-interactive and exempt,
+	//     exactly as on HTTP — automation must not break.
+	//
+	// Both fail closed. viaSession is true for a session token (machine tokens already
+	// returned above; a PAT carries the patTokenPrefix).
+	if core.AccountRestricted(user.AccountState) {
+		return nil, nil, status.Errorf(codes.PermissionDenied, "password change required before access")
+	}
+	viaSession := !viaPAT
+	if requireMFA && viaSession && !(user.MFAEnabled || user.WebAuthnEnabled) {
+		return nil, nil, status.Errorf(codes.PermissionDenied, "multi-factor authentication enrolment required")
 	}
 
 	// Resolve roles + permissions for downstream per-method authorization.
@@ -213,12 +286,21 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*U
 		Email:       user.Email,
 		Roles:       identity.Roles,
 		Permissions: identity.Permissions,
+		// Carry the interactive-session and second-factor facts so the service layer can
+		// apply the per-project MFA policy (ADR-037). viaSession is false for a PAT, which
+		// stays exempt — exactly as the deployment-wide gate above and HTTP treat it.
+		SessionAuth: viaSession,
+		MFAEnabled:  user.MFAEnabled || user.WebAuthnEnabled,
+		// Carry the impersonation attribution so the interceptor can tag the request
+		// context (core.WithImpersonation) — audit parity with HTTP.
+		ImpersonatedBy: impersonatedBy,
 	}, restriction, nil
 }
 
-// grpcPeerIP returns the source IP of the gRPC call from its peer (TCP) address, or "" if
-// it cannot be determined (which the fail-closed allowlist check then denies).
-func grpcPeerIP(ctx context.Context) string {
+// PeerIP returns the source IP of the gRPC call from its peer (TCP) address, or "" if
+// it cannot be determined (which the fail-closed allowlist check then denies). Exported
+// so the service layer can stamp it on secret-access logs, matching the HTTP path.
+func PeerIP(ctx context.Context) string {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p.Addr == nil {
 		return ""
@@ -227,6 +309,19 @@ func grpcPeerIP(ctx context.Context) string {
 		return host
 	}
 	return p.Addr.String()
+}
+
+// ClientUserAgent returns the gRPC client's user-agent from request metadata, or ""
+// when absent. Recorded on secret-access logs alongside the peer IP, as on HTTP.
+func ClientUserAgent(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	if ua := md.Get("user-agent"); len(ua) > 0 {
+		return ua[0]
+	}
+	return ""
 }
 
 // isPublicMethod checks if a gRPC method is public (doesn't require authentication)

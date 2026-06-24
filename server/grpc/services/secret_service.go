@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -46,6 +47,9 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), "secrets.write", scope); err != nil || !allowed {
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to create secrets in this project")
 	}
+	if err := enforceProjectMFA(ctx, s.core, user, scope.ProjectID); err != nil {
+		return nil, err
+	}
 
 	secret, err := s.core.CreateSecret(ctx, &core.CreateSecretRequest{
 		Name:          req.GetName(),
@@ -63,6 +67,10 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
+	// Audit the create the same way the HTTP handler does — the core method does not
+	// audit internally, so without this a secret created over gRPC left no audit
+	// trail. Detached + async (see GetSecretValue).
+	go s.core.LogSecretCreatedWithProject(core.DetachedAuditContext(ctx), user.UserID, secret.ID, secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
 	return secretNodeToProto(secret), nil
 }
 
@@ -136,6 +144,14 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
+	// Record the read in the audit trail and secret-access log — the same call the
+	// HTTP reveal handler fires. Without it, a secret read over gRPC left no
+	// secret.read event and no access-log row, so the anomaly detector never saw it:
+	// secrets could be exfiltrated over gRPC invisibly to both the audit trail and
+	// anomaly detection. Detached + async like HTTP, so it neither blocks the RPC nor
+	// dies on its cancellation; DetachedAuditContext preserves the actor-type and
+	// impersonation tags the interceptor set.
+	go s.core.LogSecretReadWithProject(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
 	return &pb.SecretValue{
 		Id:    req.GetId(),
 		Name:  secret.Name,
@@ -169,10 +185,18 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 		updateReq.Value = []byte(v)
 	}
 
+	// Capture pre-update metadata for the audit diff (raw fetch, no read-count side
+	// effect). Best-effort: a miss just yields an empty diff — same as the HTTP path.
+	oldSecret, _ := s.core.Storage().GetSecret(ctx, uint(req.GetId()))
+
 	secret, err := s.core.UpdateSecretWithPermissionCheck(ctx, updateReq)
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
+	// Audit the update with a before/after diff, mirroring the HTTP handler — the
+	// core method does not audit internally. Detached + async (see GetSecretValue).
+	diff := core.BuildSecretUpdateDiff(oldSecret, updateReq, req.GetValue() != "")
+	go s.core.LogSecretUpdatedWithDiff(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx), diff) // #nosec G118
 	return secretNodeToProto(secret), nil
 }
 
@@ -188,9 +212,20 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), "secrets.delete"); err != nil {
 		return nil, err
 	}
+	// Pre-fetch name + project for the audit log before the record is gone, mirroring
+	// the HTTP handler. Best-effort: a miss falls back to the id.
+	secretName := fmt.Sprintf("id=%d", req.GetId())
+	var secretProjectID uint
+	if sec, err := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); err == nil {
+		secretName = sec.Name
+		secretProjectID = sec.ProjectID
+	}
 	if err := s.core.DeleteSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); err != nil {
 		return nil, mapSecretError(err)
 	}
+	// Audit the delete the same way the HTTP handler does — the core method does not
+	// audit internally. Detached + async (see GetSecretValue).
+	go s.core.LogSecretDeletedWithProject(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secretProjectID, user.Username, secretName, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
 	return &emptypb.Empty{}, nil
 }
 
@@ -228,6 +263,9 @@ func (s *SecretGRPCService) ListSecrets(ctx context.Context, req *pb.ListSecrets
 	listScope := core.Scope{ProjectID: uint(req.GetProjectId()), EnvironmentID: uint(req.GetEnvironmentId())}
 	if allowed, err := s.core.AuthorizePrincipal(ctx, user.ActorKind(), user.PrincipalID(), "secrets.read", listScope); err != nil || !allowed {
 		return nil, status.Error(codes.PermissionDenied, "insufficient permissions to list secrets")
+	}
+	if err := enforceProjectMFA(ctx, s.core, user, listScope.ProjectID); err != nil {
+		return nil, err
 	}
 
 	page := int(req.GetPage())
@@ -317,7 +355,7 @@ func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *int
 	if allowed, err := cs.AuthorizePrincipal(ctx, actor.ActorKind(), actor.PrincipalID(), perm, scope); err != nil || !allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions for this secret")
 	}
-	return nil
+	return enforceProjectMFA(ctx, cs, actor, scope.ProjectID)
 }
 
 // mapSecretError translates core errors into gRPC status codes.

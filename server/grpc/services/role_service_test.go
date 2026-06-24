@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
@@ -123,6 +124,37 @@ func TestRoleService_DeleteRole(t *testing.T) {
 	_, err = svc.GetRole(roleAdminCtx(), &pb.GetRoleRequest{Id: created.GetId()})
 	require.Error(t, err)
 	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
+// Role create/update/delete over gRPC must each leave an audit event, exactly as on
+// HTTP — the underlying Storage() calls do not audit internally, so without the
+// service firing LogRole* these lifecycle changes were invisible in the audit trail
+// when driven over gRPC. The writes are synchronous, so assert directly.
+func TestRoleService_LifecycleAuditedOverGRPC(t *testing.T) {
+	svc, h := newRoleService(t)
+	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
+	perm := somePermission(t, h)
+
+	created, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: "lifecycle-role", Description: "d", Permissions: []string{perm},
+	})
+	require.NoError(t, err)
+	_, err = svc.UpdateRole(roleAdminCtx(), &pb.UpdateRoleRequest{
+		Id: created.GetId(), Description: strPtr("new"),
+	})
+	require.NoError(t, err)
+	_, err = svc.DeleteRole(roleAdminCtx(), &pb.DeleteRoleRequest{Id: created.GetId()})
+	require.NoError(t, err)
+
+	count := func(evType string) int64 {
+		var n int64
+		require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+			Where("event_type = ? AND user_id = ?", evType, 1).Count(&n).Error)
+		return n
+	}
+	assert.Equal(t, int64(1), count("role.created"), "CreateRole over gRPC must be audited")
+	assert.Equal(t, int64(1), count("role.updated"), "UpdateRole over gRPC must be audited")
+	assert.Equal(t, int64(1), count("role.deleted"), "DeleteRole over gRPC must be audited")
 }
 
 func TestRoleService_ListRoles(t *testing.T) {
