@@ -62,7 +62,7 @@ func TestDetectAnomalies(t *testing.T) {
 			AccessedBy: "mallory",
 			AccessTime: time.Date(2026, 6, 17, 3, 0, 0, 0, time.UTC),
 		}
-		got := kindsOf(detectAnomalies(secret, lg, baseline))
+		got := kindsOf(detectAnomalies(secret, lg, baseline, defaultOffHoursPolicy()))
 		for _, want := range []string{"off_hours", "new_ip", "new_user"} {
 			if !got[want] {
 				t.Errorf("expected %s alert, got %v", want, got)
@@ -76,7 +76,7 @@ func TestDetectAnomalies(t *testing.T) {
 			AccessedBy: "alice",
 			AccessTime: time.Date(2026, 6, 17, 14, 0, 0, 0, time.UTC),
 		}
-		if alerts := detectAnomalies(secret, lg, baseline); len(alerts) != 0 {
+		if alerts := detectAnomalies(secret, lg, baseline, defaultOffHoursPolicy()); len(alerts) != 0 {
 			t.Fatalf("expected no alerts, got %v", kindsOf(alerts))
 		}
 	})
@@ -90,10 +90,58 @@ func TestDetectAnomalies(t *testing.T) {
 			AccessTime: time.Date(2026, 6, 17, 14, 0, 0, 0, time.UTC),
 		}
 		empty := accessBaseline{knownIPs: map[string]bool{}, knownUsers: map[string]bool{}}
-		if alerts := detectAnomalies(secret, lg, empty); len(alerts) != 0 {
+		if alerts := detectAnomalies(secret, lg, empty, defaultOffHoursPolicy()); len(alerts) != 0 {
 			t.Fatalf("expected no alerts against an empty baseline, got %v", kindsOf(alerts))
 		}
 	})
+}
+
+// The off-hours decision must be evaluated in the configured timezone: the same
+// instant can be off-hours in UTC but business hours elsewhere. This is the bug the
+// hardcoded-UTC rule had on non-UTC deployments.
+func TestOffHoursPolicy(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+
+	// 2026-06-17 01:00 UTC == 2026-06-16 18:00 PDT (UTC-7 in summer).
+	instant := time.Date(2026, 6, 17, 1, 0, 0, 0, time.UTC)
+
+	if !defaultOffHoursPolicy().isOffHours(instant) {
+		t.Errorf("01:00 UTC must be off-hours under the UTC 22–6 default")
+	}
+	pacific := offHoursPolicy{loc: la, start: 22, end: 6}
+	if pacific.isOffHours(instant) {
+		t.Errorf("18:00 PDT (same instant) must NOT be off-hours under a Pacific 22–6 band")
+	}
+
+	// A non-wrapping band [9,17) is a normal interval.
+	day := offHoursPolicy{loc: time.UTC, start: 9, end: 17}
+	if !day.isOffHours(time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)) {
+		t.Errorf("12:00 must fall inside a non-wrapping [9,17) band")
+	}
+	if day.isOffHours(time.Date(2026, 6, 17, 20, 0, 0, 0, time.UTC)) {
+		t.Errorf("20:00 must fall outside a non-wrapping [9,17) band")
+	}
+}
+
+func TestSetBusinessHours(t *testing.T) {
+	d := NewAnomalyDetector(nil)
+
+	// Timezone only: the default 22–6 band is kept (both hours 0 = unset).
+	require.NoError(t, d.SetBusinessHours("America/New_York", 0, 0))
+	assert.Equal(t, "America/New_York", d.offHours.loc.String())
+	assert.Equal(t, 22, d.offHours.start)
+	assert.Equal(t, 6, d.offHours.end)
+
+	// Custom band applied.
+	require.NoError(t, d.SetBusinessHours("UTC", 20, 7))
+	assert.Equal(t, 20, d.offHours.start)
+	assert.Equal(t, 7, d.offHours.end)
+
+	// Invalid timezone: error, and the prior policy is left unchanged.
+	before := d.offHours
+	require.Error(t, d.SetBusinessHours("Not/AZone", 1, 2))
+	assert.Equal(t, before, d.offHours, "an invalid timezone must not mutate the policy")
 }
 
 func TestVolumeSpike(t *testing.T) {
