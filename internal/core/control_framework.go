@@ -166,7 +166,28 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			Detail:     legalHoldDetail(p.LegalHold),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.34"}, DORA: []string{"Art.12"}, ENS: []string{"mp.info.6"}},
 		},
+		{
+			ID: "supply-chain-integrity", Name: "Software supply-chain integrity (signed, verifiable updates)", Area: "Supply chain",
+			Status:     supplyChainStatus(p.SupplyChain),
+			Detail:     supplyChainDetail(p.SupplyChain),
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.19", "A.5.20", "A.5.21"}, SOC2: []string{"CC8.1"}, NIS2: []string{"Art.21(2)(d)"}, DORA: []string{"Art.28"}, ENS: []string{"op.pl.2", "op.exp.2"}},
+		},
 	}
+}
+
+// supplyChainStatus is Pass when this deployment verifies updates against a pinned signing
+// key (a signed release). A source/dev build pins no key, so the control is "not configured"
+// (it does not apply to an unsigned build) rather than a gap.
+func supplyChainStatus(s SupplyChainPosture) ControlStatus {
+	return statusFromBool(s.UpdateSigningTrusted)
+}
+
+func supplyChainDetail(s SupplyChainPosture) string {
+	if !s.UpdateSigningTrusted {
+		return "no pinned update-signing key (unsigned/source build) — offline bundle verification not in force"
+	}
+	return fmt.Sprintf("update bundles verified offline against %d pinned signing key(s); license: %s",
+		s.TrustedUpdateKeys, s.LicenseState)
 }
 
 // statusFromBool maps an enabled flag to pass / not-configured (an unset optional
