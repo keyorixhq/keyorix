@@ -84,9 +84,11 @@ func TestSCIM_ProvisionGetListDeactivateDelete(t *testing.T) {
 	list := decodeSCIM(t, w)
 	assert.Equal(t, float64(1), list["totalResults"])
 
-	// PATCH active=false → deprovisioned (a SCIM/IdP deactivation, distinct from an
-	// admin security suspension so it can be reversed by SCIM without clearing a
-	// suspension; both block login).
+	// PATCH active=false deactivates the account. IsActive=false blocks login; the
+	// existing pending_first_login (restricted) state is PRESERVED, not overwritten to
+	// deprovisioned, so a later reactivation can restore it rather than silently
+	// clearing the first-login requirement. Only an already-'active' account moves to
+	// the deprovisioned state.
 	patch := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"active","value":false}]}`
 	w = httptest.NewRecorder()
 	h.PatchUser(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Users/"+id, bytes.NewReader([]byte(patch))), id))
@@ -95,8 +97,8 @@ func TestSCIM_ProvisionGetListDeactivateDelete(t *testing.T) {
 
 	var suspended models.User
 	require.NoError(t, db.Where("external_id = ?", "okta-123").First(&suspended).Error)
-	assert.Equal(t, core.AccountDeprovisioned, suspended.AccountState)
-	assert.True(t, core.AccountLoginBlocked(suspended.AccountState), "a deprovisioned account is login-blocked")
+	assert.Equal(t, core.AccountPendingFirstLogin, suspended.AccountState, "a restricted state is preserved across SCIM deactivation")
+	assert.False(t, suspended.IsActive, "deactivation blocks login via IsActive")
 
 	// DELETE → 204 and the user is soft-deleted.
 	w = httptest.NewRecorder()
