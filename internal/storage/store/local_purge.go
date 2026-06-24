@@ -39,8 +39,40 @@ func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, befo
 	return ls.purgeDeletedBefore(ctx, &models.Environment{}, before)
 }
 
+// PurgeDeletedSecretsBefore hard-deletes soft-deleted secrets past the retention
+// window, together with their version rows, in one transaction. The secret VALUE
+// lives in secret_versions.encrypted_value, which has no deleted_at and no FK cascade
+// to secret_nodes — so deleting only the node row (as a plain purge would) left the
+// ciphertext in the database indefinitely, still decryptable (key rotation even
+// re-encrypts orphaned version rows), defeating the "irreversible by design" retention
+// / GDPR-erasure guarantee. Returns the number of secret_nodes purged.
 func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
-	return ls.purgeDeletedBefore(ctx, &models.SecretNode{}, before)
+	var purged int64
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ids []uint
+		if e := tx.Unscoped().Model(&models.SecretNode{}).
+			Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+			Pluck("id", &ids).Error; e != nil {
+			return e
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		// Destroy the ciphertext-bearing versions first, then the node rows.
+		if e := tx.Where("secret_node_id IN ?", ids).Delete(&models.SecretVersion{}).Error; e != nil {
+			return e
+		}
+		rn := tx.Unscoped().Where("id IN ?", ids).Delete(&models.SecretNode{})
+		if rn.Error != nil {
+			return rn.Error
+		}
+		purged = rn.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return purged, nil
 }
 
 // --- Data-retention purges (ISO A.5.33 / GDPR storage-limitation) ---
