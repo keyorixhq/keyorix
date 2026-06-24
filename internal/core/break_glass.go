@@ -64,10 +64,11 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		return nil, fmt.Errorf("emergency role %q not found: %w", c.breakGlassPolicy.EmergencyRole, err)
 	}
 
-	ttl := c.breakGlassPolicy.DefaultTTL
-	if ttl <= 0 {
-		ttl = 4 * time.Hour
+	defaultTTL := c.breakGlassPolicy.DefaultTTL
+	if defaultTTL <= 0 {
+		defaultTTL = 4 * time.Hour
 	}
+	ttl := defaultTTL
 	if ttlOverride != "" {
 		d, perr := time.ParseDuration(ttlOverride)
 		if perr != nil || d <= 0 {
@@ -75,8 +76,17 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		}
 		ttl = d
 	}
-	if max := c.breakGlassPolicy.MaxTTL; max > 0 && ttl > max {
-		ttl = max // cap a requested TTL at the configured ceiling
+	// Always bound the grant. When MaxTTL is unconfigured the ceiling falls back to the
+	// default TTL — so an override can only ever SHORTEN the grant, never exceed the
+	// default. The core enforces "break-glass is time-bound" itself rather than trusting
+	// the config layer to have supplied a ceiling; a policy built with MaxTTL=0 (e.g. by
+	// a future or non-startup caller) can't yield an unbounded emergency grant.
+	ceiling := c.breakGlassPolicy.MaxTTL
+	if ceiling <= 0 {
+		ceiling = defaultTTL
+	}
+	if ttl > ceiling {
+		ttl = ceiling // cap a requested TTL at the effective ceiling
 	}
 
 	now := c.now()
