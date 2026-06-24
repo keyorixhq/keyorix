@@ -725,6 +725,18 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	// anomalies to project admins + the audit/SIEM pipeline.
 	{
 		detector := core.NewAnomalyDetector(coreService.Storage())
+		if bh := cfg.AnomalyAlerts.BusinessHours; bh.Timezone != "" || bh.OffHoursStart != 0 || bh.OffHoursEnd != 0 {
+			tzLabel := bh.Timezone
+			if tzLabel == "" {
+				tzLabel = "UTC"
+			}
+			if err := detector.SetBusinessHours(bh.Timezone, bh.OffHoursStart, bh.OffHoursEnd); err != nil {
+				// Misconfigured timezone: keep the safe UTC default rather than fail startup.
+				log.Printf("Anomaly off-hours config ignored (%v); using UTC 22:00–06:00", err)
+			} else {
+				log.Printf("Anomaly off-hours rule configured (timezone %s)", tzLabel)
+			}
+		}
 		if mlc := cfg.AnomalyAlerts.ML; mlc.Enabled {
 			detector.SetMLConfig(core.MLConfig{
 				Enabled:    true,

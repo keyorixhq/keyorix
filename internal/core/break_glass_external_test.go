@@ -68,6 +68,24 @@ func TestActivateBreakGlass_CapsTTL(t *testing.T) {
 	assert.WithinDuration(t, time.Now().Add(1*time.Hour), *act.ExpiresAt, 2*time.Minute, "10h request capped at the 1h max")
 }
 
+// With no MaxTTL configured, a requested TTL is still bounded — to the default TTL,
+// not honored unbounded. The core enforces "break-glass is time-bound" itself rather
+// than relying on the config layer to have supplied a ceiling.
+func TestActivateBreakGlass_UnsetMaxTTLFloorsToDefault(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 0) // MaxTTL unset (0)
+
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	act, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "720h") // 30-day override
+	require.NoError(t, err)
+	require.NotNil(t, act.ExpiresAt)
+	assert.WithinDuration(t, time.Now().Add(4*time.Hour), *act.ExpiresAt, 2*time.Minute,
+		"with no MaxTTL, an override must be bounded to the default TTL, not honored as 720h")
+}
+
 // Break-glass refuses when disabled, and a justification is mandatory.
 func TestActivateBreakGlass_DisabledAndJustificationRequired(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)

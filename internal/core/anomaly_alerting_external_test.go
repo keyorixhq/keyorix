@@ -93,32 +93,30 @@ func TestLogSecretRead_FeedsAnomalyDetection(t *testing.T) {
 		"reads via LogSecretReadWithProject must be visible to anomaly detection")
 }
 
-// A first-time access from a never-before-seen user/IP during the detection window
-// must raise new_user / new_ip. This regresses the self-poisoning baseline bug: the
-// 30-day baseline query overlapped the 1-hour window, so the access being scored was
-// itself learned as "known" and the high-severity rules never fired.
-func TestRunDetection_FlagsFirstTimeUserAndIP(t *testing.T) {
+// Regression: a first-time reader / first-seen IP in the detection window must raise
+// new_user / new_ip. The 30-day baseline query also spans the live 1h window, so before
+// the fix the triggering read seeded its own baseline (knownUsers/knownIPs already
+// contained it) and these two high-severity rules could never fire end-to-end.
+func TestRunDetection_FlagsNewUserAndIPAgainstPriorBaseline(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()
-	require.NoError(t, h.DB.AutoMigrate(
-		&models.SecretNode{}, &models.SecretAccessLog{}, &models.AnomalyAlert{}, &models.AuditEvent{}))
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.SecretAccessLog{}, &models.AnomalyAlert{}))
 
 	ctx := context.Background()
-	secret := models.SecretNode{ID: 701, ProjectID: 1, Name: "db-pw", Status: "active", IsSecret: true}
+	secret := models.SecretNode{ID: 800, ProjectID: 1, Name: "db-pw", Status: "active", IsSecret: true}
 	require.NoError(t, h.DB.Create(&secret).Error)
 
-	// Prior history (2-6 days ago, well before the 1h window): only alice@10.0.0.1.
-	for i := 2; i <= 6; i++ {
+	// Established history (outside the 1h detection window): alice from a known IP.
+	for i := 2; i <= 10; i++ {
 		require.NoError(t, h.DB.Create(&models.SecretAccessLog{
-			SecretNodeID: 701, AccessedBy: "alice", Action: "read", IPAddress: "10.0.0.1",
+			SecretNodeID: 800, AccessedBy: "alice", Action: "read", IPAddress: "10.0.0.1",
 			AccessTime: time.Now().Add(-time.Duration(i) * 24 * time.Hour),
 		}).Error)
 	}
-
-	// A read in the detection window from a NEW principal and a NEW IP.
+	// A brand-new principal from a brand-new IP reads now (inside the detection window).
 	require.NoError(t, h.DB.Create(&models.SecretAccessLog{
-		SecretNodeID: 701, AccessedBy: "mallory", Action: "read", IPAddress: "203.0.113.9",
-		AccessTime: time.Now().Add(-2 * time.Minute),
+		SecretNodeID: 800, AccessedBy: "mallory", Action: "read", IPAddress: "203.0.113.5",
+		AccessTime: time.Now(),
 	}).Error)
 
 	detector := core.NewAnomalyDetector(h.CoreService.Storage())
@@ -126,20 +124,14 @@ func TestRunDetection_FlagsFirstTimeUserAndIP(t *testing.T) {
 
 	alerts, err := detector.ListAlerts(ctx, nil)
 	require.NoError(t, err)
-	var sawNewUser, sawNewIP bool
+	kinds := map[string]bool{}
 	for _, a := range alerts {
-		if a.SecretNodeID != 701 {
-			continue
-		}
-		switch a.AlertType {
-		case "new_user":
-			sawNewUser = a.AccessedBy == "mallory"
-		case "new_ip":
-			sawNewIP = a.IPAddress == "203.0.113.9"
+		if a.SecretNodeID == 800 {
+			kinds[a.AlertType] = true
 		}
 	}
-	assert.True(t, sawNewUser, "a first-time user in the window must raise new_user (baseline must exclude the window)")
-	assert.True(t, sawNewIP, "a first-time IP in the window must raise new_ip")
+	assert.True(t, kinds["new_user"], "a first-time reader must raise new_user")
+	assert.True(t, kinds["new_ip"], "a first-seen IP must raise new_ip")
 }
 
 // The compliance posture counts open (unacknowledged) anomalies, with a high-severity tally.

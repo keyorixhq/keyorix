@@ -139,23 +139,37 @@ func generateRotatedValueSpec(length int, charset string) (string, error) {
 	return string(b), nil
 }
 
+// dueRotation is a secret that is due for auto-rotation this run, with the policy it is
+// due under (for the audit trail).
+type dueRotation struct {
+	secret *models.SecretNode
+	policy *models.RotationPolicy
+}
+
 // RunAutoRotation rotates every auto-rotate-enabled secret that is overdue under an
 // active rotation policy, regenerating its value (a new version) and auditing each
-// rotation. Best-effort per secret: a generate/rotate failure is logged and skipped,
-// never aborting the run. A secret covered by multiple policies is rotated at most once
-// per run. Returns the number of secrets rotated.
+// rotation. A secret covered by multiple policies is rotated at most once per run.
+//
+// Rotations are ordered by the secret dependency graph (ADR-052): within a project a
+// secret rotates only after the secrets it depends on, mirroring the dependency-safe
+// waves the rotation planner computes (ADR-053). When a dependency does NOT rotate this
+// run — it failed, or was itself deferred — the dependent is DEFERRED rather than
+// rotated against a now-stale dependency (dependency-first auto-rotation), and audited
+// so an operator can act. Otherwise best-effort per secret: a generate/rotate failure is
+// logged and skipped, never aborting the run. Returns the number of secrets rotated.
 func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 	policies, err := c.storage.ListRotationPolicies(ctx, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("auto-rotation: list policies: %w", err)
 	}
 	now := c.now()
-	rotated := 0
-	done := make(map[uint]bool)
-	// failed records the last failure per secret id; a secret that later rotates under
-	// another covering policy is removed, so only genuine end-of-run failures remain.
-	failed := make(map[uint]string)
 
+	// Phase 1 — gather the secrets due for auto-rotation, deduped per secret. A secret
+	// covered by several policies is rotated at most once, under the first active policy
+	// it is due under (preserves the prior first-policy-wins behaviour). dueOrder keeps
+	// discovery order so project grouping below is deterministic.
+	due := map[uint]*dueRotation{}
+	dueOrder := []uint{}
 	for _, policy := range policies {
 		if !policy.IsActive {
 			continue
@@ -165,100 +179,204 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 			continue
 		}
 		for _, secret := range secrets {
-			if !secret.AutoRotate || done[secret.ID] {
+			if !secret.AutoRotate {
 				continue
+			}
+			if _, seen := due[secret.ID]; seen {
+				continue // already due under an earlier policy
 			}
 			lastRotated := secret.CreatedAt
 			if secret.LastRotatedAt != nil {
 				lastRotated = *secret.LastRotatedAt
 			}
-			daysSince := int(now.Sub(lastRotated).Hours() / 24)
-			if daysSince < policy.IntervalDays {
+			if int(now.Sub(lastRotated).Hours()/24) < policy.IntervalDays {
 				continue // not yet due under this policy
 			}
-
-			val, gerr := generateRotatedValueSpec(secret.RotationLength, secret.RotationCharset)
-			if gerr != nil {
-				log.Printf("auto-rotation: generate value for secret %d: %v", secret.ID, gerr)
-				failed[secret.ID] = fmt.Sprintf("%q: generate value: %v", secret.Name, gerr)
-				continue
-			}
-			// Backend rotation (ADR-047): if the secret names a configured executor,
-			// rotate the credential UPSTREAM first and store the resulting value only on
-			// success, so the two never drift. For a generate-upstream backend (e.g. a
-			// cloud key API) the stored value is what the upstream minted; for a
-			// password-set backend it is the candidate we generated. A backend that is
-			// unconfigured/unknown or whose upstream apply fails is skipped (audited).
-			storeVal := val
-			incompleteMsg := ""
-			if secret.RotationBackend != "" {
-				upstreamVal, err := c.applyBackendRotation(ctx, secret, val)
-				var partial *rotation.PartialRotationError
-				switch {
-				case errors.As(err, &partial):
-					// The upstream minted the new credential but a prior, possibly
-					// compromised one could not be removed. Store the new value (a cloud
-					// key API returns the key material only once, so discarding it would
-					// orphan a live key) but flag the rotation incomplete below so the run
-					// records a failure and alerts an operator to remove the leftover.
-					storeVal = partial.Value
-					incompleteMsg = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
-				case err != nil:
-					sid := secret.ID
-					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
-						fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
-					log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
-					failed[secret.ID] = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
-					continue
-				default:
-					storeVal = upstreamVal
-				}
-			}
-			if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), "system:auto-rotation"); rerr != nil {
-				log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
-				failed[secret.ID] = fmt.Sprintf("%q: store new version: %v", secret.Name, rerr)
-				sid := secret.ID
-				if secret.RotationBackend != "" {
-					// The upstream credential was rotated but storing the new value failed:
-					// the live credential and Keyorix's record have now DRIFTED. Audit it
-					// distinctly (the backend-apply-failure path above is audited too) so an
-					// operator can reconcile — the live secret may no longer match Keyorix.
-					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
-						fmt.Sprintf("auto-rotation DRIFT for secret %q: backend %q ref %q rotated upstream but storing the new value failed: %v — the live credential may no longer match Keyorix",
-							secret.Name, secret.RotationBackend, secret.RotationRef, rerr))
-				} else {
-					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
-						fmt.Sprintf("auto-rotation FAILED to store new version for secret %q: %v", secret.Name, rerr))
-				}
-				continue
-			}
-			if incompleteMsg != "" {
-				// New credential is stored, but a prior (possibly compromised) credential
-				// survived upstream. Mark done so it is not re-rotated under another policy
-				// this run, but record it as a failure (NOT a clean success) so the operator
-				// is notified to remove the leftover credential.
-				done[secret.ID] = true
-				failed[secret.ID] = incompleteMsg
-				sid := secret.ID
-				c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
-					fmt.Sprintf("auto-rotation INCOMPLETE for secret %q: new credential stored but a prior credential is still live and must be removed manually — %s", secret.Name, incompleteMsg))
-				log.Printf("auto-rotation: incomplete cleanup for secret %d: %s", secret.ID, incompleteMsg)
-				continue
-			}
-			delete(failed, secret.ID) // rotated successfully (e.g. under a later policy)
-			done[secret.ID] = true
-			rotated++
-			sid := secret.ID
-			via := ""
-			if secret.RotationBackend != "" {
-				via = fmt.Sprintf(" via backend %q ref %q", secret.RotationBackend, secret.RotationRef)
-			}
-			c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
-				fmt.Sprintf("auto-rotated secret %q (policy %q, interval %dd)%s", secret.Name, policy.Name, policy.IntervalDays, via))
+			due[secret.ID] = &dueRotation{secret: secret, policy: policy}
+			dueOrder = append(dueOrder, secret.ID)
 		}
 	}
+	if len(due) == 0 {
+		return 0, nil
+	}
+
+	// Phase 2 — group the due secrets by project. Rotation dependencies are per-project
+	// (ADR-052 edges never cross a project boundary), so ordering is computed per project.
+	byProject := map[uint][]uint{}
+	projectOrder := []uint{}
+	for _, id := range dueOrder {
+		pid := due[id].secret.ProjectID
+		if _, ok := byProject[pid]; !ok {
+			projectOrder = append(projectOrder, pid)
+		}
+		byProject[pid] = append(byProject[pid], id)
+	}
+
+	// Phase 3 — rotate each project's due secrets in dependency-safe wave order.
+	rotated := 0
+	// failed records why each non-rotated secret did not rotate (a genuine failure or a
+	// dependency-driven deferral); surfaced to operators via notifyRotationFailures.
+	failed := map[uint]string{}
+	for _, pid := range projectOrder {
+		ids := byProject[pid]
+		candidateSet := make(map[uint]bool, len(ids))
+		for _, id := range ids {
+			candidateSet[id] = true
+		}
+
+		edges, eerr := c.storage.ListSecretDependenciesForProject(ctx, pid)
+		if eerr != nil {
+			// Can't determine the dependency order; degrade to a flat best-effort pass for
+			// this project (no deferral) rather than skip its rotations entirely.
+			log.Printf("auto-rotation: list dependencies for project %d: %v — rotating without dependency ordering", pid, eerr)
+			edges = nil
+		}
+		waves, ok := rotationWaves(edges, candidateSet)
+		if !ok {
+			// A cycle should not occur (the graph is kept acyclic at add, ADR-052). Fall
+			// back to a single flat wave with deferral disabled so a malformed graph never
+			// blocks rotation.
+			log.Printf("auto-rotation: dependency graph for project %d has a cycle — rotating without dependency ordering", pid)
+			flat := append([]uint(nil), ids...)
+			sort.Slice(flat, func(i, j int) bool { return flat[i] < flat[j] })
+			waves = [][]uint{flat}
+			edges = nil
+		}
+
+		// In-run dependencies per secret (edges to other due secrets in this project).
+		dependsOnInRun := map[uint][]uint{}
+		for _, e := range edges {
+			if candidateSet[e.DependentSecretID] && candidateSet[e.DependsOnSecretID] {
+				dependsOnInRun[e.DependentSecretID] = append(dependsOnInRun[e.DependentSecretID], e.DependsOnSecretID)
+			}
+		}
+
+		blocked := map[uint]bool{} // due secrets that did not rotate this run (failed or deferred)
+		for _, wave := range waves {
+			for _, id := range wave {
+				dr := due[id]
+				// A dependency processed earlier (dependency-safe order guarantees it) did
+				// not rotate — defer rather than rotate against a stale dependency.
+				if depID, isBlocked := lowestBlockedDep(dependsOnInRun[id], blocked); isBlocked {
+					blocked[id] = true
+					depName := ""
+					if d, ok := due[depID]; ok {
+						depName = d.secret.Name
+					}
+					sid := id
+					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+						fmt.Sprintf("auto-rotation DEFERRED for secret %q: it depends on %q which did not rotate this run", dr.secret.Name, depName))
+					failed[id] = fmt.Sprintf("%q: deferred — depends on %q which did not rotate this run", dr.secret.Name, depName)
+					continue
+				}
+				if c.rotateOneSecret(ctx, dr.secret, dr.policy, failed) {
+					rotated++
+				} else {
+					blocked[id] = true
+				}
+			}
+		}
+	}
+
 	c.notifyRotationFailures(ctx, failed)
 	return rotated, nil
+}
+
+// lowestBlockedDep returns the lowest-id dependency that is in blocked (and true), or
+// 0/false if none of deps is blocked. Lowest-id makes the chosen dependency — and thus
+// the deferral audit message — deterministic when several dependencies are blocked.
+func lowestBlockedDep(deps []uint, blocked map[uint]bool) (uint, bool) {
+	found := false
+	var lowest uint
+	for _, d := range deps {
+		if blocked[d] && (!found || d < lowest) {
+			found, lowest = true, d
+		}
+	}
+	return lowest, found
+}
+
+// rotateOneSecret performs the actual rotation of a single due secret: generate a new
+// value, optionally apply it to the configured backend (ADR-047) before storing so the
+// two never drift, store the new version, and audit the outcome. Any failure is recorded
+// in failed and logged; it returns true only when the secret was rotated and stored
+// successfully. Best-effort: it never returns an error or aborts the run.
+func (c *KeyorixCore) rotateOneSecret(ctx context.Context, secret *models.SecretNode, policy *models.RotationPolicy, failed map[uint]string) bool {
+	val, gerr := generateRotatedValueSpec(secret.RotationLength, secret.RotationCharset)
+	if gerr != nil {
+		log.Printf("auto-rotation: generate value for secret %d: %v", secret.ID, gerr)
+		failed[secret.ID] = fmt.Sprintf("%q: generate value: %v", secret.Name, gerr)
+		return false
+	}
+	// Backend rotation (ADR-047): if the secret names a configured executor, rotate the
+	// credential UPSTREAM first and store the resulting value only on success. For a
+	// generate-upstream backend (e.g. a cloud key API) the stored value is what the
+	// upstream minted; for a password-set backend it is the candidate we generated. A
+	// backend that is unconfigured/unknown or whose upstream apply fails is skipped.
+	storeVal := val
+	incompleteMsg := ""
+	if secret.RotationBackend != "" {
+		upstreamVal, err := c.applyBackendRotation(ctx, secret, val)
+		var partial *rotation.PartialRotationError
+		switch {
+		case errors.As(err, &partial):
+			// The upstream minted the new credential but a prior, possibly compromised one
+			// could not be removed. Store the new value (a cloud key API returns the key
+			// material only once, so discarding it would orphan a live key) but flag the
+			// rotation incomplete below so the run records a failure and alerts an operator
+			// to remove the leftover.
+			storeVal = partial.Value
+			incompleteMsg = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
+		case err != nil:
+			sid := secret.ID
+			c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+				fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
+			log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
+			failed[secret.ID] = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
+			return false
+		default:
+			storeVal = upstreamVal
+		}
+	}
+	if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), "system:auto-rotation"); rerr != nil {
+		log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
+		failed[secret.ID] = fmt.Sprintf("%q: store new version: %v", secret.Name, rerr)
+		sid := secret.ID
+		if secret.RotationBackend != "" {
+			// The upstream credential was rotated but storing the new value failed: the
+			// live credential and Keyorix's record have now DRIFTED. Audit it distinctly
+			// (the backend-apply-failure path above is audited too) so an operator can
+			// reconcile — the live secret may no longer match Keyorix.
+			c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+				fmt.Sprintf("auto-rotation DRIFT for secret %q: backend %q ref %q rotated upstream but storing the new value failed: %v — the live credential may no longer match Keyorix",
+					secret.Name, secret.RotationBackend, secret.RotationRef, rerr))
+		} else {
+			c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+				fmt.Sprintf("auto-rotation FAILED to store new version for secret %q: %v", secret.Name, rerr))
+		}
+		return false
+	}
+	if incompleteMsg != "" {
+		// The new credential is stored (so dependents may still rotate against it), but a
+		// prior, possibly compromised credential survived upstream. Record it as a failure
+		// (NOT a clean success) so the operator is notified to remove the leftover, and
+		// audit it distinctly.
+		failed[secret.ID] = incompleteMsg
+		sid := secret.ID
+		c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+			fmt.Sprintf("auto-rotation INCOMPLETE for secret %q: new credential stored but a prior credential is still live and must be removed manually — %s", secret.Name, incompleteMsg))
+		log.Printf("auto-rotation: incomplete cleanup for secret %d: %s", secret.ID, incompleteMsg)
+		return true
+	}
+	delete(failed, secret.ID)
+	sid := secret.ID
+	via := ""
+	if secret.RotationBackend != "" {
+		via = fmt.Sprintf(" via backend %q ref %q", secret.RotationBackend, secret.RotationRef)
+	}
+	c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+		fmt.Sprintf("auto-rotated secret %q (policy %q, interval %dd)%s", secret.Name, policy.Name, policy.IntervalDays, via))
+	return true
 }
 
 // applyBackendRotation resolves the secret's named rotation executor and rotates the

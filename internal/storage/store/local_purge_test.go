@@ -83,7 +83,7 @@ func TestPurgeDeletedUsersBefore_NothingToPurge(t *testing.T) {
 func TestPurgeDeletedSecretsBefore_DestroysVersions(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 	now := time.Now()

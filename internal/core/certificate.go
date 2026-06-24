@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // EventSecretCertificateInspected is audited when a certificate's metadata is read.
@@ -101,6 +102,28 @@ func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID 
 	c.writeAuditEvent(ctx, EventSecretCertificateInspected, actorPtr(actorID), &sid,
 		fmt.Sprintf("inspected certificate %q (issuer %q, expires %s)", secret.Name, info.Issuer, info.NotAfter.UTC().Format("2006-01-02")))
 	return info, nil
+}
+
+// certificateSecretType is the SecretNode.Type that marks a certificate-typed secret,
+// whose leaf-expiry is cached in CertNotAfter for the certificate-hygiene posture (ADR-056).
+const certificateSecretType = "certificate"
+
+// refreshCertNotAfterCache updates the cached leaf-certificate expiry (CertNotAfter,
+// ADR-056) for a certificate-typed secret from a known plaintext value — used after a
+// rotation so the certificate-hygiene posture reflects the new certificate immediately,
+// without waiting for the next expiry scan. A parseable certificate refreshes the cached
+// date; a value that is not a certificate (e.g. the secret was rotated to a non-cert
+// value) clears the now-stale date. A no-op for non-certificate secrets. Best-effort: a
+// cache write failure never fails the caller, mirroring InspectCertificate's cache write.
+func (c *KeyorixCore) refreshCertNotAfterCache(ctx context.Context, secret *models.SecretNode, value []byte) {
+	if secret == nil || secret.Type != certificateSecretType {
+		return
+	}
+	if cert, err := parseLeafCertificate(value); err == nil {
+		_ = c.storage.SetSecretCertNotAfter(ctx, secret.ID, &cert.NotAfter)
+	} else {
+		_ = c.storage.SetSecretCertNotAfter(ctx, secret.ID, nil)
+	}
 }
 
 // parseLeafCertificate extracts the first X.509 certificate from a value that may be

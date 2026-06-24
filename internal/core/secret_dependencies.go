@@ -208,14 +208,18 @@ func (c *KeyorixCore) GetProjectRotationOrder(ctx context.Context, projectID uin
 	if err != nil {
 		return nil, err
 	}
+	// Rotation order is project-wide (authorized by a project-scoped grant that spans
+	// all environments), so no per-environment filter here — but a soft-deleted secret
+	// (ADR-033) must not appear in the order. Resolve names first, then drop any edge
+	// incident to a secret that no longer resolves, so the graph follows the secret's
+	// soft-delete/restore lifecycle (the env-scoped views filter the same way).
+	info := c.resolveSecretInfo(ctx, edges)
+	edges = edgesBetweenLiveSecrets(edges, info)
 	order, ok := topologicalRotationOrder(edges)
 	if !ok {
 		// Defensive: cycles are rejected at add, so a remaining cycle is a data fault.
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorInternal", nil), "the dependency graph contains a cycle")
 	}
-	// Rotation order is project-wide (authorized by a project-scoped grant that spans
-	// all environments), so no per-environment filter here.
-	info := c.resolveSecretInfo(ctx, edges)
 	out := &RotationOrder{ProjectID: projectID, Order: make([]SecretRef, 0, len(order))}
 	for _, id := range order {
 		out.Order = append(out.Order, SecretRef{SecretID: id, SecretName: info[id].name})
@@ -273,6 +277,24 @@ func edgesWithinEnvironment(edges []*models.SecretDependency, info map[uint]secr
 	out := make([]*models.SecretDependency, 0, len(edges))
 	for _, e := range edges {
 		if info[e.DependentSecretID].env == environmentID && info[e.DependsOnSecretID].env == environmentID {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// edgesBetweenLiveSecrets keeps only edges whose BOTH endpoints resolved to a live
+// secret (present in info). A soft-deleted endpoint does not resolve — GetSecret hides it
+// (ADR-033) — so it is absent from info, dropping every edge incident to it. The edge
+// rows are never mutated, so restoring the secret brings its edges back into the graph
+// automatically. Used by the project-wide rotation order, which (unlike the env-scoped
+// views) has no environment filter to exclude a deleted endpoint for it.
+func edgesBetweenLiveSecrets(edges []*models.SecretDependency, info map[uint]secretInfo) []*models.SecretDependency {
+	out := make([]*models.SecretDependency, 0, len(edges))
+	for _, e := range edges {
+		_, dependentLive := info[e.DependentSecretID]
+		_, dependsOnLive := info[e.DependsOnSecretID]
+		if dependentLive && dependsOnLive {
 			out = append(out, e)
 		}
 	}
