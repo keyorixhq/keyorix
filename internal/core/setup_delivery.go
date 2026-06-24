@@ -64,10 +64,47 @@ func (c *KeyorixCore) provisionSetupLink(ctx context.Context, req IssueSetupToke
 	if err != nil {
 		return nil, err
 	}
+	return c.deliverSetupLink(ctx, issued, req, displayName, assignmentSummary)
+}
+
+// provisionSetupLinkThrottled is provisionSetupLink with the per-subject resend
+// throttle (ADR-028 abuse section) applied atomically. The throttle check counts
+// recent tokens and then a new token is minted; without serialization two concurrent
+// resends for the same (purpose, email) both see a sub-cap count and both mint,
+// exceeding the daily cap / min-interval (the count-then-act is the only way past
+// the cap, so the race defeats the sole mail-bombing control). setupResendMu is held
+// across the check + IssueSetupToken so the count and the write that the next count
+// will see are one critical section. Delivery runs after the lock is released — a
+// slow SMTP send must not block every other resend. Used by every resend path; the
+// initial-provision callers (new account / new invitation) start from a zero count
+// and call provisionSetupLink directly.
+func (c *KeyorixCore) provisionSetupLinkThrottled(ctx context.Context, req IssueSetupTokenRequest, displayName, assignmentSummary string) (*ProvisionSetupResult, error) {
+	if c.setupBaseURL == "" {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrSetupBaseURLRequired)
+	}
+	c.setupResendMu.Lock()
+	if err := c.checkResendThrottle(ctx, req.Purpose, req.SubjectEmail); err != nil {
+		c.setupResendMu.Unlock()
+		return nil, err
+	}
+	issued, err := c.IssueSetupToken(ctx, req)
+	c.setupResendMu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return c.deliverSetupLink(ctx, issued, req, displayName, assignmentSummary)
+}
+
+// deliverSetupLink builds the absolute setup link from a freshly issued token and
+// delivers it via the configured channel (or hands it back out-of-band), auditing
+// the delivery. Split from provisionSetupLink so the slow delivery step runs outside
+// the resend-throttle lock.
+func (c *KeyorixCore) deliverSetupLink(ctx context.Context, issued *IssueSetupTokenResult, req IssueSetupTokenRequest, displayName, assignmentSummary string) (*ProvisionSetupResult, error) {
 	link := c.setupBaseURL + "/auth/setup/" + issued.PlainToken
 
 	var result delivery.DeliveryResult
 	if c.credentialDelivery != nil {
+		var err error
 		result, err = c.credentialDelivery.DeliverSetupLink(ctx, delivery.SetupLinkRequest{
 			RecipientEmail:    req.SubjectEmail,
 			DisplayName:       displayName,
@@ -197,10 +234,7 @@ func (c *KeyorixCore) ResendAccountSetupLink(ctx context.Context, userID, create
 	if AccountLoginBlocked(user.AccountState) {
 		return nil, fmt.Errorf("account suspended")
 	}
-	if err := c.checkResendThrottle(ctx, SetupPurposeAccountSetup, user.Email); err != nil {
-		return nil, err
-	}
-	return c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	return c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:       SetupPurposeAccountSetup,
 		SubjectEmail:  user.Email,
 		SubjectUserID: &user.ID,

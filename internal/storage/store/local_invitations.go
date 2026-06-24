@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm/clause"
 )
 
 // --- Project invitations ---
@@ -84,7 +85,12 @@ func (ls *LocalStorage) ListAccessRequests(ctx context.Context, projectID uint) 
 }
 
 func (ls *LocalStorage) CreateAccessRequestApproval(ctx context.Context, a *models.AccessRequestApproval) error {
-	if err := ls.db.WithContext(ctx).Create(a).Error; err != nil {
+	// DoNothing on conflict so a duplicate (request_id, approver_id) — e.g. two
+	// concurrent approvals from the same approver racing past the app-level dedup —
+	// is a benign no-op rather than a unique-violation error. The unique index keeps
+	// the dual-control count honest (one row per distinct approver); this just makes
+	// the losing racer idempotent. Driver-agnostic (SQLite + Postgres).
+	if err := ls.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(a).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil

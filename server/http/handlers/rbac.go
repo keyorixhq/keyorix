@@ -25,23 +25,6 @@ import (
 	"github.com/keyorixhq/keyorix/server/validation"
 )
 
-// builtinRoles cannot be deleted through the API.
-var builtinRoles = map[string]bool{
-	"super_admin": true,
-	"admin":       true,
-	"editor":      true,
-	"viewer":      true,
-	"auditor":     true,
-	// ADR-021 two-tier named roles.
-	"system_admin":      true,
-	"system_auditor":    true,
-	"system_viewer":     true,
-	"project_admin":     true,
-	"project_developer": true,
-	"project_viewer":    true,
-	"project_auditor":   true,
-}
-
 // RBACHandler handles RBAC-related HTTP requests using real storage.
 type RBACHandler struct {
 	coreService *core.KeyorixCore
@@ -297,7 +280,7 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if builtinRoles[role.Name] {
+	if core.IsBuiltinRole(role.Name) {
 		sendError(w, "Forbidden", "Cannot delete built-in role: "+role.Name, http.StatusForbidden, nil)
 		return
 	}

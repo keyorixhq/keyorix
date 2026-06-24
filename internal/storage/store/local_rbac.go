@@ -485,3 +485,26 @@ func (ls *LocalStorage) GetUserPermissions(ctx context.Context, userID uint) ([]
 	}
 	return permissions, nil
 }
+
+// GetUserGroupPermissions returns the permissions a user holds via group
+// membership, scope-agnostically across all their groups. Mirrors
+// GetUserPermissions but resolves through group_roles/user_groups, excluding
+// soft-deleted groups and expired grants (matching GetUserGroupRoleIDsAt).
+func (ls *LocalStorage) GetUserGroupPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
+	var permissions []*storage.Permission
+	err := ls.db.WithContext(ctx).Table("permissions").
+		Select("permissions.id, permissions.name, permissions.description, permissions.resource, permissions.action").
+		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
+		Joins("JOIN group_roles ON role_permissions.role_id = group_roles.role_id").
+		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		// A soft-deleted group confers no permissions (matches authz resolution).
+		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Where("user_groups.user_id = ?", userID).
+		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", time.Now()).
+		Group("permissions.id").
+		Find(&permissions).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return permissions, nil
+}

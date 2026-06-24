@@ -230,6 +230,14 @@ func (rs *RemoteStorage) GetUserPermissions(ctx context.Context, userID uint) ([
 	return result, nil
 }
 
+// GetUserGroupPermissions is not supported in remote storage. SoD conflict
+// detection (its only caller) runs server-side against LocalStorage, which resolves
+// group-inherited permissions directly; there is no remote API for it. Fail loudly
+// rather than silently under-reporting, in case a future caller wires it up.
+func (rs *RemoteStorage) GetUserGroupPermissions(_ context.Context, _ uint) ([]*storage.Permission, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
 // --- Permission management (not supported in remote mode) ---
 
 // CreatePermission is not supported in remote storage.

@@ -117,17 +117,27 @@ func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Proje
 }
 
 func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
+	// Stamp the project and the rows the cascade soft-deletes with ONE uniform
+	// deleted_at, so RestoreProject can bring back exactly this cascade's rows and not
+	// resurrect secrets/environments that were retired independently earlier (which
+	// carry a different, earlier deleted_at). GORM auto-scopes Update on a soft-delete
+	// model to deleted_at IS NULL, so already-deleted children are left untouched and
+	// keep their original timestamp.
+	deletedAt := time.Now()
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Soft-delete all secrets in the project
-		if err := tx.Where("project_id = ?", id).Delete(&models.SecretNode{}).Error; err != nil {
+		// Soft-delete all currently-live secrets in the project.
+		if err := tx.Model(&models.SecretNode{}).
+			Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
 			return fmt.Errorf("failed to soft-delete project secrets: %w", err)
 		}
-		// Soft-delete all environments in the project
-		if err := tx.Where("project_id = ?", id).Delete(&models.Environment{}).Error; err != nil {
+		// Soft-delete all currently-live environments in the project.
+		if err := tx.Model(&models.Environment{}).
+			Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
 			return fmt.Errorf("failed to soft-delete project environments: %w", err)
 		}
-		// Soft-delete the project itself
-		result := tx.Delete(&models.Project{}, id)
+		// Soft-delete the project itself with the same timestamp.
+		result := tx.Model(&models.Project{}).
+			Where("id = ?", id).Update("deleted_at", deletedAt)
 		if result.Error != nil {
 			return fmt.Errorf("failed to delete project: %w", result.Error)
 		}
@@ -138,30 +148,36 @@ func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 	})
 }
 
-// RestoreProject reverses a project soft-delete: it clears deleted_at on the
-// project and on the environments that were soft-deleted with it. Secrets are
-// NOT restored — DeleteProject hard-deletes secret rows (SecretNode has no
-// soft-delete column; per-secret soft delete is a separate, ADR-gated M2 item),
-// so a restored project comes back with its environment structure but no secrets.
+// RestoreProject reverses a project soft-delete: it clears deleted_at on the project
+// and on ONLY the environments and secrets that were soft-deleted by the same
+// DeleteProject cascade (matched by the uniform deletion timestamp). Secrets or
+// environments a user had retired independently earlier carry a different deleted_at
+// and are deliberately left in the recycle bin — restoring the project must not
+// silently resurrect a deliberately-deleted secret (and re-grant its retained shares).
 func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Unscoped().Model(&models.Project{}).
-			Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
-		if result.Error != nil {
-			return fmt.Errorf("failed to restore project: %w", result.Error)
-		}
-		if result.RowsAffected == 0 {
+		// Read the cascade's deletion timestamp before clearing it.
+		var project models.Project
+		if err := tx.Unscoped().Where("id = ? AND deleted_at IS NOT NULL", id).First(&project).Error; err != nil {
 			return fmt.Errorf("project not found or not deleted")
 		}
+		cascadeTS := project.DeletedAt.Time
+
+		// Restore only the children whose deleted_at is at or after the cascade timestamp
+		// (those removed by this DeleteProject); earlier, independently-retired rows are
+		// strictly before it and stay deleted.
 		if err := tx.Unscoped().Model(&models.Environment{}).
-			Where("project_id = ?", id).Update("deleted_at", nil).Error; err != nil {
+			Where("project_id = ? AND deleted_at >= ?", id, cascadeTS).Update("deleted_at", nil).Error; err != nil {
 			return fmt.Errorf("failed to restore project environments: %w", err)
 		}
-		// Secrets cascade-restore too (ADR-033 made them soft-deletable; the
-		// DeleteProject cascade soft-deletes them, so a restore must bring them back).
 		if err := tx.Unscoped().Model(&models.SecretNode{}).
-			Where("project_id = ?", id).Update("deleted_at", nil).Error; err != nil {
+			Where("project_id = ? AND deleted_at >= ?", id, cascadeTS).Update("deleted_at", nil).Error; err != nil {
 			return fmt.Errorf("failed to restore project secrets: %w", err)
+		}
+		// Clear the project last.
+		if err := tx.Unscoped().Model(&models.Project{}).
+			Where("id = ?", id).Update("deleted_at", nil).Error; err != nil {
+			return fmt.Errorf("failed to restore project: %w", err)
 		}
 		return nil
 	})

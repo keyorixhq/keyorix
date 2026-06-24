@@ -107,8 +107,19 @@ func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) ([]SoDViolation, 
 			if err != nil {
 				continue // best-effort; a user whose permissions can't be read is skipped
 			}
-			held := make(map[string]bool, len(perms))
+			// A toxic combination is just as real when one (or both) of the conflicting
+			// permissions reaches the user through GROUP membership — Authorize unions
+			// direct and group-inherited roles, so the SoD scan must too, or a conflict
+			// satisfied via a group grant goes silently undetected (false-negative).
+			groupPerms, err := c.storage.GetUserGroupPermissions(ctx, u.ID)
+			if err != nil {
+				continue // best-effort; skip a user whose group permissions can't be read
+			}
+			held := make(map[string]bool, len(perms)+len(groupPerms))
 			for _, p := range perms {
+				held[p.Name] = true
+			}
+			for _, p := range groupPerms {
 				held[p.Name] = true
 			}
 			for _, pol := range policies {

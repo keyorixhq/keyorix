@@ -67,11 +67,15 @@ func (c *KeyorixCore) CreateServiceAccount(ctx context.Context, req *CreateServi
 		return nil, fmt.Errorf("failed to generate client secret: %w", err)
 	}
 
+	// Store only the SHA-256 hash of the client secret, never the plaintext — matching
+	// how session tokens, PATs, machine tokens and setup tokens are persisted. The
+	// plaintext is returned once to the caller (below) and never kept retrievably, so a
+	// database read (backup, replica, injection, insider) yields no usable credential.
 	client := &models.APIClient{
 		Name:         req.Name,
 		Description:  req.Description,
 		ClientID:     clientID,
-		ClientSecret: secret,
+		ClientSecret: sha256Hex(secret),
 		Scopes:       req.Scopes,
 		IsActive:     true,
 	}
@@ -146,10 +150,13 @@ func (c *KeyorixCore) CreateServiceToken(ctx context.Context, clientID string, r
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
 
+	// Store only the SHA-256 hash of the token, never the plaintext (see
+	// CreateServiceAccount). The hash is unique per token, satisfying the column's
+	// unique index, and the plaintext is returned to the caller exactly once below.
 	token := &models.APIToken{
 		ClientID:  client.ID,
 		UserID:    req.UserID,
-		Token:     plainToken,
+		Token:     sha256Hex(plainToken),
 		Scope:     req.Scope,
 		Revoked:   false,
 		ExpiresAt: req.ExpiresAt,

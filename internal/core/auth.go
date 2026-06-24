@@ -55,6 +55,14 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	}
 	// Correct password — clear any accumulated lockout state.
 	c.clearLoginFailures(ctx, user)
+	// A deactivated account (IsActive=false — e.g. admin deactivation via UpdateUser,
+	// or a SCIM/IdP deactivation) is refused login regardless of account_state. The
+	// state-based gate below does not cover this, so without it a deactivated user who
+	// still knew their password could authenticate; it also lets SCIM deactivation
+	// preserve a restricted account_state (forced reset) while still blocking login.
+	if !user.IsActive {
+		return nil, nil, fmt.Errorf("account is not active")
+	}
 	// A suspended account is refused login outright (ADR-025). Restricted states
 	// (pending_first_login / password_reset_required) still log in, but the auth
 	// middleware confines the session to the password-change allowlist.
@@ -144,6 +152,19 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		_ = c.storage.DeleteSession(ctx, old.ID)
 		return nil, fmt.Errorf("session lifetime exceeded; re-authentication required")
 	}
+	// Re-check account state before rotating the token. ValidateSessionToken applies
+	// this gate on every request, but refresh is a distinct, unauthenticated-by-token
+	// entry point: without re-checking here, an account deactivated (IsActive=false)
+	// or suspended after issuance could keep minting fresh, self-renewing sessions
+	// indefinitely. Mirror the gate and drop the now-invalid session.
+	user, err := c.storage.GetUser(ctx, old.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+		_ = c.storage.DeleteSession(ctx, old.ID)
+		return nil, fmt.Errorf("account is not active")
+	}
 	newToken, err := generateSecureToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
@@ -188,10 +209,6 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if session.AbsoluteExpiresAt != nil && c.now().After(*session.AbsoluteExpiresAt) {
 		return nil, nil, fmt.Errorf("session lifetime exceeded")
 	}
-	// Best-effort, throttled last-seen stamp for the My Account sessions view.
-	// Only writes when the stored value is older than sessionTouchInterval, so the
-	// auth hot path is not turned into a write per request. Never fails the request.
-	_ = c.storage.TouchSession(ctx, session.ID, c.now(), sessionTouchInterval)
 	user, err := c.storage.GetUser(ctx, session.UserID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("user not found")
@@ -202,6 +219,27 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, fmt.Errorf("account is not active")
 	}
+	// For an impersonation session (acting AS session.UserID on behalf of an admin),
+	// the impersonating admin's account must still be valid too — otherwise suspending
+	// or deactivating the admin would not stop their in-flight impersonation, since the
+	// session is keyed to the target's user_id and the gate above only checks the
+	// target. Self-checking backstop alongside the session purge on state change.
+	if session.ImpersonatedBy != nil && *session.ImpersonatedBy != 0 {
+		admin, err := c.storage.GetUser(ctx, *session.ImpersonatedBy)
+		if err != nil {
+			return nil, nil, fmt.Errorf("impersonating account not found")
+		}
+		if !admin.IsActive || AccountLoginBlocked(admin.AccountState) {
+			return nil, nil, fmt.Errorf("impersonating account is not active")
+		}
+	}
+	// Best-effort, throttled last-seen stamp for the My Account sessions view.
+	// Only writes when the stored value is older than sessionTouchInterval, so the
+	// auth hot path is not turned into a write per request. Never fails the request.
+	// Stamped only AFTER the account-state gate, so a rejected request from a
+	// suspended/deactivated account is not "used" — it must not refresh last-seen
+	// (matching ValidatePATToken, which touches only after the same gate).
+	_ = c.storage.TouchSession(ctx, session.ID, c.now(), sessionTouchInterval)
 	roles, err := c.storage.GetUserRoles(ctx, user.ID)
 	if err != nil {
 		return user, []string{}, nil
@@ -231,11 +269,9 @@ func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) er
 	if AccountLoginBlocked(user.AccountState) {
 		return nil
 	}
-	// Throttle abusive repeats to a victim address (same control as resend).
-	if err := c.checkResendThrottle(ctx, SetupPurposePasswordResetLink, user.Email); err != nil {
-		return nil
-	}
-	_, _ = c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	// Throttle abusive repeats to a victim address (same control as resend). A
+	// throttled repeat returns an error here, swallowed below to stay enumeration-safe.
+	_, _ = c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:       SetupPurposePasswordResetLink,
 		SubjectEmail:  user.Email,
 		SubjectUserID: &user.ID,

@@ -21,6 +21,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -43,6 +44,9 @@ func newTestDB(t *testing.T) *gorm.DB {
 		&models.APIToken{},
 		&models.APIClient{},
 		&models.PasswordReset{},
+		&models.MFASecret{},
+		&models.DynamicSecretConfig{},
+		&models.DynamicSecretLease{},
 	}
 	for _, m := range tables {
 		if err := db.AutoMigrate(m); err != nil {
@@ -236,6 +240,86 @@ func TestRotateDEKWithSweep_MultipleBatches(t *testing.T) {
 			t.Errorf("version %d: got %q, want %q", v.VersionNumber, plaintext, values[v.VersionNumber])
 		}
 	}
+}
+
+// TestRotateDEKWithSweep_ReEncryptsAuthSecretTables verifies that the
+// DEK-encrypted auth-secret tables previously omitted from the sweep — TOTP
+// secrets, dynamic-secret admin DSNs, and lease credentials — are re-encrypted
+// under the new DEK. Before the fix a rotation orphaned them under the wiped old
+// key, breaking MFA login and dynamic-secret access irrecoverably.
+func TestRotateDEKWithSweep_ReEncryptsAuthSecretTables(t *testing.T) {
+	db := newTestDB(t)
+	svc, _ := newTestService(t, "test-passphrase")
+
+	encSecret := func(v string) ([]byte, []byte) {
+		enc, meta, err := svc.EncryptSecret([]byte(v))
+		if err != nil {
+			t.Fatalf("EncryptSecret: %v", err)
+		}
+		return enc, meta
+	}
+
+	totpEnc, totpMeta := encSecret("TOTP-SEED-XYZ")
+	require.NoError(t, db.Create(&models.MFASecret{UserID: 1, SecretEnc: totpEnc, SecretMeta: totpMeta}).Error)
+	dsnEnc, dsnMeta := encSecret("postgres://admin:pw@db/app")
+	require.NoError(t, db.Create(&models.DynamicSecretConfig{Name: "pg", ProjectID: 1, AdminDSNEnc: dsnEnc, AdminDSNMeta: dsnMeta}).Error)
+	credEnc, credMeta := encSecret(`{"user":"x","pass":"y"}`)
+	require.NoError(t, db.Create(&models.DynamicSecretLease{LeaseID: "l-1", CredentialEnc: credEnc, CredentialMeta: credMeta}).Error)
+
+	oldDEK := captureCurrentDEK(t, svc)
+	if err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
+		t.Fatalf("RotateDEKWithSweep failed: %v", err)
+	}
+	oldEncSvc, err := NewEncryptionService(oldDEK)
+	require.NoError(t, err)
+
+	check := func(name string, enc []byte, want string) {
+		// Decrypts under the new DEK (the current service)...
+		got, derr := svc.DecryptSecret(enc)
+		require.NoErrorf(t, derr, "%s: must decrypt under the new DEK after rotation", name)
+		require.Equal(t, want, string(got), name)
+		// ...and NOT under the old, rotated-out DEK.
+		parsed, perr := DeserializeEncryptedData(enc)
+		require.NoError(t, perr)
+		_, oerr := oldEncSvc.Decrypt(parsed)
+		require.Errorf(t, oerr, "%s: must NOT decrypt under the old DEK", name)
+	}
+
+	var mfa models.MFASecret
+	require.NoError(t, db.First(&mfa, "user_id = ?", 1).Error)
+	check("mfa_secret", mfa.SecretEnc, "TOTP-SEED-XYZ")
+
+	var cfg models.DynamicSecretConfig
+	require.NoError(t, db.First(&cfg, "name = ?", "pg").Error)
+	check("dynamic_secret_config", cfg.AdminDSNEnc, "postgres://admin:pw@db/app")
+
+	var lease models.DynamicSecretLease
+	require.NoError(t, db.First(&lease, "lease_id = ?", "l-1").Error)
+	check("dynamic_secret_lease", lease.CredentialEnc, `{"user":"x","pass":"y"}`)
+}
+
+// TestRotateDEKWithSweep_SoftDeletedSecretDoesNotBlock verifies a secret in the
+// recycle bin (soft-deleted node, surviving version rows) no longer aborts rotation.
+func TestRotateDEKWithSweep_SoftDeletedSecretDoesNotBlock(t *testing.T) {
+	db := newTestDB(t)
+	svc, _ := newTestService(t, "test-passphrase")
+
+	const projectID = uint(7)
+	nodeID := seedSecretNode(t, db, projectID)
+	versionID := seedSecretVersion(t, db, svc, nodeID, projectID, 1, "trashed-but-present")
+
+	// Soft-delete the node (recycle bin); its version rows remain.
+	require.NoError(t, db.Delete(&models.SecretNode{}, nodeID).Error)
+
+	// Rotation must still succeed (previously aborted with "no project found").
+	require.NoError(t, svc.RotateDEKWithSweep("test-passphrase", db))
+
+	var v models.SecretVersion
+	require.NoError(t, db.First(&v, versionID).Error)
+	aad := SecretAAD(nodeID, projectID, 1)
+	pt, err := svc.DecryptSecretWithAAD(v.EncryptedValue, aad)
+	require.NoError(t, err, "the soft-deleted secret's version must be re-encrypted under the new DEK")
+	require.Equal(t, "trashed-but-present", string(pt))
 }
 
 // TestRotateDEKWithSweep_UpgradesLegacyAAD verifies that legacy rows (no AAD)

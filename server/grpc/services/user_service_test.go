@@ -102,6 +102,65 @@ func TestUserService_CreateUser_BothCredentialModesRejected(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
+// TestUserService_CreateUser_RoleGrantRequiresAssign proves that atomic
+// provisioning over gRPC enforces the same per-grant roles.assign check the HTTP
+// handler does: a caller holding users.write but NOT roles.assign may create a
+// plain user, but may not hand out a system role or a project role it could not
+// assign directly. Without this gate a users.write holder could mint a super_admin
+// account over gRPC (privilege escalation) even though the HTTP path forbids it.
+func TestUserService_CreateUser_RoleGrantRequiresAssign(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+
+	// A role that can create users but cannot assign roles — the realistic
+	// "user administrator" persona that the bug let escalate.
+	h.CreateTestRole(t, "user_provisioner", "Can create users, cannot assign roles", 50)
+	_, err := h.SqlDB.Exec(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+		SELECT r.id, p.id FROM roles r, permissions p
+		WHERE r.name = 'user_provisioner' AND p.name = 'users.write'`)
+	require.NoError(t, err)
+	h.AssignUserRole(t, 8, 50, nil)
+
+	svc := NewUserService(h.CoreService)
+	ctx := authCtx(8, "provisioner")
+
+	// Plain user creation (no grant) is still allowed by users.write alone.
+	resp, err := svc.CreateUser(ctx, &pb.CreateUserRequest{
+		Username: "plain", Email: "plain@example.com", Password: strPtr("password123"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetUser())
+
+	// Handing out a system role is denied — this is the privilege-escalation gate.
+	_, err = svc.CreateUser(ctx, &pb.CreateUserRequest{
+		Username: "esc", Email: "esc@example.com", Password: strPtr("password123"),
+		Role: strPtr("super_admin"),
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// Handing out a project role is likewise denied.
+	_, err = svc.CreateUser(ctx, &pb.CreateUserRequest{
+		Username: "esc2", Email: "esc2@example.com", Password: strPtr("password123"),
+		ProjectAssignments: []*pb.ProjectAssignment{{ProjectId: 1, Role: "editor"}},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// TestUserService_CreateUser_AdminCanGrantRole confirms the new gate does not
+// block a legitimately-privileged caller: a global admin (roles.assign via
+// super_admin) can still provision a user with a system role atomically.
+func TestUserService_CreateUser_AdminCanGrantRole(t *testing.T) {
+	svc := newUserService(t)
+	resp, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
+		Username: "withrole", Email: "withrole@example.com", Password: strPtr("password123"),
+		Role: strPtr("system_viewer"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetUser())
+}
+
 func TestUserService_GetUser(t *testing.T) {
 	svc := newUserService(t)
 	created := svc.mustCreate(t, "dave", "dave@example.com")

@@ -389,6 +389,10 @@ func TestAuthInterceptor_ImpersonationSessionStampsAdminInAudit(t *testing.T) {
 
 	const adminID, targetID uint = 7001, 7002
 	h.CreateTestUser(t, "imp-target", targetID)
+	// The impersonating admin must exist and be active: ValidateSessionToken now
+	// re-checks the impersonator's account state on every impersonation-session request
+	// (so suspending the admin ends their impersonation immediately).
+	h.CreateTestUser(t, "imp-admin", adminID)
 	exp := time.Now().Add(time.Hour)
 	admin := adminID
 	_, err := h.Storage.CreateSession(context.Background(), &models.Session{

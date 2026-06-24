@@ -75,3 +75,42 @@ func TestPurgeDeletedUsersBefore_NothingToPurge(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), n, "a live (non-deleted) user is never purged")
 }
+
+// Purging a soft-deleted secret must also destroy its version rows, which hold the
+// encrypted value. Before the fix only the secret_nodes row was deleted, leaving the
+// ciphertext recoverable in secret_versions forever — defeating the retention purge's
+// irreversibility / GDPR-erasure guarantee.
+func TestPurgeDeletedSecretsBefore_DestroysVersions(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.SecretDependency{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	now := time.Now()
+
+	// One secret soft-deleted 40 days ago, with two ciphertext-bearing versions; and a
+	// live secret with a version that must survive.
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "old"}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{ID: 10, SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("ciphertext-1")}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{ID: 11, SecretNodeID: 1, VersionNumber: 2, EncryptedValue: []byte("ciphertext-2")}).Error)
+	require.NoError(t, db.Unscoped().Model(&models.SecretNode{}).Where("id = ?", 1).Update("deleted_at", now.AddDate(0, 0, -40)).Error)
+
+	require.NoError(t, db.Create(&models.SecretNode{ID: 2, Name: "live"}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{ID: 20, SecretNodeID: 2, VersionNumber: 1, EncryptedValue: []byte("keep-me")}).Error)
+
+	n, err := ls.PurgeDeletedSecretsBefore(ctx, now.AddDate(0, 0, -30))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "the 40-day-old soft-deleted secret is purged")
+
+	// Its node and BOTH versions (the ciphertext) are gone, even Unscoped.
+	var nodeCount, goneVersions int64
+	require.NoError(t, db.Unscoped().Model(&models.SecretNode{}).Where("id = ?", 1).Count(&nodeCount).Error)
+	assert.Equal(t, int64(0), nodeCount)
+	require.NoError(t, db.Unscoped().Model(&models.SecretVersion{}).Where("secret_node_id = ?", 1).Count(&goneVersions).Error)
+	assert.Equal(t, int64(0), goneVersions, "the ciphertext-bearing versions must be destroyed with the secret")
+
+	// The live secret's version is untouched.
+	var liveVersions int64
+	require.NoError(t, db.Model(&models.SecretVersion{}).Where("secret_node_id = ?", 2).Count(&liveVersions).Error)
+	assert.Equal(t, int64(1), liveVersions)
+}

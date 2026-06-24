@@ -40,6 +40,42 @@ func TestDetectSoDViolations(t *testing.T) {
 	assert.NotContains(t, users, "bob", "bob (viewer) lacks secrets.write")
 }
 
+// A toxic combination assembled across a DIRECT role and a GROUP-inherited role is
+// still a violation — the detector must union both, exactly as Authorize does. Before
+// the fix it consulted only direct user_roles, so a conflict satisfied via a group
+// grant went silently undetected.
+func TestDetectSoDViolations_GroupInheritedPermission(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
+	ctx := context.Background()
+
+	// carol holds secrets.read DIRECTLY (viewer, role 4) and secrets.write only via a
+	// group carrying editor (role 3). Neither alone violates; together they do.
+	h.CreateTestUser(t, "carol", 12)
+	h.AssignUserRole(t, 12, 4, nil) // viewer (direct) → secrets.read
+	h.CreateTestGroup(t, "writers", "secrets writers", 30)
+	h.AssignGroupRole(t, 30, 3, nil) // group carries editor → secrets.write
+	h.AssignUserToGroup(t, 12, 30)
+
+	// dave holds only the direct viewer role — the negative control.
+	h.CreateTestUser(t, "dave", 13)
+	h.AssignUserRole(t, 13, 4, nil)
+
+	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "read-vs-write", "", "secrets.read", "secrets.write")
+	require.NoError(t, err)
+
+	violations, err := h.CoreService.DetectSoDViolations(ctx)
+	require.NoError(t, err)
+
+	var users []string
+	for _, v := range violations {
+		users = append(users, v.Username)
+	}
+	assert.Contains(t, users, "carol", "carol holds secrets.write via her group and secrets.read directly")
+	assert.NotContains(t, users, "dave", "dave holds only secrets.read")
+}
+
 // With no policies, there are no violations.
 func TestDetectSoDViolations_NoPolicies(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)

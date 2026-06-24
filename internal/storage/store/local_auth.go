@@ -11,6 +11,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -21,16 +23,32 @@ import (
 
 // --- Sessions ---
 
+// hashSessionToken is the at-rest representation of a session token. Sessions, like
+// PATs / machine / setup tokens, are stored only as a SHA-256 hash so a database read
+// (backup, replica, injection, insider) never yields a live, replayable token. The
+// plaintext lives only in the client's possession.
+func hashSessionToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 func (ls *LocalStorage) CreateSession(ctx context.Context, session *models.Session) (*models.Session, error) {
-	if err := ls.db.WithContext(ctx).Create(session).Error; err != nil {
+	// Persist the hash, not the plaintext token. Hand the plaintext back to the caller
+	// (it must reach the client) but keep it out of the row; the column holds the hash.
+	plaintext := session.SessionToken
+	session.SessionToken = hashSessionToken(plaintext)
+	err := ls.db.WithContext(ctx).Create(session).Error
+	session.SessionToken = plaintext // restore for the caller (transient, never re-stored)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return session, nil
 }
 
 func (ls *LocalStorage) GetSession(ctx context.Context, token string) (*models.Session, error) {
+	// Look up by the hash of the presented token — the row stores only the hash.
 	var session models.Session
-	if err := ls.db.WithContext(ctx).Where("session_token = ?", token).First(&session).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where("session_token = ?", hashSessionToken(token)).First(&session).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
 	}
 	return &session, nil
@@ -65,9 +83,13 @@ func (ls *LocalStorage) DeleteSession(ctx context.Context, id uint) error {
 }
 
 // DeleteSessionsForUserExcept removes all of the user's sessions except exceptID.
+// It also removes impersonation sessions the user STARTED (impersonated_by = userID):
+// an impersonation session is keyed to the target's user_id, so without this clause a
+// suspend/deactivate/force-logout of the impersonating admin would leave their live
+// impersonation session running until its TTL — elevated access outliving the admin.
 func (ls *LocalStorage) DeleteSessionsForUserExcept(ctx context.Context, userID, exceptID uint) error {
 	result := ls.db.WithContext(ctx).
-		Where("user_id = ? AND id <> ?", userID, exceptID).
+		Where("(user_id = ? OR impersonated_by = ?) AND id <> ?", userID, userID, exceptID).
 		Delete(&models.Session{})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)

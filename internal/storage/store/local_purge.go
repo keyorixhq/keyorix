@@ -39,11 +39,16 @@ func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, befo
 	return ls.purgeDeletedBefore(ctx, &models.Environment{}, before)
 }
 
-// PurgeDeletedSecretsBefore hard-deletes soft-deleted secrets past the cutoff together
-// with the dependency-graph edges incident to them, in one transaction. A SecretDependency
-// edge has no soft-delete of its own (ADR-052) — it lives and dies with its endpoints — so
-// purging a secret without removing its edges would leave rows referencing a hard-deleted
-// secret. Returns the number of secrets purged (edge rows are not counted).
+// PurgeDeletedSecretsBefore hard-deletes soft-deleted secrets past the retention window,
+// together with their version rows AND the dependency-graph edges incident to them, in one
+// transaction. The secret VALUE lives in secret_versions.encrypted_value, which has no
+// deleted_at and no FK cascade to secret_nodes — so deleting only the node row (as a plain
+// purge would) left the ciphertext in the database indefinitely, still decryptable (key
+// rotation even re-encrypts orphaned version rows), defeating the "irreversible by design"
+// retention / GDPR-erasure guarantee. A SecretDependency edge likewise has no soft-delete of
+// its own (ADR-052) — it lives and dies with its endpoints — so purging a secret without
+// removing its edges would leave rows referencing a hard-deleted secret. Returns the number
+// of secret_nodes purged (version and edge rows are not counted).
 func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -56,15 +61,20 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 		if len(ids) == 0 {
 			return nil
 		}
+		// Destroy the ciphertext-bearing versions and the incident dependency edges
+		// first, then the node rows.
+		if e := tx.Where("secret_node_id IN ?", ids).Delete(&models.SecretVersion{}).Error; e != nil {
+			return e
+		}
 		if e := tx.Where("dependent_secret_id IN ? OR depends_on_secret_id IN ?", ids, ids).
 			Delete(&models.SecretDependency{}).Error; e != nil {
 			return e
 		}
-		r := tx.Unscoped().Where("id IN ?", ids).Delete(&models.SecretNode{})
-		if r.Error != nil {
-			return r.Error
+		rn := tx.Unscoped().Where("id IN ?", ids).Delete(&models.SecretNode{})
+		if rn.Error != nil {
+			return rn.Error
 		}
-		purged = r.RowsAffected
+		purged = rn.RowsAffected
 		return nil
 	})
 	if err != nil {

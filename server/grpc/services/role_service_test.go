@@ -126,6 +126,22 @@ func TestRoleService_DeleteRole(t *testing.T) {
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
+// TestRoleService_DeleteRole_BuiltinRefused proves the gRPC path refuses to
+// delete a product built-in role, matching the HTTP handler. Without the guard a
+// roles.write holder could delete super_admin/admin over gRPC and lock out admins.
+func TestRoleService_DeleteRole_BuiltinRefused(t *testing.T) {
+	svc, _ := newRoleService(t)
+	// super_admin is seeded with ID 1 by the RBAC test helper.
+	_, err := svc.DeleteRole(roleAdminCtx(), &pb.DeleteRoleRequest{Id: 1})
+	require.Error(t, err)
+	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+
+	// And it is still present afterwards.
+	got, gerr := svc.GetRole(roleAdminCtx(), &pb.GetRoleRequest{Id: 1})
+	require.NoError(t, gerr)
+	assert.Equal(t, "super_admin", got.GetName())
+}
+
 // Role create/update/delete over gRPC must each leave an audit event, exactly as on
 // HTTP — the underlying Storage() calls do not audit internally, so without the
 // service firing LogRole* these lifecycle changes were invisible in the audit trail

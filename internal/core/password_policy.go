@@ -50,8 +50,19 @@ func DefaultPasswordPolicy() PasswordPolicy {
 func (p PasswordPolicy) Validate(pw string, user *models.User) error {
 	var failures []string
 
-	if len(pw) < p.MinLength {
-		failures = append(failures, fmt.Sprintf("be at least %d characters", p.MinLength))
+	// A non-positive MinLength means "no length floor", which would accept even an
+	// empty password. That is never a safe intent on a secrets product and is
+	// reachable by a partial password_policy config block: setting any single field
+	// (e.g. reject_common_passwords) copies the rest as zero, collapsing MinLength to
+	// 0. Fall back to the conservative built-in default so the floor cannot be
+	// silently disabled. An explicit positive MinLength (incl. relaxed lab values) is
+	// honored as-is.
+	minLength := p.MinLength
+	if minLength <= 0 {
+		minLength = DefaultPasswordPolicy().MinLength
+	}
+	if len(pw) < minLength {
+		failures = append(failures, fmt.Sprintf("be at least %d characters", minLength))
 	}
 
 	var hasUpper, hasLower, hasDigit, hasSpecial bool

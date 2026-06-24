@@ -101,6 +101,7 @@ func TestRefreshSession_CarriesCeiling(t *testing.T) {
 	oldExpiry := sessionTestNow.Add(-5 * time.Minute)
 	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", ExpiresAt: &oldExpiry, AbsoluteExpiresAt: &ceiling}
 	store.On("GetSession", mock.Anything, "old").Return(old, nil)
+	store.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountActive}, nil)
 	store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
 
 	out, err := c.RefreshSession(context.Background(), "old")
@@ -121,6 +122,7 @@ func TestRefreshSession_ClampsLastWindowToCeiling(t *testing.T) {
 	ceiling := sessionTestNow.Add(10 * time.Minute) // less than one access window away
 	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", AbsoluteExpiresAt: &ceiling}
 	store.On("GetSession", mock.Anything, "old").Return(old, nil)
+	store.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountActive}, nil)
 	store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
 
 	_, err := c.RefreshSession(context.Background(), "old")
@@ -154,12 +156,45 @@ func TestRefreshSession_NoCeilingRefreshesForever(t *testing.T) {
 
 	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old"} // AbsoluteExpiresAt nil
 	store.On("GetSession", mock.Anything, "old").Return(old, nil)
+	store.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountActive}, nil)
 	store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
 
 	_, err := c.RefreshSession(context.Background(), "old")
 	require.NoError(t, err)
 	require.Equal(t, sessionTestNow.Add(24*time.Hour), *captured.ExpiresAt)
 	require.Nil(t, captured.AbsoluteExpiresAt)
+}
+
+// A session whose account was deactivated or suspended after issuance must not be
+// refreshed into a fresh access window — otherwise a deactivated user keeps a
+// self-renewing session. The stale session is deleted and no new one is minted.
+func TestRefreshSession_RefusedForInactiveOrBlockedAccount(t *testing.T) {
+	cases := []struct {
+		name string
+		user *models.User
+	}{
+		{"deactivated", &models.User{ID: 1, IsActive: false, AccountState: AccountActive}},
+		{"suspended", &models.User{ID: 1, IsActive: true, AccountState: AccountSuspended}},
+		{"deprovisioned", &models.User{ID: 1, IsActive: true, AccountState: AccountDeprovisioned}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := new(MockStorage)
+			c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
+
+			ceiling := sessionTestNow.Add(8 * time.Hour) // still within the window
+			old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", AbsoluteExpiresAt: &ceiling}
+			store.On("GetSession", mock.Anything, "old").Return(old, nil)
+			store.On("GetUser", mock.Anything, uint(1)).Return(tc.user, nil)
+			store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
+
+			_, err := c.RefreshSession(context.Background(), "old")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "account is not active")
+			store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+			store.AssertCalled(t, "DeleteSession", mock.Anything, uint(7))
+		})
+	}
 }
 
 // TestValidateSessionToken_AbsoluteCeilingEnforcedAtBoundary pins that the hard

@@ -56,6 +56,24 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		return nil, status.Error(codes.InvalidArgument, "role and project_assignments are only supported with password-based creation")
 	}
 
+	// Atomic provisioning must not let the caller hand out access they could not
+	// assign directly: a system-role override requires roles.assign at global
+	// scope, and each project assignment requires roles.assign at that project's
+	// scope. This mirrors the HTTP CreateUser guard (handlers/users_crud.go) so
+	// the cross-project privilege-escalation gate is not bypassable by switching
+	// transport — a users.write holder without roles.assign cannot mint an admin
+	// account over gRPC. A global admin satisfies both via admin-bypass.
+	if role != "" {
+		if err := authorizeScoped(ctx, s.core, actor, "roles.assign", core.Scope{}); err != nil {
+			return nil, err
+		}
+	}
+	for _, a := range assignments {
+		if err := authorizeScoped(ctx, s.core, actor, "roles.assign", core.Scope{ProjectID: a.ProjectID}); err != nil {
+			return nil, err
+		}
+	}
+
 	displayName := req.GetDisplayName()
 	if displayName == "" {
 		displayName = req.GetUsername()

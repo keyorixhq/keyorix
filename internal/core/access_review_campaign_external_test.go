@@ -92,6 +92,62 @@ func TestDecideAccessReviewItem_AttestAndRevoke(t *testing.T) {
 	assert.NotContains(t, names, "bob")
 }
 
+// A reviewer must not certify their OWN access (ISO 27001 A.5.18 independence).
+func TestDecideAccessReviewItem_RejectsSelfCertification(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateCampaignTables(t, h)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj))
+
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	require.NoError(t, err)
+	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 1)
+	item := detail.Items[0].ID
+
+	// Alice (user 10) deciding her own item is rejected...
+	err = h.CoreService.DecideAccessReviewItem(ctx, 10, proj, res.Campaign.ID, item, "attest", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "your own access")
+
+	// ...but an independent reviewer can.
+	require.NoError(t, h.CoreService.DecideAccessReviewItem(ctx, 1, proj, res.Campaign.ID, item, "attest", ""))
+}
+
+// An item is decided once: a decided item can't be flipped, so the recorded decision
+// can't drift from the real grant state (false certification evidence).
+func TestDecideAccessReviewItem_RejectsDoubleDecision(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateCampaignTables(t, h)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj))
+
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	require.NoError(t, err)
+	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
+	require.NoError(t, err)
+	item := detail.Items[0].ID
+
+	require.NoError(t, h.CoreService.DecideAccessReviewItem(ctx, 1, proj, res.Campaign.ID, item, "attest", ""))
+	// A second decision (flip to revoke) is rejected, and the original stands.
+	err = h.CoreService.DecideAccessReviewItem(ctx, 1, proj, res.Campaign.ID, item, "revoke", "flip")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already been decided")
+
+	after, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
+	require.NoError(t, err)
+	assert.Equal(t, core.ReviewItemAttested, after.Items[0].Decision, "the original decision is preserved")
+}
+
 // Closing refuses while items are pending unless forced; a closed campaign rejects
 // further decisions.
 func TestCloseAccessReviewCampaign_PendingGuardAndForce(t *testing.T) {

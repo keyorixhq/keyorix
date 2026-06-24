@@ -11,6 +11,21 @@ import (
 	"strings"
 )
 
+// PartialRotationError reports that the upstream rotation minted the new credential
+// (Value is the value to store in Keyorix) but a follow-up step failed — typically a
+// prior, possibly compromised credential that could not be deleted. The new Value
+// MUST still be stored (a cloud key API often returns the private key material only
+// once, so discarding it would orphan a live key), while the failure is surfaced so
+// an operator removes the leftover credential — the rotation did not fully invalidate
+// the old one. Err is the underlying cause.
+type PartialRotationError struct {
+	Value string
+	Err   error
+}
+
+func (e *PartialRotationError) Error() string { return e.Err.Error() }
+func (e *PartialRotationError) Unwrap() error  { return e.Err }
+
 // Executor applies a new credential to an upstream system during rotation. Rotate sets
 // the credential identified by ref (e.g. a database role name) to newValue. It must
 // fail (return a non-nil error) rather than partially apply, so the caller only records

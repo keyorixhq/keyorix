@@ -21,9 +21,11 @@ func (r PurgeResult) Total() int64 {
 }
 
 // PurgeExpiredSoftDeletes hard-deletes every soft-deleted user, project, and
-// environment whose deleted_at predates `before`. Each entity is purged
-// independently on its own deleted_at (no cascade). When anything was removed it
-// emits one system-actored `data.purged` audit event with the counts. Errors on
+// environment whose deleted_at predates `before`. Each top-level entity is purged
+// independently on its own deleted_at; a purged secret additionally cascades to its
+// ciphertext-bearing version rows (which carry no deleted_at of their own), so the
+// secret value is truly destroyed and not left recoverable. When anything was removed
+// it emits one system-actored `data.purged` audit event with the counts. Errors on
 // individual entities are collected but do not abort the others.
 func (c *KeyorixCore) PurgeExpiredSoftDeletes(ctx context.Context, before time.Time) (*PurgeResult, error) {
 	res := &PurgeResult{}

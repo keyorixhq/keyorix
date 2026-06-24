@@ -113,6 +113,34 @@ var defaultRoles = []bootstrapRoleDef{
 		[]string{"secrets.read", "users.read", "audit.read"}},
 }
 
+// builtinRoleNames are the roles that ship with the product and must not be
+// deleted through any API (deleting e.g. super_admin/admin would invalidate live
+// assignments and can lock every administrator out). This is the single source of
+// truth shared by the HTTP and gRPC role-delete guards; it is a superset of
+// defaultRoles (it also pins the historical "super_admin"/"auditor" aliases).
+var builtinRoleNames = map[string]bool{
+	"super_admin": true,
+	"admin":       true,
+	"editor":      true,
+	"viewer":      true,
+	"auditor":     true,
+	// ADR-021 two-tier named roles.
+	"system_admin":      true,
+	"system_auditor":    true,
+	"system_viewer":     true,
+	"project_admin":     true,
+	"project_developer": true,
+	"project_viewer":    true,
+	"project_auditor":   true,
+}
+
+// IsBuiltinRole reports whether a role name is a product built-in that the API
+// must refuse to delete. Used by both the HTTP and gRPC DeleteRole paths so the
+// guard cannot be bypassed by switching transport.
+func IsBuiltinRole(name string) bool {
+	return builtinRoleNames[name]
+}
+
 // defaultEnvironmentNames is the ordered list of environment names created on first boot.
 var defaultEnvironmentNames = []string{"development", "staging", "production"}
 

@@ -43,6 +43,56 @@ func TestAlertNewAnomalies(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
+// A secret read recorded through the real production logging path
+// (LogSecretReadWithProject → writeAccessLog → CreateSecretAccessLog) must be
+// visible to anomaly detection. Both the HTTP reveal handler and the gRPC
+// GetSecretValue fire that exact call, so this guards the end-to-end pipeline:
+// the existing detector tests hand-build SecretAccessLog rows, which would not
+// catch the writer drifting (action string, field mapping) and silently
+// re-blinding detection to real reads.
+func TestLogSecretRead_FeedsAnomalyDetection(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.SecretNode{}, &models.SecretAccessLog{}, &models.AnomalyAlert{}, &models.AuditEvent{}))
+
+	ctx := context.Background()
+	secret := models.SecretNode{ID: 700, ProjectID: 1, Name: "api-key", Status: "active", IsSecret: true}
+	require.NoError(t, h.DB.Create(&secret).Error)
+
+	// A quiet baseline so the detector has history to compare against (a couple of reads
+	// >7 days ago — far below the spike threshold). Seeded directly because the
+	// production writer always stamps AccessTime=now, so history can't go through it.
+	for i := 8; i <= 10; i++ {
+		require.NoError(t, h.DB.Create(&models.SecretAccessLog{
+			SecretNodeID: 700, AccessedBy: "alice", Action: "read", IPAddress: "10.0.0.1",
+			AccessTime: time.Now().Add(-time.Duration(i) * 24 * time.Hour),
+		}).Error)
+	}
+
+	// A burst of reads in the detection window, each recorded through the SAME call HTTP
+	// and gRPC use (LogSecretReadWithProject → writeAccessLog → CreateSecretAccessLog).
+	for i := 0; i < 12; i++ {
+		h.CoreService.LogSecretReadWithProject(ctx, 999, 700, 1, "mallory", "api-key", "203.0.113.5", "grpc-go/1.80")
+	}
+
+	// Detection must flag the burst as a frequency spike — proving the real logging path
+	// lands in secret_access_logs and is counted by the detector, not just hand-built rows.
+	detector := core.NewAnomalyDetector(h.CoreService.Storage())
+	require.NoError(t, detector.RunDetection(ctx, []models.SecretNode{secret}))
+
+	alerts, err := detector.ListAlerts(ctx, nil)
+	require.NoError(t, err)
+	var sawSpike bool
+	for _, a := range alerts {
+		if a.AlertType == "frequency_spike" && a.SecretNodeID == 700 {
+			sawSpike = true
+		}
+	}
+	assert.True(t, sawSpike,
+		"reads via LogSecretReadWithProject must be visible to anomaly detection")
+}
+
 // Regression: a first-time reader / first-seen IP in the detection window must raise
 // new_user / new_ip. The 30-day baseline query also spans the live 1h window, so before
 // the fix the triggering read seeded its own baseline (knownUsers/knownIPs already

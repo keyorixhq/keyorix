@@ -185,6 +185,18 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	if item.CampaignID != campaignID {
 		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 	}
+	// Decide once: an already-attested/revoked item must not be flipped. A revoke
+	// removes the real grant, so re-deciding it (revoke→attest) would record
+	// "attested" for access that no longer exists — false certification evidence.
+	if item.Decision != ReviewItemPending {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
+	}
+	// Independence (ISO 27001 A.5.18): a reviewer must not certify their OWN access.
+	// Self-certification defeats the control, so a user can't decide a user-scoped
+	// item that is themselves — an independent reviewer is required.
+	if item.PrincipalType == "user" && item.PrincipalID == actorID {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
+	}
 
 	decision := AccessReviewDecision{
 		Source:        item.Source,

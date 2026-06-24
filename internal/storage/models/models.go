@@ -78,9 +78,14 @@ type AccessRequest struct {
 // N-of-M dual control (ISO 27001 A.5.3 / SOX): a request grants the role only once
 // RequiredApprovals distinct approvers (none of them the requester) have approved.
 type AccessRequestApproval struct {
-	ID         uint `gorm:"primaryKey"`
-	RequestID  uint `gorm:"index;not null"`
-	ApproverID uint `gorm:"not null"`
+	ID uint `gorm:"primaryKey"`
+	// (RequestID, ApproverID) is unique: one sign-off per distinct approver. The
+	// constraint is the race backstop for the M-of-K dual-control count — without it,
+	// concurrent approvals from the same approver could insert multiple rows and the
+	// row-count threshold would treat one person as several, defeating dual control.
+	// The composite index also covers RequestID lookups (leftmost column).
+	RequestID  uint `gorm:"not null;uniqueIndex:ux_access_request_approver"`
+	ApproverID uint `gorm:"not null;uniqueIndex:ux_access_request_approver"`
 	CreatedAt  time.Time
 }
 
@@ -220,7 +225,7 @@ type User struct {
 	Username     string `gorm:"uniqueIndex;not null"`
 	Email        string
 	DisplayName  string
-	PasswordHash string
+	PasswordHash string `json:"-"`
 	IsActive     bool       `gorm:"default:true"`
 	LastLoginAt  *time.Time // stamped on each successful auth.login; nil = never logged in
 	// PasswordChangedAt is when the current password was set. Drives max-age
@@ -260,8 +265,8 @@ type User struct {
 type MFASecret struct {
 	ID         uint   `gorm:"primaryKey"`
 	UserID     uint   `gorm:"uniqueIndex"`
-	SecretEnc  []byte // encrypted TOTP secret (passthrough plaintext when encryption is disabled)
-	SecretMeta []byte // encryption metadata (key version etc.)
+	SecretEnc  []byte `json:"-"` // encrypted TOTP secret (passthrough plaintext when encryption is disabled)
+	SecretMeta []byte `json:"-"` // encryption metadata (key version etc.)
 	Activated  bool   `gorm:"default:false"`
 	CreatedAt  time.Time
 }
@@ -335,7 +340,7 @@ type WebAuthnSession struct {
 type PasswordHistory struct {
 	ID           uint `gorm:"primaryKey"`
 	UserID       uint `gorm:"index"`
-	PasswordHash string
+	PasswordHash string `json:"-"`
 	CreatedAt    time.Time
 }
 
@@ -503,8 +508,8 @@ type SecretVersion struct {
 	ID                 uint `gorm:"primaryKey"`
 	SecretNodeID       uint
 	VersionNumber      int
-	EncryptedValue     []byte
-	EncryptionMetadata JSON
+	EncryptedValue     []byte `json:"-"`
+	EncryptionMetadata JSON   `json:"-"`
 	ReadCount          int
 	CreatedAt          time.Time
 }
@@ -519,8 +524,8 @@ type DynamicSecretConfig struct {
 	ProjectID     uint   `gorm:"index"`
 	EnvironmentID uint
 	BackendType   string // "postgres"
-	AdminDSNEnc   []byte // encrypted admin connection string (never returned in API responses)
-	AdminDSNMeta  []byte
+	AdminDSNEnc   []byte `json:"-"` // encrypted admin connection string (never returned in API responses)
+	AdminDSNMeta  []byte `json:"-"`
 	// CreationTemplate is operator-authored SQL run after the role is created,
 	// with {{name}} substituted by the generated (sanitized) role name. e.g.
 	// "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};"
@@ -549,8 +554,8 @@ type DynamicSecretLease struct {
 	ProjectID      uint   // denormalized so the scope resolver/sweep avoid a join
 	EnvironmentID  uint
 	RoleName       string // the generated role/username on the target DB
-	CredentialEnc  []byte // encrypted issued credential (username/password JSON)
-	CredentialMeta []byte
+	CredentialEnc  []byte `json:"-"` // encrypted issued credential (username/password JSON)
+	CredentialMeta []byte `json:"-"`
 	Status         string `gorm:"index:idx_lease_status_expiry"` // active | revoked | expired | revoke_failed
 	RevokeReason   string
 	RevokeError    string
@@ -582,9 +587,9 @@ type SecretMetadataHistory struct {
 type Session struct {
 	ID                    uint `gorm:"primaryKey"`
 	UserID                uint
-	SessionToken          string `gorm:"unique"` // Deprecated: use EncryptedSessionToken
-	EncryptedSessionToken []byte
-	SessionTokenMetadata  JSON
+	SessionToken          string `gorm:"unique" json:"-"` // SHA-256 hash of the session token (never plaintext)
+	EncryptedSessionToken []byte `json:"-"`
+	SessionTokenMetadata  JSON   `json:"-"`
 	UserAgent             string     // captured at login, for the My Account "active sessions" view
 	IPAddress             string     // captured at login
 	LastSeenAt            *time.Time // throttled — updated at most once per validTokenTTL on the auth slow path
@@ -681,9 +686,9 @@ type SetupToken struct {
 type PasswordReset struct {
 	ID             uint `gorm:"primaryKey"`
 	UserID         uint
-	Token          string `gorm:"unique"` // Deprecated: use EncryptedToken
-	EncryptedToken []byte
-	TokenMetadata  JSON
+	Token          string `gorm:"unique" json:"-"` // password-reset token (legacy column)
+	EncryptedToken []byte `json:"-"`
+	TokenMetadata  JSON   `json:"-"`
 	ExpiresAt      *time.Time
 	CreatedAt      time.Time
 }
@@ -812,9 +817,9 @@ type APIClient struct {
 	Name                  string
 	Description           string
 	ClientID              string `gorm:"unique"`
-	ClientSecret          string // Deprecated: use EncryptedClientSecret
-	EncryptedClientSecret []byte
-	ClientSecretMetadata  JSON
+	ClientSecret          string `json:"-"` // SHA-256 hash of the client secret (never plaintext); the secret is shown once at creation
+	EncryptedClientSecret []byte `json:"-"` // legacy/unused encrypt-at-rest column; creation now hashes into ClientSecret
+	ClientSecretMetadata  JSON   `json:"-"`
 	Scopes                string
 	IsActive              bool
 	CreatedAt             time.Time
@@ -824,9 +829,9 @@ type APIToken struct {
 	ID             uint `gorm:"primaryKey"`
 	ClientID       uint
 	UserID         *uint
-	Token          string `gorm:"unique"` // Deprecated: use EncryptedToken
-	EncryptedToken []byte
-	TokenMetadata  JSON
+	Token          string `gorm:"unique" json:"-"` // SHA-256 hash of the token (never plaintext); the token is shown once at creation
+	EncryptedToken []byte `json:"-"` // legacy/unused encrypt-at-rest column; creation now hashes into Token
+	TokenMetadata  JSON   `json:"-"`
 	Scope          string
 	Revoked        bool
 	ExpiresAt      *time.Time

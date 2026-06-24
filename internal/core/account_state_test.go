@@ -78,12 +78,31 @@ func TestLogin_BlocksSuspended(t *testing.T) {
 	c := newAccountCore(store)
 	ctx := context.Background()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("Secret#Passw0rd!"), bcrypt.DefaultCost)
+	// A suspended account keeps IsActive=true (SuspendUser changes only account_state),
+	// so the state-based gate — not the IsActive gate — is what refuses the login.
 	store.On("GetUserByUsername", ctx, "bob").
-		Return(&models.User{ID: 2, Username: "bob", PasswordHash: string(hash), AccountState: AccountSuspended}, nil)
+		Return(&models.User{ID: 2, Username: "bob", PasswordHash: string(hash), IsActive: true, AccountState: AccountSuspended}, nil)
 
 	_, _, err := c.Login(ctx, &LoginRequest{Username: "bob", Password: "Secret#Passw0rd!"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "suspended")
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// A deactivated account (IsActive=false, e.g. admin deactivation via UpdateUser or a
+// SCIM/IdP deactivation) must be refused login even with the correct password and an
+// otherwise-active account_state — the state gate alone does not cover IsActive.
+func TestLogin_BlocksDeactivated(t *testing.T) {
+	store := new(MockStorage)
+	c := newAccountCore(store)
+	ctx := context.Background()
+	hash, _ := bcrypt.GenerateFromPassword([]byte("Secret#Passw0rd!"), bcrypt.DefaultCost)
+	store.On("GetUserByUsername", ctx, "bob").
+		Return(&models.User{ID: 2, Username: "bob", PasswordHash: string(hash), IsActive: false, AccountState: AccountActive}, nil)
+
+	_, _, err := c.Login(ctx, &LoginRequest{Username: "bob", Password: "Secret#Passw0rd!"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not active")
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }
 
@@ -104,15 +123,37 @@ func TestValidateSessionToken_RejectsBlockedOrInactive(t *testing.T) {
 			c := newAccountCore(store)
 			ctx := context.Background()
 			store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 2, ExpiresAt: &future}, nil)
-			store.On("TouchSession", ctx, uint(7), mock.Anything, mock.Anything).Return(nil)
 			store.On("GetUser", ctx, uint(2)).Return(tc.user, nil)
 
 			_, _, err := c.ValidateSessionToken(ctx, "tok")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "not active")
 			store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
+			// Must reject before stamping last-seen — a blocked/inactive account's
+			// request is not "used" and must not refresh the sessions view (matching
+			// ValidatePATToken's touch-after-gate ordering).
+			store.AssertNotCalled(t, "TouchSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
 	}
+}
+
+// An impersonation session (target active) must be rejected once the IMPERSONATING
+// admin is suspended/deactivated — the session is keyed to the target's user_id, so
+// the target-state gate alone would let a revoked admin keep acting as the target.
+func TestValidateSessionToken_RejectsWhenImpersonatorBlocked(t *testing.T) {
+	future := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	store := new(MockStorage)
+	c := newAccountCore(store)
+	ctx := context.Background()
+	admin := uint(1)
+	store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 2, ImpersonatedBy: &admin, ExpiresAt: &future}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, IsActive: true, AccountState: AccountActive}, nil)
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountSuspended}, nil)
+
+	_, _, err := c.ValidateSessionToken(ctx, "tok")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "impersonating account is not active")
+	store.AssertNotCalled(t, "TouchSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestValidateSessionToken_AllowsActive(t *testing.T) {

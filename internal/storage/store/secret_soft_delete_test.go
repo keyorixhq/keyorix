@@ -17,7 +17,7 @@ func newSoftDeleteTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.SecretDependency{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Environment{}, &models.SecretDependency{}))
 	return NewLocalStorage(db)
 }
 

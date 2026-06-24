@@ -68,6 +68,38 @@ func TestSessionListAndRevoke(t *testing.T) {
 	assert.Len(t, u2, 1)
 }
 
+// Purging a user's sessions must also drop impersonation sessions they STARTED
+// (keyed to the target's user_id with impersonated_by = the admin), so suspending or
+// force-logging-out the admin ends their in-flight impersonation immediately.
+func TestDeleteSessionsForUserExcept_AlsoDropsImpersonationStarted(t *testing.T) {
+	ctx := context.Background()
+	ls := newAccountTestStore(t)
+	future := time.Now().Add(time.Hour)
+	admin := uint(1)
+
+	// Admin (user 1) has a normal session; they also impersonate user 2 (a session
+	// keyed to user_id=2 with impersonated_by=1). User 3 is an unrelated bystander.
+	_, err := ls.CreateSession(ctx, &models.Session{UserID: 1, SessionToken: "admin-own", ExpiresAt: &future})
+	require.NoError(t, err)
+	_, err = ls.CreateSession(ctx, &models.Session{UserID: 2, SessionToken: "admin-imp", ImpersonatedBy: &admin, ExpiresAt: &future})
+	require.NoError(t, err)
+	_, err = ls.CreateSession(ctx, &models.Session{UserID: 3, SessionToken: "bystander", ExpiresAt: &future})
+	require.NoError(t, err)
+
+	// Suspend/force-logout the admin: purge ALL of user 1's sessions (exceptID 0).
+	require.NoError(t, ls.DeleteSessionsForUserExcept(ctx, 1, 0))
+
+	// The admin's own session AND their impersonation session are both gone.
+	_, err = ls.GetSession(ctx, "admin-own")
+	require.Error(t, err)
+	_, err = ls.GetSession(ctx, "admin-imp")
+	require.Error(t, err, "the impersonation session the admin started must be revoked too")
+
+	// The unrelated bystander's session is untouched.
+	_, err = ls.GetSession(ctx, "bystander")
+	require.NoError(t, err)
+}
+
 func TestTouchSessionThrottle(t *testing.T) {
 	ctx := context.Background()
 	ls := newAccountTestStore(t)
