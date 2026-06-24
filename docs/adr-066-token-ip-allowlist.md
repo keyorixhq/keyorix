@@ -23,10 +23,13 @@ blocks; otherwise it is denied with `403`.
 - **Storage.** `PersonalAccessToken.AllowedCIDRs` — a JSON `[]string` of CIDRs (a bare IP is
   normalised to a `/32`/`/128` host route). Empty = no restriction (the back-compat
   default). CIDRs are validated at creation; an invalid block is rejected.
-- **Enforcement at the auth boundary.** The allowlist rides on the resolved
-  `PATRestriction`, and the authentication middleware checks the request's source IP against
-  it **on every request** — including cache hits, since the same token may arrive from
-  different IPs. It **fails closed**: an undeterminable or unparseable source IP is denied.
+- **Enforcement at the auth boundary, on every transport.** The allowlist rides on the
+  resolved `PATRestriction`, and the source IP is checked against it **on every request** —
+  including HTTP cache hits, since the same token may arrive from different IPs. Both
+  transports enforce it: the HTTP authentication middleware (`RemoteAddr`) and the gRPC
+  auth interceptor (the gRPC peer address) — so the restriction cannot be bypassed by
+  switching from HTTP to gRPC. It **fails closed**: an undeterminable or unparseable source
+  IP is denied.
 - **The source IP is the TCP peer (`RemoteAddr`), never a client-supplied header**
   (`X-Forwarded-For` is attacker-controlled and would make the control trivially bypassable).
   A deployment behind a reverse proxy must therefore terminate so `RemoteAddr` is the real

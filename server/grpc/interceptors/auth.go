@@ -2,6 +2,7 @@ package interceptors
 
 import (
 	"context"
+	"net"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -9,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -190,6 +192,15 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*U
 		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
 	}
 
+	// Enforce a PAT's network allowlist on the gRPC transport too (ADR-066), so the IP
+	// restriction is not bypassable by switching from HTTP to gRPC. Fail-closed: an
+	// undeterminable peer IP outside the allowlist is denied.
+	if restriction != nil && len(restriction.AllowedCIDRs) > 0 {
+		if !core.IPInCIDRs(grpcPeerIP(ctx), restriction.AllowedCIDRs) {
+			return nil, nil, status.Errorf(codes.PermissionDenied, "token not permitted from this network")
+		}
+	}
+
 	// Resolve roles + permissions for downstream per-method authorization.
 	identity, err := coreService.GetUserIdentity(ctx, user.ID)
 	if err != nil {
@@ -203,6 +214,19 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*U
 		Roles:       identity.Roles,
 		Permissions: identity.Permissions,
 	}, restriction, nil
+}
+
+// grpcPeerIP returns the source IP of the gRPC call from its peer (TCP) address, or "" if
+// it cannot be determined (which the fail-closed allowlist check then denies).
+func grpcPeerIP(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(p.Addr.String()); err == nil {
+		return host
+	}
+	return p.Addr.String()
 }
 
 // isPublicMethod checks if a gRPC method is public (doesn't require authentication)

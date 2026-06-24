@@ -2,6 +2,7 @@ package interceptors
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -245,4 +247,39 @@ func TestAuthInterceptor_InvalidPATRejected(t *testing.T) {
 		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+}
+
+// bearerCtxFromIP is bearerCtx plus a gRPC peer with the given source IP.
+func bearerCtxFromIP(token, ip string) context.Context {
+	md := metadata.Pairs("authorization", "Bearer "+token)
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	return peer.NewContext(ctx, &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP(ip), Port: 5555}})
+}
+
+// A PAT's IP allowlist (ADR-066) is enforced over gRPC too — otherwise the restriction
+// would be bypassable by switching transports. In-range peer is allowed; off-network is
+// PermissionDenied.
+func TestAuthInterceptor_PATNetworkAllowlistOverGRPC(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.PersonalAccessToken{}))
+
+	h.CreateTestUser(t, "grpc-cidr", 9200)
+	proj2 := uint(2)
+	h.AssignUserRole(t, 9200, 3, &proj2)
+
+	// A token restricted to 10.0.0.0/8 (no permission/project scoping).
+	res, err := h.CoreService.CreateOwnPAT(context.Background(), 9200, "ci-cidr", nil, nil, 0, 0, []string{"10.0.0.0/8"})
+	require.NoError(t, err)
+
+	interceptor := AuthInterceptor(h.CoreService)
+
+	_, err = interceptor(bearerCtxFromIP(res.PlainToken, "10.1.2.3"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
+	require.NoError(t, err, "in-range source IP is allowed over gRPC")
+
+	_, err = interceptor(bearerCtxFromIP(res.PlainToken, "203.0.113.9"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
+	require.Error(t, err, "off-network source IP must be denied over gRPC")
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
