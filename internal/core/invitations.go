@@ -420,8 +420,24 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	if approverID == req.UserID {
 		return nil, fmt.Errorf("a requester cannot approve their own access request")
 	}
+	// Determine the role to grant. Under multi-party control (K>1) the role is LOCKED to
+	// the request's suggested_role — the value every approver reviews. A per-approver
+	// override would let the threshold-crossing approver substitute a higher role than
+	// the other K-1 approvers consented to (a dual-control escalation). Single-control
+	// (K=1) keeps the approve-with-a-different-role override, where one approver is the
+	// whole decision anyway.
+	required := c.requiredApprovals()
 	role := grantedRole
 	if role == "" {
+		role = req.SuggestedRole
+	}
+	if required > 1 {
+		if req.SuggestedRole == "" {
+			return nil, fmt.Errorf("a %d-of-N access request must specify the role at request time", required)
+		}
+		if grantedRole != "" && grantedRole != req.SuggestedRole {
+			return nil, fmt.Errorf("under %d-of-N approval the granted role is fixed to the requested role %q and cannot be changed by an approver", required, req.SuggestedRole)
+		}
 		role = req.SuggestedRole
 	}
 	if role == "" {
@@ -445,7 +461,6 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 
 	now := c.now()
 	received := len(approvals) + 1
-	required := c.requiredApprovals()
 
 	// Below the threshold: record the approval, stay pending, notify, return progress.
 	if received < required {
