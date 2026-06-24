@@ -60,6 +60,29 @@ func TestUpdateSCIMUser_DeactivateThenReactivate(t *testing.T) {
 	assert.False(t, AccountLoginBlocked(on.AccountState))
 }
 
+// An admin-forced credential reset (password_reset_required) must survive a routine
+// SCIM deactivate→reactivate cycle. The restricted state confines the user to the
+// password-change flow; if SCIM downgraded it to deprovisioned and then cleared that
+// to active, the forced reset would be silently lifted (the same class as the
+// admin-suspension case, for the other sticky admin state).
+func TestUpdateSCIMUser_ForcedResetSurvivesDeactivateReactivate(t *testing.T) {
+	c, _ := newSCIMStateCore(t)
+	ctx := context.Background()
+	yes, no := true, false
+
+	require.NoError(t, c.RequirePasswordReset(ctx, 99, 1)) // admin forces a reset
+
+	off, err := c.UpdateSCIMUser(ctx, 2, 1, nil, nil, &no)
+	require.NoError(t, err)
+	assert.Equal(t, AccountPasswordResetRequired, off.AccountState, "SCIM deactivation must not downgrade a forced reset")
+	assert.False(t, off.IsActive, "but login is still blocked while deactivated (IsActive=false)")
+
+	on, err := c.UpdateSCIMUser(ctx, 2, 1, nil, nil, &yes)
+	require.NoError(t, err)
+	assert.Equal(t, AccountPasswordResetRequired, on.AccountState, "reactivation must not clear the forced reset")
+	assert.True(t, AccountRestricted(on.AccountState), "the user is still confined to the password-change flow")
+}
+
 // Deactivating an already admin-suspended user must not downgrade the suspension to a
 // deprovisioned state (which a later reactivation could then clear).
 func TestUpdateSCIMUser_DeactivateKeepsAdminSuspension(t *testing.T) {

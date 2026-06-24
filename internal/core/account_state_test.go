@@ -78,12 +78,31 @@ func TestLogin_BlocksSuspended(t *testing.T) {
 	c := newAccountCore(store)
 	ctx := context.Background()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("Secret#Passw0rd!"), bcrypt.DefaultCost)
+	// A suspended account keeps IsActive=true (SuspendUser changes only account_state),
+	// so the state-based gate — not the IsActive gate — is what refuses the login.
 	store.On("GetUserByUsername", ctx, "bob").
-		Return(&models.User{ID: 2, Username: "bob", PasswordHash: string(hash), AccountState: AccountSuspended}, nil)
+		Return(&models.User{ID: 2, Username: "bob", PasswordHash: string(hash), IsActive: true, AccountState: AccountSuspended}, nil)
 
 	_, _, err := c.Login(ctx, &LoginRequest{Username: "bob", Password: "Secret#Passw0rd!"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "suspended")
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// A deactivated account (IsActive=false, e.g. admin deactivation via UpdateUser or a
+// SCIM/IdP deactivation) must be refused login even with the correct password and an
+// otherwise-active account_state — the state gate alone does not cover IsActive.
+func TestLogin_BlocksDeactivated(t *testing.T) {
+	store := new(MockStorage)
+	c := newAccountCore(store)
+	ctx := context.Background()
+	hash, _ := bcrypt.GenerateFromPassword([]byte("Secret#Passw0rd!"), bcrypt.DefaultCost)
+	store.On("GetUserByUsername", ctx, "bob").
+		Return(&models.User{ID: 2, Username: "bob", PasswordHash: string(hash), IsActive: false, AccountState: AccountActive}, nil)
+
+	_, _, err := c.Login(ctx, &LoginRequest{Username: "bob", Password: "Secret#Passw0rd!"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not active")
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }
 

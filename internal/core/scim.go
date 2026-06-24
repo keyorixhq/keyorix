@@ -176,9 +176,13 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 			}
 		} else {
 			// Mark the SCIM/IdP deactivation distinctly so a later reactivation can tell
-			// it from an admin suspension. Never downgrade an admin AccountSuspended — it
-			// is the stronger, sticky state (both block login either way).
-			if NormalizeAccountState(user.AccountState) != AccountSuspended {
+			// it from an admin-set state. Only an 'active' account moves to deprovisioned:
+			// any admin-set state (suspended, AND the restricted password_reset_required /
+			// pending_first_login states) is preserved, so a routine IdP deactivate→
+			// reactivate cycle cannot silently clear a forced-credential-reset or a
+			// first-login requirement. Login is blocked meanwhile by IsActive=false
+			// (set above) regardless of which state is retained.
+			if NormalizeAccountState(user.AccountState) == AccountActive {
 				user.AccountState = AccountDeprovisioned
 			}
 			deactivated = true

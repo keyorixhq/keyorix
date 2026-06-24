@@ -55,6 +55,14 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	}
 	// Correct password — clear any accumulated lockout state.
 	c.clearLoginFailures(ctx, user)
+	// A deactivated account (IsActive=false — e.g. admin deactivation via UpdateUser,
+	// or a SCIM/IdP deactivation) is refused login regardless of account_state. The
+	// state-based gate below does not cover this, so without it a deactivated user who
+	// still knew their password could authenticate; it also lets SCIM deactivation
+	// preserve a restricted account_state (forced reset) while still blocking login.
+	if !user.IsActive {
+		return nil, nil, fmt.Errorf("account is not active")
+	}
 	// A suspended account is refused login outright (ADR-025). Restricted states
 	// (pending_first_login / password_reset_required) still log in, but the auth
 	// middleware confines the session to the password-change allowlist.
