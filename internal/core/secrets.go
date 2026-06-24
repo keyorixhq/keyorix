@@ -227,6 +227,11 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	if err != nil {
 		return nil, fmt.Errorf("failed to update rotation timestamp: %w", err)
 	}
+	// Refresh the cached certificate expiry immediately for a certificate-typed secret
+	// (ADR-056) so the certificate-hygiene posture reflects the rotated certificate
+	// without waiting for the next expiry scan. The plaintext is already in hand, so no
+	// re-decryption is needed; a no-op for non-certificate secrets.
+	c.refreshCertNotAfterCache(ctx, secret, newValue)
 	return updatedSecret, nil
 }
 

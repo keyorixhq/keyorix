@@ -121,7 +121,7 @@ func (c *KeyorixCore) certNotAfter(ctx context.Context, secret *models.SecretNod
 // listCertificateSecrets returns every certificate-typed secret across all projects,
 // paging through all of them (expiry evaluation must not silently cap).
 func (c *KeyorixCore) listCertificateSecrets(ctx context.Context) ([]*models.SecretNode, error) {
-	certType := "certificate"
+	certType := certificateSecretType
 	var all []*models.SecretNode
 	for page := 1; ; page++ {
 		secrets, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
