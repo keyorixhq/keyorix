@@ -234,11 +234,9 @@ func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) er
 	if AccountLoginBlocked(user.AccountState) {
 		return nil
 	}
-	// Throttle abusive repeats to a victim address (same control as resend).
-	if err := c.checkResendThrottle(ctx, SetupPurposePasswordResetLink, user.Email); err != nil {
-		return nil
-	}
-	_, _ = c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	// Throttle abusive repeats to a victim address (same control as resend). A
+	// throttled repeat returns an error here, swallowed below to stay enumeration-safe.
+	_, _ = c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:       SetupPurposePasswordResetLink,
 		SubjectEmail:  user.Email,
 		SubjectUserID: &user.ID,

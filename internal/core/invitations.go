@@ -248,10 +248,7 @@ func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, projectID, invit
 	if inv.State != InvitationPending {
 		return nil, fmt.Errorf("only a pending invitation can be resent (state is %s)", inv.State)
 	}
-	if err := c.checkResendThrottle(ctx, SetupPurposeInvitationAccept, inv.Email); err != nil {
-		return nil, err
-	}
-	return c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	return c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:      SetupPurposeInvitationAccept,
 		SubjectEmail: inv.Email,
 		InvitationID: &inv.ID,
