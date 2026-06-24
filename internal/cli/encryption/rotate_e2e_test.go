@@ -108,6 +108,7 @@ func runRotationE2E(t *testing.T, kind string) {
 	if err := db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Session{},
 		&models.APIToken{}, &models.APIClient{}, &models.PasswordReset{},
+		&models.MFASecret{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}

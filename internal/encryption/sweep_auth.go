@@ -139,6 +139,143 @@ func sweepAPIClients(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionS
 	return swept, nil
 }
 
+// sweepMFASecrets re-encrypts TOTP secrets (mfa_secrets.secret_enc). These are
+// written via Service.EncryptSecret (no AAD), the same serialization as the auth
+// tokens above. Missing this sweeper meant a DEK rotation left every enrolled TOTP
+// secret encrypted under the wiped old DEK — permanently breaking MFA login.
+func sweepMFASecrets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+	var rows []models.MFASecret
+	if err := tx.Find(&rows).Error; err != nil {
+		return 0, fmt.Errorf("failed to fetch mfa_secrets: %w", err)
+	}
+	swept := 0
+	for _, row := range rows {
+		if len(row.SecretEnc) == 0 {
+			continue
+		}
+		encrypted, err := DeserializeEncryptedData(row.SecretEnc)
+		if err != nil {
+			return swept, fmt.Errorf("failed to deserialize mfa_secret id=%d: %w", row.ID, err)
+		}
+		plaintext, err := oldSvc.Decrypt(encrypted)
+		if err != nil {
+			return swept, fmt.Errorf("failed to decrypt mfa_secret id=%d: %w", row.ID, err)
+		}
+		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		wipeBytes(plaintext)
+		if err != nil {
+			return swept, fmt.Errorf("failed to re-encrypt mfa_secret id=%d: %w", row.ID, err)
+		}
+		newBytes, err := SerializeEncryptedData(newEncrypted)
+		if err != nil {
+			return swept, fmt.Errorf("failed to serialize mfa_secret id=%d: %w", row.ID, err)
+		}
+		metaBytes, err := json.Marshal(newEncrypted.Metadata)
+		if err != nil {
+			return swept, fmt.Errorf("failed to marshal mfa_secret metadata id=%d: %w", row.ID, err)
+		}
+		if err := tx.Model(&models.MFASecret{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+			"secret_enc":  newBytes,
+			"secret_meta": metaBytes,
+		}).Error; err != nil {
+			return swept, fmt.Errorf("failed to update mfa_secret id=%d: %w", row.ID, err)
+		}
+		swept++
+	}
+	return swept, nil
+}
+
+// sweepDynamicSecretConfigs re-encrypts dynamic-secret admin DSNs
+// (dynamic_secret_configs.admin_dsn_enc). Missing this left the admin connection
+// string undecryptable after rotation — the backend could no longer be reached or
+// its leases revoked.
+func sweepDynamicSecretConfigs(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+	var rows []models.DynamicSecretConfig
+	if err := tx.Find(&rows).Error; err != nil {
+		return 0, fmt.Errorf("failed to fetch dynamic_secret_configs: %w", err)
+	}
+	swept := 0
+	for _, row := range rows {
+		if len(row.AdminDSNEnc) == 0 {
+			continue
+		}
+		encrypted, err := DeserializeEncryptedData(row.AdminDSNEnc)
+		if err != nil {
+			return swept, fmt.Errorf("failed to deserialize dynamic_secret_config id=%d: %w", row.ID, err)
+		}
+		plaintext, err := oldSvc.Decrypt(encrypted)
+		if err != nil {
+			return swept, fmt.Errorf("failed to decrypt dynamic_secret_config id=%d: %w", row.ID, err)
+		}
+		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		wipeBytes(plaintext)
+		if err != nil {
+			return swept, fmt.Errorf("failed to re-encrypt dynamic_secret_config id=%d: %w", row.ID, err)
+		}
+		newBytes, err := SerializeEncryptedData(newEncrypted)
+		if err != nil {
+			return swept, fmt.Errorf("failed to serialize dynamic_secret_config id=%d: %w", row.ID, err)
+		}
+		metaBytes, err := json.Marshal(newEncrypted.Metadata)
+		if err != nil {
+			return swept, fmt.Errorf("failed to marshal dynamic_secret_config metadata id=%d: %w", row.ID, err)
+		}
+		if err := tx.Model(&models.DynamicSecretConfig{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+			"admin_dsn_enc":  newBytes,
+			"admin_dsn_meta": metaBytes,
+		}).Error; err != nil {
+			return swept, fmt.Errorf("failed to update dynamic_secret_config id=%d: %w", row.ID, err)
+		}
+		swept++
+	}
+	return swept, nil
+}
+
+// sweepDynamicSecretLeases re-encrypts issued dynamic-secret credentials
+// (dynamic_secret_leases.credential_enc). Missing this left active lease
+// credentials undecryptable after rotation.
+func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+	var rows []models.DynamicSecretLease
+	if err := tx.Find(&rows).Error; err != nil {
+		return 0, fmt.Errorf("failed to fetch dynamic_secret_leases: %w", err)
+	}
+	swept := 0
+	for _, row := range rows {
+		if len(row.CredentialEnc) == 0 {
+			continue
+		}
+		encrypted, err := DeserializeEncryptedData(row.CredentialEnc)
+		if err != nil {
+			return swept, fmt.Errorf("failed to deserialize dynamic_secret_lease id=%d: %w", row.ID, err)
+		}
+		plaintext, err := oldSvc.Decrypt(encrypted)
+		if err != nil {
+			return swept, fmt.Errorf("failed to decrypt dynamic_secret_lease id=%d: %w", row.ID, err)
+		}
+		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		wipeBytes(plaintext)
+		if err != nil {
+			return swept, fmt.Errorf("failed to re-encrypt dynamic_secret_lease id=%d: %w", row.ID, err)
+		}
+		newBytes, err := SerializeEncryptedData(newEncrypted)
+		if err != nil {
+			return swept, fmt.Errorf("failed to serialize dynamic_secret_lease id=%d: %w", row.ID, err)
+		}
+		metaBytes, err := json.Marshal(newEncrypted.Metadata)
+		if err != nil {
+			return swept, fmt.Errorf("failed to marshal dynamic_secret_lease metadata id=%d: %w", row.ID, err)
+		}
+		if err := tx.Model(&models.DynamicSecretLease{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+			"credential_enc":  newBytes,
+			"credential_meta": metaBytes,
+		}).Error; err != nil {
+			return swept, fmt.Errorf("failed to update dynamic_secret_lease id=%d: %w", row.ID, err)
+		}
+		swept++
+	}
+	return swept, nil
+}
+
 func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
 	var resets []models.PasswordReset
 	if err := tx.Find(&resets).Error; err != nil {

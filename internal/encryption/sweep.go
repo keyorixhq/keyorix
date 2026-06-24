@@ -26,12 +26,15 @@ var sweepBatchSize = 500
 
 // SweepResult holds statistics from a completed sweep.
 type SweepResult struct {
-	SecretVersionsSwept int
-	SessionsSwept       int
-	APITokensSwept      int
-	APIClientsSwept     int
-	PasswordResetsSwept int
-	LegacyAADUpgraded   int
+	SecretVersionsSwept       int
+	SessionsSwept             int
+	APITokensSwept            int
+	APIClientsSwept           int
+	PasswordResetsSwept       int
+	MFASecretsSwept           int
+	DynamicSecretConfigsSwept int
+	DynamicSecretLeasesSwept  int
+	LegacyAADUpgraded         int
 }
 
 // SweepAllTables re-encrypts every DEK-encrypted row within a single DB transaction.
@@ -70,6 +73,28 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 	}
 	result.PasswordResetsSwept = sweptResets
 
+	// These three tables are also DEK-encrypted (via Service.EncryptSecret) but were
+	// previously omitted from the sweep — so a DEK rotation orphaned their ciphertext
+	// under the wiped old key (TOTP secrets, dynamic-secret admin DSNs and lease
+	// credentials), breaking MFA login and dynamic-secret access irrecoverably.
+	sweptMFA, err := sweepMFASecrets(tx, oldSvc, newSvc, newKeyVersion)
+	if err != nil {
+		return nil, fmt.Errorf("mfa_secrets sweep failed: %w", err)
+	}
+	result.MFASecretsSwept = sweptMFA
+
+	sweptDynConfigs, err := sweepDynamicSecretConfigs(tx, oldSvc, newSvc, newKeyVersion)
+	if err != nil {
+		return nil, fmt.Errorf("dynamic_secret_configs sweep failed: %w", err)
+	}
+	result.DynamicSecretConfigsSwept = sweptDynConfigs
+
+	sweptDynLeases, err := sweepDynamicSecretLeases(tx, oldSvc, newSvc, newKeyVersion)
+	if err != nil {
+		return nil, fmt.Errorf("dynamic_secret_leases sweep failed: %w", err)
+	}
+	result.DynamicSecretLeasesSwept = sweptDynLeases
+
 	return result, nil
 }
 
@@ -86,10 +111,16 @@ func sweepSecretVersions(tx *gorm.DB, oldSvc *EncryptionService, newSvc *Encrypt
 	var offset int
 	var totalSwept, totalLegacyUpgraded int
 
-	// Pre-fetch secretNodeID → projectID to avoid N+1 queries.
+	// Pre-fetch secretNodeID → projectID to avoid N+1 queries. Unscoped: a
+	// soft-deleted (recycle-bin) secret keeps its ciphertext-bearing version rows
+	// (SecretVersion has no deleted_at; ADR-033 secrets are restorable), and those
+	// rows still must be re-encrypted under the new DEK. Without Unscoped the map
+	// excludes soft-deleted nodes, so a version of a trashed secret hits "no project
+	// found" and aborts the entire rotation — blocking key rotation whenever anything
+	// sits in the recycle bin.
 	nodeProjectMap := make(map[uint]uint)
 	var nodes []models.SecretNode
-	if err := tx.Select("id, project_id").Find(&nodes).Error; err != nil {
+	if err := tx.Unscoped().Select("id, project_id").Find(&nodes).Error; err != nil {
 		return 0, 0, fmt.Errorf("failed to fetch secret nodes for AAD reconstruction: %w", err)
 	}
 	for _, n := range nodes {
