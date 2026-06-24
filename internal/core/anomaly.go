@@ -12,8 +12,9 @@ import (
 // and, when enabled, an Isolation Forest (ADR-050). Operates on metadata only — secret
 // values are never examined.
 type AnomalyDetector struct {
-	storage StorageInterface
-	ml      MLConfig // ML pass; disabled by default (see SetMLConfig)
+	storage  StorageInterface
+	ml       MLConfig       // ML pass; disabled by default (see SetMLConfig)
+	offHours offHoursPolicy // off_hours rule window; defaults to UTC 22:00–06:00
 }
 
 // StorageInterface is satisfied by *storage.LocalStorage and *storage.RemoteStorage.
@@ -24,9 +25,10 @@ type StorageInterface = interface {
 	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
 }
 
-// NewAnomalyDetector creates a new AnomalyDetector with the ML pass disabled.
+// NewAnomalyDetector creates a new AnomalyDetector with the ML pass disabled and the
+// off-hours window at its UTC 22:00–06:00 default.
 func NewAnomalyDetector(storage StorageInterface) *AnomalyDetector {
-	return &AnomalyDetector{storage: storage}
+	return &AnomalyDetector{storage: storage, offHours: defaultOffHoursPolicy()}
 }
 
 // SetMLConfig enables (or reconfigures) the Isolation Forest pass. Defaults are
@@ -35,6 +37,66 @@ func NewAnomalyDetector(storage StorageInterface) *AnomalyDetector {
 // rules run.
 func (d *AnomalyDetector) SetMLConfig(cfg MLConfig) {
 	d.ml = cfg
+}
+
+// offHoursPolicy defines the "off hours" band for the off_hours rule. Hours are
+// evaluated in loc, and the band is [start, end) wrapping midnight (e.g. 22→6 means
+// 22:00–23:59 plus 00:00–05:59).
+type offHoursPolicy struct {
+	loc   *time.Location
+	start int // off-hours band start hour [0,23]
+	end   int // off-hours band end hour [0,23], exclusive
+}
+
+// defaultOffHoursPolicy is the legacy hardcoded behaviour: UTC, 22:00–06:00.
+func defaultOffHoursPolicy() offHoursPolicy {
+	return offHoursPolicy{loc: time.UTC, start: 22, end: 6}
+}
+
+// isOffHours reports whether t falls in the off-hours band, evaluated in the policy's
+// timezone. A band with start <= end is a normal interval [start, end); start > end is
+// a band that wraps midnight.
+func (p offHoursPolicy) isOffHours(t time.Time) bool {
+	loc := p.loc
+	if loc == nil { // zero-value policy → treat as UTC rather than panic in t.In
+		loc = time.UTC
+	}
+	h := t.In(loc).Hour()
+	if p.start <= p.end {
+		return h >= p.start && h < p.end
+	}
+	return h >= p.start || h < p.end
+}
+
+// validHour reports whether h is a valid clock hour [0,23].
+func validHour(h int) bool { return h >= 0 && h <= 23 }
+
+// SetBusinessHours configures the off_hours rule's timezone and band. tz is an IANA
+// name ("" = UTC); the off-hours band is [startHour, endHour) wrapping midnight, in
+// that timezone. A blank tz keeps UTC, and the band defaults to 22:00–06:00 unless
+// overridden. Because 0 is the config zero value AND a valid hour, both hours being 0
+// is treated as "unset" (a 0–0 band would be empty) — set the timezone alone and the
+// default band is kept. Returns an error only for an unparseable timezone, leaving the
+// prior policy unchanged.
+func (d *AnomalyDetector) SetBusinessHours(tz string, startHour, endHour int) error {
+	p := defaultOffHoursPolicy()
+	if tz != "" {
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			return fmt.Errorf("anomaly business_hours timezone %q: %w", tz, err)
+		}
+		p.loc = loc
+	}
+	if startHour != 0 || endHour != 0 { // both zero = unset → keep the default band
+		if validHour(startHour) {
+			p.start = startHour
+		}
+		if validHour(endHour) {
+			p.end = endHour
+		}
+	}
+	d.offHours = p
+	return nil
 }
 
 // accessBaseline holds statistical baseline for a secret's access patterns.
@@ -69,7 +131,7 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		}
 
 		for _, accessLog := range recentLogs {
-			alerts := detectAnomalies(secret, accessLog, baseline)
+			alerts := detectAnomalies(secret, accessLog, baseline, d.offHours)
 			for _, alert := range alerts {
 				_ = d.storage.CreateAnomalyAlert(ctx, &alert)
 			}
@@ -118,19 +180,18 @@ func buildBaseline(logs []models.SecretAccessLog, now time.Time) accessBaseline 
 }
 
 // detectAnomalies checks a single access log entry against the baseline.
-func detectAnomalies(secret models.SecretNode, log models.SecretAccessLog, baseline accessBaseline) []models.AnomalyAlert {
+func detectAnomalies(secret models.SecretNode, log models.SecretAccessLog, baseline accessBaseline, offHours offHoursPolicy) []models.AnomalyAlert {
 	var alerts []models.AnomalyAlert
 	now := time.Now().UTC()
 
-	// Rule 1: Off-hours access (22:00 - 06:00 UTC)
-	hour := log.AccessTime.UTC().Hour()
-	if hour >= 22 || hour < 6 {
+	// Rule 1: Off-hours access (configurable band + timezone; default 22:00–06:00 UTC).
+	if offHours.isOffHours(log.AccessTime) {
 		alerts = append(alerts, models.AnomalyAlert{
 			SecretNodeID: secret.ID,
 			SecretName:   secret.Name,
 			AlertType:    "off_hours",
 			Severity:     "medium",
-			Description:  fmt.Sprintf("Secret accessed outside business hours at %s UTC", log.AccessTime.UTC().Format("15:04")),
+			Description:  fmt.Sprintf("Secret accessed outside business hours at %s", log.AccessTime.In(offHours.loc).Format("15:04 MST")),
 			AccessedBy:   log.AccessedBy,
 			IPAddress:    log.IPAddress,
 			DetectedAt:   now,

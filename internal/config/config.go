@@ -1184,6 +1184,21 @@ type AnomalyAlertsConfig struct {
 	// independent of Enabled (which gates alert *push*): ML.Enabled gates whether the
 	// detection scan additionally scores accesses for multivariate outliers.
 	ML AnomalyMLConfig `yaml:"ml"`
+	// BusinessHours configures the timezone and band the off_hours rule uses. Unset =
+	// the legacy UTC 22:00–06:00 default.
+	BusinessHours AnomalyBusinessHoursConfig `yaml:"business_hours"`
+}
+
+// AnomalyBusinessHoursConfig defines when secret access counts as "off hours" for the
+// off_hours detection rule. The hours are evaluated in Timezone, and the off-hours band
+// is [OffHoursStart, OffHoursEnd) wrapping midnight (e.g. 22→6). All fields are optional
+// and default to the legacy behaviour: UTC, 22:00–06:00. Setting Timezone alone is the
+// common case — it stops flagging local business-hours access as off-hours on non-UTC
+// deployments (and vice versa).
+type AnomalyBusinessHoursConfig struct {
+	Timezone      string `yaml:"timezone"`        // IANA name (e.g. "America/New_York"); "" = UTC
+	OffHoursStart int    `yaml:"off_hours_start"` // off-hours band start hour [0,23]; default 22
+	OffHoursEnd   int    `yaml:"off_hours_end"`   // off-hours band end hour [0,23]; default 6
 }
 
 // AnomalyMLConfig configures the Isolation Forest anomaly-detection pass (ADR-050).
