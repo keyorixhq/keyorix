@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -194,6 +195,12 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 					unauthorizedResponse(w, "Invalid or expired token")
 					return
 				}
+				// The network allowlist is per-request (the same token may arrive from a
+				// different IP), so enforce it even on a cache hit.
+				if !tokenNetworkAllowed(r, entry.userCtx) {
+					forbiddenResponse(w, "token not permitted from this network")
+					return
+				}
 				next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), entry.userCtx, coreService)))
 				return
 			}
@@ -217,6 +224,10 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 			// Cache the positive result.
 			cacheSet(key, tokenCacheEntry{userCtx: userCtx, expiresAt: time.Now().Add(validTokenTTL)})
 
+			if !tokenNetworkAllowed(r, userCtx) {
+				forbiddenResponse(w, "token not permitted from this network")
+				return
+			}
 			next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
 		})
 	}
@@ -660,6 +671,27 @@ func validateToken(ctx context.Context, validator sessionValidator, token string
 		SessionAuth:    viaSession,
 		PATRestriction: restriction,
 	}, nil
+}
+
+// tokenNetworkAllowed enforces a token's IP allowlist (ADR: PAT network restriction). It
+// returns true when the token has no allowlist; otherwise the request's source IP must fall
+// within one of the allowed CIDRs. It fails CLOSED — an undeterminable/unparseable source
+// IP is denied. The source IP is the TCP peer (r.RemoteAddr), never a client-supplied
+// header, so the control cannot be spoofed; a deployment behind a proxy must terminate so
+// RemoteAddr is the real client (e.g. PROXY protocol) for per-client allowlists to apply.
+func tokenNetworkAllowed(r *http.Request, userCtx *UserContext) bool {
+	if userCtx == nil || userCtx.PATRestriction == nil || len(userCtx.PATRestriction.AllowedCIDRs) == 0 {
+		return true
+	}
+	return core.IPInCIDRs(clientIP(r), userCtx.PATRestriction.AllowedCIDRs)
+}
+
+// clientIP returns the source IP of the request from its TCP peer address.
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr // already a bare IP (or empty)
 }
 
 // unauthorizedResponse sends a 401 Unauthorized response

@@ -160,7 +160,7 @@ func TestAuthInterceptor_PATAuthenticatesAndEnforcesScope(t *testing.T) {
 	h.AssignUserRole(t, 9100, 3, &proj2) // editor (secrets.read + secrets.write) in project 2
 
 	// A token confined to secrets.read in project 2 only.
-	res, err := h.CoreService.CreateOwnPAT(context.Background(), 9100, "ci", nil, []string{"secrets.read"}, 2, 0)
+	res, err := h.CoreService.CreateOwnPAT(context.Background(), 9100, "ci", nil, []string{"secrets.read"}, 2, 0, nil)
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(res.PlainToken, "kx_pat_"))
 

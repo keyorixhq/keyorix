@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ type CreatePATResult struct {
 // token below its owner — they are enforced at request time as a filter
 // intersected with the owner's live permissions, so a token can never grant more
 // than its owner currently holds.
-func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time, scopes []string, projectScope, environmentScope uint) (*CreatePATResult, error) {
+func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string, expiresAt *time.Time, scopes []string, projectScope, environmentScope uint, allowedCIDRs []string) (*CreatePATResult, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
@@ -54,6 +55,11 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 	}
 
 	scopesJSON, err := encodePATScopes(scopes)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
+
+	cidrsJSON, err := encodePATCIDRs(allowedCIDRs)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
@@ -72,6 +78,7 @@ func (c *KeyorixCore) CreateOwnPAT(ctx context.Context, userID uint, name string
 		Scopes:           scopesJSON,
 		ProjectScope:     projectScope,
 		EnvironmentScope: environmentScope,
+		AllowedCIDRs:     cidrsJSON,
 		ExpiresAt:        expiresAt,
 		CreatedAt:        c.now(),
 	}
@@ -202,8 +209,63 @@ func DecodePATScopes(raw string) []string {
 // the token is unrestricted (no scopes and no project confinement).
 func patRestrictionFrom(pat *models.PersonalAccessToken) *PATRestriction {
 	scopes := DecodePATScopes(pat.Scopes)
-	if len(scopes) == 0 && pat.ProjectScope == 0 && pat.EnvironmentScope == 0 {
+	cidrs := DecodePATCIDRs(pat.AllowedCIDRs)
+	if len(scopes) == 0 && pat.ProjectScope == 0 && pat.EnvironmentScope == 0 && len(cidrs) == 0 {
 		return nil
 	}
-	return &PATRestriction{Permissions: scopes, ProjectID: pat.ProjectScope, EnvironmentID: pat.EnvironmentScope}
+	return &PATRestriction{Permissions: scopes, ProjectID: pat.ProjectScope, EnvironmentID: pat.EnvironmentScope, AllowedCIDRs: cidrs}
+}
+
+// encodePATCIDRs validates and JSON-encodes a CIDR allowlist for storage. Each entry must
+// be a parseable CIDR (e.g. "10.0.0.0/8"); a bare IP is accepted and normalised to a /32
+// or /128 host route. Blanks are dropped and duplicates removed; an empty result encodes to
+// "" (no network restriction, the back-compat default).
+func encodePATCIDRs(cidrs []string) (string, error) {
+	cleaned := make([]string, 0, len(cidrs))
+	seen := make(map[string]struct{}, len(cidrs))
+	for _, c := range cidrs {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		// Accept a bare IP by promoting it to a host route.
+		if !strings.Contains(c, "/") {
+			if ip := net.ParseIP(c); ip != nil {
+				if ip.To4() != nil {
+					c += "/32"
+				} else {
+					c += "/128"
+				}
+			}
+		}
+		if _, _, err := net.ParseCIDR(c); err != nil {
+			return "", fmt.Errorf("invalid CIDR %q", c)
+		}
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		cleaned = append(cleaned, c)
+	}
+	if len(cleaned) == 0 {
+		return "", nil
+	}
+	b, err := json.Marshal(cleaned)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// DecodePATCIDRs parses a stored CIDR allowlist back into a slice. An empty/invalid column
+// yields nil (no restriction).
+func DecodePATCIDRs(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
 }

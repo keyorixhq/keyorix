@@ -631,10 +631,15 @@ type PersonalAccessToken struct {
 	// environment (ADR-042). 0 = any environment. Environment ids are globally
 	// unique, so this also pins the project.
 	EnvironmentScope uint `gorm:"default:0"`
-	LastUsedAt       *time.Time
-	ExpiresAt        *time.Time // nil = never expires
-	Revoked          bool       `gorm:"default:false"`
-	CreatedAt        time.Time
+	// AllowedCIDRs is a JSON-encoded []string of CIDR blocks the token may be used from
+	// (e.g. ["10.0.0.0/8","192.0.2.4/32"]). Empty/null = no network restriction (the
+	// default). When set, a request presenting this token from a source IP outside every
+	// listed CIDR is denied — a stolen token is useless off the allowed network.
+	AllowedCIDRs string `gorm:"type:text"`
+	LastUsedAt   *time.Time
+	ExpiresAt    *time.Time // nil = never expires
+	Revoked      bool       `gorm:"default:false"`
+	CreatedAt    time.Time
 }
 
 // SetupToken is the single-use, hashed-at-rest bearer string that lets a brand-new

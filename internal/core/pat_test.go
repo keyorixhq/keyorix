@@ -23,7 +23,7 @@ func TestCreateOwnPAT(t *testing.T) {
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*models.PersonalAccessToken) }).
 			Return(&models.PersonalAccessToken{ID: 1}, nil)
 
-		res, err := c.CreateOwnPAT(ctx, 1, "ci-token", nil, nil, 0, 0)
+		res, err := c.CreateOwnPAT(ctx, 1, "ci-token", nil, nil, 0, 0, nil)
 		require.NoError(t, err)
 		assert.True(t, strings.HasPrefix(res.PlainToken, patPrefix), "raw token carries the kx_pat_ prefix")
 		require.NotNil(t, captured)
@@ -42,7 +42,7 @@ func TestCreateOwnPAT(t *testing.T) {
 			Run(func(args mock.Arguments) { captured = args.Get(1).(*models.PersonalAccessToken) }).
 			Return(&models.PersonalAccessToken{ID: 1}, nil)
 
-		_, err := c.CreateOwnPAT(ctx, 1, "ci-read-only", nil, []string{"secrets.read", "  ", "secrets.read"}, 7, 0)
+		_, err := c.CreateOwnPAT(ctx, 1, "ci-read-only", nil, []string{"secrets.read", "  ", "secrets.read"}, 7, 0, nil)
 		require.NoError(t, err)
 		require.NotNil(t, captured)
 		// Blanks dropped, duplicates removed, encoded as JSON.
@@ -58,7 +58,7 @@ func TestCreateOwnPAT(t *testing.T) {
 	t.Run("rejects an empty name", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		_, err := c.CreateOwnPAT(ctx, 1, "   ", nil, nil, 0, 0)
+		_, err := c.CreateOwnPAT(ctx, 1, "   ", nil, nil, 0, 0, nil)
 		require.Error(t, err)
 		ms.AssertNotCalled(t, "CreatePersonalAccessToken", mock.Anything, mock.Anything)
 	})

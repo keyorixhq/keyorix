@@ -31,6 +31,7 @@ var (
 	flagScopes  []string
 	flagProject int
 	flagEnv     int
+	flagCIDRs   []string
 )
 
 func init() {
@@ -39,6 +40,7 @@ func init() {
 	createCmd.Flags().StringArrayVar(&flagScopes, "scope", nil, "Least-privilege permission (repeatable; e.g. --scope secrets.read). Omit = inherit all your permissions")
 	createCmd.Flags().IntVar(&flagProject, "project-id", 0, "Confine the token to a single project (0 = any)")
 	createCmd.Flags().IntVar(&flagEnv, "environment-id", 0, "Confine the token to a single environment (0 = any; only with --project-id)")
+	createCmd.Flags().StringArrayVar(&flagCIDRs, "allowed-cidr", nil, "Restrict the token to source IPs in this CIDR (repeatable; e.g. --allowed-cidr 10.0.0.0/8). Omit = no network restriction")
 	PATCmd.AddCommand(createCmd, listCmd, revokeCmd)
 }
 
@@ -61,6 +63,7 @@ type patView struct {
 	Scopes           []string `json:"scopes"`
 	ProjectScope     uint     `json:"project_scope"`
 	EnvironmentScope uint     `json:"environment_scope"`
+	AllowedCIDRs     []string `json:"allowed_cidrs"`
 }
 
 var createCmd = &cobra.Command{
@@ -83,6 +86,9 @@ var createCmd = &cobra.Command{
 		}
 		if len(flagScopes) > 0 {
 			body["scopes"] = flagScopes
+		}
+		if len(flagCIDRs) > 0 {
+			body["allowed_cidrs"] = flagCIDRs
 		}
 		if flagProject > 0 {
 			body["project_scope"] = flagProject
@@ -189,10 +195,10 @@ func normalizeExpiry(v string) (string, error) {
 
 // describeScope renders a one-line summary of a token's least-privilege restriction.
 func describeScope(t patView) string {
-	if len(t.Scopes) == 0 && t.ProjectScope == 0 && t.EnvironmentScope == 0 {
+	if len(t.Scopes) == 0 && t.ProjectScope == 0 && t.EnvironmentScope == 0 && len(t.AllowedCIDRs) == 0 {
 		return "full access"
 	}
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
 	if t.ProjectScope > 0 {
 		parts = append(parts, fmt.Sprintf("project=%d", t.ProjectScope))
 	}
@@ -201,6 +207,9 @@ func describeScope(t patView) string {
 	}
 	if len(t.Scopes) > 0 {
 		parts = append(parts, strings.Join(t.Scopes, ","))
+	}
+	if len(t.AllowedCIDRs) > 0 {
+		parts = append(parts, "from="+strings.Join(t.AllowedCIDRs, ","))
 	}
 	return strings.Join(parts, " ")
 }

@@ -11,6 +11,7 @@ package core
 
 import (
 	"context"
+	"net"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -41,6 +42,31 @@ type PATRestriction struct {
 	// environment-scoped token — correct least privilege for, e.g., a staging-only
 	// CI credential.)
 	EnvironmentID uint
+	// AllowedCIDRs, when non-empty, restricts the token to requests whose source IP falls
+	// within one of the listed CIDR blocks. Enforced at the auth boundary (fail-closed: an
+	// undeterminable/unparseable source IP is denied). Empty = no network restriction.
+	AllowedCIDRs []string
+}
+
+// IPInCIDRs reports whether ip (a bare host like "203.0.113.7") falls within any of the
+// given CIDR blocks. It is the network gate for IP-allowlisted tokens and fails CLOSED:
+// an unparseable ip, an empty cidr list passed as a gate, or a malformed CIDR yields false
+// (callers only invoke it when the token actually carries an allowlist).
+func IPInCIDRs(ip string, cidrs []string) bool {
+	addr := net.ParseIP(strings.TrimSpace(ip))
+	if addr == nil {
+		return false
+	}
+	for _, c := range cidrs {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(c))
+		if err != nil {
+			continue
+		}
+		if network.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // Allows reports whether this restriction permits exercising permission at scope.
