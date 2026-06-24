@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -60,6 +61,44 @@ func TestRestoreProjectCascade(t *testing.T) {
 	envs, err := ls.ListEnvironmentsByProject(ctx, proj.ID)
 	require.NoError(t, err)
 	assert.Len(t, envs, 1)
+}
+
+// A secret retired INDEPENDENTLY (soft-deleted on its own, before the project) must
+// NOT be resurrected when the project is later deleted and restored — only the rows
+// the project-delete cascade removed should come back. Otherwise a deliberately-
+// trashed secret silently returns live (and its retained shares re-grant access).
+func TestRestoreProject_DoesNotResurrectIndependentlyDeletedSecret(t *testing.T) {
+	ctx := context.Background()
+	ls := newRestoreTestStore(t)
+
+	proj, err := ls.CreateProject(ctx, &models.Project{Name: "app"})
+	require.NoError(t, err)
+	_, err = ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: proj.ID})
+	require.NoError(t, err)
+	retired, err := ls.CreateSecret(ctx, &models.SecretNode{ProjectID: proj.ID, EnvironmentID: 1, Name: "retired", IsSecret: true, Type: "text", Status: "active"})
+	require.NoError(t, err)
+	kept, err := ls.CreateSecret(ctx, &models.SecretNode{ProjectID: proj.ID, EnvironmentID: 1, Name: "kept", IsSecret: true, Type: "text", Status: "active"})
+	require.NoError(t, err)
+
+	// "retired" is deliberately soft-deleted earlier (stamp an hour-old deleted_at so
+	// it is unambiguously before the project-delete cascade timestamp).
+	require.NoError(t, ls.db.Unscoped().Model(&models.SecretNode{}).
+		Where("id = ?", retired.ID).Update("deleted_at", time.Now().Add(-time.Hour)).Error)
+
+	// Delete then restore the whole project.
+	require.NoError(t, ls.DeleteProject(ctx, proj.ID))
+	require.NoError(t, ls.RestoreProject(ctx, proj.ID))
+
+	// "kept" (cascade-deleted with the project) is restored.
+	_, err = ls.GetSecret(ctx, kept.ID)
+	require.NoError(t, err, "a secret deleted by the project cascade is restored with it")
+
+	// "retired" (independently deleted earlier) stays in the recycle bin.
+	_, err = ls.GetSecret(ctx, retired.ID)
+	require.Error(t, err, "an independently-retired secret must NOT be resurrected by a project restore")
+	var stillDeleted models.SecretNode
+	require.NoError(t, ls.db.Unscoped().First(&stillDeleted, retired.ID).Error)
+	assert.True(t, stillDeleted.DeletedAt.Valid, "retired secret remains soft-deleted")
 }
 
 func TestRestoreProjectNotDeleted(t *testing.T) {
