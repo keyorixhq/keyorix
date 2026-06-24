@@ -131,6 +131,21 @@ func TestValidatePATToken(t *testing.T) {
 		assert.Contains(t, err.Error(), "inactive")
 	})
 
+	t.Run("rejects a token for a suspended user (is_active still true)", func(t *testing.T) {
+		// SuspendUser sets account_state=suspended but leaves is_active untouched, so the
+		// is_active check alone would let a suspended user keep using their PAT. The
+		// account-state gate must reject it — mirroring ValidateSessionToken.
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		ms.On("GetPersonalAccessTokenByHash", ctx, hash).Return(&models.PersonalAccessToken{ID: 9, UserID: 1}, nil)
+		ms.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountSuspended}, nil)
+		_, _, _, err := c.ValidatePATToken(ctx, raw)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not active")
+		// Must reject before stamping last-used — a blocked token is not "used".
+		ms.AssertNotCalled(t, "TouchPersonalAccessToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
 	t.Run("rejects an unknown token", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)

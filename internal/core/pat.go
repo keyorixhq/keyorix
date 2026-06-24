@@ -130,6 +130,14 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 	if !user.IsActive {
 		return nil, nil, nil, fmt.Errorf("user inactive")
 	}
+	// A suspended/blocked account must not authenticate via a PAT either. SuspendUser sets
+	// account_state but deliberately leaves is_active untouched (and kills sessions), so
+	// without this an admin's suspend would cut off session access yet leave the user's
+	// personal access tokens fully working. Mirror ValidateSessionToken's account-state
+	// gate so suspension is immediately effective on every credential type.
+	if AccountLoginBlocked(user.AccountState) {
+		return nil, nil, nil, fmt.Errorf("account is not active")
+	}
 
 	// Best-effort, throttled last-used stamp — never fails the request.
 	_ = c.storage.TouchPersonalAccessToken(ctx, pat.ID, c.now(), patTouchInterval)
