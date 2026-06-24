@@ -104,9 +104,9 @@ func newSharingTestCore(t *testing.T) *core.KeyorixCore {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2}).Error)
 
 	// Seed sessions for "valid-token" and "owner-token" (user 1, admin), "recipient-token" (user 2, reader).
-	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "valid-token"}).Error)
-	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "owner-token"}).Error)
-	require.NoError(t, db.Create(&models.Session{UserID: 2, SessionToken: "recipient-token"}).Error)
+	seedSession(t, db, 1, "valid-token")
+	seedSession(t, db, 1, "owner-token")
+	seedSession(t, db, 2, "recipient-token")
 
 	return core.NewKeyorixCore(store.NewLocalStorage(db))
 }

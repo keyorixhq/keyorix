@@ -43,8 +43,8 @@ func TestUpdateUserRolesRequiresRolesAssign(t *testing.T) {
 	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2}).Error)
-	require.NoError(t, db.Create(&models.Session{UserID: 1, SessionToken: "admin-tok"}).Error)
-	require.NoError(t, db.Create(&models.Session{UserID: 2, SessionToken: "mgr-tok"}).Error)
+	seedSession(t, db, 1, "admin-tok")
+	seedSession(t, db, 2, "mgr-tok")
 
 	router, err := NewRouter(&config.Config{}, core.NewKeyorixCore(store.NewLocalStorage(db)))
 	require.NoError(t, err)
