@@ -228,11 +228,64 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 }
 
 // RemoveUserRole removes a role from a user at the given scope and records an
-// RBAC audit event. See AssignUserRole for actorID semantics.
+// RBAC audit event. See AssignUserRole for actorID semantics. It refuses to remove
+// the last install administrator (see guardLastGlobalAdmin). This is the choke point
+// SetUserRoles and the HTTP/gRPC role-removal handlers funnel through.
 func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
+	if err := c.guardLastGlobalAdmin(ctx, userID, roleID, scope); err != nil {
+		return err
+	}
 	if err := c.storage.RemoveRole(ctx, userID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
 	return nil
+}
+
+// installAdminRoleNames are the roles that confer install-wide administration when
+// held at the global scope (project 0). Removing the last such assignment leaves the
+// install with no one able to manage users, roles, or settings.
+var installAdminRoleNames = []string{"super_admin", "admin", "system_admin"}
+
+// installAdminRoleIDSet resolves installAdminRoleNames to their role IDs (skipping
+// any that a given install did not seed).
+func (c *KeyorixCore) installAdminRoleIDSet(ctx context.Context) map[uint]bool {
+	set := make(map[uint]bool, len(installAdminRoleNames))
+	for _, name := range installAdminRoleNames {
+		if role, err := c.storage.GetRoleByName(ctx, name); err == nil && role != nil {
+			set[role.ID] = true
+		}
+	}
+	return set
+}
+
+// guardLastGlobalAdmin refuses to remove a user's global (install-wide) admin role
+// when no other global admin-role assignment would remain — preventing a
+// self-inflicted or malicious-insider lockout that strands the install with no
+// administrator (and no recovery short of DB surgery). Only the global scope is
+// guarded: a project-scoped admin can always be restored by a global admin.
+func (c *KeyorixCore) guardLastGlobalAdmin(ctx context.Context, userID, roleID uint, scope Scope) error {
+	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
+		return nil // not the global scope — project admins are recoverable
+	}
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	if !adminIDs[roleID] {
+		return nil // not removing an install-admin role
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, a := range assignments {
+		if !adminIDs[a.RoleID] {
+			continue
+		}
+		// Ignore the exact assignment being removed; any OTHER global admin grant
+		// (held by another user, or by a group) means governance survives.
+		if a.PrincipalType == "user" && a.PrincipalID == userID && a.RoleID == roleID {
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("refusing to remove the last install administrator: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings")
 }
