@@ -6,7 +6,11 @@
 //	pending_first_login       — provisioned by an admin; must set a password
 //	                            before doing anything else (restricted session).
 //	password_reset_required   — admin forced a reset; restricted until changed.
-//	suspended                 — login is refused entirely.
+//	suspended                 — login is refused entirely (admin security action).
+//	deprovisioned             — login is refused; set by SCIM/IdP deactivation. Kept
+//	                            distinct from `suspended` so an IdP reactivation clears
+//	                            only its own deactivation and can never undo an admin's
+//	                            security suspension (incident response wins).
 //
 // A "restricted" session (pending_first_login / password_reset_required)
 // authenticates but the auth middleware blocks every endpoint except the
@@ -29,6 +33,10 @@ const (
 	AccountPendingFirstLogin     = "pending_first_login"
 	AccountPasswordResetRequired = "password_reset_required"
 	AccountSuspended             = "suspended"
+	// AccountDeprovisioned is set by SCIM/IdP deactivation. It blocks login exactly
+	// like AccountSuspended, but is a separate value so SCIM reactivation can clear it
+	// without clearing an admin's (stronger, sticky) AccountSuspended. See UpdateSCIMUser.
+	AccountDeprovisioned = "deprovisioned"
 )
 
 // NormalizeAccountState maps the empty legacy value to active.
@@ -50,9 +58,17 @@ func AccountRestricted(state string) bool {
 	}
 }
 
-// AccountLoginBlocked reports whether a state refuses login outright.
+// AccountLoginBlocked reports whether a state refuses login outright. Both an admin
+// suspension and a SCIM/IdP deactivation block login; every login/session/token path
+// funnels through here, so a deprovisioned account is refused everywhere a suspended
+// one is, with no per-path change.
 func AccountLoginBlocked(state string) bool {
-	return NormalizeAccountState(state) == AccountSuspended
+	switch NormalizeAccountState(state) {
+	case AccountSuspended, AccountDeprovisioned:
+		return true
+	default:
+		return false
+	}
 }
 
 // StaleAccounts returns users that have sat in the given account_state longer

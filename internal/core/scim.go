@@ -127,7 +127,7 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	now := c.now()
 	state := AccountPendingFirstLogin
 	if !active {
-		state = AccountSuspended
+		state = AccountDeprovisioned
 	}
 	created, err := c.storage.CreateUser(ctx, &models.User{
 		Username: username, Email: email, DisplayName: displayName,
@@ -147,8 +147,11 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 }
 
 // UpdateSCIMUser applies a SCIM Replace/PATCH to a user: displayName, email, and the
-// active flag (deactivation suspends the account and terminates sessions; activation
-// returns it to active). nil fields are left unchanged.
+// active flag. Deactivation marks the account deprovisioned (blocks login, terminates
+// sessions); activation clears only a prior SCIM deactivation. An admin security
+// suspension is sticky and survives IdP sync — only an admin can clear it
+// (ReactivateUser), so routine SCIM traffic can't undo an incident-response lockout.
+// nil fields are left unchanged.
 func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, displayName, email *string, active *bool) (*models.User, error) {
 	user, err := c.storage.GetUser(ctx, id)
 	if err != nil {
@@ -164,11 +167,20 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 	if active != nil {
 		user.IsActive = *active
 		if *active {
-			if AccountLoginBlocked(user.AccountState) {
+			// Reactivation clears only a SCIM/IdP deactivation. An admin security
+			// suspension (AccountSuspended) is sticky: routine IdP sync, which re-sends
+			// active=true for every active user, must not undo an incident-response
+			// lockout — only an admin clears that, via ReactivateUser.
+			if NormalizeAccountState(user.AccountState) == AccountDeprovisioned {
 				user.AccountState = AccountActive
 			}
 		} else {
-			user.AccountState = AccountSuspended
+			// Mark the SCIM/IdP deactivation distinctly so a later reactivation can tell
+			// it from an admin suspension. Never downgrade an admin AccountSuspended — it
+			// is the stronger, sticky state (both block login either way).
+			if NormalizeAccountState(user.AccountState) != AccountSuspended {
+				user.AccountState = AccountDeprovisioned
+			}
 			deactivated = true
 		}
 	}
@@ -186,7 +198,7 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 	return updated, nil
 }
 
-// DeprovisionSCIMUser handles a SCIM DELETE: it suspends the user (blocks login,
+// DeprovisionSCIMUser handles a SCIM DELETE: it deprovisions the user (blocks login,
 // terminates sessions) and soft-deletes the record, so the account is recoverable
 // within the retention window rather than hard-destroyed.
 func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint) error {
@@ -195,7 +207,12 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
 	user.IsActive = false
-	user.AccountState = AccountSuspended
+	// Mark as SCIM-deprovisioned rather than admin-suspended, but never downgrade an
+	// existing admin security suspension. The user is soft-deleted below regardless,
+	// so this only affects the state on the recoverable record.
+	if NormalizeAccountState(user.AccountState) != AccountSuspended {
+		user.AccountState = AccountDeprovisioned
+	}
 	user.UpdatedAt = c.now()
 	// Suspend + terminate sessions + soft-delete atomically: a SCIM DELETE either fully
 	// deprovisions or leaves the account untouched, so a mid-way storage failure can't

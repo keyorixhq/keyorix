@@ -84,7 +84,9 @@ func TestSCIM_ProvisionGetListDeactivateDelete(t *testing.T) {
 	list := decodeSCIM(t, w)
 	assert.Equal(t, float64(1), list["totalResults"])
 
-	// PATCH active=false → suspended.
+	// PATCH active=false → deprovisioned (a SCIM/IdP deactivation, distinct from an
+	// admin security suspension so it can be reversed by SCIM without clearing a
+	// suspension; both block login).
 	patch := `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"active","value":false}]}`
 	w = httptest.NewRecorder()
 	h.PatchUser(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Users/"+id, bytes.NewReader([]byte(patch))), id))
@@ -93,7 +95,8 @@ func TestSCIM_ProvisionGetListDeactivateDelete(t *testing.T) {
 
 	var suspended models.User
 	require.NoError(t, db.Where("external_id = ?", "okta-123").First(&suspended).Error)
-	assert.Equal(t, core.AccountSuspended, suspended.AccountState)
+	assert.Equal(t, core.AccountDeprovisioned, suspended.AccountState)
+	assert.True(t, core.AccountLoginBlocked(suspended.AccountState), "a deprovisioned account is login-blocked")
 
 	// DELETE → 204 and the user is soft-deleted.
 	w = httptest.NewRecorder()
