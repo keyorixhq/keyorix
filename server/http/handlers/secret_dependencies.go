@@ -174,3 +174,20 @@ func (h *SecretHandler) GetProjectRotationPlan(w http.ResponseWriter, r *http.Re
 	}
 	h.sendSuccess(w, plan, "")
 }
+
+// GetDeploymentRotationPlan handles GET /api/v1/rotation-plan (ADR-053): the install-wide
+// rotation plan — every project's overdue/due-soon secrets aggregated into a roll-up, most
+// pressing project first. Gated by GLOBAL secrets.read at the route (the same access level
+// as listing all projects), so it never reveals a project the caller cannot already see.
+func (h *SecretHandler) GetDeploymentRotationPlan(w http.ResponseWriter, r *http.Request) {
+	if middleware.GetUserFromContext(r.Context()) == nil {
+		h.sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	plan, err := h.coreService.GenerateDeploymentRotationPlan(r.Context())
+	if err != nil {
+		h.sendError(w, "Error", err.Error(), dependencyErrorStatus(err.Error()), nil)
+		return
+	}
+	h.sendSuccess(w, plan, "")
+}

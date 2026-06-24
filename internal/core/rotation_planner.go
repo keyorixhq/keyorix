@@ -129,6 +129,57 @@ func (c *KeyorixCore) GenerateRotationPlan(ctx context.Context, projectID uint) 
 	return plan, nil
 }
 
+// DeploymentRotationPlan aggregates every project's rotation plan into the install-wide
+// rotation picture (ADR-053 deferred follow-up): the roll-up totals a security lead needs at
+// a glance, plus each project's own plan. Rotation dependencies are per-project (ADR-052
+// edges never cross a project boundary), so this is a roll-up of per-project plans rather
+// than a single global wave ordering. Only projects with something to rotate are listed.
+type DeploymentRotationPlan struct {
+	ProjectsScanned  int            `json:"projects_scanned"`   // projects examined
+	ProjectsWithWork int            `json:"projects_with_work"` // projects with at least one secret to rotate
+	TotalSecrets     int            `json:"total_secrets"`      // secrets needing rotation, deployment-wide
+	OverdueCount     int            `json:"overdue_count"`
+	DueSoonCount     int            `json:"due_soon_count"`
+	Projects         []RotationPlan `json:"projects"` // most-overdue project first; only projects with work
+}
+
+// GenerateDeploymentRotationPlan builds the deployment-wide rotation plan by aggregating
+// every project's plan (ADR-053). Projects with nothing to rotate are omitted from the
+// list but still counted in ProjectsScanned. Projects are ordered most-overdue first so the
+// install's most pressing rotation work surfaces at the top.
+func (c *KeyorixCore) GenerateDeploymentRotationPlan(ctx context.Context) (*DeploymentRotationPlan, error) {
+	projects, err := c.storage.ListProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	dp := &DeploymentRotationPlan{Projects: []RotationPlan{}}
+	for _, p := range projects {
+		dp.ProjectsScanned++
+		plan, err := c.GenerateRotationPlan(ctx, p.ID)
+		if err != nil {
+			return nil, fmt.Errorf("project %d: %w", p.ID, err)
+		}
+		if plan.TotalSecrets == 0 {
+			continue // nothing to rotate here — keep the deployment view focused
+		}
+		dp.ProjectsWithWork++
+		dp.TotalSecrets += plan.TotalSecrets
+		dp.OverdueCount += plan.OverdueCount
+		dp.DueSoonCount += plan.DueSoonCount
+		dp.Projects = append(dp.Projects, *plan)
+	}
+
+	// Most overdue projects first; project id breaks ties for a deterministic order.
+	sort.Slice(dp.Projects, func(i, j int) bool {
+		if dp.Projects[i].OverdueCount != dp.Projects[j].OverdueCount {
+			return dp.Projects[i].OverdueCount > dp.Projects[j].OverdueCount
+		}
+		return dp.Projects[i].ProjectID < dp.Projects[j].ProjectID
+	})
+	return dp, nil
+}
+
 // planSecret turns a candidate entry into a PlannedRotation with urgency and reasons.
 func (c *KeyorixCore) planSecret(ctx context.Context, e *RotationStatusEntry, deps []uint, candidates map[uint]*RotationStatusEntry) PlannedRotation {
 	riskScore, riskBand := 0, ""
