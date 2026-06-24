@@ -123,12 +123,25 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	if err != nil {
 		return nil, false, err
 	}
-	if cp != nil && c.checkpointSignatureValid(cp) {
-		if reason, tampered, err := c.checkpointTruncation(ctx, raw.ChainedEvents, cp); err != nil {
-			return nil, false, err
-		} else if tampered {
-			return nil, false, fmt.Errorf("refusing to checkpoint: %s", reason)
+	if cp != nil {
+		if c.checkpointSignatureValid(cp) {
+			if reason, tampered, err := c.checkpointTruncation(ctx, raw.ChainedEvents, cp); err != nil {
+				return nil, false, err
+			} else if tampered {
+				return nil, false, fmt.Errorf("refusing to checkpoint: %s", reason)
+			}
+		} else if cp.KeyVersion == c.auditCkptKeyVersion {
+			// The prior checkpoint claims the CURRENT signing-key version yet fails its
+			// signature. That is tampering, not a DEK rotation (a rotation would carry a
+			// superseded key_version). Re-baselining here would let a DB-level actor
+			// launder a tail-truncation by flipping one signature byte: the read path
+			// flags this as Valid=false, but a silent re-baseline would write a fresh,
+			// authentic checkpoint over the shortened chain and erase that signal. Fail
+			// closed and leave the tamper signal standing for an operator to investigate.
+			return nil, false, fmt.Errorf("refusing to checkpoint: latest checkpoint #%d fails its signature under the current key version %q — the checkpoint row was tampered with, not rotated", cp.ID, cp.KeyVersion)
 		}
+		// else: signature fails AND key_version is superseded → consistent with a DEK
+		// rotation; fall through and re-baseline under the new key (recovery path).
 	}
 	newCP := &models.AuditCheckpoint{
 		ChainedEvents: raw.ChainedEvents,

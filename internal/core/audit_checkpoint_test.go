@@ -311,6 +311,37 @@ func TestAuditCheckpoint_NoRebaselineOverTruncation(t *testing.T) {
 	assert.Equal(t, int64(1), n, "no new checkpoint papered over the truncation")
 }
 
+// A DB-level actor must not be able to LAUNDER a tail-truncation by corrupting the
+// prior checkpoint's signature: that makes it unverifiable, but its key_version
+// still matches the current signing key, so it is tampering (not a DEK rotation) and
+// WriteAuditCheckpoint must refuse to re-baseline over the shortened chain.
+func TestAuditCheckpoint_NoRebaselineOverCorruptedSignature(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+	logEvents(t, c, 5)
+	_, _, err := c.WriteAuditCheckpoint(ctx) // certifies 5 under "v1"
+	require.NoError(t, err)
+
+	// Truncate the tail, then corrupt the checkpoint signature (key_version unchanged).
+	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id >= 4").Error)
+	require.NoError(t, db.Exec("UPDATE audit_checkpoints SET signature = 'tampered-byte'").Error)
+
+	// The scheduled write must NOT bless the truncation by re-baselining.
+	_, written, err := c.WriteAuditCheckpoint(ctx)
+	require.Error(t, err)
+	assert.False(t, written)
+	assert.Contains(t, err.Error(), "tampered with, not rotated")
+
+	var n int64
+	require.NoError(t, db.Model(&models.AuditCheckpoint{}).Count(&n).Error)
+	assert.Equal(t, int64(1), n, "no fresh checkpoint papered over the corrupted one")
+
+	// And verification still reports the tamper (signal not erased).
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid)
+}
+
 func TestAuditCheckpoint_SignDeterministicAndBinding(t *testing.T) {
 	c := &KeyorixCore{}
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x1}, 32), "v1")
