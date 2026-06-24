@@ -34,6 +34,20 @@ func TestBuildBaseline(t *testing.T) {
 	}
 }
 
+func TestLogsBefore(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	cutoff := now.Add(-1 * time.Hour)
+	logs := []models.SecretAccessLog{
+		{AccessedBy: "old", AccessTime: now.Add(-2 * time.Hour)},       // before cutoff → kept
+		{AccessedBy: "edge", AccessTime: cutoff},                       // exactly at cutoff → excluded (strictly before)
+		{AccessedBy: "recent", AccessTime: now.Add(-1 * time.Minute)},  // after cutoff → excluded
+	}
+	got := logsBefore(logs, cutoff)
+	if len(got) != 1 || got[0].AccessedBy != "old" {
+		t.Fatalf("logsBefore should keep only the pre-cutoff log, got %+v", got)
+	}
+}
+
 func TestDetectAnomalies(t *testing.T) {
 	secret := models.SecretNode{ID: 1, Name: "db"}
 	baseline := accessBaseline{

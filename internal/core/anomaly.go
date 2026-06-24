@@ -82,15 +82,32 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		}
 
 		// ML pass (opt-in): score this window's accesses against an Isolation Forest
-		// trained on the secret's full 30-day baseline, catching multivariate outliers
-		// the single-signal rules above miss.
+		// trained on the secret's prior history, catching multivariate outliers the
+		// single-signal rules above miss. Train only on logs BEFORE the window — for the
+		// same reason buildBaseline excludes it: otherwise the forest learns this window's
+		// reads as normal (and the IP/user frequency features count the burst as
+		// established), so it can't isolate the very accesses it is scoring.
 		if d.ml.Enabled {
-			for _, alert := range mlOutlierAlerts(secret, baselineLogs, recentLogs, d.ml, now) {
+			trainLogs := logsBefore(baselineLogs, window)
+			for _, alert := range mlOutlierAlerts(secret, trainLogs, recentLogs, d.ml, now) {
 				_ = d.storage.CreateAnomalyAlert(ctx, &alert)
 			}
 		}
 	}
 	return nil
+}
+
+// logsBefore returns the access logs that occurred strictly before t, preserving
+// order. Used to exclude the live detection window from the ML training set so this
+// pass's reads don't train the model that is meant to flag them.
+func logsBefore(logs []models.SecretAccessLog, t time.Time) []models.SecretAccessLog {
+	out := make([]models.SecretAccessLog, 0, len(logs))
+	for _, lg := range logs {
+		if lg.AccessTime.Before(t) {
+			out = append(out, lg)
+		}
+	}
+	return out
 }
 
 // buildBaseline computes the statistical baseline from historical access logs,
