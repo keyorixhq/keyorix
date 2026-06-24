@@ -62,6 +62,13 @@ func (fakeValidator) ValidatePATToken(_ context.Context, token string) (*models.
 			&core.PATRestriction{Permissions: []string{"secrets.read"}, ProjectID: 5},
 			nil
 	}
+	if token == "kx_pat_cidrtoken" {
+		// A token restricted to the 10.0.0.0/8 network.
+		return &models.User{ID: 3, Username: "patuser", Email: "pat@example.com"},
+			[]string{"system_viewer"},
+			&core.PATRestriction{AllowedCIDRs: []string{"10.0.0.0/8"}},
+			nil
+	}
 	return nil, nil, nil, fmt.Errorf("invalid token")
 }
 
@@ -535,4 +542,28 @@ func TestAuthenticationConcurrency(t *testing.T) {
 	}
 
 	assert.Equal(t, numGoroutines, successCount)
+}
+
+// A PAT with a CIDR allowlist is honored per-request: accepted from an in-range source IP
+// and denied (403) from outside — and the denial holds on the cached fast path too.
+func TestAuthentication_PATNetworkAllowlist(t *testing.T) {
+	mw := newTestAuthMiddleware()
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	serve := func(remoteAddr string) int {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", "Bearer kx_pat_cidrtoken")
+		req.RemoteAddr = remoteAddr
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	assert.Equal(t, http.StatusOK, serve("10.1.2.3:5555"), "in-range source IP is allowed")
+	// Second request caches the (valid) identity but must still be denied from off-network.
+	assert.Equal(t, http.StatusForbidden, serve("203.0.113.9:5555"), "off-network source IP is forbidden")
+	// And an in-range request after the cached deny still passes (per-request evaluation).
+	assert.Equal(t, http.StatusOK, serve("10.9.9.9:443"), "in-range again after a deny")
 }

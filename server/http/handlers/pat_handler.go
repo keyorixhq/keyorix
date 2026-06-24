@@ -43,6 +43,7 @@ type patResponse struct {
 	Scopes           []string `json:"scopes"`            // empty = inherits the owner's full permissions
 	ProjectScope     uint     `json:"project_scope"`     // 0 = any project the owner can reach
 	EnvironmentScope uint     `json:"environment_scope"` // 0 = any environment
+	AllowedCIDRs     []string `json:"allowed_cidrs"`     // empty = no network restriction
 }
 
 func toPATResponse(t *models.PersonalAccessToken) patResponse {
@@ -55,6 +56,7 @@ func toPATResponse(t *models.PersonalAccessToken) patResponse {
 		Scopes:           core.DecodePATScopes(t.Scopes),
 		ProjectScope:     t.ProjectScope,
 		EnvironmentScope: t.EnvironmentScope,
+		AllowedCIDRs:     core.DecodePATCIDRs(t.AllowedCIDRs),
 	}
 	if t.ExpiresAt != nil {
 		v := t.ExpiresAt.UTC().Format(time.RFC3339)
@@ -141,6 +143,9 @@ type createPATRequestBody struct {
 	ProjectScope uint `json:"project_scope"`
 	// EnvironmentScope optionally confines the token to one environment (0/omit = any).
 	EnvironmentScope uint `json:"environment_scope"`
+	// AllowedCIDRs optionally restricts the token to source IPs within these CIDR blocks
+	// (e.g. ["10.0.0.0/8"]). Omit/empty = no network restriction.
+	AllowedCIDRs []string `json:"allowed_cidrs"`
 }
 
 // CreatePAT handles POST /auth/tokens. The raw token is returned exactly once.
@@ -166,7 +171,7 @@ func (h *PATHandler) CreatePAT(w http.ResponseWriter, r *http.Request) {
 		expiresAt = &t
 	}
 
-	result, err := h.coreService.CreateOwnPAT(r.Context(), userCtx.UserID, body.Name, expiresAt, body.Scopes, body.ProjectScope, body.EnvironmentScope)
+	result, err := h.coreService.CreateOwnPAT(r.Context(), userCtx.UserID, body.Name, expiresAt, body.Scopes, body.ProjectScope, body.EnvironmentScope, body.AllowedCIDRs)
 	if err != nil {
 		sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 		return
