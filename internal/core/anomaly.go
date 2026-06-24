@@ -60,7 +60,18 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		if len(baselineLogs) == 0 {
 			continue
 		}
-		baseline := buildBaseline(baselineLogs, now)
+		// The baseline must reflect history STRICTLY BEFORE the detection window. The
+		// 30-day query [now-30d, now] otherwise overlaps the [now-1h, now] window, so
+		// every access about to be scored is already folded into knownUsers/knownIPs —
+		// permanently disabling the new_user / new_ip rules (a first-time access learns
+		// itself as "known"). Restrict the baseline to logs before the window start.
+		priorLogs := make([]models.SecretAccessLog, 0, len(baselineLogs))
+		for _, l := range baselineLogs {
+			if l.AccessTime.Before(window) {
+				priorLogs = append(priorLogs, l)
+			}
+		}
+		baseline := buildBaseline(priorLogs, now)
 
 		// Get recent accesses (last hour)
 		recentLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, window)
