@@ -11,6 +11,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -189,17 +190,29 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 			// password-set backend it is the candidate we generated. A backend that is
 			// unconfigured/unknown or whose upstream apply fails is skipped (audited).
 			storeVal := val
+			incompleteMsg := ""
 			if secret.RotationBackend != "" {
 				upstreamVal, err := c.applyBackendRotation(ctx, secret, val)
-				if err != nil {
+				var partial *rotation.PartialRotationError
+				switch {
+				case errors.As(err, &partial):
+					// The upstream minted the new credential but a prior, possibly
+					// compromised one could not be removed. Store the new value (a cloud
+					// key API returns the key material only once, so discarding it would
+					// orphan a live key) but flag the rotation incomplete below so the run
+					// records a failure and alerts an operator to remove the leftover.
+					storeVal = partial.Value
+					incompleteMsg = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
+				case err != nil:
 					sid := secret.ID
 					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
 						fmt.Sprintf("auto-rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err))
 					log.Printf("auto-rotation: backend rotate secret %d: %v", secret.ID, err)
 					failed[secret.ID] = fmt.Sprintf("%q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, err)
 					continue
+				default:
+					storeVal = upstreamVal
 				}
-				storeVal = upstreamVal
 			}
 			if _, rerr := c.RotateSecret(ctx, secret.ID, []byte(storeVal), "system:auto-rotation"); rerr != nil {
 				log.Printf("auto-rotation: rotate secret %d: %v", secret.ID, rerr)
@@ -217,6 +230,19 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 					c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
 						fmt.Sprintf("auto-rotation FAILED to store new version for secret %q: %v", secret.Name, rerr))
 				}
+				continue
+			}
+			if incompleteMsg != "" {
+				// New credential is stored, but a prior (possibly compromised) credential
+				// survived upstream. Mark done so it is not re-rotated under another policy
+				// this run, but record it as a failure (NOT a clean success) so the operator
+				// is notified to remove the leftover credential.
+				done[secret.ID] = true
+				failed[secret.ID] = incompleteMsg
+				sid := secret.ID
+				c.writeAuditEvent(ctx, EventSecretAutoRotated, nil, &sid,
+					fmt.Sprintf("auto-rotation INCOMPLETE for secret %q: new credential stored but a prior credential is still live and must be removed manually — %s", secret.Name, incompleteMsg))
+				log.Printf("auto-rotation: incomplete cleanup for secret %d: %s", secret.ID, incompleteMsg)
 				continue
 			}
 			delete(failed, secret.ID) // rotated successfully (e.g. under a later policy)

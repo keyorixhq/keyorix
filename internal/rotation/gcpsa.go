@@ -105,9 +105,26 @@ func (e *GCPServiceAccountKeyExecutor) GenerateUpstream(ctx context.Context, ref
 	}
 
 	// Remove every prior user-managed key so only the freshly-minted one remains.
-	// Best-effort: a delete failure is not fatal (the new key is live and will be stored).
+	// Security-critical (rotation must INVALIDATE the old, possibly compromised key),
+	// so a delete failure must not be swallowed and reported as success. Attempt every
+	// deletion; if any survived, return a PartialRotationError carrying the new key
+	// material — the caller MUST still store it (GCP returns the private key only once,
+	// so discarding it would orphan a live key) while recording the rotation incomplete
+	// and alerting an operator to remove the leftover key.
+	var undeleted []string
+	var lastErr error
 	for _, kn := range prior {
-		_ = cl.DeleteKey(ctx, kn)
+		if derr := cl.DeleteKey(ctx, kn); derr != nil {
+			undeleted = append(undeleted, kn)
+			lastErr = derr
+		}
+	}
+	if len(undeleted) > 0 {
+		return "", &PartialRotationError{
+			Value: keyJSON,
+			Err: fmt.Errorf("gcp-service-account: rotated %q but failed to delete prior key(s) %v (the old key is still live and must be removed manually): %w",
+				ref, undeleted, lastErr),
+		}
 	}
 	return keyJSON, nil
 }

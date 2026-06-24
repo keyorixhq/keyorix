@@ -106,10 +106,26 @@ func (e *AzureAppSecretExecutor) GenerateUpstream(ctx context.Context, ref strin
 	if secret == "" {
 		return "", fmt.Errorf("azure-app: add secret for %q returned no secret text", ref)
 	}
-	// Remove the prior secrets so only the freshly-minted one remains. Best-effort: a
-	// delete failure is not fatal (the new secret is live and will be stored).
+	// Remove the prior secrets so only the freshly-minted one remains. Security-critical
+	// (rotation must INVALIDATE the old, possibly compromised secret), so a delete
+	// failure must not be swallowed and reported as success. Attempt every removal; if
+	// any survived, return a PartialRotationError carrying the new secret — the caller
+	// stores it (so it isn't lost) while recording the rotation incomplete and alerting
+	// an operator to remove the leftover secret.
+	var undeleted []string
+	var lastErr error
 	for _, kid := range prior {
-		_ = cl.RemovePassword(ctx, ref, kid)
+		if derr := cl.RemovePassword(ctx, ref, kid); derr != nil {
+			undeleted = append(undeleted, kid)
+			lastErr = derr
+		}
+	}
+	if len(undeleted) > 0 {
+		return "", &PartialRotationError{
+			Value: secret,
+			Err: fmt.Errorf("azure-app: rotated %q but failed to delete prior secret(s) %v (the old secret is still live and must be removed manually): %w",
+				ref, undeleted, lastErr),
+		}
 	}
 	return secret, nil
 }

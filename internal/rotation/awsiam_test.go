@@ -18,6 +18,7 @@ type fakeIAM struct {
 	newID     string
 	newSecret string
 	createErr error
+	deleteErr error // when set, DeleteAccessKey fails (cleanup-failure path)
 	deleted   []string
 	createdAs string // username passed to CreateAccessKey
 }
@@ -42,6 +43,9 @@ func (f *fakeIAM) CreateAccessKey(_ context.Context, in *iam.CreateAccessKeyInpu
 }
 
 func (f *fakeIAM) DeleteAccessKey(_ context.Context, in *iam.DeleteAccessKeyInput, _ ...func(*iam.Options)) (*iam.DeleteAccessKeyOutput, error) {
+	if f.deleteErr != nil {
+		return nil, f.deleteErr
+	}
 	f.deleted = append(f.deleted, aws.ToString(in.AccessKeyId))
 	return &iam.DeleteAccessKeyOutput{}, nil
 }
@@ -91,6 +95,28 @@ func TestAWSIAM_GenerateUpstream_TwoKeysFreesSlotFirst(t *testing.T) {
 	_, err := iamWith(fake, "svc-").GenerateUpstream(context.Background(), "svc-app")
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"AKIA1", "AKIA2"}, fake.deleted, "both prior keys removed; only the new one remains")
+}
+
+// TestAWSIAM_GenerateUpstream_PriorDeleteFailureIsSurfaced proves the rotation is
+// NOT silently reported as success when a prior (possibly compromised) access key
+// cannot be deleted. It must return a *PartialRotationError that still carries the
+// new credential (so it can be stored) while surfacing the leftover key.
+func TestAWSIAM_GenerateUpstream_PriorDeleteFailureIsSurfaced(t *testing.T) {
+	fake := &fakeIAM{existing: []string{"AKIAOLD"}, newID: "AKIANEW", newSecret: "s3cr3t", deleteErr: errors.New("AccessDenied")}
+	v, err := iamWith(fake, "svc-").GenerateUpstream(context.Background(), "svc-app")
+
+	require.Error(t, err)
+	var partial *PartialRotationError
+	require.ErrorAs(t, err, &partial, "a cleanup failure must surface as PartialRotationError, not a clean success")
+	assert.Contains(t, err.Error(), "AKIAOLD")
+	assert.Contains(t, err.Error(), "still live")
+	assert.Empty(t, v, "the value is carried on the error, not the return")
+
+	// The new credential is preserved on the error so the caller can still store it.
+	var cred map[string]string
+	require.NoError(t, json.Unmarshal([]byte(partial.Value), &cred))
+	assert.Equal(t, "AKIANEW", cred["access_key_id"])
+	assert.Equal(t, "s3cr3t", cred["secret_access_key"])
 }
 
 func TestAWSIAM_GenerateUpstream_Errors(t *testing.T) {

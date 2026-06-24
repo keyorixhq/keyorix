@@ -111,18 +111,35 @@ func (e *AWSIAMExecutor) GenerateUpstream(ctx context.Context, ref string) (stri
 	}
 	newID := *created.AccessKey.AccessKeyId
 
-	// Remove every prior key so only the freshly-minted one remains. Best-effort: a
-	// delete failure is not fatal (the new key is already live and will be stored).
-	for _, id := range prior {
-		_ = e.deleteKey(ctx, cl, ref, id)
-	}
-
 	out, err := json.Marshal(map[string]string{
 		"access_key_id":     newID,
 		"secret_access_key": *created.AccessKey.SecretAccessKey,
 	})
 	if err != nil {
 		return "", fmt.Errorf("aws-iam: marshal credential: %w", err)
+	}
+
+	// Remove every prior key so only the freshly-minted one remains. This is the
+	// security-critical step — rotation exists to INVALIDATE the old (possibly
+	// compromised) credential — so a delete failure must NOT be swallowed and the
+	// run reported as success. Attempt every deletion, then, if any survived, return
+	// a PartialRotationError carrying the new value: the caller stores the new
+	// credential (so it isn't lost) but records the rotation as incomplete and alerts
+	// an operator to remove the leftover key.
+	var undeleted []string
+	var lastErr error
+	for _, id := range prior {
+		if derr := e.deleteKey(ctx, cl, ref, id); derr != nil {
+			undeleted = append(undeleted, id)
+			lastErr = derr
+		}
+	}
+	if len(undeleted) > 0 {
+		return "", &PartialRotationError{
+			Value: string(out),
+			Err: fmt.Errorf("aws-iam: rotated %q but failed to delete prior access key(s) %v (the old credential is still live and must be removed manually): %w",
+				ref, undeleted, lastErr),
+		}
 	}
 	return string(out), nil
 }
