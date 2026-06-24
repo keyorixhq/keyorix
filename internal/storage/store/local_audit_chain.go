@@ -83,6 +83,17 @@ func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 	// µs-precision; an un-truncated nanosecond time would not round-trip).
 	event.EventTime = event.EventTime.Truncate(time.Microsecond)
 
+	// Normalize ActorType to the column default ("user", see models.AuditEvent)
+	// BEFORE hashing. The hash covers ActorType, but the row is stored via GORM,
+	// whose `default:user` tag rewrites an empty value to "user" at insert. Without
+	// this, a caller that leaves ActorType unset (e.g. the sharing/impersonation
+	// audit helpers) hashes over "" yet persists "user", so VerifyAuditChain later
+	// recomputes over the stored "user" and false-fails an untampered chain. Pinning
+	// the value here keeps the hashed and stored ActorType identical for every caller.
+	if event.ActorType == "" {
+		event.ActorType = "user"
+	}
+
 	ls.auditChainMu.Lock()
 	defer ls.auditChainMu.Unlock()
 
