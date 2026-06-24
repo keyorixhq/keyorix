@@ -161,6 +161,7 @@ const (
 	schedLockEvidence     int64 = 0x4B455953_45564944 // "KEYSEVID"
 	schedLockRecertify    int64 = 0x4B455953_52454354 // "KEYSRECT"
 	schedLockDigest       int64 = 0x4B455953_44494753 // "KEYSDIGS"
+	schedLockLicenseExp   int64 = 0x4B455953_4C494345 // "KEYSLICE"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -899,6 +900,29 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 				}
 				if n > 0 {
 					log.Printf("Certificate-expiry scan: sent %d notification(s)", n)
+				}
+				return nil
+			})
+		})
+	}
+
+	// Start the license-expiry reminder — opt-in (ADR-065 Phase 2c). Notifies install-wide
+	// admins when the offline commercial license is approaching or past expiry, so a lapse
+	// (which silently disables commercial features) doesn't go unnoticed. Single-replica-
+	// gated (ADR-039) so N replicas don't each notify.
+	if cfg.LicenseExpiry.Enabled {
+		interval := cfg.LicenseExpiry.GetInterval()
+		leadDays := cfg.LicenseExpiry.LeadDays
+		log.Printf("License-expiry reminder enabled: every %s (lead %dd)", interval, leadDays)
+		runScheduler(ctx, "license_expiry", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockLicenseExp, "License-expiry", func() error {
+				n, rerr := coreService.ScanLicenseExpiry(ctx, leadDays)
+				if rerr != nil {
+					log.Printf("License-expiry reminder error: %v", rerr)
+					return rerr
+				}
+				if n > 0 {
+					log.Printf("License-expiry reminder: sent %d notification(s)", n)
 				}
 				return nil
 			})

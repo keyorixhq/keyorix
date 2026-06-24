@@ -8,8 +8,9 @@ Accepted. Implements the **licensing** mechanism of
 the token + offline evaluation + CLI; **Phase 2b** wired it into the server (startup load, a
 nil-safe fresh-evaluating gate on the core, a startup audit event, `GET
 /api/v1/license/status`); **Phase 2c** (this revision) designates the **first commercial
-feature** — `airgap_updates`, gating `keyorix bundle import`. Dashboard surfacing and
-transition notifications remain.
+feature** — `airgap_updates`, gating `keyorix bundle import`, and adds the opt-in `license_expiry`
+background reminder that notifies install-wide admins ahead of a lapse. Dashboard surfacing
+(keyorix-web) remains.
 
 ## Context
 

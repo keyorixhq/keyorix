@@ -213,8 +213,12 @@ behaviour until built.
      embedded update key only release builds carry) and is the air-gap tier's flagship;
      `bundle verify` stays free. The gate is fail-safe (no/degraded license → feature off →
      import refused, never affecting a running deployment).
-   - **2c remaining:** surface license state in the web dashboard, and emit admin
-     notifications on state transitions (expiring-soon / expired).
+   - **2c (expiry reminders done, [ADR-065](adr-065-offline-license-validation.md)):** an
+     opt-in background reminder (`license_expiry`, single-replica-gated like the other
+     schedulers) notifies install-wide admins when the license is within its lead window of
+     expiry or has expired — deduped so it doesn't spam — so a silent lapse that disables
+     commercial features doesn't go unnoticed.
+   - **2c remaining:** surface license state in the web dashboard (keyorix-web).
 4. **Phase 3 — hardening:** HSM-backed signing, key rotation drill, reproducible-bundle
    verification, and a documented operator runbook.
 
