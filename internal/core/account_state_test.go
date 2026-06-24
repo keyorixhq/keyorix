@@ -104,13 +104,16 @@ func TestValidateSessionToken_RejectsBlockedOrInactive(t *testing.T) {
 			c := newAccountCore(store)
 			ctx := context.Background()
 			store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 2, ExpiresAt: &future}, nil)
-			store.On("TouchSession", ctx, uint(7), mock.Anything, mock.Anything).Return(nil)
 			store.On("GetUser", ctx, uint(2)).Return(tc.user, nil)
 
 			_, _, err := c.ValidateSessionToken(ctx, "tok")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "not active")
 			store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
+			// Must reject before stamping last-seen — a blocked/inactive account's
+			// request is not "used" and must not refresh the sessions view (matching
+			// ValidatePATToken's touch-after-gate ordering).
+			store.AssertNotCalled(t, "TouchSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
 	}
 }

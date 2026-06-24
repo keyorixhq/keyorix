@@ -188,10 +188,6 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if session.AbsoluteExpiresAt != nil && c.now().After(*session.AbsoluteExpiresAt) {
 		return nil, nil, fmt.Errorf("session lifetime exceeded")
 	}
-	// Best-effort, throttled last-seen stamp for the My Account sessions view.
-	// Only writes when the stored value is older than sessionTouchInterval, so the
-	// auth hot path is not turned into a write per request. Never fails the request.
-	_ = c.storage.TouchSession(ctx, session.ID, c.now(), sessionTouchInterval)
 	user, err := c.storage.GetUser(ctx, session.UserID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("user not found")
@@ -202,6 +198,13 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, fmt.Errorf("account is not active")
 	}
+	// Best-effort, throttled last-seen stamp for the My Account sessions view.
+	// Only writes when the stored value is older than sessionTouchInterval, so the
+	// auth hot path is not turned into a write per request. Never fails the request.
+	// Stamped only AFTER the account-state gate, so a rejected request from a
+	// suspended/deactivated account is not "used" — it must not refresh last-seen
+	// (matching ValidatePATToken, which touches only after the same gate).
+	_ = c.storage.TouchSession(ctx, session.ID, c.now(), sessionTouchInterval)
 	roles, err := c.storage.GetUserRoles(ctx, user.ID)
 	if err != nil {
 		return user, []string{}, nil
