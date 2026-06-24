@@ -35,6 +35,12 @@ func newSecretTestRig(t *testing.T) *secretTestRig {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// Serialize access to the in-memory DB: the audit logging the service fires runs
+	// in a detached goroutine (as on HTTP), so a single connection avoids SQLite
+	// "database is locked" races between it and the test's own queries.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
 		&models.SecretVersion{}, &models.User{}, &models.Role{}, &models.ShareRecord{},
@@ -329,6 +335,42 @@ func TestSecretService_GetSecretValue_RecordsAccessLogAndAudit(t *testing.T) {
 	require.NoError(t, r.db.Where("secret_node_id = ?", created.GetId()).First(&alog).Error)
 	assert.Equal(t, "owner", alog.AccessedBy)
 	assert.Equal(t, uint(created.GetId()), alog.SecretNodeID)
+}
+
+// Secret create/update/delete over gRPC must be audited exactly as on HTTP — the
+// core methods do not audit internally, the handler does. Without this, the entire
+// secret lifecycle was invisible in the audit trail when driven over gRPC.
+func TestSecretService_WriteOps_AuditedOverGRPC(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}))
+	ctx := authCtx(1, "owner", "secrets.write", "secrets.read", "secrets.delete")
+
+	created := r.createSecret(t, ctx, "lifecycle", "v1")
+
+	_, err := r.svc.UpdateSecret(ctx, &pb.UpdateSecretRequest{Id: created.GetId(), Value: strPtr("v2")})
+	require.NoError(t, err)
+
+	_, err = r.svc.DeleteSecret(ctx, &pb.DeleteSecretRequest{Id: created.GetId()})
+	require.NoError(t, err)
+
+	// Each op writes its audit event asynchronously; poll until all three landed.
+	countEvent := func(evType string) int64 {
+		var n int64
+		r.db.Model(&models.AuditEvent{}).
+			Where("event_type = ? AND secret_node_id = ?", evType, created.GetId()).Count(&n)
+		return n
+	}
+	require.Eventually(t, func() bool {
+		return countEvent("secret.created") == 1 &&
+			countEvent("secret.updated") == 1 &&
+			countEvent("secret.deleted") == 1
+	}, 2*time.Second, 10*time.Millisecond,
+		"create/update/delete over gRPC must each write one audit event")
+
+	// The update event carries a before/after diff (it records what changed).
+	var upd models.AuditEvent
+	require.NoError(t, r.db.Where("event_type = ? AND secret_node_id = ?", "secret.updated", created.GetId()).First(&upd).Error)
+	assert.NotEmpty(t, upd.Diff, "an update over gRPC must record a diff, like HTTP")
 }
 
 func TestSecretService_UpdateSecret(t *testing.T) {
