@@ -33,7 +33,13 @@ func TestGRPCServer_EndToEnd(t *testing.T) {
 	// Real core with a fully seeded RBAC schema (super_admin has all perms).
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
-	require.NoError(t, h.DB.AutoMigrate(&models.Session{}, &models.SecretVersion{}))
+	require.NoError(t, h.DB.AutoMigrate(&models.Session{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
+	// The services fire their audit/access-log writes in detached goroutines (as on
+	// HTTP), so serialize the in-memory DB to one connection to avoid SQLite
+	// "database is locked" races between those writes and the test's own RPCs.
+	sqlDB, sqlErr := h.DB.DB()
+	require.NoError(t, sqlErr)
+	sqlDB.SetMaxOpenConns(1)
 	// Environments that belong to the seeded projects 1 and 2 (seeded envs have none).
 	require.NoError(t, h.DB.Create(&models.Environment{ID: 10, ProjectID: 1, Name: "dev"}).Error)
 	require.NoError(t, h.DB.Create(&models.Environment{ID: 20, ProjectID: 2, Name: "dev"}).Error)
