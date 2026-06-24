@@ -55,6 +55,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 		&models.UserRole{},
 		&models.Group{},
 		&models.GroupRole{},
+		&models.UserGroup{},
 		&models.User{},
 	))
 	return db
