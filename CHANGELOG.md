@@ -3,6 +3,28 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.85.0 — 2026-06-24
+
+A proactive license-expiry reminder, plus break-glass and federated-auth boundary tests.
+
+### Added
+- **Background license-expiry reminder** — an opt-in scheduler (`license_expiry`) that
+  notifies install-wide admins when the offline commercial license is within its lead window
+  of expiry or has already expired, so a silent lapse (which degrades commercial features to
+  the community baseline) doesn't go unnoticed. It targets install-wide admins only
+  (`super_admin` / `admin` / `system_admin`, not project-scoped admins), is deduped so it
+  doesn't repeat on every tick, and is single-replica-gated in HA (ADR-039). The fail-safe
+  gate and `GET /api/v1/license/status` are unaffected. (ADR-065 Phase 2c) ([#496])
+
+### Internal
+- Security-boundary tests: an expired break-glass emergency grant denies authorization end
+  to end ([#494]), and federated machine-identity auth keeps cross-issuer bindings isolated
+  (a token from one issuer can't satisfy a binding for another) ([#495], ADR-031).
+
+[#494]: https://github.com/keyorixhq/keyorix/pull/494
+[#495]: https://github.com/keyorixhq/keyorix/pull/495
+[#496]: https://github.com/keyorixhq/keyorix/pull/496
+
 ## v0.84.0 — 2026-06-24
 
 The first commercial-licensed feature, plus session-lifetime hardening.
