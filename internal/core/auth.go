@@ -144,6 +144,19 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		_ = c.storage.DeleteSession(ctx, old.ID)
 		return nil, fmt.Errorf("session lifetime exceeded; re-authentication required")
 	}
+	// Re-check account state before rotating the token. ValidateSessionToken applies
+	// this gate on every request, but refresh is a distinct, unauthenticated-by-token
+	// entry point: without re-checking here, an account deactivated (IsActive=false)
+	// or suspended after issuance could keep minting fresh, self-renewing sessions
+	// indefinitely. Mirror the gate and drop the now-invalid session.
+	user, err := c.storage.GetUser(ctx, old.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
+		_ = c.storage.DeleteSession(ctx, old.ID)
+		return nil, fmt.Errorf("account is not active")
+	}
 	newToken, err := generateSecureToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
