@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -15,6 +16,11 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
 )
+
+// grpcUnaryTimeout caps each unary RPC's duration, matching the HTTP API's 60s
+// request-timeout middleware (server/http/router.go) so the bound is the same on
+// both transports. Streaming RPCs are exempt (see TimeoutInterceptor).
+const grpcUnaryTimeout = 60 * time.Second
 
 // NewServer creates a new gRPC server. The auth interceptor validates session
 // tokens against the shared core service. Service registration is wired in a
@@ -28,6 +34,11 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		grpc.ChainUnaryInterceptor(
 			interceptors.LoggingInterceptor(),
 			interceptors.RecoveryInterceptor(),
+			// Cap each unary RPC at the same 60s the HTTP API's Timeout middleware
+			// enforces, so a hung handler can't tie up resources over gRPC when it would
+			// be bounded over HTTP. Streams are intentionally exempt (StreamAuditLogs is
+			// long-lived), so the stream chain carries no timeout.
+			interceptors.TimeoutInterceptor(grpcUnaryTimeout),
 			interceptors.AuthInterceptor(coreService, cfg.Security.RequireMFA),
 			interceptors.MetricsInterceptor(),
 		),
