@@ -230,23 +230,12 @@ func (rs *RemoteStorage) GetUserPermissions(ctx context.Context, userID uint) ([
 	return result, nil
 }
 
-// GetUserGroupPermissions retrieves a user's group-inherited permissions via the
-// remote API. The server resolves direct and group permissions on its own storage;
-// this client path exists to satisfy the Storage interface.
-func (rs *RemoteStorage) GetUserGroupPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
-	path := fmt.Sprintf("/api/v1/users/%d/group-permissions", userID)
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user group permissions: %w", err)
-	}
-	if !resp.Success {
-		return nil, fmt.Errorf("get user group permissions failed: %s", resp.Error.Error())
-	}
-	var result []*storage.Permission
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result, nil
+// GetUserGroupPermissions is not supported in remote storage. SoD conflict
+// detection (its only caller) runs server-side against LocalStorage, which resolves
+// group-inherited permissions directly; there is no remote API for it. Fail loudly
+// rather than silently under-reporting, in case a future caller wires it up.
+func (rs *RemoteStorage) GetUserGroupPermissions(_ context.Context, _ uint) ([]*storage.Permission, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
 }
 
 // --- Permission management (not supported in remote mode) ---
