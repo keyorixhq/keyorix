@@ -41,6 +41,35 @@ func newMFATestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	return c, db, fixed
 }
 
+// A suspended account must not complete a second factor: the challenge can be
+// issued (password step passed) just before an admin suspends the account, and the
+// MFA-completion path must refuse it rather than mint a session.
+func TestVerifyMFALogin_RejectsSuspendedAccount(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	ctx := context.Background()
+
+	// Enrol + activate MFA for alice.
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode)
+	require.NoError(t, err)
+
+	// A login is in flight (valid challenge), then the admin suspends the account.
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("account_state", AccountSuspended).Error)
+
+	// Even a correct TOTP code must not yield a session for the suspended account.
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	sess, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not active")
+	assert.Nil(t, sess)
+}
+
 func TestMFA_FullFlow(t *testing.T) {
 	c, db, fixed := newMFATestCore(t)
 	ctx := context.Background()
