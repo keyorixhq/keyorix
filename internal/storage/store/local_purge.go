@@ -39,8 +39,38 @@ func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, befo
 	return ls.purgeDeletedBefore(ctx, &models.Environment{}, before)
 }
 
+// PurgeDeletedSecretsBefore hard-deletes soft-deleted secrets past the cutoff together
+// with the dependency-graph edges incident to them, in one transaction. A SecretDependency
+// edge has no soft-delete of its own (ADR-052) — it lives and dies with its endpoints — so
+// purging a secret without removing its edges would leave rows referencing a hard-deleted
+// secret. Returns the number of secrets purged (edge rows are not counted).
 func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
-	return ls.purgeDeletedBefore(ctx, &models.SecretNode{}, before)
+	var purged int64
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ids []uint
+		if e := tx.Unscoped().Model(&models.SecretNode{}).
+			Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+			Pluck("id", &ids).Error; e != nil {
+			return e
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if e := tx.Where("dependent_secret_id IN ? OR depends_on_secret_id IN ?", ids, ids).
+			Delete(&models.SecretDependency{}).Error; e != nil {
+			return e
+		}
+		r := tx.Unscoped().Where("id IN ?", ids).Delete(&models.SecretNode{})
+		if r.Error != nil {
+			return r.Error
+		}
+		purged = r.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return purged, nil
 }
 
 // --- Data-retention purges (ISO A.5.33 / GDPR storage-limitation) ---
