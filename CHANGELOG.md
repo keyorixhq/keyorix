@@ -3,6 +3,33 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## v0.84.0 — 2026-06-24
+
+The first commercial-licensed feature, plus session-lifetime hardening.
+
+### Added
+- **`bundle import` is the first license-gated commercial feature (`airgap_updates`)** —
+  staging an air-gap update bundle for rollout now requires a valid offline license carrying
+  the `airgap_updates` feature; `bundle verify` stays free. The gate is fail-safe: a
+  missing/expired/invalid license simply means the feature is off and import is refused with
+  an actionable message — it never affects a running deployment. Gating strips nothing from
+  community builds: import already requires the embedded update-signing key that only release
+  builds carry. (ADR-065 Phase 2c, ADR-062) ([#491])
+
+### Security
+- **The absolute session-lifetime ceiling is enforced at validation** — a session is now
+  rejected once it passes its absolute lifetime cap even if the access token itself has not
+  expired, closing a window where a long-lived refresh chain could outlive the configured
+  ceiling. ([#489])
+
+### Internal
+- A regression test pinning that the SIEM-pull audit export carries the ADR-029 hash-chain
+  links (so an external SIEM can independently verify tamper-evidence). ([#490])
+
+[#489]: https://github.com/keyorixhq/keyorix/pull/489
+[#490]: https://github.com/keyorixhq/keyorix/pull/490
+[#491]: https://github.com/keyorixhq/keyorix/pull/491
+
 ## v0.83.0 — 2026-06-24
 
 Offline commercial-license validation — the second air-gap mechanism, fail-safe by design —
