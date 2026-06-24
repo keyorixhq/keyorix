@@ -346,3 +346,86 @@ func TestAuthInterceptor_MFAEnrolmentGateOverGRPC(t *testing.T) {
 	_, err = AuthInterceptor(h.CoreService, false)(bearerCtx("nomfa-token"), nil, info, okHandler(nil))
 	require.NoError(t, err, "no MFA gate when the deployment does not require MFA")
 }
+
+// A machine-identity request over gRPC must produce audit events actored as a
+// machine (ADR-023/030), not silently defaulted to "user" — parity with HTTP's
+// buildRequestContext, which tags the request context the same way. Without the
+// interceptor tagging the context, switching transport to gRPC would mislabel
+// every machine action as a user action in the audit trail.
+func TestAuthInterceptor_MachineRequestStampsMachineActorInAudit(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.MachineIdentity{}, &models.MachineIdentityCredential{}, &models.MachineIdentityRole{}, &models.AuditEvent{}))
+
+	m, err := h.CoreService.CreateMachineIdentity(context.Background(), 2, "ci-bot", "service", "", "", 1)
+	require.NoError(t, err)
+	tok, err := h.CoreService.IssueMachineToken(context.Background(), 2, m.ID, "tok", nil, "", 1)
+	require.NoError(t, err)
+
+	var captured context.Context
+	interceptor := AuthInterceptor(h.CoreService, false)
+	_, err = interceptor(bearerCtx(tok.PlainToken), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
+	require.NoError(t, err)
+
+	// An audit event written downstream with the handler's context must be machine-actored.
+	h.CoreService.LogRoleAssigned(captured, 0, 1, 4, core.Scope{ProjectID: 2})
+	var ev models.AuditEvent
+	require.NoError(t, h.DB.Order("id desc").First(&ev).Error)
+	assert.Equal(t, core.ActorTypeMachine, ev.ActorType,
+		"a machine request over gRPC must stamp ActorType=machine_identity in audit")
+}
+
+// An impersonation session used over gRPC must keep the initiating admin
+// attributable: every audit event it writes records ImpersonatedBy and
+// Impersonation=true, exactly as on HTTP. Without resolving SessionImpersonator
+// and tagging the context, an admin acting through impersonation over gRPC would
+// be invisible in the audit trail — an accountability bypass by transport.
+func TestAuthInterceptor_ImpersonationSessionStampsAdminInAudit(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
+
+	const adminID, targetID uint = 7001, 7002
+	h.CreateTestUser(t, "imp-target", targetID)
+	exp := time.Now().Add(time.Hour)
+	admin := adminID
+	_, err := h.Storage.CreateSession(context.Background(), &models.Session{
+		UserID:         targetID,
+		SessionToken:   "imp-token",
+		ExpiresAt:      &exp,
+		ImpersonatedBy: &admin,
+	})
+	require.NoError(t, err)
+
+	var captured context.Context
+	interceptor := AuthInterceptor(h.CoreService, false)
+	_, err = interceptor(bearerCtx("imp-token"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&captured))
+	require.NoError(t, err)
+
+	// The token authenticates as the impersonated target, carrying the admin's id.
+	user := GetUserFromGRPCContext(captured)
+	require.NotNil(t, user)
+	assert.Equal(t, targetID, user.UserID)
+	require.NotNil(t, user.ImpersonatedBy, "impersonation must be resolved over gRPC")
+	assert.Equal(t, adminID, *user.ImpersonatedBy)
+
+	// An audit event written downstream records the initiating admin and the flag.
+	h.CoreService.LogRoleAssigned(captured, targetID, 1, 4, core.Scope{ProjectID: 2})
+	var ev models.AuditEvent
+	require.NoError(t, h.DB.Order("id desc").First(&ev).Error)
+	require.NotNil(t, ev.ImpersonatedBy, "audit over gRPC must record the impersonating admin")
+	assert.Equal(t, adminID, *ev.ImpersonatedBy)
+	assert.True(t, ev.Impersonation, "audit over gRPC must mark the event as impersonated")
+
+	// A non-impersonation session leaves the tag unset (no false positives).
+	mintSessionForTest(t, h, 7003, "plain-user", "plain-token", time.Now().Add(time.Hour))
+	var plainCtx context.Context
+	_, err = interceptor(bearerCtx("plain-token"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(&plainCtx))
+	require.NoError(t, err)
+	assert.Nil(t, GetUserFromGRPCContext(plainCtx).ImpersonatedBy,
+		"an ordinary session must not be tagged as impersonation")
+}

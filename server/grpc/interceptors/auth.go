@@ -34,6 +34,12 @@ type UserContext struct {
 	// (treated as a user). MachineIdentityID is the machine's id for that case.
 	ActorType         string `json:"actor_type,omitempty"`
 	MachineIdentityID uint   `json:"machine_identity_id,omitempty"`
+	// ImpersonatedBy is the initiating admin's id when this is an impersonation
+	// session (nil otherwise). Resolved once in authenticateRequest and tagged onto
+	// the request context by the interceptors (core.WithImpersonation) so audit
+	// events written over gRPC carry the same accountability HTTP records — the
+	// same definition HTTP's UserContext uses.
+	ImpersonatedBy *uint `json:"impersonated_by,omitempty"`
 	// SessionAuth is true only for an interactive session token — false for PATs and
 	// machine tokens, which are non-interactive. MFAEnabled is true when the user has
 	// any second factor (TOTP or a passkey). Together they let the service layer apply
@@ -87,6 +93,7 @@ func AuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.UnaryS
 
 		// Add user context to request context
 		newCtx := context.WithValue(ctx, userContextKey, userCtx)
+		newCtx = withAuditAttribution(newCtx, userCtx)
 		// Carry a PAT's least-privilege restriction (ADR-042) so core.Authorize
 		// enforces it on every authorization check this RPC makes.
 		if restriction != nil {
@@ -112,8 +119,9 @@ func StreamAuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.
 			return err
 		}
 
-		// Create a new stream with user context (+ PAT restriction when present).
+		// Create a new stream with user context (+ audit attribution / PAT restriction).
 		streamCtx := context.WithValue(stream.Context(), userContextKey, userCtx)
+		streamCtx = withAuditAttribution(streamCtx, userCtx)
 		if restriction != nil {
 			streamCtx = core.WithPATRestriction(streamCtx, restriction)
 		}
@@ -134,6 +142,30 @@ type wrappedServerStream struct {
 
 func (w *wrappedServerStream) Context() context.Context {
 	return w.ctx
+}
+
+// withAuditAttribution tags ctx so audit events written downstream over gRPC carry
+// the same actor accountability the HTTP path records in buildRequestContext:
+//
+//   - a machine-identity request is actored as a machine (ADR-023/030) rather than
+//     defaulting to "user";
+//   - an impersonation session records the initiating admin (ImpersonatedBy /
+//     Impersonation=true), so an admin acting through impersonation stays
+//     attributable over gRPC just as on HTTP.
+//
+// Without this, switching transport to gRPC silently dropped both tags — machine
+// actions were logged as user actions and impersonated actions lost the admin.
+func withAuditAttribution(ctx context.Context, userCtx *UserContext) context.Context {
+	if userCtx == nil {
+		return ctx
+	}
+	if userCtx.ActorType == core.ActorTypeMachine {
+		ctx = core.WithActorType(ctx, core.ActorTypeMachine)
+	}
+	if userCtx.ImpersonatedBy != nil {
+		ctx = core.WithImpersonation(ctx, *userCtx.ImpersonatedBy)
+	}
+	return ctx
 }
 
 // authenticateRequest extracts the bearer token from the request metadata and
@@ -193,13 +225,23 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		restriction *core.PATRestriction
 		err         error
 	)
-	if strings.HasPrefix(token, patTokenPrefix) {
+	viaPAT := strings.HasPrefix(token, patTokenPrefix)
+	if viaPAT {
 		user, _, restriction, err = coreService.ValidatePATToken(ctx, token)
 	} else {
 		user, _, err = coreService.ValidateSessionToken(ctx, token)
 	}
 	if err != nil {
 		return nil, nil, status.Errorf(codes.Unauthenticated, "Invalid or expired token")
+	}
+
+	// Resolve impersonation for a real session token (a PAT is never an
+	// impersonation session). On HTTP the auth middleware tags the context so audit
+	// events record the initiating admin; mirror it here so that accountability is
+	// not lost by switching transport. A non-impersonation session returns nil.
+	var impersonatedBy *uint
+	if !viaPAT {
+		impersonatedBy = coreService.SessionImpersonator(ctx, token)
 	}
 
 	// Enforce a PAT's network allowlist on the gRPC transport too (ADR-066), so the IP
@@ -227,7 +269,7 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 	if core.AccountRestricted(user.AccountState) {
 		return nil, nil, status.Errorf(codes.PermissionDenied, "password change required before access")
 	}
-	viaSession := !strings.HasPrefix(token, patTokenPrefix)
+	viaSession := !viaPAT
 	if requireMFA && viaSession && !(user.MFAEnabled || user.WebAuthnEnabled) {
 		return nil, nil, status.Errorf(codes.PermissionDenied, "multi-factor authentication enrolment required")
 	}
@@ -249,6 +291,9 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 		// stays exempt — exactly as the deployment-wide gate above and HTTP treat it.
 		SessionAuth: viaSession,
 		MFAEnabled:  user.MFAEnabled || user.WebAuthnEnabled,
+		// Carry the impersonation attribution so the interceptor can tag the request
+		// context (core.WithImpersonation) — audit parity with HTTP.
+		ImpersonatedBy: impersonatedBy,
 	}, restriction, nil
 }
 
