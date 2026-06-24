@@ -219,6 +219,20 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, fmt.Errorf("account is not active")
 	}
+	// For an impersonation session (acting AS session.UserID on behalf of an admin),
+	// the impersonating admin's account must still be valid too — otherwise suspending
+	// or deactivating the admin would not stop their in-flight impersonation, since the
+	// session is keyed to the target's user_id and the gate above only checks the
+	// target. Self-checking backstop alongside the session purge on state change.
+	if session.ImpersonatedBy != nil && *session.ImpersonatedBy != 0 {
+		admin, err := c.storage.GetUser(ctx, *session.ImpersonatedBy)
+		if err != nil {
+			return nil, nil, fmt.Errorf("impersonating account not found")
+		}
+		if !admin.IsActive || AccountLoginBlocked(admin.AccountState) {
+			return nil, nil, fmt.Errorf("impersonating account is not active")
+		}
+	}
 	// Best-effort, throttled last-seen stamp for the My Account sessions view.
 	// Only writes when the stored value is older than sessionTouchInterval, so the
 	// auth hot path is not turned into a write per request. Never fails the request.

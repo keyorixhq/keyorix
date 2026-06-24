@@ -83,9 +83,13 @@ func (ls *LocalStorage) DeleteSession(ctx context.Context, id uint) error {
 }
 
 // DeleteSessionsForUserExcept removes all of the user's sessions except exceptID.
+// It also removes impersonation sessions the user STARTED (impersonated_by = userID):
+// an impersonation session is keyed to the target's user_id, so without this clause a
+// suspend/deactivate/force-logout of the impersonating admin would leave their live
+// impersonation session running until its TTL — elevated access outliving the admin.
 func (ls *LocalStorage) DeleteSessionsForUserExcept(ctx context.Context, userID, exceptID uint) error {
 	result := ls.db.WithContext(ctx).
-		Where("user_id = ? AND id <> ?", userID, exceptID).
+		Where("(user_id = ? OR impersonated_by = ?) AND id <> ?", userID, userID, exceptID).
 		Delete(&models.Session{})
 	if result.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)

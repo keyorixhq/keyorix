@@ -137,6 +137,25 @@ func TestValidateSessionToken_RejectsBlockedOrInactive(t *testing.T) {
 	}
 }
 
+// An impersonation session (target active) must be rejected once the IMPERSONATING
+// admin is suspended/deactivated — the session is keyed to the target's user_id, so
+// the target-state gate alone would let a revoked admin keep acting as the target.
+func TestValidateSessionToken_RejectsWhenImpersonatorBlocked(t *testing.T) {
+	future := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	store := new(MockStorage)
+	c := newAccountCore(store)
+	ctx := context.Background()
+	admin := uint(1)
+	store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 2, ImpersonatedBy: &admin, ExpiresAt: &future}, nil)
+	store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, IsActive: true, AccountState: AccountActive}, nil)
+	store.On("GetUser", ctx, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountSuspended}, nil)
+
+	_, _, err := c.ValidateSessionToken(ctx, "tok")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "impersonating account is not active")
+	store.AssertNotCalled(t, "TouchSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
 func TestValidateSessionToken_AllowsActive(t *testing.T) {
 	future := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	store := new(MockStorage)
