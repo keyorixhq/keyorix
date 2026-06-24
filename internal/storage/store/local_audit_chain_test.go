@@ -222,6 +222,38 @@ func TestLogAuditEvent_EmptyActorTypeStillVerifies(t *testing.T) {
 	assert.Nil(t, v.FirstBrokenID)
 }
 
+func TestLogAuditEvent_NilSuccessStillVerifies(t *testing.T) {
+	ls := newAuditChainTestStore(t)
+	base := time.Now().UTC()
+	tr := true
+
+	// A normal event, then one with Success deliberately nil (the share path:
+	// every sharing_audit.go helper leaves Success unset).
+	require.NoError(t, ls.LogAuditEvent(context.Background(), &models.AuditEvent{
+		EventType: "auth.login", Description: "first", Success: &tr, EventTime: base, ActorType: "user",
+	}))
+	shareEvt := &models.AuditEvent{
+		EventType: "share_created", Description: "shared with user 2",
+		EventTime: base.Add(time.Second), ActorType: "user", // Success intentionally nil
+	}
+	require.NoError(t, ls.LogAuditEvent(context.Background(), shareEvt))
+
+	// The persisted row carries the column default (true), and the in-memory event
+	// was pinned to the same value before hashing so its hash matches.
+	require.NotNil(t, shareEvt.Success, "nil Success is normalized to the stored default before hashing")
+	assert.True(t, *shareEvt.Success)
+	var stored models.AuditEvent
+	require.NoError(t, ls.db.First(&stored, shareEvt.ID).Error)
+	require.NotNil(t, stored.Success)
+	assert.True(t, *stored.Success)
+
+	v, err := ls.VerifyAuditChain(context.Background())
+	require.NoError(t, err)
+	assert.True(t, v.Valid, "chain with a nil-Success event must verify: %s", v.Reason)
+	assert.Equal(t, int64(2), v.ChainedEvents)
+	assert.Nil(t, v.FirstBrokenID)
+}
+
 func TestComputeAuditEntryHash_Deterministic(t *testing.T) {
 	at := time.Unix(1_700_000_000, 123000).UTC() // 123µs exactly
 	uid := uint(7)

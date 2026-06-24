@@ -94,6 +94,16 @@ func (ls *LocalStorage) LogAuditEvent(ctx context.Context, event *models.AuditEv
 		event.ActorType = "user"
 	}
 
+	// Same round-trip hazard for Success (`default:true`, models.AuditEvent): the
+	// hash covers Success, but GORM rewrites a nil *bool to true at insert. Callers
+	// that leave Success unset (every sharing_audit.go helper) would hash over ""
+	// yet persist "true", so VerifyAuditChain recomputes over the stored true and
+	// false-fails an untampered chain. Pin it to the column default before hashing.
+	if event.Success == nil {
+		t := true
+		event.Success = &t
+	}
+
 	ls.auditChainMu.Lock()
 	defer ls.auditChainMu.Unlock()
 
