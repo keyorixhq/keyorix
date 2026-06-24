@@ -62,8 +62,10 @@ const (
 )
 
 // AuthInterceptor returns a unary server interceptor that authenticates each
-// request against a real session token via the core service.
-func AuthInterceptor(coreService *core.KeyorixCore) grpc.UnaryServerInterceptor {
+// request against a real session token via the core service. requireMFA mirrors
+// the deployment-wide security.require_mfa policy so the gRPC transport enforces
+// the same MFA-enrolment gate as the HTTP API.
+func AuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		// Skip authentication for certain methods
 		if isPublicMethod(info.FullMethod) {
@@ -71,7 +73,7 @@ func AuthInterceptor(coreService *core.KeyorixCore) grpc.UnaryServerInterceptor 
 		}
 
 		// Extract and validate token
-		userCtx, restriction, err := authenticateRequest(ctx, coreService)
+		userCtx, restriction, err := authenticateRequest(ctx, coreService, requireMFA)
 		if err != nil {
 			return nil, err
 		}
@@ -88,8 +90,9 @@ func AuthInterceptor(coreService *core.KeyorixCore) grpc.UnaryServerInterceptor 
 }
 
 // StreamAuthInterceptor returns a stream server interceptor that authenticates
-// each stream against a real session token via the core service.
-func StreamAuthInterceptor(coreService *core.KeyorixCore) grpc.StreamServerInterceptor {
+// each stream against a real session token via the core service. requireMFA
+// mirrors the deployment-wide security.require_mfa policy (see AuthInterceptor).
+func StreamAuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.StreamServerInterceptor {
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		// Skip authentication for certain methods
 		if isPublicMethod(info.FullMethod) {
@@ -97,7 +100,7 @@ func StreamAuthInterceptor(coreService *core.KeyorixCore) grpc.StreamServerInter
 		}
 
 		// Extract and validate token
-		userCtx, restriction, err := authenticateRequest(stream.Context(), coreService)
+		userCtx, restriction, err := authenticateRequest(stream.Context(), coreService, requireMFA)
 		if err != nil {
 			return err
 		}
@@ -133,7 +136,7 @@ func (w *wrappedServerStream) Context() context.Context {
 // token. On success it returns the authenticated user's context (id, identity,
 // roles, permissions) and the PAT restriction (nil for sessions) for downstream
 // authorization.
-func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*UserContext, *core.PATRestriction, error) {
+func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, requireMFA bool) (*UserContext, *core.PATRestriction, error) {
 	if coreService == nil {
 		// Fail closed: a server wired without a core service must not authenticate.
 		return nil, nil, status.Errorf(codes.Internal, "authentication unavailable")
@@ -199,6 +202,27 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore) (*U
 		if !core.IPInCIDRs(grpcPeerIP(ctx), restriction.AllowedCIDRs) {
 			return nil, nil, status.Errorf(codes.PermissionDenied, "token not permitted from this network")
 		}
+	}
+
+	// Mirror the HTTP authed-group gates over gRPC so neither is bypassable by switching
+	// transport (the same class of gap ADR-066 closed for the IP allowlist):
+	//
+	//   - Account restriction (ADR-025): a pending_first_login / password_reset_required
+	//     account must change its password first. On HTTP it is confined to the
+	//     change-password allowlist; gRPC has no such endpoint, so it is denied outright.
+	//   - MFA enrolment (ADR-037): when the deployment mandates MFA, an interactive
+	//     session without MFA is confined to the enrolment endpoints on HTTP; again gRPC
+	//     has none, so deny. PATs and machine tokens are non-interactive and exempt,
+	//     exactly as on HTTP — automation must not break.
+	//
+	// Both fail closed. viaSession is true for a session token (machine tokens already
+	// returned above; a PAT carries the patTokenPrefix).
+	if core.AccountRestricted(user.AccountState) {
+		return nil, nil, status.Errorf(codes.PermissionDenied, "password change required before access")
+	}
+	viaSession := !strings.HasPrefix(token, patTokenPrefix)
+	if requireMFA && viaSession && !(user.MFAEnabled || user.WebAuthnEnabled) {
+		return nil, nil, status.Errorf(codes.PermissionDenied, "multi-factor authentication enrolment required")
 	}
 
 	// Resolve roles + permissions for downstream per-method authorization.

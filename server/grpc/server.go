@@ -27,13 +27,13 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		grpc.ChainUnaryInterceptor(
 			interceptors.LoggingInterceptor(),
 			interceptors.RecoveryInterceptor(),
-			interceptors.AuthInterceptor(coreService),
+			interceptors.AuthInterceptor(coreService, cfg.Security.RequireMFA),
 			interceptors.MetricsInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
 			interceptors.StreamLoggingInterceptor(),
 			interceptors.StreamRecoveryInterceptor(),
-			interceptors.StreamAuthInterceptor(coreService),
+			interceptors.StreamAuthInterceptor(coreService, cfg.Security.RequireMFA),
 		),
 	}
 
