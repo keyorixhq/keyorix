@@ -43,6 +43,47 @@ func TestAlertNewAnomalies(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
+// Regression: a first-time reader / first-seen IP in the detection window must raise
+// new_user / new_ip. The 30-day baseline query also spans the live 1h window, so before
+// the fix the triggering read seeded its own baseline (knownUsers/knownIPs already
+// contained it) and these two high-severity rules could never fire end-to-end.
+func TestRunDetection_FlagsNewUserAndIPAgainstPriorBaseline(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.SecretAccessLog{}, &models.AnomalyAlert{}))
+
+	ctx := context.Background()
+	secret := models.SecretNode{ID: 800, ProjectID: 1, Name: "db-pw", Status: "active", IsSecret: true}
+	require.NoError(t, h.DB.Create(&secret).Error)
+
+	// Established history (outside the 1h detection window): alice from a known IP.
+	for i := 2; i <= 10; i++ {
+		require.NoError(t, h.DB.Create(&models.SecretAccessLog{
+			SecretNodeID: 800, AccessedBy: "alice", Action: "read", IPAddress: "10.0.0.1",
+			AccessTime: time.Now().Add(-time.Duration(i) * 24 * time.Hour),
+		}).Error)
+	}
+	// A brand-new principal from a brand-new IP reads now (inside the detection window).
+	require.NoError(t, h.DB.Create(&models.SecretAccessLog{
+		SecretNodeID: 800, AccessedBy: "mallory", Action: "read", IPAddress: "203.0.113.5",
+		AccessTime: time.Now(),
+	}).Error)
+
+	detector := core.NewAnomalyDetector(h.CoreService.Storage())
+	require.NoError(t, detector.RunDetection(ctx, []models.SecretNode{secret}))
+
+	alerts, err := detector.ListAlerts(ctx, nil)
+	require.NoError(t, err)
+	kinds := map[string]bool{}
+	for _, a := range alerts {
+		if a.SecretNodeID == 800 {
+			kinds[a.AlertType] = true
+		}
+	}
+	assert.True(t, kinds["new_user"], "a first-time reader must raise new_user")
+	assert.True(t, kinds["new_ip"], "a first-seen IP must raise new_ip")
+}
+
 // The compliance posture counts open (unacknowledged) anomalies, with a high-severity tally.
 func TestCompliancePosture_Anomalies(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)

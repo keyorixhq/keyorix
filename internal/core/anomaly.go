@@ -60,7 +60,7 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		if len(baselineLogs) == 0 {
 			continue
 		}
-		baseline := buildBaseline(baselineLogs, now)
+		baseline := buildBaseline(baselineLogs, now, window)
 
 		// Get recent accesses (last hour)
 		recentLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, window)
@@ -93,8 +93,14 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 	return nil
 }
 
-// buildBaseline computes statistical baseline from historical access logs.
-func buildBaseline(logs []models.SecretAccessLog, now time.Time) accessBaseline {
+// buildBaseline computes the statistical baseline from historical access logs,
+// EXCLUDING the live detection window [windowStart, now]. The reads being evaluated
+// this pass must not seed their own baseline: the baseline query spans 30 days and
+// therefore contains the last hour too, so without this exclusion a genuinely new IP
+// or user would already appear in knownIPs/knownUsers and the new_ip / new_user rules
+// could never fire. Excluding the window also keeps the volume baseline (dailyAvg)
+// from inflating itself with the very burst a spike check is meant to catch.
+func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time) accessBaseline {
 	b := accessBaseline{
 		knownIPs:   make(map[string]bool),
 		knownUsers: make(map[string]bool),
@@ -103,6 +109,10 @@ func buildBaseline(logs []models.SecretAccessLog, now time.Time) accessBaseline 
 	recentCount := 0
 
 	for _, log := range logs {
+		// Skip the live window so this pass's reads don't establish their own baseline.
+		if !log.AccessTime.Before(windowStart) {
+			continue
+		}
 		if log.IPAddress != "" {
 			b.knownIPs[log.IPAddress] = true
 		}

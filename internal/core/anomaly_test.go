@@ -11,20 +11,25 @@ import (
 
 func TestBuildBaseline(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	windowStart := now.Add(-1 * time.Hour) // the live detection window — excluded from the baseline
 	logs := []models.SecretAccessLog{
-		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-1 * time.Hour)},       // in 7d
-		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-2 * 24 * time.Hour)},    // in 7d
-		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-20 * 24 * time.Hour)}, // older than 7d
+		{IPAddress: "203.0.113.9", AccessedBy: "mallory", AccessTime: now.Add(-30 * time.Minute)}, // inside window → excluded
+		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-2 * 24 * time.Hour)},       // in 7d, before window
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-20 * 24 * time.Hour)},    // older than 7d
 	}
-	b := buildBaseline(logs, now)
+	b := buildBaseline(logs, now, windowStart)
+	// The in-window read must NOT seed the baseline, else it would mask its own anomaly.
+	if b.knownIPs["203.0.113.9"] || b.knownUsers["mallory"] {
+		t.Fatalf("in-window read must be excluded from the baseline, got IPs=%v users=%v", b.knownIPs, b.knownUsers)
+	}
 	if !b.knownIPs["10.0.0.1"] || !b.knownIPs["10.0.0.2"] {
-		t.Fatalf("expected both IPs learned, got %v", b.knownIPs)
+		t.Fatalf("expected historical IPs learned, got %v", b.knownIPs)
 	}
 	if !b.knownUsers["alice"] || !b.knownUsers["bob"] {
-		t.Fatalf("expected both users learned, got %v", b.knownUsers)
+		t.Fatalf("expected historical users learned, got %v", b.knownUsers)
 	}
-	// 2 of 3 accesses fall in the last 7 days → dailyAvg = 2/7.
-	if want := 2.0 / 7.0; b.dailyAvg != want {
+	// Of the pre-window reads, only bob's (-2d) is within the last 7 days → dailyAvg = 1/7.
+	if want := 1.0 / 7.0; b.dailyAvg != want {
 		t.Fatalf("dailyAvg = %v, want %v", b.dailyAvg, want)
 	}
 }
