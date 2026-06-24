@@ -3,6 +3,7 @@ package grpc_test
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,4 +144,54 @@ func TestGRPCServer_EndToEnd(t *testing.T) {
 		assert.Equal(t, codes.PermissionDenied, status.Code(err),
 			"a project-1-scoped writer must not create secrets in project 2 over gRPC")
 	})
+}
+
+// TestGRPCServer_HonorsConfiguredMaxRecvMsgSize proves the gRPC server enforces the
+// configured request-size cap (server.grpc.max_request_body_bytes) the way the HTTP
+// MaxBodyBytes middleware does — a memory-exhaustion DoS control that must not be
+// bypassable by switching transport. Before the fix, NewServer ignored the setting
+// and kept grpc-go's 4 MiB default.
+func TestGRPCServer_HonorsConfiguredMaxRecvMsgSize(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+
+	cfg := &config.Config{}
+	cfg.Server.GRPC.MaxRequestBodyBytes = 4096 // 4 KiB — far below grpc-go's 4 MiB default
+
+	srv, err := keyorixgrpc.NewServer(cfg, h.CoreService)
+	require.NoError(t, err)
+	lis := bufconn.Listen(1024 * 1024)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	authed := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer bogus"))
+	secrets := pb.NewSecretServiceClient(conn)
+
+	// A request over the cap is refused at the transport layer with ResourceExhausted —
+	// before the auth interceptor even runs.
+	_, err = secrets.CreateSecret(authed, &pb.CreateSecretRequest{
+		Name: "big", Value: strings.Repeat("A", 8192), ProjectId: 1, EnvironmentId: 1, Type: "password",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err),
+		"a request over the configured gRPC body cap must be rejected with ResourceExhausted")
+
+	// A small request clears the size check and reaches auth (rejected as Unauthenticated
+	// for the bogus token), proving the prior failure was the size cap and not auth.
+	_, err = secrets.CreateSecret(authed, &pb.CreateSecretRequest{
+		Name: "small", Value: "tiny", ProjectId: 1, EnvironmentId: 1, Type: "password",
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err),
+		"a small request clears the size cap and is then rejected by auth")
 }

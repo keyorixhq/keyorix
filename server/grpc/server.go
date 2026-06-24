@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"math"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -36,6 +37,18 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			interceptors.StreamAuthInterceptor(coreService, cfg.Security.RequireMFA),
 		),
 	}
+
+	// Honor the configured request-size cap on gRPC too. HTTP enforces it via the
+	// MaxBodyBytes middleware (max_request_body_bytes) to mitigate memory-exhaustion
+	// DoS; without this gRPC silently kept grpc-go's own 4 MiB default and ignored the
+	// operator's server.grpc setting, so the cap was bypassable by switching transport.
+	// Bounds the inbound message; clamp to MaxInt32 so the int64→int conversion is safe
+	// on every platform (a >2 GiB request cap is nonsensical anyway).
+	maxMsg := cfg.Server.GRPC.EffectiveMaxRequestBodyBytes()
+	if maxMsg > math.MaxInt32 {
+		maxMsg = math.MaxInt32
+	}
+	opts = append(opts, grpc.MaxRecvMsgSize(int(maxMsg)))
 
 	// Add TLS if enabled
 	if cfg.Server.GRPC.TLS.Enabled {
