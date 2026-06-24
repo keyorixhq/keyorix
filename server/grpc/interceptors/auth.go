@@ -248,7 +248,7 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 	// restriction is not bypassable by switching from HTTP to gRPC. Fail-closed: an
 	// undeterminable peer IP outside the allowlist is denied.
 	if restriction != nil && len(restriction.AllowedCIDRs) > 0 {
-		if !core.IPInCIDRs(grpcPeerIP(ctx), restriction.AllowedCIDRs) {
+		if !core.IPInCIDRs(PeerIP(ctx), restriction.AllowedCIDRs) {
 			return nil, nil, status.Errorf(codes.PermissionDenied, "token not permitted from this network")
 		}
 	}
@@ -297,9 +297,10 @@ func authenticateRequest(ctx context.Context, coreService *core.KeyorixCore, req
 	}, restriction, nil
 }
 
-// grpcPeerIP returns the source IP of the gRPC call from its peer (TCP) address, or "" if
-// it cannot be determined (which the fail-closed allowlist check then denies).
-func grpcPeerIP(ctx context.Context) string {
+// PeerIP returns the source IP of the gRPC call from its peer (TCP) address, or "" if
+// it cannot be determined (which the fail-closed allowlist check then denies). Exported
+// so the service layer can stamp it on secret-access logs, matching the HTTP path.
+func PeerIP(ctx context.Context) string {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p.Addr == nil {
 		return ""
@@ -308,6 +309,19 @@ func grpcPeerIP(ctx context.Context) string {
 		return host
 	}
 	return p.Addr.String()
+}
+
+// ClientUserAgent returns the gRPC client's user-agent from request metadata, or ""
+// when absent. Recorded on secret-access logs alongside the peer IP, as on HTTP.
+func ClientUserAgent(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	if ua := md.Get("user-agent"); len(ua) > 0 {
+		return ua[0]
+	}
+	return ""
 }
 
 // isPublicMethod checks if a gRPC method is public (doesn't require authentication)

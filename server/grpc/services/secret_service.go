@@ -139,6 +139,14 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
+	// Record the read in the audit trail and secret-access log — the same call the
+	// HTTP reveal handler fires. Without it, a secret read over gRPC left no
+	// secret.read event and no access-log row, so the anomaly detector never saw it:
+	// secrets could be exfiltrated over gRPC invisibly to both the audit trail and
+	// anomaly detection. Detached + async like HTTP, so it neither blocks the RPC nor
+	// dies on its cancellation; DetachedAuditContext preserves the actor-type and
+	// impersonation tags the interceptor set.
+	go s.core.LogSecretReadWithProject(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
 	return &pb.SecretValue{
 		Id:    req.GetId(),
 		Name:  secret.Name,

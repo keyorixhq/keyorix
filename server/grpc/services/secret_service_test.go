@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -297,6 +298,37 @@ func TestSecretService_GetSecretValue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "the-value", val.GetValue())
 	assert.Equal(t, "token", val.GetName())
+}
+
+// A secret read over gRPC must land in the audit trail and the secret-access log,
+// exactly as the HTTP reveal handler records it. Without it, the anomaly detector
+// (which feeds on secret_access_logs) is blind to reads that arrive over gRPC, so
+// secrets could be exfiltrated over gRPC invisibly. The write is detached/async,
+// so poll for it.
+func TestSecretService_GetSecretValue_RecordsAccessLogAndAudit(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
+	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
+	created := r.createSecret(t, ctx, "token", "the-value")
+
+	_, err := r.svc.GetSecretValue(ctx, &pb.GetSecretRequest{Id: created.GetId()})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		var audits, logs int64
+		r.db.Model(&models.AuditEvent{}).
+			Where("event_type = ? AND secret_node_id = ?", "secret.read", created.GetId()).Count(&audits)
+		r.db.Model(&models.SecretAccessLog{}).
+			Where("secret_node_id = ? AND action = ?", created.GetId(), "read").Count(&logs)
+		return audits == 1 && logs == 1
+	}, 2*time.Second, 10*time.Millisecond,
+		"a gRPC secret read must write one secret.read audit event and one access-log row")
+
+	// The access-log row attributes the read to the caller, for forensics / anomaly.
+	var alog models.SecretAccessLog
+	require.NoError(t, r.db.Where("secret_node_id = ?", created.GetId()).First(&alog).Error)
+	assert.Equal(t, "owner", alog.AccessedBy)
+	assert.Equal(t, uint(created.GetId()), alog.SecretNodeID)
 }
 
 func TestSecretService_UpdateSecret(t *testing.T) {
