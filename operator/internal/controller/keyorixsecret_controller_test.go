@@ -123,6 +123,27 @@ func TestReconcile_CreatesTargetSecretOwnedByCR(t *testing.T) {
 	assert.Equal(t, int64(1), ks.Status.ObservedGeneration)
 }
 
+func TestReconcile_RefusesToOverwriteUnmanagedSecret(t *testing.T) {
+	// A pre-existing Secret with the target name that the operator did NOT create.
+	foreign := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "db-creds", Namespace: "app"},
+		Data:       map[string][]byte{"OTHER": []byte("do-not-clobber")},
+	}
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"), "app/production/api-key": []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret(), foreign)
+
+	_, err := reconcile(t, r)
+	require.Error(t, err, "must refuse to adopt/overwrite an unmanaged Secret")
+
+	// The foreign Secret's data is untouched — not clobbered with the synced keys.
+	var got corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got))
+	assert.Equal(t, []byte("do-not-clobber"), got.Data["OTHER"])
+	assert.NotContains(t, got.Data, "DB_PASSWORD")
+}
+
 func TestReconcile_DefaultsTargetNameToCR(t *testing.T) {
 	ks := ksFixture()
 	ks.Spec.Target.Name = "" // unset → defaults to the CR name "db"

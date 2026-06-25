@@ -132,15 +132,35 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		secretType = corev1.SecretTypeOpaque
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		// Refuse to adopt-and-overwrite a pre-existing Secret we don't manage. A non-empty
+		// ResourceVersion means the object already existed; without a managed-by guard,
+		// SetControllerReference would adopt an UNOWNED Secret (e.g. one created manually
+		// or by Helm) and replace its data — letting a CR author clobber another workload's
+		// same-named Secret. A Secret we created carries the managed-by label and is
+		// allowed through.
+		if secret.ResourceVersion != "" && secret.Labels[managedByLabel] != managedByValue {
+			return fmt.Errorf("refusing to overwrite existing unmanaged Secret %s/%s", ks.Namespace, name)
+		}
 		if err := controllerutil.SetControllerReference(ks, secret, r.Scheme); err != nil {
 			return err
 		}
+		if secret.Labels == nil {
+			secret.Labels = map[string]string{}
+		}
+		secret.Labels[managedByLabel] = managedByValue
 		secret.Type = secretType
 		secret.Data = data // operator owns the whole data set; removed keys are pruned
 		return nil
 	})
 	return err
 }
+
+// managedByLabel/managedByValue mark a Secret as owned by this operator, so it won't
+// adopt or overwrite a Secret it didn't create.
+const (
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByValue = "keyorix-operator"
+)
 
 // fail records a SyncError on the Ready condition and requeues with backoff.
 func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
