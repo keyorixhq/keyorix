@@ -23,6 +23,14 @@ func migrateBreakGlass(t *testing.T, h *testhelper.RBACTestHelper) {
 	require.NoError(t, h.DB.AutoMigrate(&models.BreakGlassActivation{}, &models.AuditEvent{}))
 }
 
+// makeProjectMember gives the user a baseline (viewer) role at the project so they
+// satisfy break-glass's project-eligibility gate — the realistic scenario is a member
+// who lacks the specific emergency power, not an unaffiliated outsider.
+func makeProjectMember(t *testing.T, h *testhelper.RBACTestHelper, userID, projectID uint) {
+	pid := projectID
+	h.AssignUserRole(t, userID, 4, &pid) // role 4 = viewer
+}
+
 // Activating break-glass time-bound-grants the configured emergency role to the
 // caller and records the justified activation.
 func TestActivateBreakGlass_GrantsTimeBoundRole(t *testing.T) {
@@ -34,6 +42,7 @@ func TestActivateBreakGlass_GrantsTimeBoundRole(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
 
 	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident #42", "")
 	require.NoError(t, err)
@@ -62,6 +71,7 @@ func TestActivateBreakGlass_CapsTTL(t *testing.T) {
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, 2)
 	act, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "10h")
 	require.NoError(t, err)
 	require.NotNil(t, act.ExpiresAt)
@@ -79,6 +89,7 @@ func TestActivateBreakGlass_UnsetMaxTTLFloorsToDefault(t *testing.T) {
 
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, 2)
 	act, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "720h") // 30-day override
 	require.NoError(t, err)
 	require.NotNil(t, act.ExpiresAt)
@@ -115,6 +126,7 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
 
 	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
 	require.NoError(t, err)
@@ -168,6 +180,7 @@ func TestBreakGlass_ExpiredGrantDeniesAuthorization(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
 
 	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.NoError(t, err)
@@ -192,4 +205,76 @@ func TestBreakGlass_ExpiredGrantDeniesAuthorization(t *testing.T) {
 	ok, err = h.CoreService.Authorize(ctx, 10, "secrets.write", core.Scope{ProjectID: proj})
 	require.NoError(t, err)
 	assert.False(t, ok, "an expired break-glass grant must confer no access at the authorization boundary")
+}
+
+// A user with no affiliation to the project cannot break-glass it — otherwise any
+// authenticated user could self-grant the emergency role on an arbitrary project.
+func TestActivateBreakGlass_RejectsNonMember(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+
+	ctx := context.Background()
+	h.CreateTestUser(t, "outsider", 10) // created, but NOT a member of project 2
+
+	_, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "members of the project")
+
+	// And no activation was recorded for the rejected attempt.
+	list, err := h.CoreService.ListBreakGlassActivations(ctx, 2)
+	require.NoError(t, err)
+	assert.Empty(t, list)
+}
+
+// A second activation is refused while the user already holds an active, unexpired
+// grant — so a time-bound emergency grant can't be silently renewed into permanence.
+func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "first incident", "")
+	require.NoError(t, err)
+
+	// Second activation while the first is still active → refused.
+	_, err = h.CoreService.ActivateBreakGlass(ctx, proj, 10, "again", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already have an active break-glass grant")
+
+	// Exactly one activation exists.
+	list, err := h.CoreService.ListBreakGlassActivations(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+
+	// Once the first is revoked, a fresh activation is allowed again.
+	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, proj, list[0].ID))
+	_, err = h.CoreService.ActivateBreakGlass(ctx, proj, 10, "new incident", "")
+	require.NoError(t, err)
+}
+
+// An install-wide admin role (super_admin/admin/system_admin) must not be usable as the
+// emergency role: break-glass grants at a project scope and must not become a vehicle
+// for install-wide super-user. (project_admin — a project role — remains valid.)
+func TestActivateBreakGlass_RejectsInstallAdminEmergencyRole(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "admin", 4*time.Hour, 24*time.Hour) // admin is an install-wide role
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "install-wide administration")
 }

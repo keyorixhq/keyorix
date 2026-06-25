@@ -56,12 +56,48 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	if justification == "" {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a justification is required for emergency access")
 	}
+	// Only a user already affiliated with the project may break-glass it. Without this,
+	// any authenticated user could self-grant the emergency role on ANY project — break-
+	// glass is for a project you're responsible for but lack a specific power on, not for
+	// arbitrary projects.
+	members, merr := c.storage.ListProjectMembers(ctx, projectID)
+	if merr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), merr)
+	}
+	isMember := false
+	for _, m := range members {
+		if m.UserID == userID {
+			isMember = true
+			break
+		}
+	}
+	if !isMember {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "break-glass is available only to members of the project")
+	}
+	// Refuse a new activation while the user already holds an active, unexpired one on
+	// this project — otherwise the time-bound grant becomes indefinitely renewable.
+	bgNow := c.now()
+	existing, lerr := c.storage.ListBreakGlassActivations(ctx, projectID)
+	if lerr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), lerr)
+	}
+	for _, a := range existing {
+		if a.UserID == userID && a.State == BreakGlassActive && a.ExpiresAt != nil && a.ExpiresAt.After(bgNow) {
+			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you already have an active break-glass grant on this project; revoke it before activating again")
+		}
+	}
 	if c.breakGlassPolicy.EmergencyRole == "" {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "no emergency role is configured")
 	}
 	role, err := c.storage.GetRoleByName(ctx, c.breakGlassPolicy.EmergencyRole)
 	if err != nil {
 		return nil, fmt.Errorf("emergency role %q not found: %w", c.breakGlassPolicy.EmergencyRole, err)
+	}
+	// Refuse an install-wide admin role as the emergency role: break-glass grants at a
+	// project scope and must not be a vehicle for install-wide super-user. project_admin
+	// (a project role) is the intended emergency role and is allowed.
+	if c.installAdminRoleIDSet(ctx)[role.ID] {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the configured emergency role grants install-wide administration and cannot be used for break-glass")
 	}
 
 	defaultTTL := c.breakGlassPolicy.DefaultTTL
