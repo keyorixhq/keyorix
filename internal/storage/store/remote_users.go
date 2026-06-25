@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -64,7 +65,7 @@ func (rs *RemoteStorage) LockUserForUpdate(ctx context.Context, id uint) (*model
 
 // GetUserByEmail retrieves a user by email via remote API.
 func (rs *RemoteStorage) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
-	path := fmt.Sprintf("/api/v1/users/by-email/%s", email)
+	path := fmt.Sprintf("/api/v1/users/by-email/%s", url.PathEscape(email))
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user by email: %w", err)

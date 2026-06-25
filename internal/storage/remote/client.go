@@ -13,6 +13,9 @@ import (
 	"time"
 )
 
+// maxResponseBytes caps a single API response body to bound client memory use.
+const maxResponseBytes = 64 << 20 // 64 MiB
+
 // cacheEntry represents a cached response
 type cacheEntry struct {
 	response  *APIResponse
@@ -44,9 +47,17 @@ func NewHTTPClient(config *Config) (*HTTPClient, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Create HTTP client with timeout
+	// Create HTTP client with timeout. Refuse a redirect to a different host so a
+	// compromised/misbehaving server can't bounce the token-bearing request elsewhere
+	// (Go already strips the Authorization header cross-host, but don't follow at all).
 	httpClient := &http.Client{
 		Timeout: config.GetTimeout(),
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+				return fmt.Errorf("remote: refusing redirect to a different host %q", req.URL.Host)
+			}
+			return nil
+		},
 	}
 
 	// Configure TLS if needed
@@ -181,7 +192,8 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
-	respBody, err := io.ReadAll(resp.Body)
+	// Bound the response so a malicious/MITM server can't OOM the client.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}

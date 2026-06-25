@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -55,7 +56,7 @@ func (rs *RemoteStorage) GetSecret(ctx context.Context, id uint) (*models.Secret
 // GetSecretByName retrieves a secret by name and scope context via remote API.
 func (rs *RemoteStorage) GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error) {
 	path := fmt.Sprintf("/api/v1/secrets/by-name/%s?project_id=%d&environment_id=%d",
-		name, projectID, environmentID)
+		url.PathEscape(name), projectID, environmentID)
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret by name: %w", err)

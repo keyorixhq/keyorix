@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -56,7 +57,7 @@ func (rs *RemoteStorage) GetRole(ctx context.Context, id uint) (*models.Role, er
 
 // GetRoleByName retrieves a role by name via remote API.
 func (rs *RemoteStorage) GetRoleByName(ctx context.Context, name string) (*models.Role, error) {
-	path := fmt.Sprintf("/api/v1/roles/by-name/%s", name)
+	path := fmt.Sprintf("/api/v1/roles/by-name/%s", url.PathEscape(name))
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role by name: %w", err)
@@ -196,7 +197,7 @@ func (rs *RemoteStorage) GetUserRoles(ctx context.Context, userID uint) ([]*mode
 
 // CheckPermission checks if a user has a specific resource/action permission via remote API.
 func (rs *RemoteStorage) CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error) {
-	path := fmt.Sprintf("/api/v1/rbac/check-permission?user_id=%d&resource=%s&action=%s", userID, resource, action)
+	path := fmt.Sprintf("/api/v1/rbac/check-permission?user_id=%d&resource=%s&action=%s", userID, url.QueryEscape(resource), url.QueryEscape(action))
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return false, fmt.Errorf("failed to check permission: %w", err)

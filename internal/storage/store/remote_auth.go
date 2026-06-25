@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -37,7 +38,7 @@ func (rs *RemoteStorage) CreateSession(ctx context.Context, session *models.Sess
 
 // GetSession retrieves a session by token via remote API.
 func (rs *RemoteStorage) GetSession(ctx context.Context, token string) (*models.Session, error) {
-	path := fmt.Sprintf("/api/v1/sessions/%s", token)
+	path := fmt.Sprintf("/api/v1/sessions/%s", url.PathEscape(token))
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
@@ -97,7 +98,7 @@ func (rs *RemoteStorage) CreateAPIClient(ctx context.Context, client *models.API
 
 // GetAPIClient retrieves an API client by client ID via remote API.
 func (rs *RemoteStorage) GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error) {
-	path := fmt.Sprintf("/api/v1/api-clients/%s", clientID)
+	path := fmt.Sprintf("/api/v1/api-clients/%s", url.PathEscape(clientID))
 	resp, err := rs.client.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get API client: %w", err)
@@ -114,7 +115,7 @@ func (rs *RemoteStorage) GetAPIClient(ctx context.Context, clientID string) (*mo
 
 // RevokeAPIClient revokes an API client via remote API.
 func (rs *RemoteStorage) RevokeAPIClient(ctx context.Context, clientID string) error {
-	path := fmt.Sprintf("/api/v1/api-clients/%s/revoke", clientID)
+	path := fmt.Sprintf("/api/v1/api-clients/%s/revoke", url.PathEscape(clientID))
 	resp, err := rs.client.Post(ctx, path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to revoke API client: %w", err)
@@ -143,7 +144,7 @@ func (rs *RemoteStorage) ListAPIClients(ctx context.Context) ([]*models.APIClien
 
 // UpdateAPIClient updates an API client via remote API.
 func (rs *RemoteStorage) UpdateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {
-	path := fmt.Sprintf("/api/v1/service-accounts/%s", client.ClientID)
+	path := fmt.Sprintf("/api/v1/service-accounts/%s", url.PathEscape(client.ClientID))
 	resp, err := rs.client.Put(ctx, path, client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update API client: %w", err)
