@@ -191,11 +191,15 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	if item.Decision != ReviewItemPending {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
 	}
-	// Independence (ISO 27001 A.5.18): a reviewer must not certify their OWN access.
-	// Self-certification defeats the control, so a user can't decide a user-scoped
-	// item that is themselves — an independent reviewer is required.
+	// Independence (ISO 27001 A.5.18): a reviewer must not certify their OWN access —
+	// directly (a user-scoped item that is themselves) OR indirectly (a group-scoped item
+	// for a group they belong to). Self-certification, including via a group grant,
+	// defeats the control; an independent reviewer is required.
 	if item.PrincipalType == "user" && item.PrincipalID == actorID {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review your own access; an independent reviewer is required")
+	}
+	if item.PrincipalType == "group" && c.userInGroup(ctx, actorID, item.PrincipalID) {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you cannot review access for a group you belong to; an independent reviewer is required")
 	}
 
 	decision := AccessReviewDecision{
@@ -228,6 +232,22 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
+}
+
+// userInGroup reports whether userID is a member of groupID. It fails CLOSED — a
+// lookup error returns true — because it backs the recertification independence check:
+// if we can't prove the reviewer is NOT in the group, we must not let them certify it.
+func (c *KeyorixCore) userInGroup(ctx context.Context, userID, groupID uint) bool {
+	groups, err := c.storage.GetUserGroups(ctx, userID)
+	if err != nil {
+		return true
+	}
+	for _, g := range groups {
+		if g.ID == groupID {
+			return true
+		}
+	}
+	return false
 }
 
 // CloseAccessReviewCampaign freezes a campaign as the evidence record. It refuses

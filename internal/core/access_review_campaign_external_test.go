@@ -119,6 +119,42 @@ func TestDecideAccessReviewItem_RejectsSelfCertification(t *testing.T) {
 	require.NoError(t, h.CoreService.DecideAccessReviewItem(ctx, 1, proj, res.Campaign.ID, item, "attest", ""))
 }
 
+// Independence extends to GROUP-conferred access: a reviewer who belongs to a group
+// must not certify that group's review item (self-certification via a group grant).
+func TestDecideAccessReviewItem_RejectsGroupSelfCertification(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateCampaignTables(t, h)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "carol", 20)
+	g := h.CreateTestGroup(t, "team", "", 5)
+	h.AssignGroupRole(t, g.ID, 3, uptr(proj)) // the group holds a role in the project
+	h.AssignUserToGroup(t, 20, g.ID)          // carol is a member
+
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	require.NoError(t, err)
+	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
+	require.NoError(t, err)
+
+	var groupItem uint
+	for _, it := range detail.Items {
+		if it.PrincipalType == "group" && it.PrincipalID == g.ID {
+			groupItem = it.ID
+		}
+	}
+	require.NotZero(t, groupItem, "expected a group-source review item")
+
+	// Carol (a member of the group) cannot self-certify the group's access...
+	err = h.CoreService.DecideAccessReviewItem(ctx, 20, proj, res.Campaign.ID, groupItem, "attest", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group you belong to")
+
+	// ...but an independent reviewer (not a member) can.
+	require.NoError(t, h.CoreService.DecideAccessReviewItem(ctx, 1, proj, res.Campaign.ID, groupItem, "attest", ""))
+}
+
 // An item is decided once: a decided item can't be flipped, so the recorded decision
 // can't drift from the real grant state (false certification evidence).
 func TestDecideAccessReviewItem_RejectsDoubleDecision(t *testing.T) {
