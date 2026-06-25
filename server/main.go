@@ -380,6 +380,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			Endpoint:           wc.Endpoint,
 			Token:              wc.GetToken(),
 			InsecureSkipVerify: wc.InsecureSkipVerify,
+			SigningSecret:      wc.GetSigningSecret(),
 		})
 		if werr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification webhook channel: %w", werr)

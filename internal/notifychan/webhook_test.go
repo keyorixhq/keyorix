@@ -1,6 +1,9 @@
 package notifychan
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -159,4 +162,44 @@ func TestWebhookSink_DropsAndCountsWhenQueueFull(t *testing.T) {
 
 	close(release)
 	sink.Close()
+}
+
+func TestWebhookSink_SignsPayloadWhenSecretSet(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		body []byte
+		sig  string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body, sig = b, r.Header.Get("X-Keyorix-Signature")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	sink, err := NewWebhook(WebhookConfig{Endpoint: srv.URL, SigningSecret: "shh"})
+	require.NoError(t, err)
+	sink.Deliver(core.NotificationEvent{UserID: 1, Type: "x"})
+	sink.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	mac := hmac.New(sha256.New, []byte("shh"))
+	mac.Write(body)
+	want := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	assert.Equal(t, want, sig, "payload must be HMAC-signed so the receiver can verify it")
+}
+
+func TestNewWebhook_RejectsNonHTTPSEndpoint(t *testing.T) {
+	_, err := NewWebhook(WebhookConfig{Endpoint: "http://siem.example.com/hook"})
+	require.Error(t, err, "a non-loopback http endpoint must be rejected (cleartext token)")
+	assert.Contains(t, err.Error(), "https")
+
+	// Loopback http is allowed (local testing), and explicit insecure opt-in too.
+	_, err = NewWebhook(WebhookConfig{Endpoint: "http://127.0.0.1:9000/hook"})
+	require.NoError(t, err)
+	_, err = NewWebhook(WebhookConfig{Endpoint: "http://siem.example.com/hook", InsecureSkipVerify: true})
+	require.NoError(t, err)
 }

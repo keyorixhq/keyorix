@@ -60,9 +60,12 @@ func newChat(cfg ChatConfig, baseBackoff time.Duration) (*ChatSink, error) {
 	if cfg.WebhookURL == "" {
 		return nil, fmt.Errorf("notifychan: chat webhook_url is required")
 	}
+	if err := validateEndpoint(cfg.WebhookURL, false); err != nil {
+		return nil, err
+	}
 	s := &ChatSink{
 		cfg:    cfg,
-		client: &http.Client{Timeout: chatTimeout},
+		client: &http.Client{Timeout: chatTimeout, CheckRedirect: refuseRedirectDowngrade},
 	}
 	s.d = newDeliverer(string(cfg.Kind), chatQueueSize, baseBackoff, s.send)
 	return s, nil

@@ -899,11 +899,19 @@ type NotificationWebhookConfig struct {
 	Endpoint           string `yaml:"endpoint"`
 	Token              string `yaml:"token"` // use KEYORIX_NOTIFY_WEBHOOK_TOKEN env var instead
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	// SigningSecret HMAC-signs each payload (X-Keyorix-Signature) so the receiver can
+	// verify authenticity. Use KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET instead of the file.
+	SigningSecret string `yaml:"signing_secret"`
 }
 
 // GetToken returns the resolved webhook token, preferring the environment variable.
 func (c *NotificationWebhookConfig) GetToken() string {
 	return resolveSecret("KEYORIX_NOTIFY_WEBHOOK_TOKEN", c.Token)
+}
+
+// GetSigningSecret returns the resolved webhook signing secret, preferring the env var.
+func (c *NotificationWebhookConfig) GetSigningSecret() string {
+	return resolveSecret("KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET", c.SigningSecret)
 }
 
 // SCIMConfig configures SCIM 2.0 provisioning (RFC 7644). When Enabled, the
