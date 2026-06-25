@@ -59,19 +59,14 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	// Only a user already affiliated with the project may break-glass it. Without this,
 	// any authenticated user could self-grant the emergency role on ANY project — break-
 	// glass is for a project you're responsible for but lack a specific power on, not for
-	// arbitrary projects.
-	members, merr := c.storage.ListProjectMembers(ctx, projectID)
+	// arbitrary projects. Eligibility = holding any role that applies at the project scope
+	// (a project-scoped grant, or a global/install-wide role that applies everywhere); a
+	// user scoped only to a DIFFERENT project resolves an empty set and is refused.
+	affiliated, merr := c.storage.GetUserRoleIDsAt(ctx, userID, storage.Scope{ProjectID: projectID})
 	if merr != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), merr)
 	}
-	isMember := false
-	for _, m := range members {
-		if m.UserID == userID {
-			isMember = true
-			break
-		}
-	}
-	if !isMember {
+	if len(affiliated) == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "break-glass is available only to members of the project")
 	}
 	// Refuse a new activation while the user already holds an active, unexpired one on
