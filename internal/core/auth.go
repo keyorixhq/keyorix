@@ -152,6 +152,15 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		_ = c.storage.DeleteSession(ctx, old.ID)
 		return nil, fmt.Errorf("session lifetime exceeded; re-authentication required")
 	}
+	// An impersonation session must not be refreshable. /auth/refresh is public (any
+	// bearer token), and refresh rebuilds the session without the impersonation fields —
+	// so refreshing an impersonation token would mint a fresh, full-TTL session for the
+	// target with the impersonated_by attribution stripped, laundering a bounded, audited
+	// support session into unbounded, unattributed account access. The admin keeps their
+	// own session and swaps back via "Return to Admin".
+	if old.ImpersonatedBy != nil {
+		return nil, fmt.Errorf("impersonation sessions cannot be refreshed")
+	}
 	// Re-check account state before rotating the token. ValidateSessionToken applies
 	// this gate on every request, but refresh is a distinct, unauthenticated-by-token
 	// entry point: without re-checking here, an account deactivated (IsActive=false)

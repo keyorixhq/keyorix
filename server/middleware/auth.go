@@ -703,6 +703,22 @@ func unauthorizedResponse(w http.ResponseWriter, message string) {
 	})
 }
 
+// BlockWhenImpersonating refuses a request made under an impersonation session. It
+// guards the target's credential-issuing / authenticator-lifecycle self-service routes
+// (mint a PAT, enroll/disable MFA, register a passkey) so an admin impersonating a user
+// cannot plant a durable credential that outlives the bounded, audited impersonation
+// session. Impersonation is for acting AS the user for support, not administering their
+// long-lived credentials.
+func BlockWhenImpersonating(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u := GetUserFromContext(r.Context()); u != nil && u.ImpersonatedBy != nil {
+			forbiddenResponse(w, "this action is not permitted while impersonating")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // forbiddenResponse sends a 403 Forbidden response
 func forbiddenResponse(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")

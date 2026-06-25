@@ -198,21 +198,26 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Get("/auth/profile", authHandler.Profile)
 		r.Put("/auth/profile", authHandler.UpdateProfile)
 		r.Post("/auth/change-password", authHandler.ChangePassword)
-		// MFA self-service (acts on the authenticated caller's own account).
-		r.Post("/auth/mfa/enroll", authHandler.EnrollMFA)
-		r.Post("/auth/mfa/activate", authHandler.ActivateMFA)
-		r.Post("/auth/mfa/disable", authHandler.DisableMFA)
+		// MFA self-service (acts on the authenticated caller's own account). The
+		// authenticator-lifecycle routes are blocked under impersonation so an admin
+		// acting as a user cannot alter the user's MFA / plant a durable credential that
+		// outlives the impersonation session.
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/enroll", authHandler.EnrollMFA)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/activate", authHandler.ActivateMFA)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/disable", authHandler.DisableMFA)
 		r.Get("/auth/mfa/recovery-codes", authHandler.RecoveryCodesStatus)
-		r.Post("/auth/mfa/recovery-codes/regenerate", authHandler.RegenerateRecoveryCodes)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/recovery-codes/regenerate", authHandler.RegenerateRecoveryCodes)
 		// WebAuthn / passkey self-service (acts on the authenticated caller's account).
-		r.Post("/auth/webauthn/register/begin", authHandler.BeginWebAuthnRegistration)
-		r.Post("/auth/webauthn/register/finish", authHandler.FinishWebAuthnRegistration)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/register/begin", authHandler.BeginWebAuthnRegistration)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/register/finish", authHandler.FinishWebAuthnRegistration)
 		r.Get("/auth/webauthn/credentials", authHandler.ListWebAuthnCredentials)
 		r.Delete("/auth/webauthn/credentials/{id}", authHandler.DeleteWebAuthnCredential)
 		r.Get("/auth/sessions", authHandler.ListSessions)
 		r.Delete("/auth/sessions/{id}", authHandler.RevokeSession)
 		r.Get("/auth/tokens", patHandler.ListPATs)
-		r.Post("/auth/tokens", patHandler.CreatePAT)
+		// Minting a PAT under impersonation would create a durable token owned by the
+		// target that outlives the session — block it.
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/tokens", patHandler.CreatePAT)
 		r.Delete("/auth/tokens/{id}", patHandler.RevokePAT)
 		// Self-scoped: end the current impersonation session (no permission gate).
 		r.Post("/auth/end-impersonation", impersonationHandler.End)
