@@ -7,6 +7,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"strings"
@@ -221,10 +222,21 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 		return nil, nil, fmt.Errorf("account is not active")
 	}
 	verified, usedRecovery := false, false
-	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err == nil && c.validateTOTP(secret, code) {
-		verified = true
-	} else if consumed, err := c.storage.ConsumeMFARecoveryCode(ctx, ch.UserID, sha256Hex(normalizeRecoveryCode(code)), c.now()); err == nil && consumed {
-		verified, usedRecovery = true, true
+	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err == nil {
+		if step, ok := c.validateTOTPStep(secret, code); ok {
+			// Single-use within the validity window: atomically advance the last-used
+			// step. A code already accepted at this (or a later) step is a replay and
+			// MarkTOTPStepUsed returns false, so it is rejected — closing the ~90s
+			// replay window the bare totp validation left open.
+			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, ch.UserID, step); ferr == nil && fresh {
+				verified = true
+			}
+		}
+	}
+	if !verified {
+		if consumed, err := c.storage.ConsumeMFARecoveryCode(ctx, ch.UserID, sha256Hex(normalizeRecoveryCode(code)), c.now()); err == nil && consumed {
+			verified, usedRecovery = true, true
+		}
 	}
 	if !verified {
 		c.auditMFAFailed(ctx, ch.UserID, "login")
@@ -262,6 +274,30 @@ func (c *KeyorixCore) validateTOTP(secret, code string) bool {
 		Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
 	})
 	return valid
+}
+
+// totpPeriod is the TOTP step length in seconds.
+const totpPeriod = 30
+
+// validateTOTPStep verifies code against the current step and ±1 skew and, on a match,
+// returns the matched time-step (unix/period) so the caller can enforce single-use
+// (anti-replay). Unlike validateTOTP it identifies WHICH step matched.
+func (c *KeyorixCore) validateTOTPStep(secret, code string) (int64, bool) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return 0, false
+	}
+	now := c.now().UTC()
+	for _, delta := range []int64{0, -1, 1} {
+		t := now.Add(time.Duration(delta*totpPeriod) * time.Second)
+		expected, err := totp.GenerateCodeCustom(secret, t, totp.ValidateOpts{
+			Period: totpPeriod, Skew: 0, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
+		})
+		if err == nil && subtle.ConstantTimeCompare([]byte(code), []byte(expected)) == 1 {
+			return t.Unix() / totpPeriod, true
+		}
+	}
+	return 0, false
 }
 
 func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase string) {

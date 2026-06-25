@@ -463,6 +463,10 @@ type Storage interface {
 	UpsertMFASecret(ctx context.Context, s *models.MFASecret) error
 	GetMFASecret(ctx context.Context, userID uint) (*models.MFASecret, error)
 	ActivateMFASecret(ctx context.Context, userID uint) error
+	// MarkTOTPStepUsed atomically records that the given TOTP time-step was accepted for
+	// userID, returning true only if it was newly consumed (step strictly greater than
+	// the stored last-used step). A false return means the code is a replay.
+	MarkTOTPStepUsed(ctx context.Context, userID uint, step int64) (bool, error)
 	DeleteMFAForUser(ctx context.Context, userID uint) error // clears secret + recovery codes
 	SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error
 	CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error

@@ -243,3 +243,35 @@ func TestMFA_RegenerateRequiresMFAEnabled(t *testing.T) {
 	_, err := c.RegenerateMFARecoveryCodes(context.Background(), 1, mfaTestPassword)
 	require.Error(t, err, "regenerate requires MFA to be enabled")
 }
+
+// A TOTP code must be single-use: replaying the same code within its validity window
+// (with a fresh challenge) must be rejected, not mint a second session.
+func TestVerifyMFALogin_RejectsReplayedTOTPCode(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode)
+	require.NoError(t, err)
+
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	// First use succeeds.
+	ch1, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	sess, _, err := c.VerifyMFALogin(ctx, ch1, code, "ua", "1.2.3.4")
+	require.NoError(t, err)
+	require.NotNil(t, sess)
+
+	// Replay of the same code (fresh challenge, same time-step) is refused.
+	ch2, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	sess2, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid code")
+	assert.Nil(t, sess2)
+}

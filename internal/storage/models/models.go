@@ -225,7 +225,7 @@ type User struct {
 	Username     string `gorm:"uniqueIndex;not null"`
 	Email        string
 	DisplayName  string
-	PasswordHash string `json:"-"`
+	PasswordHash string     `json:"-"`
 	IsActive     bool       `gorm:"default:true"`
 	LastLoginAt  *time.Time // stamped on each successful auth.login; nil = never logged in
 	// PasswordChangedAt is when the current password was set. Drives max-age
@@ -268,7 +268,11 @@ type MFASecret struct {
 	SecretEnc  []byte `json:"-"` // encrypted TOTP secret (passthrough plaintext when encryption is disabled)
 	SecretMeta []byte `json:"-"` // encryption metadata (key version etc.)
 	Activated  bool   `gorm:"default:false"`
-	CreatedAt  time.Time
+	// LastUsedStep is the TOTP time-step (unix/period) of the most recently accepted
+	// login code. A code at or below it is a replay within its validity window and is
+	// rejected (anti-replay). nil on legacy rows = no code accepted yet.
+	LastUsedStep *int64 `json:"-"`
+	CreatedAt    time.Time
 }
 
 // MFARecoveryCode is a single-use backup code (SHA-256 hashed). UsedAt is stamped
@@ -338,8 +342,8 @@ type WebAuthnSession struct {
 // forbid reuse of the last N passwords (ADR-025 history_count). Only bcrypt
 // hashes are stored — never plaintext.
 type PasswordHistory struct {
-	ID           uint `gorm:"primaryKey"`
-	UserID       uint `gorm:"index"`
+	ID           uint   `gorm:"primaryKey"`
+	UserID       uint   `gorm:"index"`
 	PasswordHash string `json:"-"`
 	CreatedAt    time.Time
 }
@@ -587,9 +591,9 @@ type SecretMetadataHistory struct {
 type Session struct {
 	ID                    uint `gorm:"primaryKey"`
 	UserID                uint
-	SessionToken          string `gorm:"unique" json:"-"` // SHA-256 hash of the session token (never plaintext)
-	EncryptedSessionToken []byte `json:"-"`
-	SessionTokenMetadata  JSON   `json:"-"`
+	SessionToken          string     `gorm:"unique" json:"-"` // SHA-256 hash of the session token (never plaintext)
+	EncryptedSessionToken []byte     `json:"-"`
+	SessionTokenMetadata  JSON       `json:"-"`
 	UserAgent             string     // captured at login, for the My Account "active sessions" view
 	IPAddress             string     // captured at login
 	LastSeenAt            *time.Time // throttled — updated at most once per validTokenTTL on the auth slow path
@@ -830,7 +834,7 @@ type APIToken struct {
 	ClientID       uint
 	UserID         *uint
 	Token          string `gorm:"unique" json:"-"` // SHA-256 hash of the token (never plaintext); the token is shown once at creation
-	EncryptedToken []byte `json:"-"` // legacy/unused encrypt-at-rest column; creation now hashes into Token
+	EncryptedToken []byte `json:"-"`               // legacy/unused encrypt-at-rest column; creation now hashes into Token
 	TokenMetadata  JSON   `json:"-"`
 	Scope          string
 	Revoked        bool

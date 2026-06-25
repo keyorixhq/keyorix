@@ -1669,7 +1669,10 @@ func (m *MockStorage) UpsertMFASecret(_ context.Context, _ *models.MFASecret) er
 func (m *MockStorage) GetMFASecret(_ context.Context, _ uint) (*models.MFASecret, error) {
 	return nil, nil
 }
-func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint) error         { return nil }
+func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint) error { return nil }
+func (m *MockStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
+	return true, nil
+}
 func (m *MockStorage) DeleteMFAForUser(_ context.Context, _ uint) error          { return nil }
 func (m *MockStorage) SetUserMFAEnabled(_ context.Context, _ uint, _ bool) error { return nil }
 func (m *MockStorage) CreateMFARecoveryCodes(_ context.Context, _ uint, _ []string) error {
