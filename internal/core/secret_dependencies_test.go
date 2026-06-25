@@ -130,10 +130,13 @@ func TestAddSecretDependency_Validation(t *testing.T) {
 		assert.Contains(t, err.Error(), "cycle")
 	})
 
-	t.Run("missing secret rejected", func(t *testing.T) {
+	t.Run("missing dependency target rejected with an opaque error (no existence oracle)", func(t *testing.T) {
 		_, err := c.AddSecretDependency(ctx, 10, appTok, 9999, "")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "9999")
+		// Must NOT reveal whether 9999 exists / what it is — same message as a cross-scope
+		// target, so the caller can't enumerate secret IDs across scopes.
+		assert.NotContains(t, err.Error(), "9999")
+		assert.Contains(t, err.Error(), "same project and environment")
 	})
 }
 
