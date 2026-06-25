@@ -450,6 +450,9 @@ type Storage interface {
 	GetSession(ctx context.Context, token string) (*models.Session, error)
 	GetSessionByID(ctx context.Context, id uint) (*models.Session, error)
 	ListSessionsByUser(ctx context.Context, userID uint) ([]*models.Session, error)
+	// EnforceSessionLimit deletes a user's oldest sessions beyond the `keep` most-recent
+	// (by created_at), bounding concurrent sessions per user. No-op when under the cap.
+	EnforceSessionLimit(ctx context.Context, userID uint, keep int) error
 	DeleteSession(ctx context.Context, id uint) error
 	// DeleteSessionsForUserExcept removes every session owned by userID except the
 	// one with id exceptID. Used to drop other sessions on a password change.

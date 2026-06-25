@@ -124,8 +124,15 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
+	// Bound concurrent sessions per user so unbounded logins can't grow the table or
+	// enlarge the credential-theft blast radius. Best-effort — never fail a login on it.
+	_ = c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
 	return created, nil
 }
+
+// maxSessionsPerUser caps a user's concurrent sessions; the oldest beyond this are
+// reaped on each new login (see EnforceSessionLimit).
+const maxSessionsPerUser = 25
 
 // RecordLogin stamps the user's last_login_at to the current time. Best-effort:
 // the login handler calls this in a goroutine after a successful authentication,

@@ -249,6 +249,10 @@ func (rs *RemoteStorage) DeleteSessionsForUserExcept(_ context.Context, _, _ uin
 	return errUnsupportedRemote
 }
 
+func (rs *RemoteStorage) EnforceSessionLimit(_ context.Context, _ uint, _ int) error {
+	return errUnsupportedRemote
+}
+
 func (rs *RemoteStorage) TouchSession(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
 	return nil // best-effort; no-op on remote storage
 }

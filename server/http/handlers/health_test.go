@@ -24,7 +24,10 @@ func TestHealthCheck(t *testing.T) {
 	assert.Equal(t, "healthy", body["status"])
 	assert.Contains(t, body, "timestamp")
 	assert.Contains(t, body, "uptime")
-	assert.Contains(t, body, "version")
+	// version/commit are deliberately NOT disclosed on the unauthenticated /health
+	// (CVE-targeting); they live on the system.read-gated /api/v1/system/info.
+	assert.NotContains(t, body, "version")
+	assert.NotContains(t, body, "commit")
 
 	// The old handler fabricated dependency health (always "healthy" db/storage/
 	// encryption) — that lie is gone. Liveness must not claim DB health (see /readyz).

@@ -1141,6 +1141,8 @@ func (m *MockStorage) ListSessionsByUser(ctx context.Context, userID uint) ([]*m
 	return args.Get(0).([]*models.Session), args.Error(1)
 }
 
+func (m *MockStorage) EnforceSessionLimit(_ context.Context, _ uint, _ int) error { return nil }
+
 func (m *MockStorage) DeleteSessionsForUserExcept(ctx context.Context, userID, exceptID uint) error {
 	args := m.Called(ctx, userID, exceptID)
 	return args.Error(0)
