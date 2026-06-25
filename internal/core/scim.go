@@ -110,7 +110,15 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	if email == "" {
 		email = userName // SCIM userName is conventionally the email
 	}
-	if existing, _ := c.FindSCIMUser(ctx, externalID, email); existing != nil {
+	// Fail CLOSED on a lookup error: swallowing it would let a transient DB error during
+	// the dedup check fall through to CreateUser and mint a SECOND identity with the same
+	// email (there is no DB-level email uniqueness), and SSO/SCIM resolve email via
+	// first-match — so which physical account a login binds to would become ambiguous.
+	existing, ferr := c.FindSCIMUser(ctx, externalID, email)
+	if ferr != nil {
+		return nil, fmt.Errorf("failed to check for an existing user: %w", ferr)
+	}
+	if existing != nil {
 		return nil, fmt.Errorf("a user already exists for this externalId/email")
 	}
 	username, err := c.deriveSCIMUsername(ctx, userName)
