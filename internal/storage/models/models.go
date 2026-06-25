@@ -221,8 +221,12 @@ type AccessReviewItem struct {
 }
 
 type User struct {
-	ID           uint   `gorm:"primaryKey"`
-	Username     string `gorm:"uniqueIndex;not null"`
+	ID uint `gorm:"primaryKey"`
+	// Username uniqueness is enforced by a PARTIAL unique index (username WHERE
+	// deleted_at IS NULL), created in migrateDatabase — not the plain `uniqueIndex`
+	// tag — so a soft-deleted (e.g. SCIM-deprovisioned) user's username is freed for
+	// reuse on re-provisioning while the old row stays restorable for audit.
+	Username     string `gorm:"not null"`
 	Email        string
 	DisplayName  string
 	PasswordHash string     `json:"-"`

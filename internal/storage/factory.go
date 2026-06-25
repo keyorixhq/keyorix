@@ -611,6 +611,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
+	// Swap the plain unique index on users.username for a partial one (live rows only),
+	// so a SCIM-deprovisioned username can be re-provisioned. Additive + idempotent; the
+	// full AutoMigrate below covers fresh DBs.
+	if tableExists(db, "users") {
+		if err := ensureUserNameIndex(db); err != nil {
+			return err
+		}
+	}
+
 	// Skip full AutoMigrate if already initialised (projects table present).
 	if projectsExists {
 		return nil
@@ -660,9 +669,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	); err != nil {
 		return err
 	}
-	// The Group model carries no plain unique tag on name; enforce uniqueness only
-	// among live groups via a partial index (so a soft-deleted name can be reused).
-	return ensureGroupNameIndex(db)
+	// The Group and User models carry no plain unique tag on name/username; enforce
+	// uniqueness only among live rows via partial indexes (so a soft-deleted name or
+	// username can be reused, e.g. on SCIM re-provisioning).
+	if err := ensureGroupNameIndex(db); err != nil {
+		return err
+	}
+	return ensureUserNameIndex(db)
 }
 
 // ensureGroupNameIndex replaces any plain unique index on groups.name with a
@@ -676,6 +689,25 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_groups_name_active ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial groups name index: %w", err)
+	}
+	return nil
+}
+
+// ensureUserNameIndex replaces the plain unique index on users.username (from the old
+// `uniqueIndex` tag) with a partial unique index scoped to non-deleted rows. Without
+// this a SCIM-deprovisioned (soft-deleted) user keeps occupying the username in the
+// unique index, so re-provisioning the same userName collides on INSERT and the IdP's
+// provisioning run errors indefinitely. Idempotent; works on SQLite and Postgres.
+func ensureUserNameIndex(db *gorm.DB) error {
+	// Drop the legacy plain unique index. GORM's `uniqueIndex` tag names it
+	// idx_users_username; the older `unique` tag would be uni_users_username. Drop both.
+	for _, idx := range []string{"idx_users_username", "uni_users_username"} {
+		if err := db.Exec("DROP INDEX IF EXISTS " + idx).Error; err != nil {
+			return fmt.Errorf("failed to drop legacy users username index %q: %w", idx, err)
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_username_active ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
+		return fmt.Errorf("failed to create partial users username index: %w", err)
 	}
 	return nil
 }
