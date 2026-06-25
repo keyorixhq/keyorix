@@ -201,7 +201,9 @@ func (s *MachineIdentityGRPCService) RevokeMachineToken(ctx context.Context, req
 	if err := authorizeScoped(ctx, s.core, user, "roles.assign", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
 		return nil, err
 	}
-	if err := s.core.RevokeMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), uint(req.GetTokenId()), user.UserID); err != nil {
+	// gRPC has no auth cache (the interceptor validates every request), so the returned
+	// hash needs no eviction here.
+	if _, err := s.core.RevokeMachineToken(ctx, uint(req.GetProjectId()), uint(req.GetMachineId()), uint(req.GetTokenId()), user.UserID); err != nil {
 		return nil, mapMachineError(err)
 	}
 	return &emptypb.Empty{}, nil
