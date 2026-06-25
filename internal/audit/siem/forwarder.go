@@ -200,6 +200,11 @@ type eventPayload struct {
 	Impersonation  bool            `json:"impersonation,omitempty"`
 	ImpersonatedBy *uint           `json:"impersonated_by,omitempty"`
 	ActingAs       *uint           `json:"acting_as,omitempty"`
+	// Tamper-evidence chain links (ADR-029). Exporting them lets a downstream SIEM
+	// re-link the chain and detect a dropped/forged/reordered event — without them an
+	// export consumer cannot tell a gap (a lost event) from a contiguous stream.
+	EntryHash string `json:"entry_hash,omitempty"`
+	PrevHash  string `json:"prev_hash,omitempty"`
 }
 
 func toPayload(e *models.AuditEvent) eventPayload {
@@ -221,6 +226,8 @@ func toPayload(e *models.AuditEvent) eventPayload {
 		Impersonation:  e.Impersonation,
 		ImpersonatedBy: e.ImpersonatedBy,
 		ActingAs:       e.ActingAs,
+		EntryHash:      e.EntryHash,
+		PrevHash:       e.PrevHash,
 	}
 	if e.Diff != "" {
 		p.Diff = json.RawMessage(e.Diff)

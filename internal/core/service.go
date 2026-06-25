@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"regexp"
 	"sync"
 	"time"
@@ -213,7 +214,14 @@ func (c *KeyorixCore) AuditLicenseState(ctx context.Context) {
 // emitAudit persists an audit event and forwards it to the configured sink.
 // All core audit writers funnel through here so SIEM forwarding is uniform.
 func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
-	_ = c.storage.LogAuditEvent(ctx, event)
+	if err := c.storage.LogAuditEvent(ctx, event); err != nil {
+		// A failed chain-write is an audit gap that VerifyAuditChain cannot detect — a
+		// never-written event leaves no hole. Surface it loudly instead of swallowing,
+		// and do NOT forward a phantom event (ID 0, no chain position) to the SIEM: the
+		// off-box mirror must reflect the durable chain, not events that never landed.
+		log.Printf("SECURITY: failed to persist audit event %q (success=%v): %v", event.EventType, event.Success, err)
+		return
+	}
 	if c.auditForwarder != nil {
 		c.auditForwarder.Forward(event)
 	}

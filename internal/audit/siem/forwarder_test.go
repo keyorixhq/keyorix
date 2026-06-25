@@ -37,7 +37,9 @@ func sampleEvent() *models.AuditEvent {
 		ID: 42, EventType: "secret.updated", UserID: &uid, ProjectID: &pid,
 		Description: "User alice updated secret db-password", IPAddress: "10.0.0.5",
 		Success: &t, EventTime: time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC),
-		Diff: `{"value":{"changed":true}}`,
+		Diff:      `{"value":{"changed":true}}`,
+		PrevHash:  "prevhash-abc",
+		EntryHash: "entryhash-xyz",
 	}
 }
 
@@ -141,6 +143,11 @@ func TestSend_WebhookBearer(t *testing.T) {
 	}
 	if p.ID != 42 || p.EventType != "secret.updated" {
 		t.Errorf("unexpected payload: %+v", p)
+	}
+	// The chain links must be exported so a downstream SIEM can detect a dropped or
+	// forged event (a gap shows as a prev_hash that doesn't match the prior entry_hash).
+	if p.EntryHash != "entryhash-xyz" || p.PrevHash != "prevhash-abc" {
+		t.Errorf("missing tamper-evidence chain links: entry=%q prev=%q", p.EntryHash, p.PrevHash)
 	}
 }
 
