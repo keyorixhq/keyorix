@@ -1042,6 +1042,16 @@ func (m *MockStorage) AuditEntryHashByID(ctx context.Context, id uint) (string, 
 	return args.String(0), args.Bool(1), args.Error(2)
 }
 
+func (m *MockStorage) GetSystemMetadata(ctx context.Context, key string) (string, bool, error) {
+	args := m.Called(ctx, key)
+	return args.String(0), args.Bool(1), args.Error(2)
+}
+
+func (m *MockStorage) SetSystemMetadata(ctx context.Context, key, value string) error {
+	args := m.Called(ctx, key, value)
+	return args.Error(0)
+}
+
 func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
 	args := m.Called(ctx, projectID, notReadSince)
 	if args.Get(0) == nil {

@@ -140,6 +140,13 @@ type KeyorixCore struct {
 	// enforced after a DEK rotation.
 	auditCkptKey        []byte
 	auditCkptKeyVersion string
+	// auditMaxCertified is an in-memory monotonic high-water mark of the greatest
+	// chained-events count this process has ever certified or verified. It backstops
+	// the persistent signed high-water (SystemMetadata) against an online attacker who
+	// deletes the high-water row mid-run: the chain can never be observed to regress
+	// below a length we already saw this lifetime. Guarded by auditWatermarkMu.
+	auditMaxCertified int64
+	auditWatermarkMu  sync.Mutex
 	// checkpointNotary, when set, anchors each freshly-written audit checkpoint to
 	// an external authority (RFC 3161 TSA) for a forge-proof proof-of-existence
 	// (ADR-029). nil = no external anchoring. Set at startup via SetCheckpointNotary.

@@ -438,6 +438,11 @@ type Storage interface {
 	// AuditEntryHashByID returns the entry_hash of the audit row with the given
 	// id; found is false when no such row exists (e.g. it was truncated away).
 	AuditEntryHashByID(ctx context.Context, id uint) (hash string, found bool, err error)
+	// GetSystemMetadata returns the value stored for key; found is false when the key
+	// has never been set. A small singleton key/value store for server-managed state.
+	GetSystemMetadata(ctx context.Context, key string) (value string, found bool, err error)
+	// SetSystemMetadata upserts a system-metadata key/value (last write wins).
+	SetSystemMetadata(ctx context.Context, key, value string) error
 	GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error)
 	// CountImpersonatedActions returns the number of impersonated audit events
 	// recorded for actingAs by impersonator since `since`, excluding the
