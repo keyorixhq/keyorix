@@ -350,10 +350,13 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 		c.writeAuditEventFull(ctx, "webauthn.failed", nil, nil, nil, ip, "failed passwordless WebAuthn login")
 		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
-	// A passwordless login is still a login: a suspended/blocked account is refused
-	// (the password path's AccountLoginBlocked gate has no equivalent here).
-	if AccountLoginBlocked(resolved.AccountState) {
-		return nil, nil, fmt.Errorf("account suspended")
+	// A passwordless login is still a login: a deactivated or suspended/blocked account
+	// is refused. IsActive is an independent gate from AccountState — an admin
+	// deactivation (is_active=false) leaves AccountState="active", so checking only
+	// AccountLoginBlocked would let a disabled account in. Mirrors the 2FA and password
+	// gates.
+	if !resolved.IsActive || AccountLoginBlocked(resolved.AccountState) {
+		return nil, nil, fmt.Errorf("account is not active")
 	}
 	c.persistUpdatedCredential(ctx, resolved.ID, cred)
 
