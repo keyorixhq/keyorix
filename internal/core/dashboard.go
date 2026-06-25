@@ -85,9 +85,15 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		sharedWithMe = len(incoming)
 	}
 
-	uid := userID
-	_ = uid // recent activity shows all users' events
+	// Recent activity is audit data. Only an auditor (audit.read) may see ALL users'
+	// events — otherwise scope it to the caller's own activity, so the dashboard doesn't
+	// leak secret names / actions from projects the caller can't read.
+	var auditActor *uint
+	if ok, _ := c.Authorize(ctx, userID, "audit.read", Scope{}); !ok {
+		auditActor = &userID
+	}
 	events, _, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		UserID:   auditActor,
 		Page:     1,
 		PageSize: 5,
 	})

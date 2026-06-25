@@ -555,6 +555,15 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// On an already-initialized system this endpoint is reachable UNAUTHENTICATED (the
+	// bootstrap token only gates the create path). Returning the admin's username/email
+	// and the project/environment topology here would be a pre-auth identity/topology
+	// oracle, so the idempotent response carries only the initialized flag.
+	if result.AlreadyInitialized {
+		sendSuccess(w, map[string]interface{}{"already_initialized": true}, "System already initialised")
+		return
+	}
+
 	envNames := make([]string, 0, len(result.Environments))
 	for _, e := range result.Environments {
 		envNames = append(envNames, e.Name)
@@ -575,11 +584,7 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		resp["project"] = result.Project.Name
 	}
 
-	msg := "System initialised successfully"
-	if result.AlreadyInitialized {
-		msg = "System already initialised"
-	}
-	sendSuccess(w, resp, msg)
+	sendSuccess(w, resp, "System initialised successfully")
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

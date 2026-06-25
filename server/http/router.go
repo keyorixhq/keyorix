@@ -229,7 +229,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// Dashboard endpoints
 		r.Get("/dashboard/stats", dashboardHandler.GetStats)
-		r.Get("/dashboard/activity", dashboardHandler.GetActivity)
+		// The full activity feed is org-wide audit data — gate it behind audit.read.
+		// (Per-user dashboard stats scope their own recent-activity in core.)
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/dashboard/activity", dashboardHandler.GetActivity)
 
 		// Catalog endpoints (projects, environments).
 		// List endpoints need global read (browse everything); accessing a
