@@ -53,7 +53,26 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 	if cfg.InsecureSkipVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- opt-in for self-signed endpoints
 	}
-	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport}, baseBackoff: baseBackoff}, nil
+	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport, CheckRedirect: refuseRedirect}, baseBackoff: baseBackoff}, nil
+}
+
+// refuseRedirect blocks a redirect to a different host or an https->http downgrade, so
+// a compromised/misconfigured receiver returning a 30x cannot bounce the bearer-token-
+// bearing evidence POST to an internal or cleartext target (SSRF / token exfil). The
+// Authorization header is stripped by Go on a cross-host redirect, but the evidence pack
+// itself (and a same-host downgrade) still warrant refusing the bounce outright.
+func refuseRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	prev := via[len(via)-1]
+	if req.URL.Host != prev.URL.Host {
+		return fmt.Errorf("evidencesink: refusing cross-host redirect to %q", req.URL.Host)
+	}
+	if prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("evidencesink: refusing https->%s redirect", req.URL.Scheme)
+	}
+	return nil
 }
 
 // ForwardEvidence POSTs the marshalled evidence pack as application/json. The pack's

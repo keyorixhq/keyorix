@@ -26,6 +26,25 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// refuseRedirect blocks a redirect to a different host or an https->http downgrade.
+// The SIEM auth rides in custom headers (DD-API-KEY, Splunk token) that Go does NOT
+// strip on a cross-host redirect, so a compromised/misconfigured intake endpoint
+// returning a 30x could otherwise bounce the credential-bearing request to an
+// attacker-controlled or internal host (token exfil / SSRF).
+func refuseRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	prev := via[len(via)-1]
+	if req.URL.Host != prev.URL.Host {
+		return fmt.Errorf("siem: refusing cross-host redirect to %q", req.URL.Host)
+	}
+	if prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("siem: refusing https->%s redirect", req.URL.Scheme)
+	}
+	return nil
+}
+
 // Provider identifies the destination SIEM format.
 type Provider string
 
@@ -103,7 +122,7 @@ func newForwarder(cfg Config, baseBackoff time.Duration) (*Forwarder, error) {
 	}
 	f := &Forwarder{
 		cfg:         cfg,
-		client:      &http.Client{Timeout: httpTimeout, Transport: transport},
+		client:      &http.Client{Timeout: httpTimeout, Transport: transport, CheckRedirect: refuseRedirect},
 		queue:       make(chan *models.AuditEvent, queueSize),
 		baseBackoff: baseBackoff,
 		closing:     make(chan struct{}),
