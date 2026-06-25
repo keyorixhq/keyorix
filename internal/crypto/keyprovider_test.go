@@ -95,6 +95,22 @@ func TestFileKeyProvider_Errors(t *testing.T) {
 		require.Error(t, err, "a zeroed/placeholder KEK must be rejected")
 		assert.Contains(t, err.Error(), "all-zero")
 	})
+	// The all-zero guard must not be skippable by supplying the zeroed KEK in an
+	// encoded form — a placeholder/un-rendered mounted secret can arrive hex- or
+	// base64-encoded just as easily as raw bytes.
+	zero := make([]byte, KEKSize)
+	for name, encoded := range map[string][]byte{
+		"all-zero hex":    []byte(hex.EncodeToString(zero)),
+		"all-zero base64": []byte(base64.StdEncoding.EncodeToString(zero)),
+	} {
+		t.Run(name+" rejected", func(t *testing.T) {
+			path := filepath.Join(dir, "zero-enc.key")
+			require.NoError(t, os.WriteFile(path, encoded, 0600))
+			_, err := NewFileKeyProvider(path).KEK()
+			require.Error(t, err, "an encoded all-zero KEK must be rejected")
+			assert.Contains(t, err.Error(), "all-zero")
+		})
+	}
 }
 
 func TestEnvKeyProvider(t *testing.T) {
