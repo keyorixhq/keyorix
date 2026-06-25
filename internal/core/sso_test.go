@@ -138,8 +138,9 @@ func TestResolveSSOUser(t *testing.T) {
 
 	t.Run("externalId match wins", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return(&models.User{ID: 7}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
+		// The subject is looked up under this provider's scoped external_id.
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return(&models.User{ID: 7}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(7), u.ID)
 		store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
@@ -147,13 +148,14 @@ func TestResolveSSOUser(t *testing.T) {
 
 	t.Run("verified email links a never-federated account and claims it", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
-		// First link claims the account for this subject (so a later provider can't re-link it).
+		// First link claims the account for this provider+subject (so a later provider
+		// can't re-link it).
 		store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
-			return u.ID == 9 && u.ExternalID == "okta|123"
-		})).Return(&models.User{ID: 9, ExternalID: "okta|123"}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
+			return u.ID == 9 && u.ExternalID == "sso:okta:okta|123"
+		})).Return(&models.User{ID: 9, ExternalID: "sso:okta:okta|123"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(9), u.ID)
 		store.AssertCalled(t, "UpdateUser", mock.Anything, mock.Anything)
@@ -161,31 +163,43 @@ func TestResolveSSOUser(t *testing.T) {
 
 	t.Run("unverified email does NOT match an existing account (no takeover)", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		// emailVerified=false: the email fallback is skipped entirely — an IdP that merely
 		// asserts (or omits email_verified for) an address can't claim an existing account.
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", false)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", false)
 		require.NoError(t, err)
 		assert.Nil(t, u)
 		store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
 	})
 
-	t.Run("email match to an account bound to a DIFFERENT identity is refused", func(t *testing.T) {
+	t.Run("email fallback refuses an account bound to a different provider", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "partner|999").Return((*models.User)(nil), notFound())
-		// The corp account is already federated to a different subject — a second provider
-		// asserting the same email must not take it over.
-		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: "okta|123"}, nil)
-		_, err := c.resolveSSOUser(context.Background(), "partner|999", "ada@x.io", true)
-		require.ErrorContains(t, err, "already linked to a different SSO identity")
-		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
+		// This email belongs to an account already bound to IdP "azure". The "okta"
+		// assertion must NOT be able to claim it — that is the takeover this guards.
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").
+			Return(&models.User{ID: 99, ExternalID: "sso:azure:abc"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "different SSO provider")
+		assert.Nil(t, u)
+	})
+
+	t.Run("email fallback allows an account bound to the SAME provider", func(t *testing.T) {
+		c, store, _, _ := ssoTestCore(t)
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").
+			Return(&models.User{ID: 11, ExternalID: "sso:okta:other-sub"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
+		require.NoError(t, err)
+		assert.Equal(t, uint(11), u.ID)
 	})
 
 	t.Run("no match returns nil (caller decides)", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Nil(t, u)
 	})
@@ -196,8 +210,8 @@ func TestProvisionSSOUser(t *testing.T) {
 
 	t.Run("JIT-creates an active passwordless user with the default role", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
-		// No existing match (FindSCIMUser re-check), unique username derivation.
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		// No existing match (gated resolve re-check), unique username derivation.
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
 		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
 		var created *models.User
@@ -216,7 +230,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		// restricted password-change-only session), externalId pinned, real display name.
 		assert.Equal(t, AccountActive, created.AccountState)
 		assert.True(t, created.IsActive)
-		assert.Equal(t, "okta|123", created.ExternalID)
+		assert.Equal(t, "sso:okta:okta|123", created.ExternalID, "JIT account is bound to the asserting provider")
 		assert.Equal(t, "ada@x.io", created.Email)
 		assert.Equal(t, "Ada Lovelace", created.DisplayName)
 		assert.NotEmpty(t, created.PasswordHash) // unusable random hash, not blank
@@ -258,7 +272,7 @@ func TestProvisionSSOUser(t *testing.T) {
 
 	t.Run("reuses an existing user instead of duplicating", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return(&models.User{ID: 5}, nil)
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return(&models.User{ID: 5}, nil)
 		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
 		require.NoError(t, err)
 		assert.Equal(t, uint(5), u.ID)
@@ -268,7 +282,7 @@ func TestProvisionSSOUser(t *testing.T) {
 	t.Run("honours a configured default_role", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		p.DefaultRole = "project_admin"
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
 		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
 		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 7}, nil)
@@ -284,7 +298,7 @@ func TestProvisionSSOUser(t *testing.T) {
 	t.Run("an unknown default_role grants nothing but still provisions", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		p.DefaultRole = "does_not_exist"
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
 		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
 		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 8}, nil)
