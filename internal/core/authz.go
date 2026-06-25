@@ -186,6 +186,24 @@ func (c *KeyorixCore) Authorize(ctx context.Context, userID uint, permission str
 	return c.storage.RoleSetHasPermission(ctx, roleIDs, permission)
 }
 
+// principalHasScopedPermission reports whether userID's OWN roles grant permission at
+// scope, independent of any PAT restriction on the context (which belongs to the
+// requesting actor, not this user). Use it to vet a THIRD party — e.g. a prospective
+// secret owner — without the caller's token narrowing the result. Fails closed.
+func (c *KeyorixCore) principalHasScopedPermission(ctx context.Context, userID uint, permission string, scope Scope) (bool, error) {
+	roleIDs, err := c.scopedRoleIDs(ctx, userID, scope)
+	if err != nil {
+		return false, err
+	}
+	if len(roleIDs) == 0 {
+		return false, nil
+	}
+	if c.roleSetContainsAdmin(ctx, roleIDs) {
+		return true, nil
+	}
+	return c.storage.RoleSetHasPermission(ctx, roleIDs, permission)
+}
+
 // IsGlobalAdmin reports whether userID holds an admin role assigned globally
 // (project 0, environment 0). Used to short-circuit scope-filtered listing.
 //

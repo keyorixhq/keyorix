@@ -20,7 +20,8 @@ func TestReassignOwnedSecrets(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
 
@@ -37,6 +38,12 @@ func TestReassignOwnedSecrets(t *testing.T) {
 	require.NoError(t, err)
 	e2, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p2.ID})
 	require.NoError(t, err)
+
+	// The heir must have access to the secrets' scope to become their owner.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "reader"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 1, ProjectID: p1.ID}).Error)
 
 	mk := func(name string, projectID, envID, ownerID uint) uint {
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{

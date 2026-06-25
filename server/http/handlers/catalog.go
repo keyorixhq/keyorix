@@ -208,6 +208,14 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 		sendError(w, "ValidationError", "Environment name is required", http.StatusBadRequest, nil)
 		return
 	}
+	// The scope check resolves the project id from the URL without verifying it exists,
+	// so confirm the parent project is live before creating an environment under it —
+	// otherwise a caller who held write on a since-deleted project could re-establish a
+	// usable scope under it (GetProject excludes soft-deleted projects).
+	if _, perr := h.coreService.Storage().GetProject(r.Context(), uint(id)); perr != nil {
+		sendError(w, "NotFound", "Project not found", http.StatusNotFound, nil)
+		return
+	}
 	env, err := h.coreService.Storage().CreateEnvironment(r.Context(), &models.Environment{
 		ProjectID: uint(id),
 		Name:      body.Name,
