@@ -149,10 +149,10 @@ func (c *KeyorixCore) GetSecretValueByVersion(ctx context.Context, secretID uint
 	if err != nil {
 		return nil, err
 	}
-	if c.encryption != nil {
-		return c.encryption.RetrieveSecret(version.ID)
-	}
-	return version.EncryptedValue, nil
+	// Route through the shared enforcement path so a by-version read is subject to the
+	// same atomic max-reads cap as the latest-version read — defense-in-depth against a
+	// future caller that uses the by-version path to bypass the read ceiling.
+	return c.readVersionValue(ctx, secret, version)
 }
 
 // EventSecretRolledBack is audited when a secret is restored to a prior version.

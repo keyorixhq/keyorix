@@ -90,3 +90,19 @@ func TestMaxReads_ConcurrentNeverExceedsCap(t *testing.T) {
 	require.NoError(t, db.Where("secret_node_id = ?", id).First(&v).Error)
 	assert.LessOrEqual(t, v.ReadCount, cap, "read_count must not exceed the cap")
 }
+
+// A by-version read enforces the same max-reads cap as the latest-version read —
+// the by-version path must not be a bypass for the read ceiling.
+func TestMaxReads_ByVersionStopsAtCap(t *testing.T) {
+	c, _ := newMaxReadsCore(t)
+	id := seedMaxReadsSecret(t, c, 2)
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		_, err := c.GetSecretValueByVersion(ctx, id, 1)
+		require.NoError(t, err, "by-version read %d should be within the cap", i+1)
+	}
+	_, err := c.GetSecretValueByVersion(ctx, id, 1)
+	require.Error(t, err, "the 3rd by-version read must be denied")
+	assert.Contains(t, err.Error(), i18n.T("ErrorMaxReadsExceeded", nil))
+}
