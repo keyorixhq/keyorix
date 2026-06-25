@@ -406,6 +406,14 @@ type KeyProviderConfig struct {
 	// WrappedKeyPath is where the KMS-wrapped KEK blob lives (aws-kms / gcp-kms /
 	// azure-kms).
 	WrappedKeyPath string `yaml:"wrapped_key_path"`
+	// KMSEncryptionContext binds the wrapped KEK to this install (aws-kms /gcp-kms):
+	// it's passed as the AWS EncryptionContext / GCP AdditionalAuthenticatedData on
+	// wrap+unwrap, so a different install sharing the same CMK cannot unwrap this
+	// install's KEK. Set a value unique to the install, e.g. {keyorix-install: <id>}.
+	// Empty = no binding (the prior behaviour). Not supported by azure-kms (RSA wrap
+	// has no AAD). Existing wrapped blobs decrypt via a no-context fallback, so this
+	// can be enabled on a running install (it binds on the next KEK re-wrap).
+	KMSEncryptionContext map[string]string `yaml:"kms_encryption_context"`
 	// ExecCommand is the argv for type "exec": the resolver command (argv[0] is the
 	// binary, the rest are arguments) whose stdout supplies the KEK as raw 32 bytes
 	// or a hex/base64 encoding thereof. Run directly without a shell. Lets a
