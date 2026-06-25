@@ -161,10 +161,23 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		user.DisplayName = *displayName
 	}
 	if email != nil && *email != "" {
+		// Refuse an email that collides with a DIFFERENT user. SCIM email is trusted by
+		// identity resolution (SSO matches by email), so silently overwriting a low-priv
+		// account's email to an admin's would corrupt the email→account mapping and
+		// enable account linking/takeover. The create path already guards this.
+		if existing, eerr := c.storage.GetUserByEmail(ctx, *email); eerr == nil && existing != nil && existing.ID != user.ID {
+			return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
+		}
 		user.Email = *email
 	}
 	deactivated := false
 	if active != nil {
+		if !*active {
+			// Don't let a routine (or hostile) SCIM sync deactivate the only admin.
+			if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
+				return nil, err
+			}
+		}
 		user.IsActive = *active
 		if *active {
 			// Reactivation clears only a SCIM/IdP deactivation. An admin security
@@ -202,6 +215,33 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 	return updated, nil
 }
 
+// guardLastAdminDeactivation refuses an operation that would deactivate/deprovision the
+// only remaining install administrator, so a routine or hostile SCIM push can't lock
+// everyone out. Mirrors guardLastGlobalAdmin's assignment scan but keyed on the target.
+func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
+	isAdmin, err := c.IsGlobalAdmin(ctx, targetID)
+	if err != nil || !isAdmin {
+		return nil // not an admin (or can't tell) — not the last-admin case
+	}
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, a := range assignments {
+		if !adminIDs[a.RoleID] {
+			continue
+		}
+		// Any OTHER global-admin grant (a different user, or a group) means governance
+		// survives the target's removal.
+		if a.PrincipalType == "user" && a.PrincipalID == targetID {
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("refusing to deactivate the last install administrator via SCIM")
+}
+
 // DeprovisionSCIMUser handles a SCIM DELETE: it deprovisions the user (blocks login,
 // terminates sessions) and soft-deletes the record, so the account is recoverable
 // within the retention window rather than hard-destroyed.
@@ -209,6 +249,10 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	user, err := c.storage.GetUser(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	// Don't let a SCIM DELETE deprovision the only admin and lock the install out.
+	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
+		return err
 	}
 	user.IsActive = false
 	// Mark as SCIM-deprovisioned rather than admin-suspended, but never downgrade an
