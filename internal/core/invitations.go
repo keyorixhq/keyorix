@@ -410,6 +410,15 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	if req.State != AccessRequestPending {
 		return nil, fmt.Errorf("only a pending request can be approved (state is %s)", req.State)
 	}
+	// Enforce the request's own TTL here, not only on the list path. GetAccessRequest
+	// returns the stored record verbatim, so a request whose expiry has passed is still
+	// State==pending until something reconciles it — approving it would grant access on a
+	// stale request that should have lapsed. Expire it lazily and refuse.
+	if req.ExpiresAt != nil && c.now().After(*req.ExpiresAt) {
+		req.State = AccessRequestExpired
+		_ = c.storage.UpdateAccessRequest(ctx, req)
+		return nil, fmt.Errorf("access request has expired")
+	}
 	if grantTTL < 0 {
 		return nil, fmt.Errorf("grant TTL must not be negative")
 	}
@@ -443,6 +452,21 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	roleModel, err := c.storage.GetRoleByName(ctx, role)
 	if err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
+	}
+
+	// Privilege ceiling: an approver may not grant an admin role unless they themselves
+	// hold admin authority at this project. The route gate only proves the approver has
+	// roles.assign here — without this an ordinary approver could sign off a request for
+	// `admin`/`project_admin` and mint a principal more powerful than the approver, an
+	// escalation-by-proxy. Mirrors scimGroupConfersAdmin's "can't add to an admin group".
+	if isAdminRoleName(role) {
+		approverRoleIDs, rerr := c.storage.GetUserRoleIDsAt(ctx, approverID, storage.Scope{ProjectID: req.ProjectID})
+		if rerr != nil {
+			return nil, fmt.Errorf("failed to resolve approver authority: %w", rerr)
+		}
+		if !c.roleSetContainsAdmin(ctx, approverRoleIDs) {
+			return nil, fmt.Errorf("only an administrator can approve a request that grants the administrative role %q", role)
+		}
 	}
 
 	// One sign-off per distinct approver.

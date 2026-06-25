@@ -108,6 +108,80 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 	assert.Equal(t, "project_viewer", out.GrantedRole)
 }
 
+// stubAdminRoleLookups registers the admin role names so roleSetContainsAdmin can
+// resolve them; super_admin=1, admin=2, system_admin=3, project_admin=4.
+func stubAdminRoleLookups(store *MockStorage, ctx context.Context) {
+	store.On("GetRoleByName", ctx, "super_admin").Return(&models.Role{ID: 1}, nil)
+	store.On("GetRoleByName", ctx, "admin").Return(&models.Role{ID: 2}, nil)
+	store.On("GetRoleByName", ctx, "system_admin").Return(&models.Role{ID: 3}, nil)
+	store.On("GetRoleByName", ctx, "project_admin").Return(&models.Role{ID: 4}, nil)
+}
+
+// Privilege ceiling: a non-admin approver cannot sign off a request that grants an
+// admin role — that would mint a principal more powerful than the approver.
+func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
+		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "admin", State: AccessRequestPending,
+	}, nil)
+	stubAdminRoleLookups(store, ctx)
+	// Approver 9 holds only a non-admin role (id 6) at the project.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
+
+	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "admin")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only an administrator can approve")
+	// The grant was refused before any role assignment or approval record.
+	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "CreateAccessRequestApproval", mock.Anything, mock.Anything)
+}
+
+// An admin approver may grant an admin role — the ceiling permits an equal-or-higher
+// authority to sign off.
+func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
+		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "admin", State: AccessRequestPending,
+	}, nil)
+	stubAdminRoleLookups(store, ctx)
+	// Approver 9 holds the admin role (id 2) at the project.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{2}, nil)
+	store.On("AssignRole", ctx, uint(2), uint(2), storage.Scope{ProjectID: 1}).Return(nil)
+	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(nil)
+	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
+	store.On("ListAccessRequestApprovals", ctx, uint(3)).Return([]*models.AccessRequestApproval{}, nil)
+	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
+	allowNotifications(store)
+
+	out, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "admin")
+	require.NoError(t, err)
+	assert.Equal(t, AccessRequestApproved, out.State)
+}
+
+// A request whose TTL has elapsed is refused on the approve path (lazy expiry), not
+// only on the list path — GetAccessRequest returns the stored record verbatim.
+func TestApproveAccessRequest_RejectsExpired(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	past := time.Date(2026, 6, 5, 11, 0, 0, 0, time.UTC) // before the fixed clock (12:00)
+	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
+		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending, ExpiresAt: &past,
+	}, nil)
+	store.On("UpdateAccessRequest", ctx, mock.MatchedBy(func(r *models.AccessRequest) bool {
+		return r.State == AccessRequestExpired
+	})).Return(nil)
+
+	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expired")
+	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
 func TestApproveAccessRequest_RejectsNonPending(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)

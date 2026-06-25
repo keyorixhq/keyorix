@@ -133,6 +133,18 @@ type Scope = storage.Scope
 // expected to be assigned at a project scope (bypasses within that project).
 var adminRoleNames = []string{"super_admin", "admin", "system_admin", "project_admin"}
 
+// isAdminRoleName reports whether roleName is one of the admin (permission-bypass)
+// roles — a pure-string check requiring no storage lookup, for guards that already
+// hold the role name.
+func isAdminRoleName(roleName string) bool {
+	for _, n := range adminRoleNames {
+		if n == roleName {
+			return true
+		}
+	}
+	return false
+}
+
 // AuthorizePrincipal reports whether a principal — a human user or a machine
 // identity (ADR-030) — may exercise permission against the target scope. It is
 // the actor-aware entrypoint the auth gates use; Authorize is the user-only
