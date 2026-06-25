@@ -72,10 +72,12 @@ func createTestToken(t *testing.T, c *core.KeyorixCore) string {
 	t.Helper()
 	ctx := context.Background()
 	// SeedSystem creates admin user, roles, permissions, project, environments
+	c.SetBootstrapToken("test-bootstrap-token")
 	_, err := c.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "testadmin",
 		Email:    "testadmin@example.com",
 		Password: "TestPassword123!",
+		Token:    "test-bootstrap-token",
 	})
 	if err != nil {
 		t.Logf("BootstrapSystem: %v (may already be initialised)", err)

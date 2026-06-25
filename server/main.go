@@ -236,6 +236,29 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("RBAC permission reconciliation: %v (continuing)", err)
 	}
 
+	// Wire the bootstrap token that gates POST /system/init. Prefer an operator-set
+	// KEYORIX_BOOTSTRAP_TOKEN (for automation); otherwise generate one and, while the
+	// install is still empty, log it so the operator can complete first-boot init. This
+	// closes the unauthenticated, first-caller-wins admin-claim race on a fresh, reachable
+	// instance.
+	bootstrapToken := strings.TrimSpace(os.Getenv("KEYORIX_BOOTSTRAP_TOKEN"))
+	bootstrapTokenGenerated := false
+	if bootstrapToken == "" {
+		if t, gerr := core.GenerateBootstrapToken(); gerr == nil {
+			bootstrapToken, bootstrapTokenGenerated = t, true
+		} else {
+			log.Printf("failed to generate a bootstrap token: %v (API system-init will be disabled)", gerr)
+		}
+	}
+	coreService.SetBootstrapToken(bootstrapToken)
+	if needs, berr := coreService.SystemNeedsBootstrap(context.Background()); berr == nil && needs && bootstrapToken != "" {
+		if bootstrapTokenGenerated {
+			log.Printf("system not initialised — run `keyorix system init` with this one-time bootstrap token (set KEYORIX_BOOTSTRAP_TOKEN to pin your own):\n    BOOTSTRAP TOKEN: %s", bootstrapToken)
+		} else {
+			log.Printf("system not initialised — run `keyorix system init` with the configured KEYORIX_BOOTSTRAP_TOKEN")
+		}
+	}
+
 	if encSvc != nil {
 		// Wire the initialised encryption service for reversibly-encrypted auth
 		// secrets (the TOTP MFA secret, which cannot be hashed).

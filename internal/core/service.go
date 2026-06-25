@@ -49,9 +49,15 @@ type KeyorixCore struct {
 	dynamicSweepEnabled bool
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
 	// Set from config at startup via SetWebAuthn.
-	webauthnRP        *webauthn.WebAuthn
-	now               func() time.Time // For testability
-	passwordPolicy    PasswordPolicy
+	webauthnRP     *webauthn.WebAuthn
+	now            func() time.Time // For testability
+	passwordPolicy PasswordPolicy
+	// bootstrapToken gates POST /system/init (BootstrapSystem). The first-boot admin
+	// claim is otherwise unauthenticated, so a fresh, network-reachable instance could
+	// be seized by whoever calls /system/init first. The server sets this at startup
+	// (from KEYORIX_BOOTSTRAP_TOKEN, or a random value logged for the operator while the
+	// system is uninitialised); init refuses unless the caller presents a matching token.
+	bootstrapToken    string
 	secretValuePolicy SecretValuePolicy  // optional quality gate on secret values (off by default)
 	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
 	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
@@ -330,6 +336,13 @@ func (c *KeyorixCore) WebAuthnEnabled() bool { return c.webauthnRP != nil }
 // configures a password_policy block.
 func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
 	c.passwordPolicy = p
+}
+
+// SetBootstrapToken sets the token that POST /system/init must present to seed the
+// first admin. An empty token disables API bootstrap entirely (fail closed). The
+// server wires this at startup; see BootstrapSystem.
+func (c *KeyorixCore) SetBootstrapToken(token string) {
+	c.bootstrapToken = token
 }
 
 // SetSecretValuePolicy enables/configures the secret-value quality gate (off by

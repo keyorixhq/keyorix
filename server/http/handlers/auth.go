@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -75,6 +76,7 @@ type initSystemRequestBody struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name"`
+	Token       string `json:"bootstrap_token"`
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -530,14 +532,26 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The bootstrap token authorizes the first-admin claim. Accept it from a header
+	// (preferred) or the request body so the CLI and automation can supply it.
+	token := r.Header.Get("X-Keyorix-Bootstrap-Token")
+	if token == "" {
+		token = body.Token
+	}
 	result, err := h.coreService.BootstrapSystem(r.Context(), &core.BootstrapRequest{
 		Username:    body.Username,
 		Email:       body.Email,
 		Password:    body.Password,
 		DisplayName: body.DisplayName,
+		Token:       token,
 	})
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		// A bad/missing token or a weak password is a client error, not a 500.
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "bootstrap token") || strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			status = http.StatusForbidden
+		}
+		sendError(w, "Error", err.Error(), status, nil)
 		return
 	}
 

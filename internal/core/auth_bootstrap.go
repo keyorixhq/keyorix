@@ -7,18 +7,24 @@ package core
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // BootstrapRequest holds credentials and display name for the initial bootstrap.
+// Token is the caller-supplied bootstrap token, matched against the server's
+// configured token (see KeyorixCore.SetBootstrapToken) to authorize the first-admin
+// claim.
 type BootstrapRequest struct {
 	Username    string
 	Email       string
 	Password    string
 	DisplayName string
+	Token       string
 }
 
 // BootstrapResult is returned after a bootstrap call (first-time or idempotent repeat).
@@ -162,6 +168,21 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 		return c.currentBootstrapState(ctx)
 	}
 
+	// Authorize the first-admin claim. Without this gate the bootstrap is an
+	// unauthenticated, first-caller-wins admin seizure on any fresh, network-reachable
+	// instance. An unset server token disables API bootstrap entirely (fail closed).
+	if c.bootstrapToken == "" {
+		return nil, fmt.Errorf("system initialisation over the API is disabled: no bootstrap token is configured")
+	}
+	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(c.bootstrapToken)) != 1 {
+		return nil, fmt.Errorf("invalid bootstrap token")
+	}
+	// The initial admin is the most privileged account; enforce the password policy
+	// here too (plain CreateUser does not), so it can't be seeded with a weak password.
+	if err := c.passwordPolicy.Validate(req.Password, nil); err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
+
 	displayName := req.DisplayName
 	if displayName == "" {
 		displayName = req.Username
@@ -263,4 +284,22 @@ func (c *KeyorixCore) currentBootstrapState(ctx context.Context) (*BootstrapResu
 		Project:            project,
 		Environments:       envs,
 	}, nil
+}
+
+// SystemNeedsBootstrap reports whether the install has no users yet (i.e. POST
+// /system/init would seed the first admin). The server uses this at startup to decide
+// whether to surface the bootstrap token to the operator.
+func (c *KeyorixCore) SystemNeedsBootstrap(ctx context.Context) (bool, error) {
+	_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
+	if err != nil {
+		return false, err
+	}
+	return total == 0, nil
+}
+
+// GenerateBootstrapToken returns a fresh, high-entropy bootstrap token. The server
+// uses it when no KEYORIX_BOOTSTRAP_TOKEN is configured, logging the value so the
+// operator can initialise the (still-empty) install.
+func GenerateBootstrapToken() (string, error) {
+	return randToken()
 }

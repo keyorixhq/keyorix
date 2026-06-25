@@ -48,8 +48,9 @@ func TestAuthzParity_HTTPvsGRPC_Secrets(t *testing.T) {
 
 	// Bootstrap seeds the admin, the standard roles (incl. "viewer" = secrets.read) +
 	// permissions, and project 1 with its environments.
+	c.SetBootstrapToken("test-bootstrap-token")
 	_, err = c.BootstrapSystem(ctx, &core.BootstrapRequest{
-		Username: "admin", Email: "admin@example.com", Password: "AdminPass123!",
+		Username: "admin", Email: "admin@example.com", Password: "AdminPassphrase123!", Token: "test-bootstrap-token",
 	})
 	require.NoError(t, err)
 	var admin models.User

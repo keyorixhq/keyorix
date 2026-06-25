@@ -45,8 +45,9 @@ func TestAuthzParity_HTTPvsGRPC_ShareCreate(t *testing.T) {
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
+	c.SetBootstrapToken("test-bootstrap-token")
 	_, err = c.BootstrapSystem(ctx, &core.BootstrapRequest{
-		Username: "admin", Email: "admin@example.com", Password: "AdminPass123!",
+		Username: "admin", Email: "admin@example.com", Password: "AdminPassphrase123!", Token: "test-bootstrap-token",
 	})
 	require.NoError(t, err)
 

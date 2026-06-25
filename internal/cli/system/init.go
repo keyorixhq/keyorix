@@ -26,10 +26,11 @@ var (
 	force          bool
 
 	// Remote bootstrap flags (--server triggers a different code path).
-	initServer        string
-	initAdminUsername string
-	initAdminPassword string
-	initAdminEmail    string
+	initServer         string
+	initAdminUsername  string
+	initAdminPassword  string
+	initAdminEmail     string
+	initBootstrapToken string
 )
 
 var InitCmd = &cobra.Command{
@@ -68,6 +69,7 @@ func init() {
 	InitCmd.Flags().StringVar(&initAdminUsername, "admin-username", "admin", "Admin username to create")
 	InitCmd.Flags().StringVar(&initAdminPassword, "admin-password", "admin", "Admin password (change after first login)")
 	InitCmd.Flags().StringVar(&initAdminEmail, "admin-email", "admin@localhost", "Admin email address")
+	InitCmd.Flags().StringVar(&initBootstrapToken, "bootstrap-token", "", "Bootstrap token authorizing first-admin creation (or env KEYORIX_BOOTSTRAP_TOKEN; printed in the server log on first boot)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -222,11 +224,16 @@ func runRemoteInit() error {
 	server := strings.TrimRight(initServer, "/")
 	url := server + "/system/init"
 
+	token := initBootstrapToken
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("KEYORIX_BOOTSTRAP_TOKEN"))
+	}
 	payload := map[string]string{
-		"username":     initAdminUsername,
-		"email":        initAdminEmail,
-		"password":     initAdminPassword,
-		"display_name": "Administrator",
+		"username":        initAdminUsername,
+		"email":           initAdminEmail,
+		"password":        initAdminPassword,
+		"display_name":    "Administrator",
+		"bootstrap_token": token,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
