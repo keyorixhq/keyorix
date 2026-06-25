@@ -169,9 +169,11 @@ func TestRevokeOwnPAT(t *testing.T) {
 	t.Run("revokes a token the caller owns", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		ms.On("GetPersonalAccessTokenByID", ctx, uint(3)).Return(&models.PersonalAccessToken{ID: 3, UserID: 1}, nil)
+		ms.On("GetPersonalAccessTokenByID", ctx, uint(3)).Return(&models.PersonalAccessToken{ID: 3, UserID: 1, TokenHash: "hash-3"}, nil)
 		ms.On("RevokePersonalAccessToken", ctx, uint(3)).Return(nil)
-		require.NoError(t, c.RevokeOwnPAT(ctx, 1, 3))
+		hash, rerr := c.RevokeOwnPAT(ctx, 1, 3)
+		require.NoError(t, rerr)
+		assert.Equal(t, "hash-3", hash, "revoke returns the token hash for cache eviction")
 		ms.AssertCalled(t, "RevokePersonalAccessToken", ctx, uint(3))
 	})
 
@@ -179,7 +181,7 @@ func TestRevokeOwnPAT(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
 		ms.On("GetPersonalAccessTokenByID", ctx, uint(3)).Return(&models.PersonalAccessToken{ID: 3, UserID: 2}, nil)
-		err := c.RevokeOwnPAT(ctx, 1, 3)
+		_, err := c.RevokeOwnPAT(ctx, 1, 3)
 		require.Error(t, err)
 		ms.AssertNotCalled(t, "RevokePersonalAccessToken", mock.Anything, mock.Anything)
 	})

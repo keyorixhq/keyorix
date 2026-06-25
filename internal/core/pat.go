@@ -98,16 +98,22 @@ func (c *KeyorixCore) ListOwnPATs(ctx context.Context, userID uint) ([]*models.P
 }
 
 // RevokeOwnPAT revokes one of the caller's tokens after verifying ownership. A token
-// owned by another user is reported as not found to prevent ID enumeration.
-func (c *KeyorixCore) RevokeOwnPAT(ctx context.Context, userID, tokenID uint) error {
+// owned by another user is reported as not found to prevent ID enumeration. On success
+// it returns the token's hash so the caller can evict the auth cache immediately: the
+// HTTP token cache is keyed by SHA-256(raw token), which equals the stored TokenHash,
+// so without eviction a revoked PAT would keep authenticating until the cache TTL.
+func (c *KeyorixCore) RevokeOwnPAT(ctx context.Context, userID, tokenID uint) (tokenHash string, err error) {
 	if userID == 0 || tokenID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user and token IDs are required")
+		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user and token IDs are required")
 	}
 	pat, err := c.storage.GetPersonalAccessTokenByID(ctx, tokenID)
 	if err != nil || pat.UserID != userID {
-		return fmt.Errorf("%s: token not found", i18n.T("ErrorNotFound", nil))
+		return "", fmt.Errorf("%s: token not found", i18n.T("ErrorNotFound", nil))
 	}
-	return c.storage.RevokePersonalAccessToken(ctx, tokenID)
+	if err := c.storage.RevokePersonalAccessToken(ctx, tokenID); err != nil {
+		return "", err
+	}
+	return pat.TokenHash, nil
 }
 
 // ValidatePATToken resolves a raw PAT to its owning user, role names, and any

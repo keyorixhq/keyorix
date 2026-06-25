@@ -782,8 +782,15 @@ func GetCoreServiceFromContext(ctx context.Context) *core.KeyorixCore {
 // InvalidateTokenCache removes a specific token from the auth cache.
 // Call this on logout to ensure the token is rejected immediately.
 func InvalidateTokenCache(token string) {
-	key := tokenKey(token)
+	InvalidateTokenCacheByHash(tokenKey(token))
+}
+
+// InvalidateTokenCacheByHash evicts the entry keyed by the token's SHA-256 hash (hex).
+// PAT revocation works by token ID and never sees the raw token, but a PAT's stored
+// TokenHash equals this cache key, so revoke-by-id can purge the entry immediately
+// rather than waiting out the positive-cache TTL.
+func InvalidateTokenCacheByHash(hash string) {
 	tokenCacheMu.Lock()
-	delete(tokenCache, key)
+	delete(tokenCache, hash)
 	tokenCacheMu.Unlock()
 }
