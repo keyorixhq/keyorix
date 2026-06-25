@@ -48,6 +48,12 @@ func TestCreateRiskException_Rejects(t *testing.T) {
 
 	_, err = c.CreateRiskException(context.Background(), 1, "t", "sod", "", "j", now.Add(-time.Hour))
 	require.Error(t, err, "expiry must be in the future")
+
+	// Must sunset: an expiry beyond the max duration is refused (no effectively-forever
+	// waiver).
+	_, err = c.CreateRiskException(context.Background(), 1, "t", "sod", "", "j", now.AddDate(5, 0, 0))
+	require.Error(t, err, "expiry beyond the cap is rejected")
+	require.Contains(t, err.Error(), "must be within")
 }
 
 func TestListRiskExceptions_ComputesStatusAndFilters(t *testing.T) {

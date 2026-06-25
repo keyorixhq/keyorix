@@ -48,6 +48,10 @@ func exceptionStatus(e *models.RiskException, now time.Time) string {
 	return ExceptionStatusActive
 }
 
+// maxRiskExceptionDuration caps how far out a risk exception may be set to expire — an
+// exception must sunset and be re-reviewed, not become a permanent waiver.
+const maxRiskExceptionDuration = 365 * 24 * time.Hour
+
 // CreateRiskException records a governed, time-bound acceptance of a control gap.
 // actorID is the accepting owner; expiresAt must be in the future.
 func (c *KeyorixCore) CreateRiskException(ctx context.Context, actorID uint, title, category, reference, justification string, expiresAt time.Time) (*models.RiskException, error) {
@@ -59,6 +63,11 @@ func (c *KeyorixCore) CreateRiskException(ctx context.Context, actorID uint, tit
 	}
 	if !expiresAt.After(c.now()) {
 		return nil, fmt.Errorf("expires_at must be in the future (exceptions are time-bound)")
+	}
+	// A risk exception MUST sunset — bound the duration so it can't be set effectively
+	// forever (e.g. year 9999), defeating the "accepted with a sunset" governance intent.
+	if expiresAt.After(c.now().Add(maxRiskExceptionDuration)) {
+		return nil, fmt.Errorf("expires_at must be within %d days (exceptions must sunset and be re-reviewed)", int(maxRiskExceptionDuration/(24*time.Hour)))
 	}
 	created, err := c.storage.CreateRiskException(ctx, &models.RiskException{
 		Title: title, Category: category, Reference: reference, Justification: justification,

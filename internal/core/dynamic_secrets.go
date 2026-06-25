@@ -403,6 +403,12 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	if err != nil {
 		return time.Time{}, err
 	}
+	// A backend with no DB-level expiry relies entirely on the sweeper to enforce a
+	// lease's TTL. With the sweeper disabled, a renewal would extend a credential nothing
+	// will ever revoke — mirror IssueLease's fail-closed refusal.
+	if !engine.SupportsNativeExpiry() && !c.dynamicSweepEnabled {
+		return time.Time{}, fmt.Errorf("renewal is unavailable for the %s backend while the lease sweeper is disabled (its TTL would be unenforced)", cfg.BackendType)
+	}
 	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to decrypt admin DSN: %w", err)
