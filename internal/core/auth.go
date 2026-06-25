@@ -278,6 +278,12 @@ func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) er
 	if AccountLoginBlocked(user.AccountState) {
 		return nil
 	}
+	// Refuse for externally-managed identities (SSO/SCIM): issuing a local password
+	// would create a backdoor that authenticates at /auth/login and bypasses the IdP's
+	// MFA / conditional access / deprovisioning. Swallowed to stay enumeration-safe.
+	if user.ExternalID != "" {
+		return nil
+	}
 	// Throttle abusive repeats to a victim address (same control as resend). A
 	// throttled repeat returns an error here, swallowed below to stay enumeration-safe.
 	_, _ = c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{

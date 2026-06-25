@@ -97,6 +97,13 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 	if AccountLoginBlocked(user.AccountState) {
 		return nil, fmt.Errorf("account suspended")
 	}
+	// Externally-managed identities (SSO/SCIM) must not get a local password: it would
+	// be a backdoor that authenticates at /auth/login and bypasses the IdP entirely.
+	// This is the critical gate — even if a link was somehow issued, consuming it for a
+	// federated account is refused.
+	if user.ExternalID != "" {
+		return nil, fmt.Errorf("%s: this account is managed by an external identity provider; set a password through your IdP", i18n.T("ErrorValidation", nil))
+	}
 
 	// Validate the password BEFORE consuming the token, so a policy rejection lets
 	// the user retry with the same link instead of dead-ending on a spent token.
