@@ -88,6 +88,13 @@ func TestFileKeyProvider_Errors(t *testing.T) {
 		_, err := NewFileKeyProvider(path).KEK()
 		require.Error(t, err, "a key that doesn't decode to 32 bytes must be rejected")
 	})
+	t.Run("all-zero key rejected", func(t *testing.T) {
+		path := filepath.Join(dir, "zero.key")
+		require.NoError(t, os.WriteFile(path, make([]byte, KEKSize), 0600))
+		_, err := NewFileKeyProvider(path).KEK()
+		require.Error(t, err, "a zeroed/placeholder KEK must be rejected")
+		assert.Contains(t, err.Error(), "all-zero")
+	})
 }
 
 func TestEnvKeyProvider(t *testing.T) {
