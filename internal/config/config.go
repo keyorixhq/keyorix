@@ -554,6 +554,11 @@ type SIEMConfig struct {
 	Endpoint           string `yaml:"endpoint"`
 	Token              string `yaml:"token"` // use KEYORIX_SIEM_TOKEN env var instead
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	// SpoolDir enables a durable on-disk backlog: events that can't be delivered
+	// (full queue / retries exhausted) are persisted here and replayed until the SIEM
+	// accepts them, so a sustained outage doesn't silently lose the off-box copy.
+	// Empty = best-effort only.
+	SpoolDir string `yaml:"spool_dir"`
 }
 
 // GetToken returns the resolved SIEM token, preferring the environment variable.

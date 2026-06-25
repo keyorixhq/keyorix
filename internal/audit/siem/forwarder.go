@@ -42,6 +42,11 @@ type Config struct {
 	Endpoint           string // full destination URL (e.g. Splunk HEC collector URL)
 	Token              string // HEC token / DD-API-KEY / bearer token
 	InsecureSkipVerify bool   // skip TLS verification (self-signed SIEM endpoints)
+	// SpoolDir, when set, enables a durable on-disk backlog: an event that would
+	// otherwise be dropped (full queue) or fail after retries is persisted here and
+	// replayed until the SIEM accepts it, so a sustained outage no longer silently
+	// loses the off-box copy. Empty = best-effort only (the prior behaviour).
+	SpoolDir string
 }
 
 // queueSize bounds in-flight events; httpTimeout bounds a single delivery.
@@ -64,6 +69,7 @@ type Forwarder struct {
 	closing     chan struct{} // closed by Close to abort in-flight retry backoff
 	closeOnce   sync.Once
 	wg          sync.WaitGroup
+	spool       *spool // nil unless Config.SpoolDir is set
 
 	mu      sync.Mutex
 	dropped int64
@@ -102,6 +108,16 @@ func newForwarder(cfg Config, baseBackoff time.Duration) (*Forwarder, error) {
 		baseBackoff: baseBackoff,
 		closing:     make(chan struct{}),
 	}
+	if cfg.SpoolDir != "" {
+		sp, serr := newSpool(cfg.SpoolDir, defaultReplayInterval, func(ctx context.Context, e *models.AuditEvent) error {
+			_, err := f.send(ctx, e)
+			return err
+		})
+		if serr != nil {
+			return nil, serr
+		}
+		f.spool = sp
+	}
 	f.wg.Add(1)
 	go f.worker()
 	return f, nil
@@ -116,6 +132,12 @@ func (f *Forwarder) Forward(event *models.AuditEvent) {
 	select {
 	case f.queue <- event:
 	default:
+		// Queue full (a wedged/slow SIEM). Persist to the durable spool if configured so
+		// the event is replayed later; otherwise fall back to a counted, logged drop.
+		if f.spool != nil {
+			f.spool.add(event)
+			return
+		}
 		f.mu.Lock()
 		f.dropped++
 		dropped := f.dropped
@@ -146,6 +168,7 @@ func (f *Forwarder) Close() {
 		close(f.queue)
 	})
 	f.wg.Wait()
+	f.spool.close() // nil-safe; stops the replay loop
 }
 
 func (f *Forwarder) worker() {
@@ -169,6 +192,11 @@ func (f *Forwarder) deliver(event *models.AuditEvent) {
 		if !retryable || attempt >= maxAttempts {
 			siemForwards.WithLabelValues(outcomeFailed).Inc()
 			log.Printf("siem: failed to forward audit event %d after %d attempt(s): %v", event.ID, attempt, err)
+			// Persist to the durable spool (if configured) so the off-box copy survives
+			// a SIEM outage longer than the in-memory retry budget.
+			if f.spool != nil {
+				f.spool.add(event)
+			}
 			return
 		}
 		siemRetries.Inc()
@@ -177,6 +205,9 @@ func (f *Forwarder) deliver(event *models.AuditEvent) {
 		case <-f.closing:
 			siemForwards.WithLabelValues(outcomeFailed).Inc()
 			log.Printf("siem: forward of audit event %d abandoned on shutdown after %d attempt(s): %v", event.ID, attempt, err)
+			if f.spool != nil {
+				f.spool.add(event)
+			}
 			return
 		}
 		backoff *= 2

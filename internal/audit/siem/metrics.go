@@ -32,4 +32,7 @@ const (
 	outcomeDelivered = "delivered"
 	outcomeFailed    = "failed"
 	outcomeDropped   = "dropped"
+	// spooled: persisted to the on-disk durable spool for later replay instead of being
+	// dropped (only when Config.SpoolDir is set).
+	outcomeSpooled = "spooled"
 )

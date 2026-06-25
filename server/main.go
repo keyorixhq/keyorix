@@ -362,6 +362,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			Endpoint:           sc.Endpoint,
 			Token:              sc.GetToken(),
 			InsecureSkipVerify: sc.InsecureSkipVerify,
+			SpoolDir:           sc.SpoolDir,
 		})
 		if ferr != nil {
 			return nil, nil, fmt.Errorf("failed to init SIEM audit forwarder: %w", ferr)
