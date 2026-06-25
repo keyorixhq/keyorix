@@ -153,3 +153,28 @@ func TestFixFilePermsMissingFileWarns(t *testing.T) {
 	err := FixFilePerms([]FilePermSpec{{Path: filepath.Join(t.TempDir(), "absent"), Mode: 0600}}, false)
 	require.Error(t, err)
 }
+
+// TestContainmentRejectsSymlinkEscape pins the symlink-containment fix: a symlink
+// planted inside baseDir that points outside it must not let a read or write escape.
+func TestContainmentRejectsSymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("top secret"), 0o600))
+
+	// A symlink inside baseDir that resolves to the outside directory.
+	require.NoError(t, os.Symlink(outside, filepath.Join(base, "link")))
+
+	// Reading through the symlink must be denied (the resolved path is outside base).
+	_, err := SafeReadFile(base, "link/secret.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside")
+
+	// Writing through the symlink (target does not exist yet) must also be denied.
+	err = SecureWriteFile(base, "link/planted.txt", []byte("x"), 0o600)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside")
+
+	// The outside directory must be untouched by the rejected write.
+	_, statErr := os.Stat(filepath.Join(outside, "planted.txt"))
+	assert.True(t, os.IsNotExist(statErr), "rejected write must not create a file outside base")
+}

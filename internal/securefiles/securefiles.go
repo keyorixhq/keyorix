@@ -23,19 +23,46 @@ type FilePermSpec struct {
 	Mode os.FileMode // e.g., 0600
 }
 
-// isPathInsideBase ensures that targetPath is inside baseDir
+// isPathInsideBase ensures that targetPath is inside baseDir. It resolves symlinks on
+// both sides before comparing, so a symlink planted inside baseDir cannot redirect the
+// read/write to a location outside it (a purely lexical filepath.Clean check would miss
+// that). The target file itself may not exist yet (writes), so its longest existing
+// ancestor is resolved and the unresolved tail re-attached.
 func isPathInsideBase(baseDir, targetPath string) (bool, error) {
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
 		return false, err
 	}
+	if resolved, rerr := filepath.EvalSymlinks(absBase); rerr == nil {
+		absBase = resolved
+	} else if !os.IsNotExist(rerr) {
+		return false, rerr
+	}
+
 	absTarget, err := filepath.Abs(targetPath)
 	if err != nil {
 		return false, err
 	}
+	absTarget = resolveExistingAncestor(absTarget)
 
 	baseWithSlash := absBase + string(os.PathSeparator)
 	return absTarget == absBase || strings.HasPrefix(absTarget, baseWithSlash), nil
+}
+
+// resolveExistingAncestor returns p with its longest existing prefix run through
+// filepath.EvalSymlinks (collapsing any symlink in the real path) and the remaining
+// non-existent suffix re-appended unchanged. This lets the containment check resolve
+// symlinks even when the final target does not exist yet.
+func resolveExistingAncestor(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	dir, file := filepath.Split(p)
+	dir = filepath.Clean(dir)
+	if dir == p { // reached the filesystem root; nothing left to resolve
+		return p
+	}
+	return filepath.Join(resolveExistingAncestor(dir), file)
 }
 
 // SafeReadFile reads a file at filepath.Join(baseDir, filePath), validating

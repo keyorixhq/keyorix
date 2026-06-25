@@ -9,10 +9,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 )
 
 // iamAPI is the slice of the IAM client the executor uses — an interface seam so the
@@ -94,12 +96,28 @@ func (e *AWSIAMExecutor) GenerateUpstream(ctx context.Context, ref string) (stri
 			prior = append(prior, *k.AccessKeyId)
 		}
 	}
-	// IAM caps a user at two access keys; free a slot before creating the new one.
+	// IAM caps a user at two access keys. Only when both slots are full must we delete
+	// one BEFORE creating the new key (the create would otherwise fail) — that is the one
+	// unavoidable "revoke-before-mint" window. Minimise its blast radius by evicting the
+	// safest victim: an Inactive key if present, else the oldest by CreateDate, so we
+	// don't revoke a freshly-active credential and keep the most-likely-in-use key live
+	// until the new one is minted. Below the cap we skip this and create first, then
+	// delete priors (no window at all).
 	if len(prior) >= 2 {
-		if err := e.deleteKey(ctx, cl, ref, prior[0]); err != nil {
+		victim := evictableAccessKey(list.AccessKeyMetadata)
+		if victim == "" {
+			victim = prior[0]
+		}
+		if err := e.deleteKey(ctx, cl, ref, victim); err != nil {
 			return "", err
 		}
-		prior = prior[1:]
+		filtered := prior[:0]
+		for _, id := range prior {
+			if id != victim {
+				filtered = append(filtered, id)
+			}
+		}
+		prior = filtered
 	}
 
 	created, err := cl.CreateAccessKey(ctx, &iam.CreateAccessKeyInput{UserName: aws.String(ref)})
@@ -142,6 +160,27 @@ func (e *AWSIAMExecutor) GenerateUpstream(ctx context.Context, ref string) (stri
 		}
 	}
 	return string(out), nil
+}
+
+// evictableAccessKey picks the safest key to remove when freeing a slot at the IAM
+// two-key cap: an Inactive key if any (returned as soon as one is seen, regardless of
+// order), otherwise the oldest by CreateDate. Returns "" when no candidate has an ID.
+func evictableAccessKey(keys []iamtypes.AccessKeyMetadata) string {
+	victim := ""
+	var oldest *time.Time
+	for _, k := range keys {
+		if k.AccessKeyId == nil {
+			continue
+		}
+		if k.Status == iamtypes.StatusTypeInactive {
+			return *k.AccessKeyId
+		}
+		if oldest == nil || (k.CreateDate != nil && k.CreateDate.Before(*oldest)) {
+			victim = *k.AccessKeyId
+			oldest = k.CreateDate
+		}
+	}
+	return victim
 }
 
 func (e *AWSIAMExecutor) deleteKey(ctx context.Context, cl iamAPI, user, keyID string) error {
