@@ -221,6 +221,14 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, fmt.Errorf("account is not active")
 	}
+	// Per-account lockout also gates the second factor. The per-IP rate limiter is
+	// spoofable behind a misconfigured proxy, and it is otherwise the ONLY online
+	// throttle on TOTP/recovery-code guessing — binding failures to the account (keyed
+	// by ch.UserID, which the attacker does not control) makes second-factor brute force
+	// cost the same lockout as password brute force.
+	if c.loginLocked(user) {
+		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
 	verified, usedRecovery := false, false
 	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err == nil {
 		if step, ok := c.validateTOTPStep(secret, code); ok {
@@ -240,8 +248,11 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	}
 	if !verified {
 		c.auditMFAFailed(ctx, ch.UserID, "login")
+		c.recordFailedLogin(ctx, user) // count the failed second factor toward the lockout
 		return nil, nil, fmt.Errorf("invalid code")
 	}
+	// Cleared the second factor — reset any lockout state accrued from failed codes.
+	c.clearLoginFailures(ctx, user)
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
 	if err != nil {
 		return nil, nil, err

@@ -275,3 +275,43 @@ func TestVerifyMFALogin_RejectsReplayedTOTPCode(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid code")
 	assert.Nil(t, sess2)
 }
+
+// Failed second-factor attempts feed the per-account lockout, so TOTP/recovery-code
+// guessing is throttled even when the per-IP limiter is bypassed (e.g. a spoofed proxy
+// header). After MaxAttempts bad codes the account locks and refuses further attempts.
+func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode)
+	require.NoError(t, err)
+
+	// Three wrong codes → the account locks.
+	for i := 0; i < 3; i++ {
+		ch, cerr := c.CreateMFAChallenge(ctx, 1)
+		require.NoError(t, cerr)
+		_, _, verr := c.VerifyMFALogin(ctx, ch, "000000", "ua", "9.9.9.9")
+		require.Error(t, verr)
+	}
+
+	var locked models.User
+	require.NoError(t, db.First(&locked, 1).Error)
+	require.NotNil(t, locked.LoginLockedUntil, "account must be locked after MaxAttempts failed second factors")
+	assert.True(t, locked.LoginLockedUntil.After(fixed))
+
+	// Even a VALID code is now refused while the lock is active — second-factor guessing
+	// cannot continue past the lockout.
+	good, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	sess, _, err := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "locked")
+	assert.Nil(t, sess)
+}

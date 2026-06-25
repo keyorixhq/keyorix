@@ -223,6 +223,13 @@ type ServerInstanceConfig struct {
 	// JSON request); a negative value disables the cap (for endpoints that legitimately
 	// accept very large bodies).
 	MaxRequestBodyBytes int64 `yaml:"max_request_body_bytes,omitempty"`
+	// TrustedProxies is the set of reverse-proxy/load-balancer source addresses (CIDRs
+	// or bare IPs) whose X-Forwarded-For / X-Real-IP header is honored when deriving the
+	// client IP. When empty, those headers are IGNORED and the real TCP peer is used —
+	// so a client cannot spoof its source IP (which would otherwise defeat the per-IP
+	// login/MFA rate limiter) unless it actually connects from a trusted proxy. Set this
+	// to your ingress/LB CIDR(s) when running behind a proxy. (HTTP only.)
+	TrustedProxies []string `yaml:"trusted_proxies,omitempty"`
 	// Web dashboard specific settings (HTTP only)
 	WebAssetsPath  string   `yaml:"web_assets_path,omitempty"`
 	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`

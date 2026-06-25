@@ -25,7 +25,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	// Apply middleware
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// Trusted-proxy-aware client IP: honor X-Forwarded-For / X-Real-IP ONLY when the TCP
+	// peer is a configured trusted proxy, otherwise use the real peer. chi's RealIP trusts
+	// the header unconditionally, which lets any client spoof its source IP and defeat the
+	// per-IP login/MFA brute-force rate limiter.
+	r.Use(customMiddleware.ClientIP(cfg.Server.HTTP.TrustedProxies))
 	r.Use(customMiddleware.Logger())
 	r.Use(customMiddleware.Recovery())
 	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
