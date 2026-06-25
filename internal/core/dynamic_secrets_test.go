@@ -68,6 +68,34 @@ func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
 	assert.NotEqual(t, adminDSNPlain, string(stored.AdminDSNEnc))
 }
 
+func TestDynamicSecrets_MaxActiveLeasesCeiling(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "capped", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, CreationTemplate: "GRANT SELECT TO {{name}};",
+		DefaultTTLSeconds: 3600, MaxActiveLeases: 2, CreatedBy: "alice",
+	})
+	require.NoError(t, err)
+
+	// Two leases are allowed...
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	// ...the third exceeds the ceiling.
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "active-lease limit")
+
+	// Revoking one frees a slot.
+	leases, err := c.ListDynamicSecretLeases(ctx, cfg.ID)
+	require.NoError(t, err)
+	require.NoError(t, c.RevokeLease(ctx, leases[0].LeaseID, 7, "manual"))
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err, "a slot opens after a revoke")
+}
+
 func TestDynamicSecrets_IssueListRevoke(t *testing.T) {
 	c, db, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()

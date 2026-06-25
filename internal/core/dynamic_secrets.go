@@ -26,6 +26,7 @@ type CreateDynamicSecretConfigRequest struct {
 	CreationTemplate  string
 	DefaultTTLSeconds int
 	MaxTTLSeconds     int
+	MaxActiveLeases   int
 	CreatedBy         string
 	// Classification is an optional data-sensitivity label (A.5.12) for the
 	// credentials this config mints: "" or one of public|internal|confidential|restricted.
@@ -72,6 +73,7 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 		CreationTemplate:  req.CreationTemplate,
 		DefaultTTLSeconds: req.DefaultTTLSeconds,
 		MaxTTLSeconds:     req.MaxTTLSeconds,
+		MaxActiveLeases:   req.MaxActiveLeases,
 		Classification:    req.Classification,
 		CreatedBy:         req.CreatedBy,
 		CreatedAt:         c.now(),
@@ -150,6 +152,18 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	// enforced — a false promise — so refuse and point the operator at the fix.
 	if !engine.SupportsNativeExpiry() && !c.dynamicSweepEnabled {
 		return nil, fmt.Errorf("cannot issue from the %s backend while the auto-revoke sweeper is disabled: its lease TTL is enforced only by the sweeper, so the credential would never expire — enable dynamic_secrets.sweep_enabled", cfg.BackendType)
+	}
+	// Enforce the config's active-lease ceiling so a caller can't mint unbounded real DB
+	// roles/users (resource exhaustion on the target). A small race under concurrency is
+	// acceptable for a soft resource cap.
+	if cfg.MaxActiveLeases > 0 {
+		active, cerr := c.storage.CountActiveLeases(ctx, configID)
+		if cerr != nil {
+			return nil, fmt.Errorf("failed to check active lease count: %w", cerr)
+		}
+		if active >= int64(cfg.MaxActiveLeases) {
+			return nil, fmt.Errorf("active-lease limit reached for this config (%d); revoke a lease before issuing another", cfg.MaxActiveLeases)
+		}
 	}
 	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
 	if err != nil {

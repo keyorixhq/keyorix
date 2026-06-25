@@ -17,13 +17,14 @@ import (
 const adminDSNEnv = "KEYORIX_DYNAMIC_ADMIN_DSN"
 
 var (
-	cfgName       string
-	cfgProjectID  int
-	cfgEnvID      int
-	cfgBackend    string
-	cfgTemplate   string
-	cfgDefaultTTL int
-	cfgMaxTTL     int
+	cfgName           string
+	cfgProjectID      int
+	cfgEnvID          int
+	cfgBackend        string
+	cfgTemplate       string
+	cfgDefaultTTL     int
+	cfgMaxTTL         int
+	cfgMaxActiveLease int
 )
 
 var createConfigCmd = &cobra.Command{
@@ -80,6 +81,7 @@ Examples:
 			"creation_template":   cfgTemplate,
 			"default_ttl_seconds": cfgDefaultTTL,
 			"max_ttl_seconds":     cfgMaxTTL,
+			"max_active_leases":   cfgMaxActiveLease,
 		}
 		var out configView
 		if err := c.Post(context.Background(), "/api/v1/dynamic-secrets/configs", body, &out); err != nil {
@@ -119,5 +121,6 @@ func init() {
 	f.StringVar(&cfgTemplate, "creation-template", "", "Backend-specific grant/role/ACL template ({{name}} for SQL)")
 	f.IntVar(&cfgDefaultTTL, "default-ttl", 0, "Default lease TTL in seconds (0 = server default)")
 	f.IntVar(&cfgMaxTTL, "max-ttl", 0, "Max lease TTL ceiling in seconds (0 = no ceiling)")
+	f.IntVar(&cfgMaxActiveLease, "max-active-leases", 0, "Max concurrent active leases from this config (0 = no ceiling)")
 	DynamicSecretCmd.AddCommand(createConfigCmd)
 }

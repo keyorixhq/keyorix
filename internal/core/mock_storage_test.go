@@ -1718,6 +1718,9 @@ func (m *MockStorage) GetDynamicSecretLease(_ context.Context, _ string) (*model
 func (m *MockStorage) ListDynamicSecretLeases(_ context.Context, _ uint) ([]*models.DynamicSecretLease, error) {
 	return nil, nil
 }
+func (m *MockStorage) CountActiveLeases(_ context.Context, _ uint) (int64, error) {
+	return 0, nil
+}
 func (m *MockStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) error {
 	return nil
 }

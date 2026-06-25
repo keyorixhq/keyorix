@@ -538,6 +538,10 @@ type DynamicSecretConfig struct {
 	// MaxTTLSeconds caps the lifetime of any lease from this config (issue + all
 	// renewals), regardless of the TTL a caller requests. 0 = no ceiling.
 	MaxTTLSeconds int
+	// MaxActiveLeases caps how many leases from this config may be active at once, so a
+	// caller can't mint unbounded real DB roles/users (resource exhaustion on the target).
+	// 0 = no ceiling.
+	MaxActiveLeases int
 	// Classification is the data-sensitivity label of the credentials this config
 	// mints (ISO 27001 A.5.12/A.5.13): "" = unclassified, else one of
 	// public|internal|confidential|restricted. Folds into the classification posture

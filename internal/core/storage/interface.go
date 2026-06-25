@@ -490,6 +490,9 @@ type Storage interface {
 	CreateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error)
 	GetDynamicSecretLease(ctx context.Context, leaseID string) (*models.DynamicSecretLease, error)
 	ListDynamicSecretLeases(ctx context.Context, configID uint) ([]*models.DynamicSecretLease, error)
+	// CountActiveLeases returns how many leases from configID are currently active —
+	// used to enforce the config's MaxActiveLeases ceiling.
+	CountActiveLeases(ctx context.Context, configID uint) (int64, error)
 	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
 	ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error)
 

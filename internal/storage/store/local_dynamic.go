@@ -73,6 +73,14 @@ func (ls *LocalStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.
 	return ls.db.WithContext(ctx).Save(l).Error
 }
 
+// CountActiveLeases returns the number of active leases for a config.
+func (ls *LocalStorage) CountActiveLeases(ctx context.Context, configID uint) (int64, error) {
+	var n int64
+	err := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
+		Where("config_id = ? AND status = ?", configID, "active").Count(&n).Error
+	return n, err
+}
+
 // ListExpiredActiveLeases returns active leases whose ExpiresAt is past `before`,
 // ordered by id (stable) for the revoke sweep.
 func (ls *LocalStorage) ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error) {
