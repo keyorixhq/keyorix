@@ -38,10 +38,18 @@ type LoginRequest struct {
 	IPAddress string
 }
 
+// dummyBcryptHash is a fixed bcrypt hash (DefaultCost) used to equalize the timing of
+// the user-not-found login path with the wrong-password path, so /auth/login can't be
+// used as a username-existence oracle. Computed once at package load.
+var dummyBcryptHash, _ = bcrypt.GenerateFromPassword([]byte("keyorix-login-timing-equalizer"), bcrypt.DefaultCost)
+
 // Login validates credentials, creates a session, and returns (session, user, error).
 func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
 	user, err := c.storage.GetUserByUsername(ctx, req.Username)
 	if err != nil {
+		// Spend an equivalent bcrypt comparison so a missing username doesn't return
+		// faster than a wrong password (account-enumeration timing side-channel).
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(req.Password))
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
 	// Per-account lockout gate: while locked, refuse regardless of the password (and

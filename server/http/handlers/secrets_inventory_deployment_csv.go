@@ -47,13 +47,13 @@ func (h *SecretHandler) DeploymentSecretsInventoryCSV(w http.ResponseWriter, r *
 	})
 	for _, it := range items {
 		_ = cw.Write([]string{
-			it.ProjectName,
+			csvSafe(it.ProjectName),
 			strconv.FormatUint(uint64(it.ID), 10),
-			it.Name,
-			it.EnvironmentName,
-			it.Type,
-			it.Classification,
-			it.OwnerUsername,
+			csvSafe(it.Name),
+			csvSafe(it.EnvironmentName),
+			csvSafe(it.Type),
+			csvSafe(it.Classification),
+			csvSafe(it.OwnerUsername),
 			it.CreatedAt.UTC().Format(time.RFC3339),
 			tstr(it.Expiration),
 			tstr(it.LastRotatedAt),

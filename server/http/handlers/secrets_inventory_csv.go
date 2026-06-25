@@ -53,11 +53,11 @@ func (h *SecretHandler) SecretsInventoryCSV(w http.ResponseWriter, r *http.Reque
 	for _, it := range items {
 		_ = cw.Write([]string{
 			strconv.FormatUint(uint64(it.ID), 10),
-			it.Name,
-			it.EnvironmentName,
-			it.Type,
-			it.Classification,
-			it.OwnerUsername,
+			csvSafe(it.Name),
+			csvSafe(it.EnvironmentName),
+			csvSafe(it.Type),
+			csvSafe(it.Classification),
+			csvSafe(it.OwnerUsername),
 			it.CreatedAt.UTC().Format(time.RFC3339),
 			tstr(it.Expiration),
 			tstr(it.LastRotatedAt),
