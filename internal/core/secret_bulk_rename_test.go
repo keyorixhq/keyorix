@@ -68,6 +68,18 @@ func TestBulkRenameSecrets(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("a non-owner is skipped (per-secret write ACL)", func(t *testing.T) {
+		mine := mk("non-conf-x", p.ID, true) // owned by user 1
+		// User 2 holds no ownership/share on it — even with project secrets.write it must
+		// not be renamable via the bulk op (parity with the single-secret PUT gate).
+		rep, err := c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: mine, NewName: "MINE_X"}}, false, "intruder", 2, "", "")
+		require.NoError(t, err)
+		assert.Equal(t, 0, rep.Renamed)
+		require.Len(t, rep.Outcomes, 1)
+		assert.Equal(t, renameStatusSkipped, rep.Outcomes[0].Status)
+		assert.Contains(t, rep.Outcomes[0].Reason, "not authorized")
+	})
+
 	t.Run("dry run validates but changes nothing", func(t *testing.T) {
 		rep, err := c.BulkRenameSecrets(ctx, p.ID, []SecretRename{{ID: bad, NewName: "DB_PASSWORD"}}, true, "alice", 1, "", "")
 		require.NoError(t, err)

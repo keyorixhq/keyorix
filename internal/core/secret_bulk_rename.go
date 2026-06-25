@@ -94,6 +94,14 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 			skip(rn.ID, secret.Name, newName, "secret does not belong to this project")
 			continue
 		}
+		// Re-check per-secret write authorization (owner/share). The project-wide
+		// secrets.write route gate is not sufficient on its own — the single-secret PUT
+		// path enforces this, so the bulk op must not let a caller rename a secret they
+		// can't update individually.
+		if _, perr := c.EnforceSecretWritePermission(ctx, secret.ID, actorID); perr != nil {
+			skip(rn.ID, secret.Name, newName, "not authorized to rename this secret")
+			continue
+		}
 		if !secret.IsSecret {
 			skip(rn.ID, secret.Name, newName, "not a secret (folder nodes have no governed name)")
 			continue

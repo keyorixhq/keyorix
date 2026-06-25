@@ -39,6 +39,13 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 
 	extended := 0
 	for _, s := range secrets {
+		// Re-check per-secret write authorization (owner/share). The project-wide
+		// secrets.write route gate is not sufficient on its own — the single-secret PUT
+		// path enforces this too, so a caller who can't update a secret individually must
+		// not be able to via the bulk op. Skip (don't abort) on denial.
+		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
+			continue
+		}
 		// Only push expiry out, never in — skip a secret already dated past the new window.
 		if s.Expiration != nil && !s.Expiration.Before(newExpiry) {
 			continue
