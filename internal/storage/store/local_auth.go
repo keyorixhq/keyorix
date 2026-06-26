@@ -121,6 +121,18 @@ func (ls *LocalStorage) DeleteSessionsForUserExcept(ctx context.Context, userID,
 	return nil
 }
 
+// ListSessionTokenHashesForUser returns the stored session_token hashes for every session
+// the user owns or is impersonated through, for auth-cache eviction on a state change.
+func (ls *LocalStorage) ListSessionTokenHashesForUser(ctx context.Context, userID uint) ([]string, error) {
+	var hashes []string
+	if err := ls.db.WithContext(ctx).Model(&models.Session{}).
+		Where("user_id = ? OR impersonated_by = ?", userID, userID).
+		Pluck("session_token", &hashes).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return hashes, nil
+}
+
 // TouchSession bumps last_seen_at only if the stored value is older than staleness
 // (or NULL), keeping the auth hot path from writing on every request.
 func (ls *LocalStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {

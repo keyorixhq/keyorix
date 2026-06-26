@@ -59,9 +59,12 @@ func TestAdminAccountTransitions(t *testing.T) {
 			store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 				return e.EventType == tc.event
 			})).Return(nil)
-			// A login-blocking transition (suspend) must purge the user's sessions.
+			// Every state change evicts the user's cached session tokens from the auth cache.
+			store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
+			// A login-blocking transition (suspend) must purge the user's sessions AND PATs.
 			if AccountLoginBlocked(tc.wantState) {
 				store.On("DeleteSessionsForUserExcept", ctx, uint(2), uint(0)).Return(nil)
+				store.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(2)).Return([]string{}, nil)
 			}
 
 			require.NoError(t, tc.call(c, ctx))

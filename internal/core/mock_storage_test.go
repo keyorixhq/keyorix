@@ -1158,6 +1158,14 @@ func (m *MockStorage) DeleteSessionsForUserExcept(ctx context.Context, userID, e
 	return args.Error(0)
 }
 
+func (m *MockStorage) ListSessionTokenHashesForUser(ctx context.Context, userID uint) ([]string, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
 func (m *MockStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {
 	args := m.Called(ctx, id, seenAt, staleness)
 	return args.Error(0)

@@ -102,12 +102,21 @@ const (
 	// TTL for negative cache entries (stale/invalid tokens — MCP storm fix).
 	// Short enough that a legitimately re-issued token works after ~10s.
 	invalidTokenTTL = 10 * time.Second
+	// maxTokenCacheEntries caps the cache so an unauthenticated flood of distinct garbage
+	// bearer tokens (each negative-cached) cannot grow the map without bound and exhaust
+	// process memory. Beyond the cap, arbitrary entries are evicted; a cache miss just
+	// falls back to the DB.
+	maxTokenCacheEntries = 50_000
 )
 
 // tokenCacheEntry holds a cached auth result.
 type tokenCacheEntry struct {
 	userCtx   *UserContext // nil for negative entries
 	expiresAt time.Time
+	// revokedAt marks a tombstone written by an explicit eviction (revoke/logout/suspend).
+	// It lets a positive write that was already in flight when the revoke landed know it
+	// must NOT resurrect the entry (see cacheSetValidated).
+	revokedAt time.Time
 }
 
 // tokenCache is a process-wide cache keyed by SHA-256(token).
@@ -144,15 +153,44 @@ func cacheSet(key string, entry tokenCacheEntry) {
 	tokenCacheMu.Lock()
 	defer tokenCacheMu.Unlock()
 	tokenCache[key] = entry
-	// Periodic O(n) purge — runs at most once per minute.
+	pruneLocked()
+}
+
+// cacheSetValidated stores a POSITIVE entry from the slow path, but refuses to resurrect a
+// token that was revoked WHILE this validation was in flight: if a tombstone for the key
+// was written after validatedAt (the moment the slow path began, before its DB read), the
+// revoke wins and the positive entry is dropped. Closes the revocation-resurrection race.
+func cacheSetValidated(key string, userCtx *UserContext, validatedAt time.Time, expiresAt time.Time) {
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	if existing, ok := tokenCache[key]; ok && existing.revokedAt.After(validatedAt) {
+		return // revoked during our validation — do not re-cache the now-stale positive
+	}
+	tokenCache[key] = tokenCacheEntry{userCtx: userCtx, expiresAt: expiresAt}
+	pruneLocked()
+}
+
+// pruneLocked drops expired entries (at most once per minute) and hard-caps the cache so
+// a flood of distinct bearers can't grow it unbounded. Caller MUST hold tokenCacheMu.
+func pruneLocked() {
+	now := time.Now()
 	if time.Since(lastPurge) > time.Minute {
-		now := time.Now()
 		for k, v := range tokenCache {
 			if now.After(v.expiresAt) {
 				delete(tokenCache, k)
 			}
 		}
 		lastPurge = now
+	}
+	// Hard cap independent of the timed purge: evict arbitrary entries (map iteration is
+	// randomized) until back under the cap. A dropped entry is just a future cache miss.
+	for len(tokenCache) > maxTokenCacheEntries {
+		for k := range tokenCache {
+			delete(tokenCache, k)
+			if len(tokenCache) <= maxTokenCacheEntries {
+				break
+			}
+		}
 	}
 }
 
@@ -205,7 +243,10 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 				return
 			}
 
-			// Slow path: DB lookup.
+			// Slow path: DB lookup. Capture the start time BEFORE the DB read so a
+			// concurrent revoke landing during validation is recognized as "after" us and
+			// can't be resurrected by our positive cache write (see cacheSetValidated).
+			validatedAt := time.Now()
 			userCtx, err := validateToken(r.Context(), validator, token)
 			if err != nil {
 				// Cache the negative result so subsequent retries skip the DB.
@@ -221,8 +262,8 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 				userCtx.ImpersonatedBy = coreService.SessionImpersonator(r.Context(), token)
 			}
 
-			// Cache the positive result.
-			cacheSet(key, tokenCacheEntry{userCtx: userCtx, expiresAt: time.Now().Add(validTokenTTL)})
+			// Cache the positive result (race-safe: dropped if revoked mid-validation).
+			cacheSetValidated(key, userCtx, validatedAt, time.Now().Add(validTokenTTL))
 
 			if !tokenNetworkAllowed(r, userCtx) {
 				forbiddenResponse(w, "token not permitted from this network")
@@ -807,6 +848,11 @@ func InvalidateTokenCache(token string) {
 // rather than waiting out the positive-cache TTL.
 func InvalidateTokenCacheByHash(hash string) {
 	tokenCacheMu.Lock()
-	delete(tokenCache, hash)
+	// Write a short-lived tombstone rather than a plain delete: a positive validation that
+	// was already in flight (read the DB before this revoke) would otherwise re-add the
+	// entry right after our delete. The tombstone's revokedAt lets cacheSetValidated drop
+	// that stale write, and negative-caches the revoked token for invalidTokenTTL.
+	now := time.Now()
+	tokenCache[hash] = tokenCacheEntry{userCtx: nil, expiresAt: now.Add(invalidTokenTTL), revokedAt: now}
 	tokenCacheMu.Unlock()
 }

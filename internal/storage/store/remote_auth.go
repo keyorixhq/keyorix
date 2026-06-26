@@ -249,6 +249,10 @@ func (rs *RemoteStorage) DeleteSessionsForUserExcept(_ context.Context, _, _ uin
 	return errUnsupportedRemote
 }
 
+func (rs *RemoteStorage) ListSessionTokenHashesForUser(_ context.Context, _ uint) ([]string, error) {
+	return nil, errUnsupportedRemote
+}
+
 func (rs *RemoteStorage) EnforceSessionLimit(_ context.Context, _ uint, _ int) error {
 	return errUnsupportedRemote
 }

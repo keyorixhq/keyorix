@@ -462,6 +462,10 @@ type Storage interface {
 	// DeleteSessionsForUserExcept removes every session owned by userID except the
 	// one with id exceptID. Used to drop other sessions on a password change.
 	DeleteSessionsForUserExcept(ctx context.Context, userID, exceptID uint) error
+	// ListSessionTokenHashesForUser returns the stored session_token values (SHA-256
+	// hashes — equal to the auth-cache key) for every session owned by or impersonating
+	// userID, so a state change can evict them from the auth cache immediately.
+	ListSessionTokenHashesForUser(ctx context.Context, userID uint) ([]string, error)
 	// TouchSession bumps last_seen_at only when it is older than the given staleness
 	// window (no-op otherwise) so the auth hot path is not turned into a write per request.
 	TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error
