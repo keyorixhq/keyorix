@@ -835,16 +835,17 @@ func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
 	}
 	// Self-service (own account) and public routes a read-only/unauthenticated
 	// caller may legitimately reach; everything else mutating must be denied.
-	// /secrets/render and /compliance/evidence/verify are READ operations behind a POST
-	// (they only carry a payload; they mutate nothing and are gated on a *.read
-	// permission) — legitimately reachable by a read-only persona, like /system/init.
-	// /sw.js is the SPA service-worker static asset, served by the web handler for any
-	// method; serving the file for DELETE/PUT/etc. changes no state, so it's not an API
-	// mutation. These are the only exemptions; any other mutating route MUST be denied.
+	// /secrets/render is a READ operation behind a POST (it only carries a payload; it
+	// mutates nothing and is gated on a *.read permission) — legitimately reachable by a
+	// read-only persona, like /system/init. (/compliance/evidence/verify is a POST too,
+	// but it is gated on audit.read which system_viewer lacks, so it is correctly DENIED
+	// and not exempted here.) /sw.js is the SPA service-worker static asset, served by the
+	// web handler for any method; serving the file for DELETE/PUT/etc. changes no state,
+	// so it's not an API mutation. These are the only exemptions; any other mutating route
+	// MUST be denied.
 	allowExact := map[string]bool{
 		"/system/init": true, "/health": true, "/metrics": true,
 		"/api/v1/projects/{id}/secrets/render": true,
-		"/api/v1/compliance/evidence/verify":   true, // read-only signature verify (system.read)
 		"/sw.js":                               true, // static service-worker asset, not an API route
 	}
 	allowPrefix := []string{"/auth/", "/api/v1/auth/", "/notifications", "/api/v1/notifications"}

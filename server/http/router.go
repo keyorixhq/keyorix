@@ -645,10 +645,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/legal-hold", dashboardHandler.GetLegalHold)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/legal-hold", dashboardHandler.PlaceLegalHold)
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/legal-hold", dashboardHandler.LiftLegalHold)
-		// Compliance evidence pack — posture + supporting records, for archival.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
+		// Compliance evidence pack — posture + supporting records, for archival. Gated on
+		// audit.read (global), NOT system.read: the deployment-wide pack enumerates
+		// cross-project secret NAMES and break-glass JUSTIFICATIONS, which the minimal
+		// system_viewer baseline (system.read only) must not be able to export. audit.read
+		// is the compliance/auditor persona (system_auditor/system_admin) at global scope;
+		// a project-scoped audit.read holder is correctly excluded from the org-wide pack.
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
 		// Verify a previously-exported evidence pack against its detached signature.
-		r.With(customMiddleware.RequirePermission("system.read")).Post("/compliance/evidence/verify", dashboardHandler.VerifyComplianceEvidence)
+		r.With(customMiddleware.RequirePermission("audit.read")).Post("/compliance/evidence/verify", dashboardHandler.VerifyComplianceEvidence)
 		// Risk register (ISO A.5.8): list reads system.read; create/revoke system.write.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/risk-exceptions", dashboardHandler.ListRiskExceptions)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskException)
