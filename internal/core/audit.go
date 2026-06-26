@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -163,7 +165,7 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 		SecretNodeID: secretID,
 		ProjectID:    projectID,
 		IPAddress:    ip,
-		Description:  description,
+		Description:  sanitizeAuditText(description),
 		Success:      &t,
 		EventTime:    time.Now(),
 		Diff:         diff,
@@ -185,12 +187,29 @@ func (c *KeyorixCore) writeAuditEventFailed(ctx context.Context, eventType strin
 		EventType:   eventType,
 		UserID:      userID,
 		IPAddress:   ip,
-		Description: description,
+		Description: sanitizeAuditText(description),
 		Success:     &f,
 		EventTime:   time.Now(),
 		ActorType:   actorTypeFromContext(ctx),
 	}
 	c.emitAudit(ctx, event)
+}
+
+// sanitizeAuditText strips control characters (CR/LF, ANSI/C1 escapes, NUL, etc.) from a
+// string headed for an audit Description, so a crafted secret name or username can't inject
+// a forged audit line or smuggle terminal-control sequences into a CLI audit viewer. The
+// audit chain hashes the Description, so cleaning it also keeps the persisted, tamper-
+// evident content faithful. A tab is normalized to a space; other controls are dropped.
+func sanitizeAuditText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1 // drop
+		}
+		return r
+	}, s)
 }
 
 // writeAccessLog persists a secret_access_logs row.
