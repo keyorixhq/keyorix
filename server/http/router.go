@@ -327,8 +327,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/machine-identities/{machineId}", catalogHandler.TransitionMachineIdentity)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/classification", catalogHandler.ClassifyMachineIdentity)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification", catalogHandler.ClassifyMachineToken)
-		// Machine-token credentials + role grants (ADR-030).
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.IssueMachineToken)
+		// Machine-token credentials + role grants (ADR-030). Issuing a token is blocked
+		// while impersonating — like PAT creation — so an admin acting as another user
+		// cannot plant a durable (potentially non-expiring) credential that outlives the
+		// bounded, audited impersonation session.
+		r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.IssueMachineToken)
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.ListMachineTokens)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}", catalogHandler.RevokeMachineToken)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/roles", catalogHandler.GrantMachineRole)
@@ -575,7 +578,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.write")).
 				Delete("/{clientId}", saHandler.DeactivateServiceAccount)
 			r.Get("/{clientId}/tokens", saHandler.ListTokens)
-			r.With(customMiddleware.RequirePermission("users.write")).
+			// Blocked while impersonating: a service-account token is a durable credential
+			// that must not be mintable under a bounded impersonation session.
+			r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequirePermission("users.write")).
 				Post("/{clientId}/tokens", saHandler.CreateToken)
 			r.With(customMiddleware.RequirePermission("users.write")).
 				Delete("/{clientId}/tokens/{tokenId}", saHandler.RevokeToken)
