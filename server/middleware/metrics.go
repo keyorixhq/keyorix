@@ -51,9 +51,28 @@ func PrometheusMiddleware(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK // handler returned without an explicit WriteHeader
 		}
-		httpRequestsTotal.WithLabelValues(r.Method, route, strconv.Itoa(status)).Inc()
-		httpRequestDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
+		method := normalizeMethod(r.Method)
+		httpRequestsTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+		httpRequestDuration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
 	})
+}
+
+// knownMethods bounds the `method` metric label. net/http accepts any RFC-7230 token
+// as a request method, so labelling series with the raw method would let an
+// unauthenticated caller spawn unbounded time series (one per distinct method, ×buckets
+// in the histogram) and exhaust the registry — a memory-exhaustion DoS. Anything outside
+// this allow-list collapses to "other".
+var knownMethods = map[string]bool{
+	http.MethodGet: true, http.MethodPost: true, http.MethodPut: true, http.MethodPatch: true,
+	http.MethodDelete: true, http.MethodHead: true, http.MethodOptions: true,
+	http.MethodConnect: true, http.MethodTrace: true,
+}
+
+func normalizeMethod(m string) string {
+	if knownMethods[m] {
+		return m
+	}
+	return "other"
 }
 
 // MetricsHandler serves the Prometheus exposition endpoint (default registry:
