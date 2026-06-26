@@ -266,11 +266,21 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	if !wu.user.IsActive || AccountLoginBlocked(wu.user.AccountState) {
 		return nil, nil, fmt.Errorf("account is not active")
 	}
+	// Per-account lockout also gates the WebAuthn second factor (parity with the TOTP
+	// path in VerifyMFALogin): the per-IP limiter is spoofable behind a proxy and fails
+	// open, so bind assertion failures to the account. ch.UserID comes from the
+	// password-gated challenge (not an attacker-chosen handle), so this cannot be abused
+	// to lock out an arbitrary victim.
+	if c.loginLocked(wu.user) {
+		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
 	cred, err := c.webauthnRP.ValidateLogin(wu, sd, parsed)
 	if err != nil {
 		c.auditWebAuthnFailed(ctx, ch.UserID, "login")
+		c.recordFailedLogin(ctx, wu.user) // count the failed second factor toward the lockout
 		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
+	c.clearLoginFailures(ctx, wu.user)
 	c.persistUpdatedCredential(ctx, ch.UserID, cred)
 
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
@@ -358,6 +368,16 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	if !resolved.IsActive || AccountLoginBlocked(resolved.AccountState) {
 		return nil, nil, fmt.Errorf("account is not active")
 	}
+	// Honor an active per-account lockout even for a valid passkey (defense in depth —
+	// e.g. the account was locked via the password path). We deliberately do NOT feed
+	// failures into the lockout here: a discoverable login resolves the user from an
+	// attacker-chosen user handle, so counting failed assertions would let an attacker
+	// lock out an arbitrary victim. The unforgeable assertion signature is the real
+	// throttle, backed by the per-IP limiter.
+	if c.loginLocked(resolved) {
+		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
+	c.clearLoginFailures(ctx, resolved)
 	c.persistUpdatedCredential(ctx, resolved.ID, cred)
 
 	session, err := c.mintSession(ctx, resolved.ID, userAgent, ip)
