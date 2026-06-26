@@ -71,6 +71,10 @@ func tallyProgress(items []*models.AccessReviewItem) CampaignProgress {
 // campaign's items (each pending) and returns the campaign with its (all-pending)
 // progress. actorID is the opener.
 func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, projectID uint, name string) (*CampaignWithProgress, error) {
+	// Note: opening is NOT gated on a human actor — the scheduler legitimately auto-opens
+	// overdue campaigns as a system action (actorID==0). Opening only generates review
+	// items; the attributable-human requirement is enforced on the DECISION (attest/
+	// revoke) in DecideAccessReviewItem, which is the actual recertification control.
 	if projectID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
@@ -171,6 +175,14 @@ func (c *KeyorixCore) GetAccessReviewCampaign(ctx context.Context, projectID, ca
 // campaign: "attest" keeps the grant (evidence only), "revoke" removes the
 // underlying grant via RevokeAccessReviewGrant. actorID is the reviewer.
 func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, projectID, campaignID, itemID uint, action, reason string) error {
+	// A recertification decision must come from an attributable HUMAN reviewer. A
+	// machine identity authenticates with UserID==0 (authz uses its PrincipalID), so a
+	// non-zero actorID is required — otherwise an automation token holding roles.assign
+	// could rubber-stamp a campaign with the evidence recording reviewer "0"/nil, and the
+	// self-review independence check below (keyed on actorID) would be a no-op for it.
+	if err := requireHumanReviewer(actorID); err != nil {
+		return err
+	}
 	campaign, err := c.loadScopedCampaign(ctx, projectID, campaignID)
 	if err != nil {
 		return err
@@ -230,6 +242,17 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	item.DecidedAt = &now
 	if err := c.storage.UpdateAccessReviewItem(ctx, item); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+// requireHumanReviewer rejects a recertification action by a non-human / unattributable
+// actor. A machine identity authenticates with UserID==0 (it authorizes via PrincipalID),
+// and actorID==0 also denotes an unauthenticated local invocation — neither is an
+// attributable, independent human reviewer, which the SOC2/ISO/NIS2 control requires.
+func requireHumanReviewer(actorID uint) error {
+	if actorID == 0 {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "access reviews require an attributable human reviewer (a machine identity cannot act as a reviewer)")
 	}
 	return nil
 }

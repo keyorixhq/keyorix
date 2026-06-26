@@ -119,6 +119,38 @@ func TestDecideAccessReviewItem_RejectsSelfCertification(t *testing.T) {
 	require.NoError(t, h.CoreService.DecideAccessReviewItem(ctx, 1, proj, res.Campaign.ID, item, "attest", ""))
 }
 
+// A recertification decision requires an attributable HUMAN reviewer. A machine identity
+// authenticates with UserID==0, so actorID==0 is refused — otherwise an automation token
+// could rubber-stamp a campaign with the evidence recording reviewer "0"/nil, and the
+// self-review independence check (keyed on actorID) would be inert for it.
+func TestDecideAccessReviewItem_RejectsNonHumanReviewer(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateCampaignTables(t, h)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj))
+
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "review")
+	require.NoError(t, err)
+	detail, err := h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 1)
+	item := detail.Items[0].ID
+
+	// actorID 0 (machine identity / unattributable) cannot decide.
+	err = h.CoreService.DecideAccessReviewItem(ctx, 0, proj, res.Campaign.ID, item, "attest", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "attributable human reviewer")
+
+	// The item is untouched — still pending, not silently attested.
+	detail, err = h.CoreService.GetAccessReviewCampaign(ctx, proj, res.Campaign.ID)
+	require.NoError(t, err)
+	assert.Equal(t, core.ReviewItemPending, detail.Items[0].Decision)
+}
+
 // Independence extends to GROUP-conferred access: a reviewer who belongs to a group
 // must not certify that group's review item (self-certification via a group grant).
 func TestDecideAccessReviewItem_RejectsGroupSelfCertification(t *testing.T) {
