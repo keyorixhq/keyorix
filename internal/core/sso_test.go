@@ -14,9 +14,12 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func ssoTestCore(t *testing.T) (*KeyorixCore, *MockStorage, *rsa.PrivateKey, *SSOProvider) {
@@ -322,6 +325,41 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.AssertNotCalled(t, "ListGroups", mock.Anything)
 		store.AssertNotCalled(t, "RemoveUserFromGroup", mock.Anything, mock.Anything, mock.Anything)
 	})
+
+}
+
+// An IdP group assertion must NOT add the user to an admin-conferring native group (the
+// SCIM admin-group guard applied to the SSO path), while a non-admin group still syncs.
+// Uses real storage so the GetGroupRoles → roleSetContainsAdmin predicate is exercised.
+func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Group{}, &models.UserGroup{},
+		&models.GroupRole{}, &models.Role{}, &models.AuditEvent{}))
+	ls := store.NewLocalStorage(db)
+	c := NewKeyorixCore(ls)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.User{ID: 7, Username: "alice"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)  // an admin-bypass role
+	require.NoError(t, db.Create(&models.Role{ID: 9, Name: "viewer"}).Error) // non-admin
+	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "keyorix-admins"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 2, Name: "engineers"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 2}).Error) // group 1 confers admin
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 2, RoleID: 9}).Error) // group 2 is benign
+
+	// The IdP asserts BOTH group names.
+	c.reconcileSSOGroups(ctx, &SSOProvider{Name: "okta"}, 7, []string{"keyorix-admins", "engineers"})
+
+	groups, err := ls.GetUserGroups(ctx, 7)
+	require.NoError(t, err)
+	ids := map[uint]bool{}
+	for _, g := range groups {
+		ids[g.ID] = true
+	}
+	assert.False(t, ids[1], "must NOT be added to the admin-conferring group via an IdP assertion")
+	assert.True(t, ids[2], "the benign group still syncs")
 }
 
 func TestSyncSSORoles(t *testing.T) {

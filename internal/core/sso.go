@@ -446,14 +446,26 @@ func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, us
 		currentSet[g.ID] = true
 	}
 
-	added, removed := 0, 0
+	added, removed, blocked := 0, 0, 0
 	for id := range desired {
-		if !currentSet[id] {
-			if err := c.storage.AddUserToGroup(ctx, userID, id); err == nil {
-				added++
-			}
+		if currentSet[id] {
+			continue
+		}
+		// Refuse to ESCALATE into an admin-conferring group via an IdP group assertion —
+		// the same guard SCIM applies (scimGroupConfersAdmin; the predicate is not
+		// SCIM-specific). IdP group membership/names are often self-service or governed by
+		// people who are not Keyorix admins, so silently inheriting an admin role from a
+		// name match would be a privilege escalation. scimGroupConfersAdmin fails CLOSED on
+		// a lookup error, so an unverifiable group is treated as admin-bearing and skipped.
+		if c.scimGroupConfersAdmin(ctx, id) {
+			blocked++
+			continue
+		}
+		if err := c.storage.AddUserToGroup(ctx, userID, id); err == nil {
+			added++
 		}
 	}
+	// De-escalating removals are unconditional (dropping a group only reduces privilege).
 	for id := range currentSet {
 		if !desired[id] {
 			if err := c.storage.RemoveUserFromGroup(ctx, userID, id); err == nil {
@@ -461,9 +473,12 @@ func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, us
 			}
 		}
 	}
-	if added > 0 || removed > 0 {
-		c.writeAuditEvent(ctx, EventSSOGroupsSynced, actorPtr(userID), nil,
-			fmt.Sprintf("SSO group sync via %s: user %d (+%d/-%d native group memberships)", p.Name, userID, added, removed))
+	if added > 0 || removed > 0 || blocked > 0 {
+		msg := fmt.Sprintf("SSO group sync via %s: user %d (+%d/-%d native group memberships)", p.Name, userID, added, removed)
+		if blocked > 0 {
+			msg += fmt.Sprintf("; %d admin-conferring group(s) refused (IdP assertion cannot grant admin)", blocked)
+		}
+		c.writeAuditEvent(ctx, EventSSOGroupsSynced, actorPtr(userID), nil, msg)
 	}
 }
 
