@@ -306,9 +306,13 @@ type MFAChallenge struct {
 // the limit holds in HA. Rows past the window are pruned by a maintenance sweep
 // and are never read after that. The composite index serves the windowed count.
 type LoginAttempt struct {
-	ID          uint      `gorm:"primaryKey"`
-	IP          string    `gorm:"index:idx_login_attempt_ip_time,priority:1"`
-	AttemptedAt time.Time `gorm:"index:idx_login_attempt_ip_time,priority:2"`
+	ID uint   `gorm:"primaryKey"`
+	IP string `gorm:"index:idx_login_attempt_ip_time,priority:1"`
+	// AttemptedAt carries two indexes: the composite (ip, attempted_at) serves the
+	// per-IP windowed count, and a standalone index serves the prune's
+	// `WHERE attempted_at < ?` (the composite's leading ip column can't), keeping the
+	// hourly cleanup an index range delete rather than a full-table scan.
+	AttemptedAt time.Time `gorm:"index:idx_login_attempt_ip_time,priority:2;index:idx_login_attempt_time"`
 }
 
 // WebAuthnCredential is a registered passkey / FIDO2 authenticator (ADR-036).

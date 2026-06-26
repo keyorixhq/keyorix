@@ -1160,13 +1160,13 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		})
 	}
 
-	// Prune expired login-attempt records hourly (ADR-040). Single-replica-gated;
-	// always on (the limiter table needs bounded growth regardless of the purge
-	// scheduler). Rows past the rate-limit window are never read again.
-	runScheduler(ctx, "login_attempt_prune", 1*time.Hour, func() middleware.SchedulerOutcome {
-		if legalHoldBlocks("Login-attempt prune") {
-			return middleware.SchedulerSkipped
-		}
+	// Prune expired login-attempt records every 15 minutes (ADR-040). Single-replica-
+	// gated and ALWAYS run — login_attempts are ephemeral rate-limit data (never legal
+	// evidence), so this is deliberately NOT subject to legalHoldBlocks: a long-running
+	// legal hold must not stop the prune, or the table grows unbounded (an attacker
+	// failing logins from rotating IPs would exhaust disk). The rate-limit window is
+	// 15 minutes, so a 15-minute cadence keeps the table at roughly one window of rows.
+	runScheduler(ctx, "login_attempt_prune", 15*time.Minute, func() middleware.SchedulerOutcome {
 		return lockedRun(ctx, coreService.Storage(), schedLockLoginPrune, "Login-attempt prune", func() error {
 			_, perr := coreService.PruneLoginAttempts(ctx)
 			return perr
