@@ -1,6 +1,7 @@
 package siem
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -82,4 +83,82 @@ func TestSpool_DiscardsUnparseableLine(t *testing.T) {
 	s.replay()
 	_, statErr := os.Stat(filepath.Join(dir, spoolFileName))
 	assert.True(t, os.IsNotExist(statErr), "an unparseable backlog must be cleared, not retried forever")
+}
+
+// The spool is bounded: once at its size cap, further adds are dropped (counted) rather
+// than growing the file unbounded during a sustained SIEM outage.
+func TestSpool_CapBoundsGrowth(t *testing.T) {
+	dir := t.TempDir()
+	d := &fakeDelivery{failing: true}
+	s, err := newSpool(dir, time.Hour, d.deliver)
+	require.NoError(t, err)
+	t.Cleanup(s.close)
+	s.maxBytes = 200 // tiny cap for the test
+
+	tr := true
+	for i := 0; i < 50; i++ {
+		s.add(&models.AuditEvent{ID: uint(i + 1), EventType: "secret.read", Success: &tr})
+	}
+	info, statErr := os.Stat(filepath.Join(dir, spoolFileName))
+	require.NoError(t, statErr)
+	// The cap is checked before each append, so the file can exceed it by at most one line.
+	assert.Less(t, info.Size(), int64(600), "spool must not grow unbounded past its cap")
+}
+
+// A SIEM dir mode is tightened even if it pre-exists with looser perms.
+func TestSpool_TightensExistingDirPerms(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "spool")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.Chmod(dir, 0o755)) // defeat umask
+	d := &fakeDelivery{}
+	s, err := newSpool(dir, time.Hour, d.deliver)
+	require.NoError(t, err)
+	t.Cleanup(s.close)
+	info, statErr := os.Stat(dir)
+	require.NoError(t, statErr)
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm(), "spool dir must be tightened to 0700")
+}
+
+// replay must not lose an event add()ed concurrently during a (slow) delivery: the
+// reconcile preserves lines appended after the snapshot. Here delivery of the snapshot
+// succeeds (file would be removed) while a new event is added mid-replay; it must survive.
+func TestSpool_ConcurrentAddDuringReplayNotLost(t *testing.T) {
+	dir := t.TempDir()
+	tr := true
+	d := &fakeDelivery{}
+	// deliver hook adds a second event the first time it runs, simulating a concurrent
+	// add() arriving while the snapshot is being delivered.
+	var once sync.Once
+	var sp *spool
+	d2 := &fakeDelivery{}
+	hook := func(ctx context.Context, e *models.AuditEvent) error {
+		once.Do(func() { sp.add(&models.AuditEvent{ID: 99, EventType: "late", Success: &tr}) })
+		return d2.deliver(ctx, e)
+	}
+	s, err := newSpool(dir, time.Hour, hook)
+	require.NoError(t, err)
+	sp = s
+	t.Cleanup(s.close)
+
+	s.add(&models.AuditEvent{ID: 1, EventType: "secret.read", Success: &tr})
+	s.replay() // delivers ID 1; ID 99 is add()ed mid-delivery and must not be lost
+
+	_ = d
+	// The invariant: the event added concurrently during a delivery is never LOST — it is
+	// either still in the spool (retained for the next replay) or already delivered by a
+	// subsequent replay. (newSpool's background loop makes the exact split nondeterministic;
+	// the guarantee is no-loss.) Before the lock-free reconcile, an add() during replay
+	// would also have DEADLOCKED on the held mutex — reaching this point at all proves the
+	// lock isn't held across delivery.
+	deliveredLate := false
+	for _, id := range d2.delivered {
+		if id == 99 {
+			deliveredLate = true
+		}
+	}
+	inSpool := false
+	if data, rerr := os.ReadFile(filepath.Join(dir, spoolFileName)); rerr == nil {
+		inSpool = bytes.Contains(data, []byte("\"late\""))
+	}
+	assert.True(t, deliveredLate || inSpool, "the concurrently-added event must be retained or delivered, never lost")
 }
