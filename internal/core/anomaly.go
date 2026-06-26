@@ -15,7 +15,15 @@ type AnomalyDetector struct {
 	storage  StorageInterface
 	ml       MLConfig       // ML pass; disabled by default (see SetMLConfig)
 	offHours offHoursPolicy // off_hours rule window; defaults to UTC 22:00–06:00
+	// lookback is how far back each pass scans. It must be >= the scheduler interval, or
+	// the access logs between (now-lookback) and the prior run go unexamined by any rule
+	// — a coverage blind spot when the operator sets a scan cadence longer than the
+	// default. Defaults to 1h; SetLookback raises it to match the configured interval.
+	lookback time.Duration
 }
+
+// minDetectionLookback is the floor for the per-pass scan window.
+const minDetectionLookback = time.Hour
 
 // StorageInterface is satisfied by *storage.LocalStorage and *storage.RemoteStorage.
 type StorageInterface = interface {
@@ -25,10 +33,21 @@ type StorageInterface = interface {
 	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
 }
 
+// SetLookback sets how far back each detection pass scans, flooring it at one hour. The
+// scheduler should set this to its scan interval so consecutive passes cover a
+// contiguous timeline (a longer cadence must scan a proportionally longer window, else
+// the gap between passes is never analysed).
+func (d *AnomalyDetector) SetLookback(window time.Duration) {
+	if window < minDetectionLookback {
+		window = minDetectionLookback
+	}
+	d.lookback = window
+}
+
 // NewAnomalyDetector creates a new AnomalyDetector with the ML pass disabled and the
 // off-hours window at its UTC 22:00–06:00 default.
 func NewAnomalyDetector(storage StorageInterface) *AnomalyDetector {
-	return &AnomalyDetector{storage: storage, offHours: defaultOffHoursPolicy()}
+	return &AnomalyDetector{storage: storage, offHours: defaultOffHoursPolicy(), lookback: minDetectionLookback}
 }
 
 // SetMLConfig enables (or reconfigures) the Isolation Forest pass. Defaults are
@@ -106,17 +125,26 @@ type accessBaseline struct {
 	dailyAvg   float64 // average accesses per day over last 7 days
 }
 
-// RunDetection analyses SecretAccessLog for the past hour and emits AnomalyAlert rows.
-// Safe to call on a schedule — idempotent per detection window.
+// RunDetection analyses SecretAccessLog over the configured lookback window and emits
+// AnomalyAlert rows. Safe to call on a schedule — idempotent per detection window (the
+// dedup window absorbs the overlap between passes). It is best-effort per secret but
+// returns a non-nil error if any storage operation failed, so the scheduler outcome
+// reflects a partial failure rather than silently reporting success.
 func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.SecretNode) error {
 	now := time.Now().UTC()
-	window := now.Add(-1 * time.Hour)
+	lookback := d.lookback
+	if lookback < minDetectionLookback {
+		lookback = minDetectionLookback
+	}
+	window := now.Add(-lookback)
 	baselineWindow := now.Add(-30 * 24 * time.Hour)
 
+	var failures int
 	for _, secret := range secrets {
 		// Build 30-day baseline
 		baselineLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, baselineWindow)
 		if err != nil {
+			failures++
 			continue
 		}
 		if len(baselineLogs) == 0 {
@@ -124,23 +152,28 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		}
 		baseline := buildBaseline(baselineLogs, now, window)
 
-		// Get recent accesses (last hour)
+		// Get recent accesses over the lookback window.
 		recentLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, window)
 		if err != nil {
+			failures++
 			continue
 		}
 
 		for _, accessLog := range recentLogs {
 			alerts := detectAnomalies(secret, accessLog, baseline, d.offHours)
 			for _, alert := range alerts {
-				_ = d.storage.CreateAnomalyAlert(ctx, &alert)
+				if err := d.storage.CreateAnomalyAlert(ctx, &alert); err != nil {
+					failures++
+				}
 			}
 		}
 
 		// Per-secret aggregate: a read-volume spike for the window versus the learned
 		// baseline (one alert per secret per pass, not per access).
 		if alert := volumeSpikeAlert(secret, len(recentLogs), baseline, now); alert != nil {
-			_ = d.storage.CreateAnomalyAlert(ctx, alert)
+			if err := d.storage.CreateAnomalyAlert(ctx, alert); err != nil {
+				failures++
+			}
 		}
 
 		// ML pass (opt-in): score this window's accesses against an Isolation Forest
@@ -152,9 +185,14 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		if d.ml.Enabled {
 			trainLogs := logsBefore(baselineLogs, window)
 			for _, alert := range mlOutlierAlerts(secret, trainLogs, recentLogs, d.ml, now) {
-				_ = d.storage.CreateAnomalyAlert(ctx, &alert)
+				if err := d.storage.CreateAnomalyAlert(ctx, &alert); err != nil {
+					failures++
+				}
 			}
 		}
+	}
+	if failures > 0 {
+		return fmt.Errorf("anomaly detection completed with %d storage failure(s) — some alerts may not have been recorded", failures)
 	}
 	return nil
 }
