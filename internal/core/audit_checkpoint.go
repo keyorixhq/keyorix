@@ -53,6 +53,37 @@ func (c *KeyorixCore) AuditCheckpointsAvailable() bool {
 	return len(c.auditCkptKey) > 0
 }
 
+// SeedAuditWatermark loads the persisted high-water mark into the in-memory watermark
+// at startup, so anti-rollback survives a process restart. Without this the in-memory
+// watermark resets to 0 on every restart, and an attacker who deleted/garbled the
+// persistent mark before a restart could then truncate the trail undetected (the
+// restart erases the only remaining proof of the certified length). Best-effort: a read
+// error or absent/invalid mark leaves the watermark at 0 (and a missing mark while
+// checkpoints exist is separately flagged as tamper by enforceAuditHighWater).
+func (c *KeyorixCore) SeedAuditWatermark(ctx context.Context) {
+	if !c.AuditCheckpointsAvailable() {
+		return
+	}
+	floor, _, _, _, err := c.auditHighWaterFloor(ctx)
+	if err != nil {
+		log.Printf("audit high-water: failed to seed in-memory watermark at startup: %v", err)
+		return
+	}
+	c.bumpWatermark(floor)
+}
+
+// checkpointExists reports whether any signed checkpoint row exists — i.e. whether
+// checkpointing has ever been initialized for this trail. Once it has, the persistent
+// high-water mark must exist too (advanceAuditHighWater writes it with every
+// checkpoint), so a missing/malformed mark alongside an existing checkpoint is tampering.
+func (c *KeyorixCore) checkpointExists(ctx context.Context) (bool, error) {
+	cp, err := c.storage.LatestAuditCheckpoint(ctx)
+	if err != nil {
+		return false, err
+	}
+	return cp != nil, nil
+}
+
 // SetCheckpointNotary wires an external notary (RFC 3161 TSA) that anchors each
 // freshly-written checkpoint for a forge-proof proof-of-existence (ADR-029).
 // Called at startup when audit.checkpoint_notary is enabled; left unset, no
@@ -405,7 +436,20 @@ func (c *KeyorixCore) enforceAuditHighWater(ctx context.Context, v *storage.Audi
 	if err != nil {
 		return err
 	}
-	if found || floor > 0 {
+	// A persistent mark that is absent or malformed (found=false, tampered=false) is a
+	// rollback attempt WHEN signed checkpoints exist: advanceAuditHighWater writes the
+	// mark with every checkpoint, so a checkpoint without a valid mark means the mark was
+	// deleted or garbled to erase the certified length so a truncation reads clean. (With
+	// no checkpoint we cannot attribute it — a fresh trail legitimately has neither.)
+	if !found && !tampered {
+		if exists, cerr := c.checkpointExists(ctx); cerr != nil {
+			return cerr
+		} else if exists {
+			tampered = true
+			reason = "audit high-water mark is missing or malformed although signed checkpoints exist — the anti-rollback mark was deleted or tampered with"
+		}
+	}
+	if found || tampered || floor > 0 {
 		v.Checkpointed = true
 	}
 	switch {

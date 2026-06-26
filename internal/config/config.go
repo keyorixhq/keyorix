@@ -1137,10 +1137,17 @@ func (c RotationRemindersConfig) GetInterval() time.Duration {
 }
 
 // AuditCheckpointsConfig configures the audit-checkpoint scheduler: a background
-// job that signs the audit hash-chain head (ADR-029) so tail-truncation / re-seed
-// is detectable on-box. Opt-in (default off); requires encryption enabled.
+// job that signs the audit hash-chain head (ADR-029) so tampering, tail-truncation,
+// and genesis re-seed are detectable. This is the audit trail's forgery-resistance
+// layer — the per-row hash chain alone is unkeyed and a database-write attacker can
+// recompute it, so without signed checkpoints the trail is only tamper-EVIDENT, not
+// forgery-resistant. It is therefore enabled BY DEFAULT whenever a signing key is
+// available (encryption configured). Set Disabled to opt out (a loud warning is
+// logged). Enabled is retained for backward compatibility and is now redundant with
+// the default-on behavior.
 type AuditCheckpointsConfig struct {
 	Enabled  bool   `yaml:"enabled"`
+	Disabled bool   `yaml:"disabled"`
 	Schedule string `yaml:"schedule"`
 }
 

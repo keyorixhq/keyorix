@@ -282,6 +282,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		// when encryption is off (no DEK).
 		if key, keyVer, ok := encSvc.AuditCheckpointKey(); ok {
 			coreService.SetAuditCheckpointKey(key, keyVer)
+			// Restore the in-memory anti-rollback watermark from the persisted high-water
+			// mark so a process restart cannot reset it to zero (ADR-029).
+			coreService.SeedAuditWatermark(context.Background())
 		}
 		// Derive the evidence-pack signing key from the DEK so scheduled evidence
 		// exports are signed (and verifiable). Unavailable when encryption is off.
@@ -1079,30 +1082,34 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	// Start the audit-checkpoint scheduler (ADR-029) — opt-in. Periodically signs
-	// the verified audit-chain head so tail-truncation / genesis re-seed becomes
-	// detectable on-box. HA-gated so one replica writes per tick. Requires
-	// encryption (the signing key is DEK-derived); skipped with a warning if not.
-	if cfg.AuditCheckpoints.Enabled {
-		if !coreService.AuditCheckpointsAvailable() {
-			log.Printf("Audit-checkpoint scheduler requested but encryption is disabled (no signing key); skipping")
-		} else {
-			interval := cfg.AuditCheckpoints.GetInterval()
-			log.Printf("Audit-checkpoint scheduler enabled: every %s", interval)
-			runScheduler(ctx, "audit_checkpoint", interval, func() middleware.SchedulerOutcome {
-				return lockedRun(ctx, coreService.Storage(), schedLockAuditCkpt, "Audit-checkpoint", func() error {
-					cp, written, werr := coreService.WriteAuditCheckpoint(ctx)
-					if werr != nil {
-						log.Printf("Audit-checkpoint error: %v", werr)
-						return werr
-					}
-					if written {
-						log.Printf("Audit checkpoint written: #%d head=%d events=%d", cp.ID, cp.HeadID, cp.ChainedEvents)
-					}
-					return nil
-				})
+	// Start the audit-checkpoint scheduler (ADR-029). Periodically signs the verified
+	// audit-chain head so tampering, tail-truncation, and genesis re-seed are
+	// detectable. This is the trail's FORGERY-RESISTANCE layer: the per-row hash chain
+	// is unkeyed, so a database-write attacker could otherwise edit/delete/reorder rows
+	// and recompute a self-consistent chain undetected. It is therefore enabled BY
+	// DEFAULT whenever a signing key is available (the key is DEK-derived → encryption
+	// must be configured). HA-gated so one replica writes per tick.
+	switch {
+	case cfg.AuditCheckpoints.Disabled:
+		log.Printf("WARNING: audit-checkpoint forgery-resistance is explicitly DISABLED; the audit trail is tamper-evident but a database-write attacker can recompute the hash chain undetected")
+	case !coreService.AuditCheckpointsAvailable():
+		log.Printf("WARNING: audit checkpointing is UNAVAILABLE (encryption/signing key not configured) — the audit trail is tamper-EVIDENT only, NOT forgery-resistant: a database-write attacker can edit/delete/reorder audit rows and recompute the chain. Enable encryption to activate forgery resistance.")
+	default:
+		interval := cfg.AuditCheckpoints.GetInterval()
+		log.Printf("Audit-checkpoint scheduler enabled (forgery resistance active): every %s", interval)
+		runScheduler(ctx, "audit_checkpoint", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockAuditCkpt, "Audit-checkpoint", func() error {
+				cp, written, werr := coreService.WriteAuditCheckpoint(ctx)
+				if werr != nil {
+					log.Printf("Audit-checkpoint error: %v", werr)
+					return werr
+				}
+				if written {
+					log.Printf("Audit checkpoint written: #%d head=%d events=%d", cp.ID, cp.HeadID, cp.ChainedEvents)
+				}
+				return nil
 			})
-		}
+		})
 	}
 
 	// Start the JIT access-expiry sweeper — opt-in. Removes time-bound role grants
