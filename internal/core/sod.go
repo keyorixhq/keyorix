@@ -22,16 +22,22 @@ const (
 	EventSoDPolicyDeleted = "sod.policy_deleted" // #nosec G101 -- audit event type, not a credential
 )
 
-// SoDViolation is one user who effectively holds both permissions a policy forbids
-// together.
+// SoDViolation is one principal (human user or machine identity) that effectively
+// holds both permissions a policy forbids together.
 type SoDViolation struct {
-	PolicyID    uint   `json:"policy_id"`
-	PolicyName  string `json:"policy_name"`
-	UserID      uint   `json:"user_id"`
-	Username    string `json:"username"`
-	Email       string `json:"email,omitempty"`
-	PermissionA string `json:"permission_a"`
-	PermissionB string `json:"permission_b"`
+	PolicyID   uint   `json:"policy_id"`
+	PolicyName string `json:"policy_name"`
+	// PrincipalType is "user" or "machine". UserID/Username carry the principal's id
+	// and label for either kind (the JSON keys stay user_* for backward compatibility).
+	PrincipalType string `json:"principal_type"`
+	UserID        uint   `json:"user_id"`
+	Username      string `json:"username"`
+	Email         string `json:"email,omitempty"`
+	PermissionA   string `json:"permission_a"`
+	PermissionB   string `json:"permission_b"`
+	// Detail explains a non-obvious basis for the violation, e.g. that the principal
+	// holds both sides only by virtue of an admin permission-bypass role.
+	Detail string `json:"detail,omitempty"`
 }
 
 // CreateSoDPolicy defines a toxic-combination rule. The two permissions must be
@@ -80,9 +86,11 @@ func (c *KeyorixCore) DeleteSoDPolicy(ctx context.Context, actorID, id uint) err
 	return nil
 }
 
-// DetectSoDViolations evaluates every policy against every active user's effective
-// permissions and returns each principal that holds both sides of a policy. Empty
-// when there are no policies. It pages through all users (no silent cap).
+// DetectSoDViolations evaluates every policy against every active principal's
+// effective permissions and returns each that holds both sides of a policy. Empty
+// when there are no policies. It covers BOTH human users (paged, no silent cap) and
+// machine identities — automation principals hold roles and are authorized too, so
+// omitting them would leave the control blind to a whole class of actor.
 func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) ([]SoDViolation, error) {
 	policies, err := c.storage.ListSoDPolicies(ctx)
 	if err != nil {
@@ -103,40 +111,124 @@ func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) ([]SoDViolation, 
 			if !u.IsActive {
 				continue
 			}
-			perms, err := c.storage.GetUserPermissions(ctx, u.ID)
-			if err != nil {
-				continue // best-effort; a user whose permissions can't be read is skipped
-			}
-			// A toxic combination is just as real when one (or both) of the conflicting
-			// permissions reaches the user through GROUP membership — Authorize unions
-			// direct and group-inherited roles, so the SoD scan must too, or a conflict
-			// satisfied via a group grant goes silently undetected (false-negative).
-			groupPerms, err := c.storage.GetUserGroupPermissions(ctx, u.ID)
-			if err != nil {
-				continue // best-effort; skip a user whose group permissions can't be read
-			}
-			held := make(map[string]bool, len(perms)+len(groupPerms))
-			for _, p := range perms {
-				held[p.Name] = true
-			}
-			for _, p := range groupPerms {
-				held[p.Name] = true
-			}
-			for _, pol := range policies {
-				if held[pol.PermissionA] && held[pol.PermissionB] {
-					violations = append(violations, SoDViolation{
-						PolicyID: pol.ID, PolicyName: pol.Name,
-						UserID: u.ID, Username: u.Username, Email: u.Email,
-						PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
-					})
-				}
-			}
+			violations = append(violations, c.userSoDViolations(ctx, u, policies)...)
 		}
 		if len(users) < pageSize || int64(page*pageSize) >= total {
 			break
 		}
 	}
+
+	violations = append(violations, c.machineSoDViolations(ctx, policies)...)
 	return violations, nil
+}
+
+// userSoDViolations returns the policy violations a single user holds. A user whose
+// role set includes an admin permission-bypass role effectively holds EVERY
+// permission — Authorize short-circuits on it before ever consulting role_permissions
+// — so such a user violates every policy, even though their explicit role_permissions
+// rows may name only one side (or neither). Missing that made the SoD control blind to
+// exactly the most-privileged principals it exists to police. For a non-admin, the
+// held-set unions direct and group-inherited permissions (mirroring Authorize).
+func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, policies []*models.SoDPolicy) []SoDViolation {
+	if adminRole := c.adminRoleName(ctx, u.ID); adminRole != "" {
+		out := make([]SoDViolation, 0, len(policies))
+		detail := fmt.Sprintf("holds all permissions via admin role %q", adminRole)
+		for _, pol := range policies {
+			out = append(out, SoDViolation{
+				PolicyID: pol.ID, PolicyName: pol.Name,
+				PrincipalType: "user", UserID: u.ID, Username: u.Username, Email: u.Email,
+				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
+				Detail: detail,
+			})
+		}
+		return out
+	}
+
+	perms, err := c.storage.GetUserPermissions(ctx, u.ID)
+	if err != nil {
+		return nil // best-effort; a user whose permissions can't be read is skipped
+	}
+	groupPerms, err := c.storage.GetUserGroupPermissions(ctx, u.ID)
+	if err != nil {
+		return nil // best-effort; skip a user whose group permissions can't be read
+	}
+	held := make(map[string]bool, len(perms)+len(groupPerms))
+	for _, p := range perms {
+		held[p.Name] = true
+	}
+	for _, p := range groupPerms {
+		held[p.Name] = true
+	}
+	var out []SoDViolation
+	for _, pol := range policies {
+		if held[pol.PermissionA] && held[pol.PermissionB] {
+			out = append(out, SoDViolation{
+				PolicyID: pol.ID, PolicyName: pol.Name,
+				PrincipalType: "user", UserID: u.ID, Username: u.Username, Email: u.Email,
+				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
+			})
+		}
+	}
+	return out
+}
+
+// machineSoDViolations scans active machine identities. Machines resolve permissions
+// from machine_identity_roles and receive NO admin-role bypass (a leaked machine token
+// is bounded to its explicit grants), so the held-set is just the union of its roles'
+// permissions. Best-effort: if machine identities can't be listed (e.g. the table
+// isn't provisioned in this deployment), machine scanning is skipped rather than
+// failing the whole detection.
+func (c *KeyorixCore) machineSoDViolations(ctx context.Context, policies []*models.SoDPolicy) []SoDViolation {
+	machines, err := c.storage.ListAllMachineIdentities(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []SoDViolation
+	for _, m := range machines {
+		if m.State != "active" {
+			continue
+		}
+		roles, err := c.storage.GetMachineRoles(ctx, m.ID)
+		if err != nil || len(roles) == 0 {
+			continue
+		}
+		roleIDs := make([]uint, 0, len(roles))
+		for _, r := range roles {
+			roleIDs = append(roleIDs, r.ID)
+		}
+		for _, pol := range policies {
+			hasA, err := c.storage.RoleSetHasPermission(ctx, roleIDs, pol.PermissionA)
+			if err != nil || !hasA {
+				continue
+			}
+			hasB, err := c.storage.RoleSetHasPermission(ctx, roleIDs, pol.PermissionB)
+			if err != nil || !hasB {
+				continue
+			}
+			out = append(out, SoDViolation{
+				PolicyID: pol.ID, PolicyName: pol.Name,
+				PrincipalType: "machine", UserID: m.ID, Username: m.Name,
+				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
+			})
+		}
+	}
+	return out
+}
+
+// adminRoleName returns the name of an admin (permission-bypass) role the user holds
+// in ANY scope, or "" if none. The SoD scan is scope-agnostic (it unions a user's
+// permissions across scopes), so it checks admin membership the same way.
+func (c *KeyorixCore) adminRoleName(ctx context.Context, userID uint) string {
+	roles, err := c.storage.GetUserRoles(ctx, userID)
+	if err != nil {
+		return ""
+	}
+	for _, r := range roles {
+		if isAdminRoleName(r.Name) {
+			return r.Name
+		}
+	}
+	return ""
 }
 
 // actorPtr returns a *uint for an actor id (nil when 0/unauthenticated).

@@ -131,6 +131,9 @@ type Storage interface {
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
+	// ListAllMachineIdentities returns every machine identity across all projects —
+	// for install-wide sweeps such as SoD conflict detection over non-human principals.
+	ListAllMachineIdentities(ctx context.Context) ([]*models.MachineIdentity, error)
 	// CountMachineIdentitiesByClassification returns install-wide counts keyed by
 	// classification label ("" = unclassified) for the compliance posture.
 	CountMachineIdentitiesByClassification(ctx context.Context) (map[string]int, error)
