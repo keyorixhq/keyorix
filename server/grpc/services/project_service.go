@@ -152,6 +152,12 @@ func (s *ProjectGRPCService) UpdateProject(ctx context.Context, req *pb.UpdatePr
 	if req.RequireMfa != nil {
 		v := req.GetRequireMfa()
 		requireMFA = &v
+		// require_mfa is a per-project security-policy control: changing it additionally
+		// requires roles.assign at the project (parity with the HTTP handler), so a
+		// non-admin secrets.write holder can't silently disable MFA enforcement.
+		if err := authorizeScoped(ctx, s.core, user, "roles.assign", core.Scope{ProjectID: uint(req.GetId())}); err != nil {
+			return nil, err
+		}
 	}
 	project, err := s.core.UpdateProject(ctx, uint(req.GetId()), req.GetName(), req.GetDescription(), requireMFA)
 	if err != nil {
