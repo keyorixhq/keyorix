@@ -128,6 +128,16 @@ func TestFixFilePermsAuditReportsWrongMode(t *testing.T) {
 	assert.Equal(t, os.FileMode(0644), info.Mode().Perm(), "audit must not modify the file")
 }
 
+// Fail closed: when autofix is on but the fix can't actually be applied (here, the file
+// doesn't exist so stat fails), FixFilePerms must return an error rather than silently
+// reporting success — the previous `hasWarnings && !autofix` form returned nil, hiding an
+// unlocked-down key file.
+func TestFixFilePermsAutofixFailsClosedOnUnresolvable(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope.key")
+	err := FixFilePerms([]FilePermSpec{{Path: missing, Mode: 0600}}, true)
+	require.Error(t, err, "an unresolvable problem must fail even under autofix")
+}
+
 func TestFixFilePermsAutofixCorrectsMode(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "loose.key")

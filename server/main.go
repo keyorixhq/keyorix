@@ -101,6 +101,11 @@ func main() {
 		log.Fatalf("transport security: %v", err)
 	}
 
+	// Refuse (or warn) when key material on disk is readable beyond its owner.
+	if err := enforceKeyFilePermissions(cfg); err != nil {
+		log.Fatalf("key file security: %v", err)
+	}
+
 	var wg sync.WaitGroup
 
 	// Start HTTP server
@@ -1268,6 +1273,56 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 		return err
 	}
 	return check("gRPC", cfg.Server.GRPC)
+}
+
+// enforceKeyFilePermissions refuses to start (or, by default, loudly warns) when sensitive
+// key material on disk — the wrapped DEK, the KEK salt, and TLS private keys — is readable
+// by group or other. Key writes are already 0600, but a file restored from a backup with a
+// bad umask, or one left 0644 by an operator, would otherwise expose the wrapped DEK / TLS
+// key to any local user with no signal. Fails closed only when
+// security.enable_file_permission_check is set (and not overridden by
+// allow_unsafe_file_permissions); otherwise it warns. A not-yet-created key file (first
+// boot) is skipped — it is created at 0600.
+func enforceKeyFilePermissions(cfg *config.Config) error {
+	resolve := func(p string) string {
+		if p == "" || filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Join(".", p)
+	}
+	var paths []string
+	if cfg.Storage.Encryption.Enabled {
+		paths = append(paths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
+	}
+	if cfg.Server.HTTP.TLS.Enabled {
+		paths = append(paths, cfg.Server.HTTP.TLS.KeyFile)
+	}
+	if cfg.Server.GRPC.TLS.Enabled {
+		paths = append(paths, cfg.Server.GRPC.TLS.KeyFile)
+	}
+
+	var insecure []string
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			continue // absent (e.g. created at 0600 on first boot) — nothing to check yet
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			insecure = append(insecure, fmt.Sprintf("%s (mode %o)", p, info.Mode().Perm()))
+		}
+	}
+	if len(insecure) == 0 {
+		return nil
+	}
+	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(insecure, ", "))
+	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
+		return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.allow_unsafe_file_permissions to override)", msg)
+	}
+	log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
+	return nil
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config) error {

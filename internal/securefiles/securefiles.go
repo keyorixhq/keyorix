@@ -164,13 +164,15 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error {
 	}
 	currentUID, _ := strconv.Atoi(currentUser.Uid)
 
-	hasWarnings := false
+	hasWarnings := false // a mismatch was found (fixed or not)
+	unresolved := false  // a problem REMAINS — stat/chmod/chown failed, so autofix didn't help
 
 	for _, f := range files {
 		info, err := os.Stat(f.Path)
 		if err != nil {
 			fmt.Printf("[WARN] Cannot stat file %s: %v\n", f.Path, err)
 			hasWarnings = true
+			unresolved = true
 			continue
 		}
 
@@ -178,16 +180,16 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error {
 		actualMode := info.Mode().Perm()
 		if actualMode != f.Mode {
 			msg := fmt.Sprintf("File %s has mode %o but expected %o", f.Path, actualMode, f.Mode)
+			hasWarnings = true
 			if autofix {
 				if err := os.Chmod(f.Path, f.Mode); err != nil {
 					fmt.Printf("[ERROR] Failed to chmod %s: %v\n", f.Path, err)
-					hasWarnings = true
+					unresolved = true
 				} else {
 					fmt.Printf("[FIXED] %s\n", msg)
 				}
 			} else {
 				fmt.Printf("[WARN] %s\n", msg)
-				hasWarnings = true
 			}
 		}
 
@@ -196,28 +198,33 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error {
 		if !ok {
 			fmt.Printf("[WARN] Cannot get stat_t for %s\n", f.Path)
 			hasWarnings = true
+			unresolved = true
 			continue
 		}
 
 		fileUID := int(stat.Uid)
 		if fileUID != currentUID {
 			msg := fmt.Sprintf("File %s is owned by uid %d, expected uid %d", f.Path, fileUID, currentUID)
+			hasWarnings = true
 			if autofix {
 				if err := os.Chown(f.Path, currentUID, int(stat.Gid)); err != nil {
 					fmt.Printf("[ERROR] Failed to chown %s: %v\n", f.Path, err)
-					hasWarnings = true
+					unresolved = true
 				} else {
 					fmt.Printf("[FIXED] %s\n", msg)
 				}
 			} else {
 				fmt.Printf("[WARN] %s\n", msg)
-				hasWarnings = true
 			}
 		}
 	}
 
-	if hasWarnings && !autofix {
-		return fmt.Errorf("permissions or ownership audit found warnings")
+	// Fail closed when a problem remains: either autofix was off and a mismatch exists,
+	// or autofix was on but a chmod/chown/stat FAILED (so the insecure state persists).
+	// The previous `hasWarnings && !autofix` form silently returned nil when autofix
+	// couldn't actually lock a world-readable key file down.
+	if unresolved || (hasWarnings && !autofix) {
+		return fmt.Errorf("permissions or ownership audit found unresolved issues")
 	}
 
 	return nil
