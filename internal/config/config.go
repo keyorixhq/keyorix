@@ -467,6 +467,12 @@ type SecurityConfig struct {
 	// for an exponentially-backing-off cooldown. Distinct from the per-IP rate
 	// limiter (ADR-040). Opt-in (default off).
 	LoginLockout LoginLockoutConfig `yaml:"login_lockout"`
+	// RequireTransportTLS, when true, refuses to start an enabled HTTP/gRPC listener
+	// that has no TLS configured — failing closed so bearer tokens and secret values are
+	// never served in cleartext. Default false (a TLS-terminating proxy in front is a
+	// common, supported deployment), but when off the server logs a prominent warning if
+	// it serves cleartext, so the exposure is never silent.
+	RequireTransportTLS bool `yaml:"require_transport_tls"`
 }
 
 // parseDurationDefault parses a Go duration string, returning def when empty or
@@ -1383,10 +1389,14 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Server.GRPC.TLS.Enabled {
-		if !c.Server.GRPC.TLS.AutoCert {
-			if c.Server.GRPC.TLS.CertFile == "" || c.Server.GRPC.TLS.KeyFile == "" {
-				return fmt.Errorf("gRPC TLS is enabled but cert_file or key_file is missing")
-			}
+		// gRPC has no ACME integration: auto_cert would build a TLS config with no
+		// certificate, so every handshake fails (a silent outage). Reject it explicitly
+		// rather than start a server that cannot serve.
+		if c.Server.GRPC.TLS.AutoCert {
+			return fmt.Errorf("gRPC TLS auto_cert is not supported; provide cert_file and key_file")
+		}
+		if c.Server.GRPC.TLS.CertFile == "" || c.Server.GRPC.TLS.KeyFile == "" {
+			return fmt.Errorf("gRPC TLS is enabled but cert_file or key_file is missing")
 		}
 	}
 
