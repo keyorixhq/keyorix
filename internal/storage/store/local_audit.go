@@ -309,7 +309,14 @@ func (ls *LocalStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *boo
 }
 
 func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
-	return ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Update("acknowledged", true).Error
+	res := ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Update("acknowledged", true)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("anomaly alert not found")
+	}
+	return nil
 }
 
 func (ls *LocalStorage) ListUnalertedAnomalyAlerts(ctx context.Context) ([]models.AnomalyAlert, error) {

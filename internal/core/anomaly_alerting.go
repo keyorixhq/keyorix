@@ -17,6 +17,29 @@ import (
 // it flows through the SIEM forwarder like any audit event.
 const EventAnomalyDetected = "security.anomaly_detected" // #nosec G101 -- audit event type, not a credential
 
+// EventAnomalyAcknowledged audits an operator dismissing an anomaly alert — a mutation
+// of a security-detection record, so WHO dismissed WHICH alert must land on the
+// append-only trail (otherwise an attacker could quietly bury an alert about their own
+// activity).
+const EventAnomalyAcknowledged = "security.anomaly_acknowledged" // #nosec G101 -- audit event type, not a credential
+
+// AcknowledgeAnomalyAlert marks an anomaly alert acknowledged and records who did it on
+// the audit trail. actorID is the operator performing the dismissal. The acknowledge is
+// gated at the transport by a write-level permission (it mutates a detection record).
+func (c *KeyorixCore) AcknowledgeAnomalyAlert(ctx context.Context, actorID, alertID uint) error {
+	if err := c.storage.AcknowledgeAnomalyAlert(ctx, alertID); err != nil {
+		return err
+	}
+	var aid *uint
+	if actorID != 0 {
+		a := actorID
+		aid = &a
+	}
+	c.writeAuditEventFull(ctx, EventAnomalyAcknowledged, aid, nil, nil, "",
+		fmt.Sprintf("anomaly alert %d acknowledged (dismissed) by user %d", alertID, actorID))
+	return nil
+}
+
 // AlertNewAnomalies pushes every not-yet-alerted anomaly to the project's admins
 // and the audit/SIEM pipeline, marking each alerted. Returns the number announced.
 // Idempotent: an already-alerted anomaly is skipped.

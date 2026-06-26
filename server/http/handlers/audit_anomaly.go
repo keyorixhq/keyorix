@@ -55,9 +55,14 @@ func AcknowledgeAnomalyAlert(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", "Invalid alert ID", http.StatusBadRequest, nil)
 		return
 	}
-	detector := core.NewAnomalyDetector(coreService.Storage())
-	if err := detector.AcknowledgeAlert(r.Context(), uint(id)); err != nil {
-		sendError(w, "InternalError", "Failed to acknowledge alert", http.StatusInternalServerError, nil)
+	var actorID uint
+	if u := middleware.GetUserFromContext(r.Context()); u != nil {
+		actorID = u.UserID
+	}
+	// Routed through the core (not the bare detector) so the dismissal is audited with
+	// the acting operator and a missing alert id is reported as not-found, not a silent ok.
+	if err := coreService.AcknowledgeAnomalyAlert(r.Context(), actorID, uint(id)); err != nil {
+		sendError(w, "NotFound", "Anomaly alert not found", http.StatusNotFound, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"acknowledged": true}, "")

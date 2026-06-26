@@ -607,7 +607,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// above the group's audit.read with system.write (admin-level).
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/checkpoint", auditHandler.WriteAuditCheckpoint)
 			r.Get("/anomalies", handlers.ListAnomalyAlerts)
-			r.Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
+			// Acknowledging (dismissing) an alert mutates a security-detection record, so
+			// gate it above the group's audit.read with system.write — like /checkpoint —
+			// rather than letting any read-only auditor silently bury alerts.
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})
 
 		// System endpoints
