@@ -43,28 +43,29 @@ func clientIPFromRequest(r *http.Request, trusted []*net.IPNet) string {
 	if len(trusted) == 0 || !ipInAny(peer, trusted) {
 		return "" // no trusted proxy in front (or none configured) → keep the TCP peer
 	}
-	// X-Real-IP, if a trusted proxy set it, is a single already-resolved client address.
-	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
-		if net.ParseIP(xri) != nil {
-			return xri
+	// Prefer X-Forwarded-For: walk it right→left and return the first address that is NOT
+	// a trusted proxy — the client as seen by the trusted edge. Stopping at the first
+	// untrusted hop from the right means a spoofed leftmost (client-prepended) entry is
+	// ignored, so the client cannot claim an arbitrary source IP.
+	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			hop := strings.TrimSpace(parts[i])
+			if hop == "" || net.ParseIP(hop) == nil {
+				continue
+			}
+			if !ipInAny(hop, trusted) {
+				return hop
+			}
 		}
+		return "" // XFF present but only trusted hops — nothing client-attributable
 	}
-	// Walk X-Forwarded-For right→left and return the first address that is NOT a trusted
-	// proxy — the client as seen by the trusted edge. A spoofed leftmost entry is ignored
-	// because we stop at the first untrusted hop from the right.
-	xff := r.Header.Get("X-Forwarded-For")
-	if xff == "" {
-		return ""
-	}
-	parts := strings.Split(xff, ",")
-	for i := len(parts) - 1; i >= 0; i-- {
-		hop := strings.TrimSpace(parts[i])
-		if hop == "" || net.ParseIP(hop) == nil {
-			continue
-		}
-		if !ipInAny(hop, trusted) {
-			return hop
-		}
+	// Only when X-Forwarded-For is absent do we fall back to X-Real-IP. X-Real-IP carries
+	// no chain, so its anti-spoof guarantee depends entirely on the trusted proxy
+	// OVERWRITING it (not passing a client-supplied value through). Preferring the XFF
+	// walk above avoids trusting a possibly-passed-through X-Real-IP whenever XFF exists.
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" && net.ParseIP(xri) != nil {
+		return xri
 	}
 	return ""
 }

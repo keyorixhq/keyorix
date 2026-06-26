@@ -66,6 +66,28 @@ func TestClientIP_StopsAtFirstUntrustedHopFromRight(t *testing.T) {
 	}
 }
 
+func TestClientIP_XForwardedForTakesPrecedenceOverRealIP(t *testing.T) {
+	// When both headers are present, the spoof-resistant XFF walk wins over X-Real-IP,
+	// so a client-supplied (possibly proxy-passed-through) X-Real-IP can't override it.
+	got := serveAndCaptureRemoteAddr([]string{"10.0.0.0/8"}, "10.1.2.3:443", map[string]string{
+		"X-Forwarded-For": "203.0.113.9",
+		"X-Real-IP":       "6.6.6.6", // attacker-set; must be ignored in favor of XFF
+	})
+	if got != "203.0.113.9" {
+		t.Errorf("RemoteAddr = %q; want the X-Forwarded-For client, not the X-Real-IP", got)
+	}
+}
+
+func TestClientIP_RealIPOnlyWhenNoXForwardedFor(t *testing.T) {
+	// X-Real-IP is honored only as a fallback when XFF is absent (and the peer is trusted).
+	got := serveAndCaptureRemoteAddr([]string{"10.0.0.0/8"}, "10.1.2.3:443", map[string]string{
+		"X-Real-IP": "198.51.100.7",
+	})
+	if got != "198.51.100.7" {
+		t.Errorf("RemoteAddr = %q; want the X-Real-IP fallback", got)
+	}
+}
+
 func TestClientIP_BareIPTrustedProxy(t *testing.T) {
 	got := serveAndCaptureRemoteAddr([]string{"192.168.1.10"}, "192.168.1.10:8080", map[string]string{
 		"X-Real-IP": "198.51.100.2",
