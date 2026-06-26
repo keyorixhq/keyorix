@@ -107,6 +107,23 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 		sendError(w, "ValidationError", "email is required", http.StatusBadRequest, nil)
 		return
 	}
+	// Privilege ceiling (mirrors CreateUser): the route gate proves users.write, but a
+	// users.write holder must not be able to GRANT a role they themselves lack authority
+	// to assign — otherwise an onboarding manager without roles.assign could invite an
+	// account (their own email) as system_admin and own the install on accept. Require
+	// roles.assign at the relevant scope for the system role and each project assignment.
+	if body.Role != "" {
+		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{}); aerr != nil || !ok {
+			sendError(w, "Forbidden", "You may not invite with a system role you cannot assign", http.StatusForbidden, nil)
+			return
+		}
+	}
+	for _, a := range body.ProjectAssignments {
+		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: a.ProjectID}); aerr != nil || !ok {
+			sendError(w, "Forbidden", "You may not invite with roles in a project where you cannot assign roles", http.StatusForbidden, nil)
+			return
+		}
+	}
 	assignments := make([]core.ProjectAssignment, 0, len(body.ProjectAssignments))
 	for _, a := range body.ProjectAssignments {
 		assignments = append(assignments, core.ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
