@@ -53,9 +53,12 @@ func newReconciler(t *testing.T, fetcher valueFetcher, objs ...client.Object) (*
 		WithObjects(objs...).
 		Build()
 	return &KeyorixSecretReconciler{
-		Client:    c,
-		Scheme:    s,
-		newClient: func(_, _ string) valueFetcher { return fetcher },
+		Client: c,
+		Scheme: s,
+		// Trust the fixture's server so the (now fail-closed) allow-list passes; the
+		// server-validation behavior itself is covered by TestValidateServer.
+		AllowedServers: []string{"https://keyorix.internal"},
+		newClient:      func(_, _ string) valueFetcher { return fetcher },
 	}, c
 }
 
@@ -222,4 +225,51 @@ func TestHashData_StableAndSensitive(t *testing.T) {
 	b := map[string][]byte{"y": []byte("2"), "x": []byte("1")}
 	assert.Equal(t, hashData(a), hashData(b), "hash is independent of map iteration order")
 	assert.NotEqual(t, hashData(a), hashData(map[string][]byte{"x": []byte("1"), "y": []byte("3")}))
+}
+
+// validateServer is the confused-deputy guard: the operator must only ever send a token
+// to an https destination it was explicitly configured to trust, so a tenant who can
+// create a CR cannot redirect a (possibly arbitrary) namespace Secret's value to an
+// attacker server.
+func TestValidateServer(t *testing.T) {
+	allow := &KeyorixSecretReconciler{AllowedServers: []string{"https://keyorix.internal", "https://kx.example.com/"}}
+	cases := []struct {
+		name    string
+		r       *KeyorixSecretReconciler
+		server  string
+		wantErr bool
+	}{
+		{"allowed host", allow, "https://keyorix.internal", false},
+		{"allowed host trailing-slash config", allow, "https://kx.example.com", false},
+		{"http rejected", allow, "http://keyorix.internal", true},
+		{"not in allow-list rejected", allow, "https://attacker.example", true},
+		{"empty allow-list rejects everything (fail closed)", &KeyorixSecretReconciler{}, "https://keyorix.internal", true},
+		{"garbage rejected", allow, "::nope", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.r.validateServer(tc.server)
+			if tc.wantErr && err == nil {
+				t.Errorf("validateServer(%q) = nil; want error", tc.server)
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("validateServer(%q) = %v; want nil", tc.server, err)
+			}
+		})
+	}
+}
+
+// A CR pointing at an untrusted server is rejected BEFORE the operator reads the token
+// Secret — so it cannot be used to exfiltrate a namespace Secret to an attacker.
+func TestReconcile_RejectsUntrustedServer(t *testing.T) {
+	ks := ksFixture()
+	ks.Spec.Server = "https://attacker.example"
+	r, c := newReconciler(t, &fakeFetcher{}, ks, tokenSecret())
+	_, err := reconcile(t, r)
+	require.Error(t, err, "a CR with a non-allowlisted server must fail the reconcile")
+
+	// No target Secret was written.
+	var got corev1.Secret
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got)
+	require.Error(t, err, "no Secret is created for a rejected server")
 }
