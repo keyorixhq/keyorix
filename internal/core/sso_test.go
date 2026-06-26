@@ -58,7 +58,7 @@ func TestVerifyIDToken(t *testing.T) {
 
 	b := base()
 	b["name"] = "Ada Lovelace"
-	sub, email, name, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", b))
+	sub, email, name, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", b))
 	require.NoError(t, err)
 	assert.Equal(t, "okta|123", sub)
 	assert.Equal(t, "ada@x.io", email)
@@ -67,23 +67,23 @@ func TestVerifyIDToken(t *testing.T) {
 	// Wrong audience → rejected.
 	bad := base()
 	bad["aud"] = "someone-else"
-	_, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", bad))
+	_, _, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", bad))
 	require.Error(t, err)
 
 	// Nonce mismatch → rejected (replay / mix-up protection).
-	_, _, _, err = c.verifyIDToken(ctx, p, "WRONG", signToken(t, key, "kid-1", base()))
+	_, _, _, _, err = c.verifyIDToken(ctx, p, "WRONG", signToken(t, key, "kid-1", base()))
 	require.Error(t, err)
 
 	// Expired → rejected.
 	exp := base()
 	exp["exp"] = time.Now().Add(-time.Hour).Unix()
-	_, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", exp))
+	_, _, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", exp))
 	require.Error(t, err)
 
 	// Wrong issuer → rejected (keyfn refuses it).
 	iss := base()
 	iss["iss"] = "https://evil.test"
-	_, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", iss))
+	_, _, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", iss))
 	require.Error(t, err)
 }
 
@@ -98,14 +98,14 @@ func TestVerifyIDToken_EmailVerified(t *testing.T) {
 	}
 
 	// email_verified absent → email is trusted (OIDC-optional; Entra omits it).
-	_, email, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", base()))
+	_, email, _, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", base()))
 	require.NoError(t, err)
 	assert.Equal(t, "ada@x.io", email)
 
 	// email_verified: true → email trusted.
 	ok := base()
 	ok["email_verified"] = true
-	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", ok))
+	_, email, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", ok))
 	require.NoError(t, err)
 	assert.Equal(t, "ada@x.io", email)
 
@@ -113,7 +113,7 @@ func TestVerifyIDToken_EmailVerified(t *testing.T) {
 	// and the subject is unaffected.
 	no := base()
 	no["email_verified"] = false
-	sub, email, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", no))
+	sub, email, _, _, err := c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", no))
 	require.NoError(t, err)
 	assert.Equal(t, "okta|123", sub)
 	assert.Empty(t, email)
@@ -121,14 +121,14 @@ func TestVerifyIDToken_EmailVerified(t *testing.T) {
 	// email_verified sent as the string "false" → also dropped (no parse failure).
 	noStr := base()
 	noStr["email_verified"] = "false"
-	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", noStr))
+	_, email, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", noStr))
 	require.NoError(t, err)
 	assert.Empty(t, email)
 
 	// email_verified sent as the string "true" → trusted.
 	okStr := base()
 	okStr["email_verified"] = "true"
-	_, email, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", okStr))
+	_, email, _, _, err = c.verifyIDToken(ctx, p, "N1", signToken(t, key, "kid-1", okStr))
 	require.NoError(t, err)
 	assert.Equal(t, "ada@x.io", email)
 }
@@ -139,26 +139,53 @@ func TestResolveSSOUser(t *testing.T) {
 	t.Run("externalId match wins", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
 		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return(&models.User{ID: 7}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io")
+		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(7), u.ID)
 		store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
 	})
 
-	t.Run("falls back to email", func(t *testing.T) {
+	t.Run("verified email links a never-federated account and claims it", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
 		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
-		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io")
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
+		// First link claims the account for this subject (so a later provider can't re-link it).
+		store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+			return u.ID == 9 && u.ExternalID == "okta|123"
+		})).Return(&models.User{ID: 9, ExternalID: "okta|123"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(9), u.ID)
+		store.AssertCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	})
+
+	t.Run("unverified email does NOT match an existing account (no takeover)", func(t *testing.T) {
+		c, store, _, _ := ssoTestCore(t)
+		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		// emailVerified=false: the email fallback is skipped entirely — an IdP that merely
+		// asserts (or omits email_verified for) an address can't claim an existing account.
+		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", false)
+		require.NoError(t, err)
+		assert.Nil(t, u)
+		store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
+	})
+
+	t.Run("email match to an account bound to a DIFFERENT identity is refused", func(t *testing.T) {
+		c, store, _, _ := ssoTestCore(t)
+		store.On("GetUserByExternalID", mock.Anything, "partner|999").Return((*models.User)(nil), notFound())
+		// The corp account is already federated to a different subject — a second provider
+		// asserting the same email must not take it over.
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: "okta|123"}, nil)
+		_, err := c.resolveSSOUser(context.Background(), "partner|999", "ada@x.io", true)
+		require.ErrorContains(t, err, "already linked to a different SSO identity")
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	})
 
 	t.Run("no match returns nil (caller decides)", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
 		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io")
+		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Nil(t, u)
 	})

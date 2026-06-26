@@ -161,12 +161,12 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if rawID == "" {
 		return nil, nil, "", fmt.Errorf("the token response carried no id_token")
 	}
-	sub, email, name, err := c.verifyIDToken(ctx, p, st.Nonce, rawID)
+	sub, email, name, emailVerified, err := c.verifyIDToken(ctx, p, st.Nonce, rawID)
 	if err != nil {
 		return nil, nil, "", err
 	}
 
-	user, err := c.resolveSSOUser(ctx, sub, email)
+	user, err := c.resolveSSOUser(ctx, sub, email, emailVerified)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -279,7 +279,9 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		return nil, nil, "", fmt.Errorf("the assertion carried no subject or email")
 	}
 
-	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email)
+	// A SAML assertion's attributes (incl. email) are carried inside the IdP-signed,
+	// library-verified assertion, so the email is treated as verified here.
+	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email, true)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -320,7 +322,23 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 // resolveSSOUser maps the IdP identity to a Keyorix user: the SCIM externalId
 // (subject) first, then email. Returns (nil, nil) when neither matches — the caller
 // decides whether to refuse the login or JIT-provision the account.
-func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string) (*models.User, error) {
+//
+// The email fallback carries two guards that close a cross-provider account-takeover
+// vector when more than one SSO provider is trusted (e.g. a corporate IdP plus a
+// weaker/partner IdP). (1) The email must be EXPLICITLY verified: an IdP that lets a
+// user self-assert an address — or merely omits email_verified — cannot use it to
+// claim an EXISTING account (a brand-new JIT account is still provisionable, since
+// there is nothing to take over). (2) The matched account must not already be bound
+// to a DIFFERENT federated identity; otherwise a second IdP asserting the same email
+// could take over an account owned by the first. A never-federated (native or
+// SCIM-by-email) account is claimed by this subject on first link, so a later
+// provider can't re-link it by asserting the same address.
+//
+// Residual (documented): a malicious provider that can choose its subjects could still
+// forge a sub equal to a victim's externalId and match via the subject branch. Fully
+// closing that requires binding each federated identity to its issuer (as the machine
+// OIDC path does) — a schema change tracked separately.
+func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string, emailVerified bool) (*models.User, error) {
 	notFound := i18n.T("ErrorUserNotFound", nil)
 	if sub != "" {
 		if u, err := c.storage.GetUserByExternalID(ctx, sub); err == nil {
@@ -329,14 +347,29 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string) (*m
 			return nil, err
 		}
 	}
-	if email != "" {
-		if u, err := c.storage.GetUserByEmail(ctx, email); err == nil {
-			return u, nil
-		} else if !strings.Contains(err.Error(), notFound) {
-			return nil, err
+	if email == "" || !emailVerified {
+		return nil, nil
+	}
+	u, err := c.storage.GetUserByEmail(ctx, email)
+	if err != nil {
+		if strings.Contains(err.Error(), notFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if u.ExternalID != "" && u.ExternalID != sub {
+		return nil, fmt.Errorf("this email is already linked to a different SSO identity")
+	}
+	if u.ExternalID == "" && sub != "" {
+		// Claim this never-federated account for the verifying subject so a later
+		// provider can't re-link it by asserting the same email. Best-effort: a failed
+		// update just means we re-link on the next login.
+		u.ExternalID = sub
+		if updated, uerr := c.storage.UpdateUser(ctx, u); uerr == nil {
+			u = updated
 		}
 	}
-	return nil, nil
+	return u, nil
 }
 
 // provisionSSOUser JIT-creates a Keyorix account for a verified SSO identity that
@@ -618,13 +651,13 @@ func (b *ssoBool) UnmarshalJSON(data []byte) error {
 
 // verifyIDToken validates the id_token's signature (asymmetric only), issuer,
 // audience (= the provider's client_id), expiry, and the nonce, returning the
-// subject, email, and (best-effort) name claims. The email is returned only when the
-// IdP has not explicitly marked it unverified (email_verified: false) — so an IdP
-// that lets a user self-assert an arbitrary, unverified address cannot use it to
-// match an existing account or seed a JIT-provisioned one. An absent email_verified
-// claim is treated as trusted: it is OPTIONAL in OIDC and common enterprise IdPs
-// (e.g. Entra ID) omit it for a configured, trusted issuer.
-func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expectedNonce, raw string) (sub, email, name string, err error) {
+// subject, email, (best-effort) name, and whether the email was EXPLICITLY verified.
+// The email is dropped only when the IdP explicitly marks it unverified
+// (email_verified: false). An absent email_verified claim is treated as trusted for
+// JIT-provisioning — it is OPTIONAL in OIDC and common enterprise IdPs (e.g. Entra ID)
+// omit it — but emailVerified is reported true only when the claim is present and true,
+// so resolveSSOUser can refuse to MATCH AN EXISTING account on a merely-asserted email.
+func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expectedNonce, raw string) (sub, email, name string, emailVerified bool, err error) {
 	var claims struct {
 		jwt.RegisteredClaims
 		Email         string   `json:"email"`
@@ -647,10 +680,10 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 	}
 	token, err := parser.ParseWithClaims(raw, &claims, keyfn)
 	if err != nil {
-		return "", "", "", fmt.Errorf("id_token verification failed: %w", err)
+		return "", "", "", false, fmt.Errorf("id_token verification failed: %w", err)
 	}
 	if !token.Valid || claims.Issuer != p.Issuer {
-		return "", "", "", fmt.Errorf("id_token invalid")
+		return "", "", "", false, fmt.Errorf("id_token invalid")
 	}
 	audOK := false
 	for _, a := range claims.Audience {
@@ -660,13 +693,13 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 		}
 	}
 	if !audOK {
-		return "", "", "", fmt.Errorf("id_token audience does not match the client id")
+		return "", "", "", false, fmt.Errorf("id_token audience does not match the client id")
 	}
 	if expectedNonce == "" || claims.Nonce != expectedNonce {
-		return "", "", "", fmt.Errorf("id_token nonce mismatch")
+		return "", "", "", false, fmt.Errorf("id_token nonce mismatch")
 	}
 	if strings.TrimSpace(claims.Subject) == "" {
-		return "", "", "", fmt.Errorf("id_token has no subject")
+		return "", "", "", false, fmt.Errorf("id_token has no subject")
 	}
 	email = claims.Email
 	if email != "" && claims.EmailVerified != nil && !bool(*claims.EmailVerified) {
@@ -675,7 +708,8 @@ func (c *KeyorixCore) verifyIDToken(ctx context.Context, p *SSOProvider, expecte
 		// fallback / JIT-provisioning lose this untrusted address.
 		email = ""
 	}
-	return claims.Subject, email, claims.Name, nil
+	emailVerified = claims.EmailVerified != nil && bool(*claims.EmailVerified)
+	return claims.Subject, email, claims.Name, emailVerified, nil
 }
 
 func randToken() (string, error) {
