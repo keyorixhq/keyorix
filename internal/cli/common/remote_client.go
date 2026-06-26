@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 
 	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -35,21 +38,56 @@ func ResolveRemote() (endpoint, token string, ok bool) {
 		}
 	}
 
-	// Main config (keyorix.yaml — written by 'keyorix auth login --server')
+	// Main config (keyorix.yaml — written by 'keyorix auth login --server'). config.Load
+	// resolves a CWD-relative ./keyorix.yaml, so a type:remote config planted in the
+	// working directory could silently redirect the CLI to an attacker server. Warn when
+	// the remote endpoint/token is sourced from it (env and ~/.keyorix/cli.yaml above are
+	// the trusted sources).
 	if endpoint == "" || token == "" {
 		if mainCfg, err := config.Load(""); err == nil &&
 			mainCfg.Storage.Type == "remote" && mainCfg.Storage.Remote != nil {
-			if endpoint == "" {
+			fromMain := false
+			if endpoint == "" && mainCfg.Storage.Remote.BaseURL != "" {
 				endpoint = mainCfg.Storage.Remote.BaseURL
+				fromMain = true
 			}
-			if token == "" {
+			if token == "" && mainCfg.Storage.Remote.GetAPIKey() != "" {
 				token = mainCfg.Storage.Remote.GetAPIKey()
+				fromMain = true
+			}
+			if fromMain {
+				fmt.Fprintf(os.Stderr, "⚠️  Using a remote server config from ./keyorix.yaml in the current directory. If you did not place it here, a malicious file could be redirecting the CLI — prefer KEYORIX_SERVER/KEYORIX_TOKEN or 'keyorix connect'.\n")
 			}
 		}
 	}
 
+	// A non-HTTPS endpoint sends the bearer token in cleartext — warn loudly (a loopback
+	// target for local testing is fine).
+	if endpoint != "" && !endpointIsSecure(endpoint) {
+		fmt.Fprintf(os.Stderr, "⚠️  Remote endpoint %q is not HTTPS — the access token is sent in cleartext and is MITM-capturable.\n", endpoint)
+	}
+
 	ok = endpoint != "" && token != ""
 	return
+}
+
+// endpointIsSecure reports whether the endpoint is https or a loopback target.
+func endpointIsSecure(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	host := u.Hostname()
+	if host == "localhost" || strings.HasPrefix(host, "127.") || host == "::1" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // RemoteClient makes authenticated requests to the Keyorix HTTP API.
