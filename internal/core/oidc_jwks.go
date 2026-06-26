@@ -14,16 +14,39 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // jwksCacheTTL bounds how long a fetched key set is trusted before a refetch.
 const jwksCacheTTL = 1 * time.Hour
+
+// jwksMinRefetchInterval bounds how often an *unknown kid* on an otherwise-fresh
+// cache may trigger a rotation refetch, per issuer. The keyfunc runs during JWT
+// parse — BEFORE the signature is verified — and only requires that the token's
+// iss name a trusted issuer (a public, guessable value). Without this gate an
+// unauthenticated attacker could stream tokens bearing a trusted iss and a fresh
+// random kid, forcing one outbound JWKS GET each: a request storm that makes the
+// IdP rate-limit/ban Keyorix (breaking real federation) and drains our outbound
+// budget. With it, a bogus-kid flood costs at most one refetch per interval.
+const jwksMinRefetchInterval = 1 * time.Minute
+
+// maxJWKSBytes caps the JWKS response body we will read into memory. A compromised
+// or MITM'd issuer (or one reached over a downgraded connection) could otherwise
+// return an arbitrarily large body that we decode whole.
+const maxJWKSBytes = 1 << 20 // 1 MiB
+
+// maxJWKSKeys caps how many keys we retain from a single JWKS, bounding cache
+// growth from a pathological key set.
+const maxJWKSKeys = 50
 
 // jwksStaleGrace bounds how far PAST the TTL a cached key set may still be served
 // as a fallback when a JWKS refetch fails transiently. Without a bound, a key the
@@ -37,6 +60,11 @@ const jwksStaleGrace = 10 * time.Minute
 type HTTPJWKSResolver struct {
 	jwksURIs map[string]string // issuer -> jwks_uri (operator-configured)
 	client   *http.Client
+
+	// group collapses concurrent fetches for the same issuer into one outbound
+	// request, so a burst of unknown-kid tokens (see jwksMinRefetchInterval) can't
+	// fan out into a thundering herd against the IdP.
+	group singleflight.Group
 
 	mu    sync.Mutex
 	cache map[string]*jwksEntry // issuer -> cached keys
@@ -59,9 +87,31 @@ func NewHTTPJWKSResolver(jwksURIs map[string]string) (*HTTPJWKSResolver, error) 
 	}
 	return &HTTPJWKSResolver{
 		jwksURIs: jwksURIs,
-		client:   &http.Client{Timeout: 10 * time.Second},
-		cache:    map[string]*jwksEntry{},
+		client: &http.Client{
+			Timeout:       10 * time.Second,
+			CheckRedirect: noCrossOriginRedirect,
+		},
+		cache: map[string]*jwksEntry{},
 	}, nil
+}
+
+// noCrossOriginRedirect rejects a redirect that changes host or downgrades the
+// scheme. validateJWKSScheme only vets the *configured* jwks_uri; without this a
+// trusted https jwks_uri that 302s (open redirect on the IdP, or a compromised
+// IdP) to http://attacker/ would be followed and attacker keys fetched, which
+// would then validate forged tokens. Same-origin redirects are still allowed.
+func noCrossOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	prev := via[len(via)-1].URL
+	if !strings.EqualFold(req.URL.Hostname(), prev.Hostname()) {
+		return fmt.Errorf("jwks fetch: refusing cross-host redirect to %q", req.URL.Host)
+	}
+	if prev.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("jwks fetch: refusing scheme downgrade to %q", req.URL.Scheme)
+	}
+	return nil
 }
 
 // validateJWKSScheme requires https for a jwks_uri (http only for loopback).
@@ -110,10 +160,17 @@ func (r *HTTPJWKSResolver) Key(ctx context.Context, issuer, kid string) (interfa
 		if k, ok := entry.keys[kid]; ok {
 			return k, nil
 		}
-		// Unknown kid on a fresh cache: the key may have just rotated — refetch once.
+		// Unknown kid on a fresh cache: the key may have just rotated. Refetch — but
+		// not more than once per jwksMinRefetchInterval per issuer, so a flood of
+		// tokens bearing a trusted iss and random kids can't amplify into a refetch
+		// storm against the IdP. (A legitimate rotation is picked up on the next
+		// refetch the interval allows; the cache TTL still bounds staleness.)
+		if time.Since(entry.fetchedAt) < jwksMinRefetchInterval {
+			return nil, fmt.Errorf("no signing key with kid %q at issuer %q", kid, issuer)
+		}
 	}
 
-	keys, err := r.fetch(ctx, jwksURI)
+	keys, err := r.fetchAndCache(ctx, issuer, jwksURI)
 	if err != nil {
 		// Fall back to a recently-cached key set on a transient fetch error — but
 		// ONLY within a bounded grace window past the TTL, so a rotated-out (possibly
@@ -127,14 +184,29 @@ func (r *HTTPJWKSResolver) Key(ctx context.Context, issuer, kid string) (interfa
 		return nil, err
 	}
 
-	r.mu.Lock()
-	r.cache[issuer] = &jwksEntry{keys: keys, fetchedAt: time.Now()}
-	r.mu.Unlock()
-
 	if k, ok := keys[kid]; ok {
 		return k, nil
 	}
 	return nil, fmt.Errorf("no signing key with kid %q at issuer %q", kid, issuer)
+}
+
+// fetchAndCache fetches the issuer's JWKS and stores it, collapsing concurrent
+// callers for the same issuer into a single outbound request via singleflight.
+func (r *HTTPJWKSResolver) fetchAndCache(ctx context.Context, issuer, jwksURI string) (map[string]interface{}, error) {
+	v, err, _ := r.group.Do(issuer, func() (interface{}, error) {
+		keys, err := r.fetch(ctx, jwksURI)
+		if err != nil {
+			return nil, err
+		}
+		r.mu.Lock()
+		r.cache[issuer] = &jwksEntry{keys: keys, fetchedAt: time.Now()}
+		r.mu.Unlock()
+		return keys, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(map[string]interface{}), nil
 }
 
 // jwk is one JSON Web Key (the subset of fields we verify with).
@@ -166,12 +238,17 @@ func (r *HTTPJWKSResolver) fetch(ctx context.Context, jwksURI string) (map[strin
 	var doc struct {
 		Keys []jwk `json:"keys"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	// Bound the body we read so a compromised/MITM'd issuer can't OOM us with a huge
+	// response; the LimitReader yields a decode error past the cap rather than reading on.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJWKSBytes)).Decode(&doc); err != nil {
 		return nil, fmt.Errorf("jwks decode: %w", err)
 	}
 
 	out := make(map[string]interface{}, len(doc.Keys))
 	for _, k := range doc.Keys {
+		if len(out) >= maxJWKSKeys {
+			break // cap retained keys so a pathological JWKS can't bloat the cache
+		}
 		if k.Use != "" && k.Use != "sig" {
 			continue // not a signing key
 		}

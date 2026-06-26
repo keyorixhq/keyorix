@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -1398,16 +1399,37 @@ func resolveOutboundIP() string {
 
 // oidcDiscovery is the subset of an OIDC discovery document we need.
 type oidcDiscovery struct {
+	Issuer                string `json:"issuer"`
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
 	JWKSURI               string `json:"jwks_uri"`
 }
 
-// discoverOIDC fetches an issuer's /.well-known/openid-configuration.
+// maxDiscoveryBytes caps the discovery document we read into memory.
+const maxDiscoveryBytes = 1 << 20 // 1 MiB
+
+// discoverOIDC fetches an issuer's /.well-known/openid-configuration and validates
+// it. The issuer must use https (http only for loopback) so the document — which
+// names the jwks_uri that ultimately supplies the token-signing keys — is not
+// fetched over plaintext where a MITM could redirect key fetching to attacker keys.
+// Per the OIDC spec the document's own issuer must equal the configured issuer, and
+// the jwks_uri it advertises must live on the issuer's host, so a tampered/hostile
+// discovery doc can't point key fetching at an unrelated host.
 func discoverOIDC(issuer string) (*oidcDiscovery, error) {
+	iss, err := url.Parse(strings.TrimRight(issuer, "/"))
+	if err != nil || iss.Host == "" {
+		return nil, fmt.Errorf("invalid issuer %q", issuer)
+	}
+	if err := requireSecureOrLoopback(iss, "issuer"); err != nil {
+		return nil, err
+	}
+
 	u := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(u) // #nosec G107 -- issuer is operator-configured, not user input
+	client := &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: noDiscoveryCrossOriginRedirect,
+	}
+	resp, err := client.Get(u) // #nosec G107 -- issuer is operator-configured and https-validated above
 	if err != nil {
 		return nil, err
 	}
@@ -1416,13 +1438,60 @@ func discoverOIDC(issuer string) (*oidcDiscovery, error) {
 		return nil, fmt.Errorf("discovery returned %s", resp.Status)
 	}
 	var d oidcDiscovery
-	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiscoveryBytes)).Decode(&d); err != nil {
 		return nil, err
 	}
 	if d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" || d.JWKSURI == "" {
 		return nil, fmt.Errorf("discovery document is missing required endpoints")
 	}
+	if d.Issuer != "" && strings.TrimRight(d.Issuer, "/") != strings.TrimRight(issuer, "/") {
+		return nil, fmt.Errorf("discovery issuer %q does not match configured issuer %q", d.Issuer, issuer)
+	}
+	jwksURL, err := url.Parse(d.JWKSURI)
+	if err != nil || jwksURL.Host == "" {
+		return nil, fmt.Errorf("discovery jwks_uri %q is invalid", d.JWKSURI)
+	}
+	if !strings.EqualFold(jwksURL.Hostname(), iss.Hostname()) {
+		return nil, fmt.Errorf("discovery jwks_uri host %q does not match issuer host %q", jwksURL.Hostname(), iss.Hostname())
+	}
 	return &d, nil
+}
+
+// requireSecureOrLoopback rejects a non-https URL unless its host is loopback.
+func requireSecureOrLoopback(u *url.URL, label string) error {
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" && isLoopbackHostname(u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("%s %q must use https (http is allowed only for localhost)", label, u.Redacted())
+}
+
+func isLoopbackHostname(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// noDiscoveryCrossOriginRedirect rejects a discovery redirect that changes host or
+// downgrades the scheme, so a redirect can't pull the document from an unexpected host.
+func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	prev := via[len(via)-1].URL
+	if !strings.EqualFold(req.URL.Hostname(), prev.Hostname()) {
+		return fmt.Errorf("discovery: refusing cross-host redirect to %q", req.URL.Host)
+	}
+	if prev.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("discovery: refusing scheme downgrade to %q", req.URL.Scheme)
+	}
+	return nil
 }
 
 // ssoCompleteURL derives the SPA completion URL (<redirect origin>/auth/sso/complete)
