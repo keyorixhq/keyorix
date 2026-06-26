@@ -262,7 +262,10 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if err != nil {
 		return fmt.Errorf("lease not found")
 	}
-	if lease.Status != "active" {
+	// Admit revoke_failed too: a prior revoke whose target drop failed left the underlying
+	// credential LIVE, so it must remain retryable (manually or via the sweep). Only an
+	// already-revoked/expired lease is a no-op.
+	if lease.Status != "active" && lease.Status != "revoke_failed" {
 		return fmt.Errorf("lease is not active (status %s)", lease.Status)
 	}
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
@@ -303,18 +306,25 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	return nil
 }
 
-// RevokeExpiredLeases is the auto-revoke sweep: it revokes every active lease
-// past its expiry (system-actored). Returns the count revoked.
+// RevokeExpiredLeases is the auto-revoke sweep: it revokes every active (or previously
+// revoke_failed) lease past its expiry (system-actored). Returns the count revoked and a
+// non-nil error if any revoke failed, so the scheduler records the partial failure rather
+// than reporting a clean sweep while credentials remain live past their TTL.
 func (c *KeyorixCore) RevokeExpiredLeases(ctx context.Context, before time.Time) (int, error) {
 	expired, err := c.storage.ListExpiredActiveLeases(ctx, before)
 	if err != nil {
 		return 0, err
 	}
-	revoked := 0
+	revoked, failed := 0, 0
 	for _, l := range expired {
 		if err := c.RevokeLease(ctx, l.LeaseID, 0, "expired"); err == nil {
 			revoked++
+		} else {
+			failed++
 		}
+	}
+	if failed > 0 {
+		return revoked, fmt.Errorf("dynamic-secrets sweep: %d of %d expired lease(s) failed to revoke — those credentials remain live past their TTL", failed, len(expired))
 	}
 	return revoked, nil
 }
@@ -330,7 +340,8 @@ func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userI
 		return 0, 0, err
 	}
 	for _, l := range leases {
-		if l.Status != "active" {
+		// Retry a previously-failed revoke too — its credential is still live.
+		if l.Status != "active" && l.Status != "revoke_failed" {
 			continue
 		}
 		if rerr := c.RevokeLease(ctx, l.LeaseID, userID, reason); rerr != nil {
