@@ -941,6 +941,11 @@ func (m *MockStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, scop
 	return args.Get(0).([]uint), args.Error(1)
 }
 
+func (m *MockStorage) IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error) {
+	args := m.Called(ctx, userID, projectID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	args := m.Called(ctx, userID, scope)
 	if args.Get(0) == nil {

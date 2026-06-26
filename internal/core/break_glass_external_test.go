@@ -260,9 +260,58 @@ func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// A user affiliated with the project ONLY via a global/install-wide role (e.g. the
+// system_viewer baseline every SSO user receives) is NOT a project member and must be
+// refused — otherwise any authenticated user could break-glass any project.
+func TestActivateBreakGlass_RejectsGlobalOnlyAffiliation(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+
+	ctx := context.Background()
+	h.CreateTestUser(t, "ssouser", 10)
+	h.AssignUserRole(t, 10, 4, nil) // viewer at GLOBAL scope (project_id = 0), not project-scoped
+
+	_, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "members of the project")
+}
+
+// The emergency role must not carry roles.assign: a time-bound role that can assign
+// roles (or issue credentials) could be used during the window to mint a PERMANENT
+// grant that outlives break-glass, defeating auto-expiry. A (non-admin) role carrying
+// roles.assign is refused; a contained role (editor — no roles.assign) is fine.
+func TestActivateBreakGlass_RejectsRoleAssignEmergencyRole(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	// A delegated, NON-admin role that nonetheless carries roles.assign (perm id 13).
+	h.ExecuteRawSQL(t, "INSERT OR IGNORE INTO roles (id, name, description) VALUES (?, ?, ?)",
+		50, "delegated_approver", "non-admin role that can assign roles")
+	h.ExecuteRawSQL(t, "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)", 50, 13)
+
+	enableBreakGlass(h, "delegated_approver", 4*time.Hour, 24*time.Hour)
+	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "assign roles")
+
+	// editor is contained (no roles.assign) → allowed.
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	require.NoError(t, err)
+	assert.Equal(t, core.BreakGlassActive, act.State)
+}
+
 // An install-wide admin role (super_admin/admin/system_admin) must not be usable as the
 // emergency role: break-glass grants at a project scope and must not become a vehicle
-// for install-wide super-user. (project_admin — a project role — remains valid.)
+// for install-wide super-user.
 func TestActivateBreakGlass_RejectsInstallAdminEmergencyRole(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
 	defer h.Cleanup()

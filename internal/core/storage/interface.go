@@ -350,6 +350,10 @@ type Storage interface {
 	GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error)
 	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	GetUserRoleIDsExact(ctx context.Context, userID uint, scope Scope) ([]uint, error)
+	// IsProjectMember reports whether the user holds a LIVE role grant scoped to the
+	// project itself (project_id = projectID), directly or via a group — i.e. real
+	// membership. A global/install-wide role (project_id = 0) does NOT count.
+	IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error)
 	GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)

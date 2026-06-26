@@ -361,6 +361,10 @@ func (rs *RemoteStorage) GetUserRoleIDsExact(_ context.Context, _ uint, _ storag
 	return nil, fmt.Errorf("not supported in remote storage")
 }
 
+func (rs *RemoteStorage) IsProjectMember(_ context.Context, _ uint, _ uint) (bool, error) {
+	return false, fmt.Errorf("not supported in remote storage")
+}
+
 // GetUserGroupRoleIDsAt is a server-internal authorization primitive.
 func (rs *RemoteStorage) GetUserGroupRoleIDsAt(_ context.Context, _ uint, _ storage.Scope) ([]uint, error) {
 	return nil, fmt.Errorf("not supported in remote storage")
