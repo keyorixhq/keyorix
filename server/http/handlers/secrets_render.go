@@ -35,7 +35,7 @@ func (h *SecretHandler) RenderTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rendered, err := h.coreService.RenderSecretTemplate(r.Context(), reqBody.Template, uint(id), userCtx.UserID)
+	rendered, err := h.coreService.RenderSecretTemplate(r.Context(), reqBody.Template, uint(id), userCtx.UserID, userCtx.Username, r.RemoteAddr, r.Header.Get("User-Agent"))
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "not found"):

@@ -17,8 +17,11 @@ import (
 // RenderSecretTemplate expands ${secret:<environment>/<name>} references in template
 // against the given project, returning the rendered output. A reference to an unknown
 // environment/secret, or one the user cannot read, fails the whole render (no partial
-// output). Values are never logged.
-func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string, projectID, userID uint) (string, error) {
+// output). Values are never logged — but each resolved value IS recorded as a secret read
+// (audit event + access log), so a bulk render can't be used as a covert exfiltration
+// channel invisible to the audit trail and the anomaly detector. username/ip/ua attribute
+// the reads (pass-through from the request); empty is tolerated.
+func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string, projectID, userID uint, username, ip, ua string) (string, error) {
 	if projectID == 0 {
 		return "", fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
@@ -52,6 +55,10 @@ func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string,
 		if err != nil {
 			return "", err
 		}
+		// Record the read like the single-secret read path does, so a bulk render is
+		// auditable and visible to the anomaly detector (detached so it survives the
+		// request and never blocks the render).
+		go c.LogSecretReadWithProject(DetachedAuditContext(ctx), userID, secret.ID, projectID, username, secretName, ip, ua) // #nosec G118
 		return string(val), nil
 	})
 }
