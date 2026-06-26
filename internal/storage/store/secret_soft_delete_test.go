@@ -17,7 +17,7 @@ func newSoftDeleteTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Environment{}, &models.SecretDependency{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.SecretNode{}, &models.SecretVersion{}, &models.Environment{}, &models.SecretDependency{}))
 	return NewLocalStorage(db)
 }
 
@@ -26,6 +26,9 @@ func TestSecretSoftDeleteLifecycle(t *testing.T) {
 	ctx := context.Background()
 	const projectID = uint(1)
 
+	// A live parent project + environment — RestoreSecret refuses to restore into a
+	// soft-deleted parent, so the lifecycle test needs them present and live.
+	require.NoError(t, ls.db.Create(&models.Project{ID: projectID, Name: "proj"}).Error)
 	require.NoError(t, ls.db.Create(&models.Environment{ID: 10, ProjectID: projectID, Name: "dev"}).Error)
 	s, err := ls.CreateSecret(ctx, &models.SecretNode{ProjectID: projectID, EnvironmentID: 10, Name: "API_KEY", IsSecret: true, Type: "api_key", Status: "active"})
 	require.NoError(t, err)

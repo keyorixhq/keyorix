@@ -33,6 +33,10 @@ func TestRestoreOperationsAudit(t *testing.T) {
 	}
 
 	t.Run("secret.restored", func(t *testing.T) {
+		// A live parent project + environment: RestoreSecret refuses to restore into a
+		// soft-deleted parent, so the audit test needs them present and live.
+		require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
+		require.NoError(t, db.Create(&models.Environment{ID: 999, ProjectID: 1, Name: "env"}).Error)
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "k", ProjectID: 1, EnvironmentID: 999, IsSecret: true, CreatedAt: time.Now(), UpdatedAt: time.Now()})
 		require.NoError(t, err)
 		require.NoError(t, c.storage.DeleteSecret(ctx, s.ID))
