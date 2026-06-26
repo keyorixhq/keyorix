@@ -224,9 +224,13 @@ func (ls *LocalStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, sc
 	return ids, nil
 }
 
-// ListProjectMembers returns the users holding a role at the project's scope
-// (project_id = projectID, environment_id = 0 — project-level membership per
-// ADR-021). Soft-deleted users are excluded.
+// ListProjectMembers returns the users holding a LIVE role at the project's scope
+// (project_id = projectID, environment_id = 0 — project-level membership per ADR-021).
+// Soft-deleted users AND expired time-bound grants are excluded — the same expires_at
+// filter every authorization query applies, so a lapsed (but not-yet-swept) grant (e.g.
+// an expired break-glass project_admin) confers neither access NOR membership/notification
+// eligibility. Without it, sensitive approver notifications would keep reaching a user
+// whose grant has already lapsed.
 func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
 	var members []storage.ProjectMember
 	err := ls.db.WithContext(ctx).Table("user_roles ur").
@@ -234,6 +238,7 @@ func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) 
 		Joins("JOIN users u ON u.id = ur.user_id").
 		Joins("JOIN roles r ON r.id = ur.role_id").
 		Where("ur.project_id = ? AND ur.environment_id = 0", projectID).
+		Where("ur.expires_at IS NULL OR ur.expires_at > ?", time.Now()).
 		Where("u.deleted_at IS NULL").
 		Order("u.username").
 		Scan(&members).Error
