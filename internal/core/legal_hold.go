@@ -36,6 +36,22 @@ func (c *KeyorixCore) IsLegalHoldActive(ctx context.Context) (bool, error) {
 	return hold != nil, nil
 }
 
+// legalHoldGuard returns a non-nil error when a deployment-wide legal hold is active OR
+// its status cannot be confirmed — fail SAFE. The hard-delete purges call this at their
+// top (inside the scheduler lock, immediately before the deletes) so a hold placed after
+// the scheduler's pre-lock check still aborts the in-flight purge, never destroying
+// records that may be under hold.
+func (c *KeyorixCore) legalHoldGuard(ctx context.Context) error {
+	held, err := c.IsLegalHoldActive(ctx)
+	if err != nil {
+		return fmt.Errorf("refusing to purge: could not confirm legal-hold status: %w", err)
+	}
+	if held {
+		return fmt.Errorf("refusing to purge: a deployment-wide legal hold is active")
+	}
+	return nil
+}
+
 // PlaceLegalHold activates a deployment-wide legal hold with a reason. Refuses if a
 // hold is already active. actorID is the placing admin.
 func (c *KeyorixCore) PlaceLegalHold(ctx context.Context, actorID uint, reason string) (*models.LegalHold, error) {
