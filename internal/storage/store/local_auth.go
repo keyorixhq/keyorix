@@ -291,6 +291,29 @@ func (ls *LocalStorage) RevokePersonalAccessToken(ctx context.Context, id uint) 
 	return nil
 }
 
+// RevokeAllPersonalAccessTokensForUser revokes every not-already-revoked PAT belonging to
+// the user and returns the revoked tokens' hashes so the caller can evict them from the
+// auth cache immediately. Used on a password change/reset: a PAT is a parallel, longer-
+// lived credential that must die with the password, or a thief who minted one from a
+// stolen session would survive the reset.
+func (ls *LocalStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
+	var hashes []string
+	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
+		Where("user_id = ? AND revoked = ?", userID, false).
+		Pluck("token_hash", &hashes).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
+		Where("user_id = ? AND revoked = ?", userID, false).
+		Update("revoked", true).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return hashes, nil
+}
+
 // TouchPersonalAccessToken bumps last_used_at only when older than staleness (or NULL),
 // keeping the auth hot path from writing on every request (mirrors TouchSession).
 func (ls *LocalStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {

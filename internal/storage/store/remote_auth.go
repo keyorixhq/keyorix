@@ -281,6 +281,10 @@ func (rs *RemoteStorage) RevokePersonalAccessToken(_ context.Context, _ uint) er
 	return errUnsupportedRemote
 }
 
+func (rs *RemoteStorage) RevokeAllPersonalAccessTokensForUser(_ context.Context, _ uint) ([]string, error) {
+	return nil, errUnsupportedRemote
+}
+
 func (rs *RemoteStorage) TouchPersonalAccessToken(_ context.Context, _ uint, _ time.Time, _ time.Duration) error {
 	return nil // best-effort; no-op on remote storage
 }

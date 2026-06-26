@@ -140,6 +140,12 @@ type KeyorixCore struct {
 	// enforced after a DEK rotation.
 	auditCkptKey        []byte
 	auditCkptKeyVersion string
+	// tokenCacheInvalidator evicts a bearer token from the HTTP auth cache by its hash.
+	// Wired at startup (SetTokenCacheInvalidator) to the middleware cache; nil in tests/
+	// remote mode (the cache lives in the HTTP server). Lets core paths that revoke a
+	// token (e.g. revoking PATs on a password change) take effect immediately rather than
+	// after the positive-cache TTL. core cannot import the middleware directly (cycle).
+	tokenCacheInvalidator func(hash string)
 	// auditMaxCertified is an in-memory monotonic high-water mark of the greatest
 	// chained-events count this process has ever certified or verified. It backstops
 	// the persistent signed high-water (SystemMetadata) against an online attacker who

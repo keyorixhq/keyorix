@@ -532,6 +532,10 @@ type Storage interface {
 	GetPersonalAccessTokenByID(ctx context.Context, id uint) (*models.PersonalAccessToken, error)
 	GetPersonalAccessTokenByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, error)
 	RevokePersonalAccessToken(ctx context.Context, id uint) error
+	// RevokeAllPersonalAccessTokensForUser revokes every active PAT for a user and returns
+	// their token hashes (for immediate auth-cache eviction). Used on a password change/
+	// reset so PATs die with the password.
+	RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error)
 	TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
 
 	// Setup Token Management (ADR-028) — single-use, hashed-at-rest credential-delivery tokens.

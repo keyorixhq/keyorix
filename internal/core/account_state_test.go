@@ -188,6 +188,7 @@ func TestChangePassword_ClearsRestriction(t *testing.T) {
 	store.On("PrunePasswordHistory", ctx, uint(1), 5).Return(nil)
 	store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 1}, nil)
 	store.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
+	store.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
 
 	err := c.ChangePassword(ctx, 1, "oldpassword", "Brandnew#Passw0rd!", "tok")
 	require.NoError(t, err)

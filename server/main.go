@@ -96,6 +96,11 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Refuse (or loudly warn about) serving bearer tokens + secret values in cleartext.
+	if err := checkTransportTLSPosture(cfg); err != nil {
+		log.Fatalf("transport security: %v", err)
+	}
+
 	var wg sync.WaitGroup
 
 	// Start HTTP server
@@ -251,6 +256,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 	}
 	coreService.SetBootstrapToken(bootstrapToken)
+	// Let core token-revocation paths (e.g. revoking PATs on a password change) evict the
+	// HTTP auth cache immediately, rather than waiting out the positive-cache TTL.
+	coreService.SetTokenCacheInvalidator(middleware.InvalidateTokenCacheByHash)
 	if needs, berr := coreService.SystemNeedsBootstrap(context.Background()); berr == nil && needs && bootstrapToken != "" {
 		if bootstrapTokenGenerated {
 			log.Printf("system not initialised — run `keyorix system init` with this one-time bootstrap token (set KEYORIX_BOOTSTRAP_TOKEN to pin your own):\n    BOOTSTRAP TOKEN: %s", bootstrapToken)
@@ -1228,6 +1236,38 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 
 	log.Println("Shutting down HTTP server...")
 	return server.Shutdown(shutdownCtx)
+}
+
+// checkTransportTLSPosture guards against silently serving credentials/secret values in
+// cleartext. For each enabled listener without TLS it either fails closed (when
+// security.require_transport_tls is set) or logs a prominent warning. It also warns when
+// the allowed_ciphers / protocol_versions tuning is set, since those fields are not
+// currently honored (the suite list + TLS 1.2 minimum are fixed) and would otherwise give
+// a false sense of control.
+func checkTransportTLSPosture(cfg *config.Config) error {
+	require := cfg.Security.RequireTransportTLS
+	check := func(name string, inst config.ServerInstanceConfig) error {
+		if !inst.Enabled {
+			return nil
+		}
+		// The tuning fields are not wired into the TLS builders — warn whenever they are
+		// set (TLS on or off) so an operator isn't misled into thinking they took effect.
+		if len(inst.TLS.AllowedCiphers) > 0 || len(inst.ProtocolVersions) > 0 {
+			log.Printf("WARNING: %s tls.allowed_ciphers / protocol_versions are set but NOT honored — the cipher suite list and TLS 1.2 minimum are fixed in code.", name)
+		}
+		if inst.TLS.Enabled {
+			return nil
+		}
+		if require {
+			return fmt.Errorf("%s listener has no TLS but security.require_transport_tls is set: refusing to serve credentials/secrets in cleartext (enable tls or front it with a TLS-terminating proxy and unset the requirement)", name)
+		}
+		log.Printf("WARNING: %s listener is serving CLEARTEXT (no TLS) — bearer tokens and secret values are unencrypted. Front it with a TLS-terminating proxy, enable tls, or set security.require_transport_tls to fail closed.", name)
+		return nil
+	}
+	if err := check("HTTP", cfg.Server.HTTP); err != nil {
+		return err
+	}
+	return check("gRPC", cfg.Server.GRPC)
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config) error {

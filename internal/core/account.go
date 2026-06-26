@@ -67,6 +67,25 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	return nil
 }
 
+// SetTokenCacheInvalidator wires the HTTP auth-cache eviction function (by token hash)
+// so core token-revocation paths can evict immediately. Called once at startup.
+func (c *KeyorixCore) SetTokenCacheInvalidator(fn func(hash string)) {
+	c.tokenCacheInvalidator = fn
+}
+
+// invalidateTokenCache evicts the given token hashes from the auth cache when an
+// invalidator is wired (a no-op otherwise — e.g. tests, where the cache doesn't exist).
+func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
+	if c.tokenCacheInvalidator == nil {
+		return
+	}
+	for _, h := range hashes {
+		if h != "" {
+			c.tokenCacheInvalidator(h)
+		}
+	}
+}
+
 // validateNewPassword checks a candidate password against the configured policy and
 // the password-history rule, without mutating anything. Split from applyNewPassword
 // so callers (e.g. the setup-token consume flow) can reject a weak password BEFORE
@@ -105,6 +124,14 @@ func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, n
 	if c.passwordPolicy.HistoryCount > 0 {
 		_ = c.storage.AddPasswordHistory(ctx, user.ID, string(hash), now)
 		_ = c.storage.PrunePasswordHistory(ctx, user.ID, c.passwordPolicy.HistoryCount)
+	}
+
+	// Revoke the user's PATs too. A credential change must invalidate EVERY bearer class,
+	// not just sessions — otherwise a thief who minted a (possibly non-expiring) PAT from a
+	// stolen session survives the victim's reset. Best-effort; evict each from the auth
+	// cache immediately so a revoked PAT can't keep authenticating for the cache TTL.
+	if hashes, herr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, user.ID); herr == nil {
+		c.invalidateTokenCache(hashes...)
 	}
 	return nil
 }

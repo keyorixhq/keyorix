@@ -90,6 +90,7 @@ func TestCompleteSetup(t *testing.T) {
 		// Completing setup must evict the subject's other sessions (keeping the new
 		// one) so a stolen session can't survive a self-service password reset.
 		ms.On("DeleteSessionsForUserExcept", ctx, uid, uint(1)).Return(nil)
+		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
 
 		res, err := c.CompleteSetup(ctx, raw, strongPw, "ua", "1.2.3.4")
 		require.NoError(t, err)
