@@ -48,6 +48,27 @@ const (
 
 // ── Invitations ────────────────────────────────────────────────────────────
 
+// requireAuthorityForRole refuses to GRANT an admin role (super_admin/admin/system_admin/
+// project_admin) unless the actor holds admin authority at the project scope. The various
+// grant entry points (access-request approval, project invite, membership activation) are
+// gated by roles.assign, but that alone would let a non-admin roles.assign holder mint a
+// principal more powerful than themselves — escalation-by-proxy. Non-admin roles pass (the
+// roles.assign gate covers them). actorID==0 (a system/unauthenticated path) cannot grant
+// an admin role through these flows.
+func (c *KeyorixCore) requireAuthorityForRole(ctx context.Context, actorID, projectID uint, role string) error {
+	if !isAdminRoleName(role) {
+		return nil
+	}
+	ids, err := c.storage.GetUserRoleIDsAt(ctx, actorID, storage.Scope{ProjectID: projectID})
+	if err != nil {
+		return fmt.Errorf("failed to resolve granter authority: %w", err)
+	}
+	if !c.roleSetContainsAdmin(ctx, ids) {
+		return fmt.Errorf("only an administrator can grant the administrative role %q", role)
+	}
+	return nil
+}
+
 // InviteToProject creates a pending invitation for an email to a project with an
 // intended role. It snapshots the current validation mode and sets a 14-day TTL.
 func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, error) {
@@ -56,6 +77,11 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 	}
 	if _, err := c.storage.GetRoleByName(ctx, role); err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
+	}
+	// Escalation-by-proxy guard: inviting someone as an admin role requires the inviter
+	// to hold admin authority at the project (parallel to the access-request ceiling).
+	if err := c.requireAuthorityForRole(ctx, invitedBy, projectID, role); err != nil {
+		return nil, err
 	}
 	now := c.now()
 	expires := now.Add(invitationTTL)
@@ -455,18 +481,9 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	}
 
 	// Privilege ceiling: an approver may not grant an admin role unless they themselves
-	// hold admin authority at this project. The route gate only proves the approver has
-	// roles.assign here — without this an ordinary approver could sign off a request for
-	// `admin`/`project_admin` and mint a principal more powerful than the approver, an
-	// escalation-by-proxy. Mirrors scimGroupConfersAdmin's "can't add to an admin group".
-	if isAdminRoleName(role) {
-		approverRoleIDs, rerr := c.storage.GetUserRoleIDsAt(ctx, approverID, storage.Scope{ProjectID: req.ProjectID})
-		if rerr != nil {
-			return nil, fmt.Errorf("failed to resolve approver authority: %w", rerr)
-		}
-		if !c.roleSetContainsAdmin(ctx, approverRoleIDs) {
-			return nil, fmt.Errorf("only an administrator can approve a request that grants the administrative role %q", role)
-		}
+	// hold admin authority at this project (escalation-by-proxy guard).
+	if err := c.requireAuthorityForRole(ctx, approverID, req.ProjectID, role); err != nil {
+		return nil, err
 	}
 
 	// One sign-off per distinct approver.

@@ -117,6 +117,31 @@ func stubAdminRoleLookups(store *MockStorage, ctx context.Context) {
 	store.On("GetRoleByName", ctx, "project_admin").Return(&models.Role{ID: 4}, nil)
 }
 
+// The same admin-role ceiling applies to project invitations: a non-admin inviter
+// (roles.assign but not admin) cannot invite someone as an admin role — escalation-by-
+// proxy. A non-admin role invite still works.
+func TestInviteToProject_EnforcesAdminCeiling(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	stubAdminRoleLookups(store, ctx)
+	// Inviter 9 holds only a non-admin role (id 6) at the project.
+	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
+
+	// Inviting as project_admin → refused before any invitation is created.
+	_, err := c.InviteToProject(ctx, 1, "a@b.io", "project_admin", 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only an administrator can grant")
+	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
+
+	// Inviting as a non-admin role is allowed (isAdminRoleName false → no ceiling).
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 6, Name: "project_developer"}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.Anything).Return(&models.ProjectInvitation{ID: 1}, nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+	_, err = c.InviteToProject(ctx, 1, "c@d.io", "project_developer", 9)
+	require.NoError(t, err)
+}
+
 // Privilege ceiling: a non-admin approver cannot sign off a request that grants an
 // admin role — that would mint a principal more powerful than the approver.
 func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
@@ -132,7 +157,7 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 
 	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "admin")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only an administrator can approve")
+	assert.Contains(t, err.Error(), "only an administrator can grant")
 	// The grant was refused before any role assignment or approval record.
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	store.AssertNotCalled(t, "CreateAccessRequestApproval", mock.Anything, mock.Anything)
