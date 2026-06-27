@@ -4,12 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"gorm.io/gorm"
 )
 
 // newProjectTestRig reuses the secret rig's seeded core (project 1 "default" +
@@ -19,6 +21,14 @@ func newProjectTestRig(t *testing.T) *ProjectGRPCService {
 	t.Helper()
 	r := newSecretTestRig(t)
 	return NewProjectService(r.svc.core)
+}
+
+// newProjectTestRigWithDB also returns the rig's DB so a test can seed extra grants
+// (e.g. roles.assign for the require_mfa policy gate).
+func newProjectTestRigWithDB(t *testing.T) (*ProjectGRPCService, *gorm.DB) {
+	t.Helper()
+	r := newSecretTestRig(t)
+	return NewProjectService(r.svc.core), r.db
 }
 
 func TestProjectService_CRUDAndList(t *testing.T) {
@@ -40,14 +50,13 @@ func TestProjectService_CRUDAndList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "billing", got.GetName())
 
-	// Update name + require_mfa.
-	mfa := true
+	// Update name/description on the writer's secrets.write gate (require_mfa is a
+	// security-policy field with its own roles.assign gate, exercised separately).
 	upd, err := svc.UpdateProject(ctx, &pb.UpdateProjectRequest{
-		Id: created.GetId(), Name: "billing-prod", Description: "money", RequireMfa: &mfa,
+		Id: created.GetId(), Name: "billing-prod", Description: "money",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "billing-prod", upd.GetName())
-	assert.True(t, upd.GetRequireMfa())
 
 	// List environments of the seeded project.
 	envs, err := svc.ListEnvironments(ctx, &pb.ListEnvironmentsRequest{ProjectId: 1})
@@ -58,6 +67,27 @@ func TestProjectService_CRUDAndList(t *testing.T) {
 	// Delete the created project.
 	_, err = svc.DeleteProject(ctx, &pb.DeleteProjectRequest{Id: created.GetId()})
 	require.NoError(t, err)
+}
+
+// Changing require_mfa (a per-project security control) requires roles.assign at the
+// project — a plain secrets.write holder (the writer/editor persona) is refused, so a
+// developer cannot silently disable the project's MFA enforcement.
+func TestProjectService_UpdateRequireMFANeedsRolesAssign(t *testing.T) {
+	svc, db := newProjectTestRigWithDB(t)
+	ctx := authCtx(1, "owner") // user 1 = global writer (secrets.read/write/delete only)
+	mfa := false
+
+	// Writer (no roles.assign) → denied on the require_mfa toggle.
+	_, err := svc.UpdateProject(ctx, &pb.UpdateProjectRequest{Id: 1, Name: "default", RequireMfa: &mfa})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// Grant the writer role roles.assign, and now the toggle is allowed.
+	require.NoError(t, db.Create(&models.Permission{ID: 13, Name: "roles.assign", Resource: "roles", Action: "assign"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: writerRoleID, PermissionID: 13}).Error)
+	upd, err := svc.UpdateProject(ctx, &pb.UpdateProjectRequest{Id: 1, Name: "default", RequireMfa: &mfa})
+	require.NoError(t, err)
+	assert.False(t, upd.GetRequireMfa())
 }
 
 func TestProjectService_Unauthenticated(t *testing.T) {

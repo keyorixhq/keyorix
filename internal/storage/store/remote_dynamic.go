@@ -33,6 +33,9 @@ func (rs *RemoteStorage) GetDynamicSecretLease(_ context.Context, _ string) (*mo
 func (rs *RemoteStorage) ListDynamicSecretLeases(_ context.Context, _ uint) ([]*models.DynamicSecretLease, error) {
 	return nil, remoteUnsupported("ListDynamicSecretLeases")
 }
+func (rs *RemoteStorage) CountActiveLeases(_ context.Context, _ uint) (int64, error) {
+	return 0, remoteUnsupported("CountActiveLeases")
+}
 func (rs *RemoteStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) error {
 	return remoteUnsupported("UpdateDynamicSecretLease")
 }

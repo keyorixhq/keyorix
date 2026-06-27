@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
-
-	"github.com/keyorixhq/keyorix/internal/version"
 )
 
 // processStart is captured when the package loads (≈ server start) so /health can report
@@ -17,12 +15,13 @@ var processStart = time.Now()
 // dependencies (that is /readyz's job) — a transient dependency outage should not cause
 // the liveness probe to fail and restart the pod.
 func HealthCheck(w http.ResponseWriter, r *http.Request) {
+	// Deliberately omit version/commit: /health is unauthenticated, and disclosing the
+	// exact build aids CVE targeting. The precise version is available on the
+	// system.read-gated /api/v1/system/info instead.
 	health := map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now().UTC(),
 		"uptime":    time.Since(processStart).String(),
-		"version":   version.Version,
-		"commit":    version.Commit,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

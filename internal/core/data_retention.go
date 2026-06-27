@@ -73,6 +73,12 @@ func (c *KeyorixCore) RetentionPolicy() RetentionPolicy {
 // CALLERS MUST gate this on legal-hold status (the scheduler does): an active hold
 // must preserve all records, so this is not invoked while a hold is in effect.
 func (c *KeyorixCore) PurgeExpiredComplianceRecords(ctx context.Context, now time.Time, policy RetentionPolicy) (*RetentionResult, error) {
+	// Authoritative legal-hold re-check inside the locked purge (see PurgeExpiredSoftDeletes):
+	// closes the TOCTOU where a hold placed after the scheduler's pre-lock check would not
+	// stop the in-flight deletion of compliance records. Fails SAFE.
+	if err := c.legalHoldGuard(ctx); err != nil {
+		return &RetentionResult{}, err
+	}
 	res := &RetentionResult{}
 	var firstErr error
 	rec := func(err error) {

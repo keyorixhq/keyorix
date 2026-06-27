@@ -198,9 +198,13 @@ func (h *PATHandler) RevokePAT(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", "Invalid token ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RevokeOwnPAT(r.Context(), userCtx.UserID, uint(id)); err != nil {
+	tokenHash, err := h.coreService.RevokeOwnPAT(r.Context(), userCtx.UserID, uint(id))
+	if err != nil {
 		sendError(w, "NotFound", "Token not found", http.StatusNotFound, nil)
 		return
 	}
+	// Evict the auth cache so the revoked token stops authenticating immediately rather
+	// than lingering for the positive-cache TTL.
+	middleware.InvalidateTokenCacheByHash(tokenHash)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -109,17 +109,31 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	if err != nil {
 		return fmt.Errorf("user not found: %w", err)
 	}
+	// Capture the user's current session-token HASHES BEFORE mutating so we can evict their
+	// auth-cache entries. The HTTP auth cache fast path serves a frozen identity without
+	// re-reading the DB, so without eviction a suspend/deactivate/restrict would not take
+	// effect until the positive-cache TTL — a window where a blocked user keeps full access.
+	// The stored session_token IS the SHA-256 hash, which is exactly the cache key.
+	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+
 	user.AccountState = state
 	user.UpdatedAt = c.now()
 	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
 		return fmt.Errorf("failed to update account state: %w", err)
 	}
-	// A state that blocks login must also terminate the user's existing sessions,
-	// so suspension is effective immediately instead of lingering until the token
-	// expires. ValidateSessionToken also rejects blocked accounts as a backstop.
+	// A state that blocks login must also terminate the user's existing sessions AND PATs,
+	// so suspension is effective immediately instead of lingering until the token expires.
+	// ValidateSessionToken/ValidatePATToken also reject blocked accounts as a slow-path
+	// backstop, but the cache fast path bypasses it — so evict here too.
 	if AccountLoginBlocked(state) {
 		_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
+		if hashes, herr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, userID); herr == nil {
+			c.invalidateTokenCache(hashes...)
+		}
 	}
+	// Evict the captured session-token hashes from the auth cache so the new state (blocked,
+	// or merely restricted) is reflected on the very next request, not after the cache TTL.
+	c.invalidateTokenCache(sessionHashes...)
 	aid := adminID
 	c.writeAuditEventFull(ctx, eventType, &aid, nil, nil, "",
 		fmt.Sprintf("user %d account state set to %s", userID, state))

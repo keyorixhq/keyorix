@@ -68,6 +68,34 @@ func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
 	assert.NotEqual(t, adminDSNPlain, string(stored.AdminDSNEnc))
 }
 
+func TestDynamicSecrets_MaxActiveLeasesCeiling(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "capped", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, CreationTemplate: "GRANT SELECT TO {{name}};",
+		DefaultTTLSeconds: 3600, MaxActiveLeases: 2, CreatedBy: "alice",
+	})
+	require.NoError(t, err)
+
+	// Two leases are allowed...
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	// ...the third exceeds the ceiling.
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "active-lease limit")
+
+	// Revoking one frees a slot.
+	leases, err := c.ListDynamicSecretLeases(ctx, cfg.ID)
+	require.NoError(t, err)
+	require.NoError(t, c.RevokeLease(ctx, leases[0].LeaseID, 7, "manual"))
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err, "a slot opens after a revoke")
+}
+
 func TestDynamicSecrets_IssueListRevoke(t *testing.T) {
 	c, db, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
@@ -144,6 +172,44 @@ func TestDynamicSecrets_RevokeFailureMarksLease(t *testing.T) {
 	assert.Equal(t, "revoke_failed", after.Status, "the lease is flagged for an operator")
 	assert.NotEmpty(t, after.RevokeError)
 	assert.NotNil(t, after.RevokedAt)
+}
+
+// A revoke_failed lease (its credential still live) must remain retryable — manually and
+// via the sweep — not be a terminal dead-end. The sweep also surfaces a persistent
+// failure as an error so a mass TTL-enforcement outage isn't reported as a clean pass.
+func TestDynamicSecrets_RevokeFailedIsRetryable(t *testing.T) {
+	c, _, fake, fixed := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	// First revoke fails on the target → revoke_failed (the credential is still live).
+	fake.FailRevoke = true
+	require.Error(t, c.RevokeLease(ctx, issued.LeaseID, 7, "manual"))
+	failed, _ := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	require.Equal(t, "revoke_failed", failed.Status)
+
+	// A manual retry must be ACCEPTED (not rejected as "not active"). While the target is
+	// still down it fails again — but the lease stays retryable.
+	require.Error(t, c.RevokeLease(ctx, issued.LeaseID, 7, "retry"), "retry is attempted, not refused")
+
+	// Backdate past expiry: the sweep must pick up the revoke_failed lease and, while the
+	// target is still down, surface the persistent failure as a non-nil error.
+	failed.ExpiresAt = fixed.Add(-time.Hour)
+	require.NoError(t, c.storage.UpdateDynamicSecretLease(ctx, failed))
+	_, serr := c.RevokeExpiredLeases(ctx, fixed)
+	require.Error(t, serr, "the sweep surfaces a still-failing revoke")
+
+	// The target recovers — the sweep now drops the credential and the lease is revoked.
+	fake.FailRevoke = false
+	n, err := c.RevokeExpiredLeases(ctx, fixed)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	done, _ := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	assert.Equal(t, "revoked", done.Status)
+	assert.Contains(t, fake.Revoked, issued.Username)
 }
 
 func TestDynamicSecrets_IssueRejectsUnknownConfig(t *testing.T) {

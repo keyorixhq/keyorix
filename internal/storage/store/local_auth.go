@@ -82,6 +82,30 @@ func (ls *LocalStorage) DeleteSession(ctx context.Context, id uint) error {
 	return nil
 }
 
+// EnforceSessionLimit keeps only the `keep` most-recent sessions for a user and deletes
+// the rest, so unbounded logins can't grow the table or enlarge the credential-theft
+// blast radius. No-op when the user is at or under the cap.
+func (ls *LocalStorage) EnforceSessionLimit(ctx context.Context, userID uint, keep int) error {
+	if keep <= 0 {
+		return nil
+	}
+	var keepIDs []uint
+	if err := ls.db.WithContext(ctx).Model(&models.Session{}).
+		Where("user_id = ?", userID).
+		Order("created_at DESC").Limit(keep).Pluck("id", &keepIDs).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if len(keepIDs) < keep {
+		return nil // under the cap — nothing to prune
+	}
+	if err := ls.db.WithContext(ctx).
+		Where("user_id = ? AND id NOT IN ?", userID, keepIDs).
+		Delete(&models.Session{}).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 // DeleteSessionsForUserExcept removes all of the user's sessions except exceptID.
 // It also removes impersonation sessions the user STARTED (impersonated_by = userID):
 // an impersonation session is keyed to the target's user_id, so without this clause a
@@ -95,6 +119,18 @@ func (ls *LocalStorage) DeleteSessionsForUserExcept(ctx context.Context, userID,
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	return nil
+}
+
+// ListSessionTokenHashesForUser returns the stored session_token hashes for every session
+// the user owns or is impersonated through, for auth-cache eviction on a state change.
+func (ls *LocalStorage) ListSessionTokenHashesForUser(ctx context.Context, userID uint) ([]string, error) {
+	var hashes []string
+	if err := ls.db.WithContext(ctx).Model(&models.Session{}).
+		Where("user_id = ? OR impersonated_by = ?", userID, userID).
+		Pluck("session_token", &hashes).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return hashes, nil
 }
 
 // TouchSession bumps last_seen_at only if the stored value is older than staleness
@@ -265,6 +301,29 @@ func (ls *LocalStorage) RevokePersonalAccessToken(ctx context.Context, id uint) 
 		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
 	}
 	return nil
+}
+
+// RevokeAllPersonalAccessTokensForUser revokes every not-already-revoked PAT belonging to
+// the user and returns the revoked tokens' hashes so the caller can evict them from the
+// auth cache immediately. Used on a password change/reset: a PAT is a parallel, longer-
+// lived credential that must die with the password, or a thief who minted one from a
+// stolen session would survive the reset.
+func (ls *LocalStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
+	var hashes []string
+	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
+		Where("user_id = ? AND revoked = ?", userID, false).
+		Pluck("token_hash", &hashes).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+	if err := ls.db.WithContext(ctx).Model(&models.PersonalAccessToken{}).
+		Where("user_id = ? AND revoked = ?", userID, false).
+		Update("revoked", true).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return hashes, nil
 }
 
 // TouchPersonalAccessToken bumps last_used_at only when older than staleness (or NULL),

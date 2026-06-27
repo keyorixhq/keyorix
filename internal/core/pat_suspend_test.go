@@ -43,8 +43,14 @@ func TestValidatePATToken_SuspendRevokesTokenAccess(t *testing.T) {
 	// Admin (id 2) suspends the user.
 	require.NoError(t, c.SuspendUser(ctx, 2, 1))
 
-	// The PAT must now be rejected — suspension revokes token access, not only sessions.
+	// The PAT must now be rejected — suspension actively revokes the user's PATs (not just
+	// blocking them via account state), so the token is reported revoked.
 	_, _, _, err = c.ValidatePATToken(ctx, raw)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not active")
+	assert.Contains(t, err.Error(), "revoked")
+
+	// Confirm the revocation is persisted (defence-in-depth, independent of the auth cache).
+	var pat models.PersonalAccessToken
+	require.NoError(t, db.First(&pat, 1).Error)
+	assert.True(t, pat.Revoked, "suspension must revoke the user's PATs")
 }

@@ -5,7 +5,21 @@ import (
 	"log"
 	"net/http"
 	"runtime/debug"
+	"strings"
+	"unicode"
 )
+
+// stripControl removes control characters (CR/LF, ANSI/C1 escapes, NUL, etc.) from a
+// string before it is written to a log line, preventing log-injection / terminal-control
+// smuggling via attacker-influenceable values (request headers, usernames).
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
 
 // Recovery returns a middleware that recovers from panics and returns a proper error response
 func Recovery() func(next http.Handler) http.Handler {
@@ -17,19 +31,23 @@ func Recovery() func(next http.Handler) http.Handler {
 					log.Printf("PANIC: %v\n%s", err, debug.Stack())
 
 					// Get request context for logging
-					requestID := r.Header.Get("X-Request-ID")
+					// Strip control characters from the attacker-influenceable X-Request-ID
+					// header and the username before logging, so neither can inject a forged
+					// log line or smuggle terminal-control sequences into a log viewer
+					// (net/http already drops CR/LF in headers, but not other C0/C1 controls).
+					requestID := stripControl(r.Header.Get("X-Request-ID"))
 					if requestID == "" {
 						requestID = "unknown"
 					}
 
 					var userInfo string
 					if userCtx := GetUserFromContext(r.Context()); userCtx != nil {
-						userInfo = userCtx.Username
+						userInfo = stripControl(userCtx.Username)
 					} else {
 						userInfo = "anonymous"
 					}
 
-					log.Printf("PANIC CONTEXT: RequestID=%s, User=%s, Method=%s, Path=%s, RemoteAddr=%s", // #nosec G706
+					log.Printf("PANIC CONTEXT: RequestID=%s, User=%s, Method=%s, Path=%s, RemoteAddr=%s",
 						requestID, userInfo, r.Method, r.URL.Path, r.RemoteAddr)
 
 					// Send a generic error response. We deliberately NEVER return the

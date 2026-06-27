@@ -3,6 +3,15 @@
 // Thin typed wrappers over Service.EncryptSecret/DecryptSecret for each auth token category.
 // For DB store/retrieve operations see auth_encryption_store.go.
 // For rotation see auth_encryption_rotate.go.
+//
+// SECURITY NOTE (tracked hardening): unlike secret VALUES (which bind their ciphertext to
+// the owning row via SecretAAD), these auth-token blobs are encrypted without AAD, so a
+// database-WRITE attacker could transplant an encrypted token blob between rows. The
+// plaintext stays confidential under the DEK (an integrity/confused-deputy gap, not a
+// decryption or auth bypass), which is why it is not closed inline: binding AAD requires
+// threading each token's owning identity (userID/tokenID) through every encrypt/decrypt
+// call site AND a versioned-AAD migration for existing blobs (mirroring the secret-value
+// AADVersion fallback). Track as a dedicated change.
 package encryption
 
 import (

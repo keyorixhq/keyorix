@@ -25,7 +25,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	// Apply middleware
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// Trusted-proxy-aware client IP: honor X-Forwarded-For / X-Real-IP ONLY when the TCP
+	// peer is a configured trusted proxy, otherwise use the real peer. chi's RealIP trusts
+	// the header unconditionally, which lets any client spoof its source IP and defeat the
+	// per-IP login/MFA brute-force rate limiter.
+	r.Use(customMiddleware.ClientIP(cfg.Server.HTTP.TrustedProxies))
 	r.Use(customMiddleware.Logger())
 	r.Use(customMiddleware.Recovery())
 	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
@@ -198,21 +202,30 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Get("/auth/profile", authHandler.Profile)
 		r.Put("/auth/profile", authHandler.UpdateProfile)
 		r.Post("/auth/change-password", authHandler.ChangePassword)
-		// MFA self-service (acts on the authenticated caller's own account).
-		r.Post("/auth/mfa/enroll", authHandler.EnrollMFA)
-		r.Post("/auth/mfa/activate", authHandler.ActivateMFA)
-		r.Post("/auth/mfa/disable", authHandler.DisableMFA)
+		// MFA self-service (acts on the authenticated caller's own account). The
+		// authenticator-lifecycle routes are blocked under impersonation so an admin
+		// acting as a user cannot alter the user's MFA / plant a durable credential that
+		// outlives the impersonation session.
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/enroll", authHandler.EnrollMFA)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/activate", authHandler.ActivateMFA)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/disable", authHandler.DisableMFA)
 		r.Get("/auth/mfa/recovery-codes", authHandler.RecoveryCodesStatus)
-		r.Post("/auth/mfa/recovery-codes/regenerate", authHandler.RegenerateRecoveryCodes)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/mfa/recovery-codes/regenerate", authHandler.RegenerateRecoveryCodes)
 		// WebAuthn / passkey self-service (acts on the authenticated caller's account).
-		r.Post("/auth/webauthn/register/begin", authHandler.BeginWebAuthnRegistration)
-		r.Post("/auth/webauthn/register/finish", authHandler.FinishWebAuthnRegistration)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/register/begin", authHandler.BeginWebAuthnRegistration)
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/register/finish", authHandler.FinishWebAuthnRegistration)
 		r.Get("/auth/webauthn/credentials", authHandler.ListWebAuthnCredentials)
-		r.Delete("/auth/webauthn/credentials/{id}", authHandler.DeleteWebAuthnCredential)
+		// Deleting a passkey disables WebAuthn when it removes the last one — the same
+		// durable MFA-downgrade that /auth/mfa/disable is blocked from doing under
+		// impersonation. There is no admin API to remove another user's passkey, so without
+		// this guard impersonation would be the one path to weaken a user's second factor.
+		r.With(customMiddleware.BlockWhenImpersonating).Delete("/auth/webauthn/credentials/{id}", authHandler.DeleteWebAuthnCredential)
 		r.Get("/auth/sessions", authHandler.ListSessions)
 		r.Delete("/auth/sessions/{id}", authHandler.RevokeSession)
 		r.Get("/auth/tokens", patHandler.ListPATs)
-		r.Post("/auth/tokens", patHandler.CreatePAT)
+		// Minting a PAT under impersonation would create a durable token owned by the
+		// target that outlives the session — block it.
+		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/tokens", patHandler.CreatePAT)
 		r.Delete("/auth/tokens/{id}", patHandler.RevokePAT)
 		// Self-scoped: end the current impersonation session (no permission gate).
 		r.Post("/auth/end-impersonation", impersonationHandler.End)
@@ -224,7 +237,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 		// Dashboard endpoints
 		r.Get("/dashboard/stats", dashboardHandler.GetStats)
-		r.Get("/dashboard/activity", dashboardHandler.GetActivity)
+		// The full activity feed is org-wide audit data — gate it behind audit.read.
+		// (Per-user dashboard stats scope their own recent-activity in core.)
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/dashboard/activity", dashboardHandler.GetActivity)
 
 		// Catalog endpoints (projects, environments).
 		// List endpoints need global read (browse everything); accessing a
@@ -316,8 +331,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Put("/projects/{id}/machine-identities/{machineId}", catalogHandler.TransitionMachineIdentity)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/classification", catalogHandler.ClassifyMachineIdentity)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Patch("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification", catalogHandler.ClassifyMachineToken)
-		// Machine-token credentials + role grants (ADR-030).
-		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.IssueMachineToken)
+		// Machine-token credentials + role grants (ADR-030). Issuing a token is blocked
+		// while impersonating — like PAT creation — so an admin acting as another user
+		// cannot plant a durable (potentially non-expiring) credential that outlives the
+		// bounded, audited impersonation session.
+		r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.IssueMachineToken)
 		r.With(customMiddleware.RequireScopedPermission("users.read", projectScope)).Get("/projects/{id}/machine-identities/{machineId}/tokens", catalogHandler.ListMachineTokens)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Delete("/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}", catalogHandler.RevokeMachineToken)
 		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/machine-identities/{machineId}/roles", catalogHandler.GrantMachineRole)
@@ -564,7 +582,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.write")).
 				Delete("/{clientId}", saHandler.DeactivateServiceAccount)
 			r.Get("/{clientId}/tokens", saHandler.ListTokens)
-			r.With(customMiddleware.RequirePermission("users.write")).
+			// Blocked while impersonating: a service-account token is a durable credential
+			// that must not be mintable under a bounded impersonation session.
+			r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequirePermission("users.write")).
 				Post("/{clientId}/tokens", saHandler.CreateToken)
 			r.With(customMiddleware.RequirePermission("users.write")).
 				Delete("/{clientId}/tokens/{tokenId}", saHandler.RevokeToken)
@@ -591,7 +611,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// above the group's audit.read with system.write (admin-level).
 			r.With(customMiddleware.RequirePermission("system.write")).Post("/checkpoint", auditHandler.WriteAuditCheckpoint)
 			r.Get("/anomalies", handlers.ListAnomalyAlerts)
-			r.Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
+			// Acknowledging (dismissing) an alert mutates a security-detection record, so
+			// gate it above the group's audit.read with system.write — like /checkpoint —
+			// rather than letting any read-only auditor silently bury alerts.
+			r.With(customMiddleware.RequirePermission("system.write")).Post("/anomalies/{id}/acknowledge", handlers.AcknowledgeAnomalyAlert)
 		})
 
 		// System endpoints
@@ -626,10 +649,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/legal-hold", dashboardHandler.GetLegalHold)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/legal-hold", dashboardHandler.PlaceLegalHold)
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/legal-hold", dashboardHandler.LiftLegalHold)
-		// Compliance evidence pack — posture + supporting records, for archival.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
+		// Compliance evidence pack — posture + supporting records, for archival. Gated on
+		// audit.read (global), NOT system.read: the deployment-wide pack enumerates
+		// cross-project secret NAMES and break-glass JUSTIFICATIONS, which the minimal
+		// system_viewer baseline (system.read only) must not be able to export. audit.read
+		// is the compliance/auditor persona (system_auditor/system_admin) at global scope;
+		// a project-scoped audit.read holder is correctly excluded from the org-wide pack.
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
 		// Verify a previously-exported evidence pack against its detached signature.
-		r.With(customMiddleware.RequirePermission("system.read")).Post("/compliance/evidence/verify", dashboardHandler.VerifyComplianceEvidence)
+		r.With(customMiddleware.RequirePermission("audit.read")).Post("/compliance/evidence/verify", dashboardHandler.VerifyComplianceEvidence)
 		// Risk register (ISO A.5.8): list reads system.read; create/revoke system.write.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/risk-exceptions", dashboardHandler.ListRiskExceptions)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskException)

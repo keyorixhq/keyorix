@@ -76,6 +76,86 @@ func TestDetectSoDViolations_GroupInheritedPermission(t *testing.T) {
 	assert.NotContains(t, users, "dave", "dave holds only secrets.read")
 }
 
+// A user holding an admin permission-bypass role effectively holds BOTH sides of
+// every policy — Authorize short-circuits on the admin role before consulting
+// role_permissions, so the SoD scan must flag the admin even when their explicit
+// role_permissions name only one side (or neither). Before the fix this most-
+// privileged principal was invisible to the control.
+func TestDetectSoDViolations_AdminBypass(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{}))
+	ctx := context.Background()
+
+	// erin holds the admin role (role 2) — a permission-bypass role.
+	h.CreateTestUser(t, "erin", 14)
+	h.AssignUserRole(t, 14, 2, nil)
+	// frank is a plain viewer (role 4) — holds neither side, the negative control.
+	h.CreateTestUser(t, "frank", 15)
+	h.AssignUserRole(t, 15, 4, nil)
+
+	// A policy over two permissions the admin role does NOT explicitly enumerate.
+	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "approve-vs-admin", "", "access_requests.approve", "system.write")
+	require.NoError(t, err)
+
+	violations, err := h.CoreService.DetectSoDViolations(ctx)
+	require.NoError(t, err)
+
+	var erinV *struct {
+		detail   string
+		username string
+	}
+	for _, v := range violations {
+		if v.Username == "erin" {
+			erinV = &struct {
+				detail   string
+				username string
+			}{v.Detail, v.Username}
+			assert.Equal(t, "user", v.PrincipalType)
+		}
+		assert.NotEqual(t, "frank", v.Username, "a plain viewer must not be flagged")
+	}
+	require.NotNil(t, erinV, "the admin must be flagged for the policy via bypass")
+	assert.Contains(t, erinV.detail, "admin role")
+}
+
+// Machine identities hold roles and are authorized too, so a machine that holds both
+// sides of a policy via its roles is a real violation. Before the fix the scan only
+// iterated human users and never examined automation principals.
+func TestDetectSoDViolations_MachinePrincipal(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SoDPolicy{}, &models.AuditEvent{},
+		&models.MachineIdentity{}, &models.MachineIdentityRole{}))
+	ctx := context.Background()
+
+	// A CI machine that holds editor (role 3 → secrets.write) AND auditor (role 5 →
+	// audit.read), a toxic write+audit combination.
+	require.NoError(t, h.DB.Create(&models.MachineIdentity{ID: 70, Name: "ci-bot", State: "active", ProjectID: 1}).Error)
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: 70, RoleID: 3}).Error)
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: 70, RoleID: 5}).Error)
+	// A suspended machine with the same grants must be ignored.
+	require.NoError(t, h.DB.Create(&models.MachineIdentity{ID: 71, Name: "old-bot", State: "suspended", ProjectID: 1}).Error)
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: 71, RoleID: 3}).Error)
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{MachineIdentityID: 71, RoleID: 5}).Error)
+
+	_, err := h.CoreService.CreateSoDPolicy(ctx, 1, "write-vs-audit", "", "secrets.write", "audit.read")
+	require.NoError(t, err)
+
+	violations, err := h.CoreService.DetectSoDViolations(ctx)
+	require.NoError(t, err)
+
+	var found bool
+	for _, v := range violations {
+		if v.PrincipalType == "machine" && v.Username == "ci-bot" {
+			found = true
+			assert.Equal(t, uint(70), v.UserID)
+		}
+		assert.NotEqual(t, "old-bot", v.Username, "a suspended machine must not be flagged")
+	}
+	assert.True(t, found, "the active CI machine holding both sides must be flagged")
+}
+
 // With no policies, there are no violations.
 func TestDetectSoDViolations_NoPolicies(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)

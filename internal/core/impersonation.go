@@ -37,6 +37,14 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	if adminID == targetID {
 		return nil, nil, fmt.Errorf("cannot impersonate yourself")
 	}
+	// A request authenticated with a least-privilege PAT (ADR-042) must not LAUNDER that
+	// restriction through impersonation: the impersonation session is a plain session
+	// carrying no restriction, so it would act as the target with the target's FULL
+	// permissions — escaping the bound the PAT deliberately imposed. Refuse, mirroring
+	// IsGlobalAdmin's fail-closed convention for the PAT restriction.
+	if patRestrictionFromContext(ctx) != nil {
+		return nil, nil, fmt.Errorf("a restricted access token may not start impersonation")
+	}
 	admin, err := c.storage.GetUser(ctx, adminID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("admin not found")
@@ -44,6 +52,22 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	target, err := c.storage.GetUser(ctx, targetID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("target user not found")
+	}
+	// Don't mint a session for a target who cannot log in: it would be dead on arrival
+	// (ValidateSessionToken rejects blocked/inactive accounts on every request) and would
+	// only produce a misleading impersonation.start audit event.
+	if !target.IsActive || AccountLoginBlocked(target.AccountState) {
+		return nil, nil, fmt.Errorf("cannot impersonate a suspended or inactive user")
+	}
+	// Prevent privilege escalation via impersonation: a caller who is not a global admin
+	// must not impersonate a global admin (which would confer install-wide super-user).
+	// Today users.impersonate is satisfiable only by global admins, so this is a no-op;
+	// it keeps impersonation from escalating if that permission is ever delegated to a
+	// lower-privileged (sub-admin) role.
+	if targetAdmin, _ := c.IsGlobalAdmin(ctx, targetID); targetAdmin {
+		if callerAdmin, _ := c.IsGlobalAdmin(ctx, adminID); !callerAdmin {
+			return nil, nil, fmt.Errorf("cannot impersonate an administrator")
+		}
 	}
 	token, err := generateSecureToken()
 	if err != nil {

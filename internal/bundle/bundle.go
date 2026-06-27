@@ -291,11 +291,34 @@ func process(r io.Reader, reg *trust.KeyRegistry, opts *extractOpts) (*Manifest,
 
 	// When staging, gate on no-downgrade BEFORE writing any component, and prepare destDir.
 	if opts != nil {
-		if err := m.CheckUpgrade(opts.installedVersion); err != nil {
-			return nil, err
-		}
 		if strings.TrimSpace(opts.destDir) == "" {
 			return nil, fmt.Errorf("bundle: extract destination is required")
+		}
+		// The PERSISTED installed version (written at the dest by the previous import) is
+		// authoritative over the operator-supplied flag, so the no-downgrade gate enforces
+		// itself on every re-import without relying on the operator passing the right
+		// --installed-version. A present-but-unreadable marker fails closed.
+		installed := strings.TrimSpace(opts.installedVersion)
+		fromMarker := false
+		if marker, ok, merr := readInstalledVersion(opts.destDir); merr != nil {
+			return nil, merr
+		} else if ok {
+			installed, fromMarker = marker, true
+		}
+		// Re-importing the EXACT same version recorded by the marker is an idempotent
+		// re-stage of identical (signature-verified) content — allow it. CheckUpgrade
+		// rejects equal as a non-upgrade, which is right for the operator-asserted flag
+		// (an upgrade check) but would break idempotent re-import against the marker.
+		idempotent := false
+		if fromMarker && installed != "" {
+			if cmp, cerr := compareVersions(m.Version, installed); cerr == nil && cmp == 0 {
+				idempotent = true
+			}
+		}
+		if !idempotent {
+			if err := m.CheckUpgrade(installed); err != nil {
+				return nil, err
+			}
 		}
 		if err := os.MkdirAll(opts.destDir, 0o750); err != nil {
 			return nil, fmt.Errorf("bundle: create destination: %w", err)
@@ -333,7 +356,40 @@ func process(r io.Reader, reg *trust.KeyRegistry, opts *extractOpts) (*Manifest,
 			return nil, fmt.Errorf("%w: %s", ErrMissingComponent, p)
 		}
 	}
+	// Record the just-staged version so a subsequent import enforces no-downgrade against
+	// reality without the operator having to pass --installed-version.
+	if opts != nil {
+		if err := writeInstalledVersion(opts.destDir, m.Version); err != nil {
+			return nil, err
+		}
+	}
 	return &m, nil
+}
+
+// installedVersionMarker is the file at the staging destination recording the version of
+// the last successfully-imported bundle — the authoritative input to the no-downgrade gate.
+const installedVersionMarker = ".keyorix-installed-version"
+
+// readInstalledVersion returns the persisted installed version at destDir. ok is false
+// when no marker exists (a first install); a present-but-unreadable marker is an error
+// (fail closed — don't silently treat a tampered/locked marker as "first install").
+func readInstalledVersion(destDir string) (string, bool, error) {
+	b, err := os.ReadFile(filepath.Join(destDir, installedVersionMarker)) // #nosec G304 -- destDir is operator-configured, marker name is a constant
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("bundle: read installed-version marker: %w", err)
+	}
+	return strings.TrimSpace(string(b)), true, nil
+}
+
+// writeInstalledVersion persists version as the installed-version marker at destDir.
+func writeInstalledVersion(destDir, version string) error {
+	if err := os.WriteFile(filepath.Join(destDir, installedVersionMarker), []byte(version+"\n"), 0o600); err != nil {
+		return fmt.Errorf("bundle: write installed-version marker: %w", err)
+	}
+	return nil
 }
 
 func optsDest(opts *extractOpts) string {

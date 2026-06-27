@@ -59,7 +59,7 @@ type RotationPlan struct {
 // prioritised by urgency within each wave. Returns an empty plan (no waves) when
 // nothing needs rotation.
 func (c *KeyorixCore) GenerateRotationPlan(ctx context.Context, projectID uint) (*RotationPlan, error) {
-	status, err := c.GetRotationStatus(ctx, &projectID)
+	status, err := c.GetRotationStatus(ctx, &projectID, nil)
 	if err != nil {
 		return nil, err
 	}

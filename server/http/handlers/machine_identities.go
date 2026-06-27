@@ -184,6 +184,15 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 		sendError(w, "Error", err.Error(), status, nil)
 		return
 	}
+	// Suspending or revoking the identity must reject its tokens immediately, not after
+	// the auth-cache TTL — evict every credential's cache entry.
+	if to == core.MachineSuspended || to == core.MachineRevoked {
+		if hashes, herr := h.coreService.MachineTokenHashes(r.Context(), uint(machineID)); herr == nil {
+			for _, hsh := range hashes {
+				middleware.InvalidateTokenCacheByHash(hsh)
+			}
+		}
+	}
 	sendSuccess(w, map[string]interface{}{"machine_identity": m}, "Machine identity updated")
 }
 
@@ -297,7 +306,8 @@ func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Reque
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
-	if err := h.coreService.RevokeMachineToken(r.Context(), uint(projectID), uint(machineID), uint(tokenID), actor.UserID); err != nil {
+	tokenHash, err := h.coreService.RevokeMachineToken(r.Context(), uint(projectID), uint(machineID), uint(tokenID), actor.UserID)
+	if err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not found") {
 			status = http.StatusNotFound
@@ -305,6 +315,8 @@ func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Reque
 		sendError(w, "Error", err.Error(), status, nil)
 		return
 	}
+	// Evict the auth cache so the revoked token stops authenticating immediately.
+	middleware.InvalidateTokenCacheByHash(tokenHash)
 	sendSuccess(w, nil, "Machine token revoked")
 }
 

@@ -78,7 +78,7 @@ func (c *KeyorixCore) ProjectHygieneSummary(ctx context.Context, projectID uint,
 	out.StaleMachineIdentities = len(staleMI)
 
 	// Secrets past their rotation policy's interval (reuses the rotation-status eval).
-	statuses, err := c.GetRotationStatus(ctx, &projectID)
+	statuses, err := c.GetRotationStatus(ctx, &projectID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("rotation status: %w", err)
 	}

@@ -3,6 +3,7 @@ package encryption
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"testing"
 )
 
@@ -70,6 +71,40 @@ func TestEncryptionService(t *testing.T) {
 	// Verify decrypted data matches original
 	if !bytes.Equal(plaintext, decrypted) {
 		t.Errorf("Decrypted data doesn't match original.\nOriginal: %s\nDecrypted: %s", plaintext, decrypted)
+	}
+}
+
+// A corrupt/wrong-length stored nonce must yield an ERROR, not a panic (gcm.Open panics
+// on a wrong-length nonce; the guard converts that to a clean error).
+func TestDecrypt_RejectsBadNonceLengthWithoutPanic(t *testing.T) {
+	kek, err := GenerateRandomKey(32)
+	if err != nil {
+		t.Fatalf("Failed to generate KEK: %v", err)
+	}
+	service, err := NewEncryptionService(kek)
+	if err != nil {
+		t.Fatalf("Failed to create encryption service: %v", err)
+	}
+	enc, err := service.Encrypt([]byte("secret"), testKeyVersion)
+	if err != nil {
+		t.Fatalf("Failed to encrypt: %v", err)
+	}
+	// Corrupt the nonce to a too-short value (base64 of 4 bytes).
+	enc.Metadata.Nonce = base64.StdEncoding.EncodeToString([]byte{1, 2, 3, 4})
+
+	_, err = service.Decrypt(enc) // must not panic
+	if err == nil {
+		t.Fatal("expected an error for a wrong-length nonce")
+	}
+
+	// Same guard on the AAD path.
+	encAAD, err := service.EncryptWithAAD([]byte("secret"), testKeyVersion, []byte("aad"))
+	if err != nil {
+		t.Fatalf("Failed to encrypt with AAD: %v", err)
+	}
+	encAAD.Metadata.Nonce = base64.StdEncoding.EncodeToString([]byte{1, 2, 3, 4})
+	if _, err := service.DecryptWithAAD(encAAD, []byte("aad")); err == nil {
+		t.Fatal("expected an error for a wrong-length nonce on the AAD path")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -566,4 +567,68 @@ func TestAuthentication_PATNetworkAllowlist(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, serve("203.0.113.9:5555"), "off-network source IP is forbidden")
 	// And an in-range request after the cached deny still passes (per-request evaluation).
 	assert.Equal(t, http.StatusOK, serve("10.9.9.9:443"), "in-range again after a deny")
+}
+
+// A token revoked WHILE a slow-path validation was in flight must not be resurrected by
+// that validation's positive cache write (the revocation-resurrection race).
+func TestCacheSetValidated_DropsResurrectionAfterRevoke(t *testing.T) {
+	key := tokenKey("race-token")
+	tokenCacheMu.Lock()
+	delete(tokenCache, key)
+	tokenCacheMu.Unlock()
+
+	validatedAt := time.Now()        // slow path began (before its DB read)
+	time.Sleep(2 * time.Millisecond) //
+	InvalidateTokenCacheByHash(key)  // token revoked during validation
+	// The in-flight positive write must be refused (revoke is newer than validatedAt).
+	cacheSetValidated(key, &UserContext{UserID: 1}, validatedAt, time.Now().Add(validTokenTTL))
+
+	entry, ok := cacheGet(key)
+	if !ok {
+		return // tombstone may have already expired in CI; the key point is no positive entry
+	}
+	if entry.userCtx != nil {
+		t.Error("a token revoked mid-validation must NOT be resurrected as a positive cache entry")
+	}
+}
+
+// A positive write with no intervening revoke is cached normally.
+func TestCacheSetValidated_CachesWhenNotRevoked(t *testing.T) {
+	key := tokenKey("ok-token")
+	tokenCacheMu.Lock()
+	delete(tokenCache, key)
+	tokenCacheMu.Unlock()
+
+	cacheSetValidated(key, &UserContext{UserID: 7}, time.Now(), time.Now().Add(validTokenTTL))
+	entry, ok := cacheGet(key)
+	if !ok || entry.userCtx == nil || entry.userCtx.UserID != 7 {
+		t.Errorf("a non-revoked validation must be cached; got ok=%v entry=%+v", ok, entry)
+	}
+}
+
+// pruneLocked hard-caps the cache so a flood of distinct tokens can't grow it unbounded.
+func TestPruneLocked_EnforcesSizeCap(t *testing.T) {
+	// Clear the shared cache before and after so the bulk insert doesn't bleed into other
+	// tests that share the process-wide map.
+	t.Cleanup(func() {
+		tokenCacheMu.Lock()
+		for k := range tokenCache {
+			delete(tokenCache, k)
+		}
+		tokenCacheMu.Unlock()
+	})
+	tokenCacheMu.Lock()
+	for k := range tokenCache {
+		delete(tokenCache, k)
+	}
+	far := time.Now().Add(time.Hour)
+	for i := 0; i < maxTokenCacheEntries+1000; i++ {
+		tokenCache[tokenKey(string(rune(i))+"-x-"+time.Now().String()+string(rune(i)))] = tokenCacheEntry{expiresAt: far}
+	}
+	pruneLocked()
+	n := len(tokenCache)
+	tokenCacheMu.Unlock()
+	if n > maxTokenCacheEntries {
+		t.Errorf("cache size %d exceeds cap %d after prune", n, maxTokenCacheEntries)
+	}
 }

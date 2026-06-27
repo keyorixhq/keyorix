@@ -37,7 +37,9 @@ func sampleEvent() *models.AuditEvent {
 		ID: 42, EventType: "secret.updated", UserID: &uid, ProjectID: &pid,
 		Description: "User alice updated secret db-password", IPAddress: "10.0.0.5",
 		Success: &t, EventTime: time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC),
-		Diff: `{"value":{"changed":true}}`,
+		Diff:      `{"value":{"changed":true}}`,
+		PrevHash:  "prevhash-abc",
+		EntryHash: "entryhash-xyz",
 	}
 }
 
@@ -141,6 +143,40 @@ func TestSend_WebhookBearer(t *testing.T) {
 	}
 	if p.ID != 42 || p.EventType != "secret.updated" {
 		t.Errorf("unexpected payload: %+v", p)
+	}
+	// The chain links must be exported so a downstream SIEM can detect a dropped or
+	// forged event (a gap shows as a prev_hash that doesn't match the prior entry_hash).
+	if p.EntryHash != "entryhash-xyz" || p.PrevHash != "prevhash-abc" {
+		t.Errorf("missing tamper-evidence chain links: entry=%q prev=%q", p.EntryHash, p.PrevHash)
+	}
+}
+
+// A cross-host redirect from the configured SIEM endpoint must be refused, so the
+// custom auth header (DD-API-KEY) — which Go does NOT strip across hosts — can't be
+// exfiltrated to an attacker-controlled redirect target.
+func TestSend_RefusesCrossHostRedirect(t *testing.T) {
+	evil, evilCap := newCaptureServer(t, http.StatusOK)
+	// Primary endpoint 302-redirects to the evil host.
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Redirect(w, nil, evil.URL, http.StatusFound)
+	}))
+	t.Cleanup(primary.Close)
+
+	f, _ := New(Config{Enabled: true, Provider: ProviderDatadog, Endpoint: primary.URL, Token: "dd-key"})
+	t.Cleanup(f.Close)
+
+	_, err := f.send(context.Background(), sampleEvent())
+	if err == nil {
+		t.Fatal("expected an error when the endpoint redirects cross-host")
+	}
+	evilCap.mu.Lock()
+	hits, leaked := evilCap.hits, evilCap.headers.Get("DD-API-KEY")
+	evilCap.mu.Unlock()
+	if hits != 0 {
+		t.Errorf("redirect target was reached %d time(s); it must not be followed", hits)
+	}
+	if leaked != "" {
+		t.Errorf("DD-API-KEY leaked to redirect target: %q", leaked)
 	}
 }
 

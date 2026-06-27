@@ -59,9 +59,12 @@ func TestAdminAccountTransitions(t *testing.T) {
 			store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 				return e.EventType == tc.event
 			})).Return(nil)
-			// A login-blocking transition (suspend) must purge the user's sessions.
+			// Every state change evicts the user's cached session tokens from the auth cache.
+			store.On("ListSessionTokenHashesForUser", ctx, uint(2)).Return([]string{}, nil)
+			// A login-blocking transition (suspend) must purge the user's sessions AND PATs.
 			if AccountLoginBlocked(tc.wantState) {
 				store.On("DeleteSessionsForUserExcept", ctx, uint(2), uint(0)).Return(nil)
+				store.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(2)).Return([]string{}, nil)
 			}
 
 			require.NoError(t, tc.call(c, ctx))
@@ -187,7 +190,9 @@ func TestChangePassword_ClearsRestriction(t *testing.T) {
 	store.On("AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 	store.On("PrunePasswordHistory", ctx, uint(1), 5).Return(nil)
 	store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 1}, nil)
+	store.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
 	store.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
+	store.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
 
 	err := c.ChangePassword(ctx, 1, "oldpassword", "Brandnew#Passw0rd!", "tok")
 	require.NoError(t, err)

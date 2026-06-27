@@ -59,6 +59,17 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 		return nil, fmt.Errorf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
 	}
 
+	// The NEW owner must already have access to the secret's scope. Ownership grants
+	// full control (incl. re-share), so without this an authorized writer could hand a
+	// secret to a user with no role in its project — granting access out of band.
+	// Evaluate the new owner's OWN roles, not gated by the actor's PAT restriction.
+	if ok, perr := c.principalHasScopedPermission(ctx, newOwnerID, "secrets.read",
+		Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}); perr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), perr)
+	} else if !ok {
+		return nil, fmt.Errorf("%s: the new owner has no access to this secret's project/environment", i18n.T("ErrorPermissionDenied", nil))
+	}
+
 	oldOwner := secret.OwnerID
 	secret.OwnerID = newOwnerID
 	updated, err := c.storage.UpdateSecret(ctx, secret)

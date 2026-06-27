@@ -18,14 +18,17 @@ func decodeKeyMaterial(material []byte, providerName string) ([]byte, error) {
 		return validateKEK(material, providerName)
 	}
 	s := strings.TrimSpace(string(material))
-	// Hex (64 chars for 32 bytes).
+	// Hex (64 chars for 32 bytes). Decoded key material is validated (e.g. all-zero
+	// rejected) exactly like the raw branch — the guard must not be skippable by
+	// supplying the KEK in an encoded form (a zeroed/placeholder mounted secret can
+	// arrive hex- or base64-encoded just as easily as raw).
 	if b, err := hex.DecodeString(s); err == nil && len(b) == KEKSize {
-		return b, nil
+		return validateKEK(b, providerName)
 	}
 	// Base64 — try standard then raw (unpadded), both URL-safe-tolerant.
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
 		if b, err := enc.DecodeString(s); err == nil && len(b) == KEKSize {
-			return b, nil
+			return validateKEK(b, providerName)
 		}
 	}
 	return nil, fmt.Errorf("%s key provider: key material must be 32 raw bytes, or hex/base64 encoding thereof (got %d bytes that did not decode to %d)", providerName, len(material), KEKSize)

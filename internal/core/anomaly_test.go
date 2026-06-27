@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,13 +10,84 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// captureStore records the `since` lower bound of every ListSecretAccessLogs call so a
+// test can assert the detection window honors the configured lookback. It returns one
+// baseline log so RunDetection proceeds past the empty-history skip.
+type captureStore struct {
+	sinces       []time.Time
+	createErr    error
+	createdCount int
+}
+
+func (c *captureStore) ListSecretAccessLogs(_ context.Context, _ uint, since time.Time) ([]models.SecretAccessLog, error) {
+	c.sinces = append(c.sinces, since)
+	// A known user/IP (so new_user/new_ip never fire) at a deterministic OFF-HOURS time
+	// (23:00 UTC ∈ the default 22:00–06:00 window), so detectAnomalies always yields
+	// exactly one off_hours alert — making the storage-failure path deterministic.
+	return []models.SecretAccessLog{{
+		AccessedBy: "alice", IPAddress: "10.0.0.1",
+		AccessTime: time.Date(2026, 6, 20, 23, 0, 0, 0, time.UTC),
+	}}, nil
+}
+func (c *captureStore) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAlert) error {
+	c.createdCount++
+	return c.createErr
+}
+func (c *captureStore) ListAnomalyAlerts(_ context.Context, _ *bool) ([]models.AnomalyAlert, error) {
+	return nil, nil
+}
+func (c *captureStore) AcknowledgeAnomalyAlert(_ context.Context, _ uint) error { return nil }
+
+// The recent-access scan window must honor the configured lookback (so a longer scan
+// cadence scans a proportionally longer window), and be floored at one hour.
+func TestRunDetection_ScanWindowHonorsLookback(t *testing.T) {
+	t.Run("longer lookback widens the window", func(t *testing.T) {
+		store := &captureStore{}
+		d := NewAnomalyDetector(store)
+		d.SetLookback(6 * time.Hour)
+		require.NoError(t, d.RunDetection(context.Background(), []models.SecretNode{{ID: 1}}))
+
+		require.Len(t, store.sinces, 2, "one baseline query + one recent-window query")
+		recentSince := store.sinces[1] // the second call uses the lookback window
+		gap := time.Now().UTC().Sub(recentSince)
+		assert.InDelta(t, (6 * time.Hour).Seconds(), gap.Seconds(), 60, "recent window must span the 6h lookback")
+	})
+
+	t.Run("sub-hour lookback is floored at 1h", func(t *testing.T) {
+		store := &captureStore{}
+		d := NewAnomalyDetector(store)
+		d.SetLookback(5 * time.Minute) // below the floor
+		require.NoError(t, d.RunDetection(context.Background(), []models.SecretNode{{ID: 1}}))
+
+		gap := time.Now().UTC().Sub(store.sinces[1])
+		assert.InDelta(t, time.Hour.Seconds(), gap.Seconds(), 60, "the window floors at 1h")
+	})
+}
+
+// A storage failure during detection must surface as a non-nil error so the scheduler
+// records a partial failure rather than reporting a clean pass.
+func TestRunDetection_SurfacesStorageFailure(t *testing.T) {
+	store := &captureStore{createErr: assertAnErr}
+	d := NewAnomalyDetector(store)
+	// The store always yields one off_hours alert, whose insert fails → a surfaced error.
+	err := d.RunDetection(context.Background(), []models.SecretNode{{ID: 1, Name: "s"}})
+	require.Positive(t, store.createdCount, "the off_hours access must produce an alert to persist")
+	require.Error(t, err, "a failed alert insert must surface as a pass error")
+}
+
+var assertAnErr = &detectionTestErr{}
+
+type detectionTestErr struct{}
+
+func (*detectionTestErr) Error() string { return "boom" }
+
 func TestBuildBaseline(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	windowStart := now.Add(-1 * time.Hour) // the live detection window — excluded from the baseline
 	logs := []models.SecretAccessLog{
 		{IPAddress: "203.0.113.9", AccessedBy: "mallory", AccessTime: now.Add(-30 * time.Minute)}, // inside window → excluded
-		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-2 * 24 * time.Hour)},       // in 7d, before window
-		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-20 * 24 * time.Hour)},    // older than 7d
+		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-2 * 24 * time.Hour)},      // in 7d, before window
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-20 * 24 * time.Hour)},   // older than 7d
 	}
 	b := buildBaseline(logs, now, windowStart)
 	// The in-window read must NOT seed the baseline, else it would mask its own anomaly.
@@ -38,9 +110,9 @@ func TestLogsBefore(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	cutoff := now.Add(-1 * time.Hour)
 	logs := []models.SecretAccessLog{
-		{AccessedBy: "old", AccessTime: now.Add(-2 * time.Hour)},       // before cutoff → kept
-		{AccessedBy: "edge", AccessTime: cutoff},                       // exactly at cutoff → excluded (strictly before)
-		{AccessedBy: "recent", AccessTime: now.Add(-1 * time.Minute)},  // after cutoff → excluded
+		{AccessedBy: "old", AccessTime: now.Add(-2 * time.Hour)},      // before cutoff → kept
+		{AccessedBy: "edge", AccessTime: cutoff},                      // exactly at cutoff → excluded (strictly before)
+		{AccessedBy: "recent", AccessTime: now.Add(-1 * time.Minute)}, // after cutoff → excluded
 	}
 	got := logsBefore(logs, cutoff)
 	if len(got) != 1 || got[0].AccessedBy != "old" {

@@ -72,10 +72,12 @@ func createTestToken(t *testing.T, c *core.KeyorixCore) string {
 	t.Helper()
 	ctx := context.Background()
 	// SeedSystem creates admin user, roles, permissions, project, environments
+	c.SetBootstrapToken("test-bootstrap-token")
 	_, err := c.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "testadmin",
 		Email:    "testadmin@example.com",
 		Password: "TestPassword123!",
+		Token:    "test-bootstrap-token",
 	})
 	if err != nil {
 		t.Logf("BootstrapSystem: %v (may already be initialised)", err)
@@ -98,14 +100,14 @@ func createLimitedToken(t *testing.T, c *core.KeyorixCore) string {
 	_, err := c.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "limiteduser",
 		Email:    "limited@example.com",
-		Password: "LimitedPass123!",
+		Password: "Qr7#Kp2$Lm5@Vn9!",
 	})
 	if err != nil {
 		t.Fatalf("createLimitedToken: create user failed: %v", err)
 	}
 	session, _, err := c.Login(ctx, &core.LoginRequest{
 		Username: "limiteduser",
-		Password: "LimitedPass123!",
+		Password: "Qr7#Kp2$Lm5@Vn9!",
 	})
 	if err != nil {
 		t.Fatalf("createLimitedToken: login failed: %v", err)
@@ -381,7 +383,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 				"username":     "integration-user",
 				"email":        "integration@test.com",
 				"display_name": "Integration Test User",
-				"password":     "securepassword123",
+				"password":     "Qr7#Kp2$Lm5@Vn9!",
 			}
 
 			body, err := json.Marshal(userData)
@@ -761,10 +763,10 @@ func TestPrivescRoutesRequireWrite(t *testing.T) {
 	// users get system_viewer, which holds users.read but not users.write.
 	ctx := context.Background()
 	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
-		Username: "privesc_ro", Email: "privesc_ro@example.com", Password: "LimitedPass123!",
+		Username: "privesc_ro", Email: "privesc_ro@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
 	})
 	require.NoError(t, err)
-	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "privesc_ro", Password: "LimitedPass123!"})
+	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "privesc_ro", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	limited := sess.SessionToken
 
@@ -817,10 +819,10 @@ func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
 	// read-only persona that must not be able to mutate anything.
 	ctx := context.Background()
 	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
-		Username: "ro_guard", Email: "ro_guard@example.com", Password: "LimitedPass123!",
+		Username: "ro_guard", Email: "ro_guard@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
 	})
 	require.NoError(t, err)
-	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "ro_guard", Password: "LimitedPass123!"})
+	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "ro_guard", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	roToken := sess.SessionToken
 
@@ -833,16 +835,17 @@ func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
 	}
 	// Self-service (own account) and public routes a read-only/unauthenticated
 	// caller may legitimately reach; everything else mutating must be denied.
-	// /secrets/render and /compliance/evidence/verify are READ operations behind a POST
-	// (they only carry a payload; they mutate nothing and are gated on a *.read
-	// permission) — legitimately reachable by a read-only persona, like /system/init.
-	// /sw.js is the SPA service-worker static asset, served by the web handler for any
-	// method; serving the file for DELETE/PUT/etc. changes no state, so it's not an API
-	// mutation. These are the only exemptions; any other mutating route MUST be denied.
+	// /secrets/render is a READ operation behind a POST (it only carries a payload; it
+	// mutates nothing and is gated on a *.read permission) — legitimately reachable by a
+	// read-only persona, like /system/init. (/compliance/evidence/verify is a POST too,
+	// but it is gated on audit.read which system_viewer lacks, so it is correctly DENIED
+	// and not exempted here.) /sw.js is the SPA service-worker static asset, served by the
+	// web handler for any method; serving the file for DELETE/PUT/etc. changes no state,
+	// so it's not an API mutation. These are the only exemptions; any other mutating route
+	// MUST be denied.
 	allowExact := map[string]bool{
 		"/system/init": true, "/health": true, "/metrics": true,
 		"/api/v1/projects/{id}/secrets/render": true,
-		"/api/v1/compliance/evidence/verify":   true, // read-only signature verify (system.read)
 		"/sw.js":                               true, // static service-worker asset, not an API route
 	}
 	allowPrefix := []string{"/auth/", "/api/v1/auth/", "/notifications", "/api/v1/notifications"}

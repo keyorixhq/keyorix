@@ -2,6 +2,8 @@ package remote
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -30,6 +32,17 @@ func (c *Config) Validate() error {
 	c.APIKey = expandEnvVars(c.APIKey)
 	c.BaseURL = expandEnvVars(c.BaseURL)
 
+	// The API key is sent as a bearer token on every request, so refuse a cleartext
+	// base URL — it would leak the token in transit. Allow http only for a loopback
+	// target (local dev).
+	u, perr := url.Parse(c.BaseURL)
+	if perr != nil {
+		return fmt.Errorf("invalid base_url %q: %w", c.BaseURL, perr)
+	}
+	if u.Scheme != "https" && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("base_url must use https (got scheme %q) so the API key is not sent in cleartext", u.Scheme)
+	}
+
 	// Set defaults
 	if c.TimeoutSeconds <= 0 {
 		c.TimeoutSeconds = 30
@@ -45,6 +58,17 @@ func (c *Config) Validate() error {
 // GetTimeout returns the timeout duration
 func (c *Config) GetTimeout() time.Duration {
 	return time.Duration(c.TimeoutSeconds) * time.Second
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // expandEnvVars expands environment variables in the format ${VAR_NAME}

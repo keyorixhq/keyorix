@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -26,12 +27,15 @@ func init() {
 }
 
 func main() {
-	var metricsAddr, probeAddr string
+	var metricsAddr, probeAddr, allowedServers string
 	var enableLeaderElection bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the probe endpoint binds to")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"enable leader election for controller manager (run a single active replica)")
+	flag.StringVar(&allowedServers, "allowed-servers", os.Getenv("KEYORIX_ALLOWED_SERVERS"),
+		"comma-separated list of trusted Keyorix base URLs (https://host) a KeyorixSecret's spec.server must match. "+
+			"REQUIRED: without it every CR is rejected, so the operator never sends a token to a CR-chosen destination.")
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -51,9 +55,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	var allowed []string
+	for _, s := range strings.Split(allowedServers, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			allowed = append(allowed, s)
+		}
+	}
+	if len(allowed) == 0 {
+		setupLog.Info("WARNING: --allowed-servers is not set; every KeyorixSecret will be REJECTED until you configure the trusted Keyorix server URL(s)")
+	}
 	if err := (&controller.KeyorixSecretReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		AllowedServers: allowed,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KeyorixSecret")
 		os.Exit(1)

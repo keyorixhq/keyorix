@@ -110,7 +110,15 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	if email == "" {
 		email = userName // SCIM userName is conventionally the email
 	}
-	if existing, _ := c.FindSCIMUser(ctx, externalID, email); existing != nil {
+	// Fail CLOSED on a lookup error: swallowing it would let a transient DB error during
+	// the dedup check fall through to CreateUser and mint a SECOND identity with the same
+	// email (there is no DB-level email uniqueness), and SSO/SCIM resolve email via
+	// first-match — so which physical account a login binds to would become ambiguous.
+	existing, ferr := c.FindSCIMUser(ctx, externalID, email)
+	if ferr != nil {
+		return nil, fmt.Errorf("failed to check for an existing user: %w", ferr)
+	}
+	if existing != nil {
 		return nil, fmt.Errorf("a user already exists for this externalId/email")
 	}
 	username, err := c.deriveSCIMUsername(ctx, userName)
@@ -161,10 +169,23 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		user.DisplayName = *displayName
 	}
 	if email != nil && *email != "" {
+		// Refuse an email that collides with a DIFFERENT user. SCIM email is trusted by
+		// identity resolution (SSO matches by email), so silently overwriting a low-priv
+		// account's email to an admin's would corrupt the email→account mapping and
+		// enable account linking/takeover. The create path already guards this.
+		if existing, eerr := c.storage.GetUserByEmail(ctx, *email); eerr == nil && existing != nil && existing.ID != user.ID {
+			return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
+		}
 		user.Email = *email
 	}
 	deactivated := false
 	if active != nil {
+		if !*active {
+			// Don't let a routine (or hostile) SCIM sync deactivate the only admin.
+			if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
+				return nil, err
+			}
+		}
 		user.IsActive = *active
 		if *active {
 			// Reactivation clears only a SCIM/IdP deactivation. An admin security
@@ -194,12 +215,41 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if deactivated {
-		// Suspension must be effective immediately, not lingering until tokens expire.
-		_ = c.storage.DeleteSessionsForUserExcept(ctx, id, 0)
+		// Suspension must be effective immediately, not lingering until tokens expire —
+		// terminate sessions AND evict them from the auth cache (the fast path bypasses the
+		// DB, so without eviction an offboarded user keeps access for the cache TTL).
+		_ = c.deleteSessionsForUserAndEvict(ctx, id, 0, "")
 	}
 	c.writeAuditEvent(ctx, EventSCIMUserUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM updated user %d", id))
 	return updated, nil
+}
+
+// guardLastAdminDeactivation refuses an operation that would deactivate/deprovision the
+// only remaining install administrator, so a routine or hostile SCIM push can't lock
+// everyone out. Mirrors guardLastGlobalAdmin's assignment scan but keyed on the target.
+func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
+	isAdmin, err := c.IsGlobalAdmin(ctx, targetID)
+	if err != nil || !isAdmin {
+		return nil // not an admin (or can't tell) — not the last-admin case
+	}
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, a := range assignments {
+		if !adminIDs[a.RoleID] {
+			continue
+		}
+		// Any OTHER global-admin grant (a different user, or a group) means governance
+		// survives the target's removal.
+		if a.PrincipalType == "user" && a.PrincipalID == targetID {
+			continue
+		}
+		return nil
+	}
+	return fmt.Errorf("refusing to deactivate the last install administrator via SCIM")
 }
 
 // DeprovisionSCIMUser handles a SCIM DELETE: it deprovisions the user (blocks login,
@@ -210,6 +260,10 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
+	// Don't let a SCIM DELETE deprovision the only admin and lock the install out.
+	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
+		return err
+	}
 	user.IsActive = false
 	// Mark as SCIM-deprovisioned rather than admin-suspended, but never downgrade an
 	// existing admin security suspension. The user is soft-deleted below regardless,
@@ -218,6 +272,9 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 		user.AccountState = AccountDeprovisioned
 	}
 	user.UpdatedAt = c.now()
+	// Capture the user's session-token hashes BEFORE the transaction so they can be
+	// evicted from the auth cache after commit (the stored token is the SHA-256 cache key).
+	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, id)
 	// Suspend + terminate sessions + soft-delete atomically: a SCIM DELETE either fully
 	// deprovisions or leaves the account untouched, so a mid-way storage failure can't
 	// leave it half-deprovisioned (suspended but not deleted), which would make retries
@@ -231,9 +288,48 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	}); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// Evict the terminated sessions from the auth cache AFTER commit, so a deprovisioned
+	// (offboarded) user's live session stops authenticating immediately instead of
+	// lingering for the cache TTL.
+	c.invalidateTokenCache(sessionHashes...)
 	c.writeAuditEvent(ctx, EventSCIMUserDeprovisioned, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM deprovisioned user %d (%s)", id, user.Username))
 	return nil
+}
+
+// SCIMMaxPageSize bounds how many resources a single SCIM list page returns — the
+// value advertised in ServiceProviderConfig (filter.maxResults). A larger requested
+// count is clamped to it so an unfiltered list can't drain the whole directory into one
+// response (memory + DB amplification).
+const SCIMMaxPageSize = 200
+
+// ListSCIMUsersPage returns one page of users for a SCIM list and the total count.
+// startIndex is 1-based (SCIM convention); count is clamped to [0, SCIMMaxPageSize]
+// (count==0 returns no resources, just the total).
+func (c *KeyorixCore) ListSCIMUsersPage(ctx context.Context, startIndex, count int) ([]*models.User, int, error) {
+	if startIndex < 1 {
+		startIndex = 1
+	}
+	if count < 0 {
+		count = 0
+	}
+	if count > SCIMMaxPageSize {
+		count = SCIMMaxPageSize
+	}
+	if count == 0 {
+		// SCIM count=0 → return totalResults only. Use PageSize=1 to get an accurate
+		// total without a separate count API; the single fetched row is discarded.
+		_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
+		if err != nil {
+			return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		return []*models.User{}, int(total), nil
+	}
+	users, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Offset: startIndex - 1, PageSize: count})
+	if err != nil {
+		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return users, int(total), nil
 }
 
 // ListSCIMUsers returns users for a SCIM list, paging through all of them.

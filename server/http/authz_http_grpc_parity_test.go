@@ -48,8 +48,9 @@ func TestAuthzParity_HTTPvsGRPC_Secrets(t *testing.T) {
 
 	// Bootstrap seeds the admin, the standard roles (incl. "viewer" = secrets.read) +
 	// permissions, and project 1 with its environments.
+	c.SetBootstrapToken("test-bootstrap-token")
 	_, err = c.BootstrapSystem(ctx, &core.BootstrapRequest{
-		Username: "admin", Email: "admin@example.com", Password: "AdminPass123!",
+		Username: "admin", Email: "admin@example.com", Password: "Qr7#Kp2$Lm5@Vn9!", Token: "test-bootstrap-token",
 	})
 	require.NoError(t, err)
 	var admin models.User
@@ -59,12 +60,12 @@ func TestAuthzParity_HTTPvsGRPC_Secrets(t *testing.T) {
 	require.NoError(t, db.Create(&models.Environment{ID: 9, ProjectID: 2, Name: "prod"}).Error)
 
 	// A viewer (secrets.read) scoped to project 1 ONLY.
-	vu, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "viewer", Email: "viewer@example.com", Password: "ViewerPass123!"})
+	vu, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "viewer", Email: "viewer@example.com", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	var viewerRole models.Role
 	require.NoError(t, db.Where("name = ?", "viewer").First(&viewerRole).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: vu.ID, RoleID: viewerRole.ID, ProjectID: 1}).Error)
-	session, _, err := c.Login(ctx, &core.LoginRequest{Username: "viewer", Password: "ViewerPass123!"})
+	session, _, err := c.Login(ctx, &core.LoginRequest{Username: "viewer", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	token := session.SessionToken
 

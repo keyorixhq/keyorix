@@ -30,6 +30,9 @@ func TestMigrateUserToMachine(t *testing.T) {
 			return u.ID == 7 && u.AccountState == AccountSuspended
 		})).Return(&models.User{ID: 7, AccountState: AccountSuspended}, nil)
 		store.On("DeleteSessionsForUserExcept", ctx, uint(7), uint(0)).Return(nil)
+		// Suspension also evicts the user's cached session tokens and revokes their PATs.
+		store.On("ListSessionTokenHashesForUser", ctx, uint(7)).Return([]string{}, nil)
+		store.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(7)).Return([]string{}, nil)
 
 		seen := map[string]bool{}
 		store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {

@@ -18,7 +18,7 @@ const NotificationRotationDue = "rotation.reminder"
 // reminders don't pile up — once they read it (and the secret is still overdue) the
 // next run nudges them again. Returns the number of notifications created.
 func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) {
-	evals, err := c.EvaluateRotationPolicies(ctx, nil)
+	evals, err := c.EvaluateRotationPolicies(ctx, nil, nil)
 	if err != nil {
 		return 0, err
 	}

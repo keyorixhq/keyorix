@@ -9,7 +9,9 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -49,11 +51,83 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("evidencesink: webhook endpoint is required")
 	}
+	// Refuse a non-https (or internal-target) endpoint up front. Unlike the notification
+	// webhook, this path previously sent the bearer token + the FULL compliance evidence
+	// pack to whatever URL was configured — an http:// endpoint shipped both in cleartext
+	// on every POST, and refuseRedirect only guards bounces, not the initial request.
+	if err := validateEndpoint(cfg.Endpoint, cfg.InsecureSkipVerify); err != nil {
+		return nil, err
+	}
 	transport := &http.Transport{}
 	if cfg.InsecureSkipVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- opt-in for self-signed endpoints
 	}
-	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport}, baseBackoff: baseBackoff}, nil
+	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport, CheckRedirect: refuseRedirect}, baseBackoff: baseBackoff}, nil
+}
+
+// validateEndpoint rejects a non-https evidence endpoint (which would send the bearer
+// token and the full compliance pack in cleartext), allowing http only for an explicit
+// insecure opt-in or a loopback target. It also refuses a literal private/link-local IP
+// destination unless the insecure opt-in is set (SSRF/exfil hardening: an evidence pack
+// must not be POSTed to cloud metadata or an internal host).
+func validateEndpoint(raw string, allowInsecure bool) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("evidencesink: invalid endpoint %q: %w", raw, err)
+	}
+	switch u.Scheme {
+	case "https":
+		// scheme OK; fall through to the destination-IP check
+	case "http":
+		if !allowInsecure && !isLoopbackHost(u.Hostname()) {
+			return fmt.Errorf("evidencesink: endpoint %q must use https (set insecure_skip_verify only for a trusted self-signed or loopback target)", raw)
+		}
+	default:
+		return fmt.Errorf("evidencesink: endpoint %q must use https", raw)
+	}
+	if !allowInsecure && isDisallowedIPHost(u.Hostname()) {
+		return fmt.Errorf("evidencesink: endpoint %q targets a private/link-local address; refusing to send evidence to an internal host", raw)
+	}
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// isDisallowedIPHost reports whether host is a literal private or link-local IP (loopback
+// permitted). Hostnames are not resolved here, so this catches the literal-IP SSRF cases.
+func isDisallowedIPHost(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil || ip.IsLoopback() {
+		return false
+	}
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+}
+
+// refuseRedirect blocks a redirect to a different host or an https->http downgrade, so
+// a compromised/misconfigured receiver returning a 30x cannot bounce the bearer-token-
+// bearing evidence POST to an internal or cleartext target (SSRF / token exfil). The
+// Authorization header is stripped by Go on a cross-host redirect, but the evidence pack
+// itself (and a same-host downgrade) still warrant refusing the bounce outright.
+func refuseRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	prev := via[len(via)-1]
+	if req.URL.Host != prev.URL.Host {
+		return fmt.Errorf("evidencesink: refusing cross-host redirect to %q", req.URL.Host)
+	}
+	if prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("evidencesink: refusing https->%s redirect", req.URL.Scheme)
+	}
+	return nil
 }
 
 // ForwardEvidence POSTs the marshalled evidence pack as application/json. The pack's

@@ -97,10 +97,13 @@ func (s *ShareGRPCService) ListUserShares(ctx context.Context, req *pb.ListUserS
 	if err != nil {
 		return nil, err
 	}
-	// Self-scoped: returns only the caller's own shares, so a flat secrets.read
-	// check is sufficient (no cross-tenant access — see hasPermission's note).
-	if !hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions")
+	// Authorize through the scope/actor-aware primitive (global secrets.read), matching
+	// the HTTP GET /shares gate. A flat hasPermission check ignored a PAT's scope
+	// restriction, so a project-scoped (or non-read) token could list shares over gRPC
+	// while HTTP correctly denied it — the #53/#54-class transport divergence, also the
+	// IP-allowlist divergence ADR-066 closed.
+	if err := authorizeGlobal(ctx, s.core, user, "secrets.read"); err != nil {
+		return nil, err
 	}
 
 	shares, err := s.core.ListSharesByUser(ctx, user.UserID)
@@ -117,9 +120,11 @@ func (s *ShareGRPCService) ListSharedSecrets(ctx context.Context, req *pb.ListSh
 	if err != nil {
 		return nil, err
 	}
-	// Self-scoped (caller's own shared-with-me secrets) — flat check is sufficient.
-	if !hasPermission(user.Permissions, "secrets.read") {
-		return nil, status.Error(codes.PermissionDenied, "insufficient permissions")
+	// Authorize through the scope/actor-aware primitive (global secrets.read), matching
+	// the HTTP GET /shared-secrets gate — a flat check let a PAT exceed its scope
+	// restriction over gRPC (transport divergence; see ListUserShares).
+	if err := authorizeGlobal(ctx, s.core, user, "secrets.read"); err != nil {
+		return nil, err
 	}
 
 	secrets, err := s.core.ListSharedSecrets(ctx, user.UserID)

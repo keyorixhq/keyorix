@@ -164,6 +164,16 @@ func (rs *RemoteStorage) AuditEntryHashByID(_ context.Context, _ uint) (string, 
 	return "", false, fmt.Errorf("AuditEntryHashByID not available in remote mode")
 }
 
+// GetSystemMetadata is not available in remote mode; server-managed state is server-side.
+func (rs *RemoteStorage) GetSystemMetadata(_ context.Context, _ string) (string, bool, error) {
+	return "", false, fmt.Errorf("GetSystemMetadata not available in remote mode")
+}
+
+// SetSystemMetadata is not available in remote mode; server-managed state is server-side.
+func (rs *RemoteStorage) SetSystemMetadata(_ context.Context, _, _ string) error {
+	return fmt.Errorf("SetSystemMetadata not available in remote mode")
+}
+
 // CreateAnomalyAlert is not available in remote mode; anomaly detection is server-side.
 func (rs *RemoteStorage) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAlert) error {
 	return fmt.Errorf("CreateAnomalyAlert not available in remote mode")

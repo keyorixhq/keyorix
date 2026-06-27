@@ -26,6 +26,25 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// refuseRedirect blocks a redirect to a different host or an https->http downgrade.
+// The SIEM auth rides in custom headers (DD-API-KEY, Splunk token) that Go does NOT
+// strip on a cross-host redirect, so a compromised/misconfigured intake endpoint
+// returning a 30x could otherwise bounce the credential-bearing request to an
+// attacker-controlled or internal host (token exfil / SSRF).
+func refuseRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	prev := via[len(via)-1]
+	if req.URL.Host != prev.URL.Host {
+		return fmt.Errorf("siem: refusing cross-host redirect to %q", req.URL.Host)
+	}
+	if prev.URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("siem: refusing https->%s redirect", req.URL.Scheme)
+	}
+	return nil
+}
+
 // Provider identifies the destination SIEM format.
 type Provider string
 
@@ -42,6 +61,11 @@ type Config struct {
 	Endpoint           string // full destination URL (e.g. Splunk HEC collector URL)
 	Token              string // HEC token / DD-API-KEY / bearer token
 	InsecureSkipVerify bool   // skip TLS verification (self-signed SIEM endpoints)
+	// SpoolDir, when set, enables a durable on-disk backlog: an event that would
+	// otherwise be dropped (full queue) or fail after retries is persisted here and
+	// replayed until the SIEM accepts it, so a sustained outage no longer silently
+	// loses the off-box copy. Empty = best-effort only (the prior behaviour).
+	SpoolDir string
 }
 
 // queueSize bounds in-flight events; httpTimeout bounds a single delivery.
@@ -64,6 +88,7 @@ type Forwarder struct {
 	closing     chan struct{} // closed by Close to abort in-flight retry backoff
 	closeOnce   sync.Once
 	wg          sync.WaitGroup
+	spool       *spool // nil unless Config.SpoolDir is set
 
 	mu      sync.Mutex
 	dropped int64
@@ -97,10 +122,20 @@ func newForwarder(cfg Config, baseBackoff time.Duration) (*Forwarder, error) {
 	}
 	f := &Forwarder{
 		cfg:         cfg,
-		client:      &http.Client{Timeout: httpTimeout, Transport: transport},
+		client:      &http.Client{Timeout: httpTimeout, Transport: transport, CheckRedirect: refuseRedirect},
 		queue:       make(chan *models.AuditEvent, queueSize),
 		baseBackoff: baseBackoff,
 		closing:     make(chan struct{}),
+	}
+	if cfg.SpoolDir != "" {
+		sp, serr := newSpool(cfg.SpoolDir, defaultReplayInterval, func(ctx context.Context, e *models.AuditEvent) error {
+			_, err := f.send(ctx, e)
+			return err
+		})
+		if serr != nil {
+			return nil, serr
+		}
+		f.spool = sp
 	}
 	f.wg.Add(1)
 	go f.worker()
@@ -116,6 +151,12 @@ func (f *Forwarder) Forward(event *models.AuditEvent) {
 	select {
 	case f.queue <- event:
 	default:
+		// Queue full (a wedged/slow SIEM). Persist to the durable spool if configured so
+		// the event is replayed later; otherwise fall back to a counted, logged drop.
+		if f.spool != nil {
+			f.spool.add(event)
+			return
+		}
 		f.mu.Lock()
 		f.dropped++
 		dropped := f.dropped
@@ -146,6 +187,7 @@ func (f *Forwarder) Close() {
 		close(f.queue)
 	})
 	f.wg.Wait()
+	f.spool.close() // nil-safe; stops the replay loop
 }
 
 func (f *Forwarder) worker() {
@@ -169,6 +211,11 @@ func (f *Forwarder) deliver(event *models.AuditEvent) {
 		if !retryable || attempt >= maxAttempts {
 			siemForwards.WithLabelValues(outcomeFailed).Inc()
 			log.Printf("siem: failed to forward audit event %d after %d attempt(s): %v", event.ID, attempt, err)
+			// Persist to the durable spool (if configured) so the off-box copy survives
+			// a SIEM outage longer than the in-memory retry budget.
+			if f.spool != nil {
+				f.spool.add(event)
+			}
 			return
 		}
 		siemRetries.Inc()
@@ -177,6 +224,9 @@ func (f *Forwarder) deliver(event *models.AuditEvent) {
 		case <-f.closing:
 			siemForwards.WithLabelValues(outcomeFailed).Inc()
 			log.Printf("siem: forward of audit event %d abandoned on shutdown after %d attempt(s): %v", event.ID, attempt, err)
+			if f.spool != nil {
+				f.spool.add(event)
+			}
 			return
 		}
 		backoff *= 2
@@ -200,6 +250,11 @@ type eventPayload struct {
 	Impersonation  bool            `json:"impersonation,omitempty"`
 	ImpersonatedBy *uint           `json:"impersonated_by,omitempty"`
 	ActingAs       *uint           `json:"acting_as,omitempty"`
+	// Tamper-evidence chain links (ADR-029). Exporting them lets a downstream SIEM
+	// re-link the chain and detect a dropped/forged/reordered event — without them an
+	// export consumer cannot tell a gap (a lost event) from a contiguous stream.
+	EntryHash string `json:"entry_hash,omitempty"`
+	PrevHash  string `json:"prev_hash,omitempty"`
 }
 
 func toPayload(e *models.AuditEvent) eventPayload {
@@ -221,6 +276,8 @@ func toPayload(e *models.AuditEvent) eventPayload {
 		Impersonation:  e.Impersonation,
 		ImpersonatedBy: e.ImpersonatedBy,
 		ActingAs:       e.ActingAs,
+		EntryHash:      e.EntryHash,
+		PrevHash:       e.PrevHash,
 	}
 	if e.Diff != "" {
 		p.Diff = json.RawMessage(e.Diff)

@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -95,6 +96,16 @@ func main() {
 	// Setup graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Refuse (or loudly warn about) serving bearer tokens + secret values in cleartext.
+	if err := checkTransportTLSPosture(cfg); err != nil {
+		log.Fatalf("transport security: %v", err)
+	}
+
+	// Refuse (or warn) when key material on disk is readable beyond its owner.
+	if err := enforceKeyFilePermissions(cfg); err != nil {
+		log.Fatalf("key file security: %v", err)
+	}
 
 	var wg sync.WaitGroup
 
@@ -236,6 +247,32 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("RBAC permission reconciliation: %v (continuing)", err)
 	}
 
+	// Wire the bootstrap token that gates POST /system/init. Prefer an operator-set
+	// KEYORIX_BOOTSTRAP_TOKEN (for automation); otherwise generate one and, while the
+	// install is still empty, log it so the operator can complete first-boot init. This
+	// closes the unauthenticated, first-caller-wins admin-claim race on a fresh, reachable
+	// instance.
+	bootstrapToken := strings.TrimSpace(os.Getenv("KEYORIX_BOOTSTRAP_TOKEN"))
+	bootstrapTokenGenerated := false
+	if bootstrapToken == "" {
+		if t, gerr := core.GenerateBootstrapToken(); gerr == nil {
+			bootstrapToken, bootstrapTokenGenerated = t, true
+		} else {
+			log.Printf("failed to generate a bootstrap token: %v (API system-init will be disabled)", gerr)
+		}
+	}
+	coreService.SetBootstrapToken(bootstrapToken)
+	// Let core token-revocation paths (e.g. revoking PATs on a password change) evict the
+	// HTTP auth cache immediately, rather than waiting out the positive-cache TTL.
+	coreService.SetTokenCacheInvalidator(middleware.InvalidateTokenCacheByHash)
+	if needs, berr := coreService.SystemNeedsBootstrap(context.Background()); berr == nil && needs && bootstrapToken != "" {
+		if bootstrapTokenGenerated {
+			log.Printf("system not initialised — run `keyorix system init` with this one-time bootstrap token (set KEYORIX_BOOTSTRAP_TOKEN to pin your own):\n    BOOTSTRAP TOKEN: %s", bootstrapToken)
+		} else {
+			log.Printf("system not initialised — run `keyorix system init` with the configured KEYORIX_BOOTSTRAP_TOKEN")
+		}
+	}
+
 	if encSvc != nil {
 		// Wire the initialised encryption service for reversibly-encrypted auth
 		// secrets (the TOTP MFA secret, which cannot be hashed).
@@ -245,6 +282,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		// when encryption is off (no DEK).
 		if key, keyVer, ok := encSvc.AuditCheckpointKey(); ok {
 			coreService.SetAuditCheckpointKey(key, keyVer)
+			// Restore the in-memory anti-rollback watermark from the persisted high-water
+			// mark so a process restart cannot reset it to zero (ADR-029).
+			coreService.SeedAuditWatermark(context.Background())
 		}
 		// Derive the evidence-pack signing key from the DEK so scheduled evidence
 		// exports are signed (and verifiable). Unavailable when encryption is off.
@@ -316,9 +356,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("Secret-name policy enabled (pattern=%q, max_length=%d)", snp.Pattern, snp.MaxLength)
 	}
 
-	// Apply per-account login lockout if enabled (brute-force protection, distinct
-	// from the per-IP rate limiter).
-	if ll := cfg.Security.LoginLockout; ll.Enabled {
+	// Apply per-account login lockout (brute-force protection, distinct from and
+	// complementary to the per-IP rate limiter, which distributed guessing can evade).
+	// Enabled BY DEFAULT — a secrets-manager login must resist online guessing out of
+	// the box; set login_lockout.disabled to opt out.
+	if ll := cfg.Security.LoginLockout; !ll.Disabled {
 		coreService.SetLoginLockoutPolicy(core.LoginLockoutPolicy{
 			Enabled:      true,
 			MaxAttempts:  ll.GetMaxAttempts(),
@@ -328,6 +370,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		})
 		log.Printf("Per-account login lockout enabled (max_attempts=%d, window=%s, base_cooldown=%s, max_cooldown=%s)",
 			ll.GetMaxAttempts(), ll.GetWindow(), ll.GetBaseCooldown(), ll.GetMaxCooldown())
+	} else {
+		log.Printf("WARNING: per-account login lockout is DISABLED — only the per-IP rate limiter throttles password guessing, which distributed/botnet guessing against a single account can evade")
 	}
 
 	// Wire native SIEM audit forwarding if configured. New returns (nil, nil)
@@ -339,6 +383,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			Endpoint:           sc.Endpoint,
 			Token:              sc.GetToken(),
 			InsecureSkipVerify: sc.InsecureSkipVerify,
+			SpoolDir:           sc.SpoolDir,
 		})
 		if ferr != nil {
 			return nil, nil, fmt.Errorf("failed to init SIEM audit forwarder: %w", ferr)
@@ -356,6 +401,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			Endpoint:           wc.Endpoint,
 			Token:              wc.GetToken(),
 			InsecureSkipVerify: wc.InsecureSkipVerify,
+			SigningSecret:      wc.GetSigningSecret(),
 		})
 		if werr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification webhook channel: %w", werr)
@@ -749,6 +795,9 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		}
 		alertsEnabled := cfg.AnomalyAlerts.Enabled
 		interval := cfg.AnomalyAlerts.GetInterval()
+		// Scan a window at least as long as the cadence, so a longer schedule doesn't
+		// leave the time between passes unexamined (floored at 1h inside SetLookback).
+		detector.SetLookback(interval)
 		if alertsEnabled {
 			log.Printf("Anomaly alerting enabled: scan + alert every %s", interval)
 		}
@@ -1037,30 +1086,34 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	// Start the audit-checkpoint scheduler (ADR-029) — opt-in. Periodically signs
-	// the verified audit-chain head so tail-truncation / genesis re-seed becomes
-	// detectable on-box. HA-gated so one replica writes per tick. Requires
-	// encryption (the signing key is DEK-derived); skipped with a warning if not.
-	if cfg.AuditCheckpoints.Enabled {
-		if !coreService.AuditCheckpointsAvailable() {
-			log.Printf("Audit-checkpoint scheduler requested but encryption is disabled (no signing key); skipping")
-		} else {
-			interval := cfg.AuditCheckpoints.GetInterval()
-			log.Printf("Audit-checkpoint scheduler enabled: every %s", interval)
-			runScheduler(ctx, "audit_checkpoint", interval, func() middleware.SchedulerOutcome {
-				return lockedRun(ctx, coreService.Storage(), schedLockAuditCkpt, "Audit-checkpoint", func() error {
-					cp, written, werr := coreService.WriteAuditCheckpoint(ctx)
-					if werr != nil {
-						log.Printf("Audit-checkpoint error: %v", werr)
-						return werr
-					}
-					if written {
-						log.Printf("Audit checkpoint written: #%d head=%d events=%d", cp.ID, cp.HeadID, cp.ChainedEvents)
-					}
-					return nil
-				})
+	// Start the audit-checkpoint scheduler (ADR-029). Periodically signs the verified
+	// audit-chain head so tampering, tail-truncation, and genesis re-seed are
+	// detectable. This is the trail's FORGERY-RESISTANCE layer: the per-row hash chain
+	// is unkeyed, so a database-write attacker could otherwise edit/delete/reorder rows
+	// and recompute a self-consistent chain undetected. It is therefore enabled BY
+	// DEFAULT whenever a signing key is available (the key is DEK-derived → encryption
+	// must be configured). HA-gated so one replica writes per tick.
+	switch {
+	case cfg.AuditCheckpoints.Disabled:
+		log.Printf("WARNING: audit-checkpoint forgery-resistance is explicitly DISABLED; the audit trail is tamper-evident but a database-write attacker can recompute the hash chain undetected")
+	case !coreService.AuditCheckpointsAvailable():
+		log.Printf("WARNING: audit checkpointing is UNAVAILABLE (encryption/signing key not configured) — the audit trail is tamper-EVIDENT only, NOT forgery-resistant: a database-write attacker can edit/delete/reorder audit rows and recompute the chain. Enable encryption to activate forgery resistance.")
+	default:
+		interval := cfg.AuditCheckpoints.GetInterval()
+		log.Printf("Audit-checkpoint scheduler enabled (forgery resistance active): every %s", interval)
+		runScheduler(ctx, "audit_checkpoint", interval, func() middleware.SchedulerOutcome {
+			return lockedRun(ctx, coreService.Storage(), schedLockAuditCkpt, "Audit-checkpoint", func() error {
+				cp, written, werr := coreService.WriteAuditCheckpoint(ctx)
+				if werr != nil {
+					log.Printf("Audit-checkpoint error: %v", werr)
+					return werr
+				}
+				if written {
+					log.Printf("Audit checkpoint written: #%d head=%d events=%d", cp.ID, cp.HeadID, cp.ChainedEvents)
+				}
+				return nil
 			})
-		}
+		})
 	}
 
 	// Start the JIT access-expiry sweeper — opt-in. Removes time-bound role grants
@@ -1124,13 +1177,13 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		})
 	}
 
-	// Prune expired login-attempt records hourly (ADR-040). Single-replica-gated;
-	// always on (the limiter table needs bounded growth regardless of the purge
-	// scheduler). Rows past the rate-limit window are never read again.
-	runScheduler(ctx, "login_attempt_prune", 1*time.Hour, func() middleware.SchedulerOutcome {
-		if legalHoldBlocks("Login-attempt prune") {
-			return middleware.SchedulerSkipped
-		}
+	// Prune expired login-attempt records every 15 minutes (ADR-040). Single-replica-
+	// gated and ALWAYS run — login_attempts are ephemeral rate-limit data (never legal
+	// evidence), so this is deliberately NOT subject to legalHoldBlocks: a long-running
+	// legal hold must not stop the prune, or the table grows unbounded (an attacker
+	// failing logins from rotating IPs would exhaust disk). The rate-limit window is
+	// 15 minutes, so a 15-minute cadence keeps the table at roughly one window of rows.
+	runScheduler(ctx, "login_attempt_prune", 15*time.Minute, func() middleware.SchedulerOutcome {
 		return lockedRun(ctx, coreService.Storage(), schedLockLoginPrune, "Login-attempt prune", func() error {
 			_, perr := coreService.PruneLoginAttempts(ctx)
 			return perr
@@ -1200,6 +1253,88 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 
 	log.Println("Shutting down HTTP server...")
 	return server.Shutdown(shutdownCtx)
+}
+
+// checkTransportTLSPosture guards against silently serving credentials/secret values in
+// cleartext. For each enabled listener without TLS it either fails closed (when
+// security.require_transport_tls is set) or logs a prominent warning. It also warns when
+// the allowed_ciphers / protocol_versions tuning is set, since those fields are not
+// currently honored (the suite list + TLS 1.2 minimum are fixed) and would otherwise give
+// a false sense of control.
+func checkTransportTLSPosture(cfg *config.Config) error {
+	require := cfg.Security.RequireTransportTLS
+	check := func(name string, inst config.ServerInstanceConfig) error {
+		if !inst.Enabled {
+			return nil
+		}
+		// The tuning fields are not wired into the TLS builders — warn whenever they are
+		// set (TLS on or off) so an operator isn't misled into thinking they took effect.
+		if len(inst.TLS.AllowedCiphers) > 0 || len(inst.ProtocolVersions) > 0 {
+			log.Printf("WARNING: %s tls.allowed_ciphers / protocol_versions are set but NOT honored — the cipher suite list and TLS 1.2 minimum are fixed in code.", name)
+		}
+		if inst.TLS.Enabled {
+			return nil
+		}
+		if require {
+			return fmt.Errorf("%s listener has no TLS but security.require_transport_tls is set: refusing to serve credentials/secrets in cleartext (enable tls or front it with a TLS-terminating proxy and unset the requirement)", name)
+		}
+		log.Printf("WARNING: %s listener is serving CLEARTEXT (no TLS) — bearer tokens and secret values are unencrypted. Front it with a TLS-terminating proxy, enable tls, or set security.require_transport_tls to fail closed.", name)
+		return nil
+	}
+	if err := check("HTTP", cfg.Server.HTTP); err != nil {
+		return err
+	}
+	return check("gRPC", cfg.Server.GRPC)
+}
+
+// enforceKeyFilePermissions refuses to start (or, by default, loudly warns) when sensitive
+// key material on disk — the wrapped DEK, the KEK salt, and TLS private keys — is readable
+// by group or other. Key writes are already 0600, but a file restored from a backup with a
+// bad umask, or one left 0644 by an operator, would otherwise expose the wrapped DEK / TLS
+// key to any local user with no signal. Fails closed only when
+// security.enable_file_permission_check is set (and not overridden by
+// allow_unsafe_file_permissions); otherwise it warns. A not-yet-created key file (first
+// boot) is skipped — it is created at 0600.
+func enforceKeyFilePermissions(cfg *config.Config) error {
+	resolve := func(p string) string {
+		if p == "" || filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Join(".", p)
+	}
+	var paths []string
+	if cfg.Storage.Encryption.Enabled {
+		paths = append(paths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
+	}
+	if cfg.Server.HTTP.TLS.Enabled {
+		paths = append(paths, cfg.Server.HTTP.TLS.KeyFile)
+	}
+	if cfg.Server.GRPC.TLS.Enabled {
+		paths = append(paths, cfg.Server.GRPC.TLS.KeyFile)
+	}
+
+	var insecure []string
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			continue // absent (e.g. created at 0600 on first boot) — nothing to check yet
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			insecure = append(insecure, fmt.Sprintf("%s (mode %o)", p, info.Mode().Perm()))
+		}
+	}
+	if len(insecure) == 0 {
+		return nil
+	}
+	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(insecure, ", "))
+	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
+		return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.allow_unsafe_file_permissions to override)", msg)
+	}
+	log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
+	return nil
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config) error {
@@ -1275,16 +1410,37 @@ func resolveOutboundIP() string {
 
 // oidcDiscovery is the subset of an OIDC discovery document we need.
 type oidcDiscovery struct {
+	Issuer                string `json:"issuer"`
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 	TokenEndpoint         string `json:"token_endpoint"`
 	JWKSURI               string `json:"jwks_uri"`
 }
 
-// discoverOIDC fetches an issuer's /.well-known/openid-configuration.
+// maxDiscoveryBytes caps the discovery document we read into memory.
+const maxDiscoveryBytes = 1 << 20 // 1 MiB
+
+// discoverOIDC fetches an issuer's /.well-known/openid-configuration and validates
+// it. The issuer must use https (http only for loopback) so the document — which
+// names the jwks_uri that ultimately supplies the token-signing keys — is not
+// fetched over plaintext where a MITM could redirect key fetching to attacker keys.
+// Per the OIDC spec the document's own issuer must equal the configured issuer, and
+// the jwks_uri it advertises must live on the issuer's host, so a tampered/hostile
+// discovery doc can't point key fetching at an unrelated host.
 func discoverOIDC(issuer string) (*oidcDiscovery, error) {
+	iss, err := url.Parse(strings.TrimRight(issuer, "/"))
+	if err != nil || iss.Host == "" {
+		return nil, fmt.Errorf("invalid issuer %q", issuer)
+	}
+	if err := requireSecureOrLoopback(iss, "issuer"); err != nil {
+		return nil, err
+	}
+
 	u := strings.TrimRight(issuer, "/") + "/.well-known/openid-configuration"
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(u) // #nosec G107 -- issuer is operator-configured, not user input
+	client := &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: noDiscoveryCrossOriginRedirect,
+	}
+	resp, err := client.Get(u) // #nosec G107 -- issuer is operator-configured and https-validated above
 	if err != nil {
 		return nil, err
 	}
@@ -1293,13 +1449,60 @@ func discoverOIDC(issuer string) (*oidcDiscovery, error) {
 		return nil, fmt.Errorf("discovery returned %s", resp.Status)
 	}
 	var d oidcDiscovery
-	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiscoveryBytes)).Decode(&d); err != nil {
 		return nil, err
 	}
 	if d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" || d.JWKSURI == "" {
 		return nil, fmt.Errorf("discovery document is missing required endpoints")
 	}
+	if d.Issuer != "" && strings.TrimRight(d.Issuer, "/") != strings.TrimRight(issuer, "/") {
+		return nil, fmt.Errorf("discovery issuer %q does not match configured issuer %q", d.Issuer, issuer)
+	}
+	jwksURL, err := url.Parse(d.JWKSURI)
+	if err != nil || jwksURL.Host == "" {
+		return nil, fmt.Errorf("discovery jwks_uri %q is invalid", d.JWKSURI)
+	}
+	if !strings.EqualFold(jwksURL.Hostname(), iss.Hostname()) {
+		return nil, fmt.Errorf("discovery jwks_uri host %q does not match issuer host %q", jwksURL.Hostname(), iss.Hostname())
+	}
 	return &d, nil
+}
+
+// requireSecureOrLoopback rejects a non-https URL unless its host is loopback.
+func requireSecureOrLoopback(u *url.URL, label string) error {
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" && isLoopbackHostname(u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("%s %q must use https (http is allowed only for localhost)", label, u.Redacted())
+}
+
+func isLoopbackHostname(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// noDiscoveryCrossOriginRedirect rejects a discovery redirect that changes host or
+// downgrades the scheme, so a redirect can't pull the document from an unexpected host.
+func noDiscoveryCrossOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	prev := via[len(via)-1].URL
+	if !strings.EqualFold(req.URL.Hostname(), prev.Hostname()) {
+		return fmt.Errorf("discovery: refusing cross-host redirect to %q", req.URL.Host)
+	}
+	if prev.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("discovery: refusing scheme downgrade to %q", req.URL.Scheme)
+	}
+	return nil
 }
 
 // ssoCompleteURL derives the SPA completion URL (<redirect origin>/auth/sso/complete)

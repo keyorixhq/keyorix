@@ -16,7 +16,7 @@ import (
 
 // newRenderFixture builds an in-memory core with a project, a "production"
 // environment, and a secret "db-password"=s3cr3t owned by user 1.
-func newRenderFixture(t *testing.T) (*KeyorixCore, uint) {
+func newRenderFixture(t *testing.T) (*KeyorixCore, *gorm.DB, uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 
@@ -27,7 +27,7 @@ func newRenderFixture(t *testing.T) (*KeyorixCore, uint) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
-		&models.Project{}, &models.Environment{},
+		&models.Project{}, &models.Environment{}, &models.SecretAccessLog{}, &models.AuditEvent{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@test.com"}).Error)
 
@@ -48,41 +48,63 @@ func newRenderFixture(t *testing.T) (*KeyorixCore, uint) {
 		SecretNodeID: secret.ID, VersionNumber: 1, EncryptedValue: []byte("s3cr3t"),
 	})
 	require.NoError(t, err)
-	return c, proj.ID
+	return c, db, proj.ID
 }
 
 func TestRenderSecretTemplate(t *testing.T) {
 	ctx := context.Background()
-	c, projectID := newRenderFixture(t)
+	c, _, projectID := newRenderFixture(t)
 
 	t.Run("expands a known reference", func(t *testing.T) {
-		out, err := c.RenderSecretTemplate(ctx, "DB=${secret:production/db-password}", projectID, 1)
+		out, err := c.RenderSecretTemplate(ctx, "DB=${secret:production/db-password}", projectID, 1, "owner", "10.0.0.1", "ua")
 		require.NoError(t, err)
 		assert.Equal(t, "DB=s3cr3t", out)
 	})
 
 	t.Run("unknown environment fails", func(t *testing.T) {
-		_, err := c.RenderSecretTemplate(ctx, "${secret:staging/db-password}", projectID, 1)
+		_, err := c.RenderSecretTemplate(ctx, "${secret:staging/db-password}", projectID, 1, "owner", "10.0.0.1", "ua")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "environment")
 	})
 
 	t.Run("unknown secret fails", func(t *testing.T) {
-		_, err := c.RenderSecretTemplate(ctx, "${secret:production/nope}", projectID, 1)
+		_, err := c.RenderSecretTemplate(ctx, "${secret:production/nope}", projectID, 1, "owner", "10.0.0.1", "ua")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("non-reader cannot resolve", func(t *testing.T) {
 		// User 2 owns nothing and has no share → the per-secret read check denies.
-		_, err := c.RenderSecretTemplate(ctx, "${secret:production/db-password}", projectID, 2)
+		_, err := c.RenderSecretTemplate(ctx, "${secret:production/db-password}", projectID, 2, "owner", "10.0.0.1", "ua")
 		require.Error(t, err)
 	})
 
 	t.Run("requires project + user", func(t *testing.T) {
-		_, err := c.RenderSecretTemplate(ctx, "x", 0, 1)
+		_, err := c.RenderSecretTemplate(ctx, "x", 0, 1, "owner", "10.0.0.1", "ua")
 		require.Error(t, err)
-		_, err = c.RenderSecretTemplate(ctx, "x", projectID, 0)
+		_, err = c.RenderSecretTemplate(ctx, "x", projectID, 0, "owner", "10.0.0.1", "ua")
 		require.Error(t, err)
 	})
+}
+
+// A render records a secret read (access log) for each resolved reference, so a bulk
+// render can't be a covert exfiltration channel invisible to the audit trail and the
+// anomaly detector (which feeds on SecretAccessLog).
+func TestRenderSecretTemplate_RecordsReads(t *testing.T) {
+	ctx := context.Background()
+	c, db, projectID := newRenderFixture(t)
+
+	_, err := c.RenderSecretTemplate(ctx, "DB=${secret:production/db-password}", projectID, 1, "owner", "10.0.0.1", "ua")
+	require.NoError(t, err)
+
+	// The read is logged in a detached goroutine — poll briefly for the access-log row.
+	var n int64
+	for i := 0; i < 200; i++ {
+		require.NoError(t, db.Model(&models.SecretAccessLog{}).Where("accessed_by = ?", "owner").Count(&n).Error)
+		if n > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	assert.Positive(t, n, "a resolved render reference must produce a secret access-log row")
 }

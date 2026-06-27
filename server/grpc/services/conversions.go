@@ -30,20 +30,6 @@ func requireUser(ctx context.Context) (*interceptors.UserContext, error) {
 	return user, nil
 }
 
-// hasPermission reports flat membership in the caller's permission union. Use it
-// ONLY for self-scoped reads (a caller listing their OWN shares), where the result
-// set is already filtered to the caller and no cross-tenant access is possible. For
-// anything that reads or mutates another tenant's / global state, use
-// authorizeScoped / authorizeGlobal instead (see the bug-class note below).
-func hasPermission(permissions []string, required string) bool {
-	for _, p := range permissions {
-		if p == required {
-			return true
-		}
-	}
-	return false
-}
-
 // authorizeScoped enforces perm at the given scope via core.Authorize — the same
 // scope-aware path HTTP uses. This is the ONLY authorization primitive the services
 // use: an earlier flat `hasPermission(user.Permissions, …)` check treated a

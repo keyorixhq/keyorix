@@ -43,6 +43,38 @@ func TestAlertNewAnomalies(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
+// Acknowledging (dismissing) an anomaly alert flips its flag, records WHO dismissed it
+// on the audit trail (so the dismissal can't quietly bury an alert), and reports a
+// missing alert id as not-found rather than a silent success.
+func TestAcknowledgeAnomalyAlert_AuditsAndChecksExistence(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.AnomalyAlert{}, &models.AuditEvent{}))
+	ctx := context.Background()
+
+	alert := models.AnomalyAlert{
+		SecretNodeID: 500, SecretName: "db-pw", AlertType: "new_ip", Severity: "high",
+		Description: "access from a new IP", AccessedBy: "mallory", IPAddress: "203.0.113.9",
+		DetectedAt: time.Now(),
+	}
+	require.NoError(t, h.DB.Create(&alert).Error)
+
+	// Acknowledge as user 7 → flag set + an audit event attributing the dismissal.
+	require.NoError(t, h.CoreService.AcknowledgeAnomalyAlert(ctx, 7, alert.ID))
+
+	var got models.AnomalyAlert
+	require.NoError(t, h.DB.First(&got, alert.ID).Error)
+	assert.True(t, got.Acknowledged, "the alert is marked acknowledged")
+
+	var ev models.AuditEvent
+	require.NoError(t, h.DB.Where("event_type = ?", core.EventAnomalyAcknowledged).First(&ev).Error)
+	require.NotNil(t, ev.UserID)
+	assert.Equal(t, uint(7), *ev.UserID, "the dismissal is attributed to the acting operator")
+
+	// A non-existent alert id is reported as an error, not a silent success.
+	require.Error(t, h.CoreService.AcknowledgeAnomalyAlert(ctx, 7, 999999))
+}
+
 // A secret read recorded through the real production logging path
 // (LogSecretReadWithProject → writeAccessLog → CreateSecretAccessLog) must be
 // visible to anomaly detection. Both the HTTP reveal handler and the gRPC

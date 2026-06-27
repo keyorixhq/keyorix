@@ -13,9 +13,21 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// Kubernetes object-name constraints. A namespace is an RFC1123 DNS label; a Secret
+// name is an RFC1123 DNS subdomain. Validating these before they reach the API path
+// keeps a malformed (or hostile) config mapping from targeting an unintended object.
+var (
+	dns1123Label     = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+	dns1123Subdomain = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+)
+
+func isDNS1123Label(s string) bool     { return len(s) <= 63 && dns1123Label.MatchString(s) }
+func isDNS1123Subdomain(s string) bool { return len(s) <= 253 && dns1123Subdomain.MatchString(s) }
 
 // SecretMapping maps one Keyorix secret reference to a key inside a target
 // Kubernetes Secret. Several mappings may target the same Secret with different keys.
@@ -270,6 +282,10 @@ func validateMapping(m SecretMapping) error {
 		return fmt.Errorf("name is required")
 	case strings.TrimSpace(m.Key) == "":
 		return fmt.Errorf("key is required")
+	case !isDNS1123Label(m.Namespace):
+		return fmt.Errorf("namespace %q is not a valid RFC1123 label", m.Namespace)
+	case !isDNS1123Subdomain(m.Name):
+		return fmt.Errorf("name %q is not a valid Kubernetes Secret name (RFC1123 subdomain)", m.Name)
 	}
 	return nil
 }

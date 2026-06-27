@@ -101,6 +101,72 @@ func TestRestoreProject_DoesNotResurrectIndependentlyDeletedSecret(t *testing.T)
 	assert.True(t, stillDeleted.DeletedAt.Valid, "retired secret remains soft-deleted")
 }
 
+// An individual environment or secret must NOT be restorable while its parent project
+// is still soft-deleted — otherwise a holder of a still-extant project-scoped grant (a
+// soft-deleted project does not revoke its role grants) could resurrect a live, readable
+// scope under a project an admin deleted to revoke access.
+func TestRestoreChild_RefusedWhileParentProjectDeleted(t *testing.T) {
+	ctx := context.Background()
+	ls := newRestoreTestStore(t)
+
+	proj, err := ls.CreateProject(ctx, &models.Project{Name: "app"})
+	require.NoError(t, err)
+	env, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: proj.ID})
+	require.NoError(t, err)
+	sec, err := ls.CreateSecret(ctx, &models.SecretNode{ProjectID: proj.ID, EnvironmentID: env.ID, Name: "db-pw", IsSecret: true, Type: "text", Status: "active"})
+	require.NoError(t, err)
+
+	// Soft-delete the whole project (cascades to env + secret).
+	require.NoError(t, ls.DeleteProject(ctx, proj.ID))
+
+	// Individually restoring the secret is refused — the parent project is deleted.
+	err = ls.RestoreSecret(ctx, sec.ID)
+	require.Error(t, err, "a secret must not be restorable under a soft-deleted project")
+	assert.Contains(t, err.Error(), "parent project is deleted")
+
+	// Likewise the environment.
+	err = ls.RestoreEnvironment(ctx, proj.ID, env.ID)
+	require.Error(t, err, "an environment must not be restorable under a soft-deleted project")
+	assert.Contains(t, err.Error(), "parent project is deleted")
+
+	// The secret stays in the recycle bin (still soft-deleted, not readable).
+	_, err = ls.GetSecret(ctx, sec.ID)
+	require.Error(t, err)
+
+	// Restoring the project first (cascade) brings the children back — the supported path.
+	require.NoError(t, ls.RestoreProject(ctx, proj.ID))
+	_, err = ls.GetSecret(ctx, sec.ID)
+	require.NoError(t, err, "after the project is restored, its cascade-deleted secret is live again")
+}
+
+// A secret whose parent ENVIRONMENT is still soft-deleted (but project live) is also
+// refused, so a child can never outlive a deleted parent scope.
+func TestRestoreSecret_RefusedWhileParentEnvironmentDeleted(t *testing.T) {
+	ctx := context.Background()
+	ls := newRestoreTestStore(t)
+
+	proj, err := ls.CreateProject(ctx, &models.Project{Name: "app"})
+	require.NoError(t, err)
+	env, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: proj.ID})
+	require.NoError(t, err)
+	sec, err := ls.CreateSecret(ctx, &models.SecretNode{ProjectID: proj.ID, EnvironmentID: env.ID, Name: "db-pw", IsSecret: true, Type: "text", Status: "active"})
+	require.NoError(t, err)
+
+	// Delete the secret, then the environment (project stays live).
+	require.NoError(t, ls.DeleteSecret(ctx, sec.ID))
+	require.NoError(t, ls.DeleteEnvironment(ctx, env.ID))
+
+	err = ls.RestoreSecret(ctx, sec.ID)
+	require.Error(t, err, "a secret must not be restorable under a soft-deleted environment")
+	assert.Contains(t, err.Error(), "parent environment is deleted")
+
+	// With the environment restored, the secret can be restored.
+	require.NoError(t, ls.RestoreEnvironment(ctx, proj.ID, env.ID))
+	require.NoError(t, ls.RestoreSecret(ctx, sec.ID))
+	_, err = ls.GetSecret(ctx, sec.ID)
+	require.NoError(t, err)
+}
+
 func TestRestoreProjectNotDeleted(t *testing.T) {
 	ctx := context.Background()
 	ls := newRestoreTestStore(t)

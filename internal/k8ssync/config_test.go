@@ -73,6 +73,11 @@ interval: "soon"
 mappings:
   - {ref: e/n, namespace: ns, name: s, key: K}
 `,
+		"cleartext url": `
+keyorix_url: http://keyorix.internal
+mappings:
+  - {ref: e/n, namespace: ns, name: s, key: K}
+`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {

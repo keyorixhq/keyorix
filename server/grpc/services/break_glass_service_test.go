@@ -22,6 +22,10 @@ func newBreakGlassService(t *testing.T) *BreakGlassGRPCService {
 	require.NoError(t, h.DB.AutoMigrate(&models.BreakGlassActivation{}, &models.AuditEvent{}))
 	// user 1 = super_admin (global), so the scoped roles.read/roles.assign checks pass.
 	h.AssignUserRole(t, 1, 1, nil)
+	// Break-glass eligibility now requires a PROJECT-scoped membership (a global role no
+	// longer counts), so give user 1 a project-scoped role on project 1.
+	proj := uint(1)
+	h.AssignUserRole(t, 1, 4, &proj) // viewer at project 1
 	// Configure self-service emergency access with an emergency role that exists.
 	h.CreateTestRole(t, "emergency", "break-glass role", 90)
 	h.CoreService.SetBreakGlassPolicy(core.BreakGlassPolicy{

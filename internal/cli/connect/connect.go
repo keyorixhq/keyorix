@@ -6,11 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"syscall"
 	"time"
 
 	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // ConnectCmd represents the connect command
@@ -36,12 +42,15 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
-	// Add flags for connect command
-	ConnectCmd.Flags().String("api-key", "", "API key for authentication")
-	ConnectCmd.Flags().String("username", "", "Username for authentication (obtains token automatically)")
-	ConnectCmd.Flags().String("password", "", "Password for authentication (obtains token automatically)")
+	// Add flags for connect command. Secrets default to the secure path (env var /
+	// interactive no-echo prompt); passing them as literal flags is insecure (visible
+	// via ps and saved in shell history) and warned about at runtime.
+	ConnectCmd.Flags().String("api-key", "", "API key (INSECURE on the command line — prefer KEYORIX_API_KEY env var)")
+	ConnectCmd.Flags().String("username", "", "Username for authentication (prompts for the password, or reads KEYORIX_PASSWORD)")
+	ConnectCmd.Flags().String("password", "", "Password (INSECURE on the command line — omit to be prompted, or set KEYORIX_PASSWORD)")
 	ConnectCmd.Flags().String("timeout", "30s", "Request timeout")
 	ConnectCmd.Flags().Bool("test", true, "Test connection before saving")
+	ConnectCmd.Flags().Bool("insecure", false, "Allow a non-HTTPS (cleartext) endpoint — credentials and tokens would be sent unencrypted")
 
 	// Add subcommands
 	ConnectCmd.AddCommand(disconnectCmd)
@@ -50,11 +59,20 @@ func init() {
 
 func runConnect(cmd *cobra.Command, args []string) error {
 	endpoint := args[0]
-	apiKey, _ := cmd.Flags().GetString("api-key")
 	username, _ := cmd.Flags().GetString("username")
-	password, _ := cmd.Flags().GetString("password")
 	timeoutStr, _ := cmd.Flags().GetString("timeout")
 	testConnection, _ := cmd.Flags().GetBool("test")
+
+	// Resolve the API key without ever requiring it on the command line.
+	apiKey := resolveAPIKey(cmd)
+
+	// Refuse to send credentials/tokens over a cleartext (non-HTTPS) endpoint, where a
+	// network attacker could capture them, unless --insecure is explicitly given (and a
+	// loopback target, used for local testing, is always allowed).
+	insecure, _ := cmd.Flags().GetBool("insecure")
+	if err := requireSecureEndpoint(endpoint, insecure); err != nil {
+		return err
+	}
 
 	// Parse timeout
 	timeout, err := time.ParseDuration(timeoutStr)
@@ -64,8 +82,16 @@ func runConnect(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("🔗 Connecting to %s...\n", endpoint)
 
-	// If username/password provided, log in and get token
-	if username != "" && password != "" {
+	// If a username is provided, log in for a token — resolving the password securely
+	// (interactive no-echo prompt or KEYORIX_PASSWORD), never requiring it on argv.
+	if username != "" {
+		password, perr := resolveConnectPassword(cmd, username)
+		if perr != nil {
+			return perr
+		}
+		if password == "" {
+			return fmt.Errorf("a password is required to log in as %s", username)
+		}
 		fmt.Printf("🔑 Logging in as %s...\n", username)
 		token, err := loginWithCredentials(endpoint, username, password, timeout)
 		if err != nil {
@@ -102,10 +128,76 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	fmt.Printf("🌐 CLI is now in client mode\n")
 
 	if apiKey == "" {
-		fmt.Printf("💡 Tip: Use --api-key flag if the server requires authentication\n")
+		fmt.Printf("💡 Tip: set KEYORIX_API_KEY (preferred over --api-key, which leaks via ps/history)\n")
 	}
 
 	return nil
+}
+
+// requireSecureEndpoint rejects a non-HTTPS endpoint (over which the password/token
+// would travel in cleartext, MITM-capturable) unless the caller opted in with --insecure.
+// A loopback target is always allowed (local development). An https endpoint is fine.
+func requireSecureEndpoint(endpoint string, insecure bool) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid endpoint %q: %w", endpoint, err)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if isLoopbackHost(u.Hostname()) {
+		return nil
+	}
+	if insecure {
+		fmt.Fprintf(os.Stderr, "⚠️  Connecting to %q over cleartext (%s) — credentials and tokens are sent UNENCRYPTED.\n", endpoint, u.Scheme)
+		return nil
+	}
+	return fmt.Errorf("refusing to connect to a non-HTTPS endpoint %q: credentials/tokens would be sent in cleartext. Use an https:// URL, or pass --insecure to override (not recommended)", endpoint)
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if strings.HasPrefix(host, "127.") || host == "::1" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// resolveAPIKey returns the API key from the (insecure, warned) --api-key flag if set,
+// else from the KEYORIX_API_KEY env var. A literal flag value is visible via ps and the
+// shell history, so its use is flagged.
+func resolveAPIKey(cmd *cobra.Command) string {
+	if k, _ := cmd.Flags().GetString("api-key"); k != "" {
+		fmt.Fprintln(os.Stderr, "⚠️  Passing --api-key on the command line is insecure (visible via ps/proc and saved in shell history); prefer the KEYORIX_API_KEY environment variable.")
+		return k
+	}
+	return os.Getenv("KEYORIX_API_KEY")
+}
+
+// resolveConnectPassword obtains the login password without ever requiring it on argv:
+// the (insecure, warned) --password flag if set, else KEYORIX_PASSWORD, else an
+// interactive no-echo prompt (mirroring `keyorix auth login`).
+func resolveConnectPassword(cmd *cobra.Command, username string) (string, error) {
+	if pw, _ := cmd.Flags().GetString("password"); pw != "" {
+		fmt.Fprintln(os.Stderr, "⚠️  Passing --password on the command line is insecure (visible via ps/proc and saved in shell history); omit it to be prompted, or set KEYORIX_PASSWORD.")
+		return pw, nil
+	}
+	if pw := os.Getenv("KEYORIX_PASSWORD"); pw != "" {
+		return pw, nil
+	}
+	fmt.Fprintf(os.Stderr, "Password for %s: ", username)
+	b, err := term.ReadPassword(int(syscall.Stdin))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("failed to read password: %w", err)
+	}
+	return string(b), nil
 }
 
 func runDisconnect(cmd *cobra.Command, args []string) error {

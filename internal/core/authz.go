@@ -133,6 +133,18 @@ type Scope = storage.Scope
 // expected to be assigned at a project scope (bypasses within that project).
 var adminRoleNames = []string{"super_admin", "admin", "system_admin", "project_admin"}
 
+// isAdminRoleName reports whether roleName is one of the admin (permission-bypass)
+// roles — a pure-string check requiring no storage lookup, for guards that already
+// hold the role name.
+func isAdminRoleName(roleName string) bool {
+	for _, n := range adminRoleNames {
+		if n == roleName {
+			return true
+		}
+	}
+	return false
+}
+
 // AuthorizePrincipal reports whether a principal — a human user or a machine
 // identity (ADR-030) — may exercise permission against the target scope. It is
 // the actor-aware entrypoint the auth gates use; Authorize is the user-only
@@ -173,6 +185,24 @@ func (c *KeyorixCore) Authorize(ctx context.Context, userID uint, permission str
 	if !patRestrictionFromContext(ctx).Allows(permission, scope) {
 		return false, nil
 	}
+	roleIDs, err := c.scopedRoleIDs(ctx, userID, scope)
+	if err != nil {
+		return false, err
+	}
+	if len(roleIDs) == 0 {
+		return false, nil
+	}
+	if c.roleSetContainsAdmin(ctx, roleIDs) {
+		return true, nil
+	}
+	return c.storage.RoleSetHasPermission(ctx, roleIDs, permission)
+}
+
+// principalHasScopedPermission reports whether userID's OWN roles grant permission at
+// scope, independent of any PAT restriction on the context (which belongs to the
+// requesting actor, not this user). Use it to vet a THIRD party — e.g. a prospective
+// secret owner — without the caller's token narrowing the result. Fails closed.
+func (c *KeyorixCore) principalHasScopedPermission(ctx context.Context, userID uint, permission string, scope Scope) (bool, error) {
 	roleIDs, err := c.scopedRoleIDs(ctx, userID, scope)
 	if err != nil {
 		return false, err

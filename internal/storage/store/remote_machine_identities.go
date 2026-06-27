@@ -28,6 +28,10 @@ func (rs *RemoteStorage) ListMachineIdentities(_ context.Context, _ uint) ([]*mo
 	return nil, remoteUnsupported("ListMachineIdentities")
 }
 
+func (rs *RemoteStorage) ListAllMachineIdentities(_ context.Context) ([]*models.MachineIdentity, error) {
+	return nil, remoteUnsupported("ListAllMachineIdentities")
+}
+
 func (rs *RemoteStorage) CountMachineIdentitiesByClassification(_ context.Context) (map[string]int, error) {
 	return nil, remoteUnsupported("CountMachineIdentitiesByClassification")
 }

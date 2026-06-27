@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -75,6 +76,7 @@ type initSystemRequestBody struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name"`
+	Token       string `json:"bootstrap_token"`
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -530,14 +532,35 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The bootstrap token authorizes the first-admin claim. Accept it from a header
+	// (preferred) or the request body so the CLI and automation can supply it.
+	token := r.Header.Get("X-Keyorix-Bootstrap-Token")
+	if token == "" {
+		token = body.Token
+	}
 	result, err := h.coreService.BootstrapSystem(r.Context(), &core.BootstrapRequest{
 		Username:    body.Username,
 		Email:       body.Email,
 		Password:    body.Password,
 		DisplayName: body.DisplayName,
+		Token:       token,
 	})
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		// A bad/missing token or a weak password is a client error, not a 500.
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "bootstrap token") || strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
+			status = http.StatusForbidden
+		}
+		sendError(w, "Error", err.Error(), status, nil)
+		return
+	}
+
+	// On an already-initialized system this endpoint is reachable UNAUTHENTICATED (the
+	// bootstrap token only gates the create path). Returning the admin's username/email
+	// and the project/environment topology here would be a pre-auth identity/topology
+	// oracle, so the idempotent response carries only the initialized flag.
+	if result.AlreadyInitialized {
+		sendSuccess(w, map[string]interface{}{"already_initialized": true}, "System already initialised")
 		return
 	}
 
@@ -561,11 +584,7 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		resp["project"] = result.Project.Name
 	}
 
-	msg := "System initialised successfully"
-	if result.AlreadyInitialized {
-		msg = "System already initialised"
-	}
-	sendSuccess(w, resp, msg)
+	sendSuccess(w, resp, "System initialised successfully")
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

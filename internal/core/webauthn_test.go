@@ -206,6 +206,29 @@ func TestWebAuthn_FinishLoginRejectsSuspendedAccount(t *testing.T) {
 	assert.Contains(t, err.Error(), "not active")
 }
 
+// A per-account lockout (e.g. from password brute force) also bars the WebAuthn second
+// factor: the gate fires before the assertion is validated, so a locked account is
+// refused even with an otherwise-valid ceremony. Parity with the TOTP path.
+func TestWebAuthn_FinishLoginHonorsAccountLockout(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	// The account is locked (e.g. via the password path).
+	until := c.now().Add(30 * time.Minute)
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("login_locked_until", until).Error)
+
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: "x"})
+	require.NoError(t, err)
+
+	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "ua", "1.2.3.4", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "locked")
+}
+
 func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()

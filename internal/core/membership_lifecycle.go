@@ -103,6 +103,20 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	if _, err := c.storage.GetRoleByName(ctx, role); err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
+	// The parent project must be live. GetProject is soft-delete-scoped, so this refuses
+	// onboarding into a soft-deleted project — otherwise accepting an invitation that was
+	// outstanding when the project was deleted would re-establish a membership/role grant
+	// that silently resurrects on a later RestoreProject (the restore-into-deleted-parent
+	// class). It also covers the per-assignment grants applied at invite-accept.
+	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("project %d not found or deleted", projectID)
+	}
+	// Escalation-by-proxy guard: onboarding a member as an admin role requires the
+	// inviter to hold admin authority at the project (parallel to the access-request
+	// approval ceiling). idpResolved invites still pass through here.
+	if err := c.requireAuthorityForRole(ctx, invitedBy, projectID, role); err != nil {
+		return nil, err
+	}
 	// One active onboarding per (project, user).
 	if existing, err := c.storage.GetActiveProjectMembership(ctx, projectID, userID); err == nil && existing != nil {
 		return nil, fmt.Errorf("user already has a %s membership in this project", existing.State)
@@ -172,6 +186,15 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	}
 	if !canTransition(m.State, to) {
 		return nil, fmt.Errorf("cannot transition membership from %s to %s", m.State, to)
+	}
+	// Activating a membership grants its role, so the same escalation-by-proxy ceiling
+	// applies: the actor must hold admin authority at the project to activate a membership
+	// carrying an admin role. (Revocation/other transitions remove or don't grant, so
+	// they're unaffected.)
+	if to == MembershipActive {
+		if err := c.requireAuthorityForRole(ctx, actorID, m.ProjectID, m.Role); err != nil {
+			return nil, err
+		}
 	}
 
 	now := c.now()

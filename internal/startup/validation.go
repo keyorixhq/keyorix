@@ -44,7 +44,7 @@ func ValidateStartup(configPath string) (*ValidationResult, error) {
 	result.ConfigValid = true
 
 	if cfg.Security.EnableFilePermissionCheck {
-		if err := validateFilePermissions(cfg, result); err != nil {
+		if err := validateFilePermissions(cfg, configPath, result); err != nil {
 			if !cfg.Security.AllowUnsafeFilePermissions {
 				return result, fmt.Errorf("file permission validation failed: %w", err)
 			}
@@ -77,13 +77,15 @@ func ValidateStartup(configPath string) (*ValidationResult, error) {
 	return result, nil
 }
 
-func validateFilePermissions(cfg *config.Config, result *ValidationResult) error {
+func validateFilePermissions(cfg *config.Config, configPath string, result *ValidationResult) error {
 	var files []securefiles.FilePermSpec
 
-	files = append(files, securefiles.FilePermSpec{
-		Path: filepath.Clean("keyorix.yaml"),
-		Mode: 0600,
-	})
+	// Check the config file that was actually loaded, not a hardcoded "keyorix.yaml":
+	// the loader resolves KEYORIX_CONFIG_PATH / an absolute path, so a fixed relative
+	// name would silently stat a non-existent file and pass. Skip only when truly unknown.
+	if cfgFile := strings.TrimSpace(configPath); cfgFile != "" {
+		files = append(files, securefiles.FilePermSpec{Path: filepath.Clean(cfgFile), Mode: 0600})
+	}
 
 	if cfg.Storage.Encryption.Enabled {
 		// The KEK is passphrase-derived and never on disk (ADR-004); the salt and

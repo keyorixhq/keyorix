@@ -126,21 +126,74 @@ func (c *KeyorixCore) refreshCertNotAfterCache(ctx context.Context, secret *mode
 	}
 }
 
-// parseLeafCertificate extracts the first X.509 certificate from a value that may be
+// maxCertBlocks bounds how many CERTIFICATE blocks we parse from a single value, so a
+// pathological PEM (the body is already capped at MaxBodyBytes) can't burn CPU.
+const maxCertBlocks = 64
+
+// parseLeafCertificate extracts the leaf X.509 certificate from a value that may be
 // PEM (one or more blocks, possibly alongside a private key) or raw DER. Only
 // CERTIFICATE blocks are considered — a PRIVATE KEY block is never parsed or returned.
+//
+// It does NOT trust block order. PEM chains are routinely stored leaf-last (a CA
+// bundle, or a root/intermediate pasted ahead of the serving cert), so returning the
+// FIRST block would let a long-lived CA's NotAfter mask a short-lived leaf and
+// silently defeat the ADR-055/056 expiry monitor; an unparseable first block would
+// likewise hide a valid leaf behind it. Instead it parses every CERTIFICATE block,
+// skips the ones that don't parse, and selects the leaf via selectLeafCertificate.
 func parseLeafCertificate(value []byte) (*x509.Certificate, error) {
+	var certs []*x509.Certificate
 	rest := value
-	for {
+	sawPEMBlock := false
+	for len(certs) < maxCertBlocks {
 		block, remainder := pem.Decode(rest)
 		if block == nil {
 			break
 		}
-		if block.Type == "CERTIFICATE" {
-			return x509.ParseCertificate(block.Bytes)
-		}
+		sawPEMBlock = true
 		rest = remainder
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		// Skip an unparseable CERTIFICATE block rather than aborting — a corrupt block
+		// must not hide a valid (possibly soon-expiring) leaf elsewhere in the value.
+		if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+			certs = append(certs, cert)
+		}
 	}
-	// Not PEM (or no CERTIFICATE block) — try raw DER.
-	return x509.ParseCertificate(value)
+	if !sawPEMBlock {
+		// Not PEM — try raw DER (a single certificate).
+		return x509.ParseCertificate(value)
+	}
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("no parseable X.509 certificate found")
+	}
+	return selectLeafCertificate(certs), nil
+}
+
+// selectLeafCertificate picks the certificate the expiry/hygiene control should key
+// off: the soonest-expiring END-ENTITY (non-CA) certificate, so a chain that stores a
+// long-lived CA/intermediate ahead of a short-lived leaf can't hide the leaf's
+// expiry. Falls back to the soonest-expiring certificate overall when every block is a
+// CA. Order-independent by construction.
+func selectLeafCertificate(certs []*x509.Certificate) *x509.Certificate {
+	var chosen *x509.Certificate
+	for _, cert := range certs {
+		if cert.IsCA {
+			continue
+		}
+		if chosen == nil || cert.NotAfter.Before(chosen.NotAfter) {
+			chosen = cert
+		}
+	}
+	if chosen != nil {
+		return chosen
+	}
+	// All blocks are CAs — still pick the soonest-expiring so the control fails safe.
+	chosen = certs[0]
+	for _, cert := range certs[1:] {
+		if cert.NotAfter.Before(chosen.NotAfter) {
+			chosen = cert
+		}
+	}
+	return chosen
 }

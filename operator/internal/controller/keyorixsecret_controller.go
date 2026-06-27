@@ -8,7 +8,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -33,9 +35,40 @@ const (
 type KeyorixSecretReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	// AllowedServers is the set of trusted Keyorix base URLs (scheme://host) the operator
+	// will send tokens to. A CR's spec.server MUST match one of these. Without it the
+	// operator is a confused deputy: it holds cluster-wide Secret read and would ship a
+	// CR-named Secret's value (the "token") to a CR-chosen server — letting a tenant who
+	// can only create a CR exfiltrate any namespace Secret to an attacker. Empty = reject
+	// every CR (fail closed); configured at startup from --allowed-servers.
+	AllowedServers []string
 	// newClient builds a value fetcher for a server/token; nil uses the real HTTP client.
 	// Overridden in tests.
 	newClient func(server, token string) valueFetcher
+}
+
+// validateServer rejects a CR-supplied server that is not https or not in the operator's
+// configured allow-list. This is the control that stops the confused-deputy exfiltration:
+// the token (a possibly-arbitrary namespace Secret value) only ever travels to a trusted,
+// TLS-protected destination the operator was explicitly configured to trust.
+func (r *KeyorixSecretReconciler) validateServer(server string) error {
+	u, err := url.Parse(server)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid server URL %q", server)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("refusing server %q: only https is allowed (the bearer token must not travel in cleartext)", server)
+	}
+	if len(r.AllowedServers) == 0 {
+		return fmt.Errorf("refusing CR-specified server %q: the operator has no allowed-servers configured and will not send a token to an arbitrary destination — set --allowed-servers to the trusted Keyorix URL(s)", server)
+	}
+	target := u.Scheme + "://" + u.Host
+	for _, a := range r.AllowedServers {
+		if au, perr := url.Parse(strings.TrimRight(strings.TrimSpace(a), "/")); perr == nil && au.Scheme+"://"+au.Host == target {
+			return nil
+		}
+	}
+	return fmt.Errorf("server %q is not in the operator's allowed-servers list", server)
 }
 
 // valueFetcher is the slice of the Keyorix client the reconciler needs (a seam for tests).
@@ -90,6 +123,11 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // Secret's data. Any failure fails the whole reconcile so a Secret is never written with
 // a partially-fetched set of keys.
 func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret) (map[string][]byte, error) {
+	// Validate the destination BEFORE reading the token Secret, so a CR pointing at an
+	// untrusted server can't even cause the operator to read (let alone transmit) a Secret.
+	if err := r.validateServer(ks.Spec.Server); err != nil {
+		return nil, err
+	}
 	tokenKey := ks.Spec.TokenSecretRef.Key
 	if tokenKey == "" {
 		tokenKey = "token"
@@ -132,15 +170,35 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		secretType = corev1.SecretTypeOpaque
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
+		// Refuse to adopt-and-overwrite a pre-existing Secret we don't manage. A non-empty
+		// ResourceVersion means the object already existed; without a managed-by guard,
+		// SetControllerReference would adopt an UNOWNED Secret (e.g. one created manually
+		// or by Helm) and replace its data — letting a CR author clobber another workload's
+		// same-named Secret. A Secret we created carries the managed-by label and is
+		// allowed through.
+		if secret.ResourceVersion != "" && secret.Labels[managedByLabel] != managedByValue {
+			return fmt.Errorf("refusing to overwrite existing unmanaged Secret %s/%s", ks.Namespace, name)
+		}
 		if err := controllerutil.SetControllerReference(ks, secret, r.Scheme); err != nil {
 			return err
 		}
+		if secret.Labels == nil {
+			secret.Labels = map[string]string{}
+		}
+		secret.Labels[managedByLabel] = managedByValue
 		secret.Type = secretType
 		secret.Data = data // operator owns the whole data set; removed keys are pruned
 		return nil
 	})
 	return err
 }
+
+// managedByLabel/managedByValue mark a Secret as owned by this operator, so it won't
+// adopt or overwrite a Secret it didn't create.
+const (
+	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByValue = "keyorix-operator"
+)
 
 // fail records a SyncError on the Ready condition and requeues with backoff.
 func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {

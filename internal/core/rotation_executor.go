@@ -174,7 +174,7 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 		if !policy.IsActive {
 			continue
 		}
-		secrets, err := c.scopedPolicySecrets(ctx, policy)
+		secrets, err := c.scopedPolicySecrets(ctx, policy, nil)
 		if err != nil {
 			continue
 		}

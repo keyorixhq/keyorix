@@ -224,9 +224,44 @@ func (ls *LocalStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, sc
 	return ids, nil
 }
 
-// ListProjectMembers returns the users holding a role at the project's scope
-// (project_id = projectID, environment_id = 0 — project-level membership per
-// ADR-021). Soft-deleted users are excluded.
+// IsProjectMember reports whether the user holds a LIVE role grant scoped to the
+// project itself (project_id = projectID), directly or via a group. A global/install-
+// wide role (project_id = 0) does NOT count — break-glass and similar controls must
+// distinguish a project member from any user who merely holds the install baseline.
+func (ls *LocalStorage) IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error) {
+	if projectID == 0 {
+		return false, nil
+	}
+	now := time.Now()
+	var direct int64
+	if err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
+		Where("user_id = ? AND project_id = ?", userID, projectID).
+		Where("expires_at IS NULL OR expires_at > ?", now).
+		Count(&direct).Error; err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if direct > 0 {
+		return true, nil
+	}
+	var viaGroup int64
+	if err := ls.db.WithContext(ctx).Table("group_roles").
+		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Where("user_groups.user_id = ? AND group_roles.project_id = ?", userID, projectID).
+		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", now).
+		Count(&viaGroup).Error; err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return viaGroup > 0, nil
+}
+
+// ListProjectMembers returns the users holding a LIVE role at the project's scope
+// (project_id = projectID, environment_id = 0 — project-level membership per ADR-021).
+// Soft-deleted users AND expired time-bound grants are excluded — the same expires_at
+// filter every authorization query applies, so a lapsed (but not-yet-swept) grant (e.g.
+// an expired break-glass project_admin) confers neither access NOR membership/notification
+// eligibility. Without it, sensitive approver notifications would keep reaching a user
+// whose grant has already lapsed.
 func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) ([]storage.ProjectMember, error) {
 	var members []storage.ProjectMember
 	err := ls.db.WithContext(ctx).Table("user_roles ur").
@@ -234,6 +269,7 @@ func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) 
 		Joins("JOIN users u ON u.id = ur.user_id").
 		Joins("JOIN roles r ON r.id = ur.role_id").
 		Where("ur.project_id = ? AND ur.environment_id = 0", projectID).
+		Where("ur.expires_at IS NULL OR ur.expires_at > ?", time.Now()).
 		Where("u.deleted_at IS NULL").
 		Order("u.username").
 		Scan(&members).Error

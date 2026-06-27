@@ -116,6 +116,12 @@ func (es *EncryptionService) Decrypt(encryptedData *EncryptedData) ([]byte, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode nonce: %w", err)
 	}
+	// gcm.Open PANICS on a wrong-length nonce rather than returning an error. The nonce
+	// comes from stored metadata, so a corrupt/tampered row would otherwise crash the
+	// request goroutine (caught by recovery middleware as a 500); guard it as an error.
+	if len(nonce) != es.gcm.NonceSize() {
+		return nil, fmt.Errorf("invalid nonce length %d", len(nonce))
+	}
 
 	plaintext, err := es.gcm.Open(nil, nonce, encryptedData.Data, nil)
 	if err != nil {
@@ -168,6 +174,10 @@ func (es *EncryptionService) DecryptWithAAD(encryptedData *EncryptedData, aad []
 	nonce, err := base64.StdEncoding.DecodeString(encryptedData.Metadata.Nonce)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode nonce: %w", err)
+	}
+	// gcm.Open panics on a wrong-length nonce; treat a corrupt stored nonce as an error.
+	if len(nonce) != es.gcm.NonceSize() {
+		return nil, fmt.Errorf("invalid nonce length %d", len(nonce))
 	}
 
 	plaintext, err := es.gcm.Open(nil, nonce, encryptedData.Data, aad)

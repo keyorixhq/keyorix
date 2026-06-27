@@ -221,11 +221,15 @@ type AccessReviewItem struct {
 }
 
 type User struct {
-	ID           uint   `gorm:"primaryKey"`
-	Username     string `gorm:"uniqueIndex;not null"`
+	ID uint `gorm:"primaryKey"`
+	// Username uniqueness is enforced by a PARTIAL unique index (username WHERE
+	// deleted_at IS NULL), created in migrateDatabase — not the plain `uniqueIndex`
+	// tag — so a soft-deleted (e.g. SCIM-deprovisioned) user's username is freed for
+	// reuse on re-provisioning while the old row stays restorable for audit.
+	Username     string `gorm:"not null"`
 	Email        string
 	DisplayName  string
-	PasswordHash string `json:"-"`
+	PasswordHash string     `json:"-"`
 	IsActive     bool       `gorm:"default:true"`
 	LastLoginAt  *time.Time // stamped on each successful auth.login; nil = never logged in
 	// PasswordChangedAt is when the current password was set. Drives max-age
@@ -268,7 +272,11 @@ type MFASecret struct {
 	SecretEnc  []byte `json:"-"` // encrypted TOTP secret (passthrough plaintext when encryption is disabled)
 	SecretMeta []byte `json:"-"` // encryption metadata (key version etc.)
 	Activated  bool   `gorm:"default:false"`
-	CreatedAt  time.Time
+	// LastUsedStep is the TOTP time-step (unix/period) of the most recently accepted
+	// login code. A code at or below it is a replay within its validity window and is
+	// rejected (anti-replay). nil on legacy rows = no code accepted yet.
+	LastUsedStep *int64 `json:"-"`
+	CreatedAt    time.Time
 }
 
 // MFARecoveryCode is a single-use backup code (SHA-256 hashed). UsedAt is stamped
@@ -298,9 +306,13 @@ type MFAChallenge struct {
 // the limit holds in HA. Rows past the window are pruned by a maintenance sweep
 // and are never read after that. The composite index serves the windowed count.
 type LoginAttempt struct {
-	ID          uint      `gorm:"primaryKey"`
-	IP          string    `gorm:"index:idx_login_attempt_ip_time,priority:1"`
-	AttemptedAt time.Time `gorm:"index:idx_login_attempt_ip_time,priority:2"`
+	ID uint   `gorm:"primaryKey"`
+	IP string `gorm:"index:idx_login_attempt_ip_time,priority:1"`
+	// AttemptedAt carries two indexes: the composite (ip, attempted_at) serves the
+	// per-IP windowed count, and a standalone index serves the prune's
+	// `WHERE attempted_at < ?` (the composite's leading ip column can't), keeping the
+	// hourly cleanup an index range delete rather than a full-table scan.
+	AttemptedAt time.Time `gorm:"index:idx_login_attempt_ip_time,priority:2;index:idx_login_attempt_time"`
 }
 
 // WebAuthnCredential is a registered passkey / FIDO2 authenticator (ADR-036).
@@ -338,8 +350,8 @@ type WebAuthnSession struct {
 // forbid reuse of the last N passwords (ADR-025 history_count). Only bcrypt
 // hashes are stored — never plaintext.
 type PasswordHistory struct {
-	ID           uint `gorm:"primaryKey"`
-	UserID       uint `gorm:"index"`
+	ID           uint   `gorm:"primaryKey"`
+	UserID       uint   `gorm:"index"`
 	PasswordHash string `json:"-"`
 	CreatedAt    time.Time
 }
@@ -534,6 +546,10 @@ type DynamicSecretConfig struct {
 	// MaxTTLSeconds caps the lifetime of any lease from this config (issue + all
 	// renewals), regardless of the TTL a caller requests. 0 = no ceiling.
 	MaxTTLSeconds int
+	// MaxActiveLeases caps how many leases from this config may be active at once, so a
+	// caller can't mint unbounded real DB roles/users (resource exhaustion on the target).
+	// 0 = no ceiling.
+	MaxActiveLeases int
 	// Classification is the data-sensitivity label of the credentials this config
 	// mints (ISO 27001 A.5.12/A.5.13): "" = unclassified, else one of
 	// public|internal|confidential|restricted. Folds into the classification posture
@@ -587,9 +603,9 @@ type SecretMetadataHistory struct {
 type Session struct {
 	ID                    uint `gorm:"primaryKey"`
 	UserID                uint
-	SessionToken          string `gorm:"unique" json:"-"` // SHA-256 hash of the session token (never plaintext)
-	EncryptedSessionToken []byte `json:"-"`
-	SessionTokenMetadata  JSON   `json:"-"`
+	SessionToken          string     `gorm:"unique" json:"-"` // SHA-256 hash of the session token (never plaintext)
+	EncryptedSessionToken []byte     `json:"-"`
+	SessionTokenMetadata  JSON       `json:"-"`
 	UserAgent             string     // captured at login, for the My Account "active sessions" view
 	IPAddress             string     // captured at login
 	LastSeenAt            *time.Time // throttled — updated at most once per validTokenTTL on the auth slow path
@@ -830,7 +846,7 @@ type APIToken struct {
 	ClientID       uint
 	UserID         *uint
 	Token          string `gorm:"unique" json:"-"` // SHA-256 hash of the token (never plaintext); the token is shown once at creation
-	EncryptedToken []byte `json:"-"` // legacy/unused encrypt-at-rest column; creation now hashes into Token
+	EncryptedToken []byte `json:"-"`               // legacy/unused encrypt-at-rest column; creation now hashes into Token
 	TokenMetadata  JSON   `json:"-"`
 	Scope          string
 	Revoked        bool

@@ -38,15 +38,27 @@ type LoginRequest struct {
 	IPAddress string
 }
 
+// dummyBcryptHash is a fixed bcrypt hash (DefaultCost) used to equalize the timing of
+// the user-not-found login path with the wrong-password path, so /auth/login can't be
+// used as a username-existence oracle. Computed once at package load.
+var dummyBcryptHash, _ = bcrypt.GenerateFromPassword([]byte("keyorix-login-timing-equalizer"), bcrypt.DefaultCost)
+
 // Login validates credentials, creates a session, and returns (session, user, error).
 func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
 	user, err := c.storage.GetUserByUsername(ctx, req.Username)
 	if err != nil {
+		// Spend an equivalent bcrypt comparison so a missing username doesn't return
+		// faster than a wrong password (account-enumeration timing side-channel).
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(req.Password))
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
-	// Per-account lockout gate: while locked, refuse regardless of the password (and
-	// before spending a bcrypt comparison), so repeated guessing can't progress.
+	// Per-account lockout gate: while locked, refuse regardless of the password, so
+	// repeated guessing can't progress. Spend an equivalent bcrypt comparison first so the
+	// locked path's latency matches the unknown-user and wrong-password paths — otherwise a
+	// fast (no-bcrypt) response on a locked account is a username-existence oracle (the
+	// attacker first forces the lockout, then probes by timing).
 	if c.loginLocked(user) {
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(req.Password))
 		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
@@ -116,8 +128,15 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
+	// Bound concurrent sessions per user so unbounded logins can't grow the table or
+	// enlarge the credential-theft blast radius. Best-effort — never fail a login on it.
+	_ = c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
 	return created, nil
 }
+
+// maxSessionsPerUser caps a user's concurrent sessions; the oldest beyond this are
+// reaped on each new login (see EnforceSessionLimit).
+const maxSessionsPerUser = 25
 
 // RecordLogin stamps the user's last_login_at to the current time. Best-effort:
 // the login handler calls this in a goroutine after a successful authentication,
@@ -151,6 +170,15 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		// Past the hard ceiling — re-authentication required, not another refresh.
 		_ = c.storage.DeleteSession(ctx, old.ID)
 		return nil, fmt.Errorf("session lifetime exceeded; re-authentication required")
+	}
+	// An impersonation session must not be refreshable. /auth/refresh is public (any
+	// bearer token), and refresh rebuilds the session without the impersonation fields —
+	// so refreshing an impersonation token would mint a fresh, full-TTL session for the
+	// target with the impersonated_by attribution stripped, laundering a bounded, audited
+	// support session into unbounded, unattributed account access. The admin keeps their
+	// own session and swaps back via "Return to Admin".
+	if old.ImpersonatedBy != nil {
+		return nil, fmt.Errorf("impersonation sessions cannot be refreshed")
 	}
 	// Re-check account state before rotating the token. ValidateSessionToken applies
 	// this gate on every request, but refresh is a distinct, unauthenticated-by-token
@@ -267,6 +295,12 @@ func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) er
 	}
 	// Never send a reset to a login-blocked (e.g. suspended) account.
 	if AccountLoginBlocked(user.AccountState) {
+		return nil
+	}
+	// Refuse for externally-managed identities (SSO/SCIM): issuing a local password
+	// would create a backdoor that authenticates at /auth/login and bypasses the IdP's
+	// MFA / conditional access / deprovisioning. Swallowed to stay enumeration-safe.
+	if user.ExternalID != "" {
 		return nil
 	}
 	// Throttle abusive repeats to a victim address (same control as resend). A

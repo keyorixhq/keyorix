@@ -56,15 +56,55 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 		return err
 	}
 
-	// Drop other sessions. Best-effort: the password change itself has succeeded.
+	// Drop OTHER sessions and evict them from the auth cache, so a thief holding a
+	// stolen session is locked out immediately on the next request — not after the
+	// cache TTL. Best-effort: the password change itself has succeeded.
 	var keepID uint
+	var keepHash string
 	if keepSessionToken != "" {
 		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
 			keepID = s.ID
+			keepHash = s.SessionToken
 		}
 	}
-	_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
+	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	return nil
+}
+
+// SetTokenCacheInvalidator wires the HTTP auth-cache eviction function (by token hash)
+// so core token-revocation paths can evict immediately. Called once at startup.
+func (c *KeyorixCore) SetTokenCacheInvalidator(fn func(hash string)) {
+	c.tokenCacheInvalidator = fn
+}
+
+// invalidateTokenCache evicts the given token hashes from the auth cache when an
+// invalidator is wired (a no-op otherwise — e.g. tests, where the cache doesn't exist).
+func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
+	if c.tokenCacheInvalidator == nil {
+		return
+	}
+	for _, h := range hashes {
+		if h != "" {
+			c.tokenCacheInvalidator(h)
+		}
+	}
+}
+
+// deleteSessionsForUserAndEvict deletes all of the user's sessions except keepID and
+// evicts the deleted sessions from the HTTP auth cache, so a revoked session stops
+// authenticating on the very NEXT request rather than lingering for the positive-cache
+// TTL. The stored session_token IS the SHA-256 cache key. keepHash (the kept session's
+// stored hash, or "") is never evicted, so the caller's own session is not disturbed.
+// Best-effort: the session deletion is the durable control; eviction is the immediacy.
+func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID, keepID uint, keepHash string) error {
+	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+	err := c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
+	for _, h := range hashes {
+		if h != "" && h != keepHash {
+			c.invalidateTokenCache(h)
+		}
+	}
+	return err
 }
 
 // validateNewPassword checks a candidate password against the configured policy and
@@ -105,6 +145,14 @@ func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, n
 	if c.passwordPolicy.HistoryCount > 0 {
 		_ = c.storage.AddPasswordHistory(ctx, user.ID, string(hash), now)
 		_ = c.storage.PrunePasswordHistory(ctx, user.ID, c.passwordPolicy.HistoryCount)
+	}
+
+	// Revoke the user's PATs too. A credential change must invalidate EVERY bearer class,
+	// not just sessions — otherwise a thief who minted a (possibly non-expiring) PAT from a
+	// stolen session survives the victim's reset. Best-effort; evict each from the auth
+	// cache immediately so a revoked PAT can't keep authenticating for the cache TTL.
+	if hashes, herr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, user.ID); herr == nil {
+		c.invalidateTokenCache(hashes...)
 	}
 	return nil
 }
@@ -182,5 +230,11 @@ func (c *KeyorixCore) RevokeOwnSession(ctx context.Context, userID, sessionID ui
 	if err != nil || session.UserID != userID {
 		return fmt.Errorf("%s: session not found", i18n.T("ErrorNotFound", nil))
 	}
-	return c.storage.DeleteSession(ctx, sessionID)
+	if err := c.storage.DeleteSession(ctx, sessionID); err != nil {
+		return err
+	}
+	// Evict the revoked session from the auth cache so the device is logged out on its
+	// next request, not after the positive-cache TTL. session_token is the cache key.
+	c.invalidateTokenCache(session.SessionToken)
+	return nil
 }

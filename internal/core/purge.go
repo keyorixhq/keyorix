@@ -28,6 +28,15 @@ func (r PurgeResult) Total() int64 {
 // it emits one system-actored `data.purged` audit event with the counts. Errors on
 // individual entities are collected but do not abort the others.
 func (c *KeyorixCore) PurgeExpiredSoftDeletes(ctx context.Context, before time.Time) (*PurgeResult, error) {
+	// Re-check the legal hold HERE — inside the purge, under the scheduler lock and
+	// immediately before the deletes — not only in the scheduler closure before the lock
+	// is taken. Otherwise a hold placed after the pre-lock check (PlaceLegalHold doesn't
+	// take the lock) would not stop an in-flight purge from hard-deleting records that are
+	// now under hold (irreversible spoliation, ISO A.5.34). Fails SAFE: an unconfirmable
+	// hold status aborts the purge.
+	if err := c.legalHoldGuard(ctx); err != nil {
+		return &PurgeResult{}, err
+	}
 	res := &PurgeResult{}
 	var firstErr error
 	record := func(n int64, err error) int64 {

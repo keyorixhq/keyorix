@@ -941,6 +941,11 @@ func (m *MockStorage) GetUserRoleIDsExact(ctx context.Context, userID uint, scop
 	return args.Get(0).([]uint), args.Error(1)
 }
 
+func (m *MockStorage) IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error) {
+	args := m.Called(ctx, userID, projectID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	args := m.Called(ctx, userID, scope)
 	if args.Get(0) == nil {
@@ -1042,6 +1047,16 @@ func (m *MockStorage) AuditEntryHashByID(ctx context.Context, id uint) (string, 
 	return args.String(0), args.Bool(1), args.Error(2)
 }
 
+func (m *MockStorage) GetSystemMetadata(ctx context.Context, key string) (string, bool, error) {
+	args := m.Called(ctx, key)
+	return args.String(0), args.Bool(1), args.Error(2)
+}
+
+func (m *MockStorage) SetSystemMetadata(ctx context.Context, key, value string) error {
+	args := m.Called(ctx, key, value)
+	return args.Error(0)
+}
+
 func (m *MockStorage) UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]storage.UnusedSecretStat, error) {
 	args := m.Called(ctx, projectID, notReadSince)
 	if args.Get(0) == nil {
@@ -1141,9 +1156,19 @@ func (m *MockStorage) ListSessionsByUser(ctx context.Context, userID uint) ([]*m
 	return args.Get(0).([]*models.Session), args.Error(1)
 }
 
+func (m *MockStorage) EnforceSessionLimit(_ context.Context, _ uint, _ int) error { return nil }
+
 func (m *MockStorage) DeleteSessionsForUserExcept(ctx context.Context, userID, exceptID uint) error {
 	args := m.Called(ctx, userID, exceptID)
 	return args.Error(0)
+}
+
+func (m *MockStorage) ListSessionTokenHashesForUser(ctx context.Context, userID uint) ([]string, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
 }
 
 func (m *MockStorage) TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error {
@@ -1196,6 +1221,14 @@ func (m *MockStorage) GetPersonalAccessTokenByHash(ctx context.Context, hash str
 func (m *MockStorage) RevokePersonalAccessToken(ctx context.Context, id uint) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
+}
+
+func (m *MockStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
 }
 
 func (m *MockStorage) TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error {
@@ -1428,6 +1461,14 @@ func (m *MockStorage) UpdateMachineIdentity(ctx context.Context, mi *models.Mach
 
 func (m *MockStorage) ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error) {
 	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.MachineIdentity), args.Error(1)
+}
+
+func (m *MockStorage) ListAllMachineIdentities(ctx context.Context) ([]*models.MachineIdentity, error) {
+	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -1669,7 +1710,10 @@ func (m *MockStorage) UpsertMFASecret(_ context.Context, _ *models.MFASecret) er
 func (m *MockStorage) GetMFASecret(_ context.Context, _ uint) (*models.MFASecret, error) {
 	return nil, nil
 }
-func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint) error         { return nil }
+func (m *MockStorage) ActivateMFASecret(_ context.Context, _ uint) error { return nil }
+func (m *MockStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
+	return true, nil
+}
 func (m *MockStorage) DeleteMFAForUser(_ context.Context, _ uint) error          { return nil }
 func (m *MockStorage) SetUserMFAEnabled(_ context.Context, _ uint, _ bool) error { return nil }
 func (m *MockStorage) CreateMFARecoveryCodes(_ context.Context, _ uint, _ []string) error {
@@ -1712,6 +1756,9 @@ func (m *MockStorage) GetDynamicSecretLease(_ context.Context, _ string) (*model
 }
 func (m *MockStorage) ListDynamicSecretLeases(_ context.Context, _ uint) ([]*models.DynamicSecretLease, error) {
 	return nil, nil
+}
+func (m *MockStorage) CountActiveLeases(_ context.Context, _ uint) (int64, error) {
+	return 0, nil
 }
 func (m *MockStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) error {
 	return nil

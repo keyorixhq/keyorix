@@ -73,12 +73,23 @@ func (ls *LocalStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.
 	return ls.db.WithContext(ctx).Save(l).Error
 }
 
-// ListExpiredActiveLeases returns active leases whose ExpiresAt is past `before`,
-// ordered by id (stable) for the revoke sweep.
+// CountActiveLeases returns the number of active leases for a config.
+func (ls *LocalStorage) CountActiveLeases(ctx context.Context, configID uint) (int64, error) {
+	var n int64
+	err := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
+		Where("config_id = ? AND status = ?", configID, "active").Count(&n).Error
+	return n, err
+}
+
+// ListExpiredActiveLeases returns leases whose ExpiresAt is past `before` that still need
+// their target credential dropped — active leases AND revoke_failed ones (whose earlier
+// revoke failed, so their credential is still live). Ordered by id (stable) for the sweep.
+// Without the revoke_failed inclusion such a credential would stay live past TTL forever,
+// excluded from both the sweep and a manual retry.
 func (ls *LocalStorage) ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error) {
 	var leases []*models.DynamicSecretLease
 	if err := ls.db.WithContext(ctx).
-		Where("status = ? AND expires_at < ?", "active", before).
+		Where("status IN ? AND expires_at < ?", []string{"active", "revoke_failed"}, before).
 		Order("id").Find(&leases).Error; err != nil {
 		return nil, err
 	}

@@ -59,6 +59,46 @@ func mintSessionForTest(t *testing.T, h *testhelper.RBACTestHelper, userID uint,
 	require.NoError(t, err)
 }
 
+// An impersonation session must not be able to mint a durable machine token over gRPC:
+// the credential would outlive the bounded, audited impersonation session. Parity with
+// the HTTP BlockWhenImpersonating guard. A benign RPC under the same session still works.
+func TestAuthInterceptor_BlocksMachineTokenIssuanceWhileImpersonating(t *testing.T) {
+	h := setupAuthHelper(t)
+	defer h.Cleanup()
+	admin := uint(7000)
+	target := uint(7001)
+	h.CreateTestUser(t, "imp-admin", admin)
+	h.CreateTestUser(t, "imp-target", target)
+	expiry := time.Now().Add(time.Hour)
+	_, err := h.Storage.CreateSession(context.Background(), &models.Session{
+		UserID: target, SessionToken: "imp-token", ExpiresAt: &expiry, ImpersonatedBy: &admin,
+	})
+	require.NoError(t, err)
+
+	interceptor := AuthInterceptor(h.CoreService, false)
+	const machineIssue = "/keyorix.v1.MachineIdentityService/IssueMachineToken"
+
+	// Credential-minting RPC under impersonation → refused.
+	_, err = interceptor(bearerCtx("imp-token"), nil,
+		&grpc.UnaryServerInfo{FullMethod: machineIssue}, okHandler(nil))
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	// A non-credential-minting RPC under the same impersonation session still proceeds.
+	resp, err := interceptor(bearerCtx("imp-token"), nil,
+		&grpc.UnaryServerInfo{FullMethod: secretMethod}, okHandler(nil))
+	require.NoError(t, err)
+	assert.Equal(t, "ok", resp)
+}
+
+// The predicate is the single source of truth for which gRPC methods are blocked while
+// impersonating; keep it aligned with the HTTP BlockWhenImpersonating routes.
+func TestBlockedUnderImpersonation(t *testing.T) {
+	assert.True(t, blockedUnderImpersonation("/keyorix.v1.MachineIdentityService/IssueMachineToken"))
+	assert.False(t, blockedUnderImpersonation(secretMethod))
+	assert.False(t, blockedUnderImpersonation("/keyorix.v1.MachineIdentityService/ListMachineTokens"))
+}
+
 func TestAuthInterceptor_ValidSessionPopulatesUserContext(t *testing.T) {
 	h := setupAuthHelper(t)
 	defer h.Cleanup()

@@ -26,11 +26,21 @@ type KeyProvider interface {
 	Name() string
 }
 
-// validateKEK ensures key material is exactly KEKSize bytes — a shared guard so
-// every provider rejects a mis-sized key with the same clear error.
+// validateKEK ensures key material is exactly KEKSize bytes and is not the all-zero
+// key — a shared guard so every provider rejects bad material with the same clear
+// error. An all-zero KEK is a plausible empty-state (a zeroed/placeholder mounted
+// secret, an unset env var read as zeros) and must never be accepted as real AES-256
+// key material on a secrets product.
 func validateKEK(key []byte, providerName string) ([]byte, error) {
 	if len(key) != KEKSize {
 		return nil, fmt.Errorf("%s key provider: KEK must be %d bytes, got %d", providerName, KEKSize, len(key))
+	}
+	var anySet byte
+	for _, b := range key {
+		anySet |= b
+	}
+	if anySet == 0 {
+		return nil, fmt.Errorf("%s key provider: KEK is all-zero bytes — refusing placeholder/zeroed key material", providerName)
 	}
 	return key, nil
 }

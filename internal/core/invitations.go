@@ -48,6 +48,27 @@ const (
 
 // ── Invitations ────────────────────────────────────────────────────────────
 
+// requireAuthorityForRole refuses to GRANT an admin role (super_admin/admin/system_admin/
+// project_admin) unless the actor holds admin authority at the project scope. The various
+// grant entry points (access-request approval, project invite, membership activation) are
+// gated by roles.assign, but that alone would let a non-admin roles.assign holder mint a
+// principal more powerful than themselves — escalation-by-proxy. Non-admin roles pass (the
+// roles.assign gate covers them). actorID==0 (a system/unauthenticated path) cannot grant
+// an admin role through these flows.
+func (c *KeyorixCore) requireAuthorityForRole(ctx context.Context, actorID, projectID uint, role string) error {
+	if !isAdminRoleName(role) {
+		return nil
+	}
+	ids, err := c.storage.GetUserRoleIDsAt(ctx, actorID, storage.Scope{ProjectID: projectID})
+	if err != nil {
+		return fmt.Errorf("failed to resolve granter authority: %w", err)
+	}
+	if !c.roleSetContainsAdmin(ctx, ids) {
+		return fmt.Errorf("only an administrator can grant the administrative role %q", role)
+	}
+	return nil
+}
+
 // InviteToProject creates a pending invitation for an email to a project with an
 // intended role. It snapshots the current validation mode and sets a 14-day TTL.
 func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, error) {
@@ -56,6 +77,11 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 	}
 	if _, err := c.storage.GetRoleByName(ctx, role); err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
+	}
+	// Escalation-by-proxy guard: inviting someone as an admin role requires the inviter
+	// to hold admin authority at the project (parallel to the access-request ceiling).
+	if err := c.requireAuthorityForRole(ctx, invitedBy, projectID, role); err != nil {
+		return nil, err
 	}
 	now := c.now()
 	expires := now.Add(invitationTTL)
@@ -410,6 +436,15 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	if req.State != AccessRequestPending {
 		return nil, fmt.Errorf("only a pending request can be approved (state is %s)", req.State)
 	}
+	// Enforce the request's own TTL here, not only on the list path. GetAccessRequest
+	// returns the stored record verbatim, so a request whose expiry has passed is still
+	// State==pending until something reconciles it — approving it would grant access on a
+	// stale request that should have lapsed. Expire it lazily and refuse.
+	if req.ExpiresAt != nil && c.now().After(*req.ExpiresAt) {
+		req.State = AccessRequestExpired
+		_ = c.storage.UpdateAccessRequest(ctx, req)
+		return nil, fmt.Errorf("access request has expired")
+	}
 	if grantTTL < 0 {
 		return nil, fmt.Errorf("grant TTL must not be negative")
 	}
@@ -443,6 +478,12 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	roleModel, err := c.storage.GetRoleByName(ctx, role)
 	if err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
+	}
+
+	// Privilege ceiling: an approver may not grant an admin role unless they themselves
+	// hold admin authority at this project (escalation-by-proxy guard).
+	if err := c.requireAuthorityForRole(ctx, approverID, req.ProjectID, role); err != nil {
+		return nil, err
 	}
 
 	// One sign-off per distinct approver.

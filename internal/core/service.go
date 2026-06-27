@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"regexp"
 	"sync"
 	"time"
@@ -49,9 +50,15 @@ type KeyorixCore struct {
 	dynamicSweepEnabled bool
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
 	// Set from config at startup via SetWebAuthn.
-	webauthnRP        *webauthn.WebAuthn
-	now               func() time.Time // For testability
-	passwordPolicy    PasswordPolicy
+	webauthnRP     *webauthn.WebAuthn
+	now            func() time.Time // For testability
+	passwordPolicy PasswordPolicy
+	// bootstrapToken gates POST /system/init (BootstrapSystem). The first-boot admin
+	// claim is otherwise unauthenticated, so a fresh, network-reachable instance could
+	// be seized by whoever calls /system/init first. The server sets this at startup
+	// (from KEYORIX_BOOTSTRAP_TOKEN, or a random value logged for the operator while the
+	// system is uninitialised); init refuses unless the caller presents a matching token.
+	bootstrapToken    string
 	secretValuePolicy SecretValuePolicy  // optional quality gate on secret values (off by default)
 	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
 	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
@@ -133,6 +140,19 @@ type KeyorixCore struct {
 	// enforced after a DEK rotation.
 	auditCkptKey        []byte
 	auditCkptKeyVersion string
+	// tokenCacheInvalidator evicts a bearer token from the HTTP auth cache by its hash.
+	// Wired at startup (SetTokenCacheInvalidator) to the middleware cache; nil in tests/
+	// remote mode (the cache lives in the HTTP server). Lets core paths that revoke a
+	// token (e.g. revoking PATs on a password change) take effect immediately rather than
+	// after the positive-cache TTL. core cannot import the middleware directly (cycle).
+	tokenCacheInvalidator func(hash string)
+	// auditMaxCertified is an in-memory monotonic high-water mark of the greatest
+	// chained-events count this process has ever certified or verified. It backstops
+	// the persistent signed high-water (SystemMetadata) against an online attacker who
+	// deletes the high-water row mid-run: the chain can never be observed to regress
+	// below a length we already saw this lifetime. Guarded by auditWatermarkMu.
+	auditMaxCertified int64
+	auditWatermarkMu  sync.Mutex
 	// checkpointNotary, when set, anchors each freshly-written audit checkpoint to
 	// an external authority (RFC 3161 TSA) for a forge-proof proof-of-existence
 	// (ADR-029). nil = no external anchoring. Set at startup via SetCheckpointNotary.
@@ -207,7 +227,14 @@ func (c *KeyorixCore) AuditLicenseState(ctx context.Context) {
 // emitAudit persists an audit event and forwards it to the configured sink.
 // All core audit writers funnel through here so SIEM forwarding is uniform.
 func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
-	_ = c.storage.LogAuditEvent(ctx, event)
+	if err := c.storage.LogAuditEvent(ctx, event); err != nil {
+		// A failed chain-write is an audit gap that VerifyAuditChain cannot detect — a
+		// never-written event leaves no hole. Surface it loudly instead of swallowing,
+		// and do NOT forward a phantom event (ID 0, no chain position) to the SIEM: the
+		// off-box mirror must reflect the durable chain, not events that never landed.
+		log.Printf("SECURITY: failed to persist audit event %q (success=%v): %v", event.EventType, event.Success, err)
+		return
+	}
 	if c.auditForwarder != nil {
 		c.auditForwarder.Forward(event)
 	}
@@ -330,6 +357,13 @@ func (c *KeyorixCore) WebAuthnEnabled() bool { return c.webauthnRP != nil }
 // configures a password_policy block.
 func (c *KeyorixCore) SetPasswordPolicy(p PasswordPolicy) {
 	c.passwordPolicy = p
+}
+
+// SetBootstrapToken sets the token that POST /system/init must present to seed the
+// first admin. An empty token disables API bootstrap entirely (fail closed). The
+// server wires this at startup; see BootstrapSystem.
+func (c *KeyorixCore) SetBootstrapToken(token string) {
+	c.bootstrapToken = token
 }
 
 // SetSecretValuePolicy enables/configures the secret-value quality gate (off by

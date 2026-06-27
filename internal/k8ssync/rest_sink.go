@@ -189,10 +189,30 @@ func (s *RESTSink) List(ctx context.Context, namespace string) ([]string, error)
 	return names, nil
 }
 
-// Delete removes the named Secret. A 404 is treated as success — the goal state (gone)
-// is already met, so a concurrent delete or an already-reaped Secret is not an error.
+// Delete removes the named Secret, but only while it still belongs to this agent. It
+// re-verifies the managed-by label and pins the exact (uid, resourceVersion) it saw,
+// so a Secret that lost the label or was replaced between the orphan listing and here
+// is left untouched — closing the list→delete TOCTOU on a destructive action. A 404 is
+// success (already gone); a 409 means it changed under us (uid/resourceVersion no
+// longer match), so we skip rather than delete a different object.
 func (s *RESTSink) Delete(ctx context.Context, namespace, name string) error {
-	req, err := s.newRequest(ctx, http.MethodDelete, s.secretPath(namespace, name), "", nil)
+	uid, rv, owned, err := s.getOwnedMeta(ctx, namespace, name)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return nil // gone, or no longer ours — must not delete
+	}
+	opts := map[string]interface{}{
+		"apiVersion":    "v1",
+		"kind":          "DeleteOptions",
+		"preconditions": map[string]string{"uid": uid, "resourceVersion": rv},
+	}
+	raw, err := json.Marshal(opts)
+	if err != nil {
+		return fmt.Errorf("marshal delete options %s/%s: %w", namespace, name, err)
+	}
+	req, err := s.newRequest(ctx, http.MethodDelete, s.secretPath(namespace, name), "application/json", bytes.NewReader(raw))
 	if err != nil {
 		return err
 	}
@@ -201,13 +221,47 @@ func (s *RESTSink) Delete(ctx context.Context, namespace, name string) error {
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode == http.StatusNotFound {
+	switch {
+	case resp.StatusCode == http.StatusNotFound, resp.StatusCode == http.StatusConflict:
+		// 404: already gone. 409: the object changed since our owner-check (precondition
+		// mismatch) — the Secret we verified is no longer the one on the server, so skip.
 		return nil
-	}
-	if resp.StatusCode >= 400 {
+	case resp.StatusCode >= 400:
 		return fmt.Errorf("delete secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
 	}
 	return nil
+}
+
+// getOwnedMeta fetches the Secret's uid + resourceVersion and reports whether it still
+// carries this agent's managed-by label. owned is false when the Secret is absent.
+func (s *RESTSink) getOwnedMeta(ctx context.Context, namespace, name string) (uid, resourceVersion string, owned bool, err error) {
+	req, err := s.newRequest(ctx, http.MethodGet, s.secretPath(namespace, name), "", nil)
+	if err != nil {
+		return "", "", false, err
+	}
+	resp, err := s.hc.Do(req)
+	if err != nil {
+		return "", "", false, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode == http.StatusNotFound {
+		return "", "", false, nil
+	}
+	if resp.StatusCode >= 400 {
+		return "", "", false, fmt.Errorf("get secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
+	}
+	var body struct {
+		Metadata struct {
+			UID             string            `json:"uid"`
+			ResourceVersion string            `json:"resourceVersion"`
+			Labels          map[string]string `json:"labels"`
+		} `json:"metadata"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", "", false, fmt.Errorf("decode secret %s/%s: %w", namespace, name, err)
+	}
+	owned = body.Metadata.Labels[managedByLabel] == managedByValue
+	return body.Metadata.UID, body.Metadata.ResourceVersion, owned, nil
 }
 
 func (s *RESTSink) secretPath(namespace, name string) string {

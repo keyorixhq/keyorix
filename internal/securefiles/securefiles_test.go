@@ -85,6 +85,42 @@ func TestSecureWriteFileSyncRejectsTraversal(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr))
 }
 
+// A DANGLING final-component symlink inside the base must not be followed: the write
+// must fail (O_NOFOLLOW) rather than create the symlink's target outside the base.
+func TestSecureWriteRefusesDanglingSymlink(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(filepath.Dir(base), "escape.key")
+	// A symlink "link.key" inside base pointing at a not-yet-existing file outside base.
+	require.NoError(t, os.Symlink(outside, filepath.Join(base, "link.key")))
+
+	err := SecureWriteFile(base, "link.key", []byte("secret"), 0600)
+	require.Error(t, err, "writing through a final-component symlink must be refused")
+	_, statErr := os.Stat(outside)
+	assert.True(t, os.IsNotExist(statErr), "the symlink target outside base must not have been created")
+
+	err = SecureWriteFileSync(base, "link.key", []byte("secret"), 0600)
+	require.Error(t, err)
+	_, statErr = os.Stat(outside)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+// FixFilePerms must refuse to follow a symlink — otherwise it would chmod/chown the
+// symlink's target (an arbitrary file when running as root).
+func TestFixFilePerms_RefusesSymlink(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "real.txt")
+	require.NoError(t, os.WriteFile(target, []byte("x"), 0644))
+	link := filepath.Join(base, "link.key")
+	require.NoError(t, os.Symlink(target, link))
+
+	err := FixFilePerms([]FilePermSpec{{Path: link, Mode: 0600}}, true)
+	require.Error(t, err, "autofix must report an unresolved issue for a symlinked path")
+	// The target's mode must be untouched (the symlink was not followed).
+	info, statErr := os.Stat(target)
+	require.NoError(t, statErr)
+	assert.Equal(t, os.FileMode(0644), info.Mode().Perm(), "the symlink target's mode must be unchanged")
+}
+
 func TestSyncDir(t *testing.T) {
 	base := t.TempDir()
 	// A real directory syncs without error.
@@ -128,6 +164,16 @@ func TestFixFilePermsAuditReportsWrongMode(t *testing.T) {
 	assert.Equal(t, os.FileMode(0644), info.Mode().Perm(), "audit must not modify the file")
 }
 
+// Fail closed: when autofix is on but the fix can't actually be applied (here, the file
+// doesn't exist so stat fails), FixFilePerms must return an error rather than silently
+// reporting success — the previous `hasWarnings && !autofix` form returned nil, hiding an
+// unlocked-down key file.
+func TestFixFilePermsAutofixFailsClosedOnUnresolvable(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope.key")
+	err := FixFilePerms([]FilePermSpec{{Path: missing, Mode: 0600}}, true)
+	require.Error(t, err, "an unresolvable problem must fail even under autofix")
+}
+
 func TestFixFilePermsAutofixCorrectsMode(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "loose.key")
@@ -152,4 +198,29 @@ func TestFixFilePermsCorrectModeNoWarning(t *testing.T) {
 func TestFixFilePermsMissingFileWarns(t *testing.T) {
 	err := FixFilePerms([]FilePermSpec{{Path: filepath.Join(t.TempDir(), "absent"), Mode: 0600}}, false)
 	require.Error(t, err)
+}
+
+// TestContainmentRejectsSymlinkEscape pins the symlink-containment fix: a symlink
+// planted inside baseDir that points outside it must not let a read or write escape.
+func TestContainmentRejectsSymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("top secret"), 0o600))
+
+	// A symlink inside baseDir that resolves to the outside directory.
+	require.NoError(t, os.Symlink(outside, filepath.Join(base, "link")))
+
+	// Reading through the symlink must be denied (the resolved path is outside base).
+	_, err := SafeReadFile(base, "link/secret.txt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside")
+
+	// Writing through the symlink (target does not exist yet) must also be denied.
+	err = SecureWriteFile(base, "link/planted.txt", []byte("x"), 0o600)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "outside")
+
+	// The outside directory must be untouched by the rejected write.
+	_, statErr := os.Stat(filepath.Join(outside, "planted.txt"))
+	assert.True(t, os.IsNotExist(statErr), "rejected write must not create a file outside base")
 }

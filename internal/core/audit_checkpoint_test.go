@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"fmt"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func newCheckpointCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.AuditCheckpoint{}))
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.AuditCheckpoint{}, &models.SystemMetadata{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
 	return c, db
@@ -64,6 +65,80 @@ func TestAuditCheckpoint_HappyPath(t *testing.T) {
 	assert.True(t, v.Valid)
 	assert.True(t, v.Checkpointed)
 	assert.Empty(t, v.CheckpointReason)
+}
+
+// Deleting or garbling the persistent high-water mark while a signed checkpoint still
+// exists is a rollback attempt (the mark is written with every checkpoint, so its
+// absence/corruption alongside a checkpoint means it was tampered with). This also
+// simulates the restart case: the in-memory watermark is cleared, so detection must
+// come from the persistent-mark/checkpoint cross-check, not the in-memory floor.
+func TestAuditCheckpoint_MissingHighWaterWithCheckpointIsTamper(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("deleted mark", func(t *testing.T) {
+		c, db := newCheckpointCore(t)
+		logEvents(t, c, 5)
+		_, written, err := c.WriteAuditCheckpoint(ctx)
+		require.NoError(t, err)
+		require.True(t, written)
+
+		v, err := c.VerifyAuditChain(ctx)
+		require.NoError(t, err)
+		require.True(t, v.Valid)
+
+		// Attacker deletes the anti-rollback mark; simulate a restart losing the watermark.
+		require.NoError(t, db.Exec("DELETE FROM system_metadata WHERE key = ?", auditHighWaterKey).Error)
+		c.auditMaxCertified = 0
+
+		v, err = c.VerifyAuditChain(ctx)
+		require.NoError(t, err)
+		assert.False(t, v.Valid, "a missing high-water mark while a checkpoint exists is tamper")
+		assert.Contains(t, v.CheckpointReason, "anti-rollback mark")
+	})
+
+	t.Run("garbled mark", func(t *testing.T) {
+		c, _ := newCheckpointCore(t)
+		logEvents(t, c, 5)
+		_, written, err := c.WriteAuditCheckpoint(ctx)
+		require.NoError(t, err)
+		require.True(t, written)
+
+		// Overwrite the mark with an unparseable value; simulate a restart.
+		require.NoError(t, c.storage.SetSystemMetadata(ctx, auditHighWaterKey, "not-a-valid-mark"))
+		c.auditMaxCertified = 0
+
+		v, err := c.VerifyAuditChain(ctx)
+		require.NoError(t, err)
+		assert.False(t, v.Valid, "a malformed high-water mark while a checkpoint exists is tamper")
+		assert.Contains(t, v.CheckpointReason, "anti-rollback mark")
+	})
+}
+
+// SeedAuditWatermark restores the in-memory watermark from the persisted mark, so a
+// restart followed by a truncation (with the mark intact at seed time) is still caught.
+func TestSeedAuditWatermark_RestoresFloorAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+	logEvents(t, c, 5)
+	_, _, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+
+	// Simulate a restart: a fresh core over the same DB with the same key (in-memory
+	// watermark starts at 0), then seed from the persisted mark.
+	c2 := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c2.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
+	c2.SeedAuditWatermark(ctx)
+	assert.Equal(t, int64(5), c2.watermark(), "watermark restored from persisted high-water")
+
+	// Truncate the checkpoint rows AND the mark, leaving a self-consistent shorter chain;
+	// the restored in-memory watermark still catches the regression.
+	require.NoError(t, db.Exec("DELETE FROM audit_checkpoints").Error)
+	require.NoError(t, db.Exec("DELETE FROM system_metadata WHERE key = ?", auditHighWaterKey).Error)
+	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id > (SELECT MIN(id) FROM audit_events)").Error)
+
+	v, err := c2.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "truncation below the restored watermark is detected after restart")
 }
 
 // fakeNotary is a stand-in external authority for the anchoring wiring tests
@@ -340,6 +415,108 @@ func TestAuditCheckpoint_NoRebaselineOverCorruptedSignature(t *testing.T) {
 	v, err := c.VerifyAuditChain(ctx)
 	require.NoError(t, err)
 	assert.False(t, v.Valid)
+}
+
+// The headline rollback attack: an attacker with DB write deletes the newer
+// checkpoint(s) and truncates the trail back to an OLDER but still-authentic
+// checkpoint's head. The latest-checkpoint comparison alone is satisfied (the older
+// checkpoint verifies and matches the shortened chain), but the signed high-water mark
+// — a single overwritten row attesting the MAX certified length — still records the
+// longer length, so verification must flag the rollback. A FRESH core (no in-memory
+// watermark — i.e. a server restart) must catch it purely from the persistent mark.
+func TestAuditCheckpoint_DetectsRollbackToOlderCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+
+	logEvents(t, c, 5)
+	_, _, err := c.WriteAuditCheckpoint(ctx) // checkpoint #1 certifies 5; high-water = 5
+	require.NoError(t, err)
+	logEvents(t, c, 5)                      // 10 total
+	_, _, err = c.WriteAuditCheckpoint(ctx) // checkpoint #2 certifies 10; high-water = 10
+	require.NoError(t, err)
+
+	// Attack: truncate the trail back to 5 events AND delete the newer checkpoint so the
+	// authentic older checkpoint (certifying 5) becomes the latest.
+	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id > 5").Error)
+	require.NoError(t, db.Exec("DELETE FROM audit_checkpoints WHERE chained_events = 10").Error)
+
+	// Sanity: the latest-checkpoint comparison alone is now satisfied — the surviving
+	// checkpoint certifies 5 and exactly 5 self-consistent events remain.
+	raw, err := c.storage.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.True(t, raw.Valid, "the bare walk passes")
+
+	// A FRESH core (server restart: in-memory watermark starts at 0) still catches the
+	// rollback via the persistent signed high-water mark.
+	fresh := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	fresh.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
+	v, err := fresh.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "the high-water mark catches the rollback to an older checkpoint")
+	assert.True(t, v.Checkpointed)
+	assert.Contains(t, v.CheckpointReason, "high-water mark")
+}
+
+// Deleting the high-water row mid-run does not help an online attacker: the in-memory
+// watermark remembers the max length certified this session.
+func TestAuditCheckpoint_InMemoryWatermarkSurvivesHighWaterDeletion(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+	logEvents(t, c, 8)
+	_, _, err := c.WriteAuditCheckpoint(ctx) // high-water = 8 (persistent + in-memory)
+	require.NoError(t, err)
+
+	// Attacker truncates and wipes BOTH the checkpoint rows and the persistent mark.
+	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id > 3").Error)
+	require.NoError(t, db.Exec("DELETE FROM audit_checkpoints").Error)
+	require.NoError(t, db.Exec("DELETE FROM system_metadata").Error)
+
+	// The SAME running core still flags it from its in-memory watermark.
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "the in-memory watermark catches truncation after the mark is wiped")
+	assert.Contains(t, v.CheckpointReason, "high-water mark")
+}
+
+// Editing the persistent high-water row under the current key is detected (the HMAC
+// won't recompute) and is reported as tampering, not silently trusted.
+func TestAuditCheckpoint_TamperedHighWaterDetected(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+	logEvents(t, c, 6)
+	_, _, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+
+	// Lower the high-water's claimed length to mask a planned truncation; the signature
+	// no longer matches. Use a fresh core so only the persistent mark is consulted.
+	require.NoError(t, db.Exec("UPDATE system_metadata SET value = ? WHERE key = ?",
+		"v1\x002\x002\x00deadbeef\x00v1\x00bogussig", auditHighWaterKey).Error)
+
+	fresh := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	fresh.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
+	v, err := fresh.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid)
+	assert.Contains(t, v.CheckpointReason, "high-water mark")
+}
+
+// When an external-notary trust root is configured, the latest checkpoint's stored
+// anchor is re-verified on the read path: a token that doesn't verify against the
+// configured root is flagged (previously the anchor was written but never checked).
+func TestAuditCheckpoint_VerifiesAnchorWhenRootsConfigured(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 3)
+	fn := &fakeNotary{token: []byte("not-a-real-rfc3161-token"), at: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)}
+	c.SetCheckpointNotary(fn)
+	c.SetCheckpointAnchorRoots(x509.NewCertPool()) // roots configured → anchor verified on read
+	_, _, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "a checkpoint anchor that doesn't verify against the configured root is flagged")
+	assert.Contains(t, v.CheckpointReason, "external anchor failed verification")
 }
 
 func TestAuditCheckpoint_SignDeterministicAndBinding(t *testing.T) {

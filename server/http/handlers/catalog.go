@@ -160,6 +160,22 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidJSON", "Invalid request body", http.StatusBadRequest, nil)
 		return
 	}
+	// require_mfa is a per-project SECURITY-POLICY control (ADR-037), not ordinary content.
+	// The route gate only proves secrets.write — held by the non-admin editor persona — so
+	// changing it must additionally require roles.assign at the project (the admin/membership
+	// tier), otherwise a developer could silently disable the project's MFA enforcement.
+	// name/description stay on the secrets.write gate.
+	if body.RequireMFA != nil {
+		actor := middleware.GetUserFromContext(r.Context())
+		if actor == nil {
+			sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+			return
+		}
+		if ok, aerr := h.coreService.AuthorizePrincipal(r.Context(), actor.ActorKind(), actor.PrincipalID(), "roles.assign", core.Scope{ProjectID: uint(id)}); aerr != nil || !ok {
+			sendError(w, "Forbidden", "changing a project's MFA requirement requires the roles.assign permission", http.StatusForbidden, nil)
+			return
+		}
+	}
 	project, err := h.coreService.UpdateProject(r.Context(), uint(id), body.Name, body.Description, body.RequireMFA)
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
@@ -206,6 +222,14 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 	}
 	if body.Name == "" {
 		sendError(w, "ValidationError", "Environment name is required", http.StatusBadRequest, nil)
+		return
+	}
+	// The scope check resolves the project id from the URL without verifying it exists,
+	// so confirm the parent project is live before creating an environment under it —
+	// otherwise a caller who held write on a since-deleted project could re-establish a
+	// usable scope under it (GetProject excludes soft-deleted projects).
+	if _, perr := h.coreService.Storage().GetProject(r.Context(), uint(id)); perr != nil {
+		sendError(w, "NotFound", "Project not found", http.StatusNotFound, nil)
 		return
 	}
 	env, err := h.coreService.Storage().CreateEnvironment(r.Context(), &models.Environment{

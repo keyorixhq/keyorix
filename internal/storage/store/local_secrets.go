@@ -233,8 +233,15 @@ func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 	return nil
 }
 
-// RestoreEnvironment clears deleted_at on a soft-deleted environment.
+// RestoreEnvironment clears deleted_at on a soft-deleted environment, but refuses to
+// restore one whose parent project is still soft-deleted — otherwise a holder of a
+// still-extant project-scoped grant (a soft-deleted project does NOT revoke its role
+// grants) could resurrect a usable, readable scope under a project an admin deleted to
+// revoke access. Mirrors the parent-liveness guard on CreateProjectEnvironment.
 func (ls *LocalStorage) RestoreEnvironment(ctx context.Context, projectID, id uint) error {
+	if err := ls.requireLiveProject(ctx, projectID); err != nil {
+		return err
+	}
 	result := ls.db.WithContext(ctx).Unscoped().Model(&models.Environment{}).
 		Where("id = ? AND project_id = ? AND deleted_at IS NOT NULL", id, projectID).Update("deleted_at", nil)
 	if result.Error != nil {
@@ -323,9 +330,26 @@ func (ls *LocalStorage) GetSecretIncludingDeleted(ctx context.Context, id uint) 
 	return &secret, nil
 }
 
-// RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033). Uses
-// Unscoped to reach the soft-deleted row, which GORM hides by default.
+// RestoreSecret clears a soft-deleted secret's deleted_at (ADR-033). Uses Unscoped to
+// reach the soft-deleted row, which GORM hides by default. It refuses to restore a
+// secret whose parent project or environment is still soft-deleted — otherwise a holder
+// of a still-extant project-scoped grant could resurrect a live, readable secret inside
+// a project an admin deleted to revoke access (the project delete does not revoke role
+// grants). To bring such a secret back, restore the parent project first (which
+// cascade-restores its children).
 func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
+	var secret models.SecretNode
+	if err := ls.db.WithContext(ctx).Unscoped().Select("id", "project_id", "environment_id").First(&secret, id).Error; err != nil {
+		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	if err := ls.requireLiveProject(ctx, secret.ProjectID); err != nil {
+		return err
+	}
+	if secret.EnvironmentID != 0 {
+		if err := ls.requireLiveEnvironment(ctx, secret.EnvironmentID); err != nil {
+			return err
+		}
+	}
 	result := ls.db.WithContext(ctx).Unscoped().Model(&models.SecretNode{}).
 		Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
 	if result.Error != nil {
@@ -333,6 +357,32 @@ func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 	}
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	return nil
+}
+
+// requireLiveProject returns an error when the project is missing or soft-deleted.
+func (ls *LocalStorage) requireLiveProject(ctx context.Context, projectID uint) error {
+	var n int64
+	if err := ls.db.WithContext(ctx).Model(&models.Project{}).
+		Where("id = ? AND deleted_at IS NULL", projectID).Count(&n).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cannot restore: the parent project is deleted — restore the project first")
+	}
+	return nil
+}
+
+// requireLiveEnvironment returns an error when the environment is missing or soft-deleted.
+func (ls *LocalStorage) requireLiveEnvironment(ctx context.Context, environmentID uint) error {
+	var n int64
+	if err := ls.db.WithContext(ctx).Model(&models.Environment{}).
+		Where("id = ? AND deleted_at IS NULL", environmentID).Count(&n).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if n == 0 {
+		return fmt.Errorf("cannot restore: the parent environment is deleted — restore the environment first")
 	}
 	return nil
 }

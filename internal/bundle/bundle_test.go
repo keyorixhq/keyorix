@@ -370,6 +370,30 @@ func TestExtract_Idempotent(t *testing.T) {
 	}
 }
 
+// After an import, the no-downgrade gate enforces itself against the PERSISTED installed
+// version (the marker written at the dest), so re-importing an OLDER bundle is refused
+// even when the operator passes no --installed-version.
+func TestExtract_PersistedVersionBlocksDowngrade(t *testing.T) {
+	dest := t.TempDir()
+
+	// Install v1.2.0 (no flag → first install, allowed).
+	newRaw, newReg, _ := signedBundle(t, map[string]string{"images/a.tar": "new"}, "v1.2.0", "update-2026", "")
+	if _, err := Extract(bytes.NewReader(newRaw), newReg, dest, ""); err != nil {
+		t.Fatalf("install v1.2.0: %v", err)
+	}
+
+	// Attempt to import an OLDER v1.0.0 with no flag — must be refused via the marker.
+	oldRaw, oldReg, _ := signedBundle(t, map[string]string{"images/a.tar": "old"}, "v1.0.0", "update-2026", "")
+	if _, err := Extract(bytes.NewReader(oldRaw), oldReg, dest, ""); !errors.Is(err, ErrNotUpgrade) {
+		t.Fatalf("downgrade must be refused via the persisted marker, got %v", err)
+	}
+	// The older content must not have overwritten the installed component.
+	got, _ := os.ReadFile(filepath.Join(dest, "images", "a.tar"))
+	if string(got) != "new" {
+		t.Fatalf("downgrade staged content = %q, want the installed 'new'", got)
+	}
+}
+
 // assertDirEmpty fails if dir contains any regular file (temp files included), proving a
 // fail-closed Extract staged nothing.
 func assertDirEmpty(t *testing.T, dir string) {

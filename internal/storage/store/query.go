@@ -7,6 +7,7 @@ package store
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -21,7 +22,9 @@ func newQueryBuilder() *queryBuilder {
 }
 
 func (q *queryBuilder) add(key, value string) {
-	q.params = append(q.params, key+"="+value)
+	// Escape both sides: user-controlled filter values (names, tags, search, resource/
+	// action) must not be able to inject extra query params or truncate the query.
+	q.params = append(q.params, url.QueryEscape(key)+"="+url.QueryEscape(value))
 }
 
 func (q *queryBuilder) addUint(key string, v *uint) {

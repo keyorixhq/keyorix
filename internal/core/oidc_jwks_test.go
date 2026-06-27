@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -88,6 +89,73 @@ func TestHTTPJWKSResolver_StaleFallbackBounded(t *testing.T) {
 	seedCache(jwksCacheTTL + jwksStaleGrace + time.Minute)
 	_, err = r.Key(context.Background(), "https://iss", "k1")
 	require.Error(t, err)
+}
+
+// An unknown kid on a fresh cache triggers at most one refetch per
+// jwksMinRefetchInterval per issuer, so a flood of tokens bearing a trusted issuer
+// and random kids can't amplify into a JWKS-fetch storm against the IdP.
+func TestHTTPJWKSResolver_UnknownKidRefetchRateLimited(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	pub := &key.PublicKey
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		eBytes := big.NewInt(int64(pub.E)).Bytes()
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"keys": []map[string]string{{
+				"kty": "RSA", "kid": "k1", "use": "sig",
+				"n": base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString(eBytes),
+			}},
+		})
+	}))
+	defer srv.Close()
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
+
+	// Prime the cache (1 fetch).
+	_, err = r.Key(context.Background(), "https://iss", "k1")
+	require.NoError(t, err)
+	require.Equal(t, 1, hits)
+
+	// A flood of distinct unknown kids on the now-fresh cache: the first one is
+	// allowed to refetch (rotation), the rest within the interval are rejected
+	// without any outbound fetch.
+	for i := 0; i < 50; i++ {
+		_, _ = r.Key(context.Background(), "https://iss", "bogus-kid")
+	}
+	assert.LessOrEqual(t, hits, 2, "bogus-kid flood must not amplify into a fetch storm")
+
+	// The legitimate kid is still served from cache throughout.
+	_, err = r.Key(context.Background(), "https://iss", "k1")
+	require.NoError(t, err)
+}
+
+// A JWKS with more keys than maxJWKSKeys is capped so a pathological key set can't
+// bloat the cache.
+func TestHTTPJWKSResolver_CapsKeyCount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		keys := make([]map[string]string, 0, maxJWKSKeys+20)
+		for i := 0; i < maxJWKSKeys+20; i++ {
+			k, _ := rsa.GenerateKey(rand.Reader, 2048)
+			pub := &k.PublicKey
+			keys = append(keys, map[string]string{
+				"kty": "RSA", "kid": "k" + strconv.Itoa(i), "use": "sig",
+				"n": base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"keys": keys})
+	}))
+	defer srv.Close()
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
+
+	_, _ = r.Key(context.Background(), "https://iss", "k0")
+	r.mu.Lock()
+	n := len(r.cache["https://iss"].keys)
+	r.mu.Unlock()
+	assert.LessOrEqual(t, n, maxJWKSKeys, "retained key count is capped")
 }
 
 func TestNewHTTPJWKSResolver_RejectsInsecureScheme(t *testing.T) {

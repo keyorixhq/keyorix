@@ -19,6 +19,7 @@ func TestPurgeExpiredComplianceRecords_CountsCutoffsAndAudits(t *testing.T) {
 		ResolvedAccessRequestsDays: 180,
 	}
 	store := new(MockStorage)
+	store.On("GetActiveLegalHold", mock.Anything).Return(nil, nil) // no active legal hold
 	store.On("DeleteAnomalyAlertsBefore", mock.Anything, now.AddDate(0, 0, -30)).Return(int64(5), nil)
 	store.On("DeleteClosedAccessReviewsBefore", mock.Anything, now.AddDate(0, 0, -365)).Return(int64(2), int64(7), nil)
 	store.On("DeleteExpiredBreakGlassBefore", mock.Anything, now.AddDate(0, 0, -90)).Return(int64(1), nil)
@@ -52,6 +53,7 @@ func TestPurgeExpiredComplianceRecords_ZeroWindowsSkipped(t *testing.T) {
 	// Only break-glass has a window; every other type is keep-forever (0).
 	policy := RetentionPolicy{BreakGlassDays: 45}
 	store := new(MockStorage)
+	store.On("GetActiveLegalHold", mock.Anything).Return(nil, nil) // no active legal hold
 	store.On("DeleteExpiredBreakGlassBefore", mock.Anything, mock.Anything).Return(int64(0), nil)
 
 	c := NewKeyorixCore(store)

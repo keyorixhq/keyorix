@@ -51,6 +51,22 @@ func TestIssueMachineToken_ActiveOnly(t *testing.T) {
 	require.Equal(t, sha256Hex(res.PlainToken), created.TokenHash)
 }
 
+// RevokeMachineToken must return the revoked credential's hash so the HTTP handler can
+// evict it from the auth cache immediately (otherwise it keeps authenticating ≤30s).
+func TestRevokeMachineToken_ReturnsHashForCacheEviction(t *testing.T) {
+	store := new(MockStorage)
+	c := NewKeyorixCore(store)
+	store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2, State: MachineActive}, nil)
+	store.On("GetMachineIdentityCredentialByID", mock.Anything, uint(5)).
+		Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1, TokenHash: "hash-5"}, nil)
+	store.On("RevokeMachineIdentityCredential", mock.Anything, uint(5)).Return(nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	hash, err := c.RevokeMachineToken(context.Background(), 2, 1, 5, 9)
+	require.NoError(t, err)
+	require.Equal(t, "hash-5", hash)
+}
+
 func TestValidateMachineToken(t *testing.T) {
 	fixed := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	raw := "kx_machine_abc"

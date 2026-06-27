@@ -13,6 +13,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -21,6 +22,14 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// likeEscaper escapes the LIKE/ILIKE metacharacters so a user-supplied search term is
+// matched literally, not as a wildcard. Paired with an explicit ESCAPE '\' clause.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+
+// escapeLike neutralizes %, _, and \ in a user search string so `?q=%` can't turn the
+// filter into a match-all / full-table scan.
+func escapeLike(s string) string { return likeEscaper.Replace(s) }
 
 // --- Users ---
 
@@ -192,14 +201,14 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	}
 
 	if filter.Search != nil {
-		pattern := "%" + *filter.Search + "%"
-		query = query.Where("username ILIKE ? OR email ILIKE ? OR display_name ILIKE ?", pattern, pattern, pattern)
+		pattern := "%" + escapeLike(*filter.Search) + "%"
+		query = query.Where("username ILIKE ? ESCAPE '\\' OR email ILIKE ? ESCAPE '\\' OR display_name ILIKE ? ESCAPE '\\'", pattern, pattern, pattern)
 	}
 	if filter.Username != nil {
-		query = query.Where("username LIKE ?", "%"+*filter.Username+"%")
+		query = query.Where("username LIKE ? ESCAPE '\\'", "%"+escapeLike(*filter.Username)+"%")
 	}
 	if filter.Email != nil {
-		query = query.Where("email LIKE ?", "%"+*filter.Email+"%")
+		query = query.Where("email LIKE ? ESCAPE '\\'", "%"+escapeLike(*filter.Email)+"%")
 	}
 	if filter.IsActive != nil {
 		query = query.Where("is_active = ?", *filter.IsActive)
@@ -217,6 +226,9 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	}
 
 	offset := (filter.Page - 1) * filter.PageSize
+	if filter.Offset > 0 {
+		offset = filter.Offset
+	}
 	query = query.Offset(offset).Limit(filter.PageSize)
 
 	var users []*models.User

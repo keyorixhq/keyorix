@@ -148,6 +148,23 @@ func TestRefreshSession_RefusedPastCeiling(t *testing.T) {
 	store.AssertCalled(t, "DeleteSession", mock.Anything, uint(7))
 }
 
+// An impersonation session must not be refreshable — otherwise /auth/refresh would
+// mint a fresh, full-TTL session for the target with the impersonation attribution
+// stripped (laundering).
+func TestRefreshSession_RefusesImpersonationSession(t *testing.T) {
+	store := new(MockStorage)
+	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
+
+	admin := uint(9)
+	old := &models.Session{ID: 7, UserID: 1, SessionToken: "imp", ImpersonatedBy: &admin}
+	store.On("GetSession", mock.Anything, "imp").Return(old, nil)
+
+	_, err := c.RefreshSession(context.Background(), "imp")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "impersonation")
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
 // With no ceiling (legacy behaviour) a session refreshes indefinitely.
 func TestRefreshSession_NoCeilingRefreshesForever(t *testing.T) {
 	store := new(MockStorage)

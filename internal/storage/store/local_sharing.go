@@ -206,6 +206,7 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 		JOIN share_records sr ON s.id = sr.secret_id
 		JOIN user_groups ug ON sr.recipient_id = ug.group_id
 		JOIN groups g ON g.id = ug.group_id AND g.deleted_at IS NULL
+		JOIN users u ON u.id = ug.user_id AND u.deleted_at IS NULL
 		WHERE ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL AND s.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
 	`
@@ -250,6 +251,7 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		SELECT sr.* FROM share_records sr
 		JOIN user_groups ug ON sr.recipient_id = ug.group_id
 		JOIN groups g ON g.id = ug.group_id AND g.deleted_at IS NULL
+		JOIN users u ON u.id = ug.user_id AND u.deleted_at IS NULL
 		WHERE sr.secret_id = ? AND ug.user_id = ? AND sr.is_group = ? AND sr.deleted_at IS NULL
 		  AND (sr.expires_at IS NULL OR sr.expires_at > ?)
 		LIMIT 1

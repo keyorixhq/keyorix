@@ -98,3 +98,14 @@ func yamlUnmarshalForTest(t *testing.T, y string, c *Config) error {
 	*c = *loaded
 	return nil
 }
+
+// gRPC TLS auto_cert has no ACME backing (it would build a certless config and fail every
+// handshake), so Validate must reject it rather than start a server that cannot serve.
+func TestValidate_RejectsGRPCAutoCert(t *testing.T) {
+	c := &Config{}
+	c.Server.GRPC.TLS.Enabled = true
+	c.Server.GRPC.TLS.AutoCert = true
+	err := c.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "auto_cert")
+}

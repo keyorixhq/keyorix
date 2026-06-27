@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -91,6 +92,13 @@ func AuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.UnaryS
 			return nil, err
 		}
 
+		// Mirror the HTTP BlockWhenImpersonating guard: an admin acting through an
+		// impersonation session must not mint a durable credential that would outlive the
+		// bounded, audited session.
+		if blockedUnderImpersonation(info.FullMethod) && userCtx.ImpersonatedBy != nil {
+			return nil, status.Error(codes.PermissionDenied, "this action is not permitted while impersonating")
+		}
+
 		// Add user context to request context
 		newCtx := context.WithValue(ctx, userContextKey, userCtx)
 		newCtx = withAuditAttribution(newCtx, userCtx)
@@ -119,6 +127,10 @@ func StreamAuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.
 			return err
 		}
 
+		if blockedUnderImpersonation(info.FullMethod) && userCtx.ImpersonatedBy != nil {
+			return status.Error(codes.PermissionDenied, "this action is not permitted while impersonating")
+		}
+
 		// Create a new stream with user context (+ audit attribution / PAT restriction).
 		streamCtx := context.WithValue(stream.Context(), userContextKey, userCtx)
 		streamCtx = withAuditAttribution(streamCtx, userCtx)
@@ -132,6 +144,21 @@ func StreamAuthInterceptor(coreService *core.KeyorixCore, requireMFA bool) grpc.
 
 		return handler(srv, wrappedStream)
 	}
+}
+
+// credentialMintingMethods are the RPCs that issue a durable credential and so must be
+// refused while impersonating (parity with the HTTP BlockWhenImpersonating routes). A
+// token minted here would outlive the bounded, audited impersonation session with no
+// impersonation attribution. Keep in sync with the HTTP routes wrapped in
+// BlockWhenImpersonating. (Service-account token issuance has no gRPC surface today.)
+var credentialMintingMethods = map[string]bool{
+	pb.MachineIdentityService_IssueMachineToken_FullMethodName: true,
+}
+
+// blockedUnderImpersonation reports whether fullMethod mints a durable credential that
+// must not be created while impersonating.
+func blockedUnderImpersonation(fullMethod string) bool {
+	return credentialMintingMethods[fullMethod]
 }
 
 // wrappedServerStream wraps grpc.ServerStream to override context

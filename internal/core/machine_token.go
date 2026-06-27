@@ -96,21 +96,41 @@ func (c *KeyorixCore) ListMachineTokens(ctx context.Context, projectID, machineI
 }
 
 // RevokeMachineToken revokes one credential after verifying the machine belongs
-// to the project and the credential belongs to the machine.
-func (c *KeyorixCore) RevokeMachineToken(ctx context.Context, projectID, machineID, credentialID, actorID uint) error {
+// to the project and the credential belongs to the machine. It returns the revoked
+// token's hash so the caller can evict it from the auth cache immediately (the HTTP
+// token cache is keyed by SHA-256(raw) == TokenHash); without that a revoked machine
+// token keeps authenticating until the positive-cache TTL.
+func (c *KeyorixCore) RevokeMachineToken(ctx context.Context, projectID, machineID, credentialID, actorID uint) (tokenHash string, err error) {
 	m, err := c.machineInProject(ctx, projectID, machineID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cred, err := c.storage.GetMachineIdentityCredentialByID(ctx, credentialID)
 	if err != nil || cred.MachineIdentityID != machineID {
-		return fmt.Errorf("token not found")
+		return "", fmt.Errorf("token not found")
 	}
 	if err := c.storage.RevokeMachineIdentityCredential(ctx, credentialID); err != nil {
-		return err
+		return "", err
 	}
 	c.logMachineEvent(ctx, "machine_identity.token_revoked", m, actorID)
-	return nil
+	return cred.TokenHash, nil
+}
+
+// MachineTokenHashes returns the hashes of all of a machine identity's credentials,
+// so the caller can evict them from the auth cache when the identity is suspended or
+// revoked (which must reject its tokens immediately, not after the cache TTL).
+func (c *KeyorixCore) MachineTokenHashes(ctx context.Context, machineID uint) ([]string, error) {
+	creds, err := c.storage.ListMachineIdentityCredentials(ctx, machineID)
+	if err != nil {
+		return nil, err
+	}
+	hashes := make([]string, 0, len(creds))
+	for _, cr := range creds {
+		if cr.TokenHash != "" {
+			hashes = append(hashes, cr.TokenHash)
+		}
+	}
+	return hashes, nil
 }
 
 // ClassifyMachineToken sets (or clears, with "") the data-classification label on a

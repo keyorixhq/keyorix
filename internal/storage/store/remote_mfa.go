@@ -21,6 +21,10 @@ func (rs *RemoteStorage) ActivateMFASecret(_ context.Context, _ uint) error {
 	return remoteUnsupported("ActivateMFASecret")
 }
 
+func (rs *RemoteStorage) MarkTOTPStepUsed(_ context.Context, _ uint, _ int64) (bool, error) {
+	return false, remoteUnsupported("MarkTOTPStepUsed")
+}
+
 func (rs *RemoteStorage) DeleteMFAForUser(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteMFAForUser")
 }

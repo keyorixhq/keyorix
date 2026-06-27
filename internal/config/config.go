@@ -223,6 +223,13 @@ type ServerInstanceConfig struct {
 	// JSON request); a negative value disables the cap (for endpoints that legitimately
 	// accept very large bodies).
 	MaxRequestBodyBytes int64 `yaml:"max_request_body_bytes,omitempty"`
+	// TrustedProxies is the set of reverse-proxy/load-balancer source addresses (CIDRs
+	// or bare IPs) whose X-Forwarded-For / X-Real-IP header is honored when deriving the
+	// client IP. When empty, those headers are IGNORED and the real TCP peer is used —
+	// so a client cannot spoof its source IP (which would otherwise defeat the per-IP
+	// login/MFA rate limiter) unless it actually connects from a trusted proxy. Set this
+	// to your ingress/LB CIDR(s) when running behind a proxy. (HTTP only.)
+	TrustedProxies []string `yaml:"trusted_proxies,omitempty"`
 	// Web dashboard specific settings (HTTP only)
 	WebAssetsPath  string   `yaml:"web_assets_path,omitempty"`
 	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
@@ -406,6 +413,14 @@ type KeyProviderConfig struct {
 	// WrappedKeyPath is where the KMS-wrapped KEK blob lives (aws-kms / gcp-kms /
 	// azure-kms).
 	WrappedKeyPath string `yaml:"wrapped_key_path"`
+	// KMSEncryptionContext binds the wrapped KEK to this install (aws-kms /gcp-kms):
+	// it's passed as the AWS EncryptionContext / GCP AdditionalAuthenticatedData on
+	// wrap+unwrap, so a different install sharing the same CMK cannot unwrap this
+	// install's KEK. Set a value unique to the install, e.g. {keyorix-install: <id>}.
+	// Empty = no binding (the prior behaviour). Not supported by azure-kms (RSA wrap
+	// has no AAD). Existing wrapped blobs decrypt via a no-context fallback, so this
+	// can be enabled on a running install (it binds on the next KEK re-wrap).
+	KMSEncryptionContext map[string]string `yaml:"kms_encryption_context"`
 	// ExecCommand is the argv for type "exec": the resolver command (argv[0] is the
 	// binary, the rest are arguments) whose stdout supplies the KEK as raw 32 bytes
 	// or a hex/base64 encoding thereof. Run directly without a shell. Lets a
@@ -449,9 +464,17 @@ type SecurityConfig struct {
 	RequireMFA bool `yaml:"require_mfa"`
 	// LoginLockout configures per-account login lockout (brute-force protection):
 	// after MaxAttempts failed password logins within Window, the account is locked
-	// for an exponentially-backing-off cooldown. Distinct from the per-IP rate
-	// limiter (ADR-040). Opt-in (default off).
+	// for an exponentially-backing-off cooldown. Distinct from (and complementary to)
+	// the per-IP rate limiter, which a distributed/botnet guess against one account can
+	// evade. It is ENABLED BY DEFAULT — a secrets-manager login must resist online
+	// guessing out of the box. Set login_lockout.disabled to opt out.
 	LoginLockout LoginLockoutConfig `yaml:"login_lockout"`
+	// RequireTransportTLS, when true, refuses to start an enabled HTTP/gRPC listener
+	// that has no TLS configured — failing closed so bearer tokens and secret values are
+	// never served in cleartext. Default false (a TLS-terminating proxy in front is a
+	// common, supported deployment), but when off the server logs a prominent warning if
+	// it serves cleartext, so the exposure is never silent.
+	RequireTransportTLS bool `yaml:"require_transport_tls"`
 }
 
 // parseDurationDefault parses a Go duration string, returning def when empty or
@@ -466,9 +489,12 @@ func parseDurationDefault(raw string, def time.Duration) time.Duration {
 	return def
 }
 
-// LoginLockoutConfig configures per-account login lockout.
+// LoginLockoutConfig configures per-account login lockout. Lockout is enabled by
+// default; Disabled is the explicit opt-out. Enabled is retained for backward
+// compatibility and is now redundant with the default-on behavior.
 type LoginLockoutConfig struct {
 	Enabled      bool   `yaml:"enabled"`
+	Disabled     bool   `yaml:"disabled"`      // explicit opt-out (lockout is on by default)
 	MaxAttempts  int    `yaml:"max_attempts"`  // failures within the window before locking (default 5)
 	Window       string `yaml:"window"`        // Go duration; consecutive-failure window (default 15m)
 	BaseCooldown string `yaml:"base_cooldown"` // lock duration for the first lockout (default 1m)
@@ -554,6 +580,11 @@ type SIEMConfig struct {
 	Endpoint           string `yaml:"endpoint"`
 	Token              string `yaml:"token"` // use KEYORIX_SIEM_TOKEN env var instead
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	// SpoolDir enables a durable on-disk backlog: events that can't be delivered
+	// (full queue / retries exhausted) are persisted here and replayed until the SIEM
+	// accepts them, so a sustained outage doesn't silently lose the off-box copy.
+	// Empty = best-effort only.
+	SpoolDir string `yaml:"spool_dir"`
 }
 
 // GetToken returns the resolved SIEM token, preferring the environment variable.
@@ -886,11 +917,19 @@ type NotificationWebhookConfig struct {
 	Endpoint           string `yaml:"endpoint"`
 	Token              string `yaml:"token"` // use KEYORIX_NOTIFY_WEBHOOK_TOKEN env var instead
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	// SigningSecret HMAC-signs each payload (X-Keyorix-Signature) so the receiver can
+	// verify authenticity. Use KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET instead of the file.
+	SigningSecret string `yaml:"signing_secret"`
 }
 
 // GetToken returns the resolved webhook token, preferring the environment variable.
 func (c *NotificationWebhookConfig) GetToken() string {
 	return resolveSecret("KEYORIX_NOTIFY_WEBHOOK_TOKEN", c.Token)
+}
+
+// GetSigningSecret returns the resolved webhook signing secret, preferring the env var.
+func (c *NotificationWebhookConfig) GetSigningSecret() string {
+	return resolveSecret("KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET", c.SigningSecret)
 }
 
 // SCIMConfig configures SCIM 2.0 provisioning (RFC 7644). When Enabled, the
@@ -1103,10 +1142,17 @@ func (c RotationRemindersConfig) GetInterval() time.Duration {
 }
 
 // AuditCheckpointsConfig configures the audit-checkpoint scheduler: a background
-// job that signs the audit hash-chain head (ADR-029) so tail-truncation / re-seed
-// is detectable on-box. Opt-in (default off); requires encryption enabled.
+// job that signs the audit hash-chain head (ADR-029) so tampering, tail-truncation,
+// and genesis re-seed are detectable. This is the audit trail's forgery-resistance
+// layer — the per-row hash chain alone is unkeyed and a database-write attacker can
+// recompute it, so without signed checkpoints the trail is only tamper-EVIDENT, not
+// forgery-resistant. It is therefore enabled BY DEFAULT whenever a signing key is
+// available (encryption configured). Set Disabled to opt out (a loud warning is
+// logged). Enabled is retained for backward compatibility and is now redundant with
+// the default-on behavior.
 type AuditCheckpointsConfig struct {
 	Enabled  bool   `yaml:"enabled"`
+	Disabled bool   `yaml:"disabled"`
 	Schedule string `yaml:"schedule"`
 }
 
@@ -1355,10 +1401,14 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Server.GRPC.TLS.Enabled {
-		if !c.Server.GRPC.TLS.AutoCert {
-			if c.Server.GRPC.TLS.CertFile == "" || c.Server.GRPC.TLS.KeyFile == "" {
-				return fmt.Errorf("gRPC TLS is enabled but cert_file or key_file is missing")
-			}
+		// gRPC has no ACME integration: auto_cert would build a TLS config with no
+		// certificate, so every handshake fails (a silent outage). Reject it explicitly
+		// rather than start a server that cannot serve.
+		if c.Server.GRPC.TLS.AutoCert {
+			return fmt.Errorf("gRPC TLS auto_cert is not supported; provide cert_file and key_file")
+		}
+		if c.Server.GRPC.TLS.CertFile == "" || c.Server.GRPC.TLS.KeyFile == "" {
+			return fmt.Errorf("gRPC TLS is enabled but cert_file or key_file is missing")
 		}
 	}
 

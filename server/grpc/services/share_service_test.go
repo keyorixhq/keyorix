@@ -197,12 +197,36 @@ func TestShareService_ListSharedSecrets(t *testing.T) {
 	r := newShareTestRig(t)
 	r.share(t, "read")
 
+	// The recipient needs a REAL global secrets.read grant (parity with the HTTP
+	// GET /shared-secrets gate), not just a flat permission string in the token.
+	require.NoError(t, r.db.Create(&models.UserRole{UserID: 2, RoleID: writerRoleID}).Error)
+
 	// Listed from the recipient's perspective (user 2).
 	ctx := authCtx(2, "recipient", "secrets.read")
 	resp, err := r.svc.ListSharedSecrets(ctx, &pb.ListSharedSecretsRequest{})
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(resp.GetSecrets()), 1)
 	assert.Equal(t, "shared-secret", resp.GetSecrets()[0].GetName())
+}
+
+// Regression (security review): ListUserShares / ListSharedSecrets must authorize
+// through the scope/actor-aware path, not a flat permission check — otherwise a PAT
+// restricted below global secrets.read could list shares over gRPC while HTTP denies
+// it. A caller whose token carries the "secrets.read" string but who holds no real
+// global grant must be denied.
+func TestShareService_ListShares_FlatPermissionDenied(t *testing.T) {
+	r := newShareTestRig(t)
+	r.share(t, "read")
+	// User 2 has NO role grant; the flat permission string must no longer be enough.
+	ctx := authCtx(2, "recipient", "secrets.read")
+
+	_, err := r.svc.ListSharedSecrets(ctx, &pb.ListSharedSecretsRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "ListSharedSecrets flat-perm")
+
+	_, err = r.svc.ListUserShares(ctx, &pb.ListUserSharesRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err), "ListUserShares flat-perm")
 }
 
 // Regression (security review): listing a secret's shares is owner-only on the

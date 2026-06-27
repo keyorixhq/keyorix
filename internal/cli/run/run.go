@@ -72,9 +72,11 @@ func runRun(cmd *cobra.Command, args []string) error {
 		fetchErr error
 	)
 
-	// --token flag overrides the token resolved by ResolveRemote.
+	// --token flag overrides the token resolved by ResolveRemote. Passing it literally is
+	// insecure (visible via ps/proc and saved in shell history) — prefer KEYORIX_TOKEN.
 	endpoint, tok, remoteOK := common.ResolveRemote()
 	if runToken != "" {
+		fmt.Fprintln(os.Stderr, "⚠️  Passing --token on the command line is insecure (visible via ps/proc and saved in shell history); prefer the KEYORIX_TOKEN environment variable.")
 		tok = runToken
 		remoteOK = endpoint != ""
 	}

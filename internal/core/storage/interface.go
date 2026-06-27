@@ -131,6 +131,9 @@ type Storage interface {
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
+	// ListAllMachineIdentities returns every machine identity across all projects —
+	// for install-wide sweeps such as SoD conflict detection over non-human principals.
+	ListAllMachineIdentities(ctx context.Context) ([]*models.MachineIdentity, error)
 	// CountMachineIdentitiesByClassification returns install-wide counts keyed by
 	// classification label ("" = unclassified) for the compliance posture.
 	CountMachineIdentitiesByClassification(ctx context.Context) (map[string]int, error)
@@ -347,6 +350,10 @@ type Storage interface {
 	GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error)
 	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	GetUserRoleIDsExact(ctx context.Context, userID uint, scope Scope) ([]uint, error)
+	// IsProjectMember reports whether the user holds a LIVE role grant scoped to the
+	// project itself (project_id = projectID), directly or via a group — i.e. real
+	// membership. A global/install-wide role (project_id = 0) does NOT count.
+	IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error)
 	GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
@@ -438,6 +445,11 @@ type Storage interface {
 	// AuditEntryHashByID returns the entry_hash of the audit row with the given
 	// id; found is false when no such row exists (e.g. it was truncated away).
 	AuditEntryHashByID(ctx context.Context, id uint) (hash string, found bool, err error)
+	// GetSystemMetadata returns the value stored for key; found is false when the key
+	// has never been set. A small singleton key/value store for server-managed state.
+	GetSystemMetadata(ctx context.Context, key string) (value string, found bool, err error)
+	// SetSystemMetadata upserts a system-metadata key/value (last write wins).
+	SetSystemMetadata(ctx context.Context, key, value string) error
 	GetDistinctActiveUserIDs(ctx context.Context, since time.Time) ([]uint, error)
 	// CountImpersonatedActions returns the number of impersonated audit events
 	// recorded for actingAs by impersonator since `since`, excluding the
@@ -450,10 +462,17 @@ type Storage interface {
 	GetSession(ctx context.Context, token string) (*models.Session, error)
 	GetSessionByID(ctx context.Context, id uint) (*models.Session, error)
 	ListSessionsByUser(ctx context.Context, userID uint) ([]*models.Session, error)
+	// EnforceSessionLimit deletes a user's oldest sessions beyond the `keep` most-recent
+	// (by created_at), bounding concurrent sessions per user. No-op when under the cap.
+	EnforceSessionLimit(ctx context.Context, userID uint, keep int) error
 	DeleteSession(ctx context.Context, id uint) error
 	// DeleteSessionsForUserExcept removes every session owned by userID except the
 	// one with id exceptID. Used to drop other sessions on a password change.
 	DeleteSessionsForUserExcept(ctx context.Context, userID, exceptID uint) error
+	// ListSessionTokenHashesForUser returns the stored session_token values (SHA-256
+	// hashes — equal to the auth-cache key) for every session owned by or impersonating
+	// userID, so a state change can evict them from the auth cache immediately.
+	ListSessionTokenHashesForUser(ctx context.Context, userID uint) ([]string, error)
 	// TouchSession bumps last_seen_at only when it is older than the given staleness
 	// window (no-op otherwise) so the auth hot path is not turned into a write per request.
 	TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error
@@ -463,6 +482,10 @@ type Storage interface {
 	UpsertMFASecret(ctx context.Context, s *models.MFASecret) error
 	GetMFASecret(ctx context.Context, userID uint) (*models.MFASecret, error)
 	ActivateMFASecret(ctx context.Context, userID uint) error
+	// MarkTOTPStepUsed atomically records that the given TOTP time-step was accepted for
+	// userID, returning true only if it was newly consumed (step strictly greater than
+	// the stored last-used step). A false return means the code is a replay.
+	MarkTOTPStepUsed(ctx context.Context, userID uint, step int64) (bool, error)
 	DeleteMFAForUser(ctx context.Context, userID uint) error // clears secret + recovery codes
 	SetUserMFAEnabled(ctx context.Context, userID uint, enabled bool) error
 	CreateMFARecoveryCodes(ctx context.Context, userID uint, codeHashes []string) error
@@ -483,6 +506,9 @@ type Storage interface {
 	CreateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error)
 	GetDynamicSecretLease(ctx context.Context, leaseID string) (*models.DynamicSecretLease, error)
 	ListDynamicSecretLeases(ctx context.Context, configID uint) ([]*models.DynamicSecretLease, error)
+	// CountActiveLeases returns how many leases from configID are currently active —
+	// used to enforce the config's MaxActiveLeases ceiling.
+	CountActiveLeases(ctx context.Context, configID uint) (int64, error)
 	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
 	ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error)
 
@@ -517,6 +543,10 @@ type Storage interface {
 	GetPersonalAccessTokenByID(ctx context.Context, id uint) (*models.PersonalAccessToken, error)
 	GetPersonalAccessTokenByHash(ctx context.Context, hash string) (*models.PersonalAccessToken, error)
 	RevokePersonalAccessToken(ctx context.Context, id uint) error
+	// RevokeAllPersonalAccessTokensForUser revokes every active PAT for a user and returns
+	// their token hashes (for immediate auth-cache eviction). Used on a password change/
+	// reset so PATs die with the password.
+	RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error)
 	TouchPersonalAccessToken(ctx context.Context, id uint, usedAt time.Time, staleness time.Duration) error
 
 	// Setup Token Management (ADR-028) — single-use, hashed-at-rest credential-delivery tokens.
@@ -616,6 +646,10 @@ type UserFilter struct {
 	IncludeDeleted bool // when true, also return soft-deleted users
 	Page           int
 	PageSize       int
+	// Offset, when > 0, sets the row offset directly (overriding the Page-derived
+	// offset). Used for SCIM startIndex paging, where the window is an arbitrary 1-based
+	// item offset that need not align to a Page boundary.
+	Offset int
 }
 
 // MembershipCounts holds a user's project-membership tallies: Active counts

@@ -33,8 +33,10 @@ func newBootstrappedCore(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
 
 	st := store.NewLocalStorage(db)
 	c := NewKeyorixCore(st)
+	c.SetBootstrapToken("test-bootstrap-token")
 	_, err = c.BootstrapSystem(context.Background(), &BootstrapRequest{
-		Username: "admin", Email: "admin@example.com", Password: "password12345", DisplayName: "Admin",
+		Username: "admin", Email: "admin@example.com", Password: "BootstrapPass123!", DisplayName: "Admin",
+		Token: "test-bootstrap-token",
 	})
 	require.NoError(t, err)
 	return c, st

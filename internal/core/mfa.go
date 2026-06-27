@@ -7,6 +7,7 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"strings"
@@ -80,10 +81,11 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code string)
 	if err := c.storage.SetUserMFAEnabled(ctx, userID, true); err != nil {
 		return nil, fmt.Errorf("failed to enable MFA: %w", err)
 	}
-	// Invalidate any sessions minted before MFA was enabled, so a pre-enrolment
-	// session cannot outlive the security upgrade (same hygiene as password change
-	// / suspend). Best-effort: enrolment must not fail on a session-cleanup error.
-	_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
+	// Invalidate any sessions minted before MFA was enabled (and evict them from the auth
+	// cache), so a pre-enrolment session cannot outlive the security upgrade — even for
+	// the cache TTL (same hygiene as password change / suspend). Best-effort: enrolment
+	// must not fail on a session-cleanup error.
+	_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
 	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
 	if err != nil {
 		return nil, err
@@ -220,16 +222,38 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	if !user.IsActive || AccountLoginBlocked(user.AccountState) {
 		return nil, nil, fmt.Errorf("account is not active")
 	}
+	// Per-account lockout also gates the second factor. The per-IP rate limiter is
+	// spoofable behind a misconfigured proxy, and it is otherwise the ONLY online
+	// throttle on TOTP/recovery-code guessing — binding failures to the account (keyed
+	// by ch.UserID, which the attacker does not control) makes second-factor brute force
+	// cost the same lockout as password brute force.
+	if c.loginLocked(user) {
+		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
 	verified, usedRecovery := false, false
-	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err == nil && c.validateTOTP(secret, code) {
-		verified = true
-	} else if consumed, err := c.storage.ConsumeMFARecoveryCode(ctx, ch.UserID, sha256Hex(normalizeRecoveryCode(code)), c.now()); err == nil && consumed {
-		verified, usedRecovery = true, true
+	if secret, err := c.loadTOTPSecret(ctx, ch.UserID); err == nil {
+		if step, ok := c.validateTOTPStep(secret, code); ok {
+			// Single-use within the validity window: atomically advance the last-used
+			// step. A code already accepted at this (or a later) step is a replay and
+			// MarkTOTPStepUsed returns false, so it is rejected — closing the ~90s
+			// replay window the bare totp validation left open.
+			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, ch.UserID, step); ferr == nil && fresh {
+				verified = true
+			}
+		}
+	}
+	if !verified {
+		if consumed, err := c.storage.ConsumeMFARecoveryCode(ctx, ch.UserID, sha256Hex(normalizeRecoveryCode(code)), c.now()); err == nil && consumed {
+			verified, usedRecovery = true, true
+		}
 	}
 	if !verified {
 		c.auditMFAFailed(ctx, ch.UserID, "login")
+		c.recordFailedLogin(ctx, user) // count the failed second factor toward the lockout
 		return nil, nil, fmt.Errorf("invalid code")
 	}
+	// Cleared the second factor — reset any lockout state accrued from failed codes.
+	c.clearLoginFailures(ctx, user)
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
 	if err != nil {
 		return nil, nil, err
@@ -262,6 +286,30 @@ func (c *KeyorixCore) validateTOTP(secret, code string) bool {
 		Period: 30, Skew: 1, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
 	})
 	return valid
+}
+
+// totpPeriod is the TOTP step length in seconds.
+const totpPeriod = 30
+
+// validateTOTPStep verifies code against the current step and ±1 skew and, on a match,
+// returns the matched time-step (unix/period) so the caller can enforce single-use
+// (anti-replay). Unlike validateTOTP it identifies WHICH step matched.
+func (c *KeyorixCore) validateTOTPStep(secret, code string) (int64, bool) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return 0, false
+	}
+	now := c.now().UTC()
+	for _, delta := range []int64{0, -1, 1} {
+		t := now.Add(time.Duration(delta*totpPeriod) * time.Second)
+		expected, err := totp.GenerateCodeCustom(secret, t, totp.ValidateOpts{
+			Period: totpPeriod, Skew: 0, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1,
+		})
+		if err == nil && subtle.ConstantTimeCompare([]byte(code), []byte(expected)) == 1 {
+			return t.Unix() / totpPeriod, true
+		}
+	}
+	return 0, false
 }
 
 func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase string) {

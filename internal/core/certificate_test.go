@@ -42,6 +42,60 @@ func selfSignedPEM(t *testing.T, cn string, notAfter time.Time) (certPEM, keyPEM
 	return certPEM, keyPEM
 }
 
+// caCertPEM mints a self-signed CA certificate valid until notAfter (IsCA=true),
+// used to build leaf-last / CA-first chains.
+func caCertPEM(t *testing.T, cn string, notAfter time.Time) []byte {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(9999),
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             notAfter.Add(-3650 * 24 * time.Hour),
+		NotAfter:              notAfter,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// TestParseLeafCertificate_OrderIndependent proves the expiry monitor can't be
+// defeated by chain ordering or a corrupt leading block: parseLeafCertificate always
+// surfaces the soonest-expiring end-entity (non-CA) leaf regardless of position.
+func TestParseLeafCertificate_OrderIndependent(t *testing.T) {
+	base := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	leafPEM, _ := selfSignedPEM(t, "leaf.example.com", base.Add(30*24*time.Hour)) // short-lived leaf
+	caPEM := caCertPEM(t, "Root CA", base.Add(3650*24*time.Hour))                 // long-lived CA
+	leafNotAfter := base.Add(30 * 24 * time.Hour)
+
+	t.Run("CA-first bundle still yields the leaf's expiry", func(t *testing.T) {
+		bundle := append(append([]byte{}, caPEM...), leafPEM...)
+		cert, err := parseLeafCertificate(bundle)
+		require.NoError(t, err)
+		assert.False(t, cert.IsCA, "must select the end-entity leaf, not the CA")
+		assert.WithinDuration(t, leafNotAfter, cert.NotAfter, time.Second)
+	})
+
+	t.Run("corrupt leading CERTIFICATE block does not hide the valid leaf", func(t *testing.T) {
+		garbage := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not a real der cert")})
+		bundle := append(append([]byte{}, garbage...), leafPEM...)
+		cert, err := parseLeafCertificate(bundle)
+		require.NoError(t, err)
+		assert.WithinDuration(t, leafNotAfter, cert.NotAfter, time.Second)
+	})
+
+	t.Run("all-CA bundle falls back to soonest-expiring CA", func(t *testing.T) {
+		soonCA := caCertPEM(t, "Intermediate", base.Add(100*24*time.Hour))
+		bundle := append(append([]byte{}, caPEM...), soonCA...)
+		cert, err := parseLeafCertificate(bundle)
+		require.NoError(t, err)
+		assert.WithinDuration(t, base.Add(100*24*time.Hour), cert.NotAfter, time.Second)
+	})
+}
+
 func newCertCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

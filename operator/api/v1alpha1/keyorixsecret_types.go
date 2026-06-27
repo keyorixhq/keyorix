@@ -36,8 +36,10 @@ type KeyorixSecretTarget struct {
 
 // KeyorixSecretSpec defines which Keyorix secrets to sync and where.
 type KeyorixSecretSpec struct {
-	// Server is the Keyorix base URL, e.g. https://keyorix.internal.
-	// +kubebuilder:validation:Pattern=`^https?://`
+	// Server is the Keyorix base URL, e.g. https://keyorix.internal. Must be https (the
+	// machine-identity token is sent as a bearer header) AND must match the operator's
+	// --allowed-servers list — the operator rejects any other destination.
+	// +kubebuilder:validation:Pattern=`^https://`
 	Server string `json:"server"`
 	// TokenSecretRef sources the Keyorix machine-identity token (a least-privilege
 	// identity with secrets.read on the referenced secrets). The token is never

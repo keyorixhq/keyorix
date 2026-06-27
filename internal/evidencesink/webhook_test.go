@@ -14,6 +14,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The evidence webhook must refuse a cleartext (non-loopback http) endpoint and an
+// internal-target destination at construction, so the bearer token + compliance pack
+// are never shipped in cleartext or to an internal host.
+func TestWebhook_RejectsInsecureEndpoints(t *testing.T) {
+	// Cleartext http to a non-loopback host → rejected.
+	_, err := NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", Token: "ev-tok"})
+	require.ErrorContains(t, err, "must use https")
+
+	// https to the cloud-metadata link-local address → rejected (SSRF/exfil).
+	_, err = NewWebhook(WebhookConfig{Endpoint: "https://169.254.169.254/evidence"})
+	require.ErrorContains(t, err, "private/link-local")
+
+	// https to a normal host → accepted.
+	_, err = NewWebhook(WebhookConfig{Endpoint: "https://collector.example.com/evidence"})
+	require.NoError(t, err)
+
+	// The insecure opt-in permits http (trusted self-signed / lab).
+	_, err = NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", InsecureSkipVerify: true})
+	require.NoError(t, err)
+}
+
 func TestWebhook_PostsEvidenceWithAuth(t *testing.T) {
 	var (
 		mu       sync.Mutex
@@ -45,6 +66,27 @@ func TestWebhook_PostsEvidenceWithAuth(t *testing.T) {
 	assert.Equal(t, "v1:abc", sig)
 	assert.Equal(t, "keyorix-evidence-20260615T100000Z.json", filename)
 	assert.Equal(t, "webhook", wh.Target())
+}
+
+// A cross-host redirect from the configured evidence endpoint must be refused, so the
+// evidence pack (and its bearer token) can't be bounced to an attacker-controlled host.
+func TestWebhook_RefusesCrossHostRedirect(t *testing.T) {
+	var evilHits int32
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&evilHits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer evil.Close()
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Redirect(w, nil, evil.URL, http.StatusFound)
+	}))
+	defer primary.Close()
+
+	wh, err := newWebhook(WebhookConfig{Endpoint: primary.URL, Token: "ev-tok"}, time.Millisecond)
+	require.NoError(t, err)
+	err = wh.ForwardEvidence(context.Background(), "pack.json", []byte(`{"x":1}`), "")
+	require.Error(t, err, "a cross-host redirect must not be followed")
+	assert.Equal(t, int32(0), atomic.LoadInt32(&evilHits), "redirect target must never be reached")
 }
 
 func TestWebhook_ErrorsOnNon2xxAfterRetries(t *testing.T) {

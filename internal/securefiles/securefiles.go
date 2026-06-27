@@ -23,19 +23,46 @@ type FilePermSpec struct {
 	Mode os.FileMode // e.g., 0600
 }
 
-// isPathInsideBase ensures that targetPath is inside baseDir
+// isPathInsideBase ensures that targetPath is inside baseDir. It resolves symlinks on
+// both sides before comparing, so a symlink planted inside baseDir cannot redirect the
+// read/write to a location outside it (a purely lexical filepath.Clean check would miss
+// that). The target file itself may not exist yet (writes), so its longest existing
+// ancestor is resolved and the unresolved tail re-attached.
 func isPathInsideBase(baseDir, targetPath string) (bool, error) {
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
 		return false, err
 	}
+	if resolved, rerr := filepath.EvalSymlinks(absBase); rerr == nil {
+		absBase = resolved
+	} else if !os.IsNotExist(rerr) {
+		return false, rerr
+	}
+
 	absTarget, err := filepath.Abs(targetPath)
 	if err != nil {
 		return false, err
 	}
+	absTarget = resolveExistingAncestor(absTarget)
 
 	baseWithSlash := absBase + string(os.PathSeparator)
 	return absTarget == absBase || strings.HasPrefix(absTarget, baseWithSlash), nil
+}
+
+// resolveExistingAncestor returns p with its longest existing prefix run through
+// filepath.EvalSymlinks (collapsing any symlink in the real path) and the remaining
+// non-existent suffix re-appended unchanged. This lets the containment check resolve
+// symlinks even when the final target does not exist yet.
+func resolveExistingAncestor(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	dir, file := filepath.Split(p)
+	dir = filepath.Clean(dir)
+	if dir == p { // reached the filesystem root; nothing left to resolve
+		return p
+	}
+	return filepath.Join(resolveExistingAncestor(dir), file)
 }
 
 // SafeReadFile reads a file at filepath.Join(baseDir, filePath), validating
@@ -76,7 +103,19 @@ func SecureWriteFile(baseDir, path string, data []byte, perm os.FileMode) error 
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cleanPath, data, perm)
+	// O_NOFOLLOW refuses to write THROUGH a final-component symlink. The containment
+	// check resolves EXISTING symlinks, but a DANGLING final symlink (its target not yet
+	// existing) slips past it — os.WriteFile would then follow it and create a file
+	// outside baseDir. With O_NOFOLLOW the open fails (ELOOP) instead of following it.
+	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside
+	if err != nil {
+		return err
+	}
+	if _, werr := f.Write(data); werr != nil {
+		_ = f.Close()
+		return werr
+	}
+	return f.Close()
 }
 
 // SecureWriteFileSync writes data like SecureWriteFile but fsyncs the file before
@@ -91,7 +130,7 @@ func SecureWriteFileSync(baseDir, path string, data []byte, perm os.FileMode) er
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside
+	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside; O_NOFOLLOW refuses a final-component symlink
 	if err != nil {
 		return err
 	}
@@ -137,13 +176,25 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error {
 	}
 	currentUID, _ := strconv.Atoi(currentUser.Uid)
 
-	hasWarnings := false
+	hasWarnings := false // a mismatch was found (fixed or not)
+	unresolved := false  // a problem REMAINS — stat/chmod/chown failed, so autofix didn't help
 
 	for _, f := range files {
-		info, err := os.Stat(f.Path)
+		// Lstat (not Stat) so a symlink is detected rather than dereferenced: os.Chmod /
+		// os.Chown FOLLOW symlinks, so a symlink planted in the key directory would
+		// otherwise redirect the perm/owner fix to an arbitrary target (an arbitrary chown
+		// when running as root). Refuse to "fix" a symlinked path.
+		info, err := os.Lstat(f.Path)
 		if err != nil {
 			fmt.Printf("[WARN] Cannot stat file %s: %v\n", f.Path, err)
 			hasWarnings = true
+			unresolved = true
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			fmt.Printf("[WARN] Refusing to fix %s: it is a symlink (won't follow it to an arbitrary target)\n", f.Path)
+			hasWarnings = true
+			unresolved = true
 			continue
 		}
 
@@ -151,16 +202,16 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error {
 		actualMode := info.Mode().Perm()
 		if actualMode != f.Mode {
 			msg := fmt.Sprintf("File %s has mode %o but expected %o", f.Path, actualMode, f.Mode)
+			hasWarnings = true
 			if autofix {
 				if err := os.Chmod(f.Path, f.Mode); err != nil {
 					fmt.Printf("[ERROR] Failed to chmod %s: %v\n", f.Path, err)
-					hasWarnings = true
+					unresolved = true
 				} else {
 					fmt.Printf("[FIXED] %s\n", msg)
 				}
 			} else {
 				fmt.Printf("[WARN] %s\n", msg)
-				hasWarnings = true
 			}
 		}
 
@@ -169,28 +220,33 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error {
 		if !ok {
 			fmt.Printf("[WARN] Cannot get stat_t for %s\n", f.Path)
 			hasWarnings = true
+			unresolved = true
 			continue
 		}
 
 		fileUID := int(stat.Uid)
 		if fileUID != currentUID {
 			msg := fmt.Sprintf("File %s is owned by uid %d, expected uid %d", f.Path, fileUID, currentUID)
+			hasWarnings = true
 			if autofix {
 				if err := os.Chown(f.Path, currentUID, int(stat.Gid)); err != nil {
 					fmt.Printf("[ERROR] Failed to chown %s: %v\n", f.Path, err)
-					hasWarnings = true
+					unresolved = true
 				} else {
 					fmt.Printf("[FIXED] %s\n", msg)
 				}
 			} else {
 				fmt.Printf("[WARN] %s\n", msg)
-				hasWarnings = true
 			}
 		}
 	}
 
-	if hasWarnings && !autofix {
-		return fmt.Errorf("permissions or ownership audit found warnings")
+	// Fail closed when a problem remains: either autofix was off and a mismatch exists,
+	// or autofix was on but a chmod/chown/stat FAILED (so the insecure state persists).
+	// The previous `hasWarnings && !autofix` form silently returned nil when autofix
+	// couldn't actually lock a world-readable key file down.
+	if unresolved || (hasWarnings && !autofix) {
+		return fmt.Errorf("permissions or ownership audit found unresolved issues")
 	}
 
 	return nil

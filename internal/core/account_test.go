@@ -61,7 +61,9 @@ func TestChangePassword(t *testing.T) {
 		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
 		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
 		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
+		ms.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
 		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
+		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
 		// History rule (default HistoryCount=5): no prior hashes, then record + prune.
 		ms.On("RecentPasswordHashes", ctx, uint(1), 5).Return([]string{}, nil)
 		ms.On("AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
@@ -74,6 +76,29 @@ func TestChangePassword(t *testing.T) {
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPw)))
 		ms.AssertCalled(t, "DeleteSessionsForUserExcept", ctx, uint(1), uint(7))
 		ms.AssertCalled(t, "AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything)
+	})
+
+	t.Run("revokes the user's PATs and evicts them from the auth cache", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		var evicted []string
+		c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(oldHash)}
+
+		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
+		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
+		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
+		ms.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
+		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
+		// Two active PATs are revoked and their hashes returned for cache eviction.
+		ms.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(1)).Return([]string{"hash-a", "hash-b"}, nil)
+		ms.On("RecentPasswordHashes", ctx, uint(1), 5).Return([]string{}, nil)
+		ms.On("AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("PrunePasswordHistory", ctx, uint(1), 5).Return(nil)
+
+		require.NoError(t, c.ChangePassword(ctx, 1, "oldpassword", "Brandnew#Passw0rd!", "current-token"))
+		ms.AssertCalled(t, "RevokeAllPersonalAccessTokensForUser", ctx, uint(1))
+		assert.ElementsMatch(t, []string{"hash-a", "hash-b"}, evicted, "revoked PAT hashes are evicted from the auth cache")
 	})
 
 	t.Run("rejects reuse of a recent password", func(t *testing.T) {

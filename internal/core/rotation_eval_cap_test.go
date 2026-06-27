@@ -45,11 +45,11 @@ func TestEvaluateRotationPolicies_NoSilentCap(t *testing.T) {
 	}
 	require.NoError(t, db.CreateInBatches(secrets, 200).Error)
 
-	evals, err := c.EvaluateRotationPolicies(context.Background(), nil)
+	evals, err := c.EvaluateRotationPolicies(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Len(t, evals, n, "every overdue secret is evaluated, not capped at one page")
 
-	status, err := c.GetRotationStatus(context.Background(), nil)
+	status, err := c.GetRotationStatus(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Len(t, status, n, "status covers every secret too, not capped at one page")
 }

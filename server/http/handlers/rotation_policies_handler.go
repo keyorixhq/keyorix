@@ -290,6 +290,21 @@ func (h *RotationPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// parseOptionalUintQuery parses an optional uint query parameter; returns (nil, nil)
+// when absent and (nil, err) when present but not a valid uint.
+func parseOptionalUintQuery(r *http.Request, key string) (*uint, error) {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return nil, nil
+	}
+	id, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return nil, err
+	}
+	uid := uint(id)
+	return &uid, nil
+}
+
 // Evaluate handles GET /api/v1/rotation-policies/evaluate
 func (h *RotationPolicyHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
@@ -309,7 +324,16 @@ func (h *RotationPolicyHandler) Evaluate(w http.ResponseWriter, r *http.Request)
 		projectID = &uid
 	}
 
-	evaluations, err := h.coreService.EvaluateRotationPolicies(r.Context(), projectID)
+	// Honour environment_id so an environment-scoped reader's view is confined to their
+	// environment (the route gate authorizes at {project, environment} via ScopeFromQuery,
+	// but the core previously ignored the env and returned the whole project's posture).
+	environmentID, perr := parseOptionalUintQuery(r, "environment_id")
+	if perr != nil {
+		h.sendError(w, "InvalidParameter", "Invalid environment_id", http.StatusBadRequest, nil)
+		return
+	}
+
+	evaluations, err := h.coreService.EvaluateRotationPolicies(r.Context(), projectID, environmentID)
 	if err != nil {
 		log.Printf("Error evaluating rotation policies: %v", err)
 		h.sendError(w, "InternalError", "Failed to evaluate rotation policies", http.StatusInternalServerError, nil)
@@ -341,7 +365,15 @@ func (h *RotationPolicyHandler) Status(w http.ResponseWriter, r *http.Request) {
 		projectID = &uid
 	}
 
-	entries, err := h.coreService.GetRotationStatus(r.Context(), projectID)
+	// Honour environment_id so an environment-scoped reader's view is confined to their
+	// environment (see Evaluate).
+	environmentID, perr := parseOptionalUintQuery(r, "environment_id")
+	if perr != nil {
+		h.sendError(w, "InvalidParameter", "Invalid environment_id", http.StatusBadRequest, nil)
+		return
+	}
+
+	entries, err := h.coreService.GetRotationStatus(r.Context(), projectID, environmentID)
 	if err != nil {
 		log.Printf("Error getting rotation status: %v", err)
 		h.sendError(w, "InternalError", "Failed to get rotation status", http.StatusInternalServerError, nil)

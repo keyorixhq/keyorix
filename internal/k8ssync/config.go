@@ -2,6 +2,8 @@ package k8ssync
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -43,6 +45,13 @@ func (c *Config) validate() error {
 	if strings.TrimSpace(c.KeyorixURL) == "" {
 		return fmt.Errorf("keyorix_url is required")
 	}
+	// The agent sends the machine-identity token (KEYORIX_TOKEN) as a Bearer header on
+	// every request, so keyorix_url MUST be https (http only for loopback in dev) — an
+	// http endpoint would ship a secrets-read-capable token in cleartext over the cluster
+	// network. The operator (CRD) path already requires https; this matches it.
+	if err := requireHTTPSURL(c.KeyorixURL); err != nil {
+		return err
+	}
 	if len(c.Mappings) == 0 {
 		return fmt.Errorf("at least one mapping is required")
 	}
@@ -57,6 +66,30 @@ func (c *Config) validate() error {
 		}
 	}
 	return nil
+}
+
+// requireHTTPSURL rejects a keyorix_url that is not https (http is allowed only for a
+// loopback host, for local development/testing).
+func requireHTTPSURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid keyorix_url %q", raw)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" {
+			return nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil
+		}
+		return fmt.Errorf("keyorix_url %q must use https (http is allowed only for localhost); sending the bearer token over plaintext would expose it", raw)
+	default:
+		return fmt.Errorf("keyorix_url %q must use https", raw)
+	}
 }
 
 // GetInterval returns the reconcile interval, defaulting to 5m when unset.

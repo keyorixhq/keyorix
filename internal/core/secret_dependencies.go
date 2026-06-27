@@ -77,20 +77,18 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorID, dependen
 	}
 	dependent, err := c.requireSecret(ctx, dependentID)
 	if err != nil {
-		return nil, err
+		return nil, err // the caller is authorized on the path secret, so its status may differ
 	}
-	dependsOn, err := c.requireSecret(ctx, dependsOnID)
-	if err != nil {
-		return nil, err
-	}
-	// Both endpoints must be in the same project AND environment. Authorization is
-	// environment-granular (a grant is scoped to {project, environment}), and the HTTP
-	// layer only authorizes the caller on the path secret's environment — so confining
-	// the edge to that one environment is what makes the path-secret authorization also
-	// cover the dependency secret. A cross-environment edge would let a caller scoped to
-	// one environment reference (and later read the name of) a secret in another.
-	if dependent.ProjectID != dependsOn.ProjectID || dependent.EnvironmentID != dependsOn.EnvironmentID {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "both secrets must be in the same project and environment")
+	// Resolve the dependency target, but DON'T distinguish "not found" / "is a folder" /
+	// "in another project or environment" — the caller is only authorized on the path
+	// (dependent) secret's scope, so a differentiated error here is a cross-scope
+	// existence-and-type oracle (probe arbitrary IDs by 404-vs-400). Collapse them into a
+	// single opaque error. Confining the edge to the same project AND environment is also
+	// what makes the path-secret authorization cover the dependency secret (authorization
+	// is environment-granular and the HTTP layer authorizes only the path secret's env).
+	dependsOn, derr := c.requireSecret(ctx, dependsOnID)
+	if derr != nil || dependsOn.ProjectID != dependent.ProjectID || dependsOn.EnvironmentID != dependent.EnvironmentID {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the dependency target must be a secret in the same project and environment")
 	}
 
 	edges, err := c.storage.ListSecretDependenciesForProject(ctx, dependent.ProjectID)

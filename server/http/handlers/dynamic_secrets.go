@@ -70,6 +70,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		CreationTemplate  string `json:"creation_template"`
 		DefaultTTLSeconds int    `json:"default_ttl_seconds"`
 		MaxTTLSeconds     int    `json:"max_ttl_seconds"`
+		MaxActiveLeases   int    `json:"max_active_leases"`
 		Classification    string `json:"classification"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -90,6 +91,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		CreationTemplate:  body.CreationTemplate,
 		DefaultTTLSeconds: body.DefaultTTLSeconds,
 		MaxTTLSeconds:     body.MaxTTLSeconds,
+		MaxActiveLeases:   body.MaxActiveLeases,
 		Classification:    body.Classification,
 		CreatedBy:         userCtx.Username,
 	})
@@ -300,6 +302,7 @@ func sanitizeConfig(c *models.DynamicSecretConfig) map[string]interface{} {
 		"creation_template":   c.CreationTemplate,
 		"default_ttl_seconds": c.DefaultTTLSeconds,
 		"max_ttl_seconds":     c.MaxTTLSeconds,
+		"max_active_leases":   c.MaxActiveLeases,
 		"classification":      c.Classification,
 		"created_by":          c.CreatedBy,
 		"created_at":          c.CreatedAt,

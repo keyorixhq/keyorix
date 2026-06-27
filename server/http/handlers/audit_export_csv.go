@@ -90,15 +90,15 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 		_ = cw.Write([]string{
 			strconv.FormatUint(uint64(e.ID), 10),
 			e.EventTime.UTC().Format(time.RFC3339),
-			e.EventType,
-			name(e.UserID),
+			csvSafe(e.EventType),
+			csvSafe(name(e.UserID)),
 			actorTypeOrDefault(e.ActorType),
 			uintStr(e.UserID),
 			uintStr(e.ProjectID),
 			uintStr(e.SecretNodeID),
-			e.IPAddress,
+			csvSafe(e.IPAddress),
 			success,
-			e.Description,
+			csvSafe(e.Description),
 		})
 	}
 }

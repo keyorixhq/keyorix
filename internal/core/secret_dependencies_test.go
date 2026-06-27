@@ -71,7 +71,12 @@ func newDepCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretDependency{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretDependency{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}))
+	// Live parent projects (1, 2) + environment (1): RestoreSecret refuses to restore a
+	// secret into a soft-deleted parent, so the dependency-cascade tests need them present.
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "p2"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
 	now := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
 	return c, db
@@ -130,10 +135,13 @@ func TestAddSecretDependency_Validation(t *testing.T) {
 		assert.Contains(t, err.Error(), "cycle")
 	})
 
-	t.Run("missing secret rejected", func(t *testing.T) {
+	t.Run("missing dependency target rejected with an opaque error (no existence oracle)", func(t *testing.T) {
 		_, err := c.AddSecretDependency(ctx, 10, appTok, 9999, "")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "9999")
+		// Must NOT reveal whether 9999 exists / what it is — same message as a cross-scope
+		// target, so the caller can't enumerate secret IDs across scopes.
+		assert.NotContains(t, err.Error(), "9999")
+		assert.Contains(t, err.Error(), "same project and environment")
 	})
 }
 

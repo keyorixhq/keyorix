@@ -45,6 +45,16 @@ func (ls *LocalStorage) ListMachineIdentities(ctx context.Context, projectID uin
 	return rows, nil
 }
 
+// ListAllMachineIdentities returns every machine identity across all projects.
+func (ls *LocalStorage) ListAllMachineIdentities(ctx context.Context) ([]*models.MachineIdentity, error) {
+	var rows []*models.MachineIdentity
+	err := ls.db.WithContext(ctx).Order("created_at DESC").Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
+}
+
 func (ls *LocalStorage) CountMachineIdentitiesByClassification(ctx context.Context) (map[string]int, error) {
 	return countByClassification(ctx, ls.db, &models.MachineIdentity{})
 }

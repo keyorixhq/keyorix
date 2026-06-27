@@ -33,6 +33,20 @@ func (ls *LocalStorage) ActivateMFASecret(ctx context.Context, userID uint) erro
 		Where("user_id = ?", userID).Update("activated", true).Error
 }
 
+// MarkTOTPStepUsed atomically advances the user's last-used TOTP step. The single
+// conditional UPDATE (guard in the WHERE clause + RowsAffected check) makes accept and
+// advance race-free: a code at or below the stored step matches zero rows and is
+// rejected as a replay.
+func (ls *LocalStorage) MarkTOTPStepUsed(ctx context.Context, userID uint, step int64) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.MFASecret{}).
+		Where("user_id = ? AND (last_used_step IS NULL OR last_used_step < ?)", userID, step).
+		Update("last_used_step", step)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // DeleteMFAForUser removes the secret and all recovery codes for a user.
 func (ls *LocalStorage) DeleteMFAForUser(ctx context.Context, userID uint) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

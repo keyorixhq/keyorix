@@ -88,19 +88,47 @@ func TestRESTSink_ListOwnedScopesByLabel(t *testing.T) {
 	assert.ElementsMatch(t, []string{"creds", "stale"}, names)
 }
 
-func TestRESTSink_DeleteHitsDeleteVerb(t *testing.T) {
-	var gotMethod, gotPath string
+func TestRESTSink_DeleteOwnerConditional(t *testing.T) {
+	var methods []string
+	var deleteBody, deletePath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		_, _ = w.Write([]byte(`{"kind":"Status"}`))
+		methods = append(methods, r.Method)
+		switch r.Method {
+		case http.MethodGet:
+			// An owned Secret with a known uid/resourceVersion.
+			_, _ = w.Write([]byte(`{"metadata":{"uid":"u-1","resourceVersion":"rv-9","labels":{"app.kubernetes.io/managed-by":"keyorix-sync"}}}`))
+		case http.MethodDelete:
+			b, _ := io.ReadAll(r.Body)
+			deleteBody, deletePath = string(b), r.URL.Path
+			_, _ = w.Write([]byte(`{"kind":"Status"}`))
+		}
 	}))
 	defer srv.Close()
 
 	err := testSink(srv).Delete(context.Background(), "app", "stale")
 	require.NoError(t, err)
-	assert.Equal(t, http.MethodDelete, gotMethod)
-	assert.Equal(t, "/api/v1/namespaces/app/secrets/stale", gotPath)
+	assert.Equal(t, []string{http.MethodGet, http.MethodDelete}, methods, "the owner re-check (GET) must precede the DELETE")
+	assert.Equal(t, "/api/v1/namespaces/app/secrets/stale", deletePath)
+	// The delete is pinned to the exact object we verified (closes the TOCTOU).
+	assert.Contains(t, deleteBody, `"uid":"u-1"`)
+	assert.Contains(t, deleteBody, `"resourceVersion":"rv-9"`)
+}
+
+func TestRESTSink_DeleteSkipsUnownedSecret(t *testing.T) {
+	var sawDelete bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			sawDelete = true
+		}
+		// The Secret no longer carries our managed-by label (e.g. label stripped and the
+		// name reused by an unrelated object between listing and delete).
+		_, _ = w.Write([]byte(`{"metadata":{"uid":"u-2","resourceVersion":"rv-1","labels":{"app":"other"}}}`))
+	}))
+	defer srv.Close()
+
+	err := testSink(srv).Delete(context.Background(), "app", "not-ours")
+	require.NoError(t, err)
+	assert.False(t, sawDelete, "a Secret without our managed-by label must never be deleted")
 }
 
 func TestRESTSink_DeleteAbsentIsNotAnError(t *testing.T) {
