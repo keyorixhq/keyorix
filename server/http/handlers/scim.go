@@ -151,7 +151,8 @@ func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		writeSCIM(w, http.StatusOK, listResponse(resources))
 		return
 	}
-	users, err := h.coreService.ListSCIMUsers(r.Context())
+	startIndex, count := scimPaging(r)
+	users, total, err := h.coreService.ListSCIMUsersPage(r.Context(), startIndex, count)
 	if err != nil {
 		scimError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -160,14 +161,40 @@ func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range users {
 		resources = append(resources, toSCIMUser(u))
 	}
-	writeSCIM(w, http.StatusOK, listResponse(resources))
+	writeSCIM(w, http.StatusOK, listResponsePaged(resources, total, startIndex))
+}
+
+// scimPaging parses the SCIM startIndex (1-based, default 1) and count (default and
+// max SCIMMaxPageSize) query parameters, clamping count so an unfiltered list cannot
+// drain the whole directory into a single response.
+func scimPaging(r *http.Request) (startIndex, count int) {
+	startIndex = 1
+	if v := r.URL.Query().Get("startIndex"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			startIndex = n
+		}
+	}
+	count = core.SCIMMaxPageSize
+	if v := r.URL.Query().Get("count"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			count = n
+		}
+	}
+	if count > core.SCIMMaxPageSize {
+		count = core.SCIMMaxPageSize
+	}
+	return startIndex, count
 }
 
 func listResponse(resources []map[string]interface{}) map[string]interface{} {
+	return listResponsePaged(resources, len(resources), 1)
+}
+
+func listResponsePaged(resources []map[string]interface{}, total, startIndex int) map[string]interface{} {
 	return map[string]interface{}{
 		"schemas":      []string{scimListSchema},
-		"totalResults": len(resources),
-		"startIndex":   1,
+		"totalResults": total,
+		"startIndex":   startIndex,
 		"itemsPerPage": len(resources),
 		"Resources":    resources,
 	}

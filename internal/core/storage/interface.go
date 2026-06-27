@@ -646,6 +646,10 @@ type UserFilter struct {
 	IncludeDeleted bool // when true, also return soft-deleted users
 	Page           int
 	PageSize       int
+	// Offset, when > 0, sets the row offset directly (overriding the Page-derived
+	// offset). Used for SCIM startIndex paging, where the window is an arbitrary 1-based
+	// item offset that need not align to a Page boundary.
+	Offset int
 }
 
 // MembershipCounts holds a user's project-membership tallies: Active counts

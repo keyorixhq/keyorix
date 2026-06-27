@@ -226,6 +226,9 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 	}
 
 	offset := (filter.Page - 1) * filter.PageSize
+	if filter.Offset > 0 {
+		offset = filter.Offset
+	}
 	query = query.Offset(offset).Limit(filter.PageSize)
 
 	var users []*models.User

@@ -297,6 +297,41 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	return nil
 }
 
+// SCIMMaxPageSize bounds how many resources a single SCIM list page returns — the
+// value advertised in ServiceProviderConfig (filter.maxResults). A larger requested
+// count is clamped to it so an unfiltered list can't drain the whole directory into one
+// response (memory + DB amplification).
+const SCIMMaxPageSize = 200
+
+// ListSCIMUsersPage returns one page of users for a SCIM list and the total count.
+// startIndex is 1-based (SCIM convention); count is clamped to [0, SCIMMaxPageSize]
+// (count==0 returns no resources, just the total).
+func (c *KeyorixCore) ListSCIMUsersPage(ctx context.Context, startIndex, count int) ([]*models.User, int, error) {
+	if startIndex < 1 {
+		startIndex = 1
+	}
+	if count < 0 {
+		count = 0
+	}
+	if count > SCIMMaxPageSize {
+		count = SCIMMaxPageSize
+	}
+	if count == 0 {
+		// SCIM count=0 → return totalResults only. Use PageSize=1 to get an accurate
+		// total without a separate count API; the single fetched row is discarded.
+		_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
+		if err != nil {
+			return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		return []*models.User{}, int(total), nil
+	}
+	users, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Offset: startIndex - 1, PageSize: count})
+	if err != nil {
+		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return users, int(total), nil
+}
+
 // ListSCIMUsers returns users for a SCIM list, paging through all of them.
 func (c *KeyorixCore) ListSCIMUsers(ctx context.Context) ([]*models.User, error) {
 	const pageSize = 200

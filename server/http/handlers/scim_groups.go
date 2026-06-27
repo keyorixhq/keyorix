@@ -18,6 +18,15 @@ import (
 
 const scimGroupSchema = "urn:ietf:params:scim:schemas:core:2.0:Group"
 
+// SCIM group-mutation bounds: a single request may not carry more than these many
+// member entries or patch operations, so a multi-MiB members[] / Operations[] array
+// can't fan out into hundreds of thousands of per-member DB writes (the body is already
+// capped at 10 MiB, but that still permits a very large small-object array).
+const (
+	scimMaxMembersPerRequest = 5000
+	scimMaxPatchOps          = 1000
+)
+
 func toSCIMGroup(g *models.Group, members []*models.User) map[string]interface{} {
 	mem := make([]map[string]interface{}, 0, len(members))
 	for _, u := range members {
@@ -79,15 +88,43 @@ func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		wantName = m[1]
 	}
-	resources := make([]map[string]interface{}, 0, len(groups))
+
+	// Apply the name filter first, then a bounded page. Members are fetched ONLY for the
+	// groups on the returned page, so the per-group GetGroupMembers query (an N+1) is
+	// capped at the page size instead of running across the whole directory.
+	matched := groups[:0]
 	for _, g := range groups {
-		if wantName != "" && g.Name != wantName {
-			continue
+		if wantName == "" || g.Name == wantName {
+			matched = append(matched, g)
 		}
+	}
+	total := len(matched)
+	startIndex, count := scimPaging(r)
+	page := pageSlice(matched, startIndex, count)
+
+	resources := make([]map[string]interface{}, 0, len(page))
+	for _, g := range page {
 		members, _ := h.coreService.GetGroupMembers(r.Context(), g.ID)
 		resources = append(resources, toSCIMGroup(g, members))
 	}
-	writeSCIM(w, http.StatusOK, listResponse(resources))
+	writeSCIM(w, http.StatusOK, listResponsePaged(resources, total, startIndex))
+}
+
+// pageSlice returns the [startIndex, startIndex+count) window of items (startIndex is
+// 1-based), clamped to the slice bounds.
+func pageSlice[T any](items []T, startIndex, count int) []T {
+	lo := startIndex - 1
+	if lo < 0 {
+		lo = 0
+	}
+	if lo >= len(items) || count <= 0 {
+		return nil
+	}
+	hi := lo + count
+	if hi > len(items) {
+		hi = len(items)
+	}
+	return items[lo:hi]
 }
 
 // GetGroup handles GET /scim/v2/Groups/{id}.
@@ -115,6 +152,10 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		scimError(w, http.StatusBadRequest, "displayName is required")
 		return
 	}
+	if len(p.Members) > scimMaxMembersPerRequest {
+		scimError(w, http.StatusRequestEntityTooLarge, "too many members in one request")
+		return
+	}
 	g, err := h.coreService.ProvisionSCIMGroup(r.Context(), 0, p.DisplayName, p.memberIDs())
 	if err != nil {
 		status := http.StatusBadRequest
@@ -138,6 +179,10 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		scimError(w, http.StatusBadRequest, "invalid SCIM payload")
 		return
 	}
+	if len(p.Members) > scimMaxMembersPerRequest {
+		scimError(w, http.StatusRequestEntityTooLarge, "too many members in one request")
+		return
+	}
 	g, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
 	if err != nil {
 		scimError(w, http.StatusNotFound, err.Error())
@@ -159,6 +204,10 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 	var patch scimPatch
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		scimError(w, http.StatusBadRequest, "invalid SCIM patch")
+		return
+	}
+	if len(patch.Operations) > scimMaxPatchOps {
+		scimError(w, http.StatusRequestEntityTooLarge, "too many patch operations in one request")
 		return
 	}
 
@@ -207,6 +256,11 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 			replaceAll = true
 			replaceMembers = parseValueMembers(op.Value)
 		}
+	}
+
+	if len(addIDs)+len(removeIDs)+len(replaceMembers) > scimMaxMembersPerRequest {
+		scimError(w, http.StatusRequestEntityTooLarge, "too many members in one request")
+		return
 	}
 
 	var g *models.Group
