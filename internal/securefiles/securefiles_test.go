@@ -85,6 +85,42 @@ func TestSecureWriteFileSyncRejectsTraversal(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr))
 }
 
+// A DANGLING final-component symlink inside the base must not be followed: the write
+// must fail (O_NOFOLLOW) rather than create the symlink's target outside the base.
+func TestSecureWriteRefusesDanglingSymlink(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(filepath.Dir(base), "escape.key")
+	// A symlink "link.key" inside base pointing at a not-yet-existing file outside base.
+	require.NoError(t, os.Symlink(outside, filepath.Join(base, "link.key")))
+
+	err := SecureWriteFile(base, "link.key", []byte("secret"), 0600)
+	require.Error(t, err, "writing through a final-component symlink must be refused")
+	_, statErr := os.Stat(outside)
+	assert.True(t, os.IsNotExist(statErr), "the symlink target outside base must not have been created")
+
+	err = SecureWriteFileSync(base, "link.key", []byte("secret"), 0600)
+	require.Error(t, err)
+	_, statErr = os.Stat(outside)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+// FixFilePerms must refuse to follow a symlink — otherwise it would chmod/chown the
+// symlink's target (an arbitrary file when running as root).
+func TestFixFilePerms_RefusesSymlink(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "real.txt")
+	require.NoError(t, os.WriteFile(target, []byte("x"), 0644))
+	link := filepath.Join(base, "link.key")
+	require.NoError(t, os.Symlink(target, link))
+
+	err := FixFilePerms([]FilePermSpec{{Path: link, Mode: 0600}}, true)
+	require.Error(t, err, "autofix must report an unresolved issue for a symlinked path")
+	// The target's mode must be untouched (the symlink was not followed).
+	info, statErr := os.Stat(target)
+	require.NoError(t, statErr)
+	assert.Equal(t, os.FileMode(0644), info.Mode().Perm(), "the symlink target's mode must be unchanged")
+}
+
 func TestSyncDir(t *testing.T) {
 	base := t.TempDir()
 	// A real directory syncs without error.

@@ -103,7 +103,19 @@ func SecureWriteFile(baseDir, path string, data []byte, perm os.FileMode) error 
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cleanPath, data, perm)
+	// O_NOFOLLOW refuses to write THROUGH a final-component symlink. The containment
+	// check resolves EXISTING symlinks, but a DANGLING final symlink (its target not yet
+	// existing) slips past it — os.WriteFile would then follow it and create a file
+	// outside baseDir. With O_NOFOLLOW the open fails (ELOOP) instead of following it.
+	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside
+	if err != nil {
+		return err
+	}
+	if _, werr := f.Write(data); werr != nil {
+		_ = f.Close()
+		return werr
+	}
+	return f.Close()
 }
 
 // SecureWriteFileSync writes data like SecureWriteFile but fsyncs the file before
@@ -118,7 +130,7 @@ func SecureWriteFileSync(baseDir, path string, data []byte, perm os.FileMode) er
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside
+	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside; O_NOFOLLOW refuses a final-component symlink
 	if err != nil {
 		return err
 	}
@@ -168,9 +180,19 @@ func FixFilePerms(files []FilePermSpec, autofix bool) error {
 	unresolved := false  // a problem REMAINS — stat/chmod/chown failed, so autofix didn't help
 
 	for _, f := range files {
-		info, err := os.Stat(f.Path)
+		// Lstat (not Stat) so a symlink is detected rather than dereferenced: os.Chmod /
+		// os.Chown FOLLOW symlinks, so a symlink planted in the key directory would
+		// otherwise redirect the perm/owner fix to an arbitrary target (an arbitrary chown
+		// when running as root). Refuse to "fix" a symlinked path.
+		info, err := os.Lstat(f.Path)
 		if err != nil {
 			fmt.Printf("[WARN] Cannot stat file %s: %v\n", f.Path, err)
+			hasWarnings = true
+			unresolved = true
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			fmt.Printf("[WARN] Refusing to fix %s: it is a symlink (won't follow it to an arbitrary target)\n", f.Path)
 			hasWarnings = true
 			unresolved = true
 			continue
