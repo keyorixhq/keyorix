@@ -14,6 +14,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The evidence webhook must refuse a cleartext (non-loopback http) endpoint and an
+// internal-target destination at construction, so the bearer token + compliance pack
+// are never shipped in cleartext or to an internal host.
+func TestWebhook_RejectsInsecureEndpoints(t *testing.T) {
+	// Cleartext http to a non-loopback host → rejected.
+	_, err := NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", Token: "ev-tok"})
+	require.ErrorContains(t, err, "must use https")
+
+	// https to the cloud-metadata link-local address → rejected (SSRF/exfil).
+	_, err = NewWebhook(WebhookConfig{Endpoint: "https://169.254.169.254/evidence"})
+	require.ErrorContains(t, err, "private/link-local")
+
+	// https to a normal host → accepted.
+	_, err = NewWebhook(WebhookConfig{Endpoint: "https://collector.example.com/evidence"})
+	require.NoError(t, err)
+
+	// The insecure opt-in permits http (trusted self-signed / lab).
+	_, err = NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", InsecureSkipVerify: true})
+	require.NoError(t, err)
+}
+
 func TestWebhook_PostsEvidenceWithAuth(t *testing.T) {
 	var (
 		mu       sync.Mutex

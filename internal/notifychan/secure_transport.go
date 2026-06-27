@@ -9,7 +9,9 @@ import (
 
 // validateEndpoint rejects a non-https notification endpoint — which would send the
 // bearer token and payload in cleartext — allowing http only for an explicit insecure
-// opt-in or a loopback target (local testing).
+// opt-in or a loopback target (local testing). It also refuses a literal private /
+// link-local destination IP (e.g. cloud metadata 169.254.169.254 or an internal host)
+// unless the insecure opt-in is set — SSRF/exfil hardening.
 func validateEndpoint(raw string, allowInsecure bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -17,13 +19,18 @@ func validateEndpoint(raw string, allowInsecure bool) error {
 	}
 	switch u.Scheme {
 	case "https":
-		return nil
+		// scheme OK; fall through to the destination-IP check
 	case "http":
-		if allowInsecure || isLoopbackHost(u.Hostname()) {
-			return nil
+		if !allowInsecure && !isLoopbackHost(u.Hostname()) {
+			return fmt.Errorf("notifychan: endpoint %q must use https (set insecure_skip_verify only for a trusted self-signed or loopback target)", raw)
 		}
+	default:
+		return fmt.Errorf("notifychan: endpoint %q must use https", raw)
 	}
-	return fmt.Errorf("notifychan: endpoint %q must use https (set insecure_skip_verify only for a trusted self-signed or loopback target)", raw)
+	if !allowInsecure && isDisallowedIPHost(u.Hostname()) {
+		return fmt.Errorf("notifychan: endpoint %q targets a private/link-local address; refusing to send to an internal host", raw)
+	}
+	return nil
 }
 
 func isLoopbackHost(host string) bool {
@@ -34,6 +41,17 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// isDisallowedIPHost reports whether host is a literal private or link-local IP (loopback
+// is permitted as a dev target). Hostnames are not resolved here (no DNS at config time),
+// so this catches the literal-IP SSRF cases without a resolution side effect.
+func isDisallowedIPHost(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil || ip.IsLoopback() {
+		return false
+	}
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
 // refuseRedirectDowngrade blocks a redirect to a different host or a downgrade from
