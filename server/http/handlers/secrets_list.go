@@ -33,6 +33,11 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			// Clamp the page so a very large value can't force a huge OFFSET scan over the
+			// whole table on every request (deep-pagination DoS).
+			if p > maxListPage {
+				p = maxListPage
+			}
 			page = p
 		}
 	}

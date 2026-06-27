@@ -21,6 +21,10 @@ import (
 // Matches the dashboard's 30-day inactive-users signal.
 const inactiveUserWindow = 30 * 24 * time.Hour
 
+// maxListPage caps the page number on offset-paginated list endpoints, so a very large
+// page can't force an enormous OFFSET table scan on each request (deep-pagination DoS).
+const maxListPage = 10000
+
 // ListUsers serves user list from core.
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
@@ -33,6 +37,10 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	pageSize := 20
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			// Clamp the page so a very large value can't force a huge OFFSET scan (DoS).
+			if p > maxListPage {
+				p = maxListPage
+			}
 			page = p
 		}
 	}

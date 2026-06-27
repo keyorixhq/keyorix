@@ -14,6 +14,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// defaultMaxOpenConns bounds the DB connection pool when the operator hasn't set
+// max_open_conns — Go's own default is unlimited, which lets a request flood exhaust the
+// backing database's connection limit. A conservative cap is safer out of the box.
+const defaultMaxOpenConns = 25
+
 // StorageFactory creates storage instances based on configuration
 type StorageFactory interface {
 	CreateStorage(config *config.Config) (storage.Storage, error)
@@ -91,8 +96,13 @@ func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 	if err != nil {
 		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
 	}
+	// Always cap open connections. Go's default is UNLIMITED, so without a cap a flood of
+	// concurrent requests (even unauthenticated ones like /readyz, which pings the DB) can
+	// open connections without bound and exhaust the backing database's max_connections.
 	if dbCfg.MaxOpenConns > 0 {
 		sqlDB.SetMaxOpenConns(dbCfg.MaxOpenConns)
+	} else {
+		sqlDB.SetMaxOpenConns(defaultMaxOpenConns)
 	}
 	if dbCfg.MaxIdleConns > 0 {
 		sqlDB.SetMaxIdleConns(dbCfg.MaxIdleConns)

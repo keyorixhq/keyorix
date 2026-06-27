@@ -52,9 +52,13 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(req.Password))
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
-	// Per-account lockout gate: while locked, refuse regardless of the password (and
-	// before spending a bcrypt comparison), so repeated guessing can't progress.
+	// Per-account lockout gate: while locked, refuse regardless of the password, so
+	// repeated guessing can't progress. Spend an equivalent bcrypt comparison first so the
+	// locked path's latency matches the unknown-user and wrong-password paths — otherwise a
+	// fast (no-bcrypt) response on a locked account is a username-existence oracle (the
+	// attacker first forces the lockout, then probes by timing).
 	if c.loginLocked(user) {
+		_ = bcrypt.CompareHashAndPassword(dummyBcryptHash, []byte(req.Password))
 		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
