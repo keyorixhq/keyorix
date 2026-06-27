@@ -99,7 +99,7 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 	}
 
 	// Overdue rotations (deployment-wide).
-	if statuses, err := c.GetRotationStatus(ctx, nil); err == nil {
+	if statuses, err := c.GetRotationStatus(ctx, nil, nil); err == nil {
 		for _, s := range statuses {
 			if s.Status == RotationStatusOverdue {
 				ev.RotationOverdue = append(ev.RotationOverdue, EvidenceRotation{

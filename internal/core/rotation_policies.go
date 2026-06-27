@@ -186,11 +186,16 @@ type RotationStatusEntry struct {
 // environment) with more than one page of secrets would otherwise have the
 // secrets past the cap never checked for rotation — so overdue ones would be
 // missed by both the reminder scheduler and the status/evaluate views.
-func (c *KeyorixCore) scopedPolicySecrets(ctx context.Context, policy *models.RotationPolicy) ([]*models.SecretNode, error) {
+func (c *KeyorixCore) scopedPolicySecrets(ctx context.Context, policy *models.RotationPolicy, reqEnvID *uint) ([]*models.SecretNode, error) {
 	const pageSize = 500
 	var projectID, environmentID *uint
 	if policy.Scope == "project" {
 		projectID = policy.ProjectID
+		// When the caller restricted the view to a specific environment, confine a
+		// PROJECT-scoped policy's secret enumeration to that environment too — otherwise
+		// an environment-scoped reader would see secret metadata (name, last-rotated,
+		// overdue status, backend) for every environment of the project. nil = all envs.
+		environmentID = reqEnvID
 	} else {
 		environmentID = policy.EnvironmentID
 	}
@@ -211,7 +216,20 @@ func (c *KeyorixCore) scopedPolicySecrets(ctx context.Context, policy *models.Ro
 	return all, nil
 }
 
-func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID *uint) ([]*RotationStatusEntry, error) {
+// policyAppliesToEnv reports whether a policy should be included when the caller
+// restricted the view to reqEnvID. A nil reqEnvID (project-wide / internal callers)
+// includes everything. A project-scoped policy always applies (its secrets are then
+// confined to reqEnvID by scopedPolicySecrets); an environment-scoped policy applies
+// only when it targets reqEnvID, so a reader scoped to one environment can't see
+// another environment's policy posture.
+func policyAppliesToEnv(policy *models.RotationPolicy, reqEnvID *uint) bool {
+	if reqEnvID == nil || policy.Scope == "project" {
+		return true
+	}
+	return policy.EnvironmentID != nil && *policy.EnvironmentID == *reqEnvID
+}
+
+func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID, environmentID *uint) ([]*RotationStatusEntry, error) {
 	policies, err := c.storage.ListRotationPolicies(ctx, projectID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list rotation policies: %w", err)
@@ -221,11 +239,11 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID *uint) ([
 	now := c.now()
 
 	for _, policy := range policies {
-		if !policy.IsActive {
+		if !policy.IsActive || !policyAppliesToEnv(policy, environmentID) {
 			continue
 		}
 
-		secrets, err := c.scopedPolicySecrets(ctx, policy)
+		secrets, err := c.scopedPolicySecrets(ctx, policy, environmentID)
 		if err != nil {
 			continue
 		}
@@ -267,7 +285,7 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID *uint) ([
 	return entries, nil
 }
 
-func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID *uint) ([]*RotationPolicyEvaluation, error) {
+func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID, environmentID *uint) ([]*RotationPolicyEvaluation, error) {
 	policies, err := c.storage.ListRotationPolicies(ctx, projectID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list rotation policies: %w", err)
@@ -277,11 +295,11 @@ func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID *u
 	now := c.now()
 
 	for _, policy := range policies {
-		if !policy.IsActive {
+		if !policy.IsActive || !policyAppliesToEnv(policy, environmentID) {
 			continue
 		}
 
-		secrets, err := c.scopedPolicySecrets(ctx, policy)
+		secrets, err := c.scopedPolicySecrets(ctx, policy, environmentID)
 		if err != nil {
 			continue
 		}

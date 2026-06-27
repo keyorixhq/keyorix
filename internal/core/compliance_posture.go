@@ -214,7 +214,7 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	}
 
 	// Rotation hygiene (deployment-wide).
-	if statuses, err := c.GetRotationStatus(ctx, nil); err == nil {
+	if statuses, err := c.GetRotationStatus(ctx, nil, nil); err == nil {
 		p.Rotation.CoveredSecrets = len(statuses)
 		for _, s := range statuses {
 			switch s.Status {
