@@ -31,7 +31,7 @@ func adminCtx() context.Context {
 func (svc *UserGRPCService) mustCreate(t *testing.T, username, email string) *pb.User {
 	t.Helper()
 	resp, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
-		Username: username, Email: email, Password: strPtr("password123"),
+		Username: username, Email: email, Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp.GetUser())
@@ -50,7 +50,7 @@ func TestUserService_CreateUser_Password(t *testing.T) {
 func TestUserService_CreateUser_Unauthenticated(t *testing.T) {
 	svc := newUserService(t)
 	_, err := svc.CreateUser(context.Background(), &pb.CreateUserRequest{
-		Username: "x", Email: "x@example.com", Password: strPtr("password123"),
+		Username: "x", Email: "x@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
@@ -60,7 +60,7 @@ func TestUserService_CreateUser_PermissionDenied(t *testing.T) {
 	svc := newUserService(t)
 	ctx := authCtx(7, "reader") // ungranted user → denied
 	_, err := svc.CreateUser(ctx, &pb.CreateUserRequest{
-		Username: "x", Email: "x@example.com", Password: strPtr("password123"),
+		Username: "x", Email: "x@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -126,14 +126,14 @@ func TestUserService_CreateUser_RoleGrantRequiresAssign(t *testing.T) {
 
 	// Plain user creation (no grant) is still allowed by users.write alone.
 	resp, err := svc.CreateUser(ctx, &pb.CreateUserRequest{
-		Username: "plain", Email: "plain@example.com", Password: strPtr("password123"),
+		Username: "plain", Email: "plain@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp.GetUser())
 
 	// Handing out a system role is denied — this is the privilege-escalation gate.
 	_, err = svc.CreateUser(ctx, &pb.CreateUserRequest{
-		Username: "esc", Email: "esc@example.com", Password: strPtr("password123"),
+		Username: "esc", Email: "esc@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
 		Role: strPtr("super_admin"),
 	})
 	require.Error(t, err)
@@ -141,7 +141,7 @@ func TestUserService_CreateUser_RoleGrantRequiresAssign(t *testing.T) {
 
 	// Handing out a project role is likewise denied.
 	_, err = svc.CreateUser(ctx, &pb.CreateUserRequest{
-		Username: "esc2", Email: "esc2@example.com", Password: strPtr("password123"),
+		Username: "esc2", Email: "esc2@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
 		ProjectAssignments: []*pb.ProjectAssignment{{ProjectId: 1, Role: "editor"}},
 	})
 	require.Error(t, err)
@@ -154,7 +154,7 @@ func TestUserService_CreateUser_RoleGrantRequiresAssign(t *testing.T) {
 func TestUserService_CreateUser_AdminCanGrantRole(t *testing.T) {
 	svc := newUserService(t)
 	resp, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
-		Username: "withrole", Email: "withrole@example.com", Password: strPtr("password123"),
+		Username: "withrole", Email: "withrole@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
 		Role: strPtr("system_viewer"),
 	})
 	require.NoError(t, err)

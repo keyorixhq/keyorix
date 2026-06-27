@@ -34,6 +34,16 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 		displayName = req.Username
 	}
 
+	// Enforce the configured password policy on the admin-supplied password — the same
+	// policy BootstrapSystem and ChangePassword apply. Without this, the admin "classic"
+	// create path (the one path where a human picks the credential) silently accepted a
+	// weak password, which is then exposed to online guessing. The policy's user context
+	// also catches username/email-in-password. ADR-025.
+	policyUser := &models.User{Username: req.Username, Email: req.Email, DisplayName: displayName}
+	if err := c.passwordPolicy.Validate(req.Password, policyUser); err != nil {
+		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

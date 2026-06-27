@@ -100,14 +100,14 @@ func createLimitedToken(t *testing.T, c *core.KeyorixCore) string {
 	_, err := c.CreateUser(ctx, &core.CreateUserRequest{
 		Username: "limiteduser",
 		Email:    "limited@example.com",
-		Password: "LimitedPass123!",
+		Password: "Qr7#Kp2$Lm5@Vn9!",
 	})
 	if err != nil {
 		t.Fatalf("createLimitedToken: create user failed: %v", err)
 	}
 	session, _, err := c.Login(ctx, &core.LoginRequest{
 		Username: "limiteduser",
-		Password: "LimitedPass123!",
+		Password: "Qr7#Kp2$Lm5@Vn9!",
 	})
 	if err != nil {
 		t.Fatalf("createLimitedToken: login failed: %v", err)
@@ -383,7 +383,7 @@ func TestHTTPServerIntegration(t *testing.T) {
 				"username":     "integration-user",
 				"email":        "integration@test.com",
 				"display_name": "Integration Test User",
-				"password":     "securepassword123",
+				"password":     "Qr7#Kp2$Lm5@Vn9!",
 			}
 
 			body, err := json.Marshal(userData)
@@ -763,10 +763,10 @@ func TestPrivescRoutesRequireWrite(t *testing.T) {
 	// users get system_viewer, which holds users.read but not users.write.
 	ctx := context.Background()
 	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
-		Username: "privesc_ro", Email: "privesc_ro@example.com", Password: "LimitedPass123!",
+		Username: "privesc_ro", Email: "privesc_ro@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
 	})
 	require.NoError(t, err)
-	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "privesc_ro", Password: "LimitedPass123!"})
+	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "privesc_ro", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	limited := sess.SessionToken
 
@@ -819,10 +819,10 @@ func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
 	// read-only persona that must not be able to mutate anything.
 	ctx := context.Background()
 	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
-		Username: "ro_guard", Email: "ro_guard@example.com", Password: "LimitedPass123!",
+		Username: "ro_guard", Email: "ro_guard@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
 	})
 	require.NoError(t, err)
-	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "ro_guard", Password: "LimitedPass123!"})
+	sess, _, err := testCore.Login(ctx, &core.LoginRequest{Username: "ro_guard", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	roToken := sess.SessionToken
 

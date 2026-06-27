@@ -47,7 +47,7 @@ func TestAuthzParity_HTTPvsGRPC_ShareCreate(t *testing.T) {
 
 	c.SetBootstrapToken("test-bootstrap-token")
 	_, err = c.BootstrapSystem(ctx, &core.BootstrapRequest{
-		Username: "admin", Email: "admin@example.com", Password: "AdminPassphrase123!", Token: "test-bootstrap-token",
+		Username: "admin", Email: "admin@example.com", Password: "Qr7#Kp2$Lm5@Vn9!", Token: "test-bootstrap-token",
 	})
 	require.NoError(t, err)
 
@@ -61,16 +61,16 @@ func TestAuthzParity_HTTPvsGRPC_ShareCreate(t *testing.T) {
 	}
 
 	// owner — has secrets.write on p1 AND owns the secret (can share).
-	owner, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "owner", Email: "owner@example.com", Password: "OwnerPass123!"})
+	owner, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "owner", Email: "owner@example.com", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.UserRole{UserID: owner.ID, RoleID: editorRole.ID, ProjectID: 1}).Error)
-	ownerToken := login("owner", "OwnerPass123!")
+	ownerToken := login("owner", "Qr7#Kp2$Lm5@Vn9!")
 
 	// writer — has secrets.write on p1 but does NOT own the secret (must not re-share).
-	writer, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "writer", Email: "writer@example.com", Password: "WriterPass123!"})
+	writer, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "writer", Email: "writer@example.com", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.UserRole{UserID: writer.ID, RoleID: editorRole.ID, ProjectID: 1}).Error)
-	writerToken := login("writer", "WriterPass123!")
+	writerToken := login("writer", "Qr7#Kp2$Lm5@Vn9!")
 
 	// Recipients just need to exist. Distinct ones for the allow case so the HTTP and
 	// gRPC shares don't collide as duplicates.

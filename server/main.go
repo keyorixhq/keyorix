@@ -356,9 +356,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("Secret-name policy enabled (pattern=%q, max_length=%d)", snp.Pattern, snp.MaxLength)
 	}
 
-	// Apply per-account login lockout if enabled (brute-force protection, distinct
-	// from the per-IP rate limiter).
-	if ll := cfg.Security.LoginLockout; ll.Enabled {
+	// Apply per-account login lockout (brute-force protection, distinct from and
+	// complementary to the per-IP rate limiter, which distributed guessing can evade).
+	// Enabled BY DEFAULT — a secrets-manager login must resist online guessing out of
+	// the box; set login_lockout.disabled to opt out.
+	if ll := cfg.Security.LoginLockout; !ll.Disabled {
 		coreService.SetLoginLockoutPolicy(core.LoginLockoutPolicy{
 			Enabled:      true,
 			MaxAttempts:  ll.GetMaxAttempts(),
@@ -368,6 +370,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		})
 		log.Printf("Per-account login lockout enabled (max_attempts=%d, window=%s, base_cooldown=%s, max_cooldown=%s)",
 			ll.GetMaxAttempts(), ll.GetWindow(), ll.GetBaseCooldown(), ll.GetMaxCooldown())
+	} else {
+		log.Printf("WARNING: per-account login lockout is DISABLED — only the per-IP rate limiter throttles password guessing, which distributed/botnet guessing against a single account can evade")
 	}
 
 	// Wire native SIEM audit forwarding if configured. New returns (nil, nil)

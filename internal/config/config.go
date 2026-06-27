@@ -464,8 +464,10 @@ type SecurityConfig struct {
 	RequireMFA bool `yaml:"require_mfa"`
 	// LoginLockout configures per-account login lockout (brute-force protection):
 	// after MaxAttempts failed password logins within Window, the account is locked
-	// for an exponentially-backing-off cooldown. Distinct from the per-IP rate
-	// limiter (ADR-040). Opt-in (default off).
+	// for an exponentially-backing-off cooldown. Distinct from (and complementary to)
+	// the per-IP rate limiter, which a distributed/botnet guess against one account can
+	// evade. It is ENABLED BY DEFAULT — a secrets-manager login must resist online
+	// guessing out of the box. Set login_lockout.disabled to opt out.
 	LoginLockout LoginLockoutConfig `yaml:"login_lockout"`
 	// RequireTransportTLS, when true, refuses to start an enabled HTTP/gRPC listener
 	// that has no TLS configured — failing closed so bearer tokens and secret values are
@@ -487,9 +489,12 @@ func parseDurationDefault(raw string, def time.Duration) time.Duration {
 	return def
 }
 
-// LoginLockoutConfig configures per-account login lockout.
+// LoginLockoutConfig configures per-account login lockout. Lockout is enabled by
+// default; Disabled is the explicit opt-out. Enabled is retained for backward
+// compatibility and is now redundant with the default-on behavior.
 type LoginLockoutConfig struct {
 	Enabled      bool   `yaml:"enabled"`
+	Disabled     bool   `yaml:"disabled"`      // explicit opt-out (lockout is on by default)
 	MaxAttempts  int    `yaml:"max_attempts"`  // failures within the window before locking (default 5)
 	Window       string `yaml:"window"`        // Go duration; consecutive-failure window (default 15m)
 	BaseCooldown string `yaml:"base_cooldown"` // lock duration for the first lockout (default 1m)
