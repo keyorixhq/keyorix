@@ -151,9 +151,19 @@ func TestEvaluate_DeploymentBinding(t *testing.T) {
 	if st.State != StateInvalid || st.Grants() {
 		t.Fatalf("mismatch must degrade: %s grants=%v", st.State, st.Grants())
 	}
-	// No local deployment id supplied → binding not enforced (still grants).
-	if st := Evaluate(token, reg, "", now, time.Hour); !st.HasFeature("x") {
-		t.Fatal("unbound check should still grant")
+	// A deployment-BOUND license on a host with NO deployment_id configured must FAIL
+	// CLOSED — otherwise the anti-copy binding is bypassed by simply leaving deployment_id
+	// empty (copy the license to any host that doesn't set it).
+	if st := Evaluate(token, reg, "", now, time.Hour); st.State != StateInvalid || st.Grants() {
+		t.Fatalf("a bound license with no local deployment id must degrade, not grant: %s grants=%v", st.State, st.Grants())
+	}
+
+	// An UNBOUND license (no DeploymentID) still grants regardless of the local id.
+	unboundTok, unboundReg := signed(t, License{
+		Licensee: "ACME", Features: []string{"x"}, NotAfter: now.Add(time.Hour),
+	})
+	if st := Evaluate(unboundTok, unboundReg, "", now, time.Hour); !st.HasFeature("x") {
+		t.Fatal("an unbound license should grant when no deployment id is configured")
 	}
 }
 

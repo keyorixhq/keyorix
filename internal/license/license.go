@@ -158,11 +158,21 @@ func Evaluate(token string, reg *trust.KeyRegistry, deploymentID string, now tim
 	}
 
 	// Anti-copy binding: a license bound to a deployment must not grant features on another.
-	// Mismatch degrades (warn + audit), it does not shut anything down.
-	if lic.DeploymentID != "" && deploymentID != "" && lic.DeploymentID != deploymentID {
-		base.State = StateInvalid
-		base.Reason = fmt.Sprintf("license is bound to deployment %q, not this deployment", lic.DeploymentID)
-		return base
+	// Mismatch degrades (warn + audit), it does not shut anything down. Crucially, a
+	// deployment-bound license on a host with NO deployment_id configured must ALSO fail
+	// (closed): otherwise the binding is trivially bypassed by simply leaving deployment_id
+	// empty — copying the license to any host that doesn't set it.
+	if lic.DeploymentID != "" {
+		if deploymentID == "" {
+			base.State = StateInvalid
+			base.Reason = "license is bound to a specific deployment but this deployment has no deployment_id configured"
+			return base
+		}
+		if lic.DeploymentID != deploymentID {
+			base.State = StateInvalid
+			base.Reason = fmt.Sprintf("license is bound to deployment %q, not this deployment", lic.DeploymentID)
+			return base
+		}
 	}
 
 	switch {
