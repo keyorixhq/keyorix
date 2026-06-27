@@ -6,10 +6,9 @@ import (
 	"strings"
 )
 
-// trueClientIPHeaders are the forwarding headers a trusted proxy may set, in order of
-// preference. X-Forwarded-For is a comma-separated client→proxy chain (leftmost is the
-// originating client); X-Real-IP is a single address.
-var trueClientIPHeaders = []string{"X-Forwarded-For", "X-Real-IP"}
+// The forwarding headers a trusted proxy may set, in order of preference, are
+// X-Forwarded-For (a comma-separated client→proxy chain; leftmost is the originating
+// client) and X-Real-IP (a single address) — both read directly in clientIPFromRequest.
 
 // ClientIP returns a middleware that derives the real client IP and rewrites
 // r.RemoteAddr, but ONLY honors forwarding headers when the immediate TCP peer is a

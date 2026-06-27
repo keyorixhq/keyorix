@@ -138,7 +138,11 @@ func TestSpool_ConcurrentAddDuringReplayNotLost(t *testing.T) {
 	s, err := newSpool(dir, time.Hour, hook)
 	require.NoError(t, err)
 	sp = s
-	t.Cleanup(s.close)
+	// Stop the background replay loop up front so ONLY the controlled replay below runs.
+	// Otherwise the loop's periodic/initial replay races the manual one — two concurrent
+	// deliveries appending to d2.delivered and a TOCTOU on the spool file — which made this
+	// test flaky in CI. close() only stops the goroutine; add()/replay() remain usable.
+	s.close()
 
 	s.add(&models.AuditEvent{ID: 1, EventType: "secret.read", Success: &tr})
 	s.replay() // delivers ID 1; ID 99 is add()ed mid-delivery and must not be lost
