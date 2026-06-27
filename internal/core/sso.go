@@ -175,7 +175,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		if !p.AutoProvision {
 			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
 		}
-		if user, err = c.provisionSSOUser(ctx, p, sub, email, name); err != nil {
+		if user, err = c.provisionSSOUser(ctx, p, sub, email, emailVerified, name); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -289,7 +289,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		if !p.AutoProvision {
 			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
 		}
-		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, info.Name); err != nil {
+		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, true, info.Name); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -381,13 +381,21 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string, ema
 // pending_first_login (which would trap an SSO user in a password-change-only
 // restricted session they can never clear). The baseline role is the provider's
 // default_role (system_viewer when unset); an unknown role grants nothing.
-func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub, email, name string) (*models.User, error) {
+func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub, email string, emailVerified bool, name string) (*models.User, error) {
 	if strings.TrimSpace(email) == "" {
 		return nil, fmt.Errorf("the IdP returned no email; cannot auto-provision an account")
 	}
-	// Guard against a race / case where a user materialised between the resolve and
-	// here: reuse it rather than create a duplicate.
-	if existing, ferr := c.FindSCIMUser(ctx, sub, email); ferr == nil && existing != nil {
+	// Guard against a race / case where a user materialised between the resolve and here:
+	// reuse it rather than create a duplicate. This MUST go through resolveSSOUser (not a
+	// raw email lookup), so the same guards apply — an EXISTING account is reused via an
+	// email match ONLY when the email is verified, and never when it is bound to a
+	// different federated identity. A raw FindSCIMUser(sub, email) here re-introduced the
+	// unverified-email account-takeover that resolveSSOUser exists to prevent: an IdP that
+	// omits email_verified could assert a victim's email and have the JIT path "reuse"
+	// (i.e. log in as) the victim's existing account.
+	if existing, ferr := c.resolveSSOUser(ctx, sub, email, emailVerified); ferr != nil {
+		return nil, ferr
+	} else if existing != nil {
 		return existing, nil
 	}
 	username, err := c.deriveSCIMUsername(ctx, email)
