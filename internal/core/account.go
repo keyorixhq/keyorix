@@ -56,14 +56,18 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 		return err
 	}
 
-	// Drop other sessions. Best-effort: the password change itself has succeeded.
+	// Drop OTHER sessions and evict them from the auth cache, so a thief holding a
+	// stolen session is locked out immediately on the next request — not after the
+	// cache TTL. Best-effort: the password change itself has succeeded.
 	var keepID uint
+	var keepHash string
 	if keepSessionToken != "" {
 		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
 			keepID = s.ID
+			keepHash = s.SessionToken
 		}
 	}
-	_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
+	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	return nil
 }
 
@@ -84,6 +88,23 @@ func (c *KeyorixCore) invalidateTokenCache(hashes ...string) {
 			c.tokenCacheInvalidator(h)
 		}
 	}
+}
+
+// deleteSessionsForUserAndEvict deletes all of the user's sessions except keepID and
+// evicts the deleted sessions from the HTTP auth cache, so a revoked session stops
+// authenticating on the very NEXT request rather than lingering for the positive-cache
+// TTL. The stored session_token IS the SHA-256 cache key. keepHash (the kept session's
+// stored hash, or "") is never evicted, so the caller's own session is not disturbed.
+// Best-effort: the session deletion is the durable control; eviction is the immediacy.
+func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID, keepID uint, keepHash string) error {
+	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+	err := c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
+	for _, h := range hashes {
+		if h != "" && h != keepHash {
+			c.invalidateTokenCache(h)
+		}
+	}
+	return err
 }
 
 // validateNewPassword checks a candidate password against the configured policy and
@@ -209,5 +230,11 @@ func (c *KeyorixCore) RevokeOwnSession(ctx context.Context, userID, sessionID ui
 	if err != nil || session.UserID != userID {
 		return fmt.Errorf("%s: session not found", i18n.T("ErrorNotFound", nil))
 	}
-	return c.storage.DeleteSession(ctx, sessionID)
+	if err := c.storage.DeleteSession(ctx, sessionID); err != nil {
+		return err
+	}
+	// Evict the revoked session from the auth cache so the device is logged out on its
+	// next request, not after the positive-cache TTL. session_token is the cache key.
+	c.invalidateTokenCache(session.SessionToken)
+	return nil
 }

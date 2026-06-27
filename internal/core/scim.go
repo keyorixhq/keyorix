@@ -215,8 +215,10 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if deactivated {
-		// Suspension must be effective immediately, not lingering until tokens expire.
-		_ = c.storage.DeleteSessionsForUserExcept(ctx, id, 0)
+		// Suspension must be effective immediately, not lingering until tokens expire —
+		// terminate sessions AND evict them from the auth cache (the fast path bypasses the
+		// DB, so without eviction an offboarded user keeps access for the cache TTL).
+		_ = c.deleteSessionsForUserAndEvict(ctx, id, 0, "")
 	}
 	c.writeAuditEvent(ctx, EventSCIMUserUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM updated user %d", id))
@@ -270,6 +272,9 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 		user.AccountState = AccountDeprovisioned
 	}
 	user.UpdatedAt = c.now()
+	// Capture the user's session-token hashes BEFORE the transaction so they can be
+	// evicted from the auth cache after commit (the stored token is the SHA-256 cache key).
+	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, id)
 	// Suspend + terminate sessions + soft-delete atomically: a SCIM DELETE either fully
 	// deprovisions or leaves the account untouched, so a mid-way storage failure can't
 	// leave it half-deprovisioned (suspended but not deleted), which would make retries
@@ -283,6 +288,10 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	}); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// Evict the terminated sessions from the auth cache AFTER commit, so a deprovisioned
+	// (offboarded) user's live session stops authenticating immediately instead of
+	// lingering for the cache TTL.
+	c.invalidateTokenCache(sessionHashes...)
 	c.writeAuditEvent(ctx, EventSCIMUserDeprovisioned, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM deprovisioned user %d (%s)", id, user.Username))
 	return nil

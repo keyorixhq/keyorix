@@ -61,6 +61,7 @@ func TestChangePassword(t *testing.T) {
 		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
 		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
 		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
+		ms.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
 		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
 		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
 		// History rule (default HistoryCount=5): no prior hashes, then record + prune.
@@ -87,6 +88,7 @@ func TestChangePassword(t *testing.T) {
 		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
 		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
 		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
+		ms.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
 		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
 		// Two active PATs are revoked and their hashes returned for cache eviction.
 		ms.On("RevokeAllPersonalAccessTokensForUser", ctx, uint(1)).Return([]string{"hash-a", "hash-b"}, nil)

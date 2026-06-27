@@ -81,10 +81,11 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code string)
 	if err := c.storage.SetUserMFAEnabled(ctx, userID, true); err != nil {
 		return nil, fmt.Errorf("failed to enable MFA: %w", err)
 	}
-	// Invalidate any sessions minted before MFA was enabled, so a pre-enrolment
-	// session cannot outlive the security upgrade (same hygiene as password change
-	// / suspend). Best-effort: enrolment must not fail on a session-cleanup error.
-	_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
+	// Invalidate any sessions minted before MFA was enabled (and evict them from the auth
+	// cache), so a pre-enrolment session cannot outlive the security upgrade — even for
+	// the cache TTL (same hygiene as password change / suspend). Best-effort: enrolment
+	// must not fail on a session-cleanup error.
+	_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
 	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
 	if err != nil {
 		return nil, err

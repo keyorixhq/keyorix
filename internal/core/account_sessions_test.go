@@ -35,6 +35,11 @@ func TestRevokeUserSessions(t *testing.T) {
 	mkSession(11, 2, "t-b") // target's
 	mkSession(12, 3, "b-a") // bystander's — must survive
 
+	// Capture auth-cache evictions so we can prove the revoked sessions are evicted (so a
+	// compromised token can't keep authenticating on the cache fast path for the TTL).
+	var evicted []string
+	c.SetTokenCacheInvalidator(func(h string) { evicted = append(evicted, h) })
+
 	t.Run("revokes all of the target's sessions, leaves others", func(t *testing.T) {
 		n, err := c.RevokeUserSessions(ctx, 1, 2)
 		require.NoError(t, err)
@@ -47,6 +52,11 @@ func TestRevokeUserSessions(t *testing.T) {
 		other, err := c.storage.ListSessionsByUser(ctx, 3)
 		require.NoError(t, err)
 		assert.Len(t, other, 1, "bystander's session untouched")
+
+		// Both of the target's session hashes were evicted from the auth cache;
+		// the bystander's was not.
+		assert.ElementsMatch(t, []string{"t-a", "t-b"}, evicted)
+		assert.NotContains(t, evicted, "b-a")
 	})
 
 	t.Run("the account state is unchanged (force-logout, not suspend)", func(t *testing.T) {

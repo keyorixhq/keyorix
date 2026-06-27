@@ -190,6 +190,7 @@ func TestChangePassword_ClearsRestriction(t *testing.T) {
 	store.On("AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 	store.On("PrunePasswordHistory", ctx, uint(1), 5).Return(nil)
 	store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 1}, nil)
+	store.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
 	store.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
 	store.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
 

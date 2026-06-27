@@ -168,7 +168,9 @@ func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uin
 		return nil, err
 	}
 	if firstEnrol {
-		_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
+		// Purge pre-enrolment sessions AND evict them from the auth cache, so a session
+		// minted before the security upgrade cannot outlive it even for the cache TTL.
+		_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
 	}
 	uid := userID
 	c.writeAuditEventFull(ctx, "webauthn.registered", &uid, nil, nil, "",

@@ -35,6 +35,13 @@ func (c *KeyorixCore) RevokeUserSessions(ctx context.Context, adminID, userID ui
 	if err := c.storage.DeleteSessionsForUserExcept(ctx, userID, 0); err != nil {
 		return 0, fmt.Errorf("failed to revoke sessions: %w", err)
 	}
+	// Evict every revoked session from the HTTP auth cache so a compromised token stops
+	// authenticating on the NEXT request instead of lingering for the positive-cache TTL
+	// — this is the incident-response control, so the residual window matters. The stored
+	// session_token IS the SHA-256 cache key.
+	for _, s := range sessions {
+		c.invalidateTokenCache(s.SessionToken)
+	}
 
 	aid := adminID
 	c.writeAuditEventFull(ctx, EventUserSessionsRevoked, &aid, nil, nil, "",

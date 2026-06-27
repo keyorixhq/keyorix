@@ -124,11 +124,12 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	// Evict every other session for this account, keeping only the one just minted.
-	// A self-service password reset must lock out anyone holding a stolen session
-	// (and a re-provision must drop stale ones) — matching ChangePassword's
-	// invalidate-other-devices invariant, which this path previously skipped.
-	_ = c.storage.DeleteSessionsForUserExcept(ctx, user.ID, session.ID)
+	// Evict every other session for this account, keeping only the one just minted, and
+	// drop those sessions from the auth cache so a stolen session is locked out on its
+	// next request, not after the cache TTL. A self-service password reset must lock out
+	// anyone holding a stolen session (and a re-provision must drop stale ones) — matching
+	// ChangePassword's invalidate-other-devices invariant, which this path previously skipped.
+	_ = c.deleteSessionsForUserAndEvict(ctx, user.ID, session.ID, session.SessionToken)
 
 	c.writeAuditEventFull(ctx, "account.setup_completed", &user.ID, nil, nil, ip,
 		fmt.Sprintf("account setup completed via %s", tok.Purpose))

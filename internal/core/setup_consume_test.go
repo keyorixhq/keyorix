@@ -89,6 +89,7 @@ func TestCompleteSetup(t *testing.T) {
 			Return(&models.Session{ID: 1, UserID: uid, SessionToken: "sess-abc"}, nil)
 		// Completing setup must evict the subject's other sessions (keeping the new
 		// one) so a stolen session can't survive a self-service password reset.
+		ms.On("ListSessionTokenHashesForUser", ctx, uid).Return([]string{}, nil)
 		ms.On("DeleteSessionsForUserExcept", ctx, uid, uint(1)).Return(nil)
 		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
 
