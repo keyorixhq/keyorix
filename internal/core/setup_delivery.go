@@ -11,7 +11,6 @@ package core
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/big"
@@ -273,11 +272,12 @@ func (c *KeyorixCore) checkResendThrottle(ctx context.Context, purpose, email st
 // password of a setup-link account. It is never disclosed, so no one can log in
 // until the user sets a real password via the link.
 func randomUnusablePassword() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	// This password is a throwaway placeholder — it is never returned, and the account is
+	// confined to pending_first_login until the real password is set on setup-link consume.
+	// But it still flows through CreateUser's password-policy check, so it must satisfy the
+	// policy (a raw base64 draw can randomly lack a required character class). Reuse the
+	// policy-compliant one-time-password generator (all four classes guaranteed).
+	return generateOneTimePassword()
 }
 
 // One-time-password character classes (ADR-028 Part E). Visually ambiguous characters

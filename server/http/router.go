@@ -215,7 +215,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/register/begin", authHandler.BeginWebAuthnRegistration)
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/auth/webauthn/register/finish", authHandler.FinishWebAuthnRegistration)
 		r.Get("/auth/webauthn/credentials", authHandler.ListWebAuthnCredentials)
-		r.Delete("/auth/webauthn/credentials/{id}", authHandler.DeleteWebAuthnCredential)
+		// Deleting a passkey disables WebAuthn when it removes the last one — the same
+		// durable MFA-downgrade that /auth/mfa/disable is blocked from doing under
+		// impersonation. There is no admin API to remove another user's passkey, so without
+		// this guard impersonation would be the one path to weaken a user's second factor.
+		r.With(customMiddleware.BlockWhenImpersonating).Delete("/auth/webauthn/credentials/{id}", authHandler.DeleteWebAuthnCredential)
 		r.Get("/auth/sessions", authHandler.ListSessions)
 		r.Delete("/auth/sessions/{id}", authHandler.RevokeSession)
 		r.Get("/auth/tokens", patHandler.ListPATs)
