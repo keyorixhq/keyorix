@@ -28,7 +28,7 @@ func TestDeprovisionSCIMUser_RevokesSessionAndPAT(t *testing.T) {
 	c := NewKeyorixCore(ls)
 	ctx := context.Background()
 
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", IsActive: true, AccountState: AccountActive, ExternalID: "okta|alice"}).Error)
 	expiry := time.Now().Add(time.Hour)
 	// Create through the storage layer so the session token is hashed at rest (raw
 	// db.Create would store the plaintext, which GetSession's hashed lookup won't match).
