@@ -521,7 +521,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// read-only system_auditor persona holds) — these were the missed
 			// siblings of the suspend/reactivate transitions gated below.
 			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", handlers.UpdateUser)
-			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", handlers.DeleteUser)
+			// users.delete, not users.write — matches the gRPC UserService.DeleteUser
+			// gate (#141). A custom role granted users.write alone (update, not delete)
+			// could otherwise delete users via HTTP while gRPC correctly refused it.
+			r.With(customMiddleware.RequirePermission("users.delete")).Delete("/{id}", handlers.DeleteUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/restore", handlers.RestoreUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/unlock", handlers.UnlockUser)
 			// Admin force-logout: revoke all of a user's sessions (no state change).
@@ -532,9 +535,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/require-password-reset", handlers.RequirePasswordReset)
 			// Credential-delivery resend (ADR-028): reissue + redeliver a setup link.
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/resend-setup-link", handlers.ResendSetupLink)
-			r.Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
+			// roles.read, not the group-wide users.read (#141) — matches the gRPC
+			// RoleService.GetUserRoles gate for the same data. users.read is held by
+			// nearly every seeded role (project_viewer, editor, …), so gating a user's
+			// full role-assignment list on it let any low-privilege project member
+			// enumerate an arbitrary OTHER user's roles — reconnaissance for targeted
+			// privilege-escalation attempts. roles.read is held by system_admin/
+			// system_auditor/project_admin, the personas that actually manage access.
+			r.With(customMiddleware.RequirePermission("roles.read")).Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
 			// Effective permission set (union across the user's roles) — a read, gated
-			// by the group-wide users.read like the roles view above.
+			// by the group-wide users.read like the roles view used to be. Not part of
+			// #141's scope; left as-is.
 			r.Get("/{id}/permissions", usersRolesHandler.GetUserPermissionsForUser)
 			// Replacing a user's roles is a privilege grant — gate on roles.assign,
 			// not the group-wide users.read (which many non-admin roles hold).
