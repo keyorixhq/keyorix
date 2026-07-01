@@ -561,6 +561,11 @@ func (m *MockStorage) TryIncrementSecretReadCount(ctx context.Context, versionID
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
+	args := m.Called(ctx, secretID, maxReads)
+	return args.Bool(0), args.Error(1)
+}
+
 // Secret Sharing Management
 
 func (m *MockStorage) CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {

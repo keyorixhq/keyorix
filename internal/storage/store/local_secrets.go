@@ -566,3 +566,17 @@ func (ls *LocalStorage) TryIncrementSecretReadCount(ctx context.Context, version
 	}
 	return res.RowsAffected == 1, nil
 }
+
+// TryIncrementSecretNodeReadCount is TryIncrementSecretReadCount's secret-level
+// twin (#133): the same atomic conditional-UPDATE pattern, keyed on the secret
+// (secret_nodes.read_count) instead of a version, so the cap survives rotate/
+// rollback creating a new version.
+func (ls *LocalStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("id = ? AND read_count < ?", secretID, maxReads).
+		UpdateColumn("read_count", gorm.Expr("read_count + 1"))
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}

@@ -453,7 +453,13 @@ type SecretNode struct {
 	// upstream it belongs to, who to contact. Metadata only; never the value.
 	Description string
 	MaxReads    *int
-	Expiration  *time.Time
+	// ReadCount is the secret's LIFETIME read count against MaxReads — deliberately
+	// secret-level, not per-version (#133). A per-version counter resets to zero on
+	// every new version, so a burn-after-N-reads secret became re-readable simply
+	// by rotating or rolling back (which creates a fresh version); this counter
+	// carries forward across both.
+	ReadCount  int
+	Expiration *time.Time
 	Metadata    JSON
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives

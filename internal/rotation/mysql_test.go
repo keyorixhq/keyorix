@@ -82,4 +82,13 @@ func TestMySQL_RotateErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "access denied")
 	})
+	// #132: mirrors the postgres redaction test — a driver error echoing the
+	// failing statement must not leak the new password literal.
+	t.Run("backend error echoing the statement is redacted", func(t *testing.T) {
+		fake := &fakeMySQL{err: errors.New(`Error 1064: syntax error near 'S3cr3t-Live-Value!'`)}
+		err := myWith(fake, "app_").Rotate(context.Background(), "app_svc", "S3cr3t-Live-Value!")
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "S3cr3t-Live-Value!", "the live credential must never appear in the returned error")
+		assert.Contains(t, err.Error(), "app_svc")
+	})
 }
