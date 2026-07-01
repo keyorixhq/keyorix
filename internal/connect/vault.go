@@ -40,8 +40,20 @@ func NewVaultConnector(name, address, token string, allowedRefs []string) *Vault
 		address:     strings.TrimRight(address, "/"),
 		token:       token,
 		allowedRefs: allowedRefs,
-		client:      &http.Client{Timeout: 15 * time.Second},
+		// No redirect is ever legitimate for a KV read against a fixed, operator-
+		// configured Vault address — the default http.Client would otherwise follow
+		// a 30x carrying the live X-Vault-Token header to wherever a compromised or
+		// misconfigured Vault (or a MITM) points it, including an attacker host or
+		// the cloud metadata endpoint (#98). Refusing any redirect is simpler and
+		// strictly safer than an allow-same-host policy for this single-purpose read.
+		client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: refuseRedirect},
 	}
+}
+
+// refuseRedirect makes the client return the first (redirect) response as-is
+// instead of following it — see NewVaultConnector.
+func refuseRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 func (c *VaultConnector) Name() string { return c.name }

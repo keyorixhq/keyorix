@@ -87,6 +87,31 @@ func TestVault_GetSecret_Errors(t *testing.T) {
 	})
 }
 
+// TestVault_GetSecret_DoesNotFollowRedirect pins #98: a compromised or MITM'd
+// Vault could 30x the client elsewhere, carrying the live X-Vault-Token header —
+// including to an attacker host or the cloud metadata endpoint. The client must
+// not follow the redirect at all.
+func TestVault_GetSecret_DoesNotFollowRedirect(t *testing.T) {
+	var attackerHit bool
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHit = true
+		if r.Header.Get("X-Vault-Token") != "" {
+			t.Error("the live Vault token must never reach a redirect target")
+		}
+	}))
+	t.Cleanup(attacker.Close)
+
+	vault := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL+"/steal", http.StatusFound)
+	}))
+	t.Cleanup(vault.Close)
+
+	c := NewVaultConnector("v", vault.URL, "tok", nil)
+	_, err := c.GetSecret(context.Background(), "secret/x")
+	require.Error(t, err, "a redirect response must not be treated as a successful read")
+	assert.False(t, attackerHit, "the client must not follow the redirect to the attacker host")
+}
+
 // TestVault_GetSecret_RejectsTraversalAndInjection proves a caller cannot use a ref
 // that satisfies the allowed_refs HasPrefix check to climb to another Vault path via
 // `..` or to inject a query string — the ref is sanitized before the URL is built.
