@@ -29,6 +29,9 @@ type Service struct {
 	config            *config.EncryptionConfig
 	mu                sync.RWMutex
 	initialized       bool
+	// serverLock is held for as long as this Service is the live DEK holder (set
+	// by AcquireExclusiveKeyLock, released by Shutdown). See exclusive_lock.go.
+	serverLock *os.File
 }
 
 // NewService creates a new encryption Service.

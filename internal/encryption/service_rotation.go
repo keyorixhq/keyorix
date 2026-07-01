@@ -27,6 +27,16 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
 	}
 	s.mu.RUnlock()
 
+	// Refuse to rotate against a live server (#92): if a server holding this DEK
+	// is running, promoting a new DEK here would leave it silently encrypting new
+	// writes under the OLD key and unable to decrypt rows the sweep re-encrypts,
+	// until its next restart — a permanent-loss window if that restart is delayed
+	// or never happens. AcquireExclusiveKeyLock is released by the deferred
+	// Shutdown() the CLI already calls after this function returns.
+	if err := s.AcquireExclusiveKeyLock(); err != nil {
+		return fmt.Errorf("refusing to rotate: %w — stop the running server before rotating", err)
+	}
+
 	sweepFn := func(oldSvc, newSvc *EncryptionService, newKeyVersion string) error {
 		tx := db.Begin()
 		if tx.Error != nil {
@@ -131,12 +141,39 @@ func (s *Service) CleanPendingDEK() {
 	s.keyManager.CleanPendingDEK()
 }
 
-// Shutdown cleanly wipes the DEK from memory.
+// AcquireExclusiveKeyLock takes an exclusive, non-blocking OS advisory lock on
+// the key directory, so no OTHER process using the same DEK — another server
+// instance, or a concurrent rotation — can hold it at the same time (#92). The
+// server calls this once at startup (held for its whole lifetime); rotation
+// calls it at the start of RotateDEKWithSweep (held only for the sweep). Either
+// way it is released by Shutdown. Idempotent: a second call while already held
+// by this Service is a no-op.
+func (s *Service) AcquireExclusiveKeyLock() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("encryption service not initialized")
+	}
+	if s.serverLock != nil {
+		return nil
+	}
+	f, err := acquireExclusiveKeyLock(s.keyManager.baseDir)
+	if err != nil {
+		return err
+	}
+	s.serverLock = f
+	return nil
+}
+
+// Shutdown cleanly wipes the DEK from memory and releases the exclusive key
+// lock, if this Service was holding one.
 func (s *Service) Shutdown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.keyManager != nil {
 		s.keyManager.Wipe()
 	}
+	releaseExclusiveKeyLock(s.serverLock)
+	s.serverLock = nil
 	s.initialized = false
 }
