@@ -68,6 +68,17 @@ type SSOProvider struct {
 	AutoProvision bool   // JIT-create an account on first login for an unknown identity
 	DefaultRole   string // baseline role for JIT-provisioned users ("" → system_viewer)
 
+	// TrustAssertedEmail opts a SAML provider into treating its asserted email as
+	// verified for resolveSSOUser's email-fallback account linking. SAML carries no
+	// per-assertion equivalent of OIDC's email_verified claim — the assertion being
+	// IdP-signed only proves the IdP sent it, not that the IdP itself verified
+	// ownership of that address (a self-service/low-trust IdP could let a user set
+	// any email). Off by default: without it, CompleteSAML's email fallback can
+	// still seed a brand-new JIT account (nothing to take over) but cannot claim an
+	// EXISTING one — closing a SAML-specific account-takeover path (#89) that
+	// OIDC's real email_verified claim already closes. Ignored for OIDC providers.
+	TrustAssertedEmail bool
+
 	GroupSync   bool   // reconcile native group memberships from the IdP groups claim on login
 	GroupsClaim string // id_token claim carrying group names ("" → "groups")
 
@@ -279,9 +290,13 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		return nil, nil, "", fmt.Errorf("the assertion carried no subject or email")
 	}
 
-	// A SAML assertion's attributes (incl. email) are carried inside the IdP-signed,
-	// library-verified assertion, so the email is treated as verified here.
-	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email, true)
+	// The assertion being IdP-signed proves the IdP sent this email, not that the
+	// IdP verified the user OWNS it — SAML has no per-assertion equivalent of
+	// OIDC's email_verified claim. Trusting it unconditionally let a self-service/
+	// low-trust SAML IdP claim an EXISTING account (up to a native admin) merely
+	// by asserting its address (#89). Gate on the provider's explicit opt-in
+	// instead; see SSOProvider.TrustAssertedEmail.
+	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email, p.TrustAssertedEmail)
 	if err != nil {
 		return nil, nil, "", err
 	}
