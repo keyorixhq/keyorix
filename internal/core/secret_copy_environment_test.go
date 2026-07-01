@@ -41,7 +41,7 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 	mk(prod.ID, "db") // pre-existing in target → name clash, should be skipped
 
 	t.Run("copies new secrets, skips name clashes", func(t *testing.T) {
-		copied, skipped, err := c.CopyEnvironmentSecrets(ctx, p.ID, staging.ID, prod.ID, "owner", 1)
+		copied, skipped, err := c.CopyEnvironmentSecrets(ctx, p.ID, staging.ID, prod.ID, "owner", 1, "", "")
 		require.NoError(t, err)
 		assert.Equal(t, 1, copied, "only 'api' is new in prod")
 		assert.Equal(t, 1, skipped, "'db' already exists in prod")
@@ -57,17 +57,17 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 	})
 
 	t.Run("a cross-project target is rejected", func(t *testing.T) {
-		_, _, err := c.CopyEnvironmentSecrets(ctx, p.ID, staging.ID, otherEnv.ID, "owner", 1)
+		_, _, err := c.CopyEnvironmentSecrets(ctx, p.ID, staging.ID, otherEnv.ID, "owner", 1, "", "")
 		require.Error(t, err)
 	})
 
 	t.Run("source == target is rejected", func(t *testing.T) {
-		_, _, err := c.CopyEnvironmentSecrets(ctx, p.ID, staging.ID, staging.ID, "owner", 1)
+		_, _, err := c.CopyEnvironmentSecrets(ctx, p.ID, staging.ID, staging.ID, "owner", 1, "", "")
 		require.Error(t, err)
 	})
 
 	t.Run("required IDs are validated", func(t *testing.T) {
-		_, _, err := c.CopyEnvironmentSecrets(ctx, 0, staging.ID, prod.ID, "owner", 1)
+		_, _, err := c.CopyEnvironmentSecrets(ctx, 0, staging.ID, prod.ID, "owner", 1, "", "")
 		require.Error(t, err)
 	})
 }
