@@ -42,9 +42,16 @@ type spool struct {
 	maxBytes    int64
 	deliverOnce func(context.Context, *models.AuditEvent) error
 
-	mu   sync.Mutex // serializes file mutation (append + replay rewrite); NOT held across delivery
-	stop chan struct{}
-	done chan struct{}
+	mu sync.Mutex // serializes file mutation (append + replay rewrite); NOT held across delivery
+	// replayMu serializes replay() end-to-end (distinct from mu, which is deliberately
+	// released across delivery). Without it, the loop's immediate on-start replay can
+	// race a concurrently-triggered one: both read the same undelivered snapshot before
+	// either rewrites the file, and both attempt delivery — double-delivering the same
+	// backlog to the SIEM. A skipped replay is harmless (the ticker or the next trigger
+	// retries the same backlog), so this blocks rather than drops.
+	replayMu sync.Mutex
+	stop     chan struct{}
+	done     chan struct{}
 }
 
 // newSpool prepares the spool directory and starts the replay loop.
@@ -124,6 +131,8 @@ func (s *spool) loop() {
 // on the audited request path) never blocks behind a SIEM round-trip. Crash-safe: every
 // undelivered line stays on disk until the atomic rewrite at the end.
 func (s *spool) replay() {
+	s.replayMu.Lock()
+	defer s.replayMu.Unlock()
 	// Snapshot under the lock, recording the byte length we read; any add() during the
 	// lock-free delivery below only appends BEYOND this offset (add never rewrites), so the
 	// reconcile can cleanly separate "what we attempted" from "what arrived meanwhile".
