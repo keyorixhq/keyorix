@@ -134,53 +134,73 @@ func TestResolveSSOUser(t *testing.T) {
 	notFound := func() error { return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)) }
 
 	t.Run("externalId match wins", func(t *testing.T) {
-		c, store, _, _ := ssoTestCore(t)
+		c, store, _, p := ssoTestCore(t)
 		// The subject is looked up under this provider's scoped external_id.
 		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return(&models.User{ID: 7}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io")
+		u, err := c.resolveSSOUser(context.Background(), p, "okta|123", "ada@x.io")
 		require.NoError(t, err)
 		assert.Equal(t, uint(7), u.ID)
 		store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
 	})
 
-	t.Run("falls back to email for an unbound account", func(t *testing.T) {
-		c, store, _, _ := ssoTestCore(t)
+	// #89 residual gap: without the opt-in, an unmatched identity must NOT fall
+	// back to email at all — neither for a native/password-based account nor any
+	// other unbound one. SAML has no verified-email concept and an OIDC id_token
+	// can simply omit email_verified, so trusting an asserted email by default
+	// would let an untrusted/self-service IdP hijack an existing account (up to
+	// and including a native admin) merely by asserting its address.
+	t.Run("email fallback disabled by default — no linking, no lookup at all", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		require.False(t, p.TrustEmailForLinking, "default must be off (fail closed)")
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
+		u, err := c.resolveSSOUser(context.Background(), p, "okta|123", "ada@x.io")
+		require.NoError(t, err)
+		assert.Nil(t, u, "an unmatched identity must be treated as unknown, not linked by email")
+		store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
+	})
+
+	t.Run("email fallback (opt-in) links an unbound account", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		p.TrustEmailForLinking = true
 		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		// Unbound (empty external_id) local/SCIM account links by email.
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io")
+		u, err := c.resolveSSOUser(context.Background(), p, "okta|123", "ada@x.io")
 		require.NoError(t, err)
 		assert.Equal(t, uint(9), u.ID)
 	})
 
-	t.Run("email fallback refuses an account bound to a different provider", func(t *testing.T) {
-		c, store, _, _ := ssoTestCore(t)
+	t.Run("email fallback (opt-in) refuses an account bound to a different provider", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		p.TrustEmailForLinking = true
 		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		// This email belongs to an account already bound to IdP "azure". The "okta"
 		// assertion must NOT be able to claim it — that is the takeover this guards.
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").
 			Return(&models.User{ID: 99, ExternalID: "sso:azure:abc"}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io")
+		u, err := c.resolveSSOUser(context.Background(), p, "okta|123", "ada@x.io")
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "different SSO provider")
 		assert.Nil(t, u)
 	})
 
-	t.Run("email fallback allows an account bound to the SAME provider", func(t *testing.T) {
-		c, store, _, _ := ssoTestCore(t)
+	t.Run("email fallback (opt-in) allows an account bound to the SAME provider", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		p.TrustEmailForLinking = true
 		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").
 			Return(&models.User{ID: 11, ExternalID: "sso:okta:other-sub"}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io")
+		u, err := c.resolveSSOUser(context.Background(), p, "okta|123", "ada@x.io")
 		require.NoError(t, err)
 		assert.Equal(t, uint(11), u.ID)
 	})
 
-	t.Run("no match returns nil (caller decides)", func(t *testing.T) {
-		c, store, _, _ := ssoTestCore(t)
+	t.Run("no match returns nil (opt-in enabled, caller decides)", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		p.TrustEmailForLinking = true
 		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
-		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io")
+		u, err := c.resolveSSOUser(context.Background(), p, "okta|123", "ada@x.io")
 		require.NoError(t, err)
 		assert.Nil(t, u)
 	})

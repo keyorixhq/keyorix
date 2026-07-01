@@ -69,6 +69,20 @@ type SSOProvider struct {
 	AutoProvision bool   // JIT-create an account on first login for an unknown identity
 	DefaultRole   string // baseline role for JIT-provisioned users ("" → system_viewer)
 
+	// TrustEmailForLinking opts this provider into resolveSSOUser's email-fallback
+	// match against a PRE-EXISTING account with no scoped external_id for this
+	// provider yet — including a native/password-based account. Off by default
+	// (fail closed): neither SAML (no verified-email concept at all) nor a
+	// same-provider-scoping fix alone stops a self-service/low-trust IdP from
+	// asserting an arbitrary victim email on first login, so without this flag a
+	// first-time identity that doesn't match a scoped external_id is treated as
+	// unknown (refused, or JIT-provisioned as a NEW account) rather than silently
+	// linked to whichever existing account happens to share that email. Enable
+	// only for a provider whose asserted email you actually trust (e.g. a
+	// corporate IdP you control, or one that reliably sends OIDC
+	// email_verified=true).
+	TrustEmailForLinking bool
+
 	GroupSync   bool   // reconcile native group memberships from the IdP groups claim on login
 	GroupsClaim string // id_token claim carrying group names ("" → "groups")
 
@@ -167,7 +181,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		return nil, nil, "", err
 	}
 
-	user, err := c.resolveSSOUser(ctx, p.Name, sub, email)
+	user, err := c.resolveSSOUser(ctx, p, sub, email)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -280,7 +294,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		return nil, nil, "", fmt.Errorf("the assertion carried no subject or email")
 	}
 
-	user, err := c.resolveSSOUser(ctx, p.Name, info.Subject, info.Email)
+	user, err := c.resolveSSOUser(ctx, p, info.Subject, info.Email)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -341,24 +355,31 @@ func ssoBoundToOtherProvider(externalID, provider string) bool {
 		!strings.HasPrefix(externalID, ssoExternalID(provider, ""))
 }
 
-// resolveSSOUser maps a verified IdP identity from `provider` to a Keyorix user. It
-// matches this provider's own scoped external_id first, then falls back to email so a
-// pre-existing local or SCIM account can be linked on first SSO login. The email
-// fallback is GATED: it refuses to cross an existing binding to a DIFFERENT provider,
-// so IdP B cannot take over IdP A's account merely by asserting its email address.
-// Returns (nil, nil) when nothing matches — the caller refuses or JIT-provisions.
-func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email string) (*models.User, error) {
+// resolveSSOUser maps a verified IdP identity from provider p to a Keyorix user. It
+// matches this provider's own scoped external_id first, then — only when p opts in
+// via TrustEmailForLinking — falls back to email so a pre-existing local or SCIM
+// account can be linked on first SSO login. Without that opt-in (the default), a
+// first-time identity that matches no scoped external_id is treated as unknown: the
+// email-linking fallback is skipped entirely, closing the residual takeover risk
+// that provider-scoping alone doesn't — SAML has no verified-email concept, and an
+// OIDC id_token can simply omit email_verified, so an untrusted IdP could otherwise
+// still hijack an existing NATIVE (password-based) account, whose external_id is
+// unscoped, by asserting its email. When the opt-in IS set, the fallback remains
+// GATED against crossing an existing binding to a DIFFERENT provider (so IdP B still
+// can't take over IdP A's account). Returns (nil, nil) when nothing matches — the
+// caller refuses or JIT-provisions.
+func (c *KeyorixCore) resolveSSOUser(ctx context.Context, p *SSOProvider, sub, email string) (*models.User, error) {
 	notFound := i18n.T("ErrorUserNotFound", nil)
 	if sub != "" {
-		if u, err := c.storage.GetUserByExternalID(ctx, ssoExternalID(provider, sub)); err == nil {
+		if u, err := c.storage.GetUserByExternalID(ctx, ssoExternalID(p.Name, sub)); err == nil {
 			return u, nil
 		} else if !strings.Contains(err.Error(), notFound) {
 			return nil, err
 		}
 	}
-	if email != "" {
+	if email != "" && p.TrustEmailForLinking {
 		if u, err := c.storage.GetUserByEmail(ctx, email); err == nil {
-			if ssoBoundToOtherProvider(u.ExternalID, provider) {
+			if ssoBoundToOtherProvider(u.ExternalID, p.Name) {
 				return nil, fmt.Errorf("the email %q is already linked to a different SSO provider", email)
 			}
 			return u, nil
@@ -385,7 +406,7 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	// Guard against a race / case where a user materialised between the resolve and
 	// here: reuse it rather than create a duplicate. Re-run the SAME gated resolution so
 	// the race path cannot bypass the cross-provider check.
-	if existing, ferr := c.resolveSSOUser(ctx, p.Name, sub, email); ferr != nil {
+	if existing, ferr := c.resolveSSOUser(ctx, p, sub, email); ferr != nil {
 		return nil, ferr
 	} else if existing != nil {
 		return existing, nil

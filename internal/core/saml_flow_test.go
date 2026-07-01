@@ -145,6 +145,11 @@ func TestCompleteSAML_NoAccountNoProvision(t *testing.T) {
 func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
 	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@x.io", Name: "Mallory"}}
 	c, store := samlTestCore(stub) // provider "corp", AutoProvision: true
+	// This test exercises the cross-provider gate WITHIN the email-fallback path,
+	// which is itself opt-in (TrustEmailForLinking, #89) — enable it here so the
+	// fallback is reached at all, matching an operator who has decided to trust
+	// this provider's asserted email for account linking.
+	c.ssoProviders["corp"].TrustEmailForLinking = true
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-5").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
 	// No account under corp's scoped id...
@@ -160,5 +165,36 @@ func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
 	assert.Nil(t, session)
 	assert.Nil(t, user)
 	// The takeover must never reach session creation.
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// TestCompleteSAML_NativeAdminTakeoverRejectedByDefault pins the #89 residual gap:
+// even after cross-provider scoping, a SAML assertion could still hijack an
+// existing NATIVE (password-based) admin account — whose external_id is empty,
+// not bound to any provider — merely by asserting its email. SAML has no
+// verified-email concept at all, so this is reachable with no admin-console
+// access: a low-trust/self-service IdP the org configured for JIT SSO just has to
+// assert the victim's address. Without TrustEmailForLinking opted in (the
+// default), the email fallback must not run at all — the login is refused
+// outright (AutoProvision is off here), not silently linked to the native admin.
+func TestCompleteSAML_NativeAdminTakeoverRejectedByDefault(t *testing.T) {
+	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@company.com", Name: "Mallory"}}
+	c, store := samlTestCore(stub) // provider "corp", TrustEmailForLinking defaults false
+	require.False(t, c.ssoProviders["corp"].TrustEmailForLinking, "precondition: opt-in is off by default")
+	c.ssoProviders["corp"].AutoProvision = false
+	store.On("ConsumeSSOLoginState", mock.Anything, "relay-6").Return(
+		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|evil").Return((*models.User)(nil), userNotFound())
+
+	session, user, _, err := c.CompleteSAML(context.Background(), "corp",
+		httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil), "relay-6", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "no Keyorix account")
+	assert.Nil(t, session)
+	assert.Nil(t, user)
+	// The native admin's email must never even be looked up — the takeover surface
+	// this closes is that such a lookup existed at all with no independent trust
+	// signal on the asserted email.
+	store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }

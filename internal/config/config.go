@@ -939,6 +939,14 @@ type SSOProviderConfig struct {
 	// (default "system_viewer"). A misconfigured/unknown role grants nothing —
 	// least-privilege on misconfiguration.
 	DefaultRole string `yaml:"default_role"`
+	// TrustEmailForLinking opts this provider into linking its first-login identity
+	// to a PRE-EXISTING account (including a native/password-based one) purely by
+	// asserted email, when no scoped external_id match exists yet. Opt-in (default
+	// off): SAML has no verified-email concept and an OIDC id_token can simply omit
+	// email_verified, so an untrusted/self-service IdP could otherwise hijack an
+	// existing account by asserting its email. Enable only for a provider whose
+	// asserted email you actually trust.
+	TrustEmailForLinking bool `yaml:"trust_email_for_linking"`
 
 	// GroupSync reconciles the user's NATIVE group memberships from the IdP's groups
 	// claim on each login (the IdP becomes the source of truth — membership is added
