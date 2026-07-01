@@ -1659,7 +1659,8 @@ func buildSSOProviders(sso config.SSOConfig) (map[string]*core.SSOProvider, core
 			providers[pc.Name] = &core.SSOProvider{
 				Name: pc.Name, Type: "saml", SAML: sp, CompleteURL: completeURL,
 				AutoProvision: pc.AutoProvision, DefaultRole: pc.DefaultRole,
-				GroupSync: pc.GroupSync, GroupRoleMap: pc.GroupRoleMap,
+				TrustAssertedEmail: pc.TrustAssertedEmail,
+				GroupSync:          pc.GroupSync, GroupRoleMap: pc.GroupRoleMap,
 			}
 			continue
 		}

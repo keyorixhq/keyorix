@@ -985,6 +985,14 @@ type SSOProviderConfig struct {
 	// (default "system_viewer"). A misconfigured/unknown role grants nothing —
 	// least-privilege on misconfiguration.
 	DefaultRole string `yaml:"default_role"`
+	// TrustAssertedEmail opts a SAML provider (type: saml) into treating its
+	// asserted email as verified for account-linking. SAML has no per-assertion
+	// verified-email signal — the assertion being IdP-signed proves the IdP sent
+	// it, not that the IdP verified the user owns it. Opt-in (default off):
+	// without it, a SAML login can still JIT-provision a NEW account but cannot
+	// claim an EXISTING one by asserting its email. Ignored for OIDC providers
+	// (whose email_verified claim is checked per-login instead).
+	TrustAssertedEmail bool `yaml:"trust_asserted_email"`
 
 	// GroupSync reconciles the user's NATIVE group memberships from the IdP's groups
 	// claim on each login (the IdP becomes the source of truth — membership is added
