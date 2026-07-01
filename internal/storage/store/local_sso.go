@@ -4,10 +4,9 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -20,19 +19,20 @@ func (ls *LocalStorage) CreateSSOLoginState(ctx context.Context, s *models.SSOLo
 	return nil
 }
 
-// ConsumeSSOLoginState returns the state row and deletes it (single use), so a
-// callback's state can never be replayed. Returns the not-found error if absent.
+// ConsumeSSOLoginState atomically deletes the state row by its unique state token
+// and returns the deleted row's data (RETURNING) — a single-statement claim, not a
+// read-then-delete, so two concurrent callbacks racing the same state can never
+// both succeed: only the DELETE that actually removes a row (RowsAffected==1) gets
+// the data back, and the loser sees zero rows deleted (not-found). Returns the
+// not-found error if the state is absent or already consumed.
 func (ls *LocalStorage) ConsumeSSOLoginState(ctx context.Context, state string) (*models.SSOLoginState, error) {
 	var s models.SSOLoginState
-	err := ls.db.WithContext(ctx).Where("state = ?", state).First(&s).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	result := ls.db.WithContext(ctx).Clauses(clause.Returning{}).Where("state = ?", state).Delete(&s)
+	if result.Error != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	if err := ls.db.WithContext(ctx).Delete(&models.SSOLoginState{}, s.ID).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return &s, nil
 }

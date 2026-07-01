@@ -392,14 +392,14 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 func TestSyncSSORoles(t *testing.T) {
 	t.Run("authoritative over mapped roles only", func(t *testing.T) {
 		c, store, key, p := ssoTestCore(t)
-		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin", "keyorix-auditors": "system_auditor"}
-		// IdP asserts only keyorix-admins → system_admin desired; system_auditor (mapped,
-		// not asserted) must be removed; system_viewer (NOT mapped) left alone.
-		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
+		p.GroupRoleMap = map[string]string{"keyorix-secrets-rw": "secrets_writer", "keyorix-auditors": "system_auditor"}
+		// IdP asserts only keyorix-secrets-rw → secrets_writer desired; system_auditor
+		// (mapped, not asserted) must be removed; system_viewer (NOT mapped) left alone.
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-secrets-rw"}})
 		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{
 			{ID: 20, Name: "system_auditor"}, {ID: 30, Name: "system_viewer"},
 		}, nil)
-		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
+		store.On("GetRoleByName", mock.Anything, "secrets_writer").Return(&models.Role{ID: 10, Name: "secrets_writer"}, nil)
 		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 20, Name: "system_auditor"}, nil)
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
@@ -407,9 +407,28 @@ func TestSyncSSORoles(t *testing.T) {
 
 		c.syncSSORoles(context.Background(), p, 7, raw)
 
-		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // system_admin granted
+		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // secrets_writer granted
 		store.AssertCalled(t, "RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything)    // system_auditor revoked
 		store.AssertNotCalled(t, "RemoveRole", mock.Anything, uint(7), uint(30), mock.Anything) // system_viewer (unmapped) untouched
+	})
+
+	// TestSyncSSORoles/refuses-to-grant-an-admin-tier-role pins #96: GroupRoleMap
+	// mapped a group directly to an admin-tier role with no guard (unlike
+	// reconcileSSOGroups's admin-conferring-GROUP check) — an IdP group that is
+	// frequently self-service or governed by non-Keyorix-admins could grant global
+	// admin to anyone who joins it. AssignRole must never be called for an
+	// admin-tier mapped role.
+	t.Run("refuses to grant an admin-tier role from a group mapping", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
+		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{}, nil)
+		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		c.syncSSORoles(context.Background(), p, 7, raw)
+
+		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("absent groups claim → no-op (never touches roles)", func(t *testing.T) {

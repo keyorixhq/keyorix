@@ -48,6 +48,18 @@ const maxJWKSBytes = 1 << 20 // 1 MiB
 // growth from a pathological key set.
 const maxJWKSKeys = 50
 
+// minRSAModulusBits/maxRSAModulusBits bound the RSA key sizes parseJWK accepts.
+// crypto/rsa's signature verification cost scales with the modulus size (modular
+// exponentiation), and the cache lets one JWKS fetch serve every subsequent token
+// from that kid — so a compromised or MITM'd issuer serving a single pathological
+// (e.g. ~8M-bit) RSA key turns every verification into a multi-second modexp, a
+// CPU-DoS amplifier cheap for the issuer to serve. 2048 is the practical minimum
+// for a signing key; 8192 comfortably covers every real-world RSA size in use.
+const (
+	minRSAModulusBits = 2048
+	maxRSAModulusBits = 8192
+)
+
 // jwksStaleGrace bounds how far PAST the TTL a cached key set may still be served
 // as a fallback when a JWKS refetch fails transiently. Without a bound, a key the
 // issuer rotated out — e.g. because its private key was compromised — would keep
@@ -281,6 +293,9 @@ func parseJWK(k jwk) (interface{}, error) {
 		e := new(big.Int).SetBytes(eBytes)
 		if !e.IsInt64() || e.Int64() <= 0 {
 			return nil, fmt.Errorf("rsa e out of range")
+		}
+		if bits := n.BitLen(); bits < minRSAModulusBits || bits > maxRSAModulusBits {
+			return nil, fmt.Errorf("rsa modulus size %d bits outside allowed range [%d,%d]", bits, minRSAModulusBits, maxRSAModulusBits)
 		}
 		return &rsa.PublicKey{N: n, E: int(e.Int64())}, nil
 	case "EC":
