@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -17,15 +19,30 @@ import (
 
 // Audit-stream tail tuning: a SAFETY-NET fallback interval (the common path is the
 // push signal from core.SubscribeAuditStream, not this) and the max events drained per
-// wake. The interval is a var so tests can shorten it.
+// wake. The interval is a var so tests can shorten it. The SAME interval re-validates
+// the stream's authorization (#108): StreamAuthInterceptor authenticates a stream once
+// at open and is never re-run by the normal per-request path, so a session/PAT
+// revoked, a role removed, or an account suspended/deprovisioned mid-stream would
+// otherwise keep receiving the live audit feed until the client disconnects on its
+// own — potentially indefinitely.
 var auditStreamFallbackInterval = 30 * time.Second
 
 const auditStreamBatch = 100
+
+// auditStreamMaxPerPrincipal bounds how many concurrent StreamAuditLogs a single
+// principal may hold open — an unbounded caller could otherwise open arbitrarily many
+// streams, each subscribed to the audit broker, amplifying the fan-out cost of every
+// audit write across the whole install (auditBroker.signal iterates every subscriber
+// under one lock).
+const auditStreamMaxPerPrincipal = 3
 
 // AuditGRPCService implements pb.AuditServiceServer.
 type AuditGRPCService struct {
 	pb.UnimplementedAuditServiceServer
 	core *core.KeyorixCore
+
+	streamCountsMu sync.Mutex
+	streamCounts   map[string]int // "kind:id" -> concurrently open StreamAuditLogs calls
 }
 
 // Compile-time assertion that the service satisfies the generated interface.
@@ -33,7 +50,57 @@ var _ pb.AuditServiceServer = (*AuditGRPCService)(nil)
 
 // NewAuditService creates an audit gRPC service backed by the shared core.
 func NewAuditService(coreService *core.KeyorixCore) *AuditGRPCService {
-	return &AuditGRPCService{core: coreService}
+	return &AuditGRPCService{core: coreService, streamCounts: make(map[string]int)}
+}
+
+// acquireStreamSlot reserves one of a principal's auditStreamMaxPerPrincipal
+// concurrent StreamAuditLogs slots, refusing a new stream once the cap is reached.
+// The returned release func MUST be deferred by the caller to free the slot.
+func (s *AuditGRPCService) acquireStreamSlot(actor *interceptors.UserContext) (func(), error) {
+	key := fmt.Sprintf("%s:%d", actor.ActorKind(), actor.PrincipalID())
+	s.streamCountsMu.Lock()
+	defer s.streamCountsMu.Unlock()
+	if s.streamCounts[key] >= auditStreamMaxPerPrincipal {
+		return nil, status.Errorf(codes.ResourceExhausted,
+			"too many concurrent audit streams for this principal (max %d)", auditStreamMaxPerPrincipal)
+	}
+	s.streamCounts[key]++
+	return func() {
+		s.streamCountsMu.Lock()
+		defer s.streamCountsMu.Unlock()
+		s.streamCounts[key]--
+		if s.streamCounts[key] <= 0 {
+			delete(s.streamCounts, key)
+		}
+	}, nil
+}
+
+// reauthorizeAuditStream re-validates that actor may still hold this live audit feed:
+// the audit.read permission (a role/grant revoked mid-stream) and, since a long-lived
+// stream is authenticated once at open and never re-run by the per-request path, that
+// the underlying principal itself is still active — a user account that was
+// suspended/deprovisioned/deleted, or a machine identity that was suspended/revoked.
+// A stale-but-still-role-holding actor (e.g. a session or PAT that isn't THIS user's
+// only credential) is not distinguishable without the raw token, which the stream
+// context does not retain — the account- and role-level checks close the practical
+// admin-action revocation paths (suspend, deprovision, delete, remove role) #108
+// describes.
+func (s *AuditGRPCService) reauthorizeAuditStream(ctx context.Context, actor *interceptors.UserContext) error {
+	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
+		return err
+	}
+	if actor.ActorKind() == core.ActorTypeMachine {
+		m, err := s.core.Storage().GetMachineIdentity(ctx, actor.MachineIdentityID)
+		if err != nil || m.State != core.MachineActive {
+			return status.Error(codes.PermissionDenied, "machine identity is no longer active")
+		}
+		return nil
+	}
+	u, err := s.core.Storage().GetUser(ctx, actor.UserID)
+	if err != nil || !u.IsActive || core.AccountLoginBlocked(u.AccountState) {
+		return status.Error(codes.PermissionDenied, "account is no longer active")
+	}
+	return nil
 }
 
 // GetAuditLogs reads the audit log with filtering and pagination.
@@ -246,6 +313,11 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 	if err := authorizeGlobal(ctx, s.core, actor, "audit.read"); err != nil {
 		return err
 	}
+	release, err := s.acquireStreamSlot(actor)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	// Subscribe BEFORE reading the head id so no write between the two is missed: a
 	// write in that window leaves a pending tick, and the first drain queries from the
@@ -317,6 +389,13 @@ func (s *AuditGRPCService) StreamAuditLogs(req *pb.StreamAuditLogsRequest, strea
 				return err
 			}
 		case <-fallback.C:
+			// Re-validate authorization on every fallback tick (#108): a permission
+			// revoked, or the account/machine identity itself deactivated, since the
+			// stream opened must end the feed within one interval, not only when the
+			// client eventually disconnects on its own.
+			if err := s.reauthorizeAuditStream(ctx, actor); err != nil {
+				return err
+			}
 			if err := drain(); err != nil {
 				return err
 			}

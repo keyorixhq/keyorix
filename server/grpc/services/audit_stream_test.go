@@ -114,6 +114,99 @@ func TestAuditService_StreamAuditLogs_ResumesFromCursor(t *testing.T) {
 	}
 }
 
+// TestAuditService_StreamAuditLogs_RevokedRoleTerminatesStream pins #108: a long-lived
+// stream is authenticated once at open and never re-run by the per-request path, so
+// removing the role that granted audit.read mid-stream must terminate the feed within
+// one fallback interval, not only when the client eventually disconnects on its own.
+func TestAuditService_StreamAuditLogs_RevokedRoleTerminatesStream(t *testing.T) {
+	old := auditStreamFallbackInterval
+	auditStreamFallbackInterval = 15 * time.Millisecond
+	defer func() { auditStreamFallbackInterval = old }()
+
+	svc, db := newStreamCore(t)
+	ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))
+	defer cancel()
+	stream := &fakeAuditStream{ctx: ctx}
+
+	done := make(chan error, 1)
+	go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
+	time.Sleep(30 * time.Millisecond) // let the stream establish before revoking
+
+	require.NoError(t, db.Where("user_id = ? AND role_id = ?", 1, 1).Delete(&models.UserRole{}).Error)
+
+	select {
+	case err := <-done:
+		assert.Equal(t, codes.PermissionDenied, status.Code(err),
+			"the stream must end once the role granting audit.read is revoked")
+	case <-time.After(time.Second):
+		t.Fatal("stream did not terminate after the granting role was revoked")
+	}
+}
+
+// TestAuditService_StreamAuditLogs_SuspendedAccountTerminatesStream pins the
+// account-state half of #108: a role revocation isn't the only way to lose access —
+// suspending/deprovisioning the account must also cut the live feed, since
+// core.Authorize's role check alone would still pass for a suspended user whose role
+// grant is untouched.
+func TestAuditService_StreamAuditLogs_SuspendedAccountTerminatesStream(t *testing.T) {
+	old := auditStreamFallbackInterval
+	auditStreamFallbackInterval = 15 * time.Millisecond
+	defer func() { auditStreamFallbackInterval = old }()
+
+	svc, db := newStreamCore(t)
+	ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))
+	defer cancel()
+	stream := &fakeAuditStream{ctx: ctx}
+
+	done := make(chan error, 1)
+	go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
+	time.Sleep(30 * time.Millisecond)
+
+	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).
+		Update("account_state", "suspended").Error)
+
+	select {
+	case err := <-done:
+		assert.Equal(t, codes.PermissionDenied, status.Code(err),
+			"the stream must end once the account is suspended, even with the role grant intact")
+	case <-time.After(time.Second):
+		t.Fatal("stream did not terminate after the account was suspended")
+	}
+}
+
+// TestAuditService_StreamAuditLogs_MaxConcurrentPerPrincipal pins the per-principal
+// cap: an unbounded caller could otherwise open arbitrarily many concurrent streams,
+// each subscribed to the audit broker's O(N)-under-lock fan-out.
+func TestAuditService_StreamAuditLogs_MaxConcurrentPerPrincipal(t *testing.T) {
+	svc, _ := newStreamCore(t)
+
+	var cancels []context.CancelFunc
+	t.Cleanup(func() {
+		for _, c := range cancels {
+			c()
+		}
+	})
+
+	for i := 0; i < auditStreamMaxPerPrincipal; i++ {
+		ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))
+		cancels = append(cancels, cancel)
+		stream := &fakeAuditStream{ctx: ctx}
+		done := make(chan error, 1)
+		go func() { done <- svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream) }()
+		// Give StreamAuditLogs time to reach acquireStreamSlot and register before the
+		// next iteration opens another one.
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// One more, over the cap, must be refused immediately.
+	ctx, cancel := context.WithCancel(authCtx(1, "admin", "audit.read"))
+	defer cancel()
+	stream := &fakeAuditStream{ctx: ctx}
+	err := svc.StreamAuditLogs(&pb.StreamAuditLogsRequest{}, stream)
+	require.Error(t, err)
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+}
+
 func TestAuditService_StreamAuditLogs_TailsNewEvents(t *testing.T) {
 	// These events are inserted directly into the DB (bypassing the emitAudit funnel
 	// that normally fires the push signal), so delivery here rides the fallback
