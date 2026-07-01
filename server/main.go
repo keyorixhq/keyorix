@@ -426,10 +426,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	var recipientSinks []core.NotificationSink
 	if wc := cfg.Notifications.Webhook; wc.Enabled {
 		sink, werr := notifychan.NewWebhook(notifychan.WebhookConfig{
-			Endpoint:           wc.Endpoint,
-			Token:              wc.GetToken(),
-			InsecureSkipVerify: wc.InsecureSkipVerify,
-			SigningSecret:      wc.GetSigningSecret(),
+			Endpoint:                  wc.Endpoint,
+			Token:                     wc.GetToken(),
+			InsecureSkipVerify:        wc.InsecureSkipVerify,
+			AllowPrivateNetworkTarget: wc.AllowPrivateNetworkTarget,
+			SigningSecret:             wc.GetSigningSecret(),
 		})
 		if werr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification webhook channel: %w", werr)
@@ -596,9 +597,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	var evidenceTargets []evidencesink.Forwarder
 	if ew := cfg.EvidenceDelivery.Webhook; ew.Enabled {
 		fwd, ferr := evidencesink.NewWebhook(evidencesink.WebhookConfig{
-			Endpoint:           ew.Endpoint,
-			Token:              ew.GetToken(),
-			InsecureSkipVerify: ew.InsecureSkipVerify,
+			Endpoint:                  ew.Endpoint,
+			Token:                     ew.GetToken(),
+			InsecureSkipVerify:        ew.InsecureSkipVerify,
+			AllowPrivateNetworkTarget: ew.AllowPrivateNetworkTarget,
 		})
 		if ferr != nil {
 			return nil, nil, fmt.Errorf("failed to init evidence webhook target: %w", ferr)

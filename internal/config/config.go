@@ -793,6 +793,9 @@ type EvidenceWebhookConfig struct {
 	Endpoint           string `yaml:"endpoint"`
 	Token              string `yaml:"token"` // use KEYORIX_EVIDENCE_WEBHOOK_TOKEN env var instead
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	// AllowPrivateNetworkTarget opts the endpoint out of the SSRF guard — a
+	// SEPARATE decision from InsecureSkipVerify; see evidencesink.WebhookConfig.
+	AllowPrivateNetworkTarget bool `yaml:"allow_private_network_target"`
 }
 
 // GetToken returns the resolved webhook token, preferring the environment variable.
@@ -917,6 +920,9 @@ type NotificationWebhookConfig struct {
 	Endpoint           string `yaml:"endpoint"`
 	Token              string `yaml:"token"` // use KEYORIX_NOTIFY_WEBHOOK_TOKEN env var instead
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	// AllowPrivateNetworkTarget opts the endpoint out of the SSRF guard — a
+	// SEPARATE decision from InsecureSkipVerify; see notifychan.WebhookConfig.
+	AllowPrivateNetworkTarget bool `yaml:"allow_private_network_target"`
 	// SigningSecret HMAC-signs each payload (X-Keyorix-Signature) so the receiver can
 	// verify authenticity. Use KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET instead of the file.
 	SigningSecret string `yaml:"signing_secret"`
