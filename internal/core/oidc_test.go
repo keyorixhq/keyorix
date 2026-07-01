@@ -74,6 +74,7 @@ func TestOIDCVerify_Valid(t *testing.T) {
 		"iss": "https://k8s.local",
 		"sub": "system:serviceaccount:ci:deployer",
 		"aud": []string{"keyorix"},
+		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	iss, sub, err := v.Verify(context.Background(), raw)
@@ -89,6 +90,7 @@ func TestOIDCVerify_Rejections(t *testing.T) {
 	base := func() jwt.MapClaims {
 		return jwt.MapClaims{
 			"iss": "https://k8s.local", "sub": "sa", "aud": []string{"keyorix"},
+			"iat": time.Now().Unix(),
 			"exp": time.Now().Add(time.Hour).Unix(),
 		}
 	}
@@ -141,6 +143,61 @@ func TestOIDCVerify_Rejections(t *testing.T) {
 		_, _, err = v.Verify(context.Background(), raw)
 		require.Error(t, err, "HMAC must be rejected (asymmetric only)")
 	})
+
+	// #102: exp alone doesn't bound how long ago a token was minted — a
+	// far-future exp (misconfigured or malicious issuer) must not verify
+	// indefinitely just because it hasn't expired yet.
+	t.Run("missing iat rejected", func(t *testing.T) {
+		c := base()
+		delete(c, "iat")
+		_, _, err := v.Verify(context.Background(), signToken(t, key, "kid-1", c))
+		require.ErrorContains(t, err, "iat")
+	})
+
+	t.Run("stale iat beyond max age rejected despite a still-valid, far-future exp", func(t *testing.T) {
+		c := base()
+		c["iat"] = time.Now().Add(-48 * time.Hour).Unix() // exceeds defaultOIDCMaxTokenAge (24h)
+		c["exp"] = time.Now().Add(10 * 365 * 24 * time.Hour).Unix()
+		_, _, err := v.Verify(context.Background(), signToken(t, key, "kid-1", c))
+		require.ErrorContains(t, err, "max age")
+	})
+
+	t.Run("iat within max age accepted", func(t *testing.T) {
+		c := base()
+		c["iat"] = time.Now().Add(-1 * time.Hour).Unix()
+		_, _, err := v.Verify(context.Background(), signToken(t, key, "kid-1", c))
+		require.NoError(t, err)
+	})
+
+	// #102: a multi-audience token is ambiguous about its intended recipient —
+	// azp must disambiguate and itself be trusted.
+	t.Run("multiple audiences without azp rejected", func(t *testing.T) {
+		c := base()
+		c["aud"] = []string{"keyorix", "some-other-trusted-service"}
+		_, _, err := v.Verify(context.Background(), signToken(t, key, "kid-1", c))
+		require.ErrorContains(t, err, "azp")
+	})
+
+	t.Run("multiple audiences with untrusted azp rejected", func(t *testing.T) {
+		c := base()
+		c["aud"] = []string{"keyorix", "some-other-trusted-service"}
+		c["azp"] = "some-other-trusted-service" // matches an audience, but not the one we expect to be the RP here
+		v2, err := NewOIDCVerifier(
+			[]OIDCTrustedIssuer{{Issuer: "https://k8s.local", Audiences: []string{"keyorix"}}}, // azp not in this issuer's trusted set
+			staticResolver{kid: "kid-1", key: &key.PublicKey},
+		)
+		require.NoError(t, err)
+		_, _, err = v2.Verify(context.Background(), signToken(t, key, "kid-1", c))
+		require.ErrorContains(t, err, "azp")
+	})
+
+	t.Run("multiple audiences with trusted azp accepted", func(t *testing.T) {
+		c := base()
+		c["aud"] = []string{"keyorix", "some-other-trusted-service"}
+		c["azp"] = "keyorix"
+		_, _, err := v.Verify(context.Background(), signToken(t, key, "kid-1", c))
+		require.NoError(t, err)
+	})
 }
 
 func TestValidateOIDCToken_ResolvesMachine(t *testing.T) {
@@ -156,6 +213,7 @@ func TestValidateOIDCToken_ResolvesMachine(t *testing.T) {
 
 	raw := signToken(t, key, "kid-1", jwt.MapClaims{
 		"iss": "https://k8s.local", "sub": "sa", "aud": []string{"keyorix"},
+		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	m, roles, err := c.ValidateOIDCToken(context.Background(), raw)
@@ -168,6 +226,7 @@ func TestValidateOIDCToken_DisabledAndSuspended(t *testing.T) {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	raw := signToken(t, key, "kid-1", jwt.MapClaims{
 		"iss": "https://k8s.local", "sub": "sa", "aud": []string{"keyorix"},
+		"iat": time.Now().Unix(),
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 

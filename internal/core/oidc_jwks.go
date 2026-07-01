@@ -58,7 +58,16 @@ const maxJWKSKeys = 50
 // a sustained DoS. 8192 bits comfortably exceeds any real-world RSA key size in
 // production use (2048/3072/4096 are standard; NIST's own long-term guidance
 // tops out at 15360) while still rejecting a maliciously oversized modulus.
-const maxRSABits = 8192
+//
+// minRSABits (#100) is the missing lower bound: without it, a compromised or
+// MITM'd issuer could serve a trivially-weak key (e.g. 512 bits) that parses
+// and caches fine but offers no real cryptographic assurance — the check above
+// only ever guarded against a DoS-oversized key, never an undersized one. 2048
+// is the practical minimum still considered acceptable for a signing key today.
+const (
+	maxRSABits = 8192
+	minRSABits = 2048
+)
 
 // jwksStaleGrace bounds how far PAST the TTL a cached key set may still be served
 // as a fallback when a JWKS refetch fails transiently. Without a bound, a key the
@@ -286,8 +295,8 @@ func parseJWK(k jwk) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		if n.BitLen() > maxRSABits {
-			return nil, fmt.Errorf("rsa modulus too large: %d bits exceeds %d-bit limit", n.BitLen(), maxRSABits)
+		if bits := n.BitLen(); bits < minRSABits || bits > maxRSABits {
+			return nil, fmt.Errorf("rsa modulus size %d bits outside allowed range [%d,%d]", bits, minRSABits, maxRSABits)
 		}
 		eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
 		if err != nil {

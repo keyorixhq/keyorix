@@ -700,7 +700,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		trusted := make([]core.OIDCTrustedIssuer, 0, len(oidc.Issuers))
 		jwksURIs := make(map[string]string, len(oidc.Issuers))
 		for _, iss := range oidc.Issuers {
-			trusted = append(trusted, core.OIDCTrustedIssuer{Issuer: iss.Issuer, Audiences: iss.Audiences})
+			trusted = append(trusted, core.OIDCTrustedIssuer{
+				Issuer: iss.Issuer, Audiences: iss.Audiences,
+				MaxTokenAge: time.Duration(iss.MaxTokenAgeSeconds) * time.Second,
+			})
 			jwksURIs[iss.Issuer] = iss.JWKSURI
 		}
 		resolver, rerr := core.NewHTTPJWKSResolver(jwksURIs)
