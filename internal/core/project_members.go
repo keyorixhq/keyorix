@@ -18,21 +18,32 @@ func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([
 	return c.storage.ListProjectMembers(ctx, projectID)
 }
 
-// AddProjectMember assigns roleName to userID at the project scope.
-func (c *KeyorixCore) AddProjectMember(ctx context.Context, projectID, userID uint, roleName string) error {
+// AddProjectMember assigns roleName to userID at the project scope. actorID is the
+// acting principal; granting an admin role is gated by requireAuthorityForRole (the
+// same escalation-by-proxy ceiling InviteToProject/TransitionMembership apply) so a
+// non-admin roles.assign holder cannot mint a project_admin through this direct
+// entry point.
+func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, userID uint, roleName string) error {
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
+	}
+	if err := c.requireAuthorityForRole(ctx, actorID, projectID, roleName); err != nil {
+		return err
 	}
 	return c.storage.AssignRole(ctx, userID, role.ID, storage.Scope{ProjectID: projectID})
 }
 
 // SetProjectMemberRole replaces the user's role(s) at the project scope with
-// roleName, adding the member if they had none.
-func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, projectID, userID uint, roleName string) error {
+// roleName, adding the member if they had none. See AddProjectMember for actorID
+// semantics.
+func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, projectID, userID uint, roleName string) error {
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
+	}
+	if err := c.requireAuthorityForRole(ctx, actorID, projectID, roleName); err != nil {
+		return err
 	}
 	scope := storage.Scope{ProjectID: projectID}
 	existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)

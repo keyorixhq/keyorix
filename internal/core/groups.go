@@ -74,7 +74,9 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 	return updated, nil
 }
 
-// DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics.
+// DeleteGroup deletes a group by ID. Refuses to delete a group that currently
+// confers the install's last global admin role (guardLastGlobalAdminGroupDelete).
+// See CreateGroup for actorID semantics.
 func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
@@ -82,6 +84,9 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	group, err := c.storage.GetGroup(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if err := c.guardLastGlobalAdminGroupDelete(ctx, id); err != nil {
+		return err
 	}
 	if err := c.storage.DeleteGroup(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -113,25 +118,60 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 	return groups, nil
 }
 
-// AddUserToGroup adds a user to a group.
-func (c *KeyorixCore) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+// AddUserToGroup adds a user to a group. actorID is the acting principal (0 =
+// local/unauthenticated CLI — see DeleteGroup/AssignRoleToUser for the same
+// convention). Joining an admin-conferring group inherits that access just as
+// directly as a role grant, so every global-scope admin role the group already
+// holds is gated by the same escalation-by-proxy ceiling AssignRoleToGroup applies
+// (requireAuthorityForRole): a non-admin roles.assign holder must not be able to
+// self-escalate by joining a privileged group instead of being granted the role.
+// The local CLI (actorID 0) is exempt — it is already fully trusted (it can grant
+// any role directly via AssignRoleToUser, which bypasses this ceiling entirely) and
+// the exemption avoids forcing an existing admin group deployment through this new
+// check retroactively.
+func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+	}
+	if actorID != 0 {
+		grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, g := range grants {
+			role, err := c.storage.GetRole(ctx, g.RoleID)
+			if err != nil {
+				continue
+			}
+			if err := c.requireAuthorityForRole(ctx, actorID, g.ProjectID, role.Name); err != nil {
+				return err
+			}
+		}
 	}
 	if err := c.storage.AddUserToGroup(ctx, userID, groupID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.writeAuditEvent(ctx, "group.member_added", actorPtr(actorID), nil,
+		fmt.Sprintf("user %d added to group %d", userID, groupID))
 	return nil
 }
 
-// RemoveUserFromGroup removes a user from a group.
-func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
+// RemoveUserFromGroup removes a user from a group. Refuses the removal when it
+// would strip the install's last live global-admin path
+// (guardLastGlobalAdminMembership). actorID is the acting principal (0 =
+// local/unauthenticated CLI).
+func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, groupID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+	}
+	if err := c.guardLastGlobalAdminMembership(ctx, userID, groupID); err != nil {
+		return err
 	}
 	if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.writeAuditEvent(ctx, "group.member_removed", actorPtr(actorID), nil,
+		fmt.Sprintf("user %d removed from group %d", userID, groupID))
 	return nil
 }
 

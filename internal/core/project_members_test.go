@@ -23,7 +23,7 @@ func TestProjectMemberLifecycle(t *testing.T) {
 	assert.Empty(t, members)
 
 	// Add as project_viewer.
-	require.NoError(t, c.AddProjectMember(ctx, proj, u.ID, "project_viewer"))
+	require.NoError(t, c.AddProjectMember(ctx, 0, proj, u.ID, "project_viewer"))
 	members, err = c.ListProjectMembers(ctx, proj)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
@@ -31,10 +31,10 @@ func TestProjectMemberLifecycle(t *testing.T) {
 	assert.Equal(t, "project_viewer", members[0].RoleName)
 
 	// Adding the same role again is a conflict.
-	require.Error(t, c.AddProjectMember(ctx, proj, u.ID, "project_viewer"))
+	require.Error(t, c.AddProjectMember(ctx, 0, proj, u.ID, "project_viewer"))
 
 	// Change role to project_developer — replaces, doesn't accumulate.
-	require.NoError(t, c.SetProjectMemberRole(ctx, proj, u.ID, "project_developer"))
+	require.NoError(t, c.SetProjectMemberRole(ctx, 0, proj, u.ID, "project_developer"))
 	members, err = c.ListProjectMembers(ctx, proj)
 	require.NoError(t, err)
 	require.Len(t, members, 1, "member should have exactly one project role after change")
@@ -60,5 +60,5 @@ func TestAddProjectMemberUnknownRole(t *testing.T) {
 	ctx := context.Background()
 	u, err := st.CreateUser(ctx, &models.User{Username: "bob", Email: "bob@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.Error(t, c.AddProjectMember(ctx, 1, u.ID, "no_such_role"))
+	require.Error(t, c.AddProjectMember(ctx, 0, 1, u.ID, "no_such_role"))
 }

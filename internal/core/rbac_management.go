@@ -93,14 +93,22 @@ func (c *KeyorixCore) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*
 	return grants, nil
 }
 
-// AssignRoleToGroup verifies both exist then assigns the role at scope and
-// records an RBAC audit event. actorID is the acting principal (0 = none).
+// AssignRoleToGroup verifies both exist, applies the escalation-by-proxy ceiling
+// (requireAuthorityForRole — granting a group an admin role inherits to every
+// member, so it is gated exactly like a direct user grant), then assigns the role
+// at scope and records an RBAC audit event. actorID is the acting principal (0 =
+// none; requireAuthorityForRole refuses an admin grant for an unauthenticated
+// actor, since this path is only ever reached via an authenticated HTTP request).
 func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
-	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
+	}
+	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
+		return err
 	}
 	if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -109,11 +117,16 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 	return nil
 }
 
-// RemoveRoleFromGroup verifies the group exists then removes the role at scope
-// and records an RBAC audit event. actorID is the acting principal (0 = none).
+// RemoveRoleFromGroup verifies the group exists, refuses to strip the install's
+// last global-admin path (guardLastGlobalAdminPrincipal — the group-grant twin of
+// RemoveUserRole's guardLastGlobalAdmin), then removes the role at scope and
+// records an RBAC audit event. actorID is the acting principal (0 = none).
 func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
+	}
+	if err := c.guardLastGlobalAdminPrincipal(ctx, "group", groupID, roleID, scope); err != nil {
+		return err
 	}
 	if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -265,6 +278,16 @@ func (c *KeyorixCore) installAdminRoleIDSet(ctx context.Context) map[uint]bool {
 // administrator (and no recovery short of DB surgery). Only the global scope is
 // guarded: a project-scoped admin can always be restored by a global admin.
 func (c *KeyorixCore) guardLastGlobalAdmin(ctx context.Context, userID, roleID uint, scope Scope) error {
+	return c.guardLastGlobalAdminPrincipal(ctx, "user", userID, roleID, scope)
+}
+
+// guardLastGlobalAdminPrincipal generalizes guardLastGlobalAdmin to any principal
+// type (user or group) losing a role grant. Removing the install's LAST
+// global-scope admin-role assignment — whether held directly by a user or
+// conferred via a group — must be refused, or the install is left with no one able
+// to manage users, roles, or settings. RemoveRoleFromGroup and
+// guardLastGlobalAdminGroupDelete are the group-side callers.
+func (c *KeyorixCore) guardLastGlobalAdminPrincipal(ctx context.Context, principalType string, principalID, roleID uint, scope Scope) error {
 	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
 		return nil // not the global scope — project admins are recoverable
 	}
@@ -282,10 +305,91 @@ func (c *KeyorixCore) guardLastGlobalAdmin(ctx context.Context, userID, roleID u
 		}
 		// Ignore the exact assignment being removed; any OTHER global admin grant
 		// (held by another user, or by a group) means governance survives.
-		if a.PrincipalType == "user" && a.PrincipalID == userID && a.RoleID == roleID {
+		if a.PrincipalType == principalType && a.PrincipalID == principalID && a.RoleID == roleID {
 			continue
 		}
 		return nil
 	}
 	return fmt.Errorf("refusing to remove the last install administrator: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings")
+}
+
+// guardLastGlobalAdminGroupDelete refuses to delete a group that currently confers
+// one of the install's global admin roles when doing so would leave no other
+// global-admin path — deleting a group drops every role grant it holds at once, so
+// each of its global-scope admin roles is checked as if RemoveRoleFromGroup were
+// called for it individually.
+func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, groupID uint) error {
+	grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, g := range grants {
+		if g.ProjectID != 0 || g.EnvironmentID != 0 {
+			continue
+		}
+		if err := c.guardLastGlobalAdminPrincipal(ctx, "group", groupID, g.RoleID, Scope{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// guardLastGlobalAdminMembership refuses to remove userID from groupID when the
+// group confers a global admin role, userID is its last member, and no other live
+// path — a direct user grant, or another group with at least one OTHER member —
+// gives the install a global admin. The role GRANT survives a membership removal
+// (unlike RemoveRoleFromGroup/DeleteGroup), but an admin-conferring grant with zero
+// live members is exactly as inert as no grant at all, so this is the membership
+// twin of guardLastGlobalAdminPrincipal.
+func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID, groupID uint) error {
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	if len(adminIDs) == 0 {
+		return nil
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	groupHoldsAdmin := false
+	for _, a := range assignments {
+		if a.PrincipalType == "group" && a.PrincipalID == groupID && a.EnvironmentID == 0 && adminIDs[a.RoleID] {
+			groupHoldsAdmin = true
+			break
+		}
+	}
+	if !groupHoldsAdmin {
+		return nil
+	}
+	members, err := c.storage.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, m := range members {
+		if m.ID != userID {
+			return nil // another member keeps this group's access live
+		}
+	}
+	for _, a := range assignments {
+		if !adminIDs[a.RoleID] || a.EnvironmentID != 0 {
+			continue
+		}
+		switch a.PrincipalType {
+		case "user":
+			return nil // a direct global-admin grant survives regardless
+		case "group":
+			if a.PrincipalID == groupID {
+				continue // the group being evaluated
+			}
+			otherMembers, err := c.storage.ListGroupMembers(ctx, a.PrincipalID)
+			if err != nil {
+				continue
+			}
+			for _, m := range otherMembers {
+				if m.ID != userID {
+					return nil // another admin-conferring group has a live member
+				}
+			}
+		}
+	}
+	return fmt.Errorf("refusing to remove the last member of an administrator-conferring group: the install would be left with no one able to manage users, roles, or settings")
 }

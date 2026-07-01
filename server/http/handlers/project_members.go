@@ -129,6 +129,11 @@ func (h *CatalogHandler) AttestProjectAccessReview(w http.ResponseWriter, r *htt
 
 // AddProjectMember handles POST /api/v1/projects/{id}/members
 func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
@@ -146,7 +151,7 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		sendError(w, "ValidationError", "user_id and role are required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddProjectMember(r.Context(), uint(id), body.UserID, body.Role); err != nil {
+	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, uint(id), body.UserID, body.Role); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "already") {
 			status = http.StatusConflict
@@ -162,6 +167,11 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 
 // UpdateProjectMember handles PUT /api/v1/projects/{id}/members/{userId}
 func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
@@ -183,7 +193,7 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 		sendError(w, "ValidationError", "role is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.SetProjectMemberRole(r.Context(), uint(id), uint(userID), body.Role); err != nil {
+	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, uint(id), uint(userID), body.Role); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "unknown role") {
 			status = http.StatusBadRequest

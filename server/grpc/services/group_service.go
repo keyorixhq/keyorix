@@ -156,7 +156,7 @@ func (s *GroupGRPCService) AddGroupMember(ctx context.Context, req *pb.GroupMemb
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
 		return nil, err
 	}
-	if err := s.core.AddUserToGroup(ctx, uint(req.GetUserId()), uint(req.GetGroupId())); err != nil {
+	if err := s.core.AddUserToGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId())); err != nil {
 		return nil, groupError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -170,7 +170,7 @@ func (s *GroupGRPCService) RemoveGroupMember(ctx context.Context, req *pb.GroupM
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.assign"); err != nil {
 		return nil, err
 	}
-	if err := s.core.RemoveUserFromGroup(ctx, uint(req.GetUserId()), uint(req.GetGroupId())); err != nil {
+	if err := s.core.RemoveUserFromGroup(ctx, actor.UserID, uint(req.GetUserId()), uint(req.GetGroupId())); err != nil {
 		return nil, groupError(err)
 	}
 	return &emptypb.Empty{}, nil
@@ -206,8 +206,10 @@ func groupError(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case strings.Contains(msg, "required") || strings.Contains(msg, "invalid"):
 		return status.Error(codes.InvalidArgument, err.Error())
-	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied"):
+	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied") || strings.Contains(msg, "administrator can grant"):
 		return status.Error(codes.PermissionDenied, "access denied")
+	case strings.Contains(msg, "refusing to remove the last"):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Error(codes.Internal, "group operation failed")
 	}

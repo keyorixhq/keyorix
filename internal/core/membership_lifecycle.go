@@ -144,7 +144,7 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 
 	// If the mode put us straight into active, grant the role now.
 	if created.State == MembershipActive {
-		if err := c.AddProjectMember(ctx, projectID, userID, role); err != nil {
+		if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role); err != nil {
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
 	}
@@ -213,7 +213,7 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	// Side effects on the role grant.
 	switch to {
 	case MembershipActive:
-		if err := c.AddProjectMember(ctx, m.ProjectID, m.UserID, m.Role); err != nil {
+		if err := c.AddProjectMember(ctx, actorID, m.ProjectID, m.UserID, m.Role); err != nil {
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
 	case MembershipRevoked:

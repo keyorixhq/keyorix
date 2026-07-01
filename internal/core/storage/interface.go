@@ -386,6 +386,12 @@ type Storage interface {
 	// GetGroupRoleGrants is GetGroupRoles plus each grant's time-bound expiry
 	// (nil = permanent), so callers can surface remaining time on a JIT grant.
 	GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*GroupRoleGrant, error)
+	// ListGroupRoleAssignments returns every role grant held by a group across ALL
+	// scopes (unlike ListProjectRoleAssignments, which is scoped to one project) —
+	// used to evaluate the admin-rank ceiling before adding a member to the group,
+	// and the last-install-administrator invariant before removing one or deleting
+	// the group outright.
+	ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]RoleAssignment, error)
 	AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
 	// AssignRoleToGroupWithExpiry binds a time-bound role to a group; see
 	// AssignRoleWithExpiry.
