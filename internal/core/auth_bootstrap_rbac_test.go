@@ -28,7 +28,9 @@ func newBootstrappedCore(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{},
+		&models.Project{}, &models.Environment{}, &models.SystemMetadata{},
+		&models.MachineIdentity{}, &models.MachineIdentityRole{},
+		&models.PersonalAccessToken{}, &models.Session{}, &models.ShareRecord{},
 	))
 
 	st := store.NewLocalStorage(db)

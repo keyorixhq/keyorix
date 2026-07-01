@@ -32,7 +32,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 	}
 	ctx := context.Background()
 
-	if err := service.DeleteUser(ctx, deleteUserID); err != nil {
+	if err := service.DeleteUser(ctx, 0, deleteUserID); err != nil { // actorID 0: local/unauthenticated CLI
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
 	fmt.Printf("User %d deleted.\n", deleteUserID)

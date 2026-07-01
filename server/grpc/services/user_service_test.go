@@ -19,7 +19,13 @@ func newUserService(t *testing.T) *UserGRPCService {
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
 	// Grant the admin-context user (id 1) super_admin globally so core.Authorize
-	// admits the admin tests; denied tests use an ungranted user id.
+	// admits the admin tests; denied tests use an ungranted user id. A real row is
+	// created for id 1 (not just the role_users grant) so a subsequently
+	// CreateUser'd test user gets a distinct auto-increment id instead of
+	// colliding with the admin-context identity — DeleteUser's last-admin guard
+	// (#106) checks the target's OWN role set, so a collision would make it look
+	// like the last admin is being deleted.
+	h.CreateTestUser(t, "admin", 1)
 	h.AssignUserRole(t, 1, 1, nil)
 	return NewUserService(h.CoreService)
 }

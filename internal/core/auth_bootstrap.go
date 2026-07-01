@@ -150,6 +150,16 @@ func IsBuiltinRole(name string) bool {
 // defaultEnvironmentNames is the ordered list of environment names created on first boot.
 var defaultEnvironmentNames = []string{"development", "staging", "production"}
 
+// systemInitializedKey is the permanent SystemMetadata marker set once bootstrap
+// completes successfully. Unlike the live user count, it survives every user later
+// being soft-deleted (see core.DeleteUser / #106): without it, a full deprovision
+// would zero ListUsers' count and SystemNeedsBootstrap/BootstrapSystem would treat
+// the install as never-initialised again, letting a stale/leaked bootstrap token
+// (or a freshly regenerated one — GenerateBootstrapToken logs it on every restart
+// while uninitialised) re-seize admin even though the original users still exist,
+// soft-deleted and restorable.
+const systemInitializedKey = "system_initialized" // #nosec G101 -- metadata key name, not a credential
+
 // BootstrapSystem ensures the server has a fully-configured initial state:
 //   - admin user (with the supplied credentials)
 //   - canonical RBAC permissions and roles (legacy admin/editor/viewer plus the
@@ -157,14 +167,31 @@ var defaultEnvironmentNames = []string{"development", "staging", "production"}
 //   - default project ("default")
 //   - three default environments (development, staging, production)
 //
-// Idempotent: if users already exist, returns the current state with
-// AlreadyInitialized=true and performs no writes.
+// Idempotent: if the install is already initialised, returns the current state
+// with AlreadyInitialized=true and performs no writes. bootstrapMu serializes the
+// whole check-then-create sequence so two concurrent first calls can't both pass
+// the check and double-seed (the storage layer alone doesn't make this atomic).
 func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest) (*BootstrapResult, error) {
+	c.bootstrapMu.Lock()
+	defer c.bootstrapMu.Unlock()
+
+	// The permanent marker is authoritative once set — see systemInitializedKey.
+	if _, found, err := c.storage.GetSystemMetadata(ctx, systemInitializedKey); err != nil {
+		return nil, fmt.Errorf("failed to check system initialisation state: %w", err)
+	} else if found {
+		return c.currentBootstrapState(ctx)
+	}
+
 	_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existing users: %w", err)
 	}
 	if total > 0 {
+		// A pre-fix install has users but never wrote the marker; backfill it now so
+		// a future full-deprovision can't reopen bootstrap for THIS install either.
+		if err := c.storage.SetSystemMetadata(ctx, systemInitializedKey, "1"); err != nil {
+			return nil, fmt.Errorf("failed to record system initialisation state: %w", err)
+		}
 		return c.currentBootstrapState(ctx)
 	}
 
@@ -250,6 +277,14 @@ func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest
 		envs = append(envs, env)
 	}
 
+	if err := c.storage.SetSystemMetadata(ctx, systemInitializedKey, "1"); err != nil {
+		return nil, fmt.Errorf("failed to record system initialisation state: %w", err)
+	}
+	// The bootstrap token is single-use: clear it so a captured/logged token (see
+	// GenerateBootstrapToken) can never re-open initialisation later, even before
+	// considering the marker above.
+	c.bootstrapToken = ""
+
 	return &BootstrapResult{
 		AlreadyInitialized: false,
 		User:               user,
@@ -286,10 +321,18 @@ func (c *KeyorixCore) currentBootstrapState(ctx context.Context) (*BootstrapResu
 	}, nil
 }
 
-// SystemNeedsBootstrap reports whether the install has no users yet (i.e. POST
-// /system/init would seed the first admin). The server uses this at startup to decide
-// whether to surface the bootstrap token to the operator.
+// SystemNeedsBootstrap reports whether the install has never completed
+// initialisation (i.e. POST /system/init would seed the first admin). The server
+// uses this at startup to decide whether to surface the bootstrap token to the
+// operator. Checks the permanent systemInitializedKey marker first — see its doc
+// comment — falling back to the live user count only for a pre-fix install that
+// never wrote the marker.
 func (c *KeyorixCore) SystemNeedsBootstrap(ctx context.Context) (bool, error) {
+	if _, found, err := c.storage.GetSystemMetadata(ctx, systemInitializedKey); err != nil {
+		return false, err
+	} else if found {
+		return false, nil
+	}
 	_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
 	if err != nil {
 		return false, err

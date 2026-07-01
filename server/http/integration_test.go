@@ -62,6 +62,7 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.Environment{},
 		&models.Permission{},
 		&models.RolePermission{},
+		&models.SystemMetadata{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))

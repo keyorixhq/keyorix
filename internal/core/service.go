@@ -58,7 +58,11 @@ type KeyorixCore struct {
 	// be seized by whoever calls /system/init first. The server sets this at startup
 	// (from KEYORIX_BOOTSTRAP_TOKEN, or a random value logged for the operator while the
 	// system is uninitialised); init refuses unless the caller presents a matching token.
-	bootstrapToken    string
+	bootstrapToken string
+	// bootstrapMu serializes BootstrapSystem's check-then-create sequence (marker
+	// lookup, user count, then seeding) so two concurrent first calls can't both
+	// pass the check and double-seed the install. Zero value is ready to use.
+	bootstrapMu       sync.Mutex
 	secretValuePolicy SecretValuePolicy  // optional quality gate on secret values (off by default)
 	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
 	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)

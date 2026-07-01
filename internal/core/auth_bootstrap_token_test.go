@@ -25,7 +25,7 @@ func freshBootstrapCore(t *testing.T) *KeyorixCore {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Project{}, &models.Environment{},
+		&models.Project{}, &models.Environment{}, &models.SystemMetadata{},
 	))
 	return NewKeyorixCore(store.NewLocalStorage(db))
 }

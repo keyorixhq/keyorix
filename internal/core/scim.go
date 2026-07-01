@@ -226,8 +226,9 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 }
 
 // guardLastAdminDeactivation refuses an operation that would deactivate/deprovision the
-// only remaining install administrator, so a routine or hostile SCIM push can't lock
-// everyone out. Mirrors guardLastGlobalAdmin's assignment scan but keyed on the target.
+// only remaining install administrator, so a routine or hostile SCIM push — or an admin
+// DeleteUser call (core.DeleteUser shares this guard) — can't lock everyone out. Mirrors
+// guardLastGlobalAdmin's assignment scan but keyed on the target.
 func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
 	isAdmin, err := c.IsGlobalAdmin(ctx, targetID)
 	if err != nil || !isAdmin {
@@ -249,7 +250,7 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 		}
 		return nil
 	}
-	return fmt.Errorf("refusing to deactivate the last install administrator via SCIM")
+	return fmt.Errorf("refusing to deactivate the last install administrator")
 }
 
 // DeprovisionSCIMUser handles a SCIM DELETE: it deprovisions the user (blocks login,

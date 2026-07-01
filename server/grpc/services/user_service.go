@@ -171,7 +171,7 @@ func (s *UserGRPCService) DeleteUser(ctx context.Context, req *pb.DeleteUserRequ
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
-	if err := s.core.DeleteUser(ctx, uint(req.GetId())); err != nil {
+	if err := s.core.DeleteUser(ctx, actor.UserID, uint(req.GetId())); err != nil {
 		return nil, mapUserError(err)
 	}
 	return &emptypb.Empty{}, nil
