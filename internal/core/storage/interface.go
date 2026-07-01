@@ -56,6 +56,12 @@ type Storage interface {
 	// rows for a project access review. Global (project 0) grants are excluded:
 	// those are install-level, reviewed separately.
 	ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
+	// ListProjectMachineRoleAssignments returns every machine-identity role grant
+	// scoped to the project (project_id = projectID, any environment) — the machine
+	// counterpart to ListProjectRoleAssignments's user/group rows, kept separate so
+	// existing callers (compliance posture, RBAC/SCIM last-admin guards) are
+	// unaffected; only the access review enumerates it (#91).
+	ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
 	// LastUserSecretActivity returns, per user, the most recent secret-access time
 	// in the project (from the audit trail). Backs dormant-access detection in the
 	// access review — a grant whose principal has no recent activity is stale

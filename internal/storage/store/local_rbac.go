@@ -209,6 +209,24 @@ func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectI
 	return out, nil
 }
 
+// ListProjectMachineRoleAssignments returns every machine-identity role grant
+// scoped to the project (project_id = projectID, any environment) — the machine
+// counterpart to ListProjectRoleAssignments's user/group rows.
+func (ls *LocalStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	var rows []models.MachineIdentityRole
+	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	out := make([]storage.RoleAssignment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "machine", PrincipalID: r.MachineIdentityID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
+}
+
 // GetUserRoleIDsExact returns the IDs of roles directly assigned to userID at
 // exactly the given scope (no global/inherited matching). Used for full
 // replacement of a user's roles at one scope.

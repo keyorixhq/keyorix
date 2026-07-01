@@ -113,6 +113,14 @@ func (m *MockStorage) ListProjectRoleAssignments(ctx context.Context, projectID 
 	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
 }
 
+func (m *MockStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+}
+
 func (m *MockStorage) CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error) {
 	args := m.Called(ctx, inv)
 	if args.Get(0) == nil {

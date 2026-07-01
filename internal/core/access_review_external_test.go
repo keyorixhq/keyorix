@@ -48,6 +48,66 @@ func TestGenerateProjectAccessReview(t *testing.T) {
 	}, rows, "alice (editor→write) and the devs group (viewer→read); bob (auditor, no secrets) and carol (other project) excluded")
 }
 
+// TestGenerateProjectAccessReview_IncludesMachineIdentities pins #91: a machine
+// identity (CI runner, k8s workload) holding a project-scoped role that confers
+// secrets access is a project member exactly like a user or group, but was never
+// enumerated — a privileged CI/k8s principal passed through a "completed"
+// recertification campaign entirely un-attested.
+func TestGenerateProjectAccessReview_IncludesMachineIdentities(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+
+	const proj = uint(2)
+	require.NoError(t, h.DB.Create(&models.MachineIdentity{
+		ID: 50, ProjectID: proj, Name: "ci-runner", IdentityType: "ci", State: "active",
+	}).Error)
+	// role_id 3 = editor (secrets.read+write), matching the seeded roles used elsewhere
+	// in this file.
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{
+		MachineIdentityID: 50, RoleID: 3, ProjectID: proj,
+	}).Error)
+
+	review, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
+	require.NoError(t, err)
+
+	var found *core.AccessReviewEntry
+	for _, e := range review {
+		if e.PrincipalType == "machine" {
+			found = e
+		}
+	}
+	require.NotNil(t, found, "the machine identity's role grant must appear in the review")
+	assert.Equal(t, uint(50), found.PrincipalID)
+	assert.Equal(t, "ci-runner", found.PrincipalName)
+	assert.Equal(t, "write", found.AccessLevel)
+}
+
+// TestRevokeAccessReviewGrant_MachineRole pins the revoke side of #91: a reviewer
+// must be able to close the loop on a machine-identity finding, not just view it.
+func TestRevokeAccessReviewGrant_MachineRole(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
+
+	const proj = uint(2)
+	require.NoError(t, h.DB.Create(&models.MachineIdentity{
+		ID: 50, ProjectID: proj, Name: "ci-runner", IdentityType: "ci", State: "active",
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.MachineIdentityRole{
+		MachineIdentityID: 50, RoleID: 3, ProjectID: proj,
+	}).Error)
+
+	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 1, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "machine", PrincipalID: 50, RoleID: 3,
+	})
+	require.NoError(t, err)
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.MachineIdentityRole{}).
+		Where("machine_identity_id = ? AND role_id = ?", 50, 3).Count(&count).Error)
+	assert.Zero(t, count, "the machine's role grant must be removed")
+}
+
 // The review also reports per-secret grants: ownership and direct/group shares.
 func TestGenerateProjectAccessReview_SharesAndOwnership(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
