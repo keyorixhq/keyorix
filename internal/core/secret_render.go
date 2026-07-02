@@ -49,9 +49,22 @@ func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string,
 		}
 		secret, err := c.storage.GetSecretByName(ctx, secretName, projectID, envID)
 		if err != nil || secret == nil {
-			return "", fmt.Errorf("secret %q not found in %s", secretName, envName)
+			// A reference to a name that doesn't exist. Deliberately the SAME sentinel
+			// (same error, same eventual HTTP status/message) as "exists but you can't
+			// read it" below — see the permission check for why (#181).
+			return "", ErrSecretRefNotFound
 		}
-		val, err := c.GetSecretValueWithPermissionCheck(ctx, secret.ID, userID)
+		// Run the permission check BEFORE anything that could distinguish this from the
+		// "doesn't exist" branch above. GetSecretByName has no ACL of its own, so if we
+		// let a permission failure surface its own distinct error/status here, a
+		// `viewer`-role project member with no access to this secret could enumerate
+		// candidate names via ${secret:<env>/<guess>} and learn existence per guess from
+		// 404-vs-403 alone — info never surfaced by their normal scoped listing. Folding
+		// both outcomes into the identical ErrSecretRefNotFound closes that oracle (#181).
+		if _, err := c.ValidateSecretAccess(ctx, secret.ID, userID); err != nil {
+			return "", ErrSecretRefNotFound
+		}
+		val, err := c.GetSecretValue(ctx, secret.ID)
 		if err != nil {
 			return "", err
 		}

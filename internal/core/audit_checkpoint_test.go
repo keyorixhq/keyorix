@@ -519,6 +519,52 @@ func TestAuditCheckpoint_VerifiesAnchorWhenRootsConfigured(t *testing.T) {
 	assert.Contains(t, v.CheckpointReason, "external anchor failed verification")
 }
 
+// #182: VerifyCheckpointAnchor was cryptographically sound but unreachable in
+// production — nothing outside its own unit tests ever called it, and the raw
+// anchor token was never surfaced anywhere a verifier could reach it (only
+// anchored_at/anchor_provider strings were). VerifyAuditChain (already exposed via
+// GET /api/v1/audit/verify, the gRPC AuditService, and `keyorix audit verify`) now
+// surfaces the latest checkpoint's raw external-notary receipt on its result,
+// regardless of whether local trust roots are configured — so an operator can pull
+// it and verify it independently, out-of-band, without trusting this server's own
+// verification of it.
+func TestVerifyAuditChain_SurfacesRawAnchorToken(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 3)
+	fn := &fakeNotary{token: []byte("opaque-tsa-token"), at: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)}
+	c.SetCheckpointNotary(fn)
+	// Deliberately NO SetCheckpointAnchorRoots: the raw token must still be surfaced
+	// even when this server can't (or hasn't been configured to) verify it itself.
+	_, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	require.True(t, v.Valid)
+	assert.Equal(t, []byte("opaque-tsa-token"), v.AnchorToken, "the raw receipt must be reachable off the verify result")
+	assert.Equal(t, "fake", v.AnchorProvider)
+	require.NotNil(t, v.AnchoredAt)
+	assert.True(t, v.AnchoredAt.Equal(fn.at))
+}
+
+// A checkpoint with no anchor (no notary configured) must not fabricate one on the
+// verify result.
+func TestVerifyAuditChain_NoAnchorTokenWhenUnanchored(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 3)
+	_, written, err := c.WriteAuditCheckpoint(ctx) // no notary set → unanchored
+	require.NoError(t, err)
+	require.True(t, written)
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, v.AnchorToken)
+	assert.Nil(t, v.AnchoredAt)
+}
+
 func TestAuditCheckpoint_SignDeterministicAndBinding(t *testing.T) {
 	c := &KeyorixCore{}
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0x1}, 32), "v1")
