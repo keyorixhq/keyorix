@@ -44,7 +44,8 @@ func (h *SecretHandler) CopyEnvironmentSecrets(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	copied, skipped, err := h.coreService.CopyEnvironmentSecrets(r.Context(), uint(projectID), uint(sourceEnvID), reqBody.TargetEnvironmentID, userCtx.Username, userCtx.UserID)
+	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	copied, skipped, err := h.coreService.CopyEnvironmentSecrets(r.Context(), uint(projectID), uint(sourceEnvID), reqBody.TargetEnvironmentID, userCtx.Username, userCtx.UserID, ip, ua)
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()

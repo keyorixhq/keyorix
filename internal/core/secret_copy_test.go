@@ -20,7 +20,7 @@ func TestCopySecret(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
@@ -39,7 +39,7 @@ func TestCopySecret(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("copies value + metadata into the target environment", func(t *testing.T) {
-		copied, err := c.CopySecret(ctx, src.ID, prod.ID, "", "owner", 1)
+		copied, err := c.CopySecret(ctx, src.ID, prod.ID, "", "owner", 1, "203.0.113.5", "test-agent/1.0")
 		require.NoError(t, err)
 		assert.NotEqual(t, src.ID, copied.ID, "a distinct new secret")
 		assert.Equal(t, "db-url", copied.Name)
@@ -53,29 +53,37 @@ func TestCopySecret(t *testing.T) {
 		val, err := c.GetSecretValueWithPermissionCheck(ctx, copied.ID, 1)
 		require.NoError(t, err)
 		assert.Equal(t, "postgres://secret", string(val))
+
+		// #290: the copy leaves an audit trail — a read of the source, a create of the
+		// destination — matching every other secret CRUD path.
+		var readCount, createCount int64
+		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ? AND secret_node_id = ?", "secret.read", src.ID).Count(&readCount).Error)
+		assert.Equal(t, int64(1), readCount, "the source read must be audited")
+		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ? AND secret_node_id = ?", "secret.created", copied.ID).Count(&createCount).Error)
+		assert.Equal(t, int64(1), createCount, "the destination create must be audited")
 	})
 
 	t.Run("a new name can be given", func(t *testing.T) {
-		copied, err := c.CopySecret(ctx, src.ID, prod.ID, "db-url-renamed", "owner", 1)
+		copied, err := c.CopySecret(ctx, src.ID, prod.ID, "db-url-renamed", "owner", 1, "", "")
 		require.NoError(t, err)
 		assert.Equal(t, "db-url-renamed", copied.Name)
 	})
 
 	t.Run("copying to an environment in another project is rejected", func(t *testing.T) {
-		_, err := c.CopySecret(ctx, src.ID, otherEnv.ID, "", "owner", 1)
+		_, err := c.CopySecret(ctx, src.ID, otherEnv.ID, "", "owner", 1, "", "")
 		require.Error(t, err)
 	})
 
 	t.Run("a duplicate name in the target environment is rejected", func(t *testing.T) {
 		// "db-url" already copied into prod above.
-		_, err := c.CopySecret(ctx, src.ID, prod.ID, "", "owner", 1)
+		_, err := c.CopySecret(ctx, src.ID, prod.ID, "", "owner", 1, "", "")
 		require.Error(t, err)
 	})
 
 	t.Run("required IDs are validated", func(t *testing.T) {
-		_, err := c.CopySecret(ctx, 0, prod.ID, "", "owner", 1)
+		_, err := c.CopySecret(ctx, 0, prod.ID, "", "owner", 1, "", "")
 		require.Error(t, err)
-		_, err = c.CopySecret(ctx, src.ID, 0, "", "owner", 1)
+		_, err = c.CopySecret(ctx, src.ID, 0, "", "owner", 1, "", "")
 		require.Error(t, err)
 	})
 }
