@@ -817,7 +817,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			if tzLabel == "" {
 				tzLabel = "UTC"
 			}
-			if err := detector.SetBusinessHours(bh.Timezone, bh.OffHoursStart, bh.OffHoursEnd); err != nil {
+			if err := detector.SetBusinessHours(ctx, bh.Timezone, bh.OffHoursStart, bh.OffHoursEnd); err != nil {
 				// Misconfigured timezone: keep the safe UTC default rather than fail startup.
 				log.Printf("Anomaly off-hours config ignored (%v); using UTC 22:00–06:00", err)
 			} else {

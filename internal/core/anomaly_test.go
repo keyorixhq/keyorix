@@ -36,10 +36,10 @@ func (c *captureStore) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAl
 func (c *captureStore) ListAnomalyAlerts(_ context.Context, _ *bool) ([]models.AnomalyAlert, error) {
 	return nil, nil
 }
-func (c *captureStore) AcknowledgeAnomalyAlert(_ context.Context, _ uint) error { return nil }
 func (c *captureStore) PrincipalSecretFirstSeen(_ context.Context, _ time.Time) (map[string]map[uint]time.Time, error) {
 	return nil, nil
 }
+func (c *captureStore) LogAuditEvent(_ context.Context, _ *models.AuditEvent) error { return nil }
 
 // The recent-access scan window must honor the configured lookback (so a longer scan
 // cadence scans a proportionally longer window), and be floored at one hour.
@@ -279,21 +279,31 @@ func TestOffHoursPolicy(t *testing.T) {
 func TestSetBusinessHours(t *testing.T) {
 	d := NewAnomalyDetector(nil)
 
+	ctx := context.Background()
+
 	// Timezone only: the default 22–6 band is kept (both hours 0 = unset).
-	require.NoError(t, d.SetBusinessHours("America/New_York", 0, 0))
+	require.NoError(t, d.SetBusinessHours(ctx, "America/New_York", 0, 0))
 	assert.Equal(t, "America/New_York", d.offHours.loc.String())
 	assert.Equal(t, 22, d.offHours.start)
 	assert.Equal(t, 6, d.offHours.end)
 
 	// Custom band applied.
-	require.NoError(t, d.SetBusinessHours("UTC", 20, 7))
+	require.NoError(t, d.SetBusinessHours(ctx, "UTC", 20, 7))
 	assert.Equal(t, 20, d.offHours.start)
 	assert.Equal(t, 7, d.offHours.end)
 
 	// Invalid timezone: error, and the prior policy is left unchanged.
 	before := d.offHours
-	require.Error(t, d.SetBusinessHours("Not/AZone", 1, 2))
+	require.Error(t, d.SetBusinessHours(ctx, "Not/AZone", 1, 2))
 	assert.Equal(t, before, d.offHours, "an invalid timezone must not mutate the policy")
+
+	// #144: a degenerate non-zero start==end band matches no hour in isOffHours,
+	// silently disabling the rule — must be rejected, and the prior policy kept.
+	before = d.offHours
+	err := d.SetBusinessHours(ctx, "UTC", 9, 9)
+	require.Error(t, err, "an equal, non-zero start/end band must be rejected")
+	assert.Contains(t, err.Error(), "must differ")
+	assert.Equal(t, before, d.offHours, "a rejected degenerate band must not mutate the policy")
 }
 
 func TestVolumeSpike(t *testing.T) {

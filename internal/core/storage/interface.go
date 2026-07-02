@@ -531,7 +531,10 @@ type Storage interface {
 	UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
-	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
+	// AcknowledgeAnomalyAlert marks an alert acknowledged and stamps who did it and
+	// when directly on the row (#217), alongside the separate audit event the core
+	// layer emits.
+	AcknowledgeAnomalyAlert(ctx context.Context, id, actorID uint, at time.Time) error
 	// ListUnalertedAnomalyAlerts returns alerts not yet pushed out (alerted=false),
 	// and MarkAnomalyAlertAlerted flags one as pushed — for proactive alerting.
 	ListUnalertedAnomalyAlerts(ctx context.Context) ([]models.AnomalyAlert, error)
