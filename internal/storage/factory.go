@@ -500,6 +500,12 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 			return fmt.Errorf("failed to migrate break_glass_activations table: %w", err)
 		}
 	}
+	// Enforce at most one ACTIVE break-glass activation per (project, user), even
+	// under a race — see ensureBreakGlassActiveIndex. Runs whether the table was just
+	// created above or already existed on an older DB (additive, idempotent).
+	if err := ensureBreakGlassActiveIndex(db); err != nil {
+		return err
+	}
 
 	// Create the legal-holds table if missing (additive).
 	if !legalHoldExists {
@@ -699,6 +705,21 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_groups_name_active ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial groups name index: %w", err)
+	}
+	return nil
+}
+
+// ensureBreakGlassActiveIndex creates a partial unique index on
+// break_glass_activations (project_id, user_id) WHERE state='active', so at most one
+// ACTIVE break-glass activation can exist per project+user even under a race —
+// ActivateBreakGlass's own "no existing active activation" check is a list-and-scan
+// that two concurrent callers could both pass before either inserts; this index makes
+// the database the actual source of truth. Scoped to state='active' (not a plain
+// unique index) so a user can activate break-glass again after a prior activation
+// expires or is revoked. Idempotent; works on both SQLite and Postgres.
+func ensureBreakGlassActiveIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error; err != nil {
+		return fmt.Errorf("failed to create partial break_glass_activations active index: %w", err)
 	}
 	return nil
 }
