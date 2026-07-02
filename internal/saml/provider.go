@@ -15,6 +15,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,6 +91,15 @@ func NewProvider(cfg Config) (*Provider, error) {
 		IDPMetadata:       idp,
 		AllowIDPInitiated: cfg.AllowIDPInitiated,
 	}
+	// The library's default AudienceRestriction check treats an assertion with NO
+	// AudienceRestriction element as valid (see crewjam/saml's
+	// validateAudienceRestriction: an empty list is vacuously "valid"). That weakens
+	// replay/cross-service-use protection — AudienceRestriction is what scopes an
+	// assertion to THIS service provider, so an IdP or attacker omitting it produces
+	// an assertion this SP would accept even though it was never scoped to us.
+	// Override the hook to require at least one AudienceRestriction matching our
+	// entity ID; a missing element is rejected, not silently accepted.
+	sp.ValidateAudienceRestriction = requireAudienceRestriction(cfg.SPEntityID)
 	return &Provider{
 		name:       cfg.Name,
 		sp:         sp,
@@ -97,6 +107,24 @@ func NewProvider(cfg Config) (*Provider, error) {
 		nameAttr:   orDefault(cfg.NameAttr, defaultNameAttr),
 		groupsAttr: orDefault(cfg.GroupsAttr, defaultGroupsAttr),
 	}, nil
+}
+
+// requireAudienceRestriction builds a csaml.ServiceProvider.ValidateAudienceRestriction
+// hook that requires the assertion to carry at least one AudienceRestriction whose
+// Audience is entityID — a missing AudienceRestriction element is a hard failure, not
+// vacuously valid (see the comment at the call site).
+func requireAudienceRestriction(entityID string) func(assertion *csaml.Assertion) error {
+	return func(assertion *csaml.Assertion) error {
+		if assertion == nil || assertion.Conditions == nil || len(assertion.Conditions.AudienceRestrictions) == 0 {
+			return errors.New("assertion has no AudienceRestriction")
+		}
+		for _, ar := range assertion.Conditions.AudienceRestrictions {
+			if ar.Audience.Value == entityID {
+				return nil
+			}
+		}
+		return errors.New("assertion AudienceRestriction does not match this service provider")
+	}
 }
 
 // Name returns the provider name.
@@ -129,21 +157,33 @@ func (p *Provider) AuthnRequest(relayState string) (redirectURL, requestID strin
 	return u.String(), req.ID, nil
 }
 
+// errInvalidSAMLResponse is the fixed, sanitized error ParseResponse returns to every
+// caller on a validation failure — see the comment on ParseResponse for why the
+// library's own error text must never reach a caller.
+var errInvalidSAMLResponse = errors.New("saml: invalid response")
+
 // ParseResponse validates the SAMLResponse on r (signature against the pinned IdP
 // certificate, audience, recipient, time window, and — for SP-initiated — InResponseTo
 // against possibleRequestIDs) via the vetted library, then maps the assertion to an
 // AssertionInfo. A validation failure is returned as an error; nothing is trusted from an
 // unvalidated response.
+//
+// The ACS endpoint this feeds is unauthenticated (the caller controls the SAMLResponse
+// body), so the library's own error — including InvalidResponseError.PrivateErr, which
+// crewjam/saml documents as carrying internal detail (XML parse errors, signature/
+// certificate internals) never meant for an untrusted caller — must not be reflected
+// back verbatim. The detail is logged server-side for operators; every caller gets the
+// same fixed, generic error.
 func (p *Provider) ParseResponse(r *http.Request, possibleRequestIDs []string) (*AssertionInfo, error) {
 	assertion, err := p.sp.ParseResponse(r, possibleRequestIDs)
 	if err != nil {
-		// Unwrap the library's detailed (private) error for logs without leaking it to
-		// the caller's surface.
 		var ire *csaml.InvalidResponseError
 		if errors.As(err, &ire) && ire.PrivateErr != nil {
-			return nil, fmt.Errorf("saml: invalid response: %w", ire.PrivateErr)
+			log.Printf("saml: provider %q: response validation failed: %v", p.name, ire.PrivateErr)
+		} else {
+			log.Printf("saml: provider %q: response validation failed: %v", p.name, err)
 		}
-		return nil, fmt.Errorf("saml: invalid response: %w", err)
+		return nil, errInvalidSAMLResponse
 	}
 	return extractAssertion(assertion, p.emailAttr, p.nameAttr, p.groupsAttr), nil
 }
