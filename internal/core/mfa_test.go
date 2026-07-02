@@ -315,3 +315,96 @@ func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
 	assert.Contains(t, err.Error(), "locked")
 	assert.Nil(t, sess)
 }
+
+// #125: DisableMFA accepted a TOTP-code-or-password proof with NO throttle — a caller
+// holding a stolen SESSION (which doesn't itself require re-proving the second factor)
+// could brute-force the 6-digit TOTP with unlimited attempts and turn MFA off
+// outright. This pins that failed attempts now feed the SAME per-account lockout
+// VerifyMFALogin already uses, and that even a subsequently-correct code is refused
+// once locked.
+func TestDisableMFA_FailedCodesFeedAccountLockout(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode)
+	require.NoError(t, err)
+
+	// Three wrong disable attempts (neither a valid TOTP code nor the password) → locked.
+	for i := 0; i < 3; i++ {
+		require.Error(t, c.DisableMFA(ctx, 1, "000000"))
+	}
+
+	var locked models.User
+	require.NoError(t, db.First(&locked, 1).Error)
+	require.NotNil(t, locked.LoginLockedUntil, "account must be locked after MaxAttempts failed disable attempts")
+
+	// Even the CORRECT password is now refused while the lock is active.
+	err = c.DisableMFA(ctx, 1, mfaTestPassword)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "locked")
+
+	var still models.User
+	require.NoError(t, db.First(&still, 1).Error)
+	assert.True(t, still.MFAEnabled, "MFA must remain enabled while the account is locked, even with the correct password")
+}
+
+// A successful disable (correct password, before any lockout) must still clear
+// whatever failure count had accrued — the same convention VerifyMFALogin follows on
+// a successful second factor.
+func TestDisableMFA_SuccessClearsAccruedFailures(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 5, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode)
+	require.NoError(t, err)
+
+	require.Error(t, c.DisableMFA(ctx, 1, "000000"))
+	require.Error(t, c.DisableMFA(ctx, 1, "111111"))
+
+	var mid models.User
+	require.NoError(t, db.First(&mid, 1).Error)
+	assert.Equal(t, 2, mid.FailedLoginAttempts, "the two wrong attempts must be recorded")
+
+	require.NoError(t, c.DisableMFA(ctx, 1, mfaTestPassword))
+
+	var after models.User
+	require.NoError(t, db.First(&after, 1).Error)
+	assert.Zero(t, after.FailedLoginAttempts, "a successful disable must clear accrued failures")
+}
+
+// #125: same unthrottled-brute-force gap, same fix, for RegenerateMFARecoveryCodes.
+func TestRegenerateMFARecoveryCodes_FailedCodesFeedAccountLockout(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	c.loginLockout = LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour}
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, actCode)
+	require.NoError(t, err)
+
+	for i := 0; i < 3; i++ {
+		_, err := c.RegenerateMFARecoveryCodes(ctx, 1, "000000")
+		require.Error(t, err)
+	}
+
+	var locked models.User
+	require.NoError(t, db.First(&locked, 1).Error)
+	require.NotNil(t, locked.LoginLockedUntil, "account must be locked after MaxAttempts failed regenerate attempts")
+
+	_, err = c.RegenerateMFARecoveryCodes(ctx, 1, mfaTestPassword)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "locked")
+}

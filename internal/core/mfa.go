@@ -108,6 +108,16 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	if !user.MFAEnabled {
 		return fmt.Errorf("MFA is not enabled")
 	}
+	// #125: this proof-of-possession check accepted either a TOTP code or the account
+	// password with NO throttle — a caller holding a stolen SESSION (which by itself
+	// doesn't require re-proving the second factor) could brute-force the 6-digit TOTP
+	// here with unlimited attempts and turn MFA off outright, defeating it entirely.
+	// Route through the same per-account lockout VerifyMFALogin already applies to the
+	// login-time second factor, so guessing here costs the same lockout as guessing at
+	// login — a no-op when login_lockout is disabled, matching that gate's behavior.
+	if c.loginLocked(user) {
+		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
 	ok := false
 	if secret, err := c.loadTOTPSecret(ctx, userID); err == nil && c.validateTOTP(secret, codeOrPassword) {
 		ok = true
@@ -117,8 +127,10 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	}
 	if !ok {
 		c.auditMFAFailed(ctx, userID, "disable")
+		c.recordFailedLogin(ctx, user)
 		return fmt.Errorf("invalid code or password")
 	}
+	c.clearLoginFailures(ctx, user)
 	if err := c.storage.SetUserMFAEnabled(ctx, userID, false); err != nil {
 		return err
 	}
@@ -143,6 +155,11 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 	if !user.MFAEnabled {
 		return nil, fmt.Errorf("MFA is not enabled")
 	}
+	// #125: same unthrottled-brute-force gap as DisableMFA — see its comment. A stolen
+	// SESSION could otherwise be used to guess the TOTP code here with no rate limit.
+	if c.loginLocked(user) {
+		return nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
 	ok := false
 	if secret, err := c.loadTOTPSecret(ctx, userID); err == nil && c.validateTOTP(secret, codeOrPassword) {
 		ok = true
@@ -152,8 +169,10 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 	}
 	if !ok {
 		c.auditMFAFailed(ctx, userID, "regenerate_recovery_codes")
+		c.recordFailedLogin(ctx, user)
 		return nil, fmt.Errorf("invalid code or password")
 	}
+	c.clearLoginFailures(ctx, user)
 	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
 	if err != nil {
 		return nil, err
