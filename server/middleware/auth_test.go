@@ -569,6 +569,38 @@ func TestAuthentication_PATNetworkAllowlist(t *testing.T) {
 	assert.Equal(t, http.StatusOK, serve("10.9.9.9:443"), "in-range again after a deny")
 }
 
+// #210: a machine token revoked (or its identity suspended/revoked) must be rejected on
+// the VERY NEXT request, even within the 30s positive-cache window — not just once the
+// cache entry naturally expires. This exercises the same eviction primitive
+// (InvalidateTokenCacheByHash) that RevokeMachineToken/TransitionMachineIdentity's HTTP
+// handlers call with the credential's stored hash on revoke/suspend.
+func TestAuthentication_MachineTokenRevokedRejectedWithinCacheWindow(t *testing.T) {
+	mw := newTestAuthMiddleware()
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	serve := func() int {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", "Bearer kx_machine_validtoken")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	// First request: slow path validates and populates the 30s positive cache entry.
+	require.Equal(t, http.StatusOK, serve(), "a valid machine token authenticates")
+
+	// Revoke (or suspend) the machine token — this is what the HTTP handlers for
+	// RevokeMachineToken / TransitionMachineIdentity(suspended|revoked) do with the
+	// credential's stored SHA-256 hash, which is exactly the cache key.
+	InvalidateTokenCacheByHash(tokenKey("kx_machine_validtoken"))
+
+	// The VERY NEXT request, still well within validTokenTTL, must be rejected — not
+	// served from the now-stale positive cache entry.
+	assert.Equal(t, http.StatusUnauthorized, serve(), "a revoked machine token must be rejected immediately, not after the cache TTL expires")
+}
+
 // A token revoked WHILE a slow-path validation was in flight must not be resurrected by
 // that validation's positive cache write (the revocation-resurrection race).
 func TestCacheSetValidated_DropsResurrectionAfterRevoke(t *testing.T) {

@@ -542,3 +542,60 @@ func TestAuditCheckpoint_SignDeterministicAndBinding(t *testing.T) {
 		assert.False(t, c.checkpointSignatureValid(cp), "every signed field is bound")
 	}
 }
+
+// #215: a DB-write attacker who deletes every row from audit_checkpoints outright
+// (rather than tampering a checkpoint's content) must not be able to launder that as
+// "no checkpoint ever existed" — the still-valid, still-present high-water mark in
+// system_metadata proves a checkpoint WAS certified, so its absence now is a tamper
+// signal on its own, independent of whether the event count also regressed (a
+// content-tamper that re-chains the hashes forward keeps the row count unchanged).
+func TestAuditCheckpoint_DeletedCheckpointRowsIsTamper(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+	logEvents(t, c, 5)
+
+	_, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	require.True(t, v.Valid)
+
+	// Attacker deletes every audit_checkpoints row outright. The high-water mark
+	// (a different table) and the audit_events row count are both left untouched,
+	// so neither the old "missing mark" nor the count-regression check alone fires.
+	require.NoError(t, db.Exec("DELETE FROM audit_checkpoints").Error)
+
+	v, err = c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "deleting all checkpoint rows while a valid high-water mark survives must be flagged as tamper, not read as a fresh install")
+	assert.True(t, v.Checkpointed)
+	assert.Contains(t, v.CheckpointReason, "checkpoint row(s) were deleted")
+
+	// A fresh (restarted) core with no in-memory watermark must catch it too — the
+	// signal comes from the persisted mark, not session state.
+	fresh := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	fresh.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
+	v, err = fresh.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "the deletion is caught after a restart too, via the persisted mark")
+	assert.Contains(t, v.CheckpointReason, "checkpoint row(s) were deleted")
+}
+
+// A genuinely fresh install — checkpointing available (signing key configured) but no
+// checkpoint has EVER been written, so no high-water mark exists either — must still
+// report clean. This is the legitimate case #215's fix must not break: absence of
+// both a checkpoint row and a high-water mark is normal for a brand-new trail, not
+// evidence of tampering.
+func TestAuditCheckpoint_FreshInstallNeverCheckpointedIsClean(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 5) // events flow before checkpointing is ever triggered
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.True(t, v.Valid, "no checkpoint ever written is not tampering on a fresh trail")
+	assert.False(t, v.Checkpointed, "nothing has been certified yet")
+	assert.Empty(t, v.CheckpointReason)
+}

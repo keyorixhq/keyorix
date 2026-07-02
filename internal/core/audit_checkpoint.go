@@ -436,18 +436,37 @@ func (c *KeyorixCore) enforceAuditHighWater(ctx context.Context, v *storage.Audi
 	if err != nil {
 		return err
 	}
-	// A persistent mark that is absent or malformed (found=false, tampered=false) is a
-	// rollback attempt WHEN signed checkpoints exist: advanceAuditHighWater writes the
-	// mark with every checkpoint, so a checkpoint without a valid mark means the mark was
-	// deleted or garbled to erase the certified length so a truncation reads clean. (With
-	// no checkpoint we cannot attribute it — a fresh trail legitimately has neither.)
-	if !found && !tampered {
-		if exists, cerr := c.checkpointExists(ctx); cerr != nil {
-			return cerr
-		} else if exists {
+	exists, err := c.checkpointExists(ctx)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !found && !tampered:
+		// A persistent mark that is absent or malformed (found=false, tampered=false) is
+		// a rollback attempt WHEN signed checkpoints exist: advanceAuditHighWater writes
+		// the mark with every checkpoint, so a checkpoint without a valid mark means the
+		// mark was deleted or garbled to erase the certified length so a truncation reads
+		// clean. (With no checkpoint we cannot attribute it — a fresh trail legitimately
+		// has neither.)
+		if exists {
 			tampered = true
 			reason = "audit high-water mark is missing or malformed although signed checkpoints exist — the anti-rollback mark was deleted or tampered with"
 		}
+	case found && !tampered && !exists:
+		// The inverse and equally load-bearing case (#215): a validly-signed mark proves
+		// a checkpoint was written and certified at some point in this install's history
+		// — advanceAuditHighWater only ever persists the mark alongside a successful
+		// checkpoint write, and nothing in this codebase ever prunes checkpoint rows. An
+		// empty audit_checkpoints table alongside a still-valid mark therefore means the
+		// checkpoint row(s) were deleted out from under it. The count-based floor
+		// comparison below cannot catch this alone when the event count wasn't also
+		// reduced — an attacker who tampers content and re-chains the hashes forward from
+		// the tamper point stays self-consistent and doesn't shrink the row count, only
+		// deleting audit_checkpoints defeats the head-hash comparison that would
+		// otherwise catch it. This mark/table cross-check closes that gap independent of
+		// count.
+		tampered = true
+		reason = "signed audit checkpoints existed previously (a valid high-water mark proves it) but the audit_checkpoints table is now empty — the checkpoint row(s) were deleted"
 	}
 	if found || tampered || floor > 0 {
 		v.Checkpointed = true
