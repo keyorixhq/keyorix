@@ -293,14 +293,30 @@ func (rs *RemoteStorage) IncrementSecretReadCount(ctx context.Context, versionID
 	return nil
 }
 
-// TryIncrementSecretReadCount is server-side enforcement: the authoritative,
-// race-free max-reads gate runs in the server against its local storage. The remote
-// value-read path goes through the server's API (which enforces there), so this
-// method is not on a remote value-read hot path; delegate the increment and report
-// success. Errors propagate so the caller can fail closed.
-func (rs *RemoteStorage) TryIncrementSecretReadCount(ctx context.Context, versionID uint, _ int) (bool, error) {
-	if err := rs.IncrementSecretReadCount(ctx, versionID); err != nil {
-		return false, err
-	}
-	return true, nil
+// TryIncrementSecretReadCount is the max-reads burn-after-N-reads gate
+// (internal/core/storage/interface.go). LocalStorage implements it as a real
+// conditional `UPDATE ... WHERE read_count < maxReads` (local_secrets.go) so
+// concurrent readers can never collectively exceed the cap.
+//
+// The server exposes no REST endpoint for this conditional check-and-increment
+// today — only a plain, non-conditional increment-read-count route is proxyable
+// via IncrementSecretReadCount, and even that route isn't currently registered
+// in router.go (confirmed: no /secret-versions/{id}/increment-read-count route
+// exists server-side). Blindly delegating to the unconditional increment would
+// silently defeat maxReads for any deployment/future code path that reaches this
+// method through storage.type: remote — it would always report success without
+// ever checking the cap. Fail closed instead: report unsupported so the caller
+// (readVersionValue, internal/core/versions.go) takes its existing fail-closed
+// branch and refuses the read, rather than silently granting an unbounded number
+// of reads on a max-reads-limited secret (#188).
+//
+// This method is not on the live remote value-read path today — the CLI's
+// value-read path goes through a separate, already max-reads-enforcing HTTP
+// endpoint on the server, not through core.KeyorixCore/RemoteStorage — so this
+// closes a latent landmine, not a currently-exploitable gap. A real fix that
+// preserves remote-mode support for max-reads secrets would require a new
+// atomic conditional-increment REST endpoint mirroring LocalStorage's semantics;
+// that is a larger scope than this fix and remains a documented gap.
+func (rs *RemoteStorage) TryIncrementSecretReadCount(_ context.Context, _ uint, _ int) (bool, error) {
+	return false, remoteUnsupported("TryIncrementSecretReadCount")
 }

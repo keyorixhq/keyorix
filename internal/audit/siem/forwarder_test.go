@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -282,6 +283,97 @@ func TestForward_DropsAndCountsWhenQueueFull(t *testing.T) {
 	}
 	close(release)
 	f.Close()
+}
+
+// #199: a single strictly-serial worker meant an ordinary SLOW (not down) SIEM
+// throttled the whole system's audit-forward throughput to ~one event per round
+// trip. Proves delivery now happens with real concurrency (a bounded worker pool),
+// not one event at a time.
+func TestForward_DeliversWithBoundedConcurrency(t *testing.T) {
+	var inFlight, maxInFlight atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n := inFlight.Add(1)
+		for {
+			old := maxInFlight.Load()
+			if n <= old || maxInFlight.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond) // hold the request open long enough for others to overlap
+		inFlight.Add(-1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	f, err := newForwarder(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: srv.URL}, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < numWorkers*3; i++ {
+		f.Forward(sampleEvent())
+	}
+	f.Close()
+
+	if got := maxInFlight.Load(); got <= 1 {
+		t.Errorf("max concurrent SIEM deliveries = %d, want > 1 (a single serial worker throttles throughput behind one slow endpoint)", got)
+	}
+}
+
+// #199: the queue-full drop path must log enough to identify the specific lost
+// event for forensic backfill from the durable DB audit trail — not just a
+// running counter.
+func TestForward_DropLogIncludesEventIdentity(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release // wedge every worker so the queue backs up
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	f, err := newForwarder(Config{Enabled: true, Provider: ProviderWebhook, Endpoint: srv.URL}, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var logBuf syncBuffer
+	origOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOut)
+
+	for i := 0; i < queueSize+numWorkers+5; i++ {
+		f.Forward(sampleEvent()) // sampleEvent has ID 42, EventType "secret.updated"
+	}
+
+	out := logBuf.String()
+	if !strings.Contains(out, "dropped event 42") {
+		t.Errorf("drop log missing the event ID for forensic backfill; got: %s", out)
+	}
+	if !strings.Contains(out, `"secret.updated"`) {
+		t.Errorf("drop log missing the event type for forensic backfill; got: %s", out)
+	}
+
+	// Release the wedged workers so Close (which waits for them) doesn't deadlock —
+	// must happen BEFORE Close, not deferred after it (defers run LIFO).
+	close(release)
+	f.Close()
+}
+
+// syncBuffer is a goroutine-safe io.Writer for capturing concurrently-written log output.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // containsValueLeak reports whether the JSON appears to carry a plaintext value

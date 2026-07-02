@@ -186,3 +186,92 @@ func TestRevokeAccessReviewGrant_RequiresProject(t *testing.T) {
 	err := h.CoreService.RevokeAccessReviewGrant(context.Background(), 1, 0, core.AccessReviewDecision{Source: "role"})
 	require.Error(t, err)
 }
+
+// #209: attesting a role grant that has since been revoked (or never existed) must
+// be refused, not silently recorded as clean compliance evidence — an attestation
+// certifies "I reviewed and confirmed this access is still needed," which would be a
+// false statement for a grant that's already gone.
+func TestAttestAccessReviewGrant_RefusesRevokedRoleGrant(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj))
+
+	ctx := context.Background()
+	// The grant is revoked through a path unrelated to the (now-stale) campaign item...
+	require.NoError(t, h.CoreService.RevokeAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+	}))
+
+	// ...so attesting the same decision (as a reviewer acting on stale campaign data
+	// would) must be refused, not recorded as clean evidence.
+	err := h.CoreService.AttestAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+	})
+	require.Error(t, err, "attesting a grant that no longer exists must be refused")
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ?", core.EventAccessReviewAttested).Count(&count).Error)
+	assert.Equal(t, int64(0), count, "no fabricated attestation evidence must be recorded")
+}
+
+// #209: attesting an outright fabricated tuple (a role never assigned to this
+// principal) must be refused the same way — the campaign item's cached fields alone
+// are not sufficient evidence a grant exists.
+func TestAttestAccessReviewGrant_RefusesFabricatedRoleGrant(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.AuditEvent{}))
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10)
+	// alice is never actually granted role 3 at project 2.
+
+	err := h.CoreService.AttestAccessReviewGrant(context.Background(), 1, proj, core.AccessReviewDecision{
+		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
+	})
+	require.Error(t, err, "attesting a grant that was never real must be refused")
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ?", core.EventAccessReviewAttested).Count(&count).Error)
+	assert.Equal(t, int64(0), count, "no fabricated attestation evidence must be recorded")
+}
+
+// A live share attestation still succeeds, and a stale/revoked share attestation is
+// refused the same way as a role grant.
+func TestAttestAccessReviewGrant_Share(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}, &models.AuditEvent{}))
+
+	const proj = uint(2)
+	h.CreateTestUser(t, "alice", 10) // owner
+	h.CreateTestUser(t, "bob", 11)   // direct-share recipient
+	require.NoError(t, h.DB.Create(&models.Environment{ID: 20, ProjectID: proj, Name: "prod"}).Error)
+	require.NoError(t, h.DB.Create(&models.SecretNode{
+		ID: 500, ProjectID: proj, EnvironmentID: 20, OwnerID: 10, Name: "db-pw", Type: "password", Status: "active", IsSecret: true,
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 500, RecipientID: 11, IsGroup: false, Permission: "read"}).Error)
+
+	ctx := context.Background()
+	// A live share attests cleanly.
+	require.NoError(t, h.CoreService.AttestAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "direct_share", PrincipalID: 11, SecretID: 500,
+	}))
+
+	// A share that was never granted (fabricated recipient) is refused.
+	err := h.CoreService.AttestAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
+		Source: "direct_share", PrincipalID: 999, SecretID: 500,
+	})
+	require.Error(t, err)
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ?", core.EventAccessReviewAttested).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "exactly the one live attestation was recorded")
+}
