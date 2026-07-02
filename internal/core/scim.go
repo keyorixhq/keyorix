@@ -365,7 +365,9 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 		if _, err := tx.UpdateUser(ctx, user); err != nil {
 			return err
 		}
-		_ = tx.DeleteSessionsForUserExcept(ctx, id, 0)
+		if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
+			return err
+		}
 		return tx.DeleteUser(ctx, id)
 	}); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
