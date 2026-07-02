@@ -156,6 +156,18 @@ func runScan(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return nil
 		}
+		// Never follow symlinks (#153). filepath.Walk reports a symlink's own Lstat
+		// info (info.Mode()&os.ModeSymlink is set) and doesn't itself descend into a
+		// symlinked directory — but a symlinked *file* still reaches this callback,
+		// and the per-type scanners below open the path with os.ReadFile, which DOES
+		// follow symlinks. A malicious repo could commit one pointing outside the
+		// scanned tree (e.g. at the scanning user's own ~/.aws/credentials or
+		// /etc/shadow); reading through it would leak the SCANNING USER's own files
+		// into the report. Skip every symlink encountered rather than trying to
+		// validate where it resolves to.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if info.IsDir() {
 			if skipDirs[info.Name()] {
 				return filepath.SkipDir
