@@ -1198,6 +1198,35 @@ func (m *MockStorage) GetSession(ctx context.Context, token string) (*models.Ses
 	return args.Get(0).(*models.Session), args.Error(1)
 }
 
+func (m *MockStorage) GetSessionAny(ctx context.Context, token string) (*models.Session, error) {
+	args := m.Called(ctx, token)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Session), args.Error(1)
+}
+
+func (m *MockStorage) RotateSession(ctx context.Context, oldID uint, newSession *models.Session, now time.Time) (*models.Session, bool, error) {
+	args := m.Called(ctx, oldID, newSession, now)
+	if args.Get(0) == nil {
+		return nil, args.Bool(1), args.Error(2)
+	}
+	return args.Get(0).(*models.Session), args.Bool(1), args.Error(2)
+}
+
+func (m *MockStorage) ListSessionTokenHashesByFamily(ctx context.Context, familyID string) ([]string, error) {
+	args := m.Called(ctx, familyID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
+func (m *MockStorage) DeleteSessionsByFamily(ctx context.Context, familyID string) error {
+	args := m.Called(ctx, familyID)
+	return args.Error(0)
+}
+
 func (m *MockStorage) DeleteSession(ctx context.Context, id uint) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)

@@ -335,6 +335,16 @@ type WebAuthnCredential struct {
 	CredentialBlob []byte // JSON of webauthn.Credential
 	CreatedAt      time.Time
 	LastUsedAt     *time.Time
+
+	// Disabled is set when an authentication attempt against this credential showed
+	// a signature-counter regression (go-webauthn's CloneWarning — #212), the
+	// standard FIDO2 signal that its private key material may exist on more than one
+	// device. A disabled credential is excluded from every future ceremony (it can no
+	// longer authenticate, and won't be offered for exclusion on re-registration
+	// either); the owner must delete it and register a fresh passkey. Never
+	// auto-re-enabled — the stored counter can never again exceed a value a
+	// possibly-compromised clone already asserted.
+	Disabled bool `gorm:"default:false"`
 }
 
 // WebAuthnSession persists the in-flight ceremony state (the go-webauthn
@@ -637,6 +647,25 @@ type Session struct {
 	// frontend can swap back without re-authentication. nil = ordinary session.
 	ImpersonatedBy         *uint
 	ImpersonationStartedAt *time.Time
+
+	// FamilyID links every session descended from the same login through each
+	// refresh-token rotation (#211): stamped once at mintSession and carried
+	// unchanged onto every session RefreshSession rotates it into. Lets a detected
+	// refresh-token-reuse event revoke the WHOLE lineage in one shot (standard
+	// OAuth refresh-token-family revocation), not just the one row that was
+	// replayed. Empty on legacy rows minted before this field existed.
+	FamilyID string `gorm:"index"`
+
+	// RotatedAt marks this row superseded by RefreshSession — a soft, not hard,
+	// delete. Keeping the row instead of deleting it immediately lets a replay of
+	// this now-stale token be told apart from an ordinary "never existed" /
+	// already-swept-up-by-expiry lookup, which is the standard refresh-token-reuse
+	// detection signal. nil = still the live session for its token. GetSession
+	// excludes rotated rows (a rotated token must authenticate nothing); only the
+	// refresh path's reuse-detection lookup (GetSessionAny) sees them. Rotated rows
+	// are still swept up by CleanupExpiredSessions once their (unextended) ExpiresAt
+	// passes, so they don't accumulate indefinitely.
+	RotatedAt *time.Time
 }
 
 // PersonalAccessToken is a long-lived, user-owned bearer credential (ADR-027).
