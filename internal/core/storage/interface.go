@@ -319,6 +319,12 @@ type Storage interface {
 	// RestoreGroup clears a soft-deleted group's deleted_at (with its grants/members).
 	RestoreGroup(ctx context.Context, id uint) error
 	ListGroups(ctx context.Context) ([]*models.Group, error)
+	// ListGroupsPage returns one name-ordered page of groups (offset is a 0-based
+	// row offset) and the total count, without loading the rest of the table — used
+	// by the SCIM Groups list so an unfiltered request can't drain the whole
+	// directory into memory (see ListGroups' full-scan callers for why that's fine
+	// there: they intentionally want every group, e.g. SSO group sync).
+	ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error)
 	AddUserToGroup(ctx context.Context, userID, groupID uint) error
 	RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error
 	ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error)

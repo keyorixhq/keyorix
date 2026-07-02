@@ -822,6 +822,14 @@ func (m *MockStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
 	return args.Get(0).([]*models.Group), args.Error(1)
 }
 
+func (m *MockStorage) ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error) {
+	args := m.Called(ctx, offset, pageSize)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*models.Group), args.Get(1).(int64), args.Error(2)
+}
+
 func (m *MockStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
 	args := m.Called(ctx, userID, groupID)
 	return args.Error(0)

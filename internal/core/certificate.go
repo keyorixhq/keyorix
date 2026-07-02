@@ -144,7 +144,11 @@ func parseLeafCertificate(value []byte) (*x509.Certificate, error) {
 	var certs []*x509.Certificate
 	rest := value
 	sawPEMBlock := false
-	for len(certs) < maxCertBlocks {
+	// Bound by ATTEMPTS, not by len(certs): a PEM value that's mostly non-CERTIFICATE
+	// blocks (e.g. PRIVATE KEY) or unparseable CERTIFICATE blocks never grows certs,
+	// so gating on len(certs) doesn't actually cap the number of pem.Decode/
+	// x509.ParseCertificate calls — the CPU-bounding this constant exists for.
+	for attempts := 0; attempts < maxCertBlocks; attempts++ {
 		block, remainder := pem.Decode(rest)
 		if block == nil {
 			break

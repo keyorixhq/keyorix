@@ -19,6 +19,41 @@ const (
 	EventSCIMGroupDeprovisioned = "scim.group_deprovisioned"
 )
 
+// ListSCIMGroupsPage returns one page of groups for a SCIM list and the total
+// count, mirroring ListSCIMUsersPage (scim.go): startIndex is 1-based (SCIM
+// convention), count is clamped to [0, SCIMMaxPageSize]. Unlike ListGroups (used
+// by SSO group sync and other callers that intentionally want every group),
+// this is backed by a bounded, offset-limited storage query so an unfiltered SCIM
+// directory sync can't load the whole groups table into memory.
+func (c *KeyorixCore) ListSCIMGroupsPage(ctx context.Context, startIndex, count int) ([]*models.Group, int, error) {
+	if startIndex < 1 {
+		startIndex = 1
+	}
+	if count < 0 {
+		count = 0
+	}
+	if count > SCIMMaxPageSize {
+		count = SCIMMaxPageSize
+	}
+	if count == 0 {
+		// SCIM count=0 → return totalResults only. Use PageSize=1 to get an accurate
+		// total without a separate count API; the single fetched row is discarded.
+		// (Requesting PageSize=0 directly is not relied on here: GORM's Limit(0)
+		// semantics are not "zero rows" across all backends, so ListSCIMUsersPage
+		// avoids it too — mirrored here for the same reason.)
+		_, total, err := c.storage.ListGroupsPage(ctx, 0, 1)
+		if err != nil {
+			return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		return []*models.Group{}, int(total), nil
+	}
+	groups, total, err := c.storage.ListGroupsPage(ctx, startIndex-1, count)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return groups, int(total), nil
+}
+
 // ProvisionSCIMGroup creates a group from a SCIM Create and adds its initial members.
 func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, displayName string, memberIDs []uint) (*models.Group, error) {
 	if displayName == "" {

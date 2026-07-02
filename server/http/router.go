@@ -30,6 +30,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// the header unconditionally, which lets any client spoof its source IP and defeat the
 	// per-IP login/MFA brute-force rate limiter.
 	r.Use(customMiddleware.ClientIP(cfg.Server.HTTP.TrustedProxies))
+	// Must run BEFORE Logger(): it redacts the URL-embedded setup token (a
+	// bearer-equivalent credential that has to live in the URL because it's a
+	// clicked link, not a header/body) so this server's own access log doesn't
+	// write it to disk/stdout on top of proxies/browser history already seeing it.
+	r.Use(customMiddleware.RedactSensitiveURLs)
 	r.Use(customMiddleware.Logger())
 	r.Use(customMiddleware.Recovery())
 	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
@@ -163,6 +168,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// SCIM 2.0 provisioning (RFC 7644) — opt-in, authenticated by a static bearer
 	// token (NOT the session/PAT auth) so an IdP can provision/deprovision users.
 	if cfg.SCIM.Enabled {
+		// Fail startup on a too-short SCIM bearer token rather than silently serving
+		// the provisioning endpoint behind a weak, brute-forceable credential (unlike
+		// a PAT/machine token, this one is operator-supplied, not server-generated).
+		if err := core.ValidateSCIMTokenStrength(cfg.SCIM.GetToken()); err != nil {
+			return nil, fmt.Errorf("scim: %w", err)
+		}
 		scimHandler := handlers.NewSCIMHandler(coreService)
 		r.Route("/scim/v2", func(r chi.Router) {
 			r.Use(customMiddleware.NoStore)

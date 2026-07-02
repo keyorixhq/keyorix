@@ -66,6 +66,23 @@ func TestUserService_CreateUser_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// A client-supplied account_state must be ignored: it's a server-derived lifecycle
+// field (mirrors the HTTP CreateUser handler, whose request body has no
+// account_state field at all), not something a caller — however privileged —
+// should be able to self-set at creation. Requesting "password_reset_required" on
+// the plain admin-set-password path (which always normalizes to "active") pins
+// that the client's value never reaches the stored user.
+func TestUserService_CreateUser_AccountStateIgnored(t *testing.T) {
+	svc := newUserService(t)
+	resp, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
+		Username: "bob", Email: "bob@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
+		AccountState: strPtr("password_reset_required"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetUser())
+	assert.Equal(t, "active", resp.GetUser().GetAccountState(), "client-supplied account_state must not be honored")
+}
+
 func TestUserService_CreateUser_MissingFields(t *testing.T) {
 	svc := newUserService(t)
 	_, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{Email: "x@example.com"})

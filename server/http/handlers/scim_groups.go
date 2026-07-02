@@ -73,12 +73,15 @@ func (h *SCIMHandler) renderGroup(w http.ResponseWriter, ctx context.Context, g 
 var scimGroupNameFilter = regexp.MustCompile(`(?i)displayName\s+eq\s+"([^"]+)"`)
 
 // ListGroups handles GET /scim/v2/Groups — optionally filtered by displayName.
+//
+// The unfiltered (common, directory-sync) path is backed by a bounded,
+// offset-limited storage query (ListSCIMGroupsPage) so an IdP paging through
+// startIndex/count never loads the whole groups table into memory. The filtered
+// (displayName eq) path still does a full scan — there is no indexed
+// group-by-name lookup today (unlike users, which have FindSCIMUser) — but that
+// path is a narrow, bounded "does this one group exist" check during
+// provisioning, not a directory-wide sync, so it's out of scope for this fix.
 func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
-	groups, err := h.coreService.ListGroups(r.Context())
-	if err != nil {
-		scimError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	var wantName string
 	if filter := r.URL.Query().Get("filter"); filter != "" {
 		m := scimGroupNameFilter.FindStringSubmatch(filter)
@@ -89,19 +92,36 @@ func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 		wantName = m[1]
 	}
 
-	// Apply the name filter first, then a bounded page. Members are fetched ONLY for the
-	// groups on the returned page, so the per-group GetGroupMembers query (an N+1) is
-	// capped at the page size instead of running across the whole directory.
-	matched := groups[:0]
-	for _, g := range groups {
-		if wantName == "" || g.Name == wantName {
-			matched = append(matched, g)
+	startIndex, count := scimPaging(r)
+
+	var page []*models.Group
+	var total int
+	if wantName != "" {
+		groups, err := h.coreService.ListGroups(r.Context())
+		if err != nil {
+			scimError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		matched := groups[:0]
+		for _, g := range groups {
+			if g.Name == wantName {
+				matched = append(matched, g)
+			}
+		}
+		total = len(matched)
+		page = pageSlice(matched, startIndex, count)
+	} else {
+		var err error
+		page, total, err = h.coreService.ListSCIMGroupsPage(r.Context(), startIndex, count)
+		if err != nil {
+			scimError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
-	total := len(matched)
-	startIndex, count := scimPaging(r)
-	page := pageSlice(matched, startIndex, count)
 
+	// Members are fetched ONLY for the groups on the returned page, so the
+	// per-group GetGroupMembers query (an N+1) is capped at the page size instead
+	// of running across the whole directory.
 	resources := make([]map[string]interface{}, 0, len(page))
 	for _, g := range page {
 		members, _ := h.coreService.GetGroupMembers(r.Context(), g.ID)

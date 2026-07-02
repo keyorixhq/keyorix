@@ -78,15 +78,20 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 	if displayName == "" {
 		displayName = req.GetUsername()
 	}
+	// AccountState is deliberately NOT taken from the client (mirrors the HTTP
+	// CreateUser handler, which has no account_state field in its request body at
+	// all): the field is a server-derived lifecycle state, not something a caller —
+	// however privileged — should self-set at creation time. The proto still
+	// declares account_state for wire compatibility, but its value is ignored here
+	// so a caller cannot mint a new account already in, e.g., "active" bypassing the
+	// setup-link/one-time-password flows below, which set it themselves
+	// (pending_first_login / password_reset_required) when applicable.
 	coreReq := &core.CreateUserRequest{
 		Username:    req.GetUsername(),
 		Email:       req.GetEmail(),
 		DisplayName: displayName,
 		Password:    req.GetPassword(),
 		IsActive:    req.IsActive,
-	}
-	if as := req.GetAccountState(); as != "" {
-		coreReq.AccountState = as
 	}
 
 	resp := &pb.CreateUserResponse{}
