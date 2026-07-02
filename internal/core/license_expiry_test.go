@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/trust"
@@ -86,6 +87,47 @@ func TestScanLicenseExpiry_Dedup_NoResend(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 	ms.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+}
+
+// TestGlobalAdminIDs_PaginatesActiveUsersBeyondOnePage pins the fix for an install
+// with more active users than a single storage page: globalAdminIDs must walk every
+// page of active users rather than stopping after the first
+// globalAdminIDsPageSize-sized page, or an admin beyond that page would silently
+// never receive the license-expiry notification.
+func TestGlobalAdminIDs_PaginatesActiveUsersBeyondOnePage(t *testing.T) {
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	c.SetLicenseGate(gateWithExpiry(t, time.Now().Add(5*24*time.Hour)))
+
+	firstPage := make([]*models.User, globalAdminIDsPageSize)
+	for i := range firstPage {
+		firstPage[i] = &models.User{ID: uint(i + 1)}
+	}
+	total := int64(globalAdminIDsPageSize + 1)
+	lateAdminID := uint(globalAdminIDsPageSize + 1)
+
+	ms.On("ListUsers", ctx, mock.MatchedBy(func(f *storage.UserFilter) bool {
+		return f.Page == 1 && f.PageSize == globalAdminIDsPageSize
+	})).Return(firstPage, total, nil)
+	ms.On("ListUsers", ctx, mock.MatchedBy(func(f *storage.UserFilter) bool {
+		return f.Page == 2 && f.PageSize == globalAdminIDsPageSize
+	})).Return([]*models.User{{ID: lateAdminID}}, total, nil)
+
+	// Every user on page 1 is a non-admin; only the page-2 user is a global admin.
+	for i := range firstPage {
+		ms.On("GetUserRoles", ctx, firstPage[i].ID).Return([]*models.Role{{Name: "member"}}, nil)
+	}
+	ms.On("GetUserRoles", ctx, lateAdminID).Return([]*models.Role{{Name: "super_admin"}}, nil)
+	ms.On("ListNotifications", ctx, lateAdminID, true, 100).Return([]*models.Notification{}, nil)
+	ms.On("CreateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
+		return n.Type == NotificationLicenseExpiry && n.UserID == lateAdminID
+	})).Return(&models.Notification{ID: 1}, nil)
+
+	n, err := c.ScanLicenseExpiry(ctx, 30)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "the admin on the second page must still be notified")
+	ms.AssertNumberOfCalls(t, "ListUsers", 2)
 }
 
 func TestScanLicenseExpiry_SkipsProjectScopedAdmin(t *testing.T) {

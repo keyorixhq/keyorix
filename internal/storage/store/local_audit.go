@@ -281,6 +281,7 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			pageSize = filter.PageSize
 		}
 	}
+	pageSize = clampPageSize(pageSize)
 
 	var total int64
 	query.Count(&total)
