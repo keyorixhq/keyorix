@@ -10,8 +10,17 @@ import (
 // validateEndpoint rejects a non-https notification endpoint — which would send the
 // bearer token and payload in cleartext — allowing http only for an explicit insecure
 // opt-in or a loopback target (local testing). It also refuses a literal private /
-// link-local destination IP (e.g. cloud metadata 169.254.169.254 or an internal host)
-// unless the insecure opt-in is set — SSRF/exfil hardening.
+// link-local destination IP (e.g. cloud metadata 169.254.169.254 or an internal host).
+//
+// allowInsecure ONLY relaxes the transport-security requirement (permits http, and —
+// at the call site — lets the HTTP client skip TLS certificate verification for a
+// trusted self-signed endpoint). It must NOT also relax the SSRF/destination-IP guard:
+// those are independent concerns — an operator who has a legitimate reason to disable
+// TLS certificate verification (e.g. an internal service with a self-signed cert) has
+// said nothing about wanting the notification webhook to be allowed to reach internal/
+// metadata IPs. Coupling them previously meant setting insecure_skip_verify for a
+// mundane self-signed-cert reason silently ALSO disabled SSRF protection. So the
+// private/link-local IP check below is unconditional, independent of allowInsecure.
 func validateEndpoint(raw string, allowInsecure bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -27,7 +36,10 @@ func validateEndpoint(raw string, allowInsecure bool) error {
 	default:
 		return fmt.Errorf("notifychan: endpoint %q must use https", raw)
 	}
-	if !allowInsecure && isDisallowedIPHost(u.Hostname()) {
+	// SSRF guard: always enforced, regardless of allowInsecure (see the doc comment
+	// above) — a private/link-local target is refused whether or not TLS
+	// verification is disabled.
+	if isDisallowedIPHost(u.Hostname()) {
 		return fmt.Errorf("notifychan: endpoint %q targets a private/link-local address; refusing to send to an internal host", raw)
 	}
 	return nil
