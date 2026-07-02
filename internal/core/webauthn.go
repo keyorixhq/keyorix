@@ -282,7 +282,13 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 		c.recordFailedLogin(ctx, wu.user) // count the failed second factor toward the lockout
 		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
-	c.clearLoginFailures(ctx, wu.user)
+	// A concurrent burst of failed second-factor attempts against this account may
+	// have tripped the lock since the pre-verification snapshot check above
+	// (TOCTOU). Re-check under the same serialization recordFailedLogin uses
+	// before minting a session.
+	if err := c.checkLockAndClearLoginFailures(ctx, wu.user); err != nil {
+		return nil, nil, err
+	}
 	c.persistUpdatedCredential(ctx, ch.UserID, cred)
 
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
@@ -379,7 +385,14 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	if c.loginLocked(resolved) {
 		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
-	c.clearLoginFailures(ctx, resolved)
+	// Re-check the lock state under the same serialization recordFailedLogin uses
+	// before minting a session — the passwordless path does not feed failures into
+	// the lockout itself (see above), but the account could still have been locked
+	// concurrently via the password/2FA path between the snapshot check above and
+	// here (TOCTOU).
+	if err := c.checkLockAndClearLoginFailures(ctx, resolved); err != nil {
+		return nil, nil, err
+	}
 	c.persistUpdatedCredential(ctx, resolved.ID, cred)
 
 	session, err := c.mintSession(ctx, resolved.ID, userAgent, ip)

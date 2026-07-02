@@ -252,8 +252,13 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 		c.recordFailedLogin(ctx, user) // count the failed second factor toward the lockout
 		return nil, nil, fmt.Errorf("invalid code")
 	}
-	// Cleared the second factor — reset any lockout state accrued from failed codes.
-	c.clearLoginFailures(ctx, user)
+	// Cleared the second factor — but a concurrent burst of failed second-factor
+	// attempts against this account may have tripped the lock since the
+	// pre-verification snapshot check above (TOCTOU). Re-check under the same
+	// serialization recordFailedLogin uses before minting a session.
+	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+		return nil, nil, err
+	}
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
 	if err != nil {
 		return nil, nil, err
