@@ -68,6 +68,36 @@ func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
 	assert.NotEqual(t, adminDSNPlain, string(stored.AdminDSNEnc))
 }
 
+// #94: a DB-write attacker who copies one config's encrypted admin DSN onto a
+// DIFFERENT config's row must NOT have it decrypt successfully — that would let
+// Keyorix connect to (and potentially reveal error/behavioral detail about) a
+// target it was never configured to reach for that config, using credentials
+// scoped to a different backend entirely. This exercises the live IssueLease
+// (decryptAuthSecret) path end-to-end, not just the low-level AEAD primitive.
+func TestDynamicSecrets_AdminDSNTransplantBetweenConfigsFailsToDecrypt(t *testing.T) {
+	c, db, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfgA := mkConfig(t, c, ctx)
+	cfgB, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "other-db", ProjectID: 1, BackendType: "postgres",
+		AdminDSN: "postgres://admin:different@other-db.internal:5432/app",
+		DefaultTTLSeconds: 3600,
+	})
+	require.NoError(t, err)
+
+	// Simulate a DB-write attacker: copy config A's encrypted admin DSN onto B's row.
+	rowA, err := c.storage.GetDynamicSecretConfig(ctx, cfgA.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&models.DynamicSecretConfig{}).Where("id = ?", cfgB.ID).Updates(map[string]interface{}{
+		"admin_dsn_enc":  rowA.AdminDSNEnc,
+		"admin_dsn_meta": rowA.AdminDSNMeta,
+	}).Error)
+
+	_, err = c.IssueLease(ctx, cfgB.ID, 0, 7)
+	require.Error(t, err, "an admin DSN transplanted from a different config must fail to decrypt, not silently succeed")
+	assert.Contains(t, err.Error(), "decrypt admin DSN")
+}
+
 func TestDynamicSecrets_MaxActiveLeasesCeiling(t *testing.T) {
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()
