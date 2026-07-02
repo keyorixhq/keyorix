@@ -150,6 +150,13 @@ type CertificatePosture struct {
 }
 
 // CompliancePosture is the deployment's control posture at a point in time.
+//
+// #136: every sub-rollup is queried best-effort so one failing signal doesn't abort
+// the whole snapshot — but a query failure must never read the same as "checked,
+// found clean" (e.g. LegalHold.Active=false on a DB error looks identical to no hold
+// in effect, and this snapshot gets HMAC-signed into evidence packs an auditor
+// trusts). Degraded + DegradedReasons make a partial snapshot detectable instead of
+// indistinguishable from a fully-clean one.
 type CompliancePosture struct {
 	GeneratedAt      time.Time               `json:"generated_at"`
 	AuditIntegrity   AuditIntegrityPosture   `json:"audit_integrity"`
@@ -164,6 +171,20 @@ type CompliancePosture struct {
 	Risk             RiskPosture             `json:"risk"`
 	Certificates     CertificatePosture      `json:"certificates"`
 	SupplyChain      SupplyChainPosture      `json:"supply_chain"`
+	// Degraded is true when one or more sub-rollups below could not be queried — the
+	// zero/clean values they carry are UNKNOWN, not verified-clean. An evidence pack
+	// consumer must treat a degraded snapshot as incomplete, not passing.
+	Degraded bool `json:"degraded"`
+	// DegradedReasons names each failed sub-rollup with its underlying error.
+	DegradedReasons []string `json:"degraded_reasons,omitempty"`
+}
+
+// degrade records that a posture sub-rollup could not be queried: it flips Degraded
+// and appends a human-readable reason, so evidence packs signal "incomplete" instead
+// of silently reading the affected fields as a verified-clean zero value.
+func (p *CompliancePosture) degrade(area string, err error) {
+	p.Degraded = true
+	p.DegradedReasons = append(p.DegradedReasons, fmt.Sprintf("%s: %v", area, err))
 }
 
 // SupplyChainPosture reports software-supply-chain integrity: whether this deployment
@@ -206,11 +227,14 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 		}
 	} else if err != nil {
 		p.AuditIntegrity.Reason = err.Error()
+		p.degrade("audit_integrity", err)
 	}
 
 	// Second-factor coverage across active users.
 	if id, err := c.identityPosture(ctx); err == nil {
 		p.Identity = id
+	} else {
+		p.degrade("identity", err)
 	}
 
 	// Rotation hygiene (deployment-wide).
@@ -224,6 +248,8 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 				p.Rotation.DueSoon++
 			}
 		}
+	} else {
+		p.degrade("rotation", err)
 	}
 
 	// Access governance + emergency access — per project.
@@ -234,10 +260,12 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	// Separation-of-duties violations (A.5.3).
 	if violations, err := c.DetectSoDViolations(ctx); err == nil {
 		p.AccessGovernance.SoDViolations = len(violations)
+	} else {
+		p.degrade("sod_violations", err)
 	}
 
 	// Data-classification coverage (A.5.12).
-	p.Classification = c.classificationPosture(ctx)
+	p.Classification = c.classificationPosture(ctx, p)
 
 	// Open access anomalies (NIS2 detection).
 	unack := false
@@ -248,21 +276,29 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 				p.Anomalies.HighSeverityOpen++
 			}
 		}
+	} else {
+		p.degrade("anomalies", err)
 	}
 
 	// Legal hold (A.5.34).
-	if hold, err := c.storage.GetActiveLegalHold(ctx); err == nil && hold != nil {
-		at := hold.PlacedAt
-		p.LegalHold = LegalHoldPosture{Active: true, PlacedAt: &at, Reason: hold.Reason}
+	if hold, err := c.storage.GetActiveLegalHold(ctx); err == nil {
+		if hold != nil {
+			at := hold.PlacedAt
+			p.LegalHold = LegalHoldPosture{Active: true, PlacedAt: &at, Reason: hold.Reason}
+		}
+	} else {
+		p.degrade("legal_hold", err)
 	}
 
 	// Risk register — governed, time-bound exceptions (A.5.8).
 	if active, soon, err := c.CountActiveRiskExceptions(ctx, riskExpiringSoonWindow); err == nil {
 		p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon}
+	} else {
+		p.degrade("risk", err)
 	}
 
 	// Certificate hygiene from the cached cert expiry (ADR-056).
-	p.Certificates = c.certificatePosture(ctx)
+	p.Certificates = c.certificatePosture(ctx, p)
 
 	// Data-retention windows (A.5.33).
 	rp := c.retentionPolicy
@@ -292,7 +328,9 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 
 // classificationPosture counts secrets per classification level via cheap count
 // queries (PageSize 1 → only the total), rather than walking every secret row.
-func (c *KeyorixCore) classificationPosture(ctx context.Context) ClassificationPosture {
+// Reports into cp.degrade on any failed count so a query error reads as "unknown",
+// not as a verified-zero count for that classification/entity kind.
+func (c *KeyorixCore) classificationPosture(ctx context.Context, cp *CompliancePosture) ClassificationPosture {
 	count := func(level string) int {
 		f := &storage.SecretFilter{Page: 1, PageSize: 1}
 		if level != "" {
@@ -301,6 +339,7 @@ func (c *KeyorixCore) classificationPosture(ctx context.Context) ClassificationP
 		}
 		_, total, err := c.storage.ListSecrets(ctx, f)
 		if err != nil {
+			cp.degrade("classification:secrets:"+level, err)
 			return 0
 		}
 		return int(total)
@@ -315,12 +354,18 @@ func (c *KeyorixCore) classificationPosture(ctx context.Context) ClassificationP
 	}
 	if m, err := c.storage.CountDynamicSecretConfigsByClassification(ctx); err == nil {
 		p.DynamicConfigs = classificationCountsFromMap(m)
+	} else {
+		cp.degrade("classification:dynamic_configs", err)
 	}
 	if m, err := c.storage.CountMachineIdentitiesByClassification(ctx); err == nil {
 		p.MachineIdentities = classificationCountsFromMap(m)
+	} else {
+		cp.degrade("classification:machine_identities", err)
 	}
 	if m, err := c.storage.CountMachineIdentityCredentialsByClassification(ctx); err == nil {
 		p.MachineCredentials = classificationCountsFromMap(m)
+	} else {
+		cp.degrade("classification:machine_credentials", err)
 	}
 	return p
 }
@@ -387,9 +432,11 @@ func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *Compliance
 					p.AccessGovernance.ProjectsOverdue++
 				}
 			}
+		} else {
+			p.degrade(fmt.Sprintf("access_governance:campaigns:project=%d", pid), err)
 		}
 
-		p.AccessGovernance.DormantRoleGrants += c.countDormantRoleGrants(ctx, pid)
+		p.AccessGovernance.DormantRoleGrants += c.countDormantRoleGrants(ctx, pid, p)
 
 		if acts, err := c.ListBreakGlassActivations(ctx, pid); err == nil {
 			p.EmergencyAccess.TotalActivations += len(acts)
@@ -398,6 +445,8 @@ func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *Compliance
 					p.EmergencyAccess.ActiveActivations++
 				}
 			}
+		} else {
+			p.degrade(fmt.Sprintf("emergency_access:project=%d", pid), err)
 		}
 	}
 	return nil
@@ -406,13 +455,15 @@ func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *Compliance
 // countDormantRoleGrants counts distinct users holding a role grant in the project
 // who have not accessed a secret recently (or ever) — stale standing access. Cheap:
 // the project's role assignments + the last-activity map, no full secret walk.
-func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint) int {
+func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint, cp *CompliancePosture) int {
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
+		cp.degrade(fmt.Sprintf("dormant_role_grants:assignments:project=%d", projectID), err)
 		return 0
 	}
 	activity, err := c.storage.LastUserSecretActivity(ctx, projectID)
 	if err != nil {
+		cp.degrade(fmt.Sprintf("dormant_role_grants:activity:project=%d", projectID), err)
 		return 0
 	}
 	cutoff := c.now().Add(-dormantThreshold)
