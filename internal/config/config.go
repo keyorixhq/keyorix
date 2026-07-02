@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1388,6 +1389,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gRPC server is enabled but no port is specified")
 	}
 
+	if err := validateAllowedOrigins(c.Server.HTTP.AllowedOrigins); err != nil {
+		return err
+	}
+
 	if c.Server.HTTP.TLS.Enabled {
 		if c.Server.HTTP.TLS.AutoCert {
 			if len(c.Server.HTTP.TLS.Domains) == 0 {
@@ -1443,6 +1448,29 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unsupported fallback language: %s. Supported languages: en, ru, es, fr, de", c.Locale.FallbackLanguage)
 	}
 
+	return nil
+}
+
+// validateAllowedOrigins rejects a misconfigured CORS allowlist (server.http.
+// allowed_origins) at startup rather than letting it sit silently until it's
+// proven wrong in the field. A bare "*" — which matches every origin — must not
+// be configurable here: the caller must list explicit origins. Every entry must
+// also be a well-formed origin: an http(s) scheme, a host, and nothing else (no
+// path, query, fragment, userinfo, or trailing slash) — the exact shape
+// Access-Control-Allow-Origin expects an Origin header to have.
+func validateAllowedOrigins(origins []string) error {
+	for _, o := range origins {
+		if o == "*" {
+			return fmt.Errorf("server.http.allowed_origins must not contain \"*\" — list explicit origins (e.g. https://app.example.com); a wildcard origin defeats the CORS allowlist")
+		}
+		u, err := url.Parse(o)
+		if err != nil || u.Scheme == "" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return fmt.Errorf("server.http.allowed_origins entry %q is not a valid origin (expected scheme://host[:port], e.g. https://app.example.com)", o)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("server.http.allowed_origins entry %q must use http or https", o)
+		}
+	}
 	return nil
 }
 

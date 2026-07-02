@@ -103,6 +103,60 @@ func TestCompleteSetup(t *testing.T) {
 		ms.AssertCalled(t, "DeleteSessionsForUserExcept", ctx, uid, uint(1))
 	})
 
+	t.Run("an account with MFA enabled does NOT get an auto-login session (must complete the second factor)", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		anyAudit(ms)
+		user := &models.User{ID: uid, Username: "dana", AccountState: AccountPendingFirstLogin, MFAEnabled: true}
+		ms.On("GetSetupTokenByHash", ctx, hash).Return(activeAccountSetup(c), nil)
+		ms.On("GetUser", ctx, uid).Return(user, nil)
+		ms.On("RecentPasswordHashes", ctx, uid, 5).Return([]string{}, nil)
+		ms.On("MarkSetupTokenConsumed", ctx, uint(2), mock.AnythingOfType("time.Time")).Return(true, nil)
+		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
+		ms.On("AddPasswordHistory", ctx, uid, mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("PrunePasswordHistory", ctx, uid, 5).Return(nil)
+		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
+		// The reset must still lock out any stolen session (keepID=0: keep none), even
+		// though no new session is minted.
+		ms.On("ListSessionTokenHashesForUser", ctx, uid).Return([]string{}, nil)
+		ms.On("DeleteSessionsForUserExcept", ctx, uid, uint(0)).Return(nil)
+
+		res, err := c.CompleteSetup(ctx, raw, strongPw, "ua", "1.2.3.4")
+		require.ErrorIs(t, err, ErrMFARequired)
+		require.NotNil(t, res, "the user must be returned so the HTTP layer can start an MFA challenge")
+		assert.Nil(t, res.Session, "no session may be minted until the second factor is completed")
+		assert.Equal(t, uid, res.User.ID)
+		// The password itself was still accepted and the token still consumed — only
+		// the session mint is withheld.
+		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(strongPw)))
+		ms.AssertCalled(t, "MarkSetupTokenConsumed", ctx, uint(2), mock.AnythingOfType("time.Time"))
+		ms.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+		ms.AssertCalled(t, "DeleteSessionsForUserExcept", ctx, uid, uint(0))
+	})
+
+	t.Run("an account with a passkey (WebAuthn) enrolled also skips auto-login", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		anyAudit(ms)
+		user := &models.User{ID: uid, Username: "dana", AccountState: AccountPendingFirstLogin, WebAuthnEnabled: true}
+		ms.On("GetSetupTokenByHash", ctx, hash).Return(activeAccountSetup(c), nil)
+		ms.On("GetUser", ctx, uid).Return(user, nil)
+		ms.On("RecentPasswordHashes", ctx, uid, 5).Return([]string{}, nil)
+		ms.On("MarkSetupTokenConsumed", ctx, uint(2), mock.AnythingOfType("time.Time")).Return(true, nil)
+		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
+		ms.On("AddPasswordHistory", ctx, uid, mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("PrunePasswordHistory", ctx, uid, 5).Return(nil)
+		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
+		ms.On("ListSessionTokenHashesForUser", ctx, uid).Return([]string{}, nil)
+		ms.On("DeleteSessionsForUserExcept", ctx, uid, uint(0)).Return(nil)
+
+		res, err := c.CompleteSetup(ctx, raw, strongPw, "ua", "1.2.3.4")
+		require.ErrorIs(t, err, ErrMFARequired)
+		require.NotNil(t, res)
+		assert.Nil(t, res.Session)
+		ms.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	})
+
 	t.Run("an externally-managed (SSO/SCIM) account is refused a local password", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)

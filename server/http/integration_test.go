@@ -662,6 +662,50 @@ func TestHTTPServerErrorScenarios(t *testing.T) {
 	})
 }
 
+// The legacy admin-managed "service accounts" (APIClient/APIToken) issuance and
+// management routes were removed (finding #131): the credentials they minted were
+// never accepted by any authentication path, making them a dead, unscannable
+// credential type. This locks in the removal — an accidental re-registration of
+// the route without also wiring a real authentication consumer must fail this test.
+func TestServiceAccountRoutesRemoved(t *testing.T) {
+	err := i18n.InitializeForTesting()
+	require.NoError(t, err)
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"},
+		},
+	}
+	testCore := newTestCore(t)
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+	validToken := createTestToken(t, testCore)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	for _, tc := range []struct {
+		method, path string
+	}{
+		{"GET", "/api/v1/service-accounts"},
+		{"POST", "/api/v1/service-accounts"},
+		{"GET", "/api/v1/service-accounts/kx-client-deadbeef"},
+		{"GET", "/api/v1/service-accounts/kx-client-deadbeef/tokens"},
+		{"POST", "/api/v1/service-accounts/kx-client-deadbeef/tokens"},
+	} {
+		req, err := http.NewRequest(tc.method, server.URL+tc.path, nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+validToken)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equalf(t, http.StatusNotFound, resp.StatusCode,
+			"%s %s: the service-accounts issuance/management routes must stay removed", tc.method, tc.path)
+	}
+}
+
 // Performance and load testing
 func TestHTTPServerPerformance(t *testing.T) {
 	// Initialize i18n for testing

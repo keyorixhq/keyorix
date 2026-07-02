@@ -566,19 +566,6 @@ type Storage interface {
 	// backing resend throttling / daily caps.
 	CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error)
 
-	// API Client Management
-	CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
-	GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error)
-	RevokeAPIClient(ctx context.Context, clientID string) error
-	ListAPIClients(ctx context.Context) ([]*models.APIClient, error)
-	UpdateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
-
-	// API Token Management
-	CreateAPIToken(ctx context.Context, token *models.APIToken) (*models.APIToken, error)
-	GetAPIToken(ctx context.Context, id uint) (*models.APIToken, error)
-	ListAPITokens(ctx context.Context, clientID *uint) ([]*models.APIToken, error)
-	RevokeAPIToken(ctx context.Context, id uint) error
-
 	// Rotation Policy Management
 	CreateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
 	GetRotationPolicy(ctx context.Context, id uint) (*models.RotationPolicy, error)
