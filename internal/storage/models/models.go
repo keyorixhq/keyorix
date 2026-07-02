@@ -233,7 +233,13 @@ type User struct {
 	// deleted_at IS NULL), created in migrateDatabase — not the plain `uniqueIndex`
 	// tag — so a soft-deleted (e.g. SCIM-deprovisioned) user's username is freed for
 	// reuse on re-provisioning while the old row stays restorable for audit.
-	Username     string `gorm:"not null"`
+	Username string `gorm:"not null"`
+	// Email uniqueness (among live, non-empty rows) is enforced by a PARTIAL
+	// unique index (email WHERE deleted_at IS NULL AND email != ''), created in
+	// migrateDatabase — mirrors the Username precedent. Without this, two
+	// concurrent CreateUser calls with the same address could both succeed,
+	// leaving duplicate-email accounts with ambiguous SSO/SCIM/password-reset
+	// targeting.
 	Email        string
 	DisplayName  string
 	PasswordHash string     `json:"-"`
@@ -253,8 +259,11 @@ type User struct {
 	// a WebAuthn assertion as the second factor (see WebAuthnCredential).
 	WebAuthnEnabled bool `gorm:"default:false"`
 	// ExternalID is the IdP's stable identifier for a SCIM-provisioned user (SCIM
-	// externalId, RFC 7644). Empty for locally-created users. Indexed for the SCIM
-	// reconciliation lookup; not unique (legacy/blank rows coexist).
+	// externalId, RFC 7644). Empty for locally-created users. Uniqueness (among
+	// live, non-empty rows) is enforced by a PARTIAL unique index, created in
+	// migrateDatabase — two different users sharing a non-empty external_id would
+	// make SSO/SCIM identity resolution (GetUserByExternalID) ambiguous. Blank
+	// rows (every local account) coexist freely.
 	ExternalID string `gorm:"index"`
 	// Per-account login lockout (brute-force protection). FailedLoginAttempts counts
 	// consecutive failed password logins within the configured window;
@@ -477,7 +486,7 @@ type SecretNode struct {
 	// carries forward across both.
 	ReadCount  int
 	Expiration *time.Time
-	Metadata    JSON
+	Metadata   JSON
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives
 	// the classification posture and lets a review find high-sensitivity secrets.
