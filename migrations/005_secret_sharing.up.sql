@@ -30,10 +30,22 @@ CREATE INDEX idx_share_records_owner_id ON share_records(owner_id);
 CREATE INDEX idx_share_records_recipient_id ON share_records(recipient_id);
 CREATE INDEX idx_share_records_deleted_at ON share_records(deleted_at);
 
--- Update existing secrets to set owner_id to the creator
+-- Update existing secrets to attribute ownership to their actual creator.
+-- secret_nodes.created_by already records the username of whoever created the
+-- row (see internal/core, e.g. secrets.go/secret_copy.go), so match against
+-- that instead of guessing a single account for every unowned secret. A
+-- hardcoded 'admin' would silently reassign ownership of every pre-existing
+-- secret to whichever account happens to be named exactly "admin" (or leave
+-- owner_id NULL forever if none exists), regardless of who actually created
+-- it — a real attribution/authorization bug, not just a cosmetic default.
+-- Rows whose created_by is blank, or whose creating account no longer
+-- exists, are intentionally left with owner_id NULL: an explicit unowned
+-- state is safer than guessing, since misattributing ownership would grant
+-- an unrelated account sharing/management rights over a secret it never
+-- created.
 UPDATE secret_nodes SET owner_id = (
-    SELECT id FROM users WHERE username = 'admin' LIMIT 1
-) WHERE owner_id IS NULL;
+    SELECT id FROM users WHERE users.username = secret_nodes.created_by
+) WHERE owner_id IS NULL AND created_by IS NOT NULL AND created_by != '';
 
 -- Add a trigger to automatically set is_shared flag when shares are created
 CREATE TRIGGER update_secret_shared_status_insert
