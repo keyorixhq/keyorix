@@ -553,7 +553,8 @@ func TestDynamicSecrets_RevokeLeasesForConfig(t *testing.T) {
 // must NOT be silently skipped — it must be retried right alongside the still-active
 // leases, so an operator responding to "this target/config is compromised" actually
 // kills every outstanding credential, not just the ones that happened to revoke
-// cleanly on the first try.
+// cleanly on the first try. Also pins #192: a successful retry must clear the
+// earlier RevokeError, not leave a stale failure message on a now-clean lease.
 func TestDynamicSecrets_RevokeLeasesForConfigRetriesRevokeFailed(t *testing.T) {
 	c, _, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
@@ -571,6 +572,7 @@ func TestDynamicSecrets_RevokeLeasesForConfigRetriesRevokeFailed(t *testing.T) {
 	before, _ := c.storage.GetDynamicSecretLease(ctx, stuck.LeaseID)
 	require.Equal(t, "revoke_failed", before.Status, "precondition: the lease is stuck")
 	require.Nil(t, before.RevokedAt, "precondition: not falsely timestamped as revoked")
+	require.NotEmpty(t, before.RevokeError, "precondition: the earlier failure left a RevokeError message")
 
 	// The target recovers, and an incident responder now believes the whole config is
 	// compromised and pulls the kill switch.
@@ -583,6 +585,7 @@ func TestDynamicSecrets_RevokeLeasesForConfigRetriesRevokeFailed(t *testing.T) {
 	after, _ := c.storage.GetDynamicSecretLease(ctx, stuck.LeaseID)
 	assert.Equal(t, "revoked", after.Status, "the revoke_failed lease is NOT permanently stuck — the kill switch reaches it")
 	assert.NotNil(t, after.RevokedAt, "the now-successful revoke IS timestamped")
+	assert.Empty(t, after.RevokeError, "a successful retry clears the earlier error")
 	assert.Contains(t, fake.Revoked, stuck.Username, "the previously-stranded credential was actually dropped on the target")
 	assert.Contains(t, fake.Revoked, stillActive.Username)
 }
