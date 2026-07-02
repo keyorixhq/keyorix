@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +116,82 @@ func TestExtractAssertion_FriendlyNameAndMissing(t *testing.T) {
 	assert.Empty(t, info.Subject)
 	assert.Empty(t, info.Name)
 	assert.Empty(t, info.Groups)
+}
+
+// requireAudienceRestriction is the ValidateAudienceRestriction hook wired into every
+// Provider's ServiceProvider (see NewProvider). The underlying crewjam/saml library
+// treats an assertion with NO AudienceRestriction as vacuously valid — this pins that
+// our override closes that gap: a missing element is a hard failure, a mismatched
+// element is a hard failure, and a matching element passes.
+func TestRequireAudienceRestriction(t *testing.T) {
+	const us = "https://keyorix.internal/saml/corp/metadata"
+	check := requireAudienceRestriction(us)
+
+	t.Run("no AudienceRestriction is rejected", func(t *testing.T) {
+		a := &csaml.Assertion{Conditions: &csaml.Conditions{}}
+		err := check(a)
+		require.Error(t, err, "an assertion with zero AudienceRestrictions must be rejected, not vacuously accepted")
+	})
+
+	t.Run("nil Conditions is rejected", func(t *testing.T) {
+		a := &csaml.Assertion{}
+		require.Error(t, check(a))
+	})
+
+	t.Run("nil assertion is rejected", func(t *testing.T) {
+		require.Error(t, check(nil))
+	})
+
+	t.Run("mismatched Audience is rejected", func(t *testing.T) {
+		a := &csaml.Assertion{Conditions: &csaml.Conditions{
+			AudienceRestrictions: []csaml.AudienceRestriction{{Audience: csaml.Audience{Value: "https://someone-else.example/sp"}}},
+		}}
+		require.Error(t, check(a))
+	})
+
+	t.Run("matching Audience passes", func(t *testing.T) {
+		a := &csaml.Assertion{Conditions: &csaml.Conditions{
+			AudienceRestrictions: []csaml.AudienceRestriction{{Audience: csaml.Audience{Value: us}}},
+		}}
+		require.NoError(t, check(a))
+	})
+
+	t.Run("one matching among several passes", func(t *testing.T) {
+		a := &csaml.Assertion{Conditions: &csaml.Conditions{
+			AudienceRestrictions: []csaml.AudienceRestriction{
+				{Audience: csaml.Audience{Value: "https://someone-else.example/sp"}},
+				{Audience: csaml.Audience{Value: us}},
+			},
+		}}
+		require.NoError(t, check(a))
+	})
+}
+
+// NewProvider must wire requireAudienceRestriction into the underlying
+// ServiceProvider so the override actually takes effect end-to-end, not just exist
+// as an unused helper.
+func TestNewProvider_WiresAudienceRestrictionOverride(t *testing.T) {
+	p := testProvider(t)
+	require.NotNil(t, p.sp.ValidateAudienceRestriction, "ValidateAudienceRestriction must be overridden")
+
+	// An assertion with no AudienceRestriction must be rejected by the wired hook.
+	err := p.sp.ValidateAudienceRestriction(&csaml.Assertion{Conditions: &csaml.Conditions{}})
+	require.Error(t, err)
+}
+
+// ParseResponse must never reflect the underlying crewjam/saml library's error text
+// back to the caller — that text (and especially InvalidResponseError.PrivateErr) can
+// carry internal detail never meant for the untrusted caller of a public ACS endpoint.
+// Every failure collapses to the same fixed, generic error.
+func TestParseResponse_SanitizesLibraryError(t *testing.T) {
+	p := testProvider(t)
+	req := httptest.NewRequest(http.MethodPost, "https://keyorix.internal/auth/saml/corp/acs", strings.NewReader("SAMLResponse=not-valid-base64!!"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	_, err := p.ParseResponse(req, []string{"req-id"})
+	require.Error(t, err)
+	assert.Same(t, errInvalidSAMLResponse, err, "the caller must get the fixed sanitized error, not the library's own error text")
+	assert.NotContains(t, err.Error(), "base64", "the library's internal error detail must not leak into the returned error")
 }
 
 func TestParseIDPMetadata_Errors(t *testing.T) {
