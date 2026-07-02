@@ -142,6 +142,45 @@ func TestTargetEncryptionConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("kms encryption context carries through to a new wrapped path", func(t *testing.T) {
+		tgt, err := targetEncryptionConfig(cur, migrateOpts{
+			toType: "aws-kms", toKMSKeyID: "k", toWrappedKeyPath: "keys/kek-v2.kms",
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tgt.KeyProvider.KMSEncryptionContext["keyorix-install"] != "prod-1" {
+			t.Fatalf("expected encryption context to carry through, got %+v", tgt.KeyProvider.KMSEncryptionContext)
+		}
+	})
+
+	t.Run("azure-kms rejects an encryption context (no AAD input)", func(t *testing.T) {
+		_, err := targetEncryptionConfig(cur, migrateOpts{
+			toType: "azure-kms", toKMSKeyID: "https://v.vault.azure.net/keys/k", toWrappedKeyPath: "keys/kek.kms",
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "not supported") {
+			t.Fatalf("expected azure-kms + context rejection, got: %v", err)
+		}
+	})
+
+	t.Run("kms encryption context requires a new wrapped path, not the current one", func(t *testing.T) {
+		curKMS := &config.EncryptionConfig{
+			DEKPath: "keys/dek.key",
+			KeyProvider: config.KeyProviderConfig{
+				Type: "aws-kms", KMSKeyID: "k", WrappedKeyPath: "keys/kek.kms",
+			},
+		}
+		_, err := targetEncryptionConfig(curKMS, migrateOpts{
+			toType: "aws-kms", toKMSKeyID: "k", toWrappedKeyPath: "keys/kek.kms", // same path, same type
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "NEW --to-wrapped-key-path") {
+			t.Fatalf("expected same-path context rejection, got: %v", err)
+		}
+	})
+
 	t.Run("file requires path", func(t *testing.T) {
 		_, err := targetEncryptionConfig(cur, migrateOpts{toType: "file"})
 		if err == nil || !strings.Contains(err.Error(), "--to-file-path") {

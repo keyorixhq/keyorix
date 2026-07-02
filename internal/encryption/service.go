@@ -106,22 +106,29 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 	case "tpm":
 		return crypto.NewTPMKeyProvider(kp.TPMDevice, baseDir, kp.WrappedKeyPath), nil
 	case "aws-kms":
-		kmsClient, err := awskms.New(context.Background(), kp.KMSKeyID, kp.KMSEncryptionContext)
+		kmsClient, err := awskms.New(context.Background(), kp.KMSKeyID, kp.KMSEncryptionContext, kp.KMSAllowContextFallback)
 		if err != nil {
 			return nil, err
 		}
 		return crypto.NewKMSKeyProvider(kmsClient, "aws-kms", baseDir, kp.WrappedKeyPath), nil
 	case "gcp-kms":
-		kmsClient, err := gcpkms.New(context.Background(), kp.KMSKeyID, kp.KMSEncryptionContext)
+		kmsClient, err := gcpkms.New(context.Background(), kp.KMSKeyID, kp.KMSEncryptionContext, kp.KMSAllowContextFallback)
 		if err != nil {
 			return nil, err
 		}
 		return crypto.NewKMSKeyProvider(kmsClient, "gcp-kms", baseDir, kp.WrappedKeyPath), nil
 	case "azure-kms":
+		// #123: Azure Key Vault wraps with RSA-OAEP, which has no additional-
+		// authenticated-data input, so the wrapped KEK cannot be bound to an install
+		// this way — full stop, there is no fallback-vs-strict distinction to make (there
+		// was never a bound path). Previously this only logged and silently proceeded
+		// with an unbound key, which an operator relying on log aggregation/alerting
+		// could easily miss, believing their configured context was actually enforced.
+		// A hard refusal to start is the fail-closed behavior: the operator must
+		// either drop kms_encryption_context (accepting the shared-CMK exposure
+		// consciously) or switch to a per-install key.
 		if len(kp.KMSEncryptionContext) > 0 {
-			// Azure Key Vault wraps with RSA-OAEP, which has no additional-authenticated-
-			// data input, so the wrapped KEK cannot be bound to an install this way.
-			log.Printf("azure-kms: kms_encryption_context is set but unsupported (RSA wrap has no AAD); ignoring — use a per-install key to avoid shared-key unwrap")
+			return nil, fmt.Errorf("azure-kms: kms_encryption_context is set but unsupported (RSA-OAEP key wrap has no AAD input) — remove it, or use a per-install Key Vault key to avoid shared-key unwrap")
 		}
 		kmsClient, err := azurekms.New(context.Background(), kp.KMSKeyID)
 		if err != nil {

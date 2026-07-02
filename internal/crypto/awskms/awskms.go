@@ -7,6 +7,7 @@ package awskms
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -21,16 +22,20 @@ type awsKMSAPI interface {
 }
 
 type client struct {
-	kms    awsKMSAPI
-	keyID  string
-	encCtx map[string]string // AWS EncryptionContext bound to the wrapped KEK (may be empty)
+	kms           awsKMSAPI
+	keyID         string
+	encCtx        map[string]string // AWS EncryptionContext bound to the wrapped KEK (may be empty)
+	allowFallback bool              // #123: opt-in, see KMSAllowContextFallback's doc comment
 }
 
 // New builds an AWS-KMS-backed crypto.KMSClient for the given key (ID, ARN, or
 // alias). It loads the default AWS config; the caller's environment supplies the
 // region and credentials. encContext, when non-empty, is bound to the wrapped KEK so
-// a different install sharing the same CMK cannot unwrap it.
-func New(ctx context.Context, keyID string, encContext map[string]string) (keyorixcrypto.KMSClient, error) {
+// a different install sharing the same CMK cannot unwrap it — UNLESS allowFallback is
+// also set, in which case a context-bound Decrypt failure retries once without any
+// context (see config.KeyProviderConfig.KMSAllowContextFallback for the full
+// rationale; default false = the binding is strictly enforced).
+func New(ctx context.Context, keyID string, encContext map[string]string, allowFallback bool) (keyorixcrypto.KMSClient, error) {
 	if keyID == "" {
 		return nil, fmt.Errorf("aws-kms: kms_key_id is required")
 	}
@@ -38,7 +43,7 @@ func New(ctx context.Context, keyID string, encContext map[string]string) (keyor
 	if err != nil {
 		return nil, fmt.Errorf("aws-kms: load AWS config: %w", err)
 	}
-	return &client{kms: kms.NewFromConfig(cfg), keyID: keyID, encCtx: encContext}, nil
+	return &client{kms: kms.NewFromConfig(cfg), keyID: keyID, encCtx: encContext, allowFallback: allowFallback}, nil
 }
 
 func (c *client) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) {
@@ -60,13 +65,22 @@ func (c *client) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 		in.EncryptionContext = c.encCtx
 	}
 	out, err := c.kms.Decrypt(ctx, in)
-	if err != nil && len(c.encCtx) > 0 {
-		// Legacy blob wrapped before the encryption context was configured: retry once
-		// without it, so enabling the binding on a running install doesn't lock out the
-		// already-wrapped KEK (it rebinds on the next KEK re-wrap). A blob bound to a
-		// DIFFERENT install's context still fails both attempts — the security property
-		// holds.
+	// #123: the no-context retry is now OPT-IN (allowFallback) rather than automatic on
+	// any failure. With it off — the default — a context-bound Decrypt failure is
+	// final: this is the actual enforcement of the "different install can't unwrap my
+	// KEK" property. An unconditional fallback made that advisory, since a blob an
+	// attacker (with kms:Encrypt on the shared CMK but not Keyorix's own data) planted
+	// with NO context always succeeds on the fallback attempt regardless of what this
+	// install's context is. When allowFallback IS set (a deliberate, transient
+	// migration aid — see KMSAllowContextFallback), a successful fallback is logged
+	// loudly: it means this decrypt just used the weaker, unbound path, which should
+	// be closed by re-wrapping (`keyorix encryption migrate-provider
+	// --to-kms-encryption-context=...`) and turning the flag back off.
+	if err != nil && len(c.encCtx) > 0 && c.allowFallback {
 		out, err = c.kms.Decrypt(ctx, &kms.DecryptInput{CiphertextBlob: ciphertext, KeyId: &c.keyID})
+		if err == nil {
+			log.Printf("aws-kms: decrypted a wrapped KEK WITHOUT its configured encryption context (kms_allow_context_fallback is on) — this blob is not bound to this install; re-wrap it under the context via 'keyorix encryption migrate-provider --to-kms-encryption-context=...' and disable kms_allow_context_fallback")
+		}
 	}
 	if err != nil {
 		return nil, err

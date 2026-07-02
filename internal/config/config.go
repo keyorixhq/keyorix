@@ -417,10 +417,29 @@ type KeyProviderConfig struct {
 	// it's passed as the AWS EncryptionContext / GCP AdditionalAuthenticatedData on
 	// wrap+unwrap, so a different install sharing the same CMK cannot unwrap this
 	// install's KEK. Set a value unique to the install, e.g. {keyorix-install: <id>}.
-	// Empty = no binding (the prior behaviour). Not supported by azure-kms (RSA wrap
-	// has no AAD). Existing wrapped blobs decrypt via a no-context fallback, so this
-	// can be enabled on a running install (it binds on the next KEK re-wrap).
+	// Empty = no binding (the prior behaviour). NOT supported by azure-kms (RSA wrap
+	// has no AAD) — setting it there is a hard startup error, not a silent downgrade.
+	//
+	// #123: on its own this is enforced (a mismatched or missing context on the
+	// wrapped blob fails decryption outright) UNLESS KMSAllowContextFallback is also
+	// set — see that field.
 	KMSEncryptionContext map[string]string `yaml:"kms_encryption_context"`
+	// KMSAllowContextFallback opts into a ONE-DIRECTION migration aid: when
+	// KMSEncryptionContext is set and a context-bound Decrypt fails, retry once
+	// without any context, so enabling the binding on an install with an existing
+	// (pre-binding) wrapped KEK doesn't lock it out. Off by default — with it off (the
+	// secure default), a KMS Decrypt failure is final: the whole point of
+	// KMSEncryptionContext is that an attacker with kms:Encrypt on the shared CMK (but
+	// not Keyorix's own data) cannot plant a wrapped-KEK blob that decrypts under this
+	// install's identity; a fallback that auto-retries without the context on ANY
+	// failure makes that binding purely advisory, since a blob encrypted with no
+	// context at all (the trivial attack) always succeeds on the fallback attempt.
+	// Enable this ONLY transiently while migrating an existing install onto a newly
+	// configured context (`keyorix encryption migrate-provider --to-kms-encryption-
+	// context=...` to durably re-wrap under the context), then disable it again —
+	// every fallback use is logged loudly specifically so that migration window is
+	// observable and finite, not a permanent standing weakening.
+	KMSAllowContextFallback bool `yaml:"kms_allow_context_fallback"`
 	// ExecCommand is the argv for type "exec": the resolver command (argv[0] is the
 	// binary, the rest are arguments) whose stdout supplies the KEK as raw 32 bytes
 	// or a hex/base64 encoding thereof. Run directly without a shell. Lets a
