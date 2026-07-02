@@ -24,6 +24,19 @@ var ErrWebAuthnDisabled = errors.New("webauthn is not enabled on this server")
 
 const webauthnSessionTTL = 5 * time.Minute
 
+// EventWebAuthnCloneDetected is the loud, authentication-rejecting audit event
+// fired when go-webauthn's signature-counter clone-detection signal
+// (Authenticator.CloneWarning) fires (#212). The library itself already excludes
+// the one legitimate always-zero-counter case (see its UpdateCounter: both the
+// stored and asserted counts must be zero for the warning to be waived), so any
+// warning reaching here is a genuine regression, not a benign authenticator that
+// never implemented a counter.
+const EventWebAuthnCloneDetected = "webauthn.clone_detected" // #nosec G101 -- audit event type, not a credential
+
+// NotificationWebAuthnCloneDetected is the in-app/email notification type sent to
+// the affected account owner alongside EventWebAuthnCloneDetected.
+const NotificationWebAuthnCloneDetected = EventWebAuthnCloneDetected
+
 // webauthnUser adapts a Keyorix user + its stored credentials to the
 // webauthn.User interface the library expects.
 type webauthnUser struct {
@@ -53,6 +66,13 @@ func (c *KeyorixCore) loadWebAuthnUser(ctx context.Context, userID uint) (*webau
 	}
 	creds := make([]webauthn.Credential, 0, len(rows))
 	for _, r := range rows {
+		if r.Disabled {
+			// Flagged by clone-detection (#212, signature-counter regression) —
+			// excluded from every ceremony (login candidate set AND registration
+			// exclusion list) until the owner deletes it and registers a fresh
+			// passkey using the genuine physical authenticator.
+			continue
+		}
 		var cred webauthn.Credential
 		if err := json.Unmarshal(r.CredentialBlob, &cred); err != nil {
 			continue // skip an unreadable row rather than fail the whole ceremony
@@ -282,6 +302,13 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 		c.recordFailedLogin(ctx, wu.user) // count the failed second factor toward the lockout
 		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
+	// Clone-detection (#212): a signature-counter regression is a stronger, more
+	// specific signal than a simple bad assertion, so it is checked and refused
+	// before the login is otherwise treated as successful — no session is minted,
+	// the credential is disabled, and the owner is alerted (see rejectIfCloned).
+	if err := c.rejectIfCloned(ctx, ch.UserID, cred, ip); err != nil {
+		return nil, nil, err
+	}
 	c.clearLoginFailures(ctx, wu.user)
 	c.persistUpdatedCredential(ctx, ch.UserID, cred)
 
@@ -290,10 +317,6 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 		return nil, nil, err
 	}
 	uid := ch.UserID
-	if cred.Authenticator.CloneWarning {
-		c.writeAuditEventFull(ctx, "webauthn.clone_warning", &uid, nil, nil, ip,
-			fmt.Sprintf("possible cloned authenticator for user %s (signature counter did not advance)", wu.user.Username))
-	}
 	c.writeAuditEventFull(ctx, "webauthn.login_verified", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s passed WebAuthn", wu.user.Username))
 	return session, wu.user, nil
@@ -362,6 +385,12 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 		c.writeAuditEventFull(ctx, "webauthn.failed", nil, nil, nil, ip, "failed passwordless WebAuthn login")
 		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
+	// Clone-detection (#212): refuse before any other gate — a signature-counter
+	// regression means this assertion may come from a cloned authenticator, so it
+	// must never mint a session regardless of account state. See rejectIfCloned.
+	if err := c.rejectIfCloned(ctx, resolved.ID, cred, ip); err != nil {
+		return nil, nil, err
+	}
 	// A passwordless login is still a login: a deactivated or suspended/blocked account
 	// is refused. IsActive is an independent gate from AccountState — an admin
 	// deactivation (is_active=false) leaves AccountState="active", so checking only
@@ -387,13 +416,39 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 		return nil, nil, err
 	}
 	uid := resolved.ID
-	if cred.Authenticator.CloneWarning {
-		c.writeAuditEventFull(ctx, "webauthn.clone_warning", &uid, nil, nil, ip,
-			fmt.Sprintf("possible cloned authenticator for user %s (signature counter did not advance)", resolved.Username))
-	}
 	c.writeAuditEventFull(ctx, "webauthn.passwordless_login", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s logged in passwordlessly via WebAuthn", resolved.Username))
 	return session, resolved, nil
+}
+
+// rejectIfCloned inspects a just-verified assertion's credential for a signature-
+// counter regression — go-webauthn's standard FIDO2 clone-detection signal
+// (Authenticator.CloneWarning), meaning this credential's private key material
+// likely exists on more than one device (#212). Previously this was only ever
+// written to a passive audit line while the login proceeded normally; now the
+// CURRENT authentication is refused (never mints a session on a clone signal), the
+// credential is disabled so it cannot authenticate again until the owner deletes it
+// and registers a fresh passkey (auto re-enabling isn't safe — the stored counter
+// can never again exceed a value a possibly-compromised clone already asserted),
+// and the account owner is alerted loudly: a distinct audit event (superseding the
+// old passive "clone_warning" line) plus an in-app/email notification, rather than
+// only a silent log entry. Returns a rejection error when CloneWarning fired, nil
+// otherwise (the normal, incrementing-counter case).
+func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *webauthn.Credential, ip string) error {
+	if !cred.Authenticator.CloneWarning {
+		return nil
+	}
+	if row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, cred.ID); err == nil && row.UserID == userID {
+		row.Disabled = true
+		_ = c.storage.UpdateWebAuthnCredential(ctx, row)
+	}
+	uid := userID
+	c.writeAuditEventFull(ctx, EventWebAuthnCloneDetected, &uid, nil, nil, ip,
+		fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — credential disabled pending re-registration", userID))
+	c.notify(ctx, userID, NotificationWebAuthnCloneDetected, "Passkey clone suspected",
+		"A sign-in attempt was blocked because one of your passkeys reported a signature-counter regression — a sign that its private key may exist on more than one device. The passkey has been disabled; please remove it and register a new one.",
+		nil, "/account/security")
+	return fmt.Errorf("assertion verification failed: signature counter did not advance (possible cloned authenticator)")
 }
 
 // persistUpdatedCredential writes back the credential's advanced signature counter
