@@ -3,6 +3,7 @@ package k8ssync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,14 +12,20 @@ import (
 )
 
 // fakeFetcher serves values from a map; refs absent from the map return an error.
+// fail models a TRANSIENT failure (network/5xx); revoked models a DEFINITIVE one
+// (the real KeyorixFetcher's 404/401/403 handling, wrapping ErrUpstreamGone).
 type fakeFetcher struct {
-	values map[string][]byte
-	fail   map[string]bool
+	values  map[string][]byte
+	fail    map[string]bool
+	revoked map[string]bool
 }
 
 func (f *fakeFetcher) Fetch(_ context.Context, ref string) ([]byte, error) {
 	if f.fail[ref] {
 		return nil, errors.New("boom")
+	}
+	if f.revoked[ref] {
+		return nil, fmt.Errorf("secret %q gone: %w", ref, ErrUpstreamGone)
 	}
 	v, ok := f.values[ref]
 	if !ok {
@@ -163,6 +170,69 @@ func TestReconcile_FetchFailureSkipsWholeTarget(t *testing.T) {
 	assert.Empty(t, s.applied, "a target with any failed fetch must not be applied")
 	require.Len(t, res.Errors, 1)
 	assert.Contains(t, res.Errors[0], "app/creds")
+}
+
+// TestReconcile_RevokedUpstreamRemovesStaleSecret pins #140: on a definitive
+// fetch failure (the upstream secret was deleted, or this agent's access was
+// revoked), the PREVIOUSLY-materialized Secret must be actively removed from
+// the cluster — not left at its last-known value indefinitely. The old
+// behavior (skip and retry) never converges, since the same definitive
+// failure recurs every pass; de-authorization never reached the cluster.
+func TestReconcile_RevokedUpstreamRemovesStaleSecret(t *testing.T) {
+	f := &fakeFetcher{revoked: map[string]bool{"prod/db": true}}
+	s := newFakeSink()
+	s.existing["app/creds"] = map[string][]byte{"DB_PASSWORD": []byte("stale-value")}
+	s.owned["app/creds"] = true
+	e := NewEngine(f, s)
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Revoked)
+	assert.Equal(t, 0, res.Failed, "a definitive revocation is not counted as a generic failure")
+	assert.Contains(t, s.deleted, "app/creds", "the stale materialized Secret must be removed")
+	_, stillExists := s.existing["app/creds"]
+	assert.False(t, stillExists)
+	require.Len(t, res.Errors, 1)
+	assert.Contains(t, res.Errors[0], "revoked")
+}
+
+// A TRANSIENT fetch failure (network error, 5xx) must NOT delete the existing
+// Secret — only a definitive not-found/forbidden does. The old skip-and-retry
+// behavior is exactly right here (the value may still be valid; the next pass
+// will succeed once the transient issue clears).
+func TestReconcile_TransientFetchFailureLeavesSecretUntouched(t *testing.T) {
+	f := &fakeFetcher{fail: map[string]bool{"prod/db": true}}
+	s := newFakeSink()
+	s.existing["app/creds"] = map[string][]byte{"DB_PASSWORD": []byte("still-valid")}
+	s.owned["app/creds"] = true
+	e := NewEngine(f, s)
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Failed)
+	assert.Equal(t, 0, res.Revoked)
+	assert.Empty(t, s.deleted, "a transient failure must not remove the existing Secret")
+	assert.Equal(t, []byte("still-valid"), s.existing["app/creds"]["DB_PASSWORD"])
+}
+
+// In dry-run, a revocation is reported but not acted on.
+func TestReconcile_RevokedUpstreamDryRunReportsButDoesNotDelete(t *testing.T) {
+	f := &fakeFetcher{revoked: map[string]bool{"prod/db": true}}
+	s := newFakeSink()
+	s.existing["app/creds"] = map[string][]byte{"DB_PASSWORD": []byte("stale-value")}
+	s.owned["app/creds"] = true
+	e := NewEngine(f, s, WithDryRun())
+
+	res, err := e.Reconcile(context.Background(), []SecretMapping{
+		{Ref: "prod/db", Namespace: "app", Name: "creds", Key: "DB_PASSWORD"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Revoked)
+	assert.Empty(t, s.deleted, "dry-run must not delete anything")
 }
 
 func TestReconcile_DryRunReportsButDoesNotWrite(t *testing.T) {
