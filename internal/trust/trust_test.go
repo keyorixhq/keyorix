@@ -87,3 +87,18 @@ func TestDefaultRegistry_EmptyByDefaultFailsClosed(t *testing.T) {
 	assert.ErrorIs(t, r.Verify(PurposeUpdate, "any", []byte("m"), []byte("s")), ErrNoKeys)
 	assert.ErrorIs(t, r.Verify(PurposeLicense, "any", []byte("m"), []byte("s")), ErrNoKeys)
 }
+
+// #145: DefaultRegistry's error return is distinct from the empty-by-default case
+// above — an unsigned dev build parses an EMPTY spec successfully (nil error, empty
+// registry), while malformed EMBEDDED key data (corrupt -ldflags value, a build/
+// release integrity problem) is a real error. GetCompliancePosture's SupplyChain
+// rollup (internal/core/compliance_posture.go) depends on this distinction: it must
+// not read a malformed-key error the same as "no keys pinned, ordinary dev build."
+func TestDefaultRegistry_MalformedEmbeddedKeyIsAnError(t *testing.T) {
+	orig := updateKeysB64
+	updateKeysB64 = "bad-key-id=not-valid-base64!!!"
+	t.Cleanup(func() { updateKeysB64 = orig })
+
+	_, err := DefaultRegistry()
+	require.Error(t, err, "malformed embedded update-signing key data must surface as an error, not silently produce an empty registry")
+}

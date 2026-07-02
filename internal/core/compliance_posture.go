@@ -311,12 +311,22 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	}
 
 	// Supply-chain integrity (ADR-062/064/065): signed, offline-verifiable updates plus
-	// offline entitlement. A non-release/source build pins no keys (control not in force).
+	// offline entitlement. A non-release/source build pins no keys (control not in
+	// force) — trust.DefaultRegistry() returns an EMPTY registry with a nil error for
+	// that expected case (parseKeySpec("") is a no-op, not a failure). rerr != nil
+	// instead means the embedded key material itself is malformed — a build/release
+	// integrity problem — which must not silently collapse into the same
+	// TrustedUpdateKeys=0 an ordinary unsigned dev build already produces; an auditor
+	// (or this evidence pack's HMAC-signed consumer) would have no way to tell "this
+	// build was never meant to be signed" apart from "this signed build's key data is
+	// corrupt" (#145, same root as #136).
 	sc := SupplyChainPosture{}
 	if reg, rerr := trust.DefaultRegistry(); rerr == nil && reg != nil {
 		ids := reg.KeyIDs(trust.PurposeUpdate)
 		sc.TrustedUpdateKeys = len(ids)
 		sc.UpdateSigningTrusted = len(ids) > 0
+	} else if rerr != nil {
+		p.degrade("supply_chain", rerr)
 	}
 	ls := c.LicenseStatus()
 	sc.LicenseState = string(ls.State)
