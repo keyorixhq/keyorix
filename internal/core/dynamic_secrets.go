@@ -28,6 +28,10 @@ type CreateDynamicSecretConfigRequest struct {
 	MaxTTLSeconds     int
 	MaxActiveLeases   int
 	CreatedBy         string
+	// ActorID is the authenticated caller, used for the admin-authority check on
+	// binding a backend (#162) — CreatedBy is a display username, not a resolvable
+	// principal ID.
+	ActorID uint
 	// Classification is an optional data-sensitivity label (A.5.12) for the
 	// credentials this config mints: "" or one of public|internal|confidential|restricted.
 	Classification string
@@ -52,6 +56,17 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	}
 	if _, err := c.dynamicEngine(req.BackendType); err != nil {
 		return nil, err
+	}
+	// #162: binding a backend hands out standing access to mint live credentials
+	// against it (a DB admin DSN or a cloud-IAM role) — the route only requires
+	// secrets.write at the project/environment scope, which is too weak a gate for
+	// that authority on its own (exact sibling of #90's rotation-backend check).
+	ids, err := c.scopedRoleIDs(ctx, req.ActorID, Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !c.roleSetContainsAdmin(ctx, ids) {
+		return nil, fmt.Errorf("binding a dynamic-secret backend requires admin authority on this project")
 	}
 	if req.MaxTTLSeconds > 0 && req.DefaultTTLSeconds > req.MaxTTLSeconds {
 		return nil, fmt.Errorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)

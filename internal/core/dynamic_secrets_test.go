@@ -18,14 +18,25 @@ import (
 
 const adminDSNPlain = "postgres://admin:s3cr3t@db.internal:5432/app"
 
+// testAdminActorID is a global-scope admin actor (#162: binding a dynamic-secret
+// backend requires admin authority) seeded by newDynamicTestCore.
+const testAdminActorID = uint(1)
+
 // newDynamicTestCore builds a core over real SQLite with an enabled encryptor (so
 // at-rest encryption of the admin DSN + issued credential is exercised), a fixed
-// clock, and a fake credential engine in place of a real Postgres target.
+// clock, and a fake credential engine in place of a real Postgres target. Seeds
+// testAdminActorID with a global "admin" role grant so CreateDynamicSecretConfig's
+// admin-authority check (#162) passes for the tests that use it.
 func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamic.FakeEngine, time.Time) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(
+		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{},
+		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+	))
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
 	require.NoError(t, enc.Initialize("test-passphrase"))
@@ -52,9 +63,37 @@ func mkConfig(t *testing.T, c *KeyorixCore, ctx context.Context) *models.Dynamic
 		CreationTemplate:  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};",
 		DefaultTTLSeconds: 3600,
 		CreatedBy:         "alice",
+		ActorID:           testAdminActorID,
 	})
 	require.NoError(t, err)
 	return cfg
+}
+
+// #162: binding a dynamic-secret backend hands out standing access to mint live
+// credentials against it (a DB admin DSN or a cloud-IAM role) — the route only
+// requires secrets.write at the project/environment scope, which on its own would let
+// any secrets.write holder bind an arbitrary powerful backend (exact sibling of #90's
+// rotation-backend authz gap). A non-admin actor must be refused; an admin actor (the
+// suite's default testAdminActorID) must still succeed, matching mkConfig's baseline.
+func TestDynamicSecrets_CreateConfig_RequiresAdminAuthority(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+
+	// A non-admin actor (no role grant at all) must be refused.
+	_, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "attacker-cfg", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "mallory", ActorID: 999,
+	})
+	require.Error(t, err, "a non-admin actor must not be able to bind a dynamic-secret backend")
+	assert.Contains(t, err.Error(), "admin authority")
+
+	// The admin actor succeeds (same actor mkConfig and every other test in this file use).
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "admin-cfg", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
+	})
+	require.NoError(t, err)
+	assert.NotZero(t, cfg.ID)
 }
 
 func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
@@ -74,7 +113,7 @@ func TestDynamicSecrets_MaxActiveLeasesCeiling(t *testing.T) {
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "capped", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
 		AdminDSN: adminDSNPlain, CreationTemplate: "GRANT SELECT TO {{name}};",
-		DefaultTTLSeconds: 3600, MaxActiveLeases: 2, CreatedBy: "alice",
+		DefaultTTLSeconds: 3600, MaxActiveLeases: 2, CreatedBy: "alice", ActorID: testAdminActorID,
 	})
 	require.NoError(t, err)
 
@@ -224,7 +263,7 @@ func TestDynamicSecrets_MaxTTLClampsIssue(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "capped", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
-		DefaultTTLSeconds: 600, MaxTTLSeconds: 1800,
+		DefaultTTLSeconds: 600, MaxTTLSeconds: 1800, ActorID: testAdminActorID,
 	})
 	require.NoError(t, err)
 
@@ -238,7 +277,7 @@ func TestDynamicSecrets_CreateRejectsDefaultOverMax(t *testing.T) {
 	c, _, _, _ := newDynamicTestCore(t)
 	_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
 		Name: "bad", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
-		DefaultTTLSeconds: 3600, MaxTTLSeconds: 600,
+		DefaultTTLSeconds: 3600, MaxTTLSeconds: 600, ActorID: testAdminActorID,
 	})
 	require.Error(t, err)
 }
@@ -249,6 +288,7 @@ func TestDynamicSecrets_RenewExtendsAndRespectsMaxTTL(t *testing.T) {
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "renewable", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		DefaultTTLSeconds: 600, MaxTTLSeconds: 1200, // 10m default, 20m hard cap
+		ActorID: testAdminActorID,
 	})
 	require.NoError(t, err)
 
@@ -354,19 +394,25 @@ func TestDynamicSecrets_RenewRejectsExpiredLease(t *testing.T) {
 func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.DynamicSecretConfig{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(
+		&models.DynamicSecretConfig{}, &models.AuditEvent{},
+		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+	))
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
 	fixed := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}
 
 	for _, backend := range []string{"postgres", "mysql", "mongodb", "redis"} {
 		_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
 			Name: backend + "-cfg", ProjectID: 1, BackendType: backend, AdminDSN: "admin:p@tcp(h:3306)/",
+			ActorID: testAdminActorID,
 		})
 		require.NoError(t, err, "backend %s must be accepted", backend)
 	}
 
 	_, err = c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
-		Name: "bad", ProjectID: 1, BackendType: "cassandra", AdminDSN: "x",
+		Name: "bad", ProjectID: 1, BackendType: "cassandra", AdminDSN: "x", ActorID: testAdminActorID,
 	})
 	require.Error(t, err, "an unsupported backend must be rejected at config creation")
 }

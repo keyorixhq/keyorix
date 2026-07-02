@@ -94,6 +94,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		MaxActiveLeases:   body.MaxActiveLeases,
 		Classification:    body.Classification,
 		CreatedBy:         userCtx.Username,
+		ActorID:           userCtx.PrincipalID(),
 	})
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
