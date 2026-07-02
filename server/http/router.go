@@ -23,7 +23,16 @@ import (
 func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler, error) {
 	r := chi.NewRouter()
 
-	// Apply middleware
+	// Apply middleware. Recovery is registered FIRST so it is the OUTERMOST handler in
+	// the chain (chi wraps middleware in registration order: the first Use() call wraps
+	// everything registered after it). A panic in any later-registered middleware —
+	// RequestID, ClientIP, Logger, or anything below — must still be caught and turned
+	// into a clean 500 rather than propagating out to net/http's own bare panic
+	// recovery (which just logs and drops the connection, with none of Recovery's
+	// structured JSON response or panic-context logging). Recovery itself only reads
+	// the raw request (header, context — best-effort, nil-safe) so it has no ordering
+	// dependency on anything registered after it.
+	r.Use(customMiddleware.Recovery())
 	r.Use(middleware.RequestID)
 	// Trusted-proxy-aware client IP: honor X-Forwarded-For / X-Real-IP ONLY when the TCP
 	// peer is a configured trusted proxy, otherwise use the real peer. chi's RealIP trusts
@@ -31,7 +40,6 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// per-IP login/MFA brute-force rate limiter.
 	r.Use(customMiddleware.ClientIP(cfg.Server.HTTP.TrustedProxies))
 	r.Use(customMiddleware.Logger())
-	r.Use(customMiddleware.Recovery())
 	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
 	r.Use(customMiddleware.PrometheusMiddleware)
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
@@ -79,41 +87,50 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	connectHandler := handlers.NewConnectHandler(coreService)
 	adminJobsHandler := handlers.NewAdminJobsHandler(coreService)
 
-	// Auth endpoints (no authentication middleware)
-	r.Post("/auth/login", authHandler.Login)
-	r.Post("/auth/logout", authHandler.Logout)
-	r.Post("/auth/refresh", authHandler.RefreshToken)
-	r.Post("/auth/password-reset", authHandler.PasswordReset)
-	// MFA second-step: unauthenticated — the bearer is the single-use challenge
-	// issued by /auth/login, not a session.
-	r.Post("/auth/mfa/verify", authHandler.VerifyMFA)
-	// WebAuthn second-step assertion — also unauthenticated; the bearer is the same
-	// single-use challenge from /auth/login plus the ceremony's webauthn_session.
-	r.Post("/auth/webauthn/login/begin", authHandler.BeginWebAuthnLogin)
-	r.Post("/auth/webauthn/login/finish", authHandler.FinishWebAuthnLogin)
-	// Passwordless (usernameless) passkey login — public; a single resident-passkey
-	// gesture with user verification mints a session, no password (ADR-036 addendum).
-	r.Post("/auth/webauthn/passwordless/begin", authHandler.BeginWebAuthnPasswordlessLogin)
-	r.Post("/auth/webauthn/passwordless/finish", authHandler.FinishWebAuthnPasswordlessLogin)
-	r.Post("/system/init", authHandler.InitSystem)
+	// Auth endpoints (no authentication middleware). Grouped under NoStore: several of
+	// these mint or hand back a session token (login, refresh, MFA/WebAuthn verify, the
+	// SSO/SAML callbacks) or bootstrap/setup credentials (system/init, setup consume) —
+	// a browser or intermediate cache must never be allowed to cache that response. The
+	// /api/v1 group below has its own NoStore for the same reason; these routes sit
+	// outside that group (no session yet to authenticate against) so they need their
+	// own coverage rather than inheriting it.
+	r.Group(func(r chi.Router) {
+		r.Use(customMiddleware.NoStore)
+		r.Post("/auth/login", authHandler.Login)
+		r.Post("/auth/logout", authHandler.Logout)
+		r.Post("/auth/refresh", authHandler.RefreshToken)
+		r.Post("/auth/password-reset", authHandler.PasswordReset)
+		// MFA second-step: unauthenticated — the bearer is the single-use challenge
+		// issued by /auth/login, not a session.
+		r.Post("/auth/mfa/verify", authHandler.VerifyMFA)
+		// WebAuthn second-step assertion — also unauthenticated; the bearer is the same
+		// single-use challenge from /auth/login plus the ceremony's webauthn_session.
+		r.Post("/auth/webauthn/login/begin", authHandler.BeginWebAuthnLogin)
+		r.Post("/auth/webauthn/login/finish", authHandler.FinishWebAuthnLogin)
+		// Passwordless (usernameless) passkey login — public; a single resident-passkey
+		// gesture with user verification mints a session, no password (ADR-036 addendum).
+		r.Post("/auth/webauthn/passwordless/begin", authHandler.BeginWebAuthnPasswordlessLogin)
+		r.Post("/auth/webauthn/passwordless/finish", authHandler.FinishWebAuthnPasswordlessLogin)
+		r.Post("/system/init", authHandler.InitSystem)
 
-	// Credential-delivery setup links (ADR-028) — unauthenticated: the bearer is the
-	// single-use setup token in the URL / request body, not a session.
-	r.Get("/auth/setup/{token}", authHandler.GetSetupToken)
-	r.Post("/auth/setup/consume", authHandler.ConsumeSetup)
+		// Credential-delivery setup links (ADR-028) — unauthenticated: the bearer is the
+		// single-use setup token in the URL / request body, not a session.
+		r.Get("/auth/setup/{token}", authHandler.GetSetupToken)
+		r.Post("/auth/setup/consume", authHandler.ConsumeSetup)
 
-	// Human SSO login (OIDC authorization-code flow) — unauthenticated: the IdP is
-	// the authenticator. The login redirect, the IdP callback, and the provider list
-	// the login page reads. With sso disabled the provider list is empty and BeginSSO
-	// 400s on any provider.
-	r.Get("/auth/sso/providers", authHandler.ListSSOProviders)
-	r.Get("/auth/sso/{provider}/login", authHandler.BeginSSO)
-	r.Get("/auth/sso/{provider}/callback", authHandler.CompleteSSO)
-	// SAML 2.0 SP endpoints (ADR-063): metadata for the IdP admin, the login redirect
-	// (AuthnRequest), and the Assertion Consumer Service. Unauthenticated, like OIDC.
-	r.Get("/auth/saml/{provider}/metadata", authHandler.SAMLMetadata)
-	r.Get("/auth/saml/{provider}/login", authHandler.BeginSAML)
-	r.Post("/auth/saml/{provider}/acs", authHandler.CompleteSAML)
+		// Human SSO login (OIDC authorization-code flow) — unauthenticated: the IdP is
+		// the authenticator. The login redirect, the IdP callback, and the provider list
+		// the login page reads. With sso disabled the provider list is empty and BeginSSO
+		// 400s on any provider.
+		r.Get("/auth/sso/providers", authHandler.ListSSOProviders)
+		r.Get("/auth/sso/{provider}/login", authHandler.BeginSSO)
+		r.Get("/auth/sso/{provider}/callback", authHandler.CompleteSSO)
+		// SAML 2.0 SP endpoints (ADR-063): metadata for the IdP admin, the login redirect
+		// (AuthnRequest), and the Assertion Consumer Service. Unauthenticated, like OIDC.
+		r.Get("/auth/saml/{provider}/metadata", authHandler.SAMLMetadata)
+		r.Get("/auth/saml/{provider}/login", authHandler.BeginSAML)
+		r.Post("/auth/saml/{provider}/acs", authHandler.CompleteSAML)
+	})
 
 	// Health check endpoint — lightweight liveness signal (does not touch the DB, so a
 	// transient DB outage won't get the pod restarted).
