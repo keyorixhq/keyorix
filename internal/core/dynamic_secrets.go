@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/dynamic"
@@ -16,6 +17,12 @@ import (
 )
 
 const defaultDynamicTTL = 1 * time.Hour
+
+// defaultMaxLeaseTTL is the install-wide lease TTL ceiling used when
+// KeyorixCore.dynamicMaxLeaseTTL is unset (mirrors config.DynamicSecretsConfig's
+// own default so behaviour is identical whether or not the server wired
+// SetDynamicMaxLeaseTTL, e.g. in tests that construct KeyorixCore directly).
+const defaultMaxLeaseTTL = 90 * 24 * time.Hour
 
 // CreateDynamicSecretConfigRequest registers a dynamic-secrets target.
 type CreateDynamicSecretConfigRequest struct {
@@ -147,6 +154,17 @@ func (c *KeyorixCore) GetDynamicSecretLease(ctx context.Context, leaseID string)
 // IssueLease mints a short-lived credential on the target and persists the lease.
 // The plaintext credential is returned ONCE; only its encrypted form is stored.
 // ttlSeconds<=0 uses the config default (or 1h).
+//
+// LOW (#97): a genuine process crash (SIGKILL/OOM/panic bypassing defers) between
+// engine.Issue minting the credential on the target and this function persisting the
+// lease row leaves an orphan invisible to every list/revoke/sweep path (all keyed off
+// the lease table) — cleanupOrphanedRole only covers synchronous Go-level errors
+// returned by the steps AFTER Issue, not a hard crash. Fully closing this needs
+// crash-safe two-phase persistence (write a pre-mint marker, reconcile it against the
+// target on restart) across all 8 backend engines — out of proportion for a LOW
+// finding. The log line below is a partial mitigation: it gives an operator a
+// searchable breadcrumb (config, backend, target-ish role hint) to correlate against
+// server logs during incident response if a mint never resulted in a lease row.
 func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds int, userID uint) (*IssuedLease, error) {
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
 	if err != nil {
@@ -181,6 +199,10 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	}
 	ttl := c.dynamicTTL(cfg, ttlSeconds)
 
+	// Logged BEFORE the mint (not after) so the breadcrumb survives a crash during or
+	// immediately after engine.Issue — see the crash-orphan note on IssueLease's doc
+	// comment (#97).
+	log.Printf("dynamic-secrets: issuing a %s credential (config=%q id=%d project=%d ttl=%s)", cfg.BackendType, cfg.Name, cfg.ID, cfg.ProjectID, ttl)
 	cred, roleName, err := engine.Issue(ctx, adminDSN, cfg.CreationTemplate, ttl)
 	if err != nil {
 		return nil, fmt.Errorf("failed to issue credential: %w", err)
@@ -201,7 +223,20 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
 		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
 	}
+	// #97: cloud-IAM engines (AWS STS, Kubernetes) floor the REQUESTED ttl up to their
+	// own provider minimum (900s/600s) when minting, so the credential returned is
+	// valid for longer than a short-ttl caller asked for — but ExpiresAt computed from
+	// the requested ttl alone would understate that, making Keyorix believe (and the
+	// auto-revoke sweep act on) an earlier expiry than the credential's true,
+	// provider-enforced one. Both engines surface the actual granted expiry in
+	// cred.Fields["expiration"] (RFC3339); trust it over the requested-ttl computation
+	// whenever the engine provides it.
 	expiresAt := c.now().Add(ttl)
+	if raw := cred.Fields["expiration"]; raw != "" {
+		if actual, perr := time.Parse(time.RFC3339, raw); perr == nil {
+			expiresAt = actual
+		}
+	}
 	lease, err := c.storage.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
 		ConfigID:       cfg.ID,
 		LeaseID:        leaseID,
@@ -318,8 +353,18 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
 		return err
 	}
-	c.writeAuditEventFull(ctx, "dynamic_lease.revoked", uidPtr, nil, &pid, "",
-		fmt.Sprintf("revoked dynamic lease %s (reason=%s)", lease.LeaseID, reason))
+	// #97: for an ephemeral backend (AWS STS, Kubernetes) engine.Revoke above is a
+	// documented no-op — the credential cannot be invalidated early at the provider,
+	// only marked dead in Keyorix's own bookkeeping. Saying "revoked" outright would
+	// misleadingly imply the credential is dead; it remains live until its own
+	// provider-enforced expiry (lease.ExpiresAt, corrected to the actual granted
+	// expiry at issue — see IssueLease).
+	msg := fmt.Sprintf("revoked dynamic lease %s (reason=%s)", lease.LeaseID, reason)
+	if engine.IsEphemeralBackend() {
+		msg = fmt.Sprintf("marked dynamic lease %s revoked locally (reason=%s); the %s credential cannot be invalidated early and remains live until its provider-enforced expiry at %s",
+			lease.LeaseID, reason, cfg.BackendType, lease.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+	c.writeAuditEventFull(ctx, "dynamic_lease.revoked", uidPtr, nil, &pid, "", msg)
 	return nil
 }
 
@@ -384,8 +429,13 @@ func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userI
 	return revoked, failed, nil
 }
 
-// dynamicTTL resolves the requested TTL (override, else config default, else 1h)
-// and clamps it to the config's MaxTTLSeconds ceiling when one is set.
+// dynamicTTL resolves the requested TTL (override, else config default, else 1h),
+// clamps it to the config's MaxTTLSeconds ceiling when one is set, and always clamps
+// it to the install-wide max-lease-TTL ceiling on top (#97) — the per-config ceiling
+// is entirely operator-controlled and defaults to "unset = unbounded" (e.g. a config
+// left with MaxTTLSeconds=0 combined with a caller-supplied override would otherwise
+// mint a credential valid for however long the caller asked, with nothing to stop a
+// 100-year lease).
 func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) time.Duration {
 	ttl := defaultDynamicTTL
 	switch {
@@ -398,6 +448,13 @@ func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) 
 		if max := time.Duration(cfg.MaxTTLSeconds) * time.Second; ttl > max {
 			ttl = max
 		}
+	}
+	installMax := c.dynamicMaxLeaseTTL
+	if installMax <= 0 {
+		installMax = defaultMaxLeaseTTL
+	}
+	if ttl > installMax {
+		ttl = installMax
 	}
 	return ttl
 }
@@ -437,6 +494,16 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 		if hardCap := lease.IssuedAt.Add(time.Duration(cfg.MaxTTLSeconds) * time.Second); newExpiry.After(hardCap) {
 			newExpiry = hardCap
 		}
+	}
+	// ...nor past the install-wide ceiling (#97) — same reasoning as dynamicTTL: the
+	// per-config ceiling above is optional and defaults to unbounded, so a renewal
+	// alone could otherwise stretch a lease's total lifetime arbitrarily far.
+	installMax := c.dynamicMaxLeaseTTL
+	if installMax <= 0 {
+		installMax = defaultMaxLeaseTTL
+	}
+	if hardCap := lease.IssuedAt.Add(installMax); newExpiry.After(hardCap) {
+		newExpiry = hardCap
 	}
 	if !newExpiry.After(lease.ExpiresAt) {
 		return time.Time{}, fmt.Errorf("renewal would not extend the lease (max-TTL ceiling reached)")

@@ -49,6 +49,11 @@ type KeyorixCore struct {
 	// enforce a lease's TTL, so IssueLease refuses to mint from them when it is off
 	// (the credential would otherwise never expire). Set via SetDynamicSweepEnabled.
 	dynamicSweepEnabled bool
+	// dynamicMaxLeaseTTL mirrors config dynamic_secrets.max_lease_ttl (#97): a hard,
+	// install-wide ceiling dynamicTTL enforces alongside (never instead of) each
+	// config's own MaxTTLSeconds, which has no ceiling of its own. Zero = the
+	// package default (90 days) applies. Set via SetDynamicMaxLeaseTTL.
+	dynamicMaxLeaseTTL time.Duration
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
 	// Set from config at startup via SetWebAuthn.
 	webauthnRP     *webauthn.WebAuthn
@@ -449,6 +454,15 @@ func (c *KeyorixCore) SetDynamicEngineFactory(f func(string) (dynamic.Credential
 // to mint a credential from a backend whose TTL only the sweeper would enforce.
 func (c *KeyorixCore) SetDynamicSweepEnabled(enabled bool) {
 	c.dynamicSweepEnabled = enabled
+}
+
+// SetDynamicMaxLeaseTTL sets the install-wide dynamic-secret lease TTL ceiling
+// (config dynamic_secrets.max_lease_ttl, #97). A non-positive value is ignored — the
+// package default (90 days) applies instead of disabling the ceiling.
+func (c *KeyorixCore) SetDynamicMaxLeaseTTL(ttl time.Duration) {
+	if ttl > 0 {
+		c.dynamicMaxLeaseTTL = ttl
+	}
 }
 
 // dynamicEngine resolves an engine for a backend type via the factory (or the
