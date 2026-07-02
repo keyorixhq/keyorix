@@ -446,8 +446,9 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
-	offset := (filter.Page - 1) * filter.PageSize
-	query = query.Offset(offset).Limit(filter.PageSize)
+	pageSize := clampPageSize(filter.PageSize)
+	offset := (filter.Page - 1) * pageSize
+	query = query.Offset(offset).Limit(pageSize)
 
 	var secrets []*models.SecretNode
 	if err := query.Find(&secrets).Error; err != nil {
