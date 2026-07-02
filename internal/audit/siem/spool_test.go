@@ -46,7 +46,14 @@ func TestSpool_PersistsAndReplaysOnRecovery(t *testing.T) {
 	// Long interval so we drive replay() manually and avoid timing flakiness.
 	s, err := newSpool(dir, time.Hour, d.deliver)
 	require.NoError(t, err)
-	t.Cleanup(s.close)
+	// Stop the background replay loop up front so ONLY the controlled replay() calls
+	// below run. Otherwise the loop's own initial drain (loop() calls replay() once,
+	// immediately, on its own goroutine — the long interval only governs the ticker
+	// AFTER that) races the manual calls below on an arbitrary scheduling delay: two
+	// concurrent replay()s can each independently deliver the same still-spooled lines
+	// before either reconciles, double-recording the delivery — this made the test
+	// flaky in CI. close() only stops the goroutine; add()/replay() remain usable.
+	s.close()
 
 	// Spool two events while the SIEM is "down".
 	tr := true
