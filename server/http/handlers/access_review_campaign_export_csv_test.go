@@ -40,6 +40,11 @@ func TestExportAccessReviewCampaignCSV(t *testing.T) {
 		Source: "role", RoleName: "viewer", AccessLevel: "read", EnvironmentID: 2,
 		Decision: "revoked", Reason: "left team", DecidedBy: 1, DecidedAt: &decided,
 	}).Error)
+	require.NoError(t, db.Create(&models.AccessReviewItem{
+		ID: 3, CampaignID: 5, PrincipalType: "user", PrincipalID: 12, PrincipalName: `=cmd|'/c calc'!A1`,
+		Source: "role", RoleName: "viewer", AccessLevel: "read", EnvironmentID: 2,
+		Decision: "attested", DecidedBy: 1, DecidedAt: &decided,
+	}).Error)
 
 	h := NewCatalogHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 
@@ -56,7 +61,7 @@ func TestExportAccessReviewCampaignCSV(t *testing.T) {
 
 		body := w.Body.String()
 		lines := strings.Split(strings.TrimSpace(body), "\n")
-		require.Len(t, lines, 3, "header + two items")
+		require.Len(t, lines, 4, "header + three items")
 		assert.Equal(t, "principal_type,principal,email,source,role,access_level,environment_id,secret,last_used_at,decision,reason,decided_by,decided_at", strings.TrimSpace(lines[0]))
 		assert.Contains(t, body, "alice")
 		assert.Contains(t, body, "attested")
@@ -64,6 +69,21 @@ func TestExportAccessReviewCampaignCSV(t *testing.T) {
 		assert.Contains(t, body, "revoked")
 		assert.Contains(t, body, "left team")
 		assert.Contains(t, body, "auditor", "decider username is resolved")
+	})
+
+	t.Run("neutralizes a formula-injection payload in a user-controlled field", func(t *testing.T) {
+		req := withChiParams(withUserCtx(httptest.NewRequest(http.MethodGet,
+			"/api/v1/projects/1/access-review/campaigns/5/export.csv", nil)),
+			map[string]string{"id": "1", "campaignId": "5"})
+		w := httptest.NewRecorder()
+		h.ExportAccessReviewCampaignCSV(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		// "bob"'s reason cell starts with plain text; verify the injected principal name
+		// carries a leading formula-trigger character defanged with a leading single quote.
+		assert.NotContains(t, body, "\n=cmd|'/c calc'!A1", "a raw leading-= cell must never reach the CSV body")
+		assert.Contains(t, body, "'=cmd|'/c calc'!A1", "formula-trigger prefix must be neutralized with a leading quote")
 	})
 
 	t.Run("requires a user context", func(t *testing.T) {

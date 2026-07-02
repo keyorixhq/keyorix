@@ -103,14 +103,29 @@ func (s *ChatSink) send(ctx context.Context, ev core.NotificationEvent) (retryab
 	return retryable, fmt.Errorf("%s webhook returned %s", s.cfg.Kind, strings.TrimSpace(resp.Status))
 }
 
+// mrkdwnEscaper neutralizes Slack/Teams mrkdwn control syntax before a user-
+// controllable string (secret name, project name, etc.) is interpolated into a chat
+// payload. Slack's incoming-webhook `text` field parses `<...>` as a link/mention
+// token (`<!channel>`, `<@USERID>`, `<https://evil.com|label>`) by default; escaping
+// `<`/`>` (and `&`, so the escape sequences themselves can't be re-interpreted) turns
+// any such sequence back into inert literal text. Teams' MessageCard fields share the
+// same HTML-ish escaping convention, so the same replacer is safe for both platforms.
+var mrkdwnEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// escapeMrkdwn applies mrkdwnEscaper to a single string.
+func escapeMrkdwn(s string) string {
+	return mrkdwnEscaper.Replace(s)
+}
+
 // chatText renders the notification as a single plain-text message (no remote
-// resources), shared by both platforms.
+// resources), shared by both platforms. Title/Message may embed user-controllable
+// values (secret/project names), so both are mrkdwn-escaped before interpolation.
 func chatText(ev core.NotificationEvent) string {
 	var b strings.Builder
 	if ev.Title != "" {
-		fmt.Fprintf(&b, "*%s*\n", ev.Title)
+		fmt.Fprintf(&b, "*%s*\n", escapeMrkdwn(ev.Title))
 	}
-	b.WriteString(ev.Message)
+	b.WriteString(escapeMrkdwn(ev.Message))
 	if ev.Link != "" {
 		fmt.Fprintf(&b, "\n%s", ev.Link)
 	}
@@ -118,7 +133,9 @@ func chatText(ev core.NotificationEvent) string {
 }
 
 // chatPayload builds the platform-specific JSON body. Slack incoming webhooks take
-// {text}; Teams connectors take a MessageCard.
+// {text}; Teams connectors take a MessageCard. Every field sourced from
+// user-controllable data (Title, Message) is mrkdwn-escaped before it reaches either
+// payload shape.
 func chatPayload(kind ChatKind, ev core.NotificationEvent) interface{} {
 	text := chatText(ev)
 	if kind == ChatTeams {
@@ -129,9 +146,9 @@ func chatPayload(kind ChatKind, ev core.NotificationEvent) interface{} {
 		return map[string]interface{}{
 			"@type":    "MessageCard",
 			"@context": "https://schema.org/extensions",
-			"summary":  title,
-			"title":    title,
-			"text":     ev.Message,
+			"summary":  escapeMrkdwn(title),
+			"title":    escapeMrkdwn(title),
+			"text":     escapeMrkdwn(ev.Message),
 		}
 	}
 	return map[string]string{"text": text}

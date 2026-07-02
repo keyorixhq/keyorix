@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
@@ -155,16 +156,32 @@ func (v *Validator) applyRule(fieldName string, field reflect.Value, ruleName, p
 		return v.validateNumeric(field)
 	case "oneof":
 		return v.validateOneOf(field, param)
+	case "identifier":
+		return v.validateIdentifier(field)
 	}
 
 	return nil
+}
+
+// isBlank reports whether s has no visible content once ordinary whitespace and
+// Unicode zero-width/format (Cf) and control (Cc) characters (e.g. U+200B ZERO WIDTH
+// SPACE) are disregarded. Used by isEmpty so a whitespace-only or zero-width-only
+// string doesn't pass a `required` check.
+func isBlank(s string) bool {
+	for _, r := range s {
+		if unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Cc, r) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // isEmpty checks if a field is empty
 func (v *Validator) isEmpty(field reflect.Value) bool {
 	switch field.Kind() {
 	case reflect.String:
-		return field.String() == ""
+		return isBlank(field.String())
 	case reflect.Slice, reflect.Map, reflect.Array:
 		return field.Len() == 0
 	case reflect.Pointer, reflect.Interface:
@@ -333,6 +350,35 @@ func (v *Validator) validateNumeric(field reflect.Value) error {
 	numericRegex := regexp.MustCompile(`^[0-9]+$`)
 	if !numericRegex.MatchString(str) {
 		return fmt.Errorf("%s: must contain only numeric characters", i18n.T("ErrorValidation", nil))
+	}
+
+	return nil
+}
+
+// identifierRegex matches a safe resource-identifier charset: letters, digits,
+// spaces, `-`, and `_`. Deliberately excludes punctuation with special meaning
+// elsewhere (CSV-formula triggers, path separators, shell/URL metacharacters) and
+// any character outside this allowlist, so it also rejects zero-width/homograph
+// characters that could otherwise render a name blank or visually deceptive.
+var identifierRegex = regexp.MustCompile(`^[a-zA-Z0-9 _-]+$`)
+
+// validateIdentifier validates that a string is a safe resource identifier: letters,
+// digits, spaces, `-`, `_` only (see identifierRegex). Opt-in via `validate:"identifier"`
+// for Name-like fields that should be restricted to a safe, unambiguous charset — not
+// applied globally, since some fields (e.g. free-form secret names) intentionally allow
+// a broader charset.
+func (v *Validator) validateIdentifier(field reflect.Value) error {
+	if field.Kind() != reflect.String {
+		return nil
+	}
+
+	str := field.String()
+	if str == "" {
+		return nil
+	}
+
+	if !identifierRegex.MatchString(str) {
+		return fmt.Errorf("%s: must contain only letters, digits, spaces, - or _", i18n.T("ErrorValidation", nil))
 	}
 
 	return nil

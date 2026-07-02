@@ -64,6 +64,44 @@ func TestChatSink_TeamsPayload(t *testing.T) {
 	assert.Equal(t, "off-hours access by ada.", card["text"])
 }
 
+func TestChatSink_EscapesMrkdwnControlSequences(t *testing.T) {
+	// A secret/project name crafted to trigger a Slack mention-ping or a spoofed link
+	// must reach the payload as inert literal text, not live mrkdwn control syntax.
+	malicious := `<!channel> your secret <@U12345> was shared, click <https://evil.example/phish|here>`
+
+	t.Run("slack", func(t *testing.T) {
+		srv, get := captureChatServer(t)
+		sink, err := NewChat(ChatConfig{Kind: ChatSlack, WebhookURL: srv.URL})
+		require.NoError(t, err)
+		sink.Deliver(core.NotificationEvent{Title: "Secret shared with you", Message: malicious})
+		sink.Close()
+
+		var payload map[string]string
+		require.NoError(t, json.Unmarshal(get(), &payload))
+		assert.NotContains(t, payload["text"], "<!channel>", "must not carry a live @channel mention token")
+		assert.NotContains(t, payload["text"], "<@U12345>", "must not carry a live user-mention token")
+		assert.NotContains(t, payload["text"], "<https://evil.example/phish|here>", "must not carry a live spoofed-link token")
+		assert.Contains(t, payload["text"], "&lt;!channel&gt;")
+		assert.Contains(t, payload["text"], "&lt;@U12345&gt;")
+		assert.Contains(t, payload["text"], "&lt;https://evil.example/phish|here&gt;")
+	})
+
+	t.Run("teams", func(t *testing.T) {
+		srv, get := captureChatServer(t)
+		sink, err := NewChat(ChatConfig{Kind: ChatTeams, WebhookURL: srv.URL})
+		require.NoError(t, err)
+		sink.Deliver(core.NotificationEvent{Title: "Secret shared with you", Message: malicious})
+		sink.Close()
+
+		var card map[string]interface{}
+		require.NoError(t, json.Unmarshal(get(), &card))
+		text, _ := card["text"].(string)
+		assert.NotContains(t, text, "<!channel>")
+		assert.NotContains(t, text, "<@U12345>")
+		assert.Contains(t, text, "&lt;!channel&gt;")
+	})
+}
+
 func TestNewChat_Validation(t *testing.T) {
 	_, err := NewChat(ChatConfig{Kind: "irc", WebhookURL: "https://x"})
 	require.Error(t, err)
