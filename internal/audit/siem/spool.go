@@ -45,6 +45,15 @@ type spool struct {
 	mu   sync.Mutex // serializes file mutation (append + replay rewrite); NOT held across delivery
 	stop chan struct{}
 	done chan struct{}
+
+	// replayMu serializes replay() itself. In production exactly one goroutine (loop)
+	// ever calls replay(), so this never contends — but replay()'s file mutation lock
+	// (mu) is deliberately released across the network delivery calls, so if replay()
+	// were ever invoked concurrently (e.g. a future manual "flush now" trigger racing
+	// the ticker, or a test driving it directly), two overlapping calls would each
+	// independently snapshot the same undelivered lines and double-deliver them before
+	// either rewrites. This queues concurrent callers instead.
+	replayMu sync.Mutex
 }
 
 // newSpool prepares the spool directory and starts the replay loop.
@@ -124,6 +133,9 @@ func (s *spool) loop() {
 // on the audited request path) never blocks behind a SIEM round-trip. Crash-safe: every
 // undelivered line stays on disk until the atomic rewrite at the end.
 func (s *spool) replay() {
+	s.replayMu.Lock()
+	defer s.replayMu.Unlock()
+
 	// Snapshot under the lock, recording the byte length we read; any add() during the
 	// lock-free delivery below only appends BEYOND this offset (add never rewrites), so the
 	// reconcile can cleanly separate "what we attempted" from "what arrived meanwhile".
