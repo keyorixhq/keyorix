@@ -1399,6 +1399,7 @@ message ConnectRefGrant {
   uint32 role_id = 2;
   string connector = 3;
   string ref_prefix = 4;
+  optional google.protobuf.Timestamp expires_at = 5;
 }
 
 message ConnectRefGrantList {
@@ -1409,6 +1410,7 @@ message CreateConnectRefGrantRequest {
   uint32 role_id = 1;
   string connector = 2;
   string ref_prefix = 3;
+  optional google.protobuf.Timestamp expires_at = 4;
 }
 
 message DeleteConnectRefGrantRequest {

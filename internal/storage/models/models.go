@@ -175,6 +175,11 @@ type RiskException struct {
 // written justification, for incident response (NIS2/DORA). The grant itself is a
 // JIT time-bound role assignment that auto-expires; this record is the queryable,
 // auditable evidence for post-hoc review. State: active → expired | revoked.
+//
+// A partial unique index on (project_id, user_id) WHERE state='active' (created by
+// the storage migration, not expressible via a plain gorm tag) enforces at most one
+// active activation per project+user even under a race — see
+// storage.ErrBreakGlassAlreadyActive.
 type BreakGlassActivation struct {
 	ID            uint       `gorm:"primaryKey" json:"id"`
 	ProjectID     uint       `gorm:"index" json:"project_id"`
@@ -443,6 +448,11 @@ type ConnectRefGrant struct {
 	RoleID    uint   `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:1"`
 	Connector string `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:2"`
 	RefPrefix string `gorm:"not null;uniqueIndex:uq_connect_ref_grant,priority:3"`
+	// ExpiresAt makes a grant time-bound (just-in-time access): nil = permanent;
+	// otherwise the grant stops authorizing the moment it passes. Enforcement checks
+	// this directly so an expired grant is denied immediately, mirroring
+	// UserRole.ExpiresAt / ShareRecord.ExpiresAt.
+	ExpiresAt *time.Time `gorm:"index"`
 	CreatedAt time.Time
 }
 
@@ -497,6 +507,9 @@ type SecretNode struct {
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives
 	// the classification posture and lets a review find high-sensitivity secrets.
+	// LABEL ONLY, NOT A CONTROL — see the KNOWN LIMITATION note on the package doc of
+	// internal/core/classification.go; a "restricted" secret is not currently treated
+	// any differently at read time than a "public" one.
 	Classification string `gorm:"index"`
 	Status         string `gorm:"default:'active'"`
 	CreatedBy      string
@@ -593,6 +606,7 @@ type DynamicSecretConfig struct {
 	// mints (ISO 27001 A.5.12/A.5.13): "" = unclassified, else one of
 	// public|internal|confidential|restricted. Folds into the classification posture
 	// so dynamic credentials are covered alongside static secrets.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
 	// Disabled refuses new IssueLease calls against this config (#369). Set
 	// automatically when the owning project is soft-deleted (DeleteProject's
@@ -1046,6 +1060,7 @@ type MachineIdentity struct {
 	RevokedAt    *time.Time
 	// Classification is the data-sensitivity tier this machine identity handles
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
 }
 
@@ -1066,6 +1081,7 @@ type MachineIdentityCredential struct {
 	CreatedAt         time.Time
 	// Classification is the data-sensitivity tier of what this credential can reach
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
 }
 
