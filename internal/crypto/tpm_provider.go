@@ -7,6 +7,16 @@
 // The seal/unseal command flow is exercised end-to-end against an in-process TPM 2.0
 // simulator in the tests; only the device open is platform-specific (and fail-closed:
 // no TPM ⇒ startup fails loudly, never a silent fallback).
+//
+// KNOWN LIMITATION — no PCR policy binding: the sealed object's auth policy is empty
+// (PasswordAuth(nil)); nothing here builds a PolicyPCR session or seals with an
+// AuthPolicy over a PCR selection. Concretely, this means the seal is bound to "the
+// TPM chip is present and this is the primary it derived at seal time" — NOT to a
+// verified/untampered boot state. Any code path capable of asking this TPM to unseal
+// the blob succeeds regardless of what firmware, bootloader, or kernel got the machine
+// there; a compromised-but-still-genuine boot chain unseals the KEK exactly as
+// successfully as a clean one would. Do not describe this provider as boot-attestation
+// or measured-boot binding until PCR policy sealing is implemented.
 package crypto
 
 import (
@@ -35,6 +45,9 @@ type tpmSealedBlob struct {
 // at blobPath (resolved under baseDir, like the KMS providers' wrapped_key_path);
 // devicePath is the TPM device. open is injectable so the seal/unseal logic can be
 // tested against a simulator.
+//
+// No PCR policy is enforced (see the package doc): the seal is bound to the TPM chip
+// only, not to a verified boot state.
 type TPMKeyProvider struct {
 	devicePath string
 	baseDir    string
@@ -76,7 +89,12 @@ func (p *TPMKeyProvider) KEK() ([]byte, error) {
 	}
 	kek, uerr := p.unseal(blob)
 	if uerr != nil {
-		return nil, fmt.Errorf("tpm key provider: unseal failed (wrong TPM, or blob/PCR mismatch): %w", uerr)
+		// No PCR policy is enforced here (see the package doc), so a PCR/boot-state
+		// mismatch is never the cause of an unseal failure — do not suggest it. The
+		// only reasons this TPM can fail to unseal the blob are: it is not the TPM
+		// (or does not derive the same primary) that sealed it, or the blob itself is
+		// corrupt/truncated.
+		return nil, fmt.Errorf("tpm key provider: unseal failed (not the sealing TPM, or the sealed blob is corrupt): %w", uerr)
 	}
 	return validateKEK(kek, "tpm")
 }

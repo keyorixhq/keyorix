@@ -192,6 +192,11 @@ storage:
   data under a portable provider (or re-seal per host) and note that a TPM
   clear/replacement makes the blob unrecoverable. Move an existing install on with
   `keyorix encryption migrate-provider --to-type tpm --to-wrapped-key-path keys/kek.tpm`.
+  ⚠️ **No PCR policy binding yet**: the seal is bound to "this TPM chip", not to a
+  verified/measured boot state — no PolicyPCR session is used. Any code capable of
+  asking the TPM to unseal the blob succeeds regardless of firmware/bootloader/kernel
+  integrity, so this provider does **not** currently protect against a compromised
+  boot chain on an otherwise-genuine, present TPM.
 - **`aws-kms`** / **`gcp-kms`** / **`azure-kms`** (ADR-041): the KEK is a random key
   **wrapped by a cloud KMS/HSM key**; only the wrapped blob is on disk
   (`wrapped_key_path`), unwrapped via the KMS at startup. The wrapping key never

@@ -70,7 +70,7 @@ func (km *KeyManager) deriveKEK(passphrase string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to ensure salt exists: %w", err)
 	}
-	return GenerateKEK(passphrase, salt, 600000), nil
+	return GenerateKEK(passphrase, salt, DefaultKEKIterations), nil
 }
 
 // KeyInfo contains metadata about encryption keys.

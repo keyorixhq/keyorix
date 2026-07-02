@@ -67,10 +67,20 @@ func NewEncryptionService(kek []byte) (*EncryptionService, error) {
 	}, nil
 }
 
-// GenerateKEK generates a new Key Encryption Key using PBKDF2
+// DefaultKEKIterations is the PBKDF2-HMAC-SHA256 iteration count GenerateKEK falls
+// back to when the caller passes 0. 600,000 matches OWASP's current (2023+)
+// recommended minimum for PBKDF2-HMAC-SHA256 and the value already used explicitly by
+// the legacy passphrase KEK-derivation path (KeyManager.deriveKEK) — this constant
+// keeps the two in sync instead of drifting apart. The prior fallback (100,000) was a
+// materially weaker default from an older OWASP guideline generation, worth roughly
+// 6x less brute-force resistance.
+const DefaultKEKIterations = 600000
+
+// GenerateKEK generates a new Key Encryption Key using PBKDF2. iterations == 0 uses
+// DefaultKEKIterations.
 func GenerateKEK(password string, salt []byte, iterations int) []byte {
 	if iterations == 0 {
-		iterations = 100000 // Default iterations
+		iterations = DefaultKEKIterations
 	}
 	return pbkdf2.Key([]byte(password), salt, iterations, 32, sha256.New)
 }
