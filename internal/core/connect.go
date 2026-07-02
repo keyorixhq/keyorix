@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -45,8 +46,12 @@ func (c *KeyorixCore) ConnectConnectorNames() []string {
 // ReadFederatedSecret proxies a read of ref from the named external-store connector
 // and audits it. The caller (transport layer) must have already enforced the global
 // connect.read permission; actorType ("user" / "machine_identity") and principalID
-// identify the caller for per-reference RBAC (ADR-045). The value is returned to the
-// caller and never persisted.
+// identify the caller for per-reference RBAC (ADR-045). The audit events this writes
+// are stamped with actorType directly (via WithActorType) rather than trusting that
+// the caller's ctx already carries the matching tag — a machine-identity read must be
+// attributed as ActorTypeMachine (ADR-023) even if a future/CLI caller reaches this
+// function with an untagged context, not silently default to "user". The value is
+// returned to the caller and never persisted.
 func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string, principalID uint, connectorName, ref string) (string, error) {
 	if c.connectManager == nil {
 		return "", fmt.Errorf("keyorix connect is not enabled")
@@ -55,6 +60,7 @@ func (c *KeyorixCore) ReadFederatedSecret(ctx context.Context, actorType string,
 	if !ok {
 		return "", fmt.Errorf("unknown connector %q", connectorName)
 	}
+	ctx = WithActorType(ctx, actorType)
 	uid := principalID
 
 	// Per-reference RBAC (ADR-045): once a connector has any ref-grant, the read is
@@ -89,8 +95,11 @@ func (c *KeyorixCore) ListConnectRefGrants(ctx context.Context) ([]*models.Conne
 // CreateConnectRefGrant adds a per-reference grant (ADR-045): role roleID may read any
 // ref under refPrefix ("" = all) on connectorName. The connector must be configured —
 // scoping a non-existent (typo'd) connector is rejected so an operator can't believe
-// they restricted a connector that is in fact still unscoped. Audited.
-func (c *KeyorixCore) CreateConnectRefGrant(ctx context.Context, actorID, roleID uint, connectorName, refPrefix string) (*models.ConnectRefGrant, error) {
+// they restricted a connector that is in fact still unscoped. expiresAt makes the
+// grant time-bound (nil = permanent), mirroring UserRole.ExpiresAt / ShareRecord.
+// ExpiresAt — a Connect grant is otherwise permanent with no way to make it JIT.
+// Audited.
+func (c *KeyorixCore) CreateConnectRefGrant(ctx context.Context, actorID, roleID uint, connectorName, refPrefix string, expiresAt *time.Time) (*models.ConnectRefGrant, error) {
 	if c.connectManager == nil {
 		return nil, fmt.Errorf("keyorix connect is not enabled")
 	}
@@ -104,6 +113,7 @@ func (c *KeyorixCore) CreateConnectRefGrant(ctx context.Context, actorID, roleID
 		RoleID:    roleID,
 		Connector: connectorName,
 		RefPrefix: refPrefix,
+		ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		return nil, err
@@ -143,12 +153,21 @@ func (c *KeyorixCore) connectRefAllowed(ctx context.Context, actorType string, p
 	if err != nil {
 		return false, err
 	}
+	now := time.Now()
 	for _, g := range grants {
-		if roleSet[g.RoleID] && refMatches(g.RefPrefix, ref) {
+		if roleSet[g.RoleID] && connectGrantActive(g, now) && refMatches(g.RefPrefix, ref) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// connectGrantActive reports whether a Connect ref-grant still authorizes at time now:
+// a nil ExpiresAt is permanent, otherwise the grant stops authorizing the instant it
+// passes — mirroring shareActive / UserRole.ExpiresAt. An expired grant is denied
+// immediately here; a background sweep is not required for correctness.
+func connectGrantActive(g *models.ConnectRefGrant, now time.Time) bool {
+	return g.ExpiresAt == nil || now.Before(*g.ExpiresAt)
 }
 
 // refMatches reports whether ref is covered by a grant's pattern (ADR-045). A pattern

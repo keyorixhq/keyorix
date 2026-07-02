@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -78,13 +79,17 @@ func (h *ConnectHandler) ListRefGrants(w http.ResponseWriter, r *http.Request) {
 			"role_id":    g.RoleID,
 			"connector":  g.Connector,
 			"ref_prefix": g.RefPrefix,
+			"expires_at": g.ExpiresAt,
 			"created_at": g.CreatedAt,
 		})
 	}
 	sendSuccess(w, map[string]interface{}{"grants": out}, "")
 }
 
-// CreateRefGrant adds a per-reference grant (ADR-045).
+// CreateRefGrant adds a per-reference grant (ADR-045). ExpiresAt is optional: omitted
+// or null makes the grant permanent (backward compatible); otherwise the grant stops
+// authorizing the moment it passes, mirroring how secret shares support a time-bound,
+// JIT expiry.
 func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -92,15 +97,16 @@ func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		RoleID    uint   `json:"role_id"`
-		Connector string `json:"connector"`
-		RefPrefix string `json:"ref_prefix"`
+		RoleID    uint       `json:"role_id"`
+		Connector string     `json:"connector"`
+		RefPrefix string     `json:"ref_prefix"`
+		ExpiresAt *time.Time `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidParameter", "invalid JSON body", http.StatusBadRequest, nil)
 		return
 	}
-	g, err := h.coreService.CreateConnectRefGrant(r.Context(), userCtx.UserID, body.RoleID, body.Connector, body.RefPrefix)
+	g, err := h.coreService.CreateConnectRefGrant(r.Context(), userCtx.UserID, body.RoleID, body.Connector, body.RefPrefix, body.ExpiresAt)
 	if err != nil {
 		sendError(w, "ConnectError", err.Error(), http.StatusBadRequest, nil)
 		return
@@ -110,6 +116,7 @@ func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) 
 		"role_id":    g.RoleID,
 		"connector":  g.Connector,
 		"ref_prefix": g.RefPrefix,
+		"expires_at": g.ExpiresAt,
 	}, "Connect ref-grant created")
 }
 
