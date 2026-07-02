@@ -438,6 +438,62 @@ func TestExtract_FirstInstallOnEmptyDestStillAllowed(t *testing.T) {
 	}
 }
 
+// TestExtract_RefusesPrePlantedSymlink proves the #152 fix: a symlink pre-planted at a path
+// the extraction process would otherwise write into (before the legitimate operator runs a
+// genuinely-signed bundle import) must be refused, not followed — the trusted bundle content
+// must never land outside the staging root.
+func TestExtract_RefusesPrePlantedSymlink(t *testing.T) {
+	raw, reg, _ := signedBundle(t, map[string]string{"images/keyorix-server.tar": "image-bytes"}, "v1.0.0", "update-2026", "")
+
+	dest := t.TempDir()
+	outside := t.TempDir()
+	// Pre-plant "<dest>/images" as a symlink pointing OUTSIDE the staging root, exactly the
+	// classic insecure-staging-directory precondition: an attacker with local write access to
+	// the destination path plants this before the legitimate import runs.
+	if err := os.Symlink(outside, filepath.Join(dest, "images")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, err := Extract(bytes.NewReader(raw), reg, dest, ""); err == nil {
+		t.Fatalf("Extract must refuse to follow a pre-planted symlink, got nil error")
+	}
+
+	// Nothing must have been written through the symlink into the outside directory.
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatalf("readdir outside: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("bundle content escaped the staging root into %s: %v", outside, entries)
+	}
+}
+
+// TestExtract_RefusesSymlinkedStagingRoot proves the staging ROOT itself (not just a nested
+// component) is checked: if the operator-supplied --dest path has been pre-planted as a
+// symlink, Extract must refuse rather than stage trusted content through it.
+func TestExtract_RefusesSymlinkedStagingRoot(t *testing.T) {
+	raw, reg, _ := signedBundle(t, map[string]string{"images/a.tar": "x"}, "v1.0.0", "update-2026", "")
+
+	parent := t.TempDir()
+	outside := t.TempDir()
+	dest := filepath.Join(parent, "staging")
+	if err := os.Symlink(outside, dest); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, err := Extract(bytes.NewReader(raw), reg, dest, ""); err == nil {
+		t.Fatalf("Extract must refuse a symlinked staging root, got nil error")
+	}
+
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatalf("readdir outside: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("bundle content escaped through the symlinked root into %s: %v", outside, entries)
+	}
+}
+
 // assertDirEmpty fails if dir contains any regular file (temp files included), proving a
 // fail-closed Extract staged nothing.
 func assertDirEmpty(t *testing.T, dir string) {
