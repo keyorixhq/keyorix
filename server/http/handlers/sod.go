@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,7 +19,8 @@ import (
 func (h *CatalogHandler) ListSoDPolicies(w http.ResponseWriter, r *http.Request) {
 	policies, err := h.coreService.ListSoDPolicies(r.Context())
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing SoD policies: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"policies": policies, "count": len(policies)}, "")
@@ -44,10 +46,14 @@ func (h *CatalogHandler) CreateSoDPolicy(w http.ResponseWriter, r *http.Request)
 	policy, err := h.coreService.CreateSoDPolicy(r.Context(), actor.UserID, body.Name, body.Description, body.PermissionA, body.PermissionB)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be different") {
+		msg := err.Error()
+		if strings.Contains(msg, "required") || strings.Contains(msg, "must be different") {
 			status = http.StatusBadRequest
+		} else {
+			log.Printf("Error creating SoD policy: %v", err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -68,10 +74,14 @@ func (h *CatalogHandler) DeleteSoDPolicy(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.coreService.DeleteSoDPolicy(r.Context(), actor.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("Error deleting SoD policy %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Policy deleted")
@@ -81,7 +91,8 @@ func (h *CatalogHandler) DeleteSoDPolicy(w http.ResponseWriter, r *http.Request)
 func (h *CatalogHandler) ListSoDViolations(w http.ResponseWriter, r *http.Request) {
 	violations, err := h.coreService.DetectSoDViolations(r.Context())
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error detecting SoD violations: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"violations": violations, "count": len(violations)}, "")

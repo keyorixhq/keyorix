@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,7 +38,8 @@ func (h *CatalogHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	includeDeleted := r.URL.Query().Get("include_deleted") == "true"
 	projects, err := h.coreService.ListProjectsWithCounts(r.Context(), includeDeleted)
 	if err != nil {
-		sendError(w, "Failed to list projects", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing projects: %v", err)
+		sendError(w, "Failed to list projects", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"projects": projects}, "")
@@ -53,10 +55,14 @@ func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := h.coreService.RestoreProject(r.Context(), actorID(r), uint(id)); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("Error restoring project %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Project restored")
@@ -72,7 +78,12 @@ func (h *CatalogHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 	}
 	project, err := h.coreService.GetProject(r.Context(), uint(id))
 	if err != nil {
-		sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
+		if strings.Contains(err.Error(), "not found") {
+			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
+			return
+		}
+		log.Printf("Error getting project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, project, "")
@@ -126,7 +137,8 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		project, err = h.coreService.CreateProject(r.Context(), body.Name, body.Description)
 	}
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error creating project: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -137,7 +149,8 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 func (h *CatalogHandler) ListEnvironments(w http.ResponseWriter, r *http.Request) {
 	environments, err := h.coreService.ListEnvironments(r.Context())
 	if err != nil {
-		sendError(w, "Failed to list environments", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing environments: %v", err)
+		sendError(w, "Failed to list environments", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"environments": environments}, "")
@@ -178,7 +191,16 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	project, err := h.coreService.UpdateProject(r.Context(), uint(id), body.Name, body.Description, body.RequireMFA)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "name is required"), strings.Contains(msg, "exceeds"):
+			status = http.StatusBadRequest
+		default:
+			log.Printf("Error updating project %d: %v", id, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, project, "Project updated")
@@ -196,10 +218,14 @@ func (h *CatalogHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "true"
 	if err := h.coreService.DeleteProject(r.Context(), uint(id), force); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "secret(s)") {
+		msg := err.Error()
+		if strings.Contains(msg, "secret(s)") {
 			status = http.StatusConflict
+		} else {
+			log.Printf("Error deleting project %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Project deleted")
@@ -237,7 +263,8 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 		Name:      body.Name,
 	})
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error creating environment for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -255,10 +282,14 @@ func (h *CatalogHandler) DeleteEnvironment(w http.ResponseWriter, r *http.Reques
 	if err := h.coreService.DeleteEnvironment(r.Context(), uint(id)); err != nil {
 		msg := err.Error()
 		status := http.StatusInternalServerError
-		if strings.Contains(msg, "active secret") {
+		switch {
+		case strings.Contains(msg, "active secret"):
 			status = http.StatusConflict
-		} else if strings.Contains(msg, "not found") {
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
+		default:
+			log.Printf("Error deleting environment %d: %v", id, err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return
@@ -282,7 +313,8 @@ func (h *CatalogHandler) ListProjectEnvironments(w http.ResponseWriter, r *http.
 		environments, err = h.coreService.ListEnvironmentsByProject(r.Context(), uint(id))
 	}
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing environments for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"environments": environments}, "")
@@ -304,10 +336,14 @@ func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Reque
 	}
 	if err := h.coreService.RestoreEnvironment(r.Context(), actorID(r), uint(projectID), uint(id)); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("Error restoring environment %d in project %d: %v", id, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Environment restored")
