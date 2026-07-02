@@ -40,6 +40,12 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if req.GetName() == "" || req.GetDescription() == "" || len(req.GetPermissions()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "name, description and at least one permission are required")
 	}
+	// #294: reserved role names must never be creatable — see the identical guard (with
+	// full rationale) in the HTTP RBACHandler.CreateRole. This closes the same gap over
+	// gRPC, which has its own independent CreateRole path.
+	if core.IsBuiltinRole(req.GetName()) {
+		return nil, status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
+	}
 
 	permIDs, err := s.resolvePermissionIDs(ctx, actor.UserID, req.GetPermissions())
 	if err != nil {

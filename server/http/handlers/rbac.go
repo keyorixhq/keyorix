@@ -138,6 +138,21 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// #294: reserved role names (super_admin/admin/system_admin/project_admin/...) must
+	// never be creatable through the API. Bootstrap-seeded builtins (admin, system_admin,
+	// project_admin, ...) already collide with an existing row on the DB's unique(name)
+	// constraint, but "super_admin" and "auditor" are pinned as builtin/reserved (see
+	// IsBuiltinRole) WITHOUT ever being seeded — nothing previously stopped a roles.write
+	// holder from creating an empty-permission role literally named "super_admin".
+	// roleSetContainsAdmin (authz.go) grants a full admin bypass by NAME match alone, not
+	// by permission content, so that role — despite holding zero permissions and
+	// trivially satisfying #169's "must already hold every bundled permission" check —
+	// would function as a complete admin-bypass switch the moment it's assigned.
+	if core.IsBuiltinRole(req.Name) {
+		sendError(w, "ConflictError", "this role name is reserved and cannot be created", http.StatusConflict, nil)
+		return
+	}
+
 	// #169: resolve + authorize every requested permission BEFORE creating anything,
 	// so a request naming even one permission the actor doesn't hold fails the whole
 	// creation loudly (403) instead of silently creating a role missing just that

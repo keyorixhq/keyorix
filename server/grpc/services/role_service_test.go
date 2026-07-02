@@ -281,6 +281,40 @@ func TestRoleService_UpdateRole_RolesWriteHolderCannotAddSystemWrite(t *testing.
 	assert.Equal(t, int64(1), permCount, "the role's permission set must be unchanged")
 }
 
+// #294: closes the same reserved-name admin-bypass gap as the HTTP handler test
+// (rbac_role_escalation_test.go's TestCreateRole_CannotClaimReservedAdminBypassName)
+// over gRPC, which has its own independent CreateRole path.
+func TestRoleService_CreateRole_CannotClaimReservedAdminBypassName(t *testing.T) {
+	svc, h := newRoleService(t)
+	roleEditor := h.CreateTestRole(t, "role-editor-2", "can edit roles only", 102)
+	require.NoError(t, h.DB.Exec(
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		roleEditor.ID).Error)
+	h.CreateTestUser(t, "attacker3", 702)
+	h.AssignUserRole(t, 702, roleEditor.ID, nil)
+
+	ctx := authCtx(702, "attacker3")
+	// RBACTestHelper.SeedDefaultRolesAndPermissions pre-seeds "super_admin"/"admin"/
+	// "editor"/"viewer"/"auditor"/"system_viewer" as realistic fixture roles — a fresh
+	// create attempt for any of THOSE names would collide with the unique(name)
+	// constraint regardless of this fix, so AlreadyExists alone doesn't prove the
+	// reserved-name guard fired for them. "system_admin" and "project_admin" are NOT
+	// pre-seeded by this harness, so their rejection can only come from the guard.
+	for _, reserved := range []string{"super_admin", "auditor", "admin", "system_admin", "project_admin"} {
+		_, err := svc.CreateRole(ctx, &pb.CreateRoleRequest{
+			Name: reserved, Description: "reserved-name attempt", Permissions: []string{"roles.write"},
+		})
+		require.Error(t, err, "creating a role named %q must be refused", reserved)
+		assert.Equal(t, codes.AlreadyExists, status.Code(err))
+	}
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.Role{}).Where("name = ?", "system_admin").Count(&count).Error)
+	assert.Zero(t, count, "no role named system_admin must exist — this name isn't pre-seeded, so its rejection proves the guard fired")
+	require.NoError(t, h.DB.Model(&models.Role{}).Where("name = ?", "project_admin").Count(&count).Error)
+	assert.Zero(t, count, "no role named project_admin must exist — this name isn't pre-seeded, so its rejection proves the guard fired")
+}
+
 func TestRoleService_RemoveRole(t *testing.T) {
 	svc, h := newRoleService(t)
 	user := h.CreateTestUser(t, "removee", 501)
