@@ -61,6 +61,24 @@ func TestSecureWriteFileSyncRoundTripAndPerms(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+// TestSecureWriteFileEnforcesPermsOnExistingFile pins the #206 fix: a pre-existing file
+// with looser perms (e.g. inherited from a backup/dotfiles-sync/rsync, or an older client
+// version predating secure-write conventions) must be tightened to the requested mode on
+// the next SecureWriteFile call — O_TRUNC alone preserves the old mode; the explicit
+// Chmod fixes it, mirroring SecureWriteFileSync's already-correct pattern.
+func TestSecureWriteFileEnforcesPermsOnExistingFile(t *testing.T) {
+	base := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(base, "cfg.yaml"), []byte("old"), 0644))
+	require.NoError(t, SecureWriteFile(base, "cfg.yaml", []byte("new"), 0600))
+
+	info, err := os.Stat(filepath.Join(base, "cfg.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	got, err := SafeReadFile(base, "cfg.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("new"), got)
+}
+
 func TestSecureWriteFileSyncEnforcesPermsOnExistingFile(t *testing.T) {
 	base := t.TempDir()
 	// A pre-existing file with looser perms must be tightened to the requested mode

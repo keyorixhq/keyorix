@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	runEnv     string
-	runProject string
-	runToken   string
+	runEnv      string
+	runProject  string
+	runToken    string
+	runCleanEnv bool
 )
 
 // RunCmd is the top-level 'run' command.
@@ -46,7 +47,16 @@ Authentication:
   • Session tokens written by 'keyorix auth login' are used automatically
     when the CLI is in client mode.
   • For service accounts / CI/CD, set KEYORIX_TOKEN (or --token) and
-    point the CLI at a server with 'keyorix connect' or KEYORIX_SERVER.`,
+    point the CLI at a server with 'keyorix connect' or KEYORIX_SERVER.
+
+Environment isolation:
+  • By default the child process inherits the FULL parent environment plus
+    the injected secrets, matching how most shells/tools behave.
+  • Pass --clean-env to start the child from ONLY the injected secrets
+    (plus a minimal PATH/HOME baseline) instead — use this when you don't
+    want the child to also see whatever else is already exported in the
+    invoking shell (a leftover token from a prior 'keyorix run', an
+    unrelated CI secret, etc.).`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runRun,
 }
@@ -55,6 +65,7 @@ func init() {
 	RunCmd.Flags().StringVar(&runEnv, "env", "development", "Environment name (e.g. production)")
 	RunCmd.Flags().StringVar(&runProject, "project", "", "Project name (overrides KEYORIX_PROJECT and active project)")
 	RunCmd.Flags().StringVar(&runToken, "token", "", "Service or session token (overrides KEYORIX_TOKEN env var)")
+	RunCmd.Flags().BoolVar(&runCleanEnv, "clean-env", false, "Start the child process with ONLY the injected secrets (plus a minimal PATH/HOME baseline) instead of the full inherited parent environment")
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
@@ -90,7 +101,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fetchErr
 	}
 
-	return execChild(args, envVars)
+	return execChild(args, envVars, runCleanEnv)
 }
 
 // ── Embedded mode ─────────────────────────────────────────────────────────────
@@ -300,12 +311,16 @@ func toEnvKey(name string) string {
 	return b.String()
 }
 
-// execChild builds the child environment and executes the command.
-func execChild(args []string, extraEnv map[string]string) error {
-	childEnv := os.Environ()
-	for k, v := range extraEnv {
-		childEnv = append(childEnv, k+"="+v)
-	}
+// execChild builds the child environment and executes the command. By default (cleanEnv
+// false) the child inherits the FULL parent environment plus the injected secrets — the
+// long-standing, backward-compatible behavior. With cleanEnv true (--clean-env), the child
+// starts from ONLY the injected secrets plus a minimal PATH/HOME baseline so it can still
+// locate binaries and its home directory; every other variable already present in the
+// invoking shell (a leftover token from a prior `keyorix run`, an unrelated CI secret, etc.)
+// is NOT inherited. This is opt-in hardening for #164 — the root cause underlying the
+// already-fixed #103 KEYORIX_TOKEN-specific leak, broader than that one variable.
+func execChild(args []string, extraEnv map[string]string, cleanEnv bool) error {
+	childEnv := buildChildEnv(extraEnv, cleanEnv)
 
 	c := exec.Command(args[0], args[1:]...) // #nosec G204
 	c.Stdin = os.Stdin
@@ -321,4 +336,27 @@ func execChild(args []string, extraEnv map[string]string) error {
 		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil
+}
+
+// buildChildEnv computes the environment slice passed to the child process. By default
+// (cleanEnv false) it starts from the FULL parent environment (os.Environ()) — the
+// long-standing, backward-compatible behavior. With cleanEnv true it starts from ONLY a
+// minimal PATH/HOME baseline (so the child can still locate binaries and its home
+// directory), NOT the rest of the parent environment. In both cases extraEnv (the injected
+// secrets) is appended last.
+func buildChildEnv(extraEnv map[string]string, cleanEnv bool) []string {
+	var childEnv []string
+	if cleanEnv {
+		for _, k := range []string{"PATH", "HOME"} {
+			if v, ok := os.LookupEnv(k); ok {
+				childEnv = append(childEnv, k+"="+v)
+			}
+		}
+	} else {
+		childEnv = os.Environ()
+	}
+	for k, v := range extraEnv {
+		childEnv = append(childEnv, k+"="+v)
+	}
+	return childEnv
 }

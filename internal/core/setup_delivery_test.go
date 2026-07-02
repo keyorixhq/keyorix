@@ -147,6 +147,8 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	ctx := context.Background()
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
+	fixed := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return fixed }
 	c.SetCredentialDelivery(&fakeDeliverer{echoLink: true, result: delivery.DeliveryResult{Channel: delivery.ChannelOutOfBand}}, testBaseURL)
 	anyAudit(ms)
 
@@ -162,6 +164,10 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	})).Return(created, nil)
 	ms.On("AddPasswordHistory", ctx, uint(9), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 	ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, notFound())
+	// The initial provision is throttle-checked too (#183) — a fresh email with no
+	// prior tokens clears both checks.
+	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-24*time.Hour)).Return(int64(0), nil)
+	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-resendMinInterval)).Return(int64(0), nil)
 	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "dana@acme.io").Return(nil)
 	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
 
@@ -173,6 +179,65 @@ func TestCreateUserWithSetupLink(t *testing.T) {
 	ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	require.NotNil(t, prov)
 	assert.True(t, strings.HasPrefix(prov.LinkForAdmin, testBaseURL+"/auth/setup/"+setupPrefix))
+}
+
+// TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop proves the #183 fix: a
+// create→soft-delete→recreate loop against the SAME email must be throttled on the Nth
+// attempt within the cooldown window, exactly like an explicit resend — because
+// DeleteUser is an unconditional soft delete and GetUserByEmail excludes soft-deleted
+// rows, the email is immediately reusable for another CreateUserWithSetupLink call, and
+// without this fix each such "recreate" would look like a fresh, unthrottled initial
+// provision and send another email with no cooldown and no daily cap.
+func TestCreateUserWithSetupLink_ThrottlesCreateDeleteRecreateLoop(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	fixed := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return fixed }
+	c.SetCredentialDelivery(&fakeDeliverer{echoLink: true, result: delivery.DeliveryResult{Channel: delivery.ChannelOutOfBand}}, testBaseURL)
+	anyAudit(ms)
+
+	notFound := func() error { return assertNotFoundErr() }
+	req := &CreateUserRequest{Username: "dana", Email: "dana@acme.io", DisplayName: "Dana"}
+
+	// First create→provision succeeds (the recreated user gets a fresh row/ID after the
+	// prior one was soft-deleted, but the email — and so the throttle key — is the same).
+	ms.On("GetUserByUsername", ctx, "dana").Return(nil, notFound())
+	ms.On("GetUserByEmail", ctx, "dana@acme.io").Return(nil, notFound())
+	ms.On("CreateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
+		return u.AccountState == AccountPendingFirstLogin
+	})).Return(&models.User{ID: 20, Username: "dana", Email: "dana@acme.io", AccountState: AccountPendingFirstLogin}, nil).Once()
+	ms.On("AddPasswordHistory", ctx, uint(20), mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
+	ms.On("GetRoleByName", ctx, "system_viewer").Return(nil, notFound())
+	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
+	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
+	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposeAccountSetup, "dana@acme.io").Return(nil).Once()
+	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil).Once()
+
+	_, prov1, err := c.CreateUserWithSetupLink(ctx, req, 7)
+	require.NoError(t, err)
+	require.NotNil(t, prov1)
+
+	// Simulate the soft-delete: the recreated account is a "new" user again as far as
+	// CreateUser's own checks are concerned (GetUserByUsername/Email miss again), but the
+	// setup-token store — keyed on the raw email, independent of the user row — now
+	// reflects the one token just issued, so the throttle must fire on this second attempt.
+	ms.On("GetUserByUsername", ctx, "dana").Return(nil, notFound())
+	ms.On("GetUserByEmail", ctx, "dana@acme.io").Return(nil, notFound())
+	ms.On("CreateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
+		return u.AccountState == AccountPendingFirstLogin
+	})).Return(&models.User{ID: 21, Username: "dana", Email: "dana@acme.io", AccountState: AccountPendingFirstLogin}, nil).Once()
+	ms.On("AddPasswordHistory", ctx, uint(21), mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
+	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
+	ms.On("CountSetupTokensSince", ctx, SetupPurposeAccountSetup, "dana@acme.io", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
+
+	_, prov2, err := c.CreateUserWithSetupLink(ctx, req, 7)
+	require.Error(t, err, "the recreate must be throttled by the still-live min-interval window")
+	assert.Contains(t, err.Error(), "wait")
+	assert.Nil(t, prov2)
+	// Throttled means no second setup token was minted and no second email sent.
+	ms.AssertNumberOfCalls(t, "CreateSetupToken", 1)
 }
 
 func TestCreateUserWithOneTimePassword(t *testing.T) {

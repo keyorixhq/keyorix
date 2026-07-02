@@ -97,7 +97,12 @@ func resolveInside(baseDir, path string) (string, error) {
 }
 
 // SecureWriteFile writes data to filepath.Join(baseDir, path), validating
-// that the resolved path remains inside baseDir.
+// that the resolved path remains inside baseDir. The file mode is enforced even if the
+// file pre-existed with a looser mode (#206): OpenFile's perm argument only applies to
+// NEW files (a Go/POSIX gotcha — O_CREATE|O_TRUNC on an EXISTING file preserves its
+// current mode bits), so a file restored from a backup/dotfiles-sync/rsync with a loose
+// mode (e.g. umask-default 0644) would otherwise silently keep accepting secure writes
+// without ever being tightened. An explicit Chmod after open closes that gap.
 func SecureWriteFile(baseDir, path string, data []byte, perm os.FileMode) error {
 	cleanPath, err := resolveInside(baseDir, path)
 	if err != nil {
@@ -110,6 +115,11 @@ func SecureWriteFile(baseDir, path string, data []byte, perm os.FileMode) error 
 	f, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, perm) // #nosec G304 -- cleanPath validated inside baseDir by resolveInside
 	if err != nil {
 		return err
+	}
+	// O_TRUNC keeps a pre-existing file's mode; force the intended perms (see doc comment).
+	if cerr := f.Chmod(perm); cerr != nil {
+		_ = f.Close()
+		return cerr
 	}
 	if _, werr := f.Write(data); werr != nil {
 		_ = f.Close()

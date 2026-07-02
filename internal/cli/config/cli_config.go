@@ -136,9 +136,20 @@ func SaveCLIConfig(config *CLIConfig, configPath string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	// Write file with secure permissions
+	// Write file with secure permissions. os.WriteFile's perm argument only applies when
+	// the file is newly CREATED — if configPath already exists (e.g. restored from a
+	// backup/dotfiles-sync/rsync that reset the mode to a looser umask-default like
+	// 0644, or written by an older client version predating secure-write conventions),
+	// O_TRUNC preserves its existing mode and every subsequent write — including a
+	// deliberate credential rotation — would silently keep writing the fresh plaintext
+	// API key into a loosely-permissioned file (#206). Explicitly Chmod after writing so
+	// the mode is tightened to 0600 regardless of whether the file was newly created or
+	// already existed with looser permissions.
 	if err := os.WriteFile(configPath, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
+	}
+	if err := os.Chmod(configPath, 0600); err != nil { // #nosec G302 -- 0600 is the intended secure mode, not a weakening
+		return fmt.Errorf("failed to tighten config file permissions: %w", err)
 	}
 
 	return nil
