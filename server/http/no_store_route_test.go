@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -39,4 +40,64 @@ func TestNoStore_ScopedToAPI(t *testing.T) {
 	// A non-API path keeps its own cache policy, not no-store (health sets no-cache).
 	_, cc = cacheCtl("/health")
 	assert.NotEqual(t, "no-store", cc, "non-API responses keep their own cache headers")
+}
+
+// TestNoStore_CoversAuthAndTokenEndpoints proves the unauthenticated auth/token
+// routes registered OUTSIDE the /api/v1 group (login, refresh, MFA/WebAuthn verify,
+// system bootstrap, setup-link consumption, the SSO/SAML login+callback surface) also
+// carry Cache-Control: no-store. Several of these responses mint or hand back a
+// session token; without no-store a browser or intermediate cache could retain a
+// response containing one.
+func TestNoStore_CoversAuthAndTokenEndpoints(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	router, err := NewRouter(&config.Config{}, newTestCore(t))
+	require.NoError(t, err)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+	client := &http.Client{
+		// Don't follow the SSO/SAML redirects — inspect the redirect response itself.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	post := func(path string) string {
+		resp, err := client.Post(srv.URL+path, "application/json", strings.NewReader("{}"))
+		require.NoError(t, err, path)
+		_ = resp.Body.Close()
+		return resp.Header.Get("Cache-Control")
+	}
+	get := func(path string) string {
+		resp, err := client.Get(srv.URL + path)
+		require.NoError(t, err, path)
+		_ = resp.Body.Close()
+		return resp.Header.Get("Cache-Control")
+	}
+
+	for _, path := range []string{
+		"/auth/login",
+		"/auth/logout",
+		"/auth/refresh",
+		"/auth/password-reset",
+		"/auth/mfa/verify",
+		"/auth/webauthn/login/begin",
+		"/auth/webauthn/login/finish",
+		"/auth/webauthn/passwordless/begin",
+		"/auth/webauthn/passwordless/finish",
+		"/system/init",
+		"/auth/setup/consume",
+	} {
+		assert.Equal(t, "no-store", post(path), "%s must be no-store", path)
+	}
+
+	for _, path := range []string{
+		"/auth/setup/sometoken",
+		"/auth/sso/providers",
+		"/auth/sso/someprovider/login",
+		"/auth/sso/someprovider/callback",
+		"/auth/saml/someprovider/metadata",
+		"/auth/saml/someprovider/login",
+	} {
+		assert.Equal(t, "no-store", get(path), "%s must be no-store", path)
+	}
 }
