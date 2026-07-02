@@ -633,8 +633,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 
 	// Wire the configured data-retention windows (A.5.33) so the compliance posture
-	// reports them; the scheduler below drives the actual purge.
-	coreService.SetRetentionPolicy(core.RetentionPolicy{
+	// reports them; the scheduler below drives the actual purge. Audited (#160) so a
+	// shortened window is on the record, not just its eventual purge counts.
+	coreService.SetRetentionPolicy(context.Background(), core.RetentionPolicy{
 		AnomalyAlertsDays:          cfg.DataRetention.AnomalyAlertsDays,
 		ClosedAccessReviewsDays:    cfg.DataRetention.ClosedAccessReviewsDays,
 		BreakGlassDays:             cfg.DataRetention.BreakGlassDays,

@@ -180,13 +180,15 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
 	}
 
-	// Consume the token (single-use, atomic) before materializing. tok was already
-	// inspected by CompleteSetup, so consume it directly (no re-lookup).
-	if err := c.consumeInspectedToken(ctx, tok, SetupPurposeInvitationAccept); err != nil {
-		return nil, err
-	}
-
 	// Lazily create the account with the chosen password (active — they just set it).
+	// SECURITY (#155): create the account BEFORE consuming the token, not after. If a
+	// concurrent account-creation for the same email (e.g. another invite, an admin
+	// directly adding the address) wins the race, CreateUser fails here and the token
+	// is left untouched, so the legitimate holder can retry the SAME link — at which
+	// point the GetUserByEmail guard above now sees the winning account and returns
+	// the clean "account already exists" message instead of a dead "token already
+	// used" error. Consuming up front (the previous order) permanently burned the
+	// invite link for the loser of that race even though nothing unsafe happened.
 	username, err := c.deriveUsername(ctx, inv.Email)
 	if err != nil {
 		return nil, err
@@ -199,6 +201,12 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Consume the token (single-use, atomic) now that the account exists. tok was
+	// already inspected by CompleteSetup, so consume it directly (no re-lookup).
+	if err := c.consumeInspectedToken(ctx, tok, SetupPurposeInvitationAccept); err != nil {
+		return nil, err
 	}
 
 	// Materialize the invitation's grants under the invite-time validation mode. For a
