@@ -1,5 +1,11 @@
 -- Migration: Remove secret sharing schema
 -- Version: 005
+--
+-- WARNING — IRREVERSIBLE DATA LOSS: `DROP TABLE IF EXISTS share_records`
+-- below permanently destroys every share/access-grant record (who shared
+-- what secret with whom, and when) — this is access-control history, not
+-- just schema. BACK UP share_records (or export it to a backup table)
+-- before running this rollback.
 
 -- Drop triggers
 DROP TRIGGER IF EXISTS update_secret_shared_status_insert;
