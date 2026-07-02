@@ -54,6 +54,12 @@ web:
     type: ClusterIP
     port: 80
   resources: {}
+  # corsAllowedOrigins allowlists origins (exact scheme+host+port, e.g.
+  # "https://app.example.com") the nginx-proxied /api, /auth, /system endpoints will
+  # accept CREDENTIALED cross-origin requests from. The bundled web UI's own JS calls
+  # these same-origin (served by this same nginx) and needs no entry here. Empty by
+  # default: no cross-origin API access unless explicitly opted in.
+  corsAllowedOrigins: []
 
 # ── Ingress (for the web UI) ──────────────────────────────────────────────────
 ingress:
