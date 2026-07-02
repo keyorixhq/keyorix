@@ -134,24 +134,33 @@ func TestHTTPJWKSResolver_UnknownKidRefetchRateLimited(t *testing.T) {
 // A JWKS with more keys than maxJWKSKeys is capped so a pathological key set can't
 // bloat the cache.
 func TestHTTPJWKSResolver_CapsKeyCount(t *testing.T) {
+	// Generate all RSA-2048 keys UP FRONT, not inside the HTTP handler: generating
+	// 70 of them (maxJWKSKeys+20) takes long enough under load (heavy parallel test
+	// suite contention) that doing it per-request could exceed the resolver's 10s
+	// HTTP client timeout, making r.Key() below return an error the test didn't
+	// check — a nil-pointer panic on the next line (the cache entry was never
+	// populated), observed as an intermittent flake. Precomputing removes the
+	// timing dependency: the handler now does pure, fast JSON encoding.
+	keys := make([]map[string]string, 0, maxJWKSKeys+20)
+	for i := 0; i < maxJWKSKeys+20; i++ {
+		k, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		pub := &k.PublicKey
+		keys = append(keys, map[string]string{
+			"kty": "RSA", "kid": "k" + strconv.Itoa(i), "use": "sig",
+			"n": base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+			"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
+		})
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		keys := make([]map[string]string, 0, maxJWKSKeys+20)
-		for i := 0; i < maxJWKSKeys+20; i++ {
-			k, _ := rsa.GenerateKey(rand.Reader, 2048)
-			pub := &k.PublicKey
-			keys = append(keys, map[string]string{
-				"kty": "RSA", "kid": "k" + strconv.Itoa(i), "use": "sig",
-				"n": base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
-				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
-			})
-		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"keys": keys})
 	}))
 	defer srv.Close()
 	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
 	require.NoError(t, err)
 
-	_, _ = r.Key(context.Background(), "https://iss", "k0")
+	_, err = r.Key(context.Background(), "https://iss", "k0")
+	require.NoError(t, err)
 	r.mu.Lock()
 	n := len(r.cache["https://iss"].keys)
 	r.mu.Unlock()
