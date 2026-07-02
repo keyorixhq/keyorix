@@ -85,11 +85,20 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		sharedWithMe = len(incoming)
 	}
 
-	// Recent activity is audit data. Only an auditor (audit.read) may see ALL users'
-	// events — otherwise scope it to the caller's own activity, so the dashboard doesn't
-	// leak secret names / actions from projects the caller can't read.
+	// GetDashboardStats is reachable by any caller holding at least the universal
+	// system_viewer baseline (system.read is enforced in the router) — every regular
+	// user's own home dashboard. Only a genuinely elevated caller (audit.read:
+	// system_admin/system_auditor) may see the DEPLOYMENT-WIDE aggregates mixed into
+	// this same payload (active-user count, audit-event counts, failed-auth count,
+	// inactive-user count): a zero-project-membership baseline account has no
+	// legitimate route to org-wide numbers otherwise (#272). Recent activity gets the
+	// same treatment, scoped to the caller's own events when they lack audit.read, so
+	// the dashboard never leaks secret names/actions from projects the caller can't
+	// read.
+	hasAuditRead, _ := c.Authorize(ctx, userID, "audit.read", Scope{})
+
 	var auditActor *uint
-	if ok, _ := c.Authorize(ctx, userID, "audit.read", Scope{}); !ok {
+	if !hasAuditRead {
 		auditActor = &userID
 	}
 	events, _, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
@@ -104,53 +113,55 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 
 	expiringSecrets := c.getExpiringSecrets(ctx, username)
 
-	// Active users from storage stats
-	var activeUsers int64
-	if storageStats, err := c.storage.GetStats(ctx); err == nil {
-		activeUsers = storageStats.TotalUsers
+	var activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers int64
+	if hasAuditRead {
+		// Active users from storage stats.
+		if storageStats, err := c.storage.GetStats(ctx); err == nil {
+			activeUsers = storageStats.TotalUsers
+		}
+
+		// Audit events in the last 30 days — total count only.
+		thirtyDaysAgo := time.Now().UTC().Add(-30 * 24 * time.Hour)
+		_, auditCount, _ = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+			StartTime: &thirtyDaysAgo,
+			Page:      1,
+			PageSize:  1,
+		})
+		// Auth events (login/logout) vs secret events in last 30 days.
+		authAction := "auth.login"
+		_, auditLogins, _ = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+			StartTime: &thirtyDaysAgo,
+			Action:    &authAction,
+			Page:      1,
+			PageSize:  1,
+		})
+		secretReadAction := "secret.read"
+		_, auditSecretReads, _ = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+			StartTime: &thirtyDaysAgo,
+			Action:    &secretReadAction,
+			Page:      1,
+			PageSize:  1,
+		})
+
+		// Failed auth attempts in the last 24 hours (success=false, any action).
+		twentyFourHoursAgo := time.Now().UTC().Add(-24 * time.Hour)
+		successFalse := false
+		_, failedAuth24h, _ = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+			StartTime: &twentyFourHoursAgo,
+			Success:   &successFalse,
+			Page:      1,
+			PageSize:  1,
+		})
+
+		// Inactive users: registered users whose last_login_at is null or older than
+		// 30 days. Counted directly off the users table (no audit-log scan).
+		inactiveCutoff := thirtyDaysAgo
+		_, inactiveUsers, _ = c.storage.ListUsers(ctx, &storage.UserFilter{
+			InactiveSince: &inactiveCutoff,
+			Page:          1,
+			PageSize:      1,
+		})
 	}
-
-	// Audit events in the last 30 days — total count only
-	thirtyDaysAgo := time.Now().UTC().Add(-30 * 24 * time.Hour)
-	_, auditCount, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-		StartTime: &thirtyDaysAgo,
-		Page:      1,
-		PageSize:  1,
-	})
-	// Auth events (login/logout) vs secret events in last 30 days
-	authAction := "auth.login"
-	_, auditLogins, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-		StartTime: &thirtyDaysAgo,
-		Action:    &authAction,
-		Page:      1,
-		PageSize:  1,
-	})
-	secretReadAction := "secret.read"
-	_, auditSecretReads, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-		StartTime: &thirtyDaysAgo,
-		Action:    &secretReadAction,
-		Page:      1,
-		PageSize:  1,
-	})
-
-	// Failed auth attempts in the last 24 hours (success=false, any action).
-	twentyFourHoursAgo := time.Now().UTC().Add(-24 * time.Hour)
-	successFalse := false
-	_, failedAuth24h, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-		StartTime: &twentyFourHoursAgo,
-		Success:   &successFalse,
-		Page:      1,
-		PageSize:  1,
-	})
-
-	// Inactive users: registered users whose last_login_at is null or older than
-	// 30 days. Counted directly off the users table (no audit-log scan).
-	inactiveCutoff := thirtyDaysAgo
-	_, inactiveUsers, _ := c.storage.ListUsers(ctx, &storage.UserFilter{
-		InactiveSince: &inactiveCutoff,
-		Page:          1,
-		PageSize:      1,
-	})
 
 	stats := &DashboardStats{
 		TotalSecrets:          total,
@@ -189,8 +200,12 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	return stats, nil
 }
 
-// GetActivityFeed returns a paginated activity feed for the given user.
+// GetActivityFeed returns a paginated, deployment-wide activity feed. userID is
+// unused here (kept for signature symmetry with GetDashboardStats/call sites): the
+// router's audit.read gate on GET /dashboard/activity is what authorizes seeing
+// every user's events, so this function itself applies no per-caller scoping.
 func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username string, page, pageSize int) (*ActivityFeed, error) {
+	_ = userID
 	if page <= 0 {
 		page = 1
 	}
@@ -198,8 +213,6 @@ func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username
 		pageSize = 10
 	}
 
-	uid := userID
-	_ = uid // admin sees all events
 	events, total, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
 		Page:     page,
 		PageSize: pageSize,

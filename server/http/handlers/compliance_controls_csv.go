@@ -15,7 +15,8 @@ import (
 
 // ExportComplianceControlsCSV handles GET /api/v1/compliance/controls.csv — the evaluated
 // control matrix as a CSV attachment (id, name, area, status, detail, and the framework
-// clause refs). Deployment-wide system.read is enforced by the router.
+// clause refs). Deployment-wide audit.read is enforced by the router (not the
+// universal system_viewer baseline — same tier as the JSON endpoint above).
 func (h *DashboardHandler) ExportComplianceControlsCSV(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

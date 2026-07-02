@@ -4,7 +4,9 @@
 // long-lived bearer credential that is expired-but-active or abandoned is exactly the
 // kind of token sprawl an attacker reuses, so this gives an admin one place to find
 // and revoke them. Parallels the stale-machine-identity and unused-secret hygiene
-// views. Read-only; never returns a token hash or plaintext. Admin-scoped (route-gated).
+// views. Read-only; never returns a token hash or plaintext. Route-gated on
+// audit.read (not the universal system_viewer baseline; see #275) — discloses every
+// user's PAT names/scopes/CIDRs/owning user ID deployment-wide.
 package core
 
 import (
