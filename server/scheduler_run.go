@@ -27,7 +27,7 @@ func runScheduler(ctx context.Context, name string, interval time.Duration, tick
 		defer ticker.Stop()
 		run := func() {
 			start := time.Now()
-			outcome := tick()
+			outcome := safeTick(name, tick)
 			middleware.RecordSchedulerRun(name, outcome, time.Since(start))
 		}
 		run() // run once immediately on startup
@@ -40,6 +40,22 @@ func runScheduler(ctx context.Context, name string, interval time.Duration, tick
 			}
 		}
 	}()
+}
+
+// safeTick recovers a panic from tick, converting it into a SchedulerFailure outcome
+// instead of crashing the goroutine (and, since this is the process's only goroutine
+// for `name`, silently ending that scheduler forever). This guards work a job's tick
+// closure does BEFORE acquiring the advisory lock (e.g. legalHoldBlocks' DB read in
+// main.go) — storage.WithSchedulerLock's own runProtected only covers work done AFTER
+// the lock is held.
+func safeTick(name string, tick func() middleware.SchedulerOutcome) (outcome middleware.SchedulerOutcome) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("%s scheduler tick panicked: %v", name, r)
+			outcome = middleware.SchedulerFailure
+		}
+	}()
+	return tick()
 }
 
 // lockedRun executes fn under scheduler advisory lock key and maps the result to a
