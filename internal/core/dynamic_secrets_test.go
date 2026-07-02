@@ -313,6 +313,45 @@ func TestDynamicSecrets_RevokeLeasesForConfig(t *testing.T) {
 	assert.Equal(t, 0, revoked2)
 }
 
+// #192: the bulk incident-response kill switch is the LAST line of defense for
+// MySQL/Mongo/Redis, where the target DROP/dropUser/ACL-DELUSER call is the only
+// enforcement mechanism. A lease already stuck in revoke_failed (its credential still
+// live from an earlier failed attempt) must NOT be silently skipped by
+// RevokeLeasesForConfig — it must be retried right alongside the still-active leases,
+// so an operator responding to "this target/config is compromised" actually kills every
+// outstanding credential, not just the ones that happened to revoke cleanly before.
+func TestDynamicSecrets_RevokeLeasesForConfigRetriesRevokeFailed(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	stuck, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	stillActive, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	// The first lease's revoke fails once (transient outage) and is left revoke_failed —
+	// its credential is still live on the target.
+	fake.FailRevoke = true
+	require.Error(t, c.RevokeLease(ctx, stuck.LeaseID, 7, "manual"))
+	before, _ := c.storage.GetDynamicSecretLease(ctx, stuck.LeaseID)
+	require.Equal(t, "revoke_failed", before.Status, "precondition: the lease is stuck exactly as #192 describes")
+
+	// The target recovers, and an incident responder now believes the whole config is
+	// compromised and pulls the kill switch.
+	fake.FailRevoke = false
+	revoked, failed, err := c.RevokeLeasesForConfig(ctx, cfg.ID, 7, "incident: compromised target")
+	require.NoError(t, err)
+	assert.Equal(t, 0, failed)
+	assert.Equal(t, 2, revoked, "both the still-active lease AND the previously revoke_failed one must be revoked")
+
+	after, _ := c.storage.GetDynamicSecretLease(ctx, stuck.LeaseID)
+	assert.Equal(t, "revoked", after.Status, "the revoke_failed lease is NOT permanently stuck — the kill switch reaches it")
+	assert.Empty(t, after.RevokeError, "a successful retry clears the earlier error")
+	assert.Contains(t, fake.Revoked, stuck.Username, "the previously-stranded credential was actually dropped on the target")
+	assert.Contains(t, fake.Revoked, stillActive.Username)
+}
+
 func TestDynamicSecrets_RenewRejectsInactiveLease(t *testing.T) {
 	c, _, _, _ := newDynamicTestCore(t)
 	ctx := context.Background()

@@ -297,6 +297,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	}
 	lease.Status = "revoked"
 	lease.RevokeReason = reason
+	lease.RevokeError = "" // clear any error from a prior failed attempt — this retry succeeded
 	lease.RevokedAt = &now
 	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
 		return err
