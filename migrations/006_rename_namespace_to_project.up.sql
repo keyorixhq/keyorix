@@ -2,6 +2,12 @@
 -- Safe to apply on both PostgreSQL and SQLite ≥ 3.25.0.
 -- GORM AutoMigrate already creates a `projects` table on fresh installs;
 -- this migration is for databases initialised with migrations 001–003.
+--
+-- ORDERING: this migration must run before 007_rotation_policies (which adds
+-- a `project_id INTEGER REFERENCES projects(id)` column) — 007 will fail
+-- outright against a database that hasn't renamed namespaces → projects yet.
+-- Originally numbered 007/006 respectively; renumbered (see #201) so the
+-- table-creating rename actually precedes the migration that depends on it.
 
 -- 1. Rename the primary table
 ALTER TABLE namespaces RENAME TO projects;
