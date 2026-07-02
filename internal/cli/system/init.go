@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
@@ -74,6 +75,7 @@ func init() {
 
 func runInit(cmd *cobra.Command, args []string) error {
 	if initServer != "" {
+		common.WarnInsecureFlag(cmd, "admin-password", "consider leaving it unset and changing the password after first login instead.")
 		return runRemoteInit()
 	}
 
