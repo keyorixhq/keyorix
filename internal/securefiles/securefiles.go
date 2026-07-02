@@ -1,6 +1,7 @@
 package securefiles
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/user"
@@ -165,6 +166,55 @@ func SyncDir(dirPath string) error {
 		return serr
 	}
 	return d.Close()
+}
+
+// SecureDeleteFile overwrites path with random bytes, then zeros, fsyncing after each
+// pass, before unlinking it — a best-effort "shred" for key-material backups that
+// should not linger recoverable on disk (e.g. a pre-migration wrapped-DEK backup, whose
+// plaintext-after-unwrap is byte-identical to the DEK still in active use). This is NOT
+// a guarantee on copy-on-write filesystems, SSDs with wear-leveling, or any snapshotted/
+// replicated storage — those may retain the original blocks regardless of what gets
+// written to the logical file — but it's strictly better than a plain unlink, and is the
+// same caveat any shred(1)-style tool carries.
+func SecureDeleteFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	size := info.Size()
+
+	f, err := os.OpenFile(path, os.O_WRONLY, 0) // #nosec G304 -- caller-controlled key-backup path, not network input
+	if err != nil {
+		return err
+	}
+	overwrite := func(pattern func([]byte) error) error {
+		buf := make([]byte, size)
+		if err := pattern(buf); err != nil {
+			return err
+		}
+		if _, err := f.WriteAt(buf, 0); err != nil {
+			return err
+		}
+		return f.Sync()
+	}
+	if err := overwrite(func(b []byte) error { _, err := rand.Read(b); return err }); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("shred pass (random) failed: %w", err)
+	}
+	if err := overwrite(func(b []byte) error { return nil /* buf is already zero-valued */ }); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("shred pass (zero) failed: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return SyncDir(filepath.Dir(path))
 }
 
 // FixFilePerms verifies file permissions and ownership.

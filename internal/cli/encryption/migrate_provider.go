@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -39,6 +41,9 @@ var (
 	mpToTPMDevice      string
 	mpToSaltPath       string
 	mpConfirm          bool
+
+	mpCleanupConfirm bool
+	mpCleanupDryRun  bool
 )
 
 var migrateProviderCmd = &cobra.Command{
@@ -63,6 +68,28 @@ restart — the printed summary shows the exact block.`,
 	RunE: runMigrateProvider,
 }
 
+// migrateProviderCleanupCmd securely deletes leftover `<dekPath>.migrate-backup.*`
+// files (#198). migrate-provider retains its pre-migration wrapped-DEK backup
+// indefinitely by design (so a failed verification can restore it) — but since a
+// rewrap never changes the DEK's VALUE, only its wrapping, the backup's
+// plaintext-after-unwrap stays byte-identical to the DEK still in active use. A
+// weak/compromised OLD KEK can unwrap it forever unless an operator deletes it, and
+// the only prior guidance was a printed "remove once confident" — no tooling.
+var migrateProviderCleanupCmd = &cobra.Command{
+	Use:   "cleanup",
+	Short: "Securely delete leftover pre-migration wrapped-DEK backups",
+	Long: `Find and securely delete every "<dek_path>.migrate-backup.*" file left behind by
+a previous 'migrate-provider' run. Each backup's plaintext-after-unwrap is
+byte-identical to the DEK still in active use (only the wrapping changed), so a
+weak/compromised OLD key-encryption key can still unwrap it indefinitely — deleting
+these once you've confirmed the new provider works removes that exposure window.
+
+Files are overwritten (random pass, then zero pass, each fsynced) before being
+unlinked — a best-effort "shred", not a guarantee on copy-on-write filesystems, SSDs,
+or replicated/snapshotted storage. Requires --confirm; use --dry-run to preview first.`,
+	RunE: runMigrateProviderCleanup,
+}
+
 func init() {
 	EncryptionCmd.AddCommand(migrateProviderCmd)
 	f := migrateProviderCmd.Flags()
@@ -77,6 +104,86 @@ func init() {
 	f.StringVar(&mpToTPMDevice, "to-tpm-device", "", "TPM 2.0 device path (tpm type; default /dev/tpmrm0)")
 	f.StringVar(&mpToSaltPath, "to-salt-path", "", "salt path for the target password provider (default: current salt_path)")
 	f.BoolVar(&mpConfirm, "confirm", false, "required acknowledgement before re-wrapping the DEK")
+
+	migrateProviderCmd.AddCommand(migrateProviderCleanupCmd)
+	cf := migrateProviderCleanupCmd.Flags()
+	cf.BoolVar(&mpCleanupConfirm, "confirm", false, "required acknowledgement before deleting backup files")
+	cf.BoolVar(&mpCleanupDryRun, "dry-run", false, "list matching backup files without deleting them")
+}
+
+// runMigrateProviderCleanup finds and (unless --dry-run) securely deletes every
+// migrate-backup file for the configured DEK path. Matching is by filename prefix
+// "<base>.migrate-backup." directly under the DEK's directory — the same layout
+// migrateProviderWithConfig writes (backupRel is relative to baseDir, sibling to
+// enc.DEKPath).
+func runMigrateProviderCleanup(cmd *cobra.Command, args []string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	baseDir, _ := os.Getwd()
+	return migrateProviderCleanupWithConfig(cfg, baseDir, mpCleanupDryRun, mpCleanupConfirm)
+}
+
+// migrateProviderCleanupWithConfig is the testable core of the cleanup subcommand:
+// no flag parsing, an explicit baseDir instead of os.Getwd().
+func migrateProviderCleanupWithConfig(cfg *config.Config, baseDir string, dryRun, confirm bool) error {
+	if !cfg.Storage.Encryption.Enabled {
+		return fmt.Errorf("encryption is disabled in configuration")
+	}
+	matches, err := findMigrateBackups(baseDir, cfg.Storage.Encryption.DEKPath)
+	if err != nil {
+		return fmt.Errorf("failed to scan for migrate-backup files: %w", err)
+	}
+	if len(matches) == 0 {
+		fmt.Println("✅ No migrate-backup files found — nothing to clean up.")
+		return nil
+	}
+	fmt.Printf("Found %d migrate-backup file(s):\n", len(matches))
+	for _, m := range matches {
+		fmt.Printf("  %s\n", m)
+	}
+	if dryRun {
+		fmt.Println("\n(--dry-run: no files deleted)")
+		return nil
+	}
+	if !confirm {
+		return fmt.Errorf("this permanently and irreversibly shreds the listed backup file(s). Re-run with --confirm (or --dry-run to only list them)")
+	}
+	for _, m := range matches {
+		if err := securefiles.SecureDeleteFile(filepath.Join(baseDir, m)); err != nil {
+			return fmt.Errorf("failed to securely delete %s: %w", m, err)
+		}
+	}
+	fmt.Printf("✅ Securely deleted %d migrate-backup file(s).\n", len(matches))
+	return nil
+}
+
+// findMigrateBackups lists filenames (relative to baseDir) matching
+// "<base>.migrate-backup.*" for the given DEK path, sorted for stable output.
+func findMigrateBackups(baseDir, dekPath string) ([]string, error) {
+	dir := filepath.Dir(filepath.Join(baseDir, dekPath))
+	prefix := filepath.Base(dekPath) + ".migrate-backup."
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var matches []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		rel, rerr := filepath.Rel(baseDir, filepath.Join(dir, e.Name()))
+		if rerr != nil {
+			continue
+		}
+		matches = append(matches, rel)
+	}
+	sort.Strings(matches)
+	return matches, nil
 }
 
 // migrateOpts is the target-provider description, mirroring the --to-* flags so the
@@ -320,7 +427,11 @@ func providerLabel(t string) string {
 func printMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 	kp := tgt.KeyProvider
 	fmt.Println("✅ DEK re-wrapped and verified under the new provider.")
-	fmt.Printf("🗄️  Previous wrapped DEK backed up at %s (remove once confident).\n", backupRel)
+	fmt.Printf("🗄️  Previous wrapped DEK backed up at %s.\n", backupRel)
+	fmt.Println("   Its plaintext-after-unwrap is byte-identical to the DEK still in active use —")
+	fmt.Println("   only the wrapping changed. Once you've confirmed the new provider works, run")
+	fmt.Println("   `keyorix encryption migrate-provider cleanup --confirm` to securely delete it")
+	fmt.Println("   (and any other leftover migrate-backup files) rather than a plain rm.")
 	fmt.Println()
 	fmt.Println("⚠️  Update storage.encryption.key_provider in your config to match BEFORE the next restart:")
 	fmt.Println()
