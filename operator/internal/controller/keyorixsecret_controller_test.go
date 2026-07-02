@@ -15,6 +15,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	secretsv1alpha1 "github.com/keyorixhq/keyorix/operator/api/v1alpha1"
 )
@@ -79,8 +80,12 @@ func ksFixture() *secretsv1alpha1.KeyorixSecret {
 
 func tokenSecret() *corev1.Secret {
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "kx-token", Namespace: "app"},
-		Data:       map[string][]byte{"token": []byte("machine-tok")},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kx-token",
+			Namespace: "app",
+			Labels:    map[string]string{tokenSecretLabel: tokenSecretValue},
+		},
+		Data: map[string][]byte{"token": []byte("machine-tok")},
 	}
 }
 
@@ -272,4 +277,79 @@ func TestReconcile_RejectsUntrustedServer(t *testing.T) {
 	var got corev1.Secret
 	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got)
 	require.Error(t, err, "no Secret is created for a rejected server")
+}
+
+// #184 (confused deputy, second half): even with validateServer pinning the
+// destination, a CRD-write-only principal (no core-Secret RBAC of their own) must not
+// be able to point tokenSecretRef at an arbitrary pre-existing Secret and have the
+// operator's cluster-wide Secret-read RBAC ship its bytes to the (trusted) Keyorix
+// server. Only a Secret explicitly labeled as a token source may be resolved.
+func TestReconcile_RejectsUnlabeledTokenSecret(t *testing.T) {
+	unlabeled := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kx-token", Namespace: "app"}, // no label
+		Data:       map[string][]byte{"token": []byte("some-secret-value")},
+	}
+	r, c := newReconciler(t, &fakeFetcher{}, ksFixture(), unlabeled)
+
+	_, err := reconcile(t, r)
+	require.Error(t, err, "an unlabeled Secret must not be usable as tokenSecretRef")
+	assert.Contains(t, err.Error(), tokenSecretLabel)
+
+	var got corev1.Secret
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got)
+	require.Error(t, err, "no Secret is created when the token source is unlabeled")
+}
+
+// A Secret carrying an unrelated/incorrect label value (not exactly the required
+// marker) is treated the same as unlabeled — no partial-match bypass.
+func TestReconcile_RejectsTokenSecretWithWrongLabelValue(t *testing.T) {
+	wrongLabel := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kx-token",
+			Namespace: "app",
+			Labels:    map[string]string{tokenSecretLabel: "false"},
+		},
+		Data: map[string][]byte{"token": []byte("some-secret-value")},
+	}
+	r, _ := newReconciler(t, &fakeFetcher{}, ksFixture(), wrongLabel)
+	_, err := reconcile(t, r)
+	require.Error(t, err)
+}
+
+// #185: a same-named Secret already owned (controller ref) by a DIFFERENT KeyorixSecret
+// CR must never be silently re-adopted by this CR, even though it already carries the
+// operator's managed-by label (set by the other CR's earlier reconcile). This is the
+// second line of defense beyond the managed-by label check: SetControllerReference
+// itself refuses to move a controller ref from one owner to another.
+func TestReconcile_RefusesToAdoptSecretOwnedByAnotherCR(t *testing.T) {
+	other := &secretsv1alpha1.KeyorixSecret{
+		ObjectMeta: metav1.ObjectMeta{Name: "other-cr", Namespace: "app", UID: "other-uid"},
+	}
+	owned := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-creds",
+			Namespace: "app",
+			Labels:    map[string]string{managedByLabel: managedByValue},
+		},
+		Data: map[string][]byte{"OTHER": []byte("owned-by-other-cr")},
+	}
+	// Give `owned` a real controller owner reference to `other`, mirroring what a prior
+	// reconcile of the other CR would have set.
+	s := testScheme(t)
+	require.NoError(t, controllerutil.SetControllerReference(other, owned, s))
+
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"), "app/production/api-key": []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret(), owned)
+
+	_, err := reconcile(t, r)
+	require.Error(t, err, "must refuse to steal ownership of a Secret controlled by a different CR")
+
+	var got corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got))
+	assert.Equal(t, []byte("owned-by-other-cr"), got.Data["OTHER"], "the other CR's Secret data must be untouched")
+	assert.NotContains(t, got.Data, "DB_PASSWORD")
+	require.Len(t, got.OwnerReferences, 1)
+	assert.Equal(t, "other-cr", got.OwnerReferences[0].Name, "ownership must not have moved to the new CR")
 }
