@@ -23,7 +23,7 @@ func TestGroupCRUDAudit(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.Group{}, &models.GroupRole{}, &models.UserGroup{}, &models.AuditEvent{},
+		&models.Group{}, &models.GroupRole{}, &models.UserGroup{}, &models.AuditEvent{}, &models.Role{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	ctx := context.Background()

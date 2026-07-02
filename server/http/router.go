@@ -262,7 +262,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("secrets.write")).Post("/projects", catalogHandler.CreateProject)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Put("/projects/{id}", catalogHandler.UpdateProject)
 		r.With(customMiddleware.RequireScopedPermission("secrets.delete", projectScope)).Delete("/projects/{id}", catalogHandler.DeleteProject)
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/restore", catalogHandler.RestoreProject)
+		// Restore reinstates every role grant the project carried at deletion — the
+		// same blast radius as a role grant — so gate on roles.assign (#161), not
+		// secrets.write, mirroring the direct-grant paths (matching #147's group fix).
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", projectScope)).Post("/projects/{id}/restore", catalogHandler.RestoreProject)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/drift", catalogHandler.GetProjectDrift)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/rotation-order", secretHandler.GetProjectRotationOrder)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/rotation-plan", secretHandler.GetProjectRotationPlan)
@@ -367,7 +370,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/environments", catalogHandler.CreateProjectEnvironment)
 		// Environment restore is nested under the project so the scope resolves
 		// from the (live) project ID — the env row is soft-deleted and unloadable.
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", customMiddleware.ScopeFromProjectParam("projectId"))).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironment)
+		// Restore reinstates the environment's role grants, so gate on roles.assign
+		// (#161), not secrets.write — same shape as the project-restore fix above.
+		r.With(customMiddleware.RequireScopedPermission("roles.assign", customMiddleware.ScopeFromProjectParam("projectId"))).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironment)
 		r.With(customMiddleware.RequireScopedPermission("secrets.delete", customMiddleware.ScopeFromEnvParam("id"))).Delete("/environments/{id}", catalogHandler.DeleteEnvironment)
 		r.With(customMiddleware.RequirePermission("secrets.read")).Get("/environments", catalogHandler.ListEnvironments)
 
@@ -536,7 +541,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/{id}", groupHandler.GetGroup)
 			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", groupHandler.UpdateGroup)
 			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", groupHandler.DeleteGroup)
-			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/restore", groupHandler.RestoreGroup)
+			// Restore reinstates every role grant the group carried at deletion — the
+			// same blast radius as a role grant — so gate on roles.assign (#147), not
+			// users.write, mirroring the direct role-grant path below.
+			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/restore", groupHandler.RestoreGroup)
 			r.Get("/{id}/members", groupHandler.GetGroupMembers)
 			// Secrets a group can reach via shares — reveals secret names, so it needs
 			// secrets.read on top of the group-level users.read above.

@@ -11,6 +11,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strings"
 
@@ -269,6 +270,64 @@ func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) 
 		}
 	}
 	return false
+}
+
+// requireGlobalAdminToReinstateAdminRoles refuses to reinstate roleIDs unless
+// actorID is themselves a global admin, but ONLY when roleIDs actually contains an
+// admin-tier role — a non-admin role set passes untouched. Restoring a soft-deleted
+// principal (a group, a project, an environment) brings back EVERY role grant it
+// held atomically, in one step, with no per-role choice — unlike a single direct
+// grant (requireAuthorityForRole, invitations.go), the restore may reinstate
+// several roles at once, so the whole SET needs an aggregate ceiling check. Used
+// by group/project/environment restore (#147/#161): a principal holding only the
+// gating permission (roles.assign) — not admin authority itself — must not be able
+// to resurrect an admin-conferring grant that was soft-deleted out from under them
+// (e.g. an incident-response revocation), the same escalation-by-proxy shape
+// requireAuthorityForRole closes for direct grants.
+func (c *KeyorixCore) requireGlobalAdminToReinstateAdminRoles(ctx context.Context, actorID uint, roleIDs []uint, objectDesc string) error {
+	if !c.roleSetContainsAdmin(ctx, roleIDs) {
+		return nil
+	}
+	isAdmin, err := c.IsGlobalAdmin(ctx, actorID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !isAdmin {
+		return fmt.Errorf("only an administrator can restore a %s holding an administrative role grant", objectDesc)
+	}
+	return nil
+}
+
+// requireEqualOrGreaterAdminAuthority refuses when targetID holds an admin-tier
+// role — global OR project-scoped, direct OR group-inherited — at any scope where
+// actorID does not ALSO hold admin-tier authority. Unlike the single-scope
+// IsGlobalAdmin check, this discovers and checks EVERY scope the target actually
+// holds a grant at (via GetUserRoleScopes), so a target who is a project-scoped
+// project_admin — never itself flagged "global admin" — is still compared
+// correctly. Used by impersonation's admin-rank-ceiling check (#165): the action
+// string only customizes the error message (e.g. "impersonate").
+func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, actorID, targetID uint, action string) error {
+	scopes, err := c.storage.GetUserRoleScopes(ctx, targetID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve target authority: %w", err)
+	}
+	for _, scope := range scopes {
+		targetRoleIDs, err := c.scopedRoleIDs(ctx, targetID, scope)
+		if err != nil {
+			return fmt.Errorf("failed to resolve target authority: %w", err)
+		}
+		if !c.roleSetContainsAdmin(ctx, targetRoleIDs) {
+			continue
+		}
+		actorRoleIDs, err := c.scopedRoleIDs(ctx, actorID, scope)
+		if err != nil {
+			return fmt.Errorf("failed to resolve actor authority: %w", err)
+		}
+		if !c.roleSetContainsAdmin(ctx, actorRoleIDs) {
+			return fmt.Errorf("cannot %s a user holding administrative authority you do not also hold", action)
+		}
+	}
+	return nil
 }
 
 // dedupeUints returns ids with duplicates removed, preserving first-seen order.

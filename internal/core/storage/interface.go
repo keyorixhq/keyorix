@@ -368,6 +368,14 @@ type Storage interface {
 	// membership. A global/install-wide role (project_id = 0) does NOT count.
 	IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error)
 	GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
+	// GetUserRoleScopes returns the distinct (project, environment) scopes at which
+	// userID holds ANY role, directly or via a live (non-deleted) group. It is the
+	// scope-DISCOVERY step behind a scope-aware admin-rank-ceiling comparison
+	// (impersonation's #165 check): the caller doesn't know in advance which
+	// project a target might hold a project-scoped admin role in, so it must
+	// enumerate every scope the target actually has a grant at, then evaluate
+	// GetUserRoleIDsAt/GetUserGroupRoleIDsAt (via scopedRoleIDs) per scope.
+	GetUserRoleScopes(ctx context.Context, userID uint) ([]Scope, error)
 	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
