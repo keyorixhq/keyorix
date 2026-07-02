@@ -154,6 +154,13 @@ type RiskException struct {
 	Revoked       bool       `gorm:"index" json:"revoked"`    // true = withdrawn before expiry
 	RevokedBy     uint       `json:"revoked_by,omitempty"`
 	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	// Approved/ApprovedBy/ApprovedAt implement dual control (#170): an exception
+	// only suppresses its matched violation once a DIFFERENT system.write holder
+	// than the creator approves it, so the same actor can't unilaterally create
+	// and self-approve a suppression of their own risk.
+	Approved   bool       `gorm:"default:false" json:"approved"`
+	ApprovedBy uint       `json:"approved_by,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 }
 
 // BreakGlassActivation records a self-service emergency-access elevation: a user
@@ -947,6 +954,13 @@ type AnomalyAlert struct {
 	IPAddress    string
 	DetectedAt   time.Time `gorm:"index"`
 	Acknowledged bool      `gorm:"default:false"`
+	// AcknowledgedBy/AcknowledgedAt attribute WHO dismissed this alert and WHEN
+	// (#217) — a privileged principal could otherwise suppress evidence of their
+	// own malicious access with the acknowledged flag alone leaving no forensic
+	// trail on the row itself (a separate audit event is also emitted, but the
+	// row-level attribution lets the posture/digest surface it directly).
+	AcknowledgedBy uint       `json:"acknowledged_by,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
 	// Alerted is set once the anomaly has been pushed out (admin notification +
 	// SIEM forward) so the alerter doesn't re-notify on every scan.
 	Alerted   bool `gorm:"default:false;index"`

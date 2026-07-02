@@ -14,6 +14,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -160,7 +161,16 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	c.auditProjectScoped(ctx, EventBreakGlassActivated, userID, projectID,
 		fmt.Sprintf("break-glass: user %d self-granted %q until %s — %s",
 			userID, role.Name, expiresAt.UTC().Format(time.RFC3339), justification))
-	c.notifyBreakGlassAdmins(ctx, userID, projectID, role.Name, expiresAt)
+	// The grant is already committed and audited above, so a notification failure here
+	// is a DETECTION-LATENCY gap, not a control failure — don't fail the activation on
+	// it. But silently swallowing it would defeat break-glass's "loud by design" intent
+	// if the notification pipeline itself is down, so surface it loudly (#166): a
+	// SECURITY-prefixed log line, matching the convention emitAudit already uses for a
+	// failed audit write, so an operational alerting pipeline watching logs still pages.
+	if nerr := c.notifyBreakGlassAdmins(ctx, userID, projectID, role.Name, expiresAt); nerr != nil {
+		log.Printf("SECURITY: break-glass activation %d (project %d, user %d): admin notification failed: %v",
+			activation.ID, projectID, userID, nerr)
+	}
 	return activation, nil
 }
 
@@ -219,11 +229,15 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, projectID, 
 }
 
 // notifyBreakGlassAdmins alerts the project's approver-role members that emergency
-// access was activated (best-effort).
-func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, projectID uint, roleName string, expiresAt time.Time) {
+// access was activated. Individual notify() delivery is still best-effort (an
+// email/webhook sink hiccup for one admin shouldn't abort the fan-out to the
+// others), but a failure to even LIST the project's members is a distinct, louder
+// failure mode — it means NO admin was considered for the alert at all — so that
+// case is returned as an error (#166) rather than swallowed silently.
+func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, projectID uint, roleName string, expiresAt time.Time) error {
 	members, err := c.storage.ListProjectMembers(ctx, projectID)
 	if err != nil {
-		return
+		return fmt.Errorf("list project %d members: %w", projectID, err)
 	}
 	pid := projectID
 	title := "Break-glass emergency access activated"
@@ -236,4 +250,5 @@ func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, proje
 		}
 		c.notify(ctx, m.UserID, EventBreakGlassActivated, title, msg, &pid, link)
 	}
+	return nil
 }

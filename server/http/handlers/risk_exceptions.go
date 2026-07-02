@@ -64,6 +64,38 @@ func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Re
 	sendSuccess(w, map[string]interface{}{"exception": exc}, "Risk exception recorded")
 }
 
+// ApproveRiskException handles POST /api/v1/risk-exceptions/{id}/approve — dual
+// control (#170): the exception only suppresses its matched violation from the
+// compliance posture once a DIFFERENT system.write holder than the creator
+// approves it.
+func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid exception ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.ApproveRiskException(r.Context(), actor.UserID, uint(id)); err != nil {
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "dual control"):
+			status = http.StatusForbidden
+		case strings.Contains(msg, "cannot approve") || strings.Contains(msg, "already approved"):
+			status = http.StatusBadRequest
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", msg, status, nil)
+		return
+	}
+	sendSuccess(w, nil, "Risk exception approved")
+}
+
 // RevokeRiskException handles DELETE /api/v1/risk-exceptions/{id} — withdraw early.
 func (h *DashboardHandler) RevokeRiskException(w http.ResponseWriter, r *http.Request) {
 	actor := middleware.GetUserFromContext(r.Context())

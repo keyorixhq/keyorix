@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
@@ -48,6 +49,41 @@ func TestLegalHold_PlaceAndLift(t *testing.T) {
 
 	// Lifting again (none active) is refused.
 	require.Error(t, h.CoreService.LiftLegalHold(ctx, 1))
+}
+
+// #157: a third-party system.write holder who neither placed the hold nor holds an
+// admin-tier role must not be able to lift it — only the placer or an admin-tier
+// principal may. The denial is itself audited, and the hold stays active.
+func TestLegalHold_LiftDeniedForThirdParty(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
+	ctx := context.Background()
+
+	_, err := h.CoreService.PlaceLegalHold(ctx, 1, "litigation INC-9")
+	require.NoError(t, err)
+
+	// Actor 9 holds no role at all — neither the placer nor admin-tier.
+	err = h.CoreService.LiftLegalHold(ctx, 9)
+	require.Error(t, err, "a non-placer, non-admin actor must not be able to lift the hold")
+
+	active, aerr := h.CoreService.IsLegalHoldActive(ctx)
+	require.NoError(t, aerr)
+	assert.True(t, active, "the hold must remain active after a denied lift attempt")
+
+	// The denial is audited distinctly (event still EventLegalHoldLifted per the
+	// implementation, but with Success=false — verify a failed attempt was recorded).
+	var failed int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ? AND success = ?", core.EventLegalHoldLifted, false).Count(&failed).Error)
+	assert.Equal(t, int64(1), failed, "the denied lift attempt must be audited")
+
+	// A DIFFERENT admin-tier principal (not the placer) may still lift it.
+	h.AssignUserRole(t, 20, 2, nil) // role 2 = admin (global)
+	require.NoError(t, h.CoreService.LiftLegalHold(ctx, 20))
+	active, aerr = h.CoreService.IsLegalHoldActive(ctx)
+	require.NoError(t, aerr)
+	assert.False(t, active, "an admin-tier non-placer must be able to lift the hold")
 }
 
 // The compliance posture reflects an active legal hold.

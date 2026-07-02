@@ -86,7 +86,7 @@ func TestListAnomalyAlerts_AcknowledgedFilter(t *testing.T) {
 	a2 := &models.AnomalyAlert{SecretNodeID: 2, AlertType: "new_user", AccessedBy: "bob", IPAddress: "10.0.0.2", DetectedAt: now}
 	require.NoError(t, ls.CreateAnomalyAlert(ctx, a1))
 	require.NoError(t, ls.CreateAnomalyAlert(ctx, a2))
-	require.NoError(t, ls.AcknowledgeAnomalyAlert(ctx, a1.ID))
+	require.NoError(t, ls.AcknowledgeAnomalyAlert(ctx, a1.ID, 1, now))
 
 	all, err := ls.ListAnomalyAlerts(ctx, nil)
 	require.NoError(t, err)

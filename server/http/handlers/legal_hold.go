@@ -60,8 +60,11 @@ func (h *DashboardHandler) LiftLegalHold(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.coreService.LiftLegalHold(r.Context(), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "no legal hold") {
+		switch {
+		case strings.Contains(err.Error(), "no legal hold"):
 			status = http.StatusBadRequest
+		case strings.Contains(err.Error(), "only the placing admin"):
+			status = http.StatusForbidden
 		}
 		sendError(w, "Error", err.Error(), status, nil)
 		return

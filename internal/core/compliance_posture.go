@@ -231,9 +231,11 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 		return nil, err
 	}
 
-	// Separation-of-duties violations (A.5.3).
+	// Separation-of-duties violations (A.5.3), net of governed risk exceptions
+	// (#170): an approved, active "sod"-category exception suppresses only the ONE
+	// violation it names, not the whole SoD control.
 	if violations, err := c.DetectSoDViolations(ctx); err == nil {
-		p.AccessGovernance.SoDViolations = len(violations)
+		p.AccessGovernance.SoDViolations = len(c.suppressExceptedSoDViolations(ctx, violations))
 	}
 
 	// Data-classification coverage (A.5.12).
@@ -288,6 +290,41 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	p.SupplyChain = sc
 
 	return p, nil
+}
+
+// suppressExceptedSoDViolations drops any violation covered by an active, APPROVED
+// "sod"-category risk exception whose Reference matches it exactly (#170). Before
+// this, a registered exception was purely decorative — GetCompliancePosture
+// reported every raw violation regardless, so the "governed acceptance" mechanism
+// didn't actually accept anything. Fails safe: a lookup error reports every
+// violation unfiltered rather than risking an under-count from a partial exception
+// list.
+func (c *KeyorixCore) suppressExceptedSoDViolations(ctx context.Context, violations []SoDViolation) []SoDViolation {
+	if len(violations) == 0 {
+		return violations
+	}
+	exceptions, err := c.ListRiskExceptions(ctx, true) // active only (not revoked, not expired)
+	if err != nil {
+		return violations
+	}
+	excepted := make(map[string]bool, len(exceptions))
+	for _, e := range exceptions {
+		if e.Category != "sod" || !e.Approved {
+			continue
+		}
+		excepted[e.Reference] = true
+	}
+	if len(excepted) == 0 {
+		return violations
+	}
+	out := make([]SoDViolation, 0, len(violations))
+	for _, v := range violations {
+		if excepted[v.Reference] {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // classificationPosture counts secrets per classification level via cheap count

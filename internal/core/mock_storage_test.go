@@ -1078,8 +1078,8 @@ func (m *MockStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *bool)
 	return args.Get(0).([]models.AnomalyAlert), args.Error(1)
 }
 
-func (m *MockStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
+func (m *MockStorage) AcknowledgeAnomalyAlert(ctx context.Context, id, actorID uint, at time.Time) error {
+	args := m.Called(ctx, id, actorID, at)
 	return args.Error(0)
 }
 
