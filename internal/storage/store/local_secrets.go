@@ -522,6 +522,44 @@ func (ls *LocalStorage) CreateSecretVersion(ctx context.Context, version *models
 	return version, nil
 }
 
+// maxSecretVersionConflictRetries bounds CreateNextSecretVersion's retry loop.
+// Each retry only advances the computed number by one slot, so under N truly
+// simultaneous writers on the same secret a losing writer can need close to N
+// retries — set well above any realistic concurrent-writer count on one secret,
+// bounded so a genuinely broken insert (not a version-number conflict) fails
+// instead of looping forever.
+const maxSecretVersionConflictRetries = 64
+
+// CreateNextSecretVersion atomically assigns and stores the next version number
+// for version.SecretNodeID (#121). It computes MAX(version_number)+1 and
+// inserts; a concurrent writer racing the SAME computation is caught by the
+// unique index on (secret_node_id, version_number) rather than silently
+// duplicating a version number or losing an update — the losing INSERT fails,
+// and this retries with a freshly (now-post-conflict) computed number. Cheaper
+// and more portable across SQLite/Postgres than a SELECT ... FOR UPDATE lock,
+// and correct regardless of transaction isolation level: an INSERT is either
+// accepted (this writer's number was live) or rejected (it wasn't).
+func (ls *LocalStorage) CreateNextSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxSecretVersionConflictRetries; attempt++ {
+		var maxVersion int
+		if err := ls.db.WithContext(ctx).Model(&models.SecretVersion{}).
+			Where("secret_node_id = ?", version.SecretNodeID).
+			Select("COALESCE(MAX(version_number), 0)").
+			Scan(&maxVersion).Error; err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		version.VersionNumber = maxVersion + 1
+		version.ID = 0 // ensure a retry after a failed attempt inserts fresh, not updates
+		if err := ls.db.WithContext(ctx).Create(version).Error; err == nil {
+			return version, nil
+		} else {
+			lastErr = err
+		}
+	}
+	return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), lastErr)
+}
+
 // GetSecretVersions retrieves all versions of a secret ordered newest-first.
 func (ls *LocalStorage) GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error) {
 	var versions []*models.SecretVersion

@@ -108,7 +108,7 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
-	if err := c.storeSecretVersion(ctx, createdSecret, req.Value, 1); err != nil {
+	if err := c.storeSecretVersion(ctx, createdSecret, req.Value); err != nil {
 		if delErr := c.storage.DeleteSecret(ctx, createdSecret.ID); delErr != nil {
 			log.Printf("warning: failed to cleanup orphaned secret %d after failed version creation: %v", createdSecret.ID, delErr)
 		}
@@ -175,12 +175,7 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	secret.UpdatedAt = time.Now()
 
 	if len(req.Value) > 0 {
-		latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
-		nextVersionNumber := 1
-		if err == nil && latestVersion != nil {
-			nextVersionNumber = latestVersion.VersionNumber + 1
-		}
-		if err := c.storeSecretVersion(ctx, secret, req.Value, nextVersionNumber); err != nil {
+		if err := c.storeSecretVersion(ctx, secret, req.Value); err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 	}
@@ -212,12 +207,7 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
 	}
-	latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
-	nextVersionNumber := 1
-	if err == nil && latestVersion != nil {
-		nextVersionNumber = latestVersion.VersionNumber + 1
-	}
-	if err := c.storeSecretVersion(ctx, secret, newValue, nextVersionNumber); err != nil {
+	if err := c.storeSecretVersion(ctx, secret, newValue); err != nil {
 		return nil, fmt.Errorf("failed to store rotated secret: %w", err)
 	}
 	now := time.Now()

@@ -31,9 +31,42 @@ func (se *SecretEncryption) Initialize(passphrase string) error {
 	return se.service.Initialize(passphrase)
 }
 
-// StoreSecret encrypts and stores a secret in the database
+// maxStoreSecretConflictRetries bounds StoreSecret's version-number retry loop
+// (#121). Each retry only advances the computed number by one slot, so under N
+// truly simultaneous writers on the same secret a losing writer can need close
+// to N retries — set well above any realistic concurrent-writer count on one
+// secret, bounded so a genuinely broken insert fails instead of looping forever.
+const maxStoreSecretConflictRetries = 64
+
+// StoreSecret encrypts and stores a secret in the database, assigning the next
+// version number atomically (#121). A concurrent writer for the SAME secret
+// (manual RotateSecret racing scheduled auto-rotation, or two concurrent
+// updates) used to both compute the SAME MAX(version_number)+1 before either
+// committed, producing a duplicate version number — GetLatest then returns one
+// non-deterministically (a lost update: the Keyorix-visible value silently
+// diverges from whichever upstream credential a rotation backend actually set)
+// — or, when the second INSERT's version_number wasn't yet unique-constrained,
+// simply succeeded and duplicated it outright. A unique index on
+// (secret_node_id, version_number) now makes the losing writer's INSERT fail
+// instead of succeeding wrongly; this retries with a freshly computed number
+// rather than surfacing that as an error.
 func (se *SecretEncryption) StoreSecret(secretNode *models.SecretNode, plaintext []byte) (*models.SecretVersion, error) {
-	// Use a transaction to ensure atomicity and prevent race conditions
+	var lastErr error
+	for attempt := 0; attempt < maxStoreSecretConflictRetries; attempt++ {
+		version, err := se.tryStoreSecret(secretNode, plaintext)
+		if err == nil {
+			return version, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// tryStoreSecret is one attempt of StoreSecret: compute the next version number
+// and insert, inside a transaction. The encryption AAD binds to the version
+// number (SecretAAD), so a conflicting attempt must re-encrypt with the freshly
+// computed number, not just retry the insert with the old ciphertext.
+func (se *SecretEncryption) tryStoreSecret(secretNode *models.SecretNode, plaintext []byte) (*models.SecretVersion, error) {
 	tx := se.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -41,7 +74,6 @@ func (se *SecretEncryption) StoreSecret(secretNode *models.SecretNode, plaintext
 		}
 	}()
 
-	// Calculate next version number within the transaction
 	var maxVersion int
 	err := tx.Model(&models.SecretVersion{}).
 		Where("secret_node_id = ?", secretNode.ID).

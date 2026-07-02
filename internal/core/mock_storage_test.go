@@ -539,6 +539,14 @@ func (m *MockStorage) CreateSecretVersion(ctx context.Context, version *models.S
 	return args.Get(0).(*models.SecretVersion), args.Error(1)
 }
 
+func (m *MockStorage) CreateNextSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
+	args := m.Called(ctx, version)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.SecretVersion), args.Error(1)
+}
+
 func (m *MockStorage) GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error) {
 	args := m.Called(ctx, secretID)
 	if args.Get(0) == nil {

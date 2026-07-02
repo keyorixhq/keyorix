@@ -630,6 +630,16 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
+	// #121: (secret_node_id, version_number) carried no DB constraint at all — a
+	// manual RotateSecret racing scheduled auto-rotation (or two concurrent
+	// updates) on the same secret could both compute the same MAX+1 and both
+	// insert, duplicating a version number. See ensureSecretVersionIndex.
+	if tableExists(db, "secret_versions") {
+		if err := ensureSecretVersionIndex(db); err != nil {
+			return err
+		}
+	}
+
 	// Skip full AutoMigrate if already initialised (projects table present).
 	if projectsExists {
 		return nil
@@ -685,7 +695,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if err := ensureGroupNameIndex(db); err != nil {
 		return err
 	}
-	return ensureUserNameIndex(db)
+	if err := ensureUserNameIndex(db); err != nil {
+		return err
+	}
+	return ensureSecretVersionIndex(db)
 }
 
 // ensureGroupNameIndex replaces any plain unique index on groups.name with a
@@ -718,6 +731,25 @@ func ensureUserNameIndex(db *gorm.DB) error {
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_username_active ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial users username index: %w", err)
+	}
+	return nil
+}
+
+// ensureSecretVersionIndex enforces uniqueness of (secret_node_id, version_number)
+// at the DB layer (#121). Without this, two concurrent writers for the same secret
+// (manual RotateSecret racing scheduled auto-rotation, or two concurrent updates)
+// could both compute the same next version number and both insert successfully,
+// producing a duplicate version — a lost update: GetLatest then returns one of the
+// two non-deterministically, silently diverging from whichever value a rotation
+// backend actually set upstream. Versions are append-only (never soft-deleted), so
+// unlike the users/groups name indexes this one is unconditional, not partial. An
+// install that already has duplicate (secret_node_id, version_number) rows from
+// this exact pre-existing race will fail loud here rather than have AutoMigrate
+// error unpredictably — a deliberate, disclosed tradeoff matching the precedent set
+// by ensureUserNameIndex/ensureGroupNameIndex for the same class of risk.
+func ensureSecretVersionIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_secret_versions_node_version ON secret_versions (secret_node_id, version_number)").Error; err != nil {
+		return fmt.Errorf("failed to create secret_versions unique index: %w", err)
 	}
 	return nil
 }

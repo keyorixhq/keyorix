@@ -218,6 +218,17 @@ func (rs *RemoteStorage) CreateSecretVersion(ctx context.Context, version *model
 	return &result, nil
 }
 
+// CreateNextSecretVersion delegates to CreateSecretVersion, leaving
+// version.VersionNumber as the caller set it. True atomic version-number
+// assignment (#121) is enforced server-side, where the actual writer is a
+// LocalStorage-backed Keyorix server process (RotateSecret/CreateSecret/
+// UpdateSecret all route through KeyorixCore.storeSecretVersion, which calls
+// this same interface method); this remote client is not itself on that
+// enforcement path.
+func (rs *RemoteStorage) CreateNextSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
+	return rs.CreateSecretVersion(ctx, version)
+}
+
 // GetSecretVersion retrieves a specific version of a secret via remote API.
 func (rs *RemoteStorage) GetSecretVersion(ctx context.Context, secretID uint, version int) (*models.SecretVersion, error) {
 	path := fmt.Sprintf("/api/v1/secrets/%d/versions/%d", secretID, version)

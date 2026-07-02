@@ -224,6 +224,17 @@ type Storage interface {
 	ListProjectSecretsForDrift(ctx context.Context, projectID uint) ([]DriftSecretRow, error)
 	GetSecretVersions(ctx context.Context, secretID uint) ([]*models.SecretVersion, error)
 	CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error)
+	// CreateNextSecretVersion atomically assigns and stores the next version
+	// number for version.SecretNodeID (#121): version.VersionNumber is ignored on
+	// input and set internally. A manual rotation racing auto-rotation (or two
+	// concurrent updates) on the same secret used to both compute the SAME
+	// MAX(version_number)+1 before either INSERTed, producing a duplicate version
+	// number (GetLatest then returns one non-deterministically — a lost update)
+	// or, worse, silently diverging from the upstream credential a backend
+	// rotation just set. Backed by a unique index on (secret_node_id,
+	// version_number): a losing writer's INSERT fails and is retried with a
+	// freshly computed number instead of racing again.
+	CreateNextSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error)
 	GetLatestSecretVersion(ctx context.Context, secretID uint) (*models.SecretVersion, error)
 	// SetSecretCertNotAfter caches a certificate-typed secret's parsed leaf expiry
 	// (ADR-056), a targeted column update with no other side effects.

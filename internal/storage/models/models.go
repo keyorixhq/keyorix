@@ -517,7 +517,14 @@ type SecretDependency struct {
 }
 
 type SecretVersion struct {
-	ID                 uint `gorm:"primaryKey"`
+	ID uint `gorm:"primaryKey"`
+	// SecretNodeID + VersionNumber uniqueness is enforced by a composite unique
+	// index (secret_node_id, version_number), created in migrateDatabase — not a
+	// plain gorm uniqueIndex tag, matching the raw-SQL-index precedent used for
+	// users.email/external_id (an install that already has duplicate rows from
+	// this exact race must fail loud at migration time, not have AutoMigrate
+	// error unpredictably). Versions are append-only (never soft-deleted), so
+	// unlike those partial indexes this one is unconditional.
 	SecretNodeID       uint
 	VersionNumber      int
 	EncryptedValue     []byte `json:"-"`

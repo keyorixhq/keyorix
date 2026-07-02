@@ -53,7 +53,7 @@ func TestKeyorixCore_CreateSecret(t *testing.T) {
 		// Mock storage calls
 		mockStorage.On("GetSecretByName", ctx, req.Name, req.ProjectID, req.EnvironmentID).Return(nil, assert.AnError)
 		mockStorage.On("CreateSecret", ctx, mock.AnythingOfType("*models.SecretNode")).Return(expectedSecret, nil)
-		mockStorage.On("CreateSecretVersion", ctx, mock.AnythingOfType("*models.SecretVersion")).Return(expectedVersion, nil)
+		mockStorage.On("CreateNextSecretVersion", ctx, mock.AnythingOfType("*models.SecretVersion")).Return(expectedVersion, nil)
 
 		// Execute
 		result, err := core.CreateSecret(ctx, req)
