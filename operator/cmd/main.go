@@ -7,10 +7,14 @@ import (
 	"os"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -49,6 +53,22 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "keyorix-operator.secrets.keyorix.io",
+		// #124: without this, the default cache watches/caches EVERY Secret in
+		// every namespace the manager can reach — including every token Secret CR
+		// authors reference, unrelated to this operator entirely. Scope the
+		// shared informer cache to only Secrets this operator manages (the label
+		// it always stamps on target Secrets in applySecret); Owns() still fires
+		// correctly since our own target Secrets always carry the label. A token
+		// Secret lookup goes through the manager's uncached APIReader instead
+		// (wired into the reconciler below) — a one-off read has no reason to be
+		// watched/cached at all.
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {
+					Label: labels.SelectorFromSet(labels.Set{controller.ManagedByLabel: controller.ManagedByValue}),
+				},
+			},
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -64,11 +84,12 @@ func main() {
 	if len(allowed) == 0 {
 		setupLog.Info("WARNING: --allowed-servers is not set; every KeyorixSecret will be REJECTED until you configure the trusted Keyorix server URL(s)")
 	}
-	if err := (&controller.KeyorixSecretReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		AllowedServers: allowed,
-	}).SetupWithManager(mgr); err != nil {
+	reconciler, err := controller.NewReconciler(mgr.GetClient(), mgr.GetScheme(), mgr.GetAPIReader(), allowed)
+	if err != nil {
+		setupLog.Error(err, "unable to initialize controller", "controller", "KeyorixSecret")
+		os.Exit(1)
+	}
+	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KeyorixSecret")
 		os.Exit(1)
 	}
