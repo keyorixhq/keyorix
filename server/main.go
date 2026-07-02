@@ -833,6 +833,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		// Scan a window at least as long as the cadence, so a longer schedule doesn't
 		// leave the time between passes unexamined (floored at 1h inside SetLookback).
 		detector.SetLookback(interval)
+		detector.SetBaselineQuarantine(cfg.AnomalyAlerts.GetBaselineQuarantine())
 		if alertsEnabled {
 			log.Printf("Anomaly alerting enabled: scan + alert every %s", interval)
 		}

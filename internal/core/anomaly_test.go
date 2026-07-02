@@ -37,6 +37,9 @@ func (c *captureStore) ListAnomalyAlerts(_ context.Context, _ *bool) ([]models.A
 	return nil, nil
 }
 func (c *captureStore) AcknowledgeAnomalyAlert(_ context.Context, _ uint) error { return nil }
+func (c *captureStore) PrincipalSecretFirstSeen(_ context.Context, _ time.Time) (map[string]map[uint]time.Time, error) {
+	return nil, nil
+}
 
 // The recent-access scan window must honor the configured lookback (so a longer scan
 // cadence scans a proportionally longer window), and be floored at one hour.
@@ -127,7 +130,10 @@ func TestBuildBaseline(t *testing.T) {
 		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-2 * 24 * time.Hour)},      // in 7d, before window
 		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-20 * 24 * time.Hour)},   // older than 7d
 	}
-	b := buildBaseline(logs, now, windowStart)
+	// quarantine=0: isolates this test to the live-window exclusion behavior; the
+	// quarantine-specific promotion delay is covered separately by
+	// TestBuildBaseline_QuarantineWithholdsRecentlySeenIdentities.
+	b := buildBaseline(logs, now, windowStart, 0)
 	// The in-window read must NOT seed the baseline, else it would mask its own anomaly.
 	if b.knownIPs["203.0.113.9"] || b.knownUsers["mallory"] {
 		t.Fatalf("in-window read must be excluded from the baseline, got IPs=%v users=%v", b.knownIPs, b.knownUsers)
@@ -141,6 +147,29 @@ func TestBuildBaseline(t *testing.T) {
 	// Of the pre-window reads, only bob's (-2d) is within the last 7 days → dailyAvg = 1/7.
 	if want := 1.0 / 7.0; b.dailyAvg != want {
 		t.Fatalf("dailyAvg = %v, want %v", b.dailyAvg, want)
+	}
+}
+
+// #101: an IP/user must have been observed for at least `quarantine` before the live
+// window, not merely before it, to be trusted as baseline — otherwise a single access
+// one lookback interval ago (e.g. 1h) is enough to poison the baseline and silence
+// new_ip/new_user for that identity on the very next pass.
+func TestBuildBaseline_QuarantineWithholdsRecentlySeenIdentities(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	windowStart := now.Add(-1 * time.Hour)
+	quarantine := 24 * time.Hour
+	logs := []models.SecretAccessLog{
+		// First seen 2h before the live window — well short of the 24h quarantine.
+		{IPAddress: "203.0.113.9", AccessedBy: "mallory", AccessTime: windowStart.Add(-2 * time.Hour)},
+		// First seen 48h before the live window — clears the 24h quarantine.
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: windowStart.Add(-48 * time.Hour)},
+	}
+	b := buildBaseline(logs, now, windowStart, quarantine)
+	if b.knownIPs["203.0.113.9"] || b.knownUsers["mallory"] {
+		t.Fatalf("a recently-first-seen identity must stay quarantined, got IPs=%v users=%v", b.knownIPs, b.knownUsers)
+	}
+	if !b.knownIPs["10.0.0.1"] || !b.knownUsers["alice"] {
+		t.Fatalf("an identity first seen before the quarantine cutoff must be trusted, got IPs=%v users=%v", b.knownIPs, b.knownUsers)
 	}
 }
 
@@ -191,17 +220,30 @@ func TestDetectAnomalies(t *testing.T) {
 		}
 	})
 
-	t.Run("empty baseline suppresses new-ip/new-user", func(t *testing.T) {
-		// Bootstrapping: with no history, an unknown IP/user must not flag (only off-hours,
-		// which is time-based, can fire). Use a business-hours time so nothing fires.
+	t.Run("empty baseline still flags first-ever access, at low severity (#101)", func(t *testing.T) {
+		// A brand-new secret's first-ever access used to be silently waved through with
+		// zero novelty signal — exactly the blind spot an attacker deliberately
+		// targeting a freshly-provisioned, never-accessed secret would rely on. It must
+		// now still surface (auditable), but at "low" severity since there's no
+		// established pattern being violated, only an absence of history. Business-hours
+		// time so only new_ip/new_user are in play.
 		lg := models.SecretAccessLog{
 			IPAddress:  "8.8.8.8",
 			AccessedBy: "mallory",
 			AccessTime: time.Date(2026, 6, 17, 14, 0, 0, 0, time.UTC),
 		}
 		empty := accessBaseline{knownIPs: map[string]bool{}, knownUsers: map[string]bool{}}
-		if alerts := detectAnomalies(secret, lg, empty, defaultOffHoursPolicy()); len(alerts) != 0 {
-			t.Fatalf("expected no alerts against an empty baseline, got %v", kindsOf(alerts))
+		alerts := detectAnomalies(secret, lg, empty, defaultOffHoursPolicy())
+		got := kindsOf(alerts)
+		for _, want := range []string{"new_ip", "new_user"} {
+			if !got[want] {
+				t.Errorf("expected %s alert against an empty baseline, got %v", want, got)
+			}
+		}
+		for _, a := range alerts {
+			if a.Severity != "low" {
+				t.Errorf("expected low severity for a first-ever access with no baseline, got %s alert at %s", a.AlertType, a.Severity)
+			}
 		}
 	})
 }

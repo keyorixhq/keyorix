@@ -1240,6 +1240,24 @@ type AnomalyAlertsConfig struct {
 	// BusinessHours configures the timezone and band the off_hours rule uses. Unset =
 	// the legacy UTC 22:00–06:00 default.
 	BusinessHours AnomalyBusinessHoursConfig `yaml:"business_hours"`
+	// BaselineQuarantine is how long an IP/user must be observed before the live scan
+	// window before it is trusted as "known" baseline (#101) — see
+	// AnomalyDetector.SetBaselineQuarantine. Go duration string (e.g. "24h"); unset
+	// keeps the 24h default. An explicit "0" or "0s" disables quarantine.
+	BaselineQuarantine string `yaml:"baseline_quarantine"`
+}
+
+// GetBaselineQuarantine returns the parsed BaselineQuarantine duration; defaults to 24h.
+// A configured zero duration ("0", "0s") is honored as an explicit opt-out rather than
+// falling back to the default, since Go's ParseDuration("0") succeeds with d == 0.
+func (c AnomalyAlertsConfig) GetBaselineQuarantine() time.Duration {
+	if c.BaselineQuarantine == "" {
+		return 24 * time.Hour
+	}
+	if d, err := time.ParseDuration(c.BaselineQuarantine); err == nil && d >= 0 {
+		return d
+	}
+	return 24 * time.Hour
 }
 
 // AnomalyBusinessHoursConfig defines when secret access counts as "off hours" for the
@@ -1264,7 +1282,11 @@ type AnomalyMLConfig struct {
 	Threshold  float64 `yaml:"threshold"`   // anomaly-score cutoff (0.5,1.0); default 0.60
 	NumTrees   int     `yaml:"num_trees"`   // ensemble size; default 100
 	SampleSize int     `yaml:"sample_size"` // per-tree subsample (psi); default 256
-	Seed       int64   `yaml:"seed"`        // RNG seed for reproducible scoring; default 1
+	// Seed, if set, pins the Isolation Forest's RNG for reproducible scoring (e.g. to
+	// diff forest behavior across a config change). Unset (0) draws a fresh
+	// crypto/rand-sourced seed per process instead of a fixed constant, so the forest
+	// structure isn't predictable from source (#101).
+	Seed int64 `yaml:"seed"`
 }
 
 // GetInterval returns the anomaly scan/alert interval (Go duration); defaults to 1h.

@@ -166,6 +166,53 @@ func TestRunDetection_FlagsNewUserAndIPAgainstPriorBaseline(t *testing.T) {
 	assert.True(t, kinds["new_ip"], "a first-seen IP must raise new_ip")
 }
 
+// Regression (#101): a principal that reads many DIFFERENT secrets it has never
+// touched before — breadth exfiltration — must raise a principal_breadth alert, even
+// though each individual secret only sees one unremarkable access from that principal
+// (never crossing any single-secret threshold on its own).
+func TestRunDetection_DetectsPrincipalBreadthAcrossSecrets(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.SecretAccessLog{}, &models.AnomalyAlert{}))
+
+	ctx := context.Background()
+	var secrets []models.SecretNode
+	for i := uint(900); i < 906; i++ { // 6 secrets — above principalBreadthMinNewSecrets (5)
+		s := models.SecretNode{ID: i, ProjectID: 1, Name: "s", Status: "active", IsSecret: true}
+		require.NoError(t, h.DB.Create(&s).Error)
+		secrets = append(secrets, s)
+
+		// Established baseline for each secret: alice, well outside the quarantine window,
+		// so per-secret new_user does not also fire for alice and confound the assertion.
+		require.NoError(t, h.DB.Create(&models.SecretAccessLog{
+			SecretNodeID: s.ID, AccessedBy: "alice", Action: "read", IPAddress: "10.0.0.1",
+			AccessTime: time.Now().Add(-10 * 24 * time.Hour),
+		}).Error)
+	}
+
+	// mallory reads all 6 secrets ONCE each, right now — never touched any of them before.
+	for _, s := range secrets {
+		require.NoError(t, h.DB.Create(&models.SecretAccessLog{
+			SecretNodeID: s.ID, AccessedBy: "mallory", Action: "read", IPAddress: "203.0.113.5",
+			AccessTime: time.Now(),
+		}).Error)
+	}
+
+	detector := core.NewAnomalyDetector(h.CoreService.Storage())
+	require.NoError(t, detector.RunDetection(ctx, secrets))
+
+	alerts, err := detector.ListAlerts(ctx, nil)
+	require.NoError(t, err)
+	var breadth *models.AnomalyAlert
+	for i, a := range alerts {
+		if a.AlertType == "principal_breadth" && a.AccessedBy == "mallory" {
+			breadth = &alerts[i]
+		}
+	}
+	require.NotNil(t, breadth, "a principal reading 6 never-before-touched secrets must raise principal_breadth")
+	assert.Equal(t, "medium", breadth.Severity, "6 new secrets is below the high-severity multiplier (2x threshold = 10)")
+}
+
 // The compliance posture counts open (unacknowledged) anomalies, with a high-severity tally.
 func TestCompliancePosture_Anomalies(t *testing.T) {
 	h := testhelper.NewRBACTestHelper(t)
