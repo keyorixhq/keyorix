@@ -230,6 +230,57 @@ func TestRoleService_AssignRole_ScopedCrossProjectDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
+// #169: the gRPC path closes the same escalation as HTTP — an actor holding ONLY
+// roles.write (no system.write, no admin role) must not be able to bundle
+// system.write into a role's definition, whether creating a new role or updating an
+// existing one they already hold.
+func TestRoleService_CreateRole_RolesWriteHolderCannotBundleSystemWrite(t *testing.T) {
+	svc, h := newRoleService(t)
+	roleEditor := h.CreateTestRole(t, "role-editor", "can edit roles only", 100)
+	require.NoError(t, h.DB.Exec(
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		roleEditor.ID).Error)
+	h.CreateTestUser(t, "attacker", 700)
+	h.AssignUserRole(t, 700, roleEditor.ID, nil)
+
+	ctx := authCtx(700, "attacker")
+	_, err := svc.CreateRole(ctx, &pb.CreateRoleRequest{
+		Name: "self-promote", Description: "escalation attempt", Permissions: []string{"system.write"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	var roleCount int64
+	require.NoError(t, h.DB.Model(&models.Role{}).Where("name = ?", "self-promote").Count(&roleCount).Error)
+	assert.Zero(t, roleCount, "no role must be created when a bundled permission is refused")
+}
+
+func TestRoleService_UpdateRole_RolesWriteHolderCannotAddSystemWrite(t *testing.T) {
+	svc, h := newRoleService(t)
+	roleEditor := h.CreateTestRole(t, "role-editor", "can edit roles only", 100)
+	require.NoError(t, h.DB.Exec(
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		roleEditor.ID).Error)
+	target := h.CreateTestRole(t, "target", "a role the attacker already holds", 101)
+	require.NoError(t, h.DB.Exec(
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		target.ID).Error)
+	h.CreateTestUser(t, "attacker2", 701)
+	h.AssignUserRole(t, 701, roleEditor.ID, nil)
+	h.AssignUserRole(t, 701, target.ID, nil)
+
+	ctx := authCtx(701, "attacker2")
+	_, err := svc.UpdateRole(ctx, &pb.UpdateRoleRequest{
+		Id: uint32(target.ID), Permissions: []string{"roles.write", "system.write"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	var permCount int64
+	require.NoError(t, h.DB.Table("role_permissions").Where("role_id = ?", target.ID).Count(&permCount).Error)
+	assert.Equal(t, int64(1), permCount, "the role's permission set must be unchanged")
+}
+
 func TestRoleService_RemoveRole(t *testing.T) {
 	svc, h := newRoleService(t)
 	user := h.CreateTestUser(t, "removee", 501)

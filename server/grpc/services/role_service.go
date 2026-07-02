@@ -41,7 +41,7 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 		return nil, status.Error(codes.InvalidArgument, "name, description and at least one permission are required")
 	}
 
-	permIDs, err := s.resolvePermissionIDs(ctx, req.GetPermissions())
+	permIDs, err := s.resolvePermissionIDs(ctx, actor.UserID, req.GetPermissions())
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 
 	// A provided permission list replaces the entire set.
 	if len(req.GetPermissions()) > 0 {
-		permIDs, err := s.resolvePermissionIDs(ctx, req.GetPermissions())
+		permIDs, err := s.resolvePermissionIDs(ctx, actor.UserID, req.GetPermissions())
 		if err != nil {
 			return nil, err
 		}
@@ -278,8 +278,15 @@ func (s *RoleGRPCService) roleByID(ctx context.Context, id uint) (*pb.Role, erro
 	return roleToProto(role, perms), nil
 }
 
-// resolvePermissionIDs maps permission names to IDs, rejecting unknown names.
-func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, names []string) ([]uint, error) {
+// resolvePermissionIDs maps permission names to IDs, rejecting unknown names, and
+// requires actorID already hold every named permission (#169: CreateRole/UpdateRole
+// are gated only by the narrower "roles.write" — without this, a roles.write holder
+// could bundle an arbitrary admin-tier permission into a role's DEFINITION with no
+// check they hold it themselves, mirroring the same check the HTTP handler applies).
+// Checked at global scope, matching how roles.write itself is gated. Validating here
+// — before the caller creates/mutates anything — means a request naming even one
+// unauthorized permission is rejected atomically, not partially applied.
+func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, actorID uint, names []string) ([]uint, error) {
 	perms, err := s.core.Storage().ListPermissions(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to resolve permissions")
@@ -293,6 +300,13 @@ func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, names []stri
 		id, ok := byName[n]
 		if !ok {
 			return nil, status.Errorf(codes.InvalidArgument, "unknown permission %q", n)
+		}
+		authorized, aerr := s.core.Authorize(ctx, actorID, n, core.Scope{})
+		if aerr != nil {
+			return nil, status.Error(codes.Internal, "failed to resolve actor authority")
+		}
+		if !authorized {
+			return nil, status.Errorf(codes.PermissionDenied, "cannot bundle permission %q into a role: you do not hold it yourself", n)
 		}
 		ids = append(ids, id)
 	}
