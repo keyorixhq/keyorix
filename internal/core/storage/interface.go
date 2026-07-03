@@ -24,6 +24,17 @@ type Storage interface {
 	// when another replica holds the lock — the caller should simply skip this tick.
 	WithSchedulerLock(ctx context.Context, key int64, fn func() error) (ran bool, err error)
 
+	// WithAuditCheckpointLock serializes the audit-checkpoint chain-walk + decide +
+	// create-checkpoint sequence (ADR-029) across every trigger — the scheduler tick,
+	// the HTTP POST /api/v1/audit/checkpoint endpoint, and the gRPC
+	// WriteAuditCheckpoint RPC — even when they land on different replicas (ADR-039
+	// HA). Unlike WithSchedulerLock, this BLOCKS until the lock is free rather than
+	// skipping on contention: every caller must actually run its checkpoint decision
+	// against a consistent, serialized view, not silently no-op (#300). On PostgreSQL
+	// it holds a session advisory lock (pg_advisory_lock) for the duration of fn; on
+	// SQLite (single instance, no cross-process concern) a process mutex is enough.
+	WithAuditCheckpointLock(ctx context.Context, fn func() error) error
+
 	// WithTransaction runs fn inside a single storage transaction: every mutation fn
 	// performs through the provided Storage commits together, or rolls back together if
 	// fn returns an error. The backing store decides the semantics — the local (DB)
