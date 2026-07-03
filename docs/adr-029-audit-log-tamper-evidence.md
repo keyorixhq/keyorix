@@ -122,6 +122,23 @@ double-migration hazard).
     authenticated prior checkpoint, so a truncation is never silently re-baselined
     away. Surfaced as `checkpointed`/`checkpoint_reason` on `/audit/verify` and in
     `keyorix audit verify`.
+  - **Checkpoint-write serialization (#300):** `WriteAuditCheckpoint` is reachable
+    from three unsynchronized triggers — the scheduler tick, the HTTP
+    `POST /api/v1/audit/checkpoint` endpoint, and the gRPC `WriteAuditCheckpoint`
+    RPC — which can land on different replicas (HA). Without serialization, two
+    overlapping calls could interleave the chain-walk + decide + create sequence
+    and commit a checkpoint out of chain-length order: the row with the higher DB
+    `id` could end up certifying FEWER chained events than an earlier-committed
+    row, so `LatestAuditCheckpoint`'s `id DESC` pick would silently miss coverage
+    of events that landed in the interleaving window — a real gap even with a
+    fully-intact, validly-signed chain. `WriteAuditCheckpoint` now runs its whole
+    sequence under `storage.WithAuditCheckpointLock`, mirroring the per-event
+    append serialization above: a process-level mutex for the common single-writer
+    topology and SQLite, extended across processes/replicas on PostgreSQL with a
+    blocking session advisory lock (`pg_advisory_lock`, distinct from the
+    per-append lock key). Unlike the scheduler's own `WithSchedulerLock` (a "try"
+    lock that skips a tick on contention), this blocks until free, so an
+    operator-triggered write racing the scheduler is serialized, not dropped.
   - **DEK rotation:** a checkpoint signed under a superseded DEK cannot be
     re-verified on-box, so after a rotation `verify` fails closed (reports invalid)
     until the next checkpoint write re-baselines under the new key — the scheduler

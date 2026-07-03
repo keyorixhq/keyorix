@@ -19,6 +19,11 @@ func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() er
 	return true, fn()
 }
 
+// WithAuditCheckpointLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithAuditCheckpointLock(_ context.Context, fn func() error) error {
+	return fn()
+}
+
 // WithTransaction runs fn directly against the mock (no real transaction in tests).
 func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
 	return fn(m)

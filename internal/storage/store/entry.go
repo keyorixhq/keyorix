@@ -80,9 +80,15 @@ type LocalStorage struct {
 	// SAME mutex as its parent — otherwise an audit append inside a transaction would
 	// not serialize against concurrent appends on the base store.
 	auditChainMu *sync.Mutex
+	// auditCheckpointMu serializes WriteAuditCheckpoint's chain-walk + decide +
+	// create-checkpoint sequence within this process (ADR-029/#300). The PostgreSQL
+	// advisory lock in WithAuditCheckpointLock extends this across processes/replicas
+	// (ADR-039 HA). A pointer for the same reason as auditChainMu — a transaction-scoped
+	// LocalStorage must share its parent's mutex.
+	auditCheckpointMu *sync.Mutex
 }
 
 // NewLocalStorage creates a LocalStorage backed by the given *gorm.DB.
 func NewLocalStorage(db *gorm.DB) *LocalStorage {
-	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}}
+	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}, auditCheckpointMu: &sync.Mutex{}}
 }
