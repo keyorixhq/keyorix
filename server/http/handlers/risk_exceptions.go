@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,7 +23,8 @@ func (h *DashboardHandler) ListRiskExceptions(w http.ResponseWriter, r *http.Req
 	activeOnly := r.URL.Query().Get("all") != "true"
 	exceptions, err := h.coreService.ListRiskExceptions(r.Context(), activeOnly)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing risk exceptions: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"exceptions": exceptions}, "")
@@ -55,10 +57,15 @@ func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Re
 	exc, err := h.coreService.CreateRiskException(r.Context(), actor.UserID, body.Title, body.Category, body.Reference, body.Justification, expiresAt)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "required") || strings.Contains(msg, "must be"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error creating risk exception: %v", err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -85,6 +92,9 @@ func (h *DashboardHandler) RevokeRiskException(w http.ResponseWriter, r *http.Re
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
+		default:
+			log.Printf("Error revoking risk exception %d: %v", id, err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return

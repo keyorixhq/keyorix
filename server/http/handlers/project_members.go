@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,7 +22,8 @@ func (h *CatalogHandler) ListProjectMembers(w http.ResponseWriter, r *http.Reque
 	}
 	members, err := h.coreService.ListProjectMembers(r.Context(), uint(id))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing project %d members: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"members": members}, "")
@@ -38,7 +40,8 @@ func (h *CatalogHandler) GetProjectAccessReview(w http.ResponseWriter, r *http.R
 	}
 	entries, err := h.coreService.GenerateProjectAccessReview(r.Context(), uint(id))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error generating access review for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"entries": entries, "count": len(entries)}, "")
@@ -105,6 +108,9 @@ func (h *CatalogHandler) RevokeProjectAccessReview(w http.ResponseWriter, r *htt
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "no matching share") || strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
+		default:
+			log.Printf("Error revoking access-review grant for project %d: %v", projectID, err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return
@@ -153,12 +159,17 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 	}
 	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, uint(id), body.UserID, body.Role); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "already") {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "already"):
 			status = http.StatusConflict
-		} else if strings.Contains(err.Error(), "unknown role") {
+		case strings.Contains(msg, "unknown role"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error adding member to project %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -195,13 +206,17 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 	}
 	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, uint(id), uint(userID), body.Role); err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "unknown role"):
+		case strings.Contains(msg, "unknown role"):
 			status = http.StatusBadRequest
-		case strings.Contains(err.Error(), "last administrator"):
+		case strings.Contains(msg, "last administrator"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error updating role for member %d on project %d: %v", userID, id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Member role updated")
@@ -226,13 +241,17 @@ func (h *CatalogHandler) RemoveProjectMember(w http.ResponseWriter, r *http.Requ
 	}
 	if err := h.coreService.RemoveProjectMember(r.Context(), userCtx.UserID, uint(id), uint(userID)); err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not a member"):
+		case strings.Contains(msg, "not a member"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "last administrator"):
+		case strings.Contains(msg, "last administrator"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error removing member %d from project %d: %v", userID, id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Member removed")
