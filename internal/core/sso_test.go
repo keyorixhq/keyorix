@@ -402,9 +402,12 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "secrets_writer").Return(&models.Role{ID: 10, Name: "secrets_writer"}, nil)
 		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 20, Name: "system_auditor"}, nil)
 		// RemoveUserRole's last-global-admin guard (unrelated to this test's role, but
-		// exercised on every removal) looks up the other install-admin role names too.
+		// exercised on every removal) looks up every install-admin role name
+		// (installAdminRoleNames: super_admin/admin/system_admin) to build the
+		// admin-role-ID set.
 		store.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, assert.AnError)
 		store.On("GetRoleByName", mock.Anything, "admin").Return(nil, assert.AnError)
+		store.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError)
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
