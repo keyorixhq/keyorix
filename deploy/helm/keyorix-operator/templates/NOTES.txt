@@ -3,12 +3,18 @@ keyorix-operator is installed.
 The operator watches KeyorixSecret resources cluster-wide and materialises the
 referenced Keyorix secrets into native Kubernetes Secrets.
 
-1. Create a machine-identity token Secret in your app namespace:
+1. Create a machine-identity token Secret in your app namespace, and label it as a
+   Keyorix token source (required — the operator refuses to resolve an unlabeled
+   Secret as a tokenSecretRef, so a KeyorixSecret author can't point at an arbitrary
+   pre-existing Secret they don't otherwise have RBAC to read):
 
    kubectl -n <ns> create secret generic keyorix-token \
      --from-literal=token="$KEYORIX_MACHINE_TOKEN"
+   kubectl -n <ns> label secret keyorix-token secrets.keyorix.io/token-secret=true
 
-2. Create a KeyorixSecret (see deploy/helm/keyorix-operator/examples/keyorixsecret.yaml):
+2. Create a KeyorixSecret (see deploy/helm/keyorix-operator/examples/keyorixsecret.yaml).
+   spec.server must be https and match the operator's --allowed-servers /
+   KEYORIX_ALLOWED_SERVERS configuration — the operator rejects every CR until that's set:
 
    apiVersion: secrets.keyorix.io/v1alpha1
    kind: KeyorixSecret

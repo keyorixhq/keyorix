@@ -589,3 +589,141 @@ func TestRunAutoRotation_BackendSucceedsStoreFails_AuditsDrift(t *testing.T) {
 	assert.Contains(t, events[0].Description, "DRIFT", "the backend-succeeded-store-failed case must be audited as drift")
 	assert.Contains(t, events[0].Description, "app_svc", "the audit must name the upstream ref to reconcile")
 }
+
+// ── #193: RotateSecretOnDemand — the manual/operator rotation path must actually drive
+// backend rotation for a backend-bound secret, never silently store an arbitrary
+// caller-supplied value while leaving the real upstream credential untouched. ──
+
+// fakePartialGenExecutor is a generate-upstream backend whose GenerateUpstream can
+// return a rotation.PartialRotationError: the new credential is minted upstream but a
+// follow-up cleanup step (deleting the prior one) fails — the new value must still be
+// stored (never orphan a freshly minted, untracked credential).
+type fakePartialGenExecutor struct {
+	name    string
+	value   string
+	partial bool
+	gotRef  string
+}
+
+func (f *fakePartialGenExecutor) Name() string { return f.name }
+func (f *fakePartialGenExecutor) Type() string { return "fakepartial" }
+func (f *fakePartialGenExecutor) Rotate(context.Context, string, string) error {
+	return errors.New("use GenerateUpstream")
+}
+func (f *fakePartialGenExecutor) GenerateUpstream(_ context.Context, ref string) (string, error) {
+	f.gotRef = ref
+	if f.partial {
+		return "", &rotation.PartialRotationError{Value: f.value, Err: errors.New("could not delete prior key")}
+	}
+	return f.value, nil
+}
+
+// A secret with no configured rotation backend rotates exactly as before: the
+// caller-supplied value is stored verbatim.
+func TestRotateSecretOnDemand_NoBackendStoresCallerValue(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "plain", false, fixed.Add(-24*time.Hour))
+
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("caller-value"), "alice")
+	require.NoError(t, err)
+	assert.NotNil(t, updated.LastRotatedAt)
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, "caller-value", string(v.EncryptedValue))
+}
+
+// The core #193 regression: a manual on-demand rotate of a backend-bound secret must
+// actually invoke the backend rotation executor (not just overwrite the stored value),
+// and the value stored in Keyorix is the one the backend applied/confirmed.
+func TestRotateSecretOnDemand_AppliesBackend(t *testing.T) {
+	fake := &fakeExecutor{name: "pg"}
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
+
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("operator-supplied"), "alice")
+	require.NoError(t, err)
+
+	require.True(t, fake.called, "the manual rotate must actually invoke the backend executor")
+	assert.Equal(t, "app_svc", fake.gotRef)
+	assert.Equal(t, "operator-supplied", fake.gotVal, "the caller's candidate is what gets applied upstream")
+
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber)
+	assert.Equal(t, fake.gotVal, string(v.EncryptedValue), "the stored value matches what was actually applied upstream")
+	assert.NotNil(t, updated.LastRotatedAt)
+}
+
+// For a generate-upstream backend the caller's candidate is ignored — the stored value
+// is what the upstream minted, matching automated-rotation semantics.
+func TestRotateSecretOnDemand_GenerateUpstreamIgnoresCandidate(t *testing.T) {
+	fake := &fakePartialGenExecutor{name: "cloud", value: `{"access_key_id":"AKIANEW"}`}
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-24*time.Hour))
+
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("ignored-candidate"), "alice")
+	require.NoError(t, err)
+	assert.Equal(t, "svc-app", fake.gotRef)
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, fake.value, string(v.EncryptedValue))
+}
+
+// If the upstream rotation fails outright, nothing is stored — the response must never
+// be a misleading "success" while the suspected-compromised credential is untouched.
+func TestRotateSecretOnDemand_BackendFailureRefused(t *testing.T) {
+	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
+
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("operator-supplied"), "alice")
+	require.Error(t, err, "an upstream rotation failure must never look like success")
+	assert.Contains(t, err.Error(), "backend")
+	assert.Contains(t, err.Error(), "NOT rotated")
+
+	require.True(t, fake.called)
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 1, v.VersionNumber, "no new value is stored when the upstream apply fails")
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretRotateFailed).Find(&events).Error)
+	require.Len(t, events, 1, "the failure is audited distinctly")
+	assert.Contains(t, events[0].Description, "app_svc")
+}
+
+// A partial upstream failure (new credential minted, prior one could not be removed)
+// still stores the new value — discarding it would orphan a live, untracked credential —
+// but the call still returns an error so the caller is never told "success" while a
+// leftover credential needs manual removal.
+func TestRotateSecretOnDemand_PartialFailureStoresButErrors(t *testing.T) {
+	fake := &fakePartialGenExecutor{name: "cloud", value: `{"access_key_id":"AKIANEW"}`, partial: true}
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-24*time.Hour))
+
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("ignored"), "alice")
+	require.Error(t, err, "a partial upstream cleanup failure must not report success")
+	assert.NotNil(t, updated, "the new value is still returned/stored — never orphan a freshly minted credential")
+
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber)
+	assert.Equal(t, fake.value, string(v.EncryptedValue), "the newly minted credential is stored despite the partial failure")
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretRotateIncomplete).Find(&events).Error)
+	require.Len(t, events, 1, "the partial outcome is audited distinctly from both success and outright failure")
+}
+
+// An unknown backend name (misconfigured after a manager reload) is refused, not
+// silently treated as a plain Keyorix-only rotation.
+func TestRotateSecretOnDemand_UnknownBackendRefused(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "other"}}))
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
+
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("x"), "alice")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown rotation backend")
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 1, v.VersionNumber, "nothing is stored for an unresolvable backend")
+}

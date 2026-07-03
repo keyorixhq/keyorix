@@ -651,6 +651,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := ensureUserEmailIndex(db); err != nil {
 			return err
 		}
+		// Same DB-level protection for users.external_id (#117): the SCIM/IdP-asserted
+		// identifier was indexed but NOT unique, so two different users could share the
+		// same non-empty external_id — an ambiguity GetUserByExternalID (SSO/SCIM login
+		// resolution) must not tolerate. Additive + idempotent; the full AutoMigrate
+		// below covers fresh DBs.
+		if err := ensureUserExternalIDIndex(db); err != nil {
+			return err
+		}
 	}
 
 	// Close the share-create race (#136): a partial unique index on live rows so two
@@ -745,6 +753,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		return err
 	}
 	if err := ensureUserEmailIndex(db); err != nil {
+		return err
+	}
+	if err := ensureUserExternalIDIndex(db); err != nil {
 		return err
 	}
 	if err := ensureProjectNameIndex(db); err != nil {
@@ -846,13 +857,29 @@ func ensureUserNameIndex(db *gorm.DB) error {
 // case-insensitive lookup (`LOWER(email) = LOWER(?)`) — an exact-match index would let
 // the race slip through on a case variant (Bob@x vs bob@x). Scoped to
 // `deleted_at IS NULL` so a soft-deleted (e.g. SCIM-deprovisioned) user's email is freed
-// for reuse on re-provisioning, mirroring ensureUserNameIndex; `email <> ''` so any
+// for reuse on re-provisioning, mirroring ensureUserNameIndex; `email <> ”` so any
 // legacy rows with no email recorded don't collide with each other. Idempotent; works on
 // both SQLite and Postgres (both support expression indexes, partial indexes, and
 // IF [NOT] EXISTS).
 func ensureUserEmailIndex(db *gorm.DB) error {
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial users email index: %w", err)
+	}
+	return nil
+}
+
+// ensureUserExternalIDIndex creates a partial unique index on users.external_id,
+// scoped to live rows with a non-empty external_id (#117). external_id (the
+// SCIM/IdP-asserted identifier) was indexed but NOT unique, explicitly
+// documented as allowing "legacy/blank rows [to] coexist" — but two DIFFERENT
+// users sharing the same non-empty external_id is exactly the ambiguity SSO/
+// SCIM identity resolution (GetUserByExternalID) must not tolerate: which one
+// does a federated login authenticate as? Empty external_id (every locally-
+// created account) is excluded so native users never collide with each other.
+// Idempotent; works on SQLite and Postgres.
+func ensureUserExternalIDIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_external_id_active ON users (external_id) WHERE deleted_at IS NULL AND external_id != ''").Error; err != nil {
+		return fmt.Errorf("failed to create partial users external_id index: %w", err)
 	}
 	return nil
 }
@@ -870,7 +897,7 @@ func ensureUserEmailIndex(db *gorm.DB) error {
 // ensureUserEmailIndex's treatment of users.email (#117) for the identical
 // shadow-identity class of bug. Scoped to `deleted_at IS NULL` so a soft-deleted
 // project's name is freed for reuse on re-creation, mirroring ensureGroupNameIndex/
-// ensureUserNameIndex; `name <> ''` so any legacy rows with no name recorded don't
+// ensureUserNameIndex; `name <> ”` so any legacy rows with no name recorded don't
 // collide with each other. Idempotent; works on both SQLite and Postgres.
 //
 // Known residual limitation: this closes the case-folding gap but not the

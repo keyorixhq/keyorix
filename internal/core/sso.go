@@ -71,6 +71,17 @@ type SSOProvider struct {
 	AutoProvision bool   // JIT-create an account on first login for an unknown identity
 	DefaultRole   string // baseline role for JIT-provisioned users ("" → system_viewer)
 
+	// TrustAssertedEmail opts a SAML provider into treating its asserted email as
+	// verified for resolveSSOUser's email-fallback account linking. SAML carries no
+	// per-assertion equivalent of OIDC's email_verified claim — the assertion being
+	// IdP-signed only proves the IdP sent it, not that the IdP itself verified
+	// ownership of that address (a self-service/low-trust IdP could let a user set
+	// any email). Off by default: without it, CompleteSAML's email fallback can
+	// still seed a brand-new JIT account (nothing to take over) but cannot claim an
+	// EXISTING one — closing a SAML-specific account-takeover path (#89) that
+	// OIDC's real email_verified claim already closes. Ignored for OIDC providers.
+	TrustAssertedEmail bool
+
 	GroupSync   bool   // reconcile native group memberships from the IdP groups claim on login
 	GroupsClaim string // id_token claim carrying group names ("" → "groups")
 
@@ -192,7 +203,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		if !p.AutoProvision {
 			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
 		}
-		if user, err = c.provisionSSOUser(ctx, p, sub, email, name); err != nil {
+		if user, err = c.provisionSSOUser(ctx, p, sub, email, emailVerified, name); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -296,9 +307,13 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		return nil, nil, "", fmt.Errorf("the assertion carried no subject or email")
 	}
 
-	// A SAML assertion's attributes (incl. email) are carried inside the IdP-signed,
-	// library-verified assertion, so the email is treated as verified here.
-	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email, true)
+	// The assertion being IdP-signed proves the IdP sent this email, not that the
+	// IdP verified the user OWNS it — SAML has no per-assertion equivalent of
+	// OIDC's email_verified claim. Trusting it unconditionally let a self-service/
+	// low-trust SAML IdP claim an EXISTING account (up to a native admin) merely
+	// by asserting its address (#89). Gate on the provider's explicit opt-in
+	// instead; see SSOProvider.TrustAssertedEmail.
+	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email, p.TrustAssertedEmail)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -306,7 +321,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		if !p.AutoProvision {
 			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
 		}
-		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, info.Name); err != nil {
+		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, true, info.Name); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -398,13 +413,21 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string, ema
 // pending_first_login (which would trap an SSO user in a password-change-only
 // restricted session they can never clear). The baseline role is the provider's
 // default_role (system_viewer when unset); an unknown role grants nothing.
-func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub, email, name string) (*models.User, error) {
+func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub, email string, emailVerified bool, name string) (*models.User, error) {
 	if strings.TrimSpace(email) == "" {
 		return nil, fmt.Errorf("the IdP returned no email; cannot auto-provision an account")
 	}
-	// Guard against a race / case where a user materialised between the resolve and
-	// here: reuse it rather than create a duplicate.
-	if existing, ferr := c.FindSCIMUser(ctx, sub, email); ferr == nil && existing != nil {
+	// Guard against a race / case where a user materialised between the resolve and here:
+	// reuse it rather than create a duplicate. This MUST go through resolveSSOUser (not a
+	// raw email lookup), so the same guards apply — an EXISTING account is reused via an
+	// email match ONLY when the email is verified, and never when it is bound to a
+	// different federated identity. A raw FindSCIMUser(sub, email) here re-introduced the
+	// unverified-email account-takeover that resolveSSOUser exists to prevent: an IdP that
+	// omits email_verified could assert a victim's email and have the JIT path "reuse"
+	// (i.e. log in as) the victim's existing account.
+	if existing, ferr := c.resolveSSOUser(ctx, sub, email, emailVerified); ferr != nil {
+		return nil, ferr
+	} else if existing != nil {
 		return existing, nil
 	}
 	username, err := c.deriveSCIMUsername(ctx, email)

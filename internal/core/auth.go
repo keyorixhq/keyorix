@@ -365,6 +365,15 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 // account (enumeration-safe), so unknown addresses, suspended accounts, throttled
 // repeats, and delivery/config failures are all swallowed. The attempt itself is
 // audited inside provisionSetupLink.
+//
+// #117: the known-account path used to synchronously dial-and-send the email
+// (SMTP delivery blocks on the real network round-trip) before returning, while
+// an unknown/blocked/SSO-managed address returned after a single fast DB lookup
+// — a measurable timing side-channel an attacker can use to enumerate valid
+// accounts without ever seeing a different response body. The issue+deliver
+// step now runs detached in the background (DetachedAuditContext, the same
+// fire-and-forget pattern used elsewhere for post-response audit work) so this
+// function returns at the same speed regardless of whether the email exists.
 func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) error {
 	user, err := c.storage.GetUserByEmail(ctx, email)
 	if err != nil {
@@ -382,12 +391,18 @@ func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) er
 	}
 	// Throttle abusive repeats to a victim address (same control as resend). A
 	// throttled repeat returns an error here, swallowed below to stay enumeration-safe.
-	_, _ = c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
-		Purpose:       SetupPurposePasswordResetLink,
-		SubjectEmail:  user.Email,
-		SubjectUserID: &user.ID,
-		CreatedBy:     0, // self-service (no issuing admin)
-	}, user.DisplayName, "")
+	// Detached from the request context: the HTTP handler returns immediately after
+	// this call, which would cancel a request-scoped ctx before the SMTP send (or
+	// even the throttle check) completes.
+	detached := DetachedAuditContext(ctx)
+	go func() {
+		_, _ = c.provisionSetupLinkThrottled(detached, IssueSetupTokenRequest{
+			Purpose:       SetupPurposePasswordResetLink,
+			SubjectEmail:  user.Email,
+			SubjectUserID: &user.ID,
+			CreatedBy:     0, // self-service (no issuing admin)
+		}, user.DisplayName, "")
+	}()
 	return nil
 }
 
