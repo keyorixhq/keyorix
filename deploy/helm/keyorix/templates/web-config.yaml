@@ -28,6 +28,19 @@ data:
       gzip_comp_level 6;
       gzip_types application/javascript application/json application/xml image/svg+xml text/css text/javascript text/plain text/xml font/ttf font/otf;
 
+      # #138: the web UI's own JS calls /api etc. same-origin (served by this SAME
+      # nginx) and needs no CORS headers at all — a browser never sends/requires them
+      # for a same-origin fetch. This map only serves a genuinely cross-origin caller
+      # that has been explicitly allowlisted via web.corsAllowedOrigins; any other
+      # Origin gets no Access-Control-Allow-Origin match, so the browser blocks the
+      # response. Empty by default (no cross-origin API access unless opted in).
+      map $http_origin $cors_allowed_origin {
+        default "";
+        {{- range .Values.web.corsAllowedOrigins }}
+        "{{ . }}" "{{ . }}";
+        {{- end }}
+      }
+
       add_header X-Frame-Options "SAMEORIGIN" always;
       add_header X-Content-Type-Options "nosniff" always;
       add_header X-XSS-Protection "1; mode=block" always;
@@ -54,7 +67,7 @@ data:
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
-          add_header Access-Control-Allow-Origin $http_origin always;
+          add_header Access-Control-Allow-Origin $cors_allowed_origin always;
           add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
           add_header Access-Control-Allow-Headers "Authorization, Content-Type, Accept" always;
           add_header Access-Control-Allow-Credentials true always;
