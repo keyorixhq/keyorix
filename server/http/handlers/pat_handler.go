@@ -99,7 +99,9 @@ type patHygieneResponse struct {
 
 // PATHygiene handles GET /api/v1/pat-hygiene?days=N — the deployment-wide list of
 // non-revoked tokens that are expired-but-active or stale (unused for the window), so
-// an admin can revoke token sprawl. Global system.read is enforced by the router.
+// an admin can revoke token sprawl. Global audit.read is enforced by the router (it
+// discloses every user's PAT scopes/CIDRs/owning user ID deployment-wide, so the
+// universal system_viewer baseline is not enough).
 // days defaults to 90 and is capped at 3650.
 func (h *PATHandler) PATHygiene(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {

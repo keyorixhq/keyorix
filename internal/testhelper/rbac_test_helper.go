@@ -63,6 +63,9 @@ func NewRBACTestHelper(t *testing.T) *RBACTestHelper {
 		&models.SecretNode{},
 		&models.ShareRecord{},
 		&models.ConnectRefGrant{},
+		&models.PersonalAccessToken{},
+		&models.Session{},
+		&models.SystemMetadata{},
 	)
 	require.NoError(t, err)
 

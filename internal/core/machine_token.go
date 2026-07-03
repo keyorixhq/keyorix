@@ -206,10 +206,20 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 // AssignMachineRole grants a role to a machine identity at the given scope and
 // audits it. The machine must belong to scope.ProjectID — the caller is only
 // proven to hold roles.assign at that project, so a machine in another project
-// must not be reachable through this path.
+// must not be reachable through this path. Granting an admin role is additionally
+// gated by requireAuthorityForRole (the same escalation-by-proxy ceiling
+// AddProjectMember applies) — an admin-credentialed machine identity is just as
+// much a self-escalation vector as an admin user grant.
 func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope, actorID uint) error {
 	m, err := c.machineInProject(ctx, scope.ProjectID, machineID)
 	if err != nil {
+		return err
+	}
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
+		return err
+	}
+	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
 		return err
 	}
 	if err := c.storage.AssignMachineRole(ctx, machineID, roleID, scope); err != nil {

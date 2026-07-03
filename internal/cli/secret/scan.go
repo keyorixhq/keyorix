@@ -125,6 +125,18 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	if scanCommit != "" {
+		// scanCommit is a user-controlled --commit value passed straight to git as a
+		// revision argument. A value starting with "-" (e.g. "--upload-pack=...")
+		// would otherwise be parsed as a git flag rather than a revision — arg
+		// injection, not full shell injection (no shell is involved), but still lets a
+		// crafted value smuggle extra git arguments. A literal "--" separator does NOT
+		// fix this for diff-tree: git treats everything after "--" as a pathspec, not a
+		// revision, so it would just break every legitimate --commit value. Reject a
+		// leading "-" instead — no genuine git revision (branch, tag, SHA, HEAD~N, …)
+		// ever starts with one.
+		if strings.HasPrefix(scanCommit, "-") {
+			return fmt.Errorf("invalid --commit value %q: must not start with '-'", scanCommit)
+		}
 		out, err := exec.Command("git", "-C", absPath, "diff-tree", "--no-commit-id", "-r", "--name-only", scanCommit).Output() // #nosec G204
 		if err == nil && len(out) > 0 {
 			stagedFiles = map[string]bool{}
@@ -142,6 +154,18 @@ func runScan(cmd *cobra.Command, args []string) error {
 
 	err = filepath.Walk(absPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			return nil
+		}
+		// Never follow symlinks (#153). filepath.Walk reports a symlink's own Lstat
+		// info (info.Mode()&os.ModeSymlink is set) and doesn't itself descend into a
+		// symlinked directory — but a symlinked *file* still reaches this callback,
+		// and the per-type scanners below open the path with os.ReadFile, which DOES
+		// follow symlinks. A malicious repo could commit one pointing outside the
+		// scanned tree (e.g. at the scanning user's own ~/.aws/credentials or
+		// /etc/shadow); reading through it would leak the SCANNING USER's own files
+		// into the report. Skip every symlink encountered rather than trying to
+		// validate where it resolves to.
+		if info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
 		if info.IsDir() {

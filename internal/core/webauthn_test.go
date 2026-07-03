@@ -26,7 +26,7 @@ func newWebAuthnTestCore(t *testing.T, withRP bool) (*KeyorixCore, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
-		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}))
+		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}, &models.Notification{}))
 	hash, _ := bcrypt.GenerateFromPassword([]byte(webauthnTestPassword), bcrypt.DefaultCost)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",
 		PasswordHash: string(hash), AccountState: "active"}).Error)
@@ -229,6 +229,34 @@ func TestWebAuthn_FinishLoginHonorsAccountLockout(t *testing.T) {
 	assert.Contains(t, err.Error(), "locked")
 }
 
+// Platform authenticators (Touch ID, Windows Hello, and most passkeys) never
+// implement a signature counter and always report SignCount 0. persistUpdatedCredential's
+// #306 stale-write guard must not treat a (0, 0) comparison as "stale" — that would
+// silently stop LastUsedAt/blob from ever persisting again after the very first login
+// for the common case, mirroring go-webauthn's own Authenticator.UpdateCounter gate
+// (which also special-cases 0/0 as never a clone signal).
+func TestWebAuthn_PersistUpdatedCredential_ZeroCounterAuthenticatorAlwaysPersists(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	var before models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ?", 1).First(&before).Error)
+	assert.Nil(t, before.LastUsedAt, "no login yet")
+
+	// Simulate two logins in a row from a zero-counter authenticator.
+	for i := 0; i < 2; i++ {
+		c.now = func() time.Time { return time.Date(2026, 6, 12, 10, i, 0, 0, time.UTC) }
+		c.persistUpdatedCredential(ctx, 1, &webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{SignCount: 0}})
+	}
+
+	var after models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ?", 1).First(&after).Error)
+	require.NotNil(t, after.LastUsedAt, "LastUsedAt must still update on every login even when SignCount stays 0")
+	assert.Equal(t, time.Date(2026, 6, 12, 10, 1, 0, 0, time.UTC), after.LastUsedAt.UTC(),
+		"the SECOND login's timestamp must persist too — a (0,0) comparison must not be treated as a stale write")
+}
+
 func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
@@ -246,4 +274,54 @@ func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {
 
 	_, _, err = c.FinishWebAuthnLogin(ctx, ch, otherToken, "ua", "1.2.3.4", nil)
 	require.Error(t, err, "a webauthn session for another user must not complete this challenge")
+}
+
+// #212: a signature-counter regression (go-webauthn's Authenticator.CloneWarning —
+// the standard FIDO2 clone-detection signal) must refuse the authentication and
+// disable the credential, not just write a passive audit line while login proceeds.
+// This is the actual authentication-time enforcement path both FinishWebAuthnLogin
+// and FinishWebAuthnPasswordlessLogin call once the library's cryptographic
+// assertion check has already succeeded.
+func TestWebAuthn_RejectIfCloned_DisablesCredentialAndRejects(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	cred := &webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{CloneWarning: true}}
+	err := c.rejectIfCloned(ctx, 1, cred, "203.0.113.9")
+	require.Error(t, err, "a regressed signature counter must refuse the authentication")
+
+	var row models.WebAuthnCredential
+	require.NoError(t, db.Where("credential_id = ?", []byte("cred-1")).First(&row).Error)
+	assert.True(t, row.Disabled, "the flagged credential must be disabled pending re-registration")
+
+	var events int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", EventWebAuthnCloneDetected).Count(&events).Error)
+	assert.Equal(t, int64(1), events, "the clone must be audited distinctly, not just silently logged")
+
+	// The disabled credential must be excluded from every future ceremony — it can
+	// never authenticate again until the owner re-registers a fresh passkey.
+	wu, err := c.loadWebAuthnUser(ctx, 1)
+	require.NoError(t, err)
+	assert.Empty(t, wu.creds, "a disabled credential must not be offered for future login ceremonies")
+}
+
+// A normal, strictly-incrementing counter must NOT be treated as a clone signal and
+// must leave the credential fully usable.
+func TestWebAuthn_RejectIfCloned_NormalCounterPasses(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	cred := &webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{CloneWarning: false, SignCount: 42}}
+	err := c.rejectIfCloned(ctx, 1, cred, "203.0.113.9")
+	require.NoError(t, err, "a normal incrementing counter must not be rejected")
+
+	var row models.WebAuthnCredential
+	require.NoError(t, db.Where("credential_id = ?", []byte("cred-1")).First(&row).Error)
+	assert.False(t, row.Disabled, "an un-flagged credential must not be disabled")
+
+	wu, err := c.loadWebAuthnUser(ctx, 1)
+	require.NoError(t, err)
+	assert.Len(t, wu.creds, 1, "an un-flagged credential remains usable")
 }

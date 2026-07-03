@@ -72,6 +72,17 @@ type UserContext struct {
 	PATRestriction *core.PATRestriction `json:"-"`
 }
 
+// cloneUserContextWithRestriction returns a shallow copy of base with
+// PATRestriction replaced (#146) — used on a cache hit to apply a freshly
+// re-fetched restriction without mutating the shared cached entry (other
+// concurrent requests hitting the same cache entry must not see this one
+// request's snapshot).
+func cloneUserContextWithRestriction(base *UserContext, restriction *core.PATRestriction) *UserContext {
+	clone := *base
+	clone.PATRestriction = restriction
+	return &clone
+}
+
 // ActorKind returns the principal's actor type ("user" or "machine_identity"),
 // defaulting to user for legacy/empty contexts.
 func (u *UserContext) ActorKind() string {
@@ -234,12 +245,23 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 					return
 				}
 				// The network allowlist is per-request (the same token may arrive from a
-				// different IP), so enforce it even on a cache hit.
-				if !tokenNetworkAllowed(r, entry.userCtx) {
+				// different IP), so enforce it even on a cache hit. For a PAT specifically,
+				// the ALLOWLIST ITSELF (not just the request's IP) can change between cache
+				// writes (#146: an admin narrowing a compromised PAT's allowlist mid-incident
+				// must take effect immediately, not up to validTokenTTL later) — re-fetch it
+				// fresh rather than trusting entry.userCtx's cached snapshot. A refresh
+				// failure falls back to the cached restriction (degraded, not fail-open).
+				effective := entry.userCtx
+				if coreService != nil && strings.HasPrefix(token, patTokenPrefix) {
+					if fresh, err := coreService.CurrentPATRestriction(r.Context(), token); err == nil {
+						effective = cloneUserContextWithRestriction(entry.userCtx, fresh)
+					}
+				}
+				if !tokenNetworkAllowed(r, effective) {
 					forbiddenResponse(w, "token not permitted from this network")
 					return
 				}
-				next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), entry.userCtx, coreService)))
+				next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), effective, coreService)))
 				return
 			}
 
@@ -577,6 +599,15 @@ func derefUint(p *uint) uint {
 // which a deliberately-scoped token must not satisfy. This keeps PAT scoping
 // honoured on this role-based gate, which does not funnel through core.Authorize
 // (where the restriction is otherwise enforced). Fail-closed.
+//
+// WARNING (#308): this match is UNSCOPED — it checks only the role name against
+// userCtx.Roles, with no project/environment scope check at all. It currently has
+// no production route caller (only exercised by auth_test.go). Do NOT wire this
+// onto a machine-token-reachable route: combined with a machine identity's
+// unscoped role list (e.g. store.GetMachineRoles, itself for-display only, see
+// its own warning), it would bypass project/environment scoping entirely for
+// machine principals. If a role-based gate is ever needed on a scoped route, use
+// a scope-aware check (core.Authorize / the RBAC choke point) instead.
 func RequireRole(role string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
@@ -43,6 +44,11 @@ type EvidenceExportResult struct {
 	Bytes   int      `json:"bytes"`
 	Targets []string `json:"targets"` // where the pack was delivered (e.g. "file:/path", "webhook")
 	Signed  bool     `json:"signed"`  // whether a detached HMAC signature was produced
+	// Degraded/DegradedReasons (#136): surfaced from the exported pack's posture so a
+	// caller (the scheduler's log line, or an operator inspecting the result) sees a
+	// partial-collection export without having to open and parse the archived file.
+	Degraded        bool     `json:"degraded"`
+	DegradedReasons []string `json:"degraded_reasons,omitempty"`
 }
 
 // ExportComplianceEvidence generates the evidence pack and delivers it to every
@@ -71,7 +77,12 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 	// pack's authenticity is provable later. signature is "" when unavailable.
 	signature, signed := c.signEvidence(data)
 
-	res := &EvidenceExportResult{Bytes: len(data), Signed: signed}
+	res := &EvidenceExportResult{
+		Bytes:           len(data),
+		Signed:          signed,
+		Degraded:        ev.Posture != nil && ev.Posture.Degraded,
+		DegradedReasons: postureDegradedReasons(ev.Posture),
+	}
 
 	// The pack's canonical name — used both as the local filename and the off-box
 	// object key, so a file and an object-store copy of the same run line up.
@@ -81,7 +92,7 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		if err := os.MkdirAll(outputDir, 0o700); err != nil {
 			return nil, fmt.Errorf("evidence export: create output dir: %w", err)
 		}
-		if err := securefiles.SecureWriteFile(outputDir, name, data, 0o600); err != nil {
+		if err := securefiles.SecureWriteFileSync(outputDir, name, data, 0o600); err != nil {
 			return nil, fmt.Errorf("evidence export: write: %w", err)
 		}
 		res.Path = filepath.Join(outputDir, name)
@@ -89,7 +100,7 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		// Write the detached signature alongside the pack (verify with `keyorix
 		// compliance verify`). Best-effort: a sig-write failure must not lose the pack.
 		if signed {
-			_ = securefiles.SecureWriteFile(outputDir, name+".sig", []byte(signature), 0o600)
+			_ = securefiles.SecureWriteFileSync(outputDir, name+".sig", []byte(signature), 0o600)
 		}
 	}
 
@@ -107,10 +118,26 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		}
 	}
 
+	// #136: a degraded export must be visible in the audit trail itself, not just in
+	// the archived file — an auditor or admin scanning the log/SIEM for delivery
+	// confirmations should not read "exported" as "complete and clean".
+	degradedNote := ""
+	if res.Degraded {
+		degradedNote = fmt.Sprintf("; DEGRADED (%d collection failure(s)): %s", len(res.DegradedReasons), strings.Join(res.DegradedReasons, "; "))
+	}
+
 	sysCtx := WithActorType(ctx, ActorTypeSystem)
 	c.writeAuditEvent(sysCtx, "compliance.evidence_exported", nil, nil,
-		fmt.Sprintf("compliance evidence pack exported to %v (%d bytes, signed=%t; %d campaigns, %d break-glass activations, %d overdue rotations, %d SoD violations)%s",
-			res.Targets, len(data), signed, len(ev.Campaigns), len(ev.BreakGlass), len(ev.RotationOverdue), len(ev.SoDViolations), forwardNote))
+		fmt.Sprintf("compliance evidence pack exported to %v (%d bytes, signed=%t; %d campaigns, %d break-glass activations, %d overdue rotations, %d SoD violations)%s%s",
+			res.Targets, len(data), signed, len(ev.Campaigns), len(ev.BreakGlass), len(ev.RotationOverdue), len(ev.SoDViolations), forwardNote, degradedNote))
 
 	return res, nil
+}
+
+// postureDegradedReasons safely extracts DegradedReasons from a possibly-nil posture.
+func postureDegradedReasons(p *CompliancePosture) []string {
+	if p == nil {
+		return nil
+	}
+	return p.DegradedReasons
 }

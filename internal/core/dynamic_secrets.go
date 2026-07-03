@@ -8,13 +8,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 const defaultDynamicTTL = 1 * time.Hour
+
+// defaultMaxLeaseTTL is the install-wide lease TTL ceiling used when
+// KeyorixCore.dynamicMaxLeaseTTL is unset (mirrors config.DynamicSecretsConfig's
+// own default so behaviour is identical whether or not the server wired
+// SetDynamicMaxLeaseTTL, e.g. in tests that construct KeyorixCore directly).
+const defaultMaxLeaseTTL = 90 * 24 * time.Hour
 
 // CreateDynamicSecretConfigRequest registers a dynamic-secrets target.
 type CreateDynamicSecretConfigRequest struct {
@@ -28,6 +36,10 @@ type CreateDynamicSecretConfigRequest struct {
 	MaxTTLSeconds     int
 	MaxActiveLeases   int
 	CreatedBy         string
+	// ActorID is the authenticated caller, used for the admin-authority check on
+	// binding a backend (#162) — CreatedBy is a display username, not a resolvable
+	// principal ID.
+	ActorID uint
 	// Classification is an optional data-sensitivity label (A.5.12) for the
 	// credentials this config mints: "" or one of public|internal|confidential|restricted.
 	Classification string
@@ -53,23 +65,34 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if _, err := c.dynamicEngine(req.BackendType); err != nil {
 		return nil, err
 	}
+	// #162: binding a backend hands out standing access to mint live credentials
+	// against it (a DB admin DSN or a cloud-IAM role) — the route only requires
+	// secrets.write at the project/environment scope, which is too weak a gate for
+	// that authority on its own (exact sibling of #90's rotation-backend check).
+	ids, err := c.scopedRoleIDs(ctx, req.ActorID, Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve actor authority: %w", err)
+	}
+	if !c.roleSetContainsAdmin(ctx, ids) {
+		return nil, fmt.Errorf("binding a dynamic-secret backend requires admin authority on this project")
+	}
 	if req.MaxTTLSeconds > 0 && req.DefaultTTLSeconds > req.MaxTTLSeconds {
 		return nil, fmt.Errorf("default_ttl_seconds (%d) cannot exceed max_ttl_seconds (%d)", req.DefaultTTLSeconds, req.MaxTTLSeconds)
 	}
 	if !IsValidClassification(req.Classification) {
 		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
 	}
-	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
-	}
+	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
+	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not
+	// known beforehand) — insert first with the DSN columns empty, then encrypt and
+	// persist them in a second write. The gap between the two writes is invisible to
+	// any other caller: cfg.ID isn't returned to the requester until this function
+	// returns, so nothing else can observe or race the momentarily-DSN-less row.
 	cfg, err := c.storage.CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
 		Name:              req.Name,
 		ProjectID:         req.ProjectID,
 		EnvironmentID:     req.EnvironmentID,
 		BackendType:       req.BackendType,
-		AdminDSNEnc:       dsnEnc,
-		AdminDSNMeta:      dsnMeta,
 		CreationTemplate:  req.CreationTemplate,
 		DefaultTTLSeconds: req.DefaultTTLSeconds,
 		MaxTTLSeconds:     req.MaxTTLSeconds,
@@ -81,6 +104,15 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	})
 	if err != nil {
 		return nil, err
+	}
+	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
+	}
+	cfg.AdminDSNEnc = dsnEnc
+	cfg.AdminDSNMeta = dsnMeta
+	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+		return nil, fmt.Errorf("failed to persist encrypted admin DSN: %w", err)
 	}
 	pid := cfg.ProjectID
 	c.writeAuditEventFull(ctx, "dynamic_secret.config_created", nil, nil, &pid, "",
@@ -137,6 +169,17 @@ func (c *KeyorixCore) GetDynamicSecretLease(ctx context.Context, leaseID string)
 // IssueLease mints a short-lived credential on the target and persists the lease.
 // The plaintext credential is returned ONCE; only its encrypted form is stored.
 // ttlSeconds<=0 uses the config default (or 1h).
+//
+// LOW (#97): a genuine process crash (SIGKILL/OOM/panic bypassing defers) between
+// engine.Issue minting the credential on the target and this function persisting the
+// lease row leaves an orphan invisible to every list/revoke/sweep path (all keyed off
+// the lease table) — cleanupOrphanedRole only covers synchronous Go-level errors
+// returned by the steps AFTER Issue, not a hard crash. Fully closing this needs
+// crash-safe two-phase persistence (write a pre-mint marker, reconcile it against the
+// target on restart) across all 8 backend engines — out of proportion for a LOW
+// finding. The log line below is a partial mitigation: it gives an operator a
+// searchable breadcrumb (config, backend, target-ish role hint) to correlate against
+// server logs during incident response if a mint never resulted in a lease row.
 func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds int, userID uint) (*IssuedLease, error) {
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
 	if err != nil {
@@ -165,30 +208,50 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 			return nil, fmt.Errorf("active-lease limit reached for this config (%d); revoke a lease before issuing another", cfg.MaxActiveLeases)
 		}
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}
 	ttl := c.dynamicTTL(cfg, ttlSeconds)
 
+	// Logged BEFORE the mint (not after) so the breadcrumb survives a crash during or
+	// immediately after engine.Issue — see the crash-orphan note on IssueLease's doc
+	// comment (#97).
+	log.Printf("dynamic-secrets: issuing a %s credential (config=%q id=%d project=%d ttl=%s)", cfg.BackendType, cfg.Name, cfg.ID, cfg.ProjectID, ttl)
 	cred, roleName, err := engine.Issue(ctx, adminDSN, cfg.CreationTemplate, ttl)
 	if err != nil {
 		return nil, fmt.Errorf("failed to issue credential: %w", err)
 	}
-	credJSON, _ := json.Marshal(cred) // #nosec G117 -- intentional: serialized only to be immediately encrypted at rest below, never persisted or logged in cleartext
-	credEnc, credMeta, err := c.encryptAuthSecret(string(credJSON))
-	if err != nil {
-		// The role exists on the target — revoke it so we don't leak it.
-		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
-		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
-	}
-
+	// leaseID is generated BEFORE encryption (not after, as in the pre-#94 order) so
+	// DynamicSecretLeaseAAD can bind the credential's ciphertext to it — leaseID is a
+	// random token assigned by us, not an auto-increment PK, so it's available without
+	// a two-phase insert-then-update (contrast CreateDynamicSecretConfig above).
 	leaseID, err := generateSecureToken()
 	if err != nil {
 		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
 		return nil, err
 	}
+	credJSON, _ := json.Marshal(cred) // #nosec G117 -- intentional: serialized only to be immediately encrypted at rest below, never persisted or logged in cleartext
+	credEnc, credMeta, err := c.encryptAuthSecret(string(credJSON), encryption.DynamicSecretLeaseAAD(leaseID, cfg.ID))
+	if err != nil {
+		// The role exists on the target — revoke it so we don't leak it.
+		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
+		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
+	}
+	// #97: cloud-IAM engines (AWS STS, Kubernetes) floor the REQUESTED ttl up to their
+	// own provider minimum (900s/600s) when minting, so the credential returned is
+	// valid for longer than a short-ttl caller asked for — but ExpiresAt computed from
+	// the requested ttl alone would understate that, making Keyorix believe (and the
+	// auto-revoke sweep act on) an earlier expiry than the credential's true,
+	// provider-enforced one. Both engines surface the actual granted expiry in
+	// cred.Fields["expiration"] (RFC3339); trust it over the requested-ttl computation
+	// whenever the engine provides it.
 	expiresAt := c.now().Add(ttl)
+	if raw := cred.Fields["expiration"]; raw != "" {
+		if actual, perr := time.Parse(time.RFC3339, raw); perr == nil {
+			expiresAt = actual
+		}
+	}
 	lease, err := c.storage.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
 		ConfigID:       cfg.ID,
 		LeaseID:        leaseID,
@@ -276,7 +339,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if err != nil {
 		return err
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}
@@ -289,7 +352,11 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if rerr := engine.Revoke(ctx, adminDSN, lease.RoleName); rerr != nil {
 		lease.Status = "revoke_failed"
 		lease.RevokeError = rerr.Error()
-		lease.RevokedAt = &now
+		// Deliberately NOT stamping RevokedAt here: the target drop failed, so the
+		// credential is still live. Stamping it would make the audit trail / API
+		// falsely claim the role was dropped at this time, even though it wasn't —
+		// and it wasn't dropped at all yet, so there is no "revoked at" moment to
+		// record. RevokedAt is set only on the success path below.
 		_ = c.storage.UpdateDynamicSecretLease(ctx, lease)
 		c.writeAuditEventFull(ctx, "dynamic_lease.revoke_failed", uidPtr, nil, &pid, "",
 			fmt.Sprintf("FAILED to revoke dynamic lease %s (role %s): %v", lease.LeaseID, lease.RoleName, rerr))
@@ -301,8 +368,18 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if err := c.storage.UpdateDynamicSecretLease(ctx, lease); err != nil {
 		return err
 	}
-	c.writeAuditEventFull(ctx, "dynamic_lease.revoked", uidPtr, nil, &pid, "",
-		fmt.Sprintf("revoked dynamic lease %s (reason=%s)", lease.LeaseID, reason))
+	// #97: for an ephemeral backend (AWS STS, Kubernetes) engine.Revoke above is a
+	// documented no-op — the credential cannot be invalidated early at the provider,
+	// only marked dead in Keyorix's own bookkeeping. Saying "revoked" outright would
+	// misleadingly imply the credential is dead; it remains live until its own
+	// provider-enforced expiry (lease.ExpiresAt, corrected to the actual granted
+	// expiry at issue — see IssueLease).
+	msg := fmt.Sprintf("revoked dynamic lease %s (reason=%s)", lease.LeaseID, reason)
+	if engine.IsEphemeralBackend() {
+		msg = fmt.Sprintf("marked dynamic lease %s revoked locally (reason=%s); the %s credential cannot be invalidated early and remains live until its provider-enforced expiry at %s",
+			lease.LeaseID, reason, cfg.BackendType, lease.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+	c.writeAuditEventFull(ctx, "dynamic_lease.revoked", uidPtr, nil, &pid, "", msg)
 	return nil
 }
 
@@ -367,8 +444,13 @@ func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userI
 	return revoked, failed, nil
 }
 
-// dynamicTTL resolves the requested TTL (override, else config default, else 1h)
-// and clamps it to the config's MaxTTLSeconds ceiling when one is set.
+// dynamicTTL resolves the requested TTL (override, else config default, else 1h),
+// clamps it to the config's MaxTTLSeconds ceiling when one is set, and always clamps
+// it to the install-wide max-lease-TTL ceiling on top (#97) — the per-config ceiling
+// is entirely operator-controlled and defaults to "unset = unbounded" (e.g. a config
+// left with MaxTTLSeconds=0 combined with a caller-supplied override would otherwise
+// mint a credential valid for however long the caller asked, with nothing to stop a
+// 100-year lease).
 func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) time.Duration {
 	ttl := defaultDynamicTTL
 	switch {
@@ -381,6 +463,13 @@ func (c *KeyorixCore) dynamicTTL(cfg *models.DynamicSecretConfig, override int) 
 		if max := time.Duration(cfg.MaxTTLSeconds) * time.Second; ttl > max {
 			ttl = max
 		}
+	}
+	installMax := c.dynamicMaxLeaseTTL
+	if installMax <= 0 {
+		installMax = defaultMaxLeaseTTL
+	}
+	if ttl > installMax {
+		ttl = installMax
 	}
 	return ttl
 }
@@ -421,6 +510,16 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 			newExpiry = hardCap
 		}
 	}
+	// ...nor past the install-wide ceiling (#97) — same reasoning as dynamicTTL: the
+	// per-config ceiling above is optional and defaults to unbounded, so a renewal
+	// alone could otherwise stretch a lease's total lifetime arbitrarily far.
+	installMax := c.dynamicMaxLeaseTTL
+	if installMax <= 0 {
+		installMax = defaultMaxLeaseTTL
+	}
+	if hardCap := lease.IssuedAt.Add(installMax); newExpiry.After(hardCap) {
+		newExpiry = hardCap
+	}
 	if !newExpiry.After(lease.ExpiresAt) {
 		return time.Time{}, fmt.Errorf("renewal would not extend the lease (max-TTL ceiling reached)")
 	}
@@ -434,7 +533,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	if !engine.SupportsNativeExpiry() && !c.dynamicSweepEnabled {
 		return time.Time{}, fmt.Errorf("renewal is unavailable for the %s backend while the lease sweeper is disabled (its TTL would be unenforced)", cfg.BackendType)
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}

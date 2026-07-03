@@ -53,7 +53,7 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := h.coreService.CopySecret(r.Context(), uint(id), reqBody.EnvironmentID, reqBody.Name, userCtx.Username, userCtx.UserID)
+	created, err := h.coreService.CopySecret(r.Context(), uint(id), reqBody.EnvironmentID, reqBody.Name, userCtx.Username, userCtx.UserID, r.RemoteAddr, r.Header.Get("User-Agent"))
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusInternalServerError

@@ -83,3 +83,56 @@ func TestSecretTags(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// TestCreateSecret_AppliesTags guards #390: CreateSecretRequest.Tags was silently
+// accepted and dropped — CreateSecret never read req.Tags or called SetSecretTags,
+// despite both the HTTP and gRPC handlers passing the field through, so a caller
+// intending an immediate "reviewed"/"exempt"-style tag at creation time got no tag
+// and no error.
+func TestCreateSecret_AppliesTags(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{},
+		&models.Environment{}, &models.AuditEvent{}, &models.Tag{}, &models.SecretTag{}))
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	ctx := context.Background()
+	p, err := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
+	require.NoError(t, err)
+	e, err := c.storage.CreateEnvironment(ctx, &models.Environment{Name: "production", ProjectID: p.ID})
+	require.NoError(t, err)
+
+	t.Run("tags supplied at create time are persisted, normalized", func(t *testing.T) {
+		created, err := c.CreateSecret(ctx, &CreateSecretRequest{
+			Name: "DB_PASSWORD", Value: []byte("supersecret1"), ProjectID: p.ID, EnvironmentID: e.ID,
+			Type: "password", CreatedBy: "owner", OwnerID: 1, Tags: []string{" Reviewed ", "REVIEWED", "exempt"},
+		})
+		require.NoError(t, err)
+		got, err := c.storage.GetSecretTags(ctx, created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"exempt", "reviewed"}, got)
+	})
+
+	t.Run("no tags is still a no-op, no error", func(t *testing.T) {
+		created, err := c.CreateSecret(ctx, &CreateSecretRequest{
+			Name: "API_KEY", Value: []byte("supersecret1"), ProjectID: p.ID, EnvironmentID: e.ID,
+			Type: "password", CreatedBy: "owner", OwnerID: 1,
+		})
+		require.NoError(t, err)
+		got, err := c.storage.GetSecretTags(ctx, created.ID)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("an over-long tag at create time is rejected before the secret is persisted", func(t *testing.T) {
+		_, err := c.CreateSecret(ctx, &CreateSecretRequest{
+			Name: "BAD_TAG_SECRET", Value: []byte("supersecret1"), ProjectID: p.ID, EnvironmentID: e.ID,
+			Type: "password", CreatedBy: "owner", OwnerID: 1, Tags: []string{strings.Repeat("a", 51)},
+		})
+		require.Error(t, err)
+		_, getErr := c.storage.GetSecretByName(ctx, "BAD_TAG_SECRET", p.ID, e.ID)
+		require.Error(t, getErr, "the secret must not have been created when its tag list is invalid")
+	})
+}

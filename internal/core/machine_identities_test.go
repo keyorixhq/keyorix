@@ -84,7 +84,7 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)
 		ctx := context.Background()
-		store.On("GetMachineIdentity", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineActive}, nil)
+		store.On("LockMachineIdentityForUpdate", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineActive}, nil)
 		store.On("UpdateMachineIdentity", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
 			return m.State == MachineSuspended
 		})).Return(nil)
@@ -99,7 +99,7 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)
 		ctx := context.Background()
-		store.On("GetMachineIdentity", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineActive}, nil)
+		store.On("LockMachineIdentityForUpdate", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineActive}, nil)
 		store.On("UpdateMachineIdentity", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
 			return m.State == MachineRevoked && m.RevokedAt != nil
 		})).Return(nil)
@@ -113,7 +113,7 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)
 		ctx := context.Background()
-		store.On("GetMachineIdentity", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineRevoked}, nil)
+		store.On("LockMachineIdentityForUpdate", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineRevoked}, nil)
 
 		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineActive, 9)
 		require.Error(t, err)
@@ -127,11 +127,31 @@ func TestTransitionMachineIdentity(t *testing.T) {
 		store := new(MockStorage)
 		c := newMachineCore(store)
 		ctx := context.Background()
-		store.On("GetMachineIdentity", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 2, State: MachineActive}, nil)
+		store.On("LockMachineIdentityForUpdate", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 2, State: MachineActive}, nil)
 
 		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineSuspended, 9)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
+		store.AssertNotCalled(t, "UpdateMachineIdentity", mock.Anything, mock.Anything)
+	})
+
+	// #388: a concurrent revoke and reactivate racing off the same pre-transition
+	// state must not silently un-revoke — the second transition observes the
+	// FIRST one's already-committed state under the row lock and is rejected as an
+	// illegal transition (revoked is terminal), not applied blindly.
+	t.Run("second racing transition sees the first's committed state, not the stale one", func(t *testing.T) {
+		store := new(MockStorage)
+		c := newMachineCore(store)
+		ctx := context.Background()
+		// Both callers "observed" active/suspended before racing; by the time the second
+		// transition's LockMachineIdentityForUpdate call runs, the first has already
+		// committed revoked — WithTransaction in tests calls fn directly, so this models
+		// the real DB row-lock serializing to reflect the just-committed state.
+		store.On("LockMachineIdentityForUpdate", ctx, uint(10)).Return(&models.MachineIdentity{ID: 10, ProjectID: 1, State: MachineRevoked}, nil)
+
+		_, err := c.TransitionMachineIdentity(ctx, 1, 10, MachineActive, 9)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot transition")
 		store.AssertNotCalled(t, "UpdateMachineIdentity", mock.Anything, mock.Anything)
 	})
 }

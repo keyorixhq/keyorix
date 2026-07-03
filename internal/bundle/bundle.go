@@ -373,15 +373,47 @@ const installedVersionMarker = ".keyorix-installed-version"
 // readInstalledVersion returns the persisted installed version at destDir. ok is false
 // when no marker exists (a first install); a present-but-unreadable marker is an error
 // (fail closed — don't silently treat a tampered/locked marker as "first install").
+//
+// #111: a missing marker in an OTHERWISE NON-EMPTY destDir is refused rather than
+// treated as a first install. The marker is a plaintext file in the same operator-
+// writable staging directory the import itself writes into — an import-capable
+// adversary can freely rm/edit it, and a bare "absent = first install" gate let them
+// delete the marker to re-stage an older signed release over an existing, populated
+// install (the no-downgrade check never fires with no marker to compare against). A
+// directory already holding staged component files but no marker is inconsistent
+// with a genuine first install (which starts from an empty/nonexistent directory) —
+// it means either a marker was deleted, or a prior import failed partway through
+// (before the marker write at the very end); both cases are ambiguous enough to
+// refuse rather than silently proceed unguarded.
 func readInstalledVersion(destDir string) (string, bool, error) {
 	b, err := os.ReadFile(filepath.Join(destDir, installedVersionMarker)) // #nosec G304 -- destDir is operator-configured, marker name is a constant
 	if err != nil {
 		if os.IsNotExist(err) {
+			hasContent, derr := destDirHasContent(destDir)
+			if derr != nil {
+				return "", false, fmt.Errorf("bundle: check destination for existing content: %w", derr)
+			}
+			if hasContent {
+				return "", false, fmt.Errorf("bundle: destination %q already contains staged content but no installed-version marker — refusing to treat this as a first install (the marker may have been removed, or a prior import failed partway through); clear the destination first if this is intentional", destDir)
+			}
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("bundle: read installed-version marker: %w", err)
 	}
 	return strings.TrimSpace(string(b)), true, nil
+}
+
+// destDirHasContent reports whether destDir contains any entry at all. A
+// nonexistent directory counts as empty (nothing has ever been staged there).
+func destDirHasContent(destDir string) (bool, error) {
+	entries, err := os.ReadDir(destDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return len(entries) > 0, nil
 }
 
 // writeInstalledVersion persists version as the installed-version marker at destDir.

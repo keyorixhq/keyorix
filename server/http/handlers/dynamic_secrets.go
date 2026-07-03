@@ -10,12 +10,38 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// isSafeDynamicSecretError reports whether msg is one of the small set of
+// deliberately-crafted, safe messages core's dynamic-secret lease functions
+// (IssueLease/RevokeLease/RenewLease/RevokeLeasesForConfig) produce without
+// wrapping a lower-layer error. Everything else wraps (via %w) the actual
+// backend operation's error — issuing/revoking a credential against the
+// target database/cloud engine — which can carry connection detail (host,
+// driver wording) that must not reach the client verbatim (backlog #116).
+func isSafeDynamicSecretError(msg string) bool {
+	for _, safe := range []string{
+		"config not found",
+		"lease not found",
+		"lease is not active",
+		"lease has expired; issue a new lease instead",
+		"cannot issue from the",
+		"active-lease limit reached",
+		"mints self-expiring credentials that cannot be renewed",
+		"unsupported backend",
+	} {
+		if strings.Contains(msg, safe) {
+			return true
+		}
+	}
+	return false
+}
 
 // DynamicSecretHandler handles dynamic-secrets HTTP requests.
 type DynamicSecretHandler struct {
@@ -94,6 +120,7 @@ func (h *DynamicSecretHandler) CreateConfig(w http.ResponseWriter, r *http.Reque
 		MaxActiveLeases:   body.MaxActiveLeases,
 		Classification:    body.Classification,
 		CreatedBy:         userCtx.Username,
+		ActorID:           userCtx.PrincipalID(),
 	})
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
@@ -150,7 +177,12 @@ func (h *DynamicSecretHandler) IssueLease(w http.ResponseWriter, r *http.Request
 
 	lease, err := h.coreService.IssueLease(r.Context(), cfg.ID, body.TTLSeconds, userCtx.UserID)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadGateway, nil)
+		msg := err.Error()
+		if !isSafeDynamicSecretError(msg) {
+			log.Printf("Error issuing dynamic-secret lease for config %d: %v", cfg.ID, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
 	}
 	sendSuccess(w, lease, "Credential issued — it is shown once and will auto-revoke at expiry.")
@@ -193,7 +225,12 @@ func (h *DynamicSecretHandler) RevokeLease(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := h.coreService.RevokeLease(r.Context(), leaseID, userCtx.UserID, "manual"); err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadGateway, nil)
+		msg := err.Error()
+		if !isSafeDynamicSecretError(msg) {
+			log.Printf("Error revoking dynamic-secret lease %q: %v", leaseID, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"lease_id": leaseID, "status": "revoked"}, "Lease revoked.")
@@ -222,7 +259,12 @@ func (h *DynamicSecretHandler) RenewLease(w http.ResponseWriter, r *http.Request
 	_ = json.NewDecoder(r.Body).Decode(&body) // body optional; default TTL on absence
 	newExpiry, err := h.coreService.RenewLease(r.Context(), leaseID, body.TTLSeconds, userCtx.UserID)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadGateway, nil)
+		msg := err.Error()
+		if !isSafeDynamicSecretError(msg) {
+			log.Printf("Error renewing dynamic-secret lease %q: %v", leaseID, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"lease_id": leaseID, "expires_at": newExpiry}, "Lease renewed.")
@@ -238,7 +280,12 @@ func (h *DynamicSecretHandler) RevokeAllLeases(w http.ResponseWriter, r *http.Re
 	}
 	revoked, failed, err := h.coreService.RevokeLeasesForConfig(r.Context(), cfg.ID, userCtx.UserID, "bulk")
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusBadGateway, nil)
+		msg := err.Error()
+		if !isSafeDynamicSecretError(msg) {
+			log.Printf("Error revoking all dynamic-secret leases for config %d: %v", cfg.ID, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Error", msg, http.StatusBadGateway, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{

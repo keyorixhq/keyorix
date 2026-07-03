@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,7 +26,8 @@ func (h *CatalogHandler) ListMachineIdentities(w http.ResponseWriter, r *http.Re
 	}
 	identities, err := h.coreService.ListMachineIdentities(r.Context(), uint(id))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing machine identities for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"machine_identities": identities}, "")
@@ -50,7 +52,8 @@ func (h *CatalogHandler) ListStaleMachineIdentities(w http.ResponseWriter, r *ht
 	}
 	identities, err := h.coreService.ListStaleMachineIdentities(r.Context(), uint(id), time.Duration(days)*24*time.Hour)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing stale machine identities for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"machine_identities": identities, "total": len(identities)}, "")
@@ -85,10 +88,14 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 	m, err := h.coreService.CreateMachineIdentity(r.Context(), uint(id), body.Name, body.IdentityType, body.Description, body.Classification, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "invalid identity_type") || strings.Contains(err.Error(), "required") {
+		msg := err.Error()
+		if strings.Contains(msg, "invalid identity_type") || strings.Contains(msg, "required") {
 			status = http.StatusBadRequest
+		} else {
+			log.Printf("Error creating machine identity for project %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -130,12 +137,17 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 	m, err := h.coreService.MigrateUserToMachine(r.Context(), body.Username, uint(id), body.IdentityType, body.Name, actor.UserID, !body.KeepUser)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		} else if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "invalid identity_type") {
+		case strings.Contains(msg, "required") || strings.Contains(msg, "invalid identity_type"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error migrating user %q to machine identity in project %d: %v", body.Username, id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -175,13 +187,17 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 	m, err := h.coreService.TransitionMachineIdentity(r.Context(), uint(projectID), uint(machineID), to, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "cannot transition"):
+		case strings.Contains(msg, "cannot transition"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error transitioning machine identity %d in project %d: %v", machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	// Suspending or revoking the identity must reject its tokens immediately, not after
@@ -231,13 +247,17 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 	result, err := h.coreService.IssueMachineToken(r.Context(), uint(projectID), uint(machineID), body.Name, expiresAt, body.Classification, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "must be active"):
+		case strings.Contains(msg, "must be active"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error issuing machine token for machine %d in project %d: %v", machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -265,7 +285,8 @@ func (h *CatalogHandler) ListMachineTokens(w http.ResponseWriter, r *http.Reques
 	}
 	creds, err := h.coreService.ListMachineTokens(r.Context(), uint(projectID), uint(machineID))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing machine tokens for machine %d in project %d: %v", machineID, projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(creds))
@@ -309,10 +330,14 @@ func (h *CatalogHandler) RevokeMachineToken(w http.ResponseWriter, r *http.Reque
 	tokenHash, err := h.coreService.RevokeMachineToken(r.Context(), uint(projectID), uint(machineID), uint(tokenID), actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("Error revoking machine token %d for machine %d in project %d: %v", tokenID, machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	// Evict the auth cache so the revoked token stops authenticating immediately.
@@ -337,10 +362,18 @@ func (h *CatalogHandler) ClassifyMachineIdentity(w http.ResponseWriter, r *http.
 	m, err := h.coreService.ClassifyMachineIdentity(r.Context(), projectID, machineID, body.Classification, actor.UserID)
 	if err != nil {
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
+		case strings.Contains(msg, "classification must be"):
+			// keep 400, msg is the deliberate validation message
+		default:
+			status = http.StatusInternalServerError
+			log.Printf("Error classifying machine identity %d in project %d: %v", machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"machine_identity": m}, "Classification updated")
@@ -368,10 +401,18 @@ func (h *CatalogHandler) ClassifyMachineToken(w http.ResponseWriter, r *http.Req
 	cred, err := h.coreService.ClassifyMachineToken(r.Context(), projectID, machineID, uint(tokenID), body.Classification, actor.UserID)
 	if err != nil {
 		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
+		case strings.Contains(msg, "classification must be"):
+			// keep 400, msg is the deliberate validation message
+		default:
+			status = http.StatusInternalServerError
+			log.Printf("Error classifying machine token %d for machine %d in project %d: %v", tokenID, machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -434,13 +475,17 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 	}
 	if err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "already") || strings.Contains(err.Error(), "not assigned"):
+		case strings.Contains(msg, "already") || strings.Contains(msg, "not assigned"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error changing machine role for machine %d in project %d: %v", machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	verb := "granted"
@@ -468,15 +513,19 @@ func (h *CatalogHandler) CreateOIDCBinding(w http.ResponseWriter, r *http.Reques
 	b, err := h.coreService.CreateOIDCBinding(r.Context(), projectID, machineID, body.Issuer, body.Subject, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "required"):
+		case strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
-		case strings.Contains(err.Error(), "already bound"):
+		case strings.Contains(msg, "already bound"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error creating OIDC binding for machine %d in project %d: %v", machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -492,10 +541,14 @@ func (h *CatalogHandler) ListOIDCBindings(w http.ResponseWriter, r *http.Request
 	bindings, err := h.coreService.ListOIDCBindings(r.Context(), projectID, machineID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("Error listing OIDC bindings for machine %d in project %d: %v", machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(bindings))
@@ -518,10 +571,14 @@ func (h *CatalogHandler) DeleteOIDCBinding(w http.ResponseWriter, r *http.Reques
 	}
 	if err := h.coreService.DeleteOIDCBinding(r.Context(), projectID, machineID, uint(bindingID), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("Error deleting OIDC binding %d for machine %d in project %d: %v", bindingID, machineID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "OIDC binding removed")

@@ -135,3 +135,91 @@ func TestRenderSecretTemplate_RecordsReads(t *testing.T) {
 	}
 	assert.Positive(t, n, "a resolved render reference must produce a secret access-log row")
 }
+
+// #324: rendering a template referencing N distinct secrets must produce N audit_events
+// rows and N secret_access_logs rows — one per resolved secret, each attributed to the
+// correct secret ID — not one aggregate event for the whole render call. Without this,
+// a single POST could bulk-decrypt an arbitrary number of secrets while leaving the
+// anomaly detector (which keys off per-secret SecretAccessLog rows) completely blind,
+// exactly matching the fetch-N-individually-vs-render-once asymmetry #324 called out.
+func TestRenderSecretTemplate_RecordsReadPerSecret(t *testing.T) {
+	ctx := context.Background()
+	c, db, projectID := newRenderFixture(t)
+
+	// Add two more secrets to the same project/environment alongside db-password.
+	env, err := c.storage.ListEnvironmentsByProject(ctx, projectID)
+	require.NoError(t, err)
+	require.Len(t, env, 1)
+
+	apiKey, err := c.storage.CreateSecret(ctx, &models.SecretNode{
+		Name: "api-key", ProjectID: projectID, EnvironmentID: env[0].ID, Type: "password",
+		OwnerID: 1, IsSecret: true, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	_, err = c.storage.CreateSecretVersion(ctx, &models.SecretVersion{
+		SecretNodeID: apiKey.ID, VersionNumber: 1, EncryptedValue: []byte("a-p-i"),
+	})
+	require.NoError(t, err)
+
+	stripeKey, err := c.storage.CreateSecret(ctx, &models.SecretNode{
+		Name: "stripe-secret", ProjectID: projectID, EnvironmentID: env[0].ID, Type: "password",
+		OwnerID: 1, IsSecret: true, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	})
+	require.NoError(t, err)
+	_, err = c.storage.CreateSecretVersion(ctx, &models.SecretVersion{
+		SecretNodeID: stripeKey.ID, VersionNumber: 1, EncryptedValue: []byte("sk_live_xyz"),
+	})
+	require.NoError(t, err)
+
+	dbSecret, err := c.storage.GetSecretByName(ctx, "db-password", projectID, env[0].ID)
+	require.NoError(t, err)
+
+	tmpl := "${secret:production/db-password}${secret:production/api-key}${secret:production/stripe-secret}"
+	out, err := c.RenderSecretTemplate(ctx, tmpl, projectID, 1, "owner", "10.0.0.1", "ua")
+	require.NoError(t, err)
+	assert.Equal(t, "s3cr3ta-p-isk_live_xyz", out)
+
+	wantSecretIDs := []uint{dbSecret.ID, apiKey.ID, stripeKey.ID}
+
+	// Reads are logged in detached goroutines — poll briefly for all three rows.
+	var gotAccessLogIDs []uint
+	var gotAuditSecretIDs []*uint
+	for i := 0; i < 200; i++ {
+		var logs []models.SecretAccessLog
+		require.NoError(t, db.Where("accessed_by = ? AND action = ?", "owner", "read").Find(&logs).Error)
+		gotAccessLogIDs = nil
+		for _, l := range logs {
+			gotAccessLogIDs = append(gotAccessLogIDs, l.SecretNodeID)
+		}
+
+		var events []models.AuditEvent
+		require.NoError(t, db.Where("event_type = ?", "secret.read").Find(&events).Error)
+		gotAuditSecretIDs = nil
+		for _, e := range events {
+			gotAuditSecretIDs = append(gotAuditSecretIDs, e.SecretNodeID)
+		}
+
+		if len(gotAccessLogIDs) >= 3 && len(gotAuditSecretIDs) >= 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	assert.ElementsMatch(t, wantSecretIDs, gotAccessLogIDs,
+		"one secret_access_logs row per resolved secret, correctly attributed")
+	require.Len(t, gotAuditSecretIDs, 3, "one audit_events row per resolved secret, not one aggregate event")
+	var gotAuditIDs []uint
+	for _, id := range gotAuditSecretIDs {
+		require.NotNil(t, id, "each secret.read audit event must carry the specific secret's ID")
+		gotAuditIDs = append(gotAuditIDs, *id)
+	}
+	assert.ElementsMatch(t, wantSecretIDs, gotAuditIDs)
+
+	// Every audit event must also carry the project ID for scoping.
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", "secret.read").Find(&events).Error)
+	for _, e := range events {
+		require.NotNil(t, e.ProjectID)
+		assert.Equal(t, projectID, *e.ProjectID)
+	}
+}

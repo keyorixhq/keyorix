@@ -7,8 +7,14 @@ import (
 )
 
 type Project struct {
-	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"uniqueIndex;not null"`
+	ID uint `gorm:"primaryKey"`
+	// Name uniqueness is enforced by a case-insensitive PARTIAL unique index
+	// (LOWER(name) WHERE deleted_at IS NULL), created in migrateDatabase (#385) — not
+	// the plain `uniqueIndex` tag — so "Production"/"production" can't land as two
+	// distinct rows (closing a shadow-project confusion vector against the
+	// case-insensitive CLI project-name resolution), while a soft-deleted project's
+	// name is still freed for reuse.
+	Name        string `gorm:"not null"`
 	Description string
 	// RequireMFA, when true, denies interactive (session-authenticated) callers
 	// without a second factor access to this project's scoped resources, even when
@@ -112,13 +118,14 @@ func (SoDPolicy) TableName() string { return "sod_policies" }
 // hold is preserved. Placing/lifting is audited; the row history is the evidence
 // of when holds were in effect.
 type LegalHold struct {
-	ID         uint       `gorm:"primaryKey" json:"id"`
-	Reason     string     `json:"reason"`
-	PlacedBy   uint       `json:"placed_by"`
-	PlacedAt   time.Time  `json:"placed_at"`
-	Released   bool       `gorm:"index" json:"released"` // false = active
-	ReleasedBy uint       `json:"released_by,omitempty"`
-	ReleasedAt *time.Time `json:"released_at,omitempty"`
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Reason        string     `json:"reason"`
+	PlacedBy      uint       `json:"placed_by"`
+	PlacedAt      time.Time  `json:"placed_at"`
+	Released      bool       `gorm:"index" json:"released"` // false = active
+	ReleasedBy    uint       `json:"released_by,omitempty"`
+	ReleasedAt    *time.Time `json:"released_at,omitempty"`
+	ReleaseReason string     `json:"release_reason,omitempty"` // why the hold was lifted (#380)
 }
 
 // SSOLoginState is the short-lived CSRF/nonce state for an in-flight OIDC
@@ -328,6 +335,16 @@ type WebAuthnCredential struct {
 	CredentialBlob []byte // JSON of webauthn.Credential
 	CreatedAt      time.Time
 	LastUsedAt     *time.Time
+
+	// Disabled is set when an authentication attempt against this credential showed
+	// a signature-counter regression (go-webauthn's CloneWarning — #212), the
+	// standard FIDO2 signal that its private key material may exist on more than one
+	// device. A disabled credential is excluded from every future ceremony (it can no
+	// longer authenticate, and won't be offered for exclusion on re-registration
+	// either); the owner must delete it and register a fresh passkey. Never
+	// auto-re-enabled — the stored counter can never again exceed a value a
+	// possibly-compromised clone already asserted.
+	Disabled bool `gorm:"default:false"`
 }
 
 // WebAuthnSession persists the in-flight ceremony state (the go-webauthn
@@ -453,7 +470,13 @@ type SecretNode struct {
 	// upstream it belongs to, who to contact. Metadata only; never the value.
 	Description string
 	MaxReads    *int
-	Expiration  *time.Time
+	// ReadCount is the secret's LIFETIME read count against MaxReads — deliberately
+	// secret-level, not per-version (#133). A per-version counter resets to zero on
+	// every new version, so a burn-after-N-reads secret became re-readable simply
+	// by rotating or rolling back (which creates a fresh version); this counter
+	// carries forward across both.
+	ReadCount  int
+	Expiration *time.Time
 	Metadata    JSON
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives
@@ -624,6 +647,25 @@ type Session struct {
 	// frontend can swap back without re-authentication. nil = ordinary session.
 	ImpersonatedBy         *uint
 	ImpersonationStartedAt *time.Time
+
+	// FamilyID links every session descended from the same login through each
+	// refresh-token rotation (#211): stamped once at mintSession and carried
+	// unchanged onto every session RefreshSession rotates it into. Lets a detected
+	// refresh-token-reuse event revoke the WHOLE lineage in one shot (standard
+	// OAuth refresh-token-family revocation), not just the one row that was
+	// replayed. Empty on legacy rows minted before this field existed.
+	FamilyID string `gorm:"index"`
+
+	// RotatedAt marks this row superseded by RefreshSession — a soft, not hard,
+	// delete. Keeping the row instead of deleting it immediately lets a replay of
+	// this now-stale token be told apart from an ordinary "never existed" /
+	// already-swept-up-by-expiry lookup, which is the standard refresh-token-reuse
+	// detection signal. nil = still the live session for its token. GetSession
+	// excludes rotated rows (a rotated token must authenticate nothing); only the
+	// refresh path's reuse-detection lookup (GetSessionAny) sees them. Rotated rows
+	// are still swept up by CleanupExpiredSessions once their (unextended) ExpiresAt
+	// passes, so they don't accumulate indefinitely.
+	RotatedAt *time.Time
 }
 
 // PersonalAccessToken is a long-lived, user-owned bearer credential (ADR-027).
@@ -635,9 +677,9 @@ type Session struct {
 type PersonalAccessToken struct {
 	ID          uint   `gorm:"primaryKey"`
 	UserID      uint   `gorm:"index;not null"`
-	Name        string `gorm:"not null"`             // user-facing label
-	TokenHash   string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
-	TokenPrefix string `gorm:"index"`                // leading chars of the raw token, for display ("kx_pat_ab12…")
+	Name        string `gorm:"not null"`                      // user-facing label
+	TokenHash   string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenPrefix string `gorm:"index"`                         // leading chars of the raw token, for display ("kx_pat_ab12…")
 	// Scopes is a JSON-encoded []string permission allowlist (ADR-042). Empty/null =
 	// the token inherits the owner's full permission set (legacy v1 behaviour, the
 	// default for existing rows). When non-empty, the token may exercise ONLY the
@@ -671,7 +713,7 @@ type PersonalAccessToken struct {
 // stored, and lookup is by hash, mirroring PersonalAccessToken.
 type SetupToken struct {
 	ID        uint   `gorm:"primaryKey"`
-	TokenHash string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenHash string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex of the raw token (never the plaintext)
 
 	// Purpose scopes the token: invitation_accept | account_setup | password_reset_link.
 	// A token minted for one purpose can never drive another, even if the raw string
@@ -940,7 +982,7 @@ type AnomalyAlert struct {
 	ID           uint `gorm:"primaryKey"`
 	SecretNodeID uint `gorm:"index"`
 	SecretName   string
-	AlertType    string // off_hours, new_ip, frequency_spike, new_user, ml_outlier
+	AlertType    string // off_hours, new_ip, frequency_spike, new_user, ml_outlier, principal_breadth
 	Severity     string // low, medium, high
 	Description  string
 	AccessedBy   string

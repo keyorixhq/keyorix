@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,6 +29,21 @@ func campaignStatusForError(msg string) int {
 	}
 }
 
+// sendCampaignError classifies err via campaignStatusForError and writes the
+// response. The message is only echoed back for the recognized, deliberately
+// user-facing outcomes above; the unclassified/500 fallback is assumed to be a
+// raw error from a lower layer (storage, etc.), so it is logged server-side
+// and replaced with a generic client-safe message (backlog #116).
+func sendCampaignError(w http.ResponseWriter, context string, err error) {
+	msg := err.Error()
+	status := campaignStatusForError(msg)
+	if status == http.StatusInternalServerError {
+		log.Printf("Error %s: %v", context, err)
+		msg = clientSafe(err)
+	}
+	sendError(w, "Error", msg, status, nil)
+}
+
 // OpenAccessReviewCampaign handles POST /api/v1/projects/{id}/access-review/campaigns.
 func (h *CatalogHandler) OpenAccessReviewCampaign(w http.ResponseWriter, r *http.Request) {
 	projectID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
@@ -47,7 +63,7 @@ func (h *CatalogHandler) OpenAccessReviewCampaign(w http.ResponseWriter, r *http
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	result, err := h.coreService.OpenAccessReviewCampaign(r.Context(), userCtx.UserID, uint(projectID), body.Name)
 	if err != nil {
-		sendError(w, "Error", err.Error(), campaignStatusForError(err.Error()), nil)
+		sendCampaignError(w, "opening access-review campaign", err)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -63,7 +79,8 @@ func (h *CatalogHandler) ListAccessReviewCampaigns(w http.ResponseWriter, r *htt
 	}
 	campaigns, err := h.coreService.ListAccessReviewCampaigns(r.Context(), uint(projectID))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing access-review campaigns for project %d: %v", projectID, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"campaigns": campaigns, "count": len(campaigns)}, "")
@@ -83,7 +100,7 @@ func (h *CatalogHandler) GetAccessReviewCampaign(w http.ResponseWriter, r *http.
 	}
 	detail, err := h.coreService.GetAccessReviewCampaign(r.Context(), uint(projectID), uint(campaignID))
 	if err != nil {
-		sendError(w, "Error", err.Error(), campaignStatusForError(err.Error()), nil)
+		sendCampaignError(w, "getting access-review campaign", err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -127,7 +144,7 @@ func (h *CatalogHandler) DecideAccessReviewCampaignItem(w http.ResponseWriter, r
 		return
 	}
 	if err := h.coreService.DecideAccessReviewItem(r.Context(), userCtx.UserID, uint(projectID), uint(campaignID), uint(itemID), body.Action, body.Reason); err != nil {
-		sendError(w, "Error", err.Error(), campaignStatusForError(err.Error()), nil)
+		sendCampaignError(w, "deciding access-review campaign item", err)
 		return
 	}
 	sendSuccess(w, nil, "Decision recorded")
@@ -157,7 +174,7 @@ func (h *CatalogHandler) CloseAccessReviewCampaign(w http.ResponseWriter, r *htt
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	result, err := h.coreService.CloseAccessReviewCampaign(r.Context(), userCtx.UserID, uint(projectID), uint(campaignID), body.Force)
 	if err != nil {
-		sendError(w, "Error", err.Error(), campaignStatusForError(err.Error()), nil)
+		sendCampaignError(w, "closing access-review campaign", err)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"campaign": result.Campaign, "progress": result.Progress}, "Campaign closed")

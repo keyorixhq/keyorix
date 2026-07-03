@@ -19,6 +19,11 @@ func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() er
 	return true, fn()
 }
 
+// WithAuditCheckpointLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithAuditCheckpointLock(_ context.Context, fn func() error) error {
+	return fn()
+}
+
 // WithTransaction runs fn directly against the mock (no real transaction in tests).
 func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
 	return fn(m)
@@ -61,7 +66,16 @@ func (m *MockStorage) ListProjectsWithCounts(_ context.Context, _ bool) ([]stora
 	return nil, nil
 }
 
-func (m *MockStorage) GetProject(_ context.Context, id uint) (*models.Project, error) {
+func (m *MockStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "GetProject" {
+			args := m.Called(ctx, id)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).(*models.Project), args.Error(1)
+		}
+	}
 	return &models.Project{}, nil
 }
 
@@ -73,8 +87,8 @@ func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
 	return nil
 }
 
-func (m *MockStorage) RestoreProject(_ context.Context, _ uint) error {
-	return nil
+func (m *MockStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
+	return 0, 0, nil
 }
 
 func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
@@ -107,6 +121,22 @@ func (m *MockStorage) ListProjectMembers(_ context.Context, _ uint) ([]storage.P
 
 func (m *MockStorage) ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
 	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+}
+
+// ListGlobalAdminAssignmentsForUpdate is unused by the tests that construct a
+// MockStorage directly (they don't exercise RemoveUserRole's last-admin guard);
+// returns empty so the guard treats "no other admin" as the default in the rare
+// case something reaches it.
+func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
+	return nil, nil
+}
+
+func (m *MockStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, groupID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -208,9 +238,9 @@ func (m *MockStorage) ListAccessReviewCampaigns(ctx context.Context, projectID u
 	return args.Get(0).([]*models.AccessReviewCampaign), args.Error(1)
 }
 
-func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) error {
+func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error) {
 	args := m.Called(ctx, c)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error {
@@ -234,9 +264,9 @@ func (m *MockStorage) GetAccessReviewItem(ctx context.Context, id uint) (*models
 	return args.Get(0).(*models.AccessReviewItem), args.Error(1)
 }
 
-func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error {
+func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error) {
 	args := m.Called(ctx, item)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
@@ -298,6 +328,13 @@ func (m *MockStorage) ListSecretDependenciesForProject(ctx context.Context, proj
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.SecretDependency), args.Error(1)
+}
+
+// ListSecretDependenciesForProjectForUpdate has no row lock in the mock; it
+// reuses the ListSecretDependenciesForProject expectation, mirroring
+// LockUserForUpdate above.
+func (m *MockStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
+	return m.ListSecretDependenciesForProject(ctx, projectID)
 }
 
 func (m *MockStorage) DeleteSecretDependency(ctx context.Context, id uint) error {
@@ -394,6 +431,11 @@ func (m *MockStorage) ListBreakGlassActivations(ctx context.Context, projectID u
 
 func (m *MockStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
 	args := m.Called(ctx, a)
+	return args.Error(0)
+}
+
+func (m *MockStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error {
+	args := m.Called(ctx, id, revokedBy, revokedAt)
 	return args.Error(0)
 }
 
@@ -558,6 +600,11 @@ func (m *MockStorage) IncrementSecretReadCount(ctx context.Context, versionID ui
 
 func (m *MockStorage) TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error) {
 	args := m.Called(ctx, versionID, maxReads)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
+	args := m.Called(ctx, secretID, maxReads)
 	return args.Bool(0), args.Error(1)
 }
 
@@ -904,6 +951,11 @@ func (m *MockStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope
 	return args.Error(0)
 }
 
+func (m *MockStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error {
+	args := m.Called(ctx, userID, projectID)
+	return args.Error(0)
+}
+
 func (m *MockStorage) AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
 	args := m.Called(ctx, groupID, roleID, scope, expiresAt)
 	return args.Error(0)
@@ -954,6 +1006,14 @@ func (m *MockStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, sc
 	return args.Get(0).([]uint), args.Error(1)
 }
 
+func (m *MockStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]storage.Scope, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.Scope), args.Error(1)
+}
+
 func (m *MockStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
 	args := m.Called(ctx, roleIDs, permission)
 	return args.Bool(0), args.Error(1)
@@ -998,6 +1058,14 @@ func (m *MockStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, s
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]models.SecretAccessLog), args.Error(1)
+}
+
+func (m *MockStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error) {
+	args := m.Called(ctx, since)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]map[uint]time.Time), args.Error(1)
 }
 
 func (m *MockStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
@@ -1128,6 +1196,35 @@ func (m *MockStorage) GetSession(ctx context.Context, token string) (*models.Ses
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.Session), args.Error(1)
+}
+
+func (m *MockStorage) GetSessionAny(ctx context.Context, token string) (*models.Session, error) {
+	args := m.Called(ctx, token)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Session), args.Error(1)
+}
+
+func (m *MockStorage) RotateSession(ctx context.Context, oldID uint, newSession *models.Session, now time.Time) (*models.Session, bool, error) {
+	args := m.Called(ctx, oldID, newSession, now)
+	if args.Get(0) == nil {
+		return nil, args.Bool(1), args.Error(2)
+	}
+	return args.Get(0).(*models.Session), args.Bool(1), args.Error(2)
+}
+
+func (m *MockStorage) ListSessionTokenHashesByFamily(ctx context.Context, familyID string) ([]string, error) {
+	args := m.Called(ctx, familyID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
+func (m *MockStorage) DeleteSessionsByFamily(ctx context.Context, familyID string) error {
+	args := m.Called(ctx, familyID)
+	return args.Error(0)
 }
 
 func (m *MockStorage) DeleteSession(ctx context.Context, id uint) error {
@@ -1274,55 +1371,6 @@ func (m *MockStorage) CountSetupTokensSince(ctx context.Context, purpose, email 
 	return args.Get(0).(int64), args.Error(1)
 }
 
-// API Client Management
-
-func (m *MockStorage) CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {
-	args := m.Called(ctx, client)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.APIClient), args.Error(1)
-}
-
-func (m *MockStorage) GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error) {
-	args := m.Called(ctx, clientID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.APIClient), args.Error(1)
-}
-
-func (m *MockStorage) RevokeAPIClient(ctx context.Context, clientID string) error {
-	args := m.Called(ctx, clientID)
-	return args.Error(0)
-}
-
-func (m *MockStorage) ListAPIClients(_ context.Context) ([]*models.APIClient, error) {
-	return nil, nil
-}
-
-func (m *MockStorage) UpdateAPIClient(_ context.Context, client *models.APIClient) (*models.APIClient, error) {
-	return client, nil
-}
-
-// API Token Management
-
-func (m *MockStorage) CreateAPIToken(_ context.Context, token *models.APIToken) (*models.APIToken, error) {
-	return token, nil
-}
-
-func (m *MockStorage) GetAPIToken(_ context.Context, id uint) (*models.APIToken, error) {
-	return &models.APIToken{ID: id}, nil
-}
-
-func (m *MockStorage) ListAPITokens(_ context.Context, _ *uint) ([]*models.APIToken, error) {
-	return nil, nil
-}
-
-func (m *MockStorage) RevokeAPIToken(_ context.Context, _ uint) error {
-	return nil
-}
-
 // Health and Maintenance
 
 func (m *MockStorage) HealthCheck(ctx context.Context) error {
@@ -1447,6 +1495,14 @@ func (m *MockStorage) CreateMachineIdentity(ctx context.Context, mi *models.Mach
 }
 
 func (m *MockStorage) GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentity), args.Error(1)
+}
+
+func (m *MockStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -1777,7 +1833,10 @@ func (m *MockStorage) CreateWebAuthnCredential(_ context.Context, _ *models.WebA
 func (m *MockStorage) ListWebAuthnCredentials(_ context.Context, _ uint) ([]*models.WebAuthnCredential, error) {
 	return nil, nil
 }
-func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte) (*models.WebAuthnCredential, error) {
+func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (m *MockStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
 	return nil, nil
 }
 func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {

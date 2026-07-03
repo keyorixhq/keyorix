@@ -31,10 +31,39 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
 // filter into a match-all / full-table scan.
 func escapeLike(s string) string { return likeEscaper.Replace(s) }
 
+// isDuplicateEmailViolation reports whether err is a unique-constraint violation on
+// specifically the partial users-email index (uniq_users_email_active, #117), as
+// distinct from any other unique constraint on the users table (e.g. the username
+// index) or elsewhere. Both SQLite and Postgres include the violated index/constraint
+// name in the driver-native error text for an expression index like this one (SQLite:
+// `UNIQUE constraint failed: index 'uniq_users_email_active'`; Postgres: `duplicate key
+// value violates unique constraint "uniq_users_email_active"`), so matching the index
+// name — rather than the generic isUniqueViolation substrings used for
+// single-unique-index tables like project_memberships — avoids mis-attributing a
+// username collision (or any future users-table unique index) to email. Neither
+// dialector wraps a typed error here (that needs the gorm.Config{TranslateError: true}
+// opt-in, which this codebase doesn't set), so this is driver-native text matching, the
+// same approach already used for "not found"/unique-violation detection elsewhere (e.g.
+// sso.go, users.go, scim.go, local_memberships.go).
+func isDuplicateEmailViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "uniq_users_email_active")
+}
+
 // --- Users ---
 
 func (ls *LocalStorage) CreateUser(ctx context.Context, user *models.User) (*models.User, error) {
 	if err := ls.db.WithContext(ctx).Create(user).Error; err != nil {
+		if isDuplicateEmailViolation(err) {
+			// The partial unique index uniq_users_email_active (#117) caught a concurrent
+			// duplicate: another create/signup/invite-accept/SCIM-provision for the
+			// identical (case-insensitive) email committed first. Translate to the
+			// sentinel so callers can surface a clean "email already in use" error
+			// instead of a raw constraint-violation message.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return user, nil
@@ -46,6 +75,9 @@ func (ls *LocalStorage) CreateUser(ctx context.Context, user *models.User) (*mod
 func (ls *LocalStorage) CreateUserWithRoleGrants(ctx context.Context, user *models.User, grants []storage.RoleGrant) (*models.User, error) {
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(user).Error; err != nil {
+			if isDuplicateEmailViolation(err) {
+				return fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
+			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		for _, g := range grants {
@@ -139,6 +171,14 @@ func (ls *LocalStorage) GetUserByExternalID(ctx context.Context, externalID stri
 
 func (ls *LocalStorage) UpdateUser(ctx context.Context, user *models.User) (*models.User, error) {
 	if err := ls.db.WithContext(ctx).Save(user).Error; err != nil {
+		if isDuplicateEmailViolation(err) {
+			// The partial unique index uniq_users_email_active (#117) caught a concurrent
+			// duplicate: another update (e.g. a racing UpdateSCIMUser, #120/#218) already
+			// committed the identical (case-insensitive) email to a different user before
+			// this write landed. Translate to the sentinel so callers surface a clean
+			// "email already in use" error instead of a raw constraint-violation message.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateEmail, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return user, nil

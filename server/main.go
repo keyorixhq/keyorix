@@ -52,6 +52,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/startup"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
@@ -65,6 +66,20 @@ func main() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Schema/sanity validation (ports, TLS cert/key presence, storage DSN/path) — always
+	// enforced, independent of any security flag: a malformed config should never boot.
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration is invalid: %v", err)
+	}
+
+	// Run the file-permission / encryption-key / database-reachability checks that were
+	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
+	// (#330), despite official docs and that command's own help text claiming they run
+	// automatically on every boot.
+	if err := runStartupValidation(cfg); err != nil {
+		log.Fatalf("startup validation: %v", err)
 	}
 
 	// Initialize i18n system
@@ -392,21 +407,35 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("SIEM audit forwarding enabled (provider=%s)", sc.Provider)
 	}
 
-	// Wire external notification channels if configured. Each in-app notification is
-	// fanned out to every enabled channel (best-effort, async); with none enabled it
-	// stays in-app only.
-	var notifySinks []core.NotificationSink
+	// Wire external notification channels if configured.
+	//
+	// #391: two distinct fan-out sets are built, not one. broadcastSinks (every
+	// enabled channel) backs the deployment-wide, aggregate notifications
+	// (compliance digest, auto-rotation-failure summary) — those are genuinely
+	// relevant to the whole deployment's ops audience. recipientSinks (only
+	// channels that can address a single user — currently email) backs every
+	// per-user/per-project notification (secret shared, share revoked, ownership
+	// transferred, access requested, anomaly alert, break-glass activation, …).
+	// Slack/Teams/webhook are deliberately excluded from recipientSinks: they are
+	// one fixed destination an operator configures, with no per-user chat-identity
+	// mapping in this codebase to target a specific recipient, so routing a
+	// per-user event there would broadcast it to everyone with channel visibility
+	// regardless of project membership or secret access. See
+	// internal/core/notifications.go and internal/core/service.go.
+	var broadcastSinks []core.NotificationSink
+	var recipientSinks []core.NotificationSink
 	if wc := cfg.Notifications.Webhook; wc.Enabled {
 		sink, werr := notifychan.NewWebhook(notifychan.WebhookConfig{
-			Endpoint:           wc.Endpoint,
-			Token:              wc.GetToken(),
-			InsecureSkipVerify: wc.InsecureSkipVerify,
-			SigningSecret:      wc.GetSigningSecret(),
+			Endpoint:                  wc.Endpoint,
+			Token:                     wc.GetToken(),
+			InsecureSkipVerify:        wc.InsecureSkipVerify,
+			AllowPrivateNetworkTarget: wc.AllowPrivateNetworkTarget,
+			SigningSecret:             wc.GetSigningSecret(),
 		})
 		if werr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification webhook channel: %w", werr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification webhook channel enabled (endpoint=%s)", wc.Endpoint)
 	}
 	if ec := cfg.Notifications.Email; ec.Enabled {
@@ -421,7 +450,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if eerr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification email channel: %w", eerr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
+		recipientSinks = append(recipientSinks, sink)
 		log.Printf("Notification email channel enabled (host=%s)", ec.Host)
 	}
 	if cfg.Notifications.Slack.Enabled {
@@ -429,7 +459,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if serr != nil {
 			return nil, nil, fmt.Errorf("failed to init Slack notification channel: %w", serr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification Slack channel enabled")
 	}
 	if cfg.Notifications.Teams.Enabled {
@@ -437,11 +467,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if terr != nil {
 			return nil, nil, fmt.Errorf("failed to init Teams notification channel: %w", terr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification Teams channel enabled")
 	}
-	if sink := notifychan.NewMulti(notifySinks...); sink != nil {
+	if sink := notifychan.NewMulti(broadcastSinks...); sink != nil {
 		coreService.SetNotificationSink(sink)
+	}
+	if sink := notifychan.NewMulti(recipientSinks...); sink != nil {
+		coreService.SetRecipientNotificationSink(sink)
 	}
 
 	// Wire Keyorix Connect (ADR-043) read-through federation if enabled.
@@ -564,9 +597,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	var evidenceTargets []evidencesink.Forwarder
 	if ew := cfg.EvidenceDelivery.Webhook; ew.Enabled {
 		fwd, ferr := evidencesink.NewWebhook(evidencesink.WebhookConfig{
-			Endpoint:           ew.Endpoint,
-			Token:              ew.GetToken(),
-			InsecureSkipVerify: ew.InsecureSkipVerify,
+			Endpoint:                  ew.Endpoint,
+			Token:                     ew.GetToken(),
+			InsecureSkipVerify:        ew.InsecureSkipVerify,
+			AllowPrivateNetworkTarget: ew.AllowPrivateNetworkTarget,
 		})
 		if ferr != nil {
 			return nil, nil, fmt.Errorf("failed to init evidence webhook target: %w", ferr)
@@ -617,6 +651,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// refuses to mint from backends whose lease TTL only the sweeper enforces
 	// (MySQL/MongoDB) when it is disabled — otherwise the credential never expires.
 	coreService.SetDynamicSweepEnabled(cfg.DynamicSecrets.SweepEnabled)
+	// Install-wide hard ceiling on any dynamic-secret lease's TTL (#97); enforced on
+	// top of each config's own optional (default-unbounded) MaxTTLSeconds.
+	coreService.SetDynamicMaxLeaseTTL(cfg.DynamicSecrets.GetMaxLeaseTTL())
 
 	// Wire self-service emergency access (break-glass); zero value = disabled.
 	coreService.SetBreakGlassPolicy(core.BreakGlassPolicy{
@@ -633,8 +670,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 
 	// Wire the configured data-retention windows (A.5.33) so the compliance posture
-	// reports them; the scheduler below drives the actual purge.
-	coreService.SetRetentionPolicy(core.RetentionPolicy{
+	// reports them; the scheduler below drives the actual purge. Audited (#160) so a
+	// shortened window is on the record, not just its eventual purge counts.
+	coreService.SetRetentionPolicy(context.Background(), core.RetentionPolicy{
 		AnomalyAlertsDays:          cfg.DataRetention.AnomalyAlertsDays,
 		ClosedAccessReviewsDays:    cfg.DataRetention.ClosedAccessReviewsDays,
 		BreakGlassDays:             cfg.DataRetention.BreakGlassDays,
@@ -662,7 +700,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		trusted := make([]core.OIDCTrustedIssuer, 0, len(oidc.Issuers))
 		jwksURIs := make(map[string]string, len(oidc.Issuers))
 		for _, iss := range oidc.Issuers {
-			trusted = append(trusted, core.OIDCTrustedIssuer{Issuer: iss.Issuer, Audiences: iss.Audiences})
+			trusted = append(trusted, core.OIDCTrustedIssuer{
+				Issuer: iss.Issuer, Audiences: iss.Audiences,
+				MaxTokenAge: time.Duration(iss.MaxTokenAgeSeconds) * time.Second,
+			})
 			jwksURIs[iss.Issuer] = iss.JWKSURI
 		}
 		resolver, rerr := core.NewHTTPJWKSResolver(jwksURIs)
@@ -798,6 +839,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		// Scan a window at least as long as the cadence, so a longer schedule doesn't
 		// leave the time between passes unexamined (floored at 1h inside SetLookback).
 		detector.SetLookback(interval)
+		detector.SetBaselineQuarantine(cfg.AnomalyAlerts.GetBaselineQuarantine())
 		if alertsEnabled {
 			log.Printf("Anomaly alerting enabled: scan + alert every %s", interval)
 		}
@@ -1079,7 +1121,15 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 						log.Printf("Evidence-delivery error: %v", err)
 						return err
 					}
-					log.Printf("Evidence pack exported: %d bytes → %v", res.Bytes, res.Targets)
+					if res.Degraded {
+						// #136: a degraded pack must be loud in the operator-facing log, not
+						// just embedded in the archived JSON — a collection failure means
+						// this export is incomplete, not a clean point-in-time snapshot.
+						log.Printf("Evidence pack exported DEGRADED (%d collection failure(s)): %d bytes -> %v; reasons: %s",
+							len(res.DegradedReasons), res.Bytes, res.Targets, strings.Join(res.DegradedReasons, "; "))
+					} else {
+						log.Printf("Evidence pack exported: %d bytes -> %v", res.Bytes, res.Targets)
+					}
 					return nil
 				})
 			})
@@ -1192,11 +1242,17 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 
 	// Create HTTP server
 	server := &http.Server{
-		Addr:         fmt.Sprintf(":%s", cfg.Server.HTTP.Port),
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:    fmt.Sprintf(":%s", cfg.Server.HTTP.Port),
+		Handler: router,
+		// ReadHeaderTimeout bounds how long a client can dribble in request headers one
+		// byte at a time before the connection is dropped (gosec G112 / slowloris-style
+		// DoS via a client that never finishes sending headers, holding the connection —
+		// and a worker goroutine — open indefinitely). Shorter than ReadTimeout since
+		// headers should arrive promptly even for a slow body upload.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// Configure TLS if enabled
@@ -1226,12 +1282,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		var serveErr error
 		if cfg.Server.HTTP.TLS.Enabled {
 			if cfg.Server.HTTP.TLS.AutoCert {
-				m := &autocert.Manager{
-					Cache:      autocert.DirCache("certs"),
-					Prompt:     autocert.AcceptTOS,
-					HostPolicy: autocert.HostWhitelist(cfg.Server.HTTP.TLS.Domains...),
-				}
-				server.TLSConfig = m.TLSConfig()
+				server.TLSConfig = buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains)
 				serveErr = server.ServeTLS(ln, "", "")
 			} else {
 				serveErr = server.ServeTLS(ln, cfg.Server.HTTP.TLS.CertFile, cfg.Server.HTTP.TLS.KeyFile)
@@ -1285,6 +1336,44 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 		return err
 	}
 	return check("gRPC", cfg.Server.GRPC)
+}
+
+// runStartupValidation runs internal/startup.ValidateStartup — the file-permission,
+// encryption-key (DEK/salt existence + size), and database-reachability checks that were
+// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand,
+// despite that command's own help text and SYSTEM_SETUP.md/docs/CONFIGURATION.md claiming
+// they run automatically on every boot (#330).
+//
+// Gated behind security.enable_file_permission_check — the flag these checks are
+// documented under and the one production.yaml/web-enabled.yaml explicitly turn on — so a
+// deployment that hasn't opted in (the default: the flag defaults to false) is completely
+// unaffected by wiring this in; enforceKeyFilePermissions below still runs unconditionally
+// as the lighter-weight, always-on permission check it always was. When the flag is set,
+// ValidateStartup itself decides warn-vs-fail-closed for a bad permission via
+// allow_unsafe_file_permissions, and auto-fixes bad permissions when
+// auto_fix_file_permissions is set (run first, before enforceKeyFilePermissions, so an
+// auto-fix takes effect before that check re-inspects the same files) — any other failure
+// (missing/undersized DEK or salt, unreachable local database) refuses to start, matching
+// this being "the sole automated backstop for a world-readable master-key-material file."
+func runStartupValidation(cfg *config.Config) error {
+	if !cfg.Security.EnableFilePermissionCheck {
+		return nil
+	}
+	configPath := config.ResolvedPath("")
+	result, err := startup.ValidateStartup(configPath)
+	if result != nil {
+		for _, w := range result.Warnings {
+			log.Printf("startup validation warning: %s", w)
+		}
+		for _, e := range result.Errors {
+			log.Printf("startup validation error: %s", e)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	log.Printf("Startup validation passed (config, file permissions, encryption keys, database).")
+	return nil
 }
 
 // enforceKeyFilePermissions refuses to start (or, by default, loudly warns) when sensitive
@@ -1377,7 +1466,8 @@ func startGRPCServer(ctx context.Context, cfg *config.Config) error {
 
 func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 	if cfg.Server.HTTP.TLS.AutoCert {
-		// Autocert will handle TLS config
+		// AutoCert mode builds its tls.Config separately, from the autocert.Manager
+		// (see buildAutoCertTLSConfig) — it still gets the same hardening applied.
 		return nil, nil
 	}
 
@@ -1387,15 +1477,45 @@ func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
 	}
 
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		},
-	}, nil
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+	applyTLSHardening(tlsConfig)
+	return tlsConfig, nil
+}
+
+// hardenedCipherSuites is the explicit AEAD-only cipher suite allowlist applied to
+// every HTTP TLS listener, regardless of how its certificate is sourced.
+var hardenedCipherSuites = []uint16{
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+}
+
+// applyTLSHardening layers the deliberately hardened MinVersion/CipherSuites onto
+// tlsConfig in place. The protocol-version floor and cipher-suite allowlist are
+// independent of how the certificate itself is sourced, so this must be applied
+// uniformly whether tlsConfig came from a manually configured cert/key pair
+// (createTLSConfig) or from an autocert.Manager (buildAutoCertTLSConfig) — AutoCert
+// should only supply the certificate, not silently determine the rest of the TLS
+// posture too (#172).
+func applyTLSHardening(tlsConfig *tls.Config) {
+	tlsConfig.MinVersion = tls.VersionTLS12
+	tlsConfig.CipherSuites = hardenedCipherSuites
+}
+
+// buildAutoCertTLSConfig builds the tls.Config for HTTP AutoCert (Let's Encrypt-style
+// automatic certificate management) mode: the autocert.Manager supplies the
+// certificate (via GetCertificate/NextProtos), and the same hardened
+// MinVersion/CipherSuites as the non-AutoCert path (createTLSConfig) are layered on
+// top instead of being silently discarded (#172).
+func buildAutoCertTLSConfig(domains []string) *tls.Config {
+	m := &autocert.Manager{
+		Cache:      autocert.DirCache("certs"),
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(domains...),
+	}
+	tlsConfig := m.TLSConfig()
+	applyTLSHardening(tlsConfig)
+	return tlsConfig
 }
 
 // resolveOutboundIP returns the machine's preferred outbound IP address.

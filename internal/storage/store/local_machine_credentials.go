@@ -136,20 +136,44 @@ func (ls *LocalStorage) RemoveMachineRole(ctx context.Context, machineID, roleID
 // GetMachineRoleIDsAt returns the role IDs granted to the machine that apply at
 // the target scope — a grant applies when its project is global or equal AND its
 // environment is global or equal (mirrors GetUserRoleIDsAt).
+//
+// A scoped (non-zero) project_id/environment_id must ALSO NOT resolve to a
+// soft-deleted project/environment row — mirroring the deleted_at join
+// GetUserRoleIDsAt/GetUserGroupRoleIDsAt apply for the same reason (#161/#312).
+// Without it, a machine role bound directly to a project/environment ID keeps
+// authorizing regardless of that project's/environment's own soft-delete state,
+// so deletion doesn't work as an access boundary for machine principals either.
+// The LEFT JOINs (not INNER) are required because project_id/environment_id 0
+// means "global" and has no corresponding row to join against — the "= 0 OR ..."
+// clause short-circuits before the joined columns are consulted in that case; a
+// scoped project_id/environment_id with no matching row at all (the joined column
+// is SQL NULL) is treated as not-deleted, same as every other "unknown" scope ID
+// this query already tolerates.
 func (ls *LocalStorage) GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Model(&models.MachineIdentityRole{}).
-		Where("machine_identity_id = ?", machineID).
-		Where("project_id = 0 OR project_id = ?", scope.ProjectID).
-		Where("environment_id = 0 OR environment_id = ?", scope.EnvironmentID).
-		Distinct().Pluck("role_id", &ids).Error
+		Joins("LEFT JOIN projects ON projects.id = machine_identity_roles.project_id").
+		Joins("LEFT JOIN environments ON environments.id = machine_identity_roles.environment_id").
+		Where("machine_identity_roles.machine_identity_id = ?", machineID).
+		Where("machine_identity_roles.project_id = 0 OR (machine_identity_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("machine_identity_roles.environment_id = 0 OR (machine_identity_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
+		Distinct().Pluck("machine_identity_roles.role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return ids, nil
 }
 
-// GetMachineRoles returns every role granted to the machine (any scope), for display.
+// GetMachineRoles returns every role granted to the machine (any scope), for
+// display only (e.g. rendering a machine's role list in an admin UI/CLI).
+//
+// It is intentionally UNSCOPED — it returns roles across every project/
+// environment flattened into one list, with no deleted_at gate on the scope
+// project/environment (unlike GetMachineRoleIDsAt). Do NOT reuse this result
+// for an authorization decision: pair it with an unscoped role-name check (e.g.
+// RequireRole, see its own warning) on a machine-token-reachable route and a
+// role granted only for a now-soft-deleted or entirely different project would
+// wrongly authorize (#308). Use GetMachineRoleIDsAt for any authorization path.
 func (ls *LocalStorage) GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error) {
 	var roles []*models.Role
 	err := ls.db.WithContext(ctx).Table("roles").
