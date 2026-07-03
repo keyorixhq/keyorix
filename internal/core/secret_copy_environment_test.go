@@ -20,7 +20,7 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()
 	p, _ := c.storage.CreateProject(ctx, &models.Project{Name: "p1"})
@@ -41,7 +41,7 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 	mk(prod.ID, "db") // pre-existing in target → name clash, should be skipped
 
 	t.Run("copies new secrets, skips name clashes", func(t *testing.T) {
-		copied, skipped, err := c.CopyEnvironmentSecrets(ctx, p.ID, staging.ID, prod.ID, "owner", 1, "", "")
+		copied, skipped, err := c.CopyEnvironmentSecrets(ctx, p.ID, staging.ID, prod.ID, "owner", 1, "203.0.113.5", "test-agent/1.0")
 		require.NoError(t, err)
 		assert.Equal(t, 1, copied, "only 'api' is new in prod")
 		assert.Equal(t, 1, skipped, "'db' already exists in prod")
@@ -54,6 +54,15 @@ func TestCopyEnvironmentSecrets(t *testing.T) {
 			names[s.Name] = true
 		}
 		assert.True(t, names["db"] && names["api"])
+
+		// #290: each per-secret copy attempt left a read audit event for the source (the
+		// value is read before the name-clash is discovered at create time), and the one
+		// successful copy ('api') also left a create event for the destination.
+		var readCount, createCount int64
+		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "secret.read").Count(&readCount).Error)
+		assert.Equal(t, int64(2), readCount, "both 'db' and 'api' sources were read, even though 'db' was then skipped as a name clash")
+		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "secret.created").Count(&createCount).Error)
+		assert.Equal(t, int64(1), createCount, "exactly one destination create ('api')")
 	})
 
 	t.Run("a cross-project target is rejected", func(t *testing.T) {

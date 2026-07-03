@@ -39,7 +39,7 @@ func TestCopySecret(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("copies value + metadata into the target environment", func(t *testing.T) {
-		copied, err := c.CopySecret(ctx, src.ID, prod.ID, "", "owner", 1, "", "")
+		copied, err := c.CopySecret(ctx, src.ID, prod.ID, "", "owner", 1, "203.0.113.5", "test-agent/1.0")
 		require.NoError(t, err)
 		assert.NotEqual(t, src.ID, copied.ID, "a distinct new secret")
 		assert.Equal(t, "db-url", copied.Name)
@@ -53,6 +53,14 @@ func TestCopySecret(t *testing.T) {
 		val, err := c.GetSecretValueWithPermissionCheck(ctx, copied.ID, 1)
 		require.NoError(t, err)
 		assert.Equal(t, "postgres://secret", string(val))
+
+		// #290: the copy leaves an audit trail — a read of the source, a create of the
+		// destination — matching every other secret CRUD path.
+		var readCount, createCount int64
+		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ? AND secret_node_id = ?", "secret.read", src.ID).Count(&readCount).Error)
+		assert.Equal(t, int64(1), readCount, "the source read must be audited")
+		require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ? AND secret_node_id = ?", "secret.created", copied.ID).Count(&createCount).Error)
+		assert.Equal(t, int64(1), createCount, "the destination create must be audited")
 	})
 
 	// TestCopySecret/audits_both_the_source_read_and_the_destination_create pins

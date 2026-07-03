@@ -19,7 +19,9 @@ const copyEnvPageSize = 500
 // CopyEnvironmentSecrets copies every secret in sourceEnvID into targetEnvID (same
 // project), returning how many were copied and how many were skipped (a name already
 // present in the target, or a per-secret failure). The two environments must belong to
-// the same project.
+// the same project. Each per-secret copy is audited by CopySecret (a read on the
+// source, a create on the destination); ip/ua attribute those events (pass-through
+// from the request).
 func (c *KeyorixCore) CopyEnvironmentSecrets(ctx context.Context, projectID, sourceEnvID, targetEnvID uint, actorUsername string, actorID uint, ip, ua string) (copied, skipped int, err error) {
 	if projectID == 0 || sourceEnvID == 0 || targetEnvID == 0 {
 		return 0, 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project, source and target environment IDs are required")

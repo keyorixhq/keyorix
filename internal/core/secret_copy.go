@@ -19,13 +19,13 @@ import (
 // metadata (type, classification, description). newName defaults to the source name
 // when empty. The actor must be able to read the source (enforced here) and — checked
 // by the transport — to create in the target environment. The target environment must
-// belong to the same project as the source.
-//
-// Decrypting the source and writing a new secret are audited explicitly (secret.read
-// + secret.created, #126): CreateSecret alone leaves no trace that a copy also read
-// the source value, and GetSecretValueWithPermissionCheck's max-reads accounting is
-// not an audit event — without this, a copy was a covert exfil channel invisible to
-// the anomaly detector (which keys off SecretAccessLog rows the Log* helpers write).
+// belong to the same project as the source. Records the source read and the
+// destination create in the audit trail (audit_events + secret_access_logs, #126/#290)
+// — CreateSecret alone leaves no trace that a copy also read the source value, and
+// GetSecretValueWithPermissionCheck's max-reads accounting is not an audit event —
+// without this, a copy was a covert exfil channel invisible to the anomaly detector
+// (which keys off SecretAccessLog rows the Log* helpers write). ip/ua attribute the
+// events (pass-through from the request); empty is tolerated.
 func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint, newName, actorUsername string, actorID uint, ip, ua string) (*models.SecretNode, error) {
 	if sourceID == 0 || targetEnvID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source secret ID and target environment ID are required")

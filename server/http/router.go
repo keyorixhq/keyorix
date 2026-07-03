@@ -382,7 +382,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/extend-expiring", secretHandler.ExtendExpiringSecrets)
 		// Bulk rename toward naming-policy conformance — remediation for name-conformance.
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/bulk-rename", secretHandler.BulkRenameSecrets)
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/environments/{envId}/copy-secrets", secretHandler.CopyEnvironmentSecrets)
+		// Bulk copy also requires secrets.read on the SOURCE environment (resolved from
+		// the envId path param, not attacker-supplied input) — mirroring the single-secret
+		// copy route below, which gates secrets.read on the source in addition to
+		// secrets.write on the target. Without this leg, a write-only-scoped principal
+		// could use the bulk copy to duplicate secret VALUES out of an environment they
+		// were deliberately denied read access to, defeating the write-only RBAC role
+		// this product's custom-role system is designed to support.
+		r.With(
+			customMiddleware.RequireScopedPermission("secrets.write", projectScope),
+			customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromEnvParam("envId")),
+		).Post("/projects/{id}/environments/{envId}/copy-secrets", secretHandler.CopyEnvironmentSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/environments", catalogHandler.ListProjectEnvironments)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/environments", catalogHandler.CreateProjectEnvironment)
 		// Environment restore is nested under the project so the scope resolves
