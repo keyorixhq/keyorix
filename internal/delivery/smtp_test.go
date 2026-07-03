@@ -23,10 +23,23 @@ func TestNewSMTPDelivery(t *testing.T) {
 	})
 
 	t.Run("accepts the documented tls modes", func(t *testing.T) {
+		t.Setenv(EnvAllowInsecureSMTP, "true")
 		for _, m := range []string{"", "starttls", "implicit", "none", "STARTTLS"} {
 			_, err := newSMTPDelivery(SMTPSettings{Host: "smtp.acme.io", From: "k@acme.io", TLS: m})
 			require.NoError(t, err, "tls=%q", m)
 		}
+	})
+
+	t.Run("tls=none refuses to activate without the explicit opt-in env var", func(t *testing.T) {
+		t.Setenv(EnvAllowInsecureSMTP, "")
+		_, err := newSMTPDelivery(SMTPSettings{Host: "smtp.acme.io", From: "k@acme.io", TLS: "none"})
+		require.Error(t, err, "cleartext SMTP must fail closed by default")
+	})
+
+	t.Run("tls=none succeeds once the operator opts in", func(t *testing.T) {
+		t.Setenv(EnvAllowInsecureSMTP, "true")
+		_, err := newSMTPDelivery(SMTPSettings{Host: "smtp.acme.io", From: "k@acme.io", TLS: "none"})
+		require.NoError(t, err)
 	})
 }
 
@@ -88,6 +101,7 @@ func TestSubjectFor(t *testing.T) {
 func TestSMTPDeliverDegradesOnSendFailure(t *testing.T) {
 	// Point at a closed port on localhost: the dial fails fast (connection refused),
 	// and delivery must degrade to manual relay rather than returning an error.
+	t.Setenv(EnvAllowInsecureSMTP, "true")
 	d, err := newSMTPDelivery(SMTPSettings{Host: "127.0.0.1", Port: 1, From: "k@acme.io", TLS: "none"})
 	require.NoError(t, err)
 
