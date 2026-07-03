@@ -240,8 +240,19 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	item.Reason = reason
 	item.DecidedBy = actorID
 	item.DecidedAt = &now
-	if err := c.storage.UpdateAccessReviewItem(ctx, item); err != nil {
+	// The pending check above is a plain read, so a concurrent or replayed second
+	// decision on this item can reach here too, having read the same "pending" state
+	// before either write lands. UpdateAccessReviewItem's WHERE-decision='pending'
+	// conditional UPDATE is the actual race-closing guard: ok==false means this call
+	// lost the race (the item was decided out from under it), so surface a clear
+	// "already decided" error rather than a generic storage failure — and, crucially,
+	// don't silently let this decision overwrite the one that won.
+	ok, err := c.storage.UpdateAccessReviewItem(ctx, item)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if !ok {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
 	}
 	return nil
 }

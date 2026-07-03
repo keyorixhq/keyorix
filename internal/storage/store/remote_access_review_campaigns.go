@@ -37,6 +37,6 @@ func (rs *RemoteStorage) GetAccessReviewItem(_ context.Context, _ uint) (*models
 	return nil, remoteUnsupported("GetAccessReviewItem")
 }
 
-func (rs *RemoteStorage) UpdateAccessReviewItem(_ context.Context, _ *models.AccessReviewItem) error {
-	return remoteUnsupported("UpdateAccessReviewItem")
+func (rs *RemoteStorage) UpdateAccessReviewItem(_ context.Context, _ *models.AccessReviewItem) (bool, error) {
+	return false, remoteUnsupported("UpdateAccessReviewItem")
 }

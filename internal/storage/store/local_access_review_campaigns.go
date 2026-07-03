@@ -79,9 +79,30 @@ func (ls *LocalStorage) GetAccessReviewItem(ctx context.Context, id uint) (*mode
 	return &item, nil
 }
 
-func (ls *LocalStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error {
-	if err := ls.db.WithContext(ctx).Save(item).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+// accessReviewItemPending mirrors core.ReviewItemPending (the store package cannot
+// import core: core already imports storage/store). Both sides of this decision
+// state machine — core's pre-check and this conditional UPDATE — must agree on the
+// same "undecided" sentinel string.
+const accessReviewItemPending = "pending"
+
+// UpdateAccessReviewItem persists a recertification decision with a conditional
+// UPDATE (`WHERE id = ? AND decision = 'pending'`), not an unconditional Save. A
+// decision is a one-way transition (pending -> attested|revoked): DecideAccessReviewItem
+// reads the item, checks it's still pending, then acts and persists — a plain
+// read-then-write with a gap in between (the action itself, plus everything else in
+// the request) wide enough for two concurrent/replayed decisions to both pass the
+// pending check before either writes. Making the persist itself the single
+// conditional statement closes that race: whichever call's UPDATE lands first wins
+// (RowsAffected==1); the loser's UPDATE matches zero rows and is told so, instead of
+// silently overwriting the winner's decision and corrupting the compliance evidence
+// trail.
+func (ls *LocalStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.AccessReviewItem{}).
+		Where("id = ? AND decision = ?", item.ID, accessReviewItemPending).
+		Select("*").
+		Updates(item)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
-	return nil
+	return res.RowsAffected == 1, nil
 }
