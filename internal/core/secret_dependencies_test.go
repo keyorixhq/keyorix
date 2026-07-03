@@ -73,7 +73,10 @@ func newDepCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretDependency{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}))
+	// #370: DeleteSecret now revokes ShareRecord rows in the same transaction as the
+	// secret's own soft-delete, so ShareRecord must be migrated even though these
+	// tests never create a share directly.
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretDependency{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}, &models.ShareRecord{}))
 	// Live parent projects (1, 2) + environment (1): RestoreSecret refuses to restore a
 	// secret into a soft-deleted parent, so the dependency-cascade tests need them present.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)

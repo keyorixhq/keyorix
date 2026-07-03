@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -69,6 +70,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	// Admin upgrades the grant to developer.
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
@@ -103,6 +105,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(nil)
@@ -160,6 +163,7 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "admin", State: AccessRequestPending,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	stubAdminRoleLookups(store, ctx)
 	// Approver 9 holds only a non-admin role (id 6) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
@@ -181,6 +185,7 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "admin", State: AccessRequestPending,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	stubAdminRoleLookups(store, ctx)
 	// Approver 9 holds the admin role (id 2) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{2}, nil)
@@ -206,6 +211,7 @@ func TestApproveAccessRequest_RejectsExpired(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending, ExpiresAt: &past,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	store.On("UpdateAccessRequest", ctx, mock.MatchedBy(func(r *models.AccessRequest) bool {
 		return r.State == AccessRequestExpired
 	})).Return(nil)
@@ -243,6 +249,75 @@ func TestApproveAccessRequest_RejectsOtherProject(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// #371: a request against a project that no longer exists (never created, or already
+// soft-deleted) must be refused at creation time — otherwise it could sit pending
+// against a project retired specifically to shut off further access, waiting to be
+// approved (and go live) whenever the project is restored.
+func TestRequestProjectAccess_RejectsUnknownProject(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	store.On("GetProject", ctx, uint(404)).Return(nil, fmt.Errorf("project not found"))
+
+	_, err := c.RequestProjectAccess(ctx, 404, 2, "", "please")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	store.AssertNotCalled(t, "CreateAccessRequest", mock.Anything, mock.Anything)
+}
+
+// #371: RequestProjectAccess must refuse a soft-deleted project the same way it refuses
+// an unknown one — GetProject's default soft-delete scope makes this the same check.
+func TestRequestProjectAccess_RejectsSoftDeletedProject(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
+	require.NoError(t, err)
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "retiring"})
+	require.NoError(t, err)
+	require.NoError(t, st.DeleteProject(ctx, proj.ID))
+
+	_, err = c.RequestProjectAccess(ctx, proj.ID, requester.ID, "project_viewer", "please")
+	require.Error(t, err, "requesting access to a soft-deleted project must be refused")
+}
+
+// #371: ApproveAccessRequestWithExpiry must refuse to approve a request whose target
+// project has been soft-deleted in the meantime — DeleteProject never touches
+// access_requests, so without this check a stale pending request could be approved
+// after the fact and go live the moment the project is later restored, against
+// potentially-stale intent and with no re-review.
+func TestApproveAccessRequestWithExpiry_RejectsSoftDeletedProject(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	approver, err := st.CreateUser(ctx, &models.User{Username: "approver2", Email: "approver2@example.com", IsActive: true})
+	require.NoError(t, err)
+	adminRole, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
+	requester, err := st.CreateUser(ctx, &models.User{Username: "requester2", Email: "requester2@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "retiring2"})
+	require.NoError(t, err)
+	req, err := st.CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: proj.ID, UserID: requester.ID, SuggestedRole: "project_viewer", State: AccessRequestPending,
+	})
+	require.NoError(t, err)
+
+	// The project is soft-deleted AFTER the request was filed, but before it's approved.
+	require.NoError(t, st.DeleteProject(ctx, proj.ID))
+
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, proj.ID, req.ID, approver.ID, "", 0)
+	require.Error(t, err, "approving a request against a soft-deleted project must be refused")
+	assert.Contains(t, err.Error(), "no longer exists")
+
+	// No role grant landed.
+	ids, err := st.GetUserRoleIDsAt(ctx, requester.ID, storage.Scope{ProjectID: proj.ID})
+	require.NoError(t, err)
+	assert.Empty(t, ids)
 }
 
 func TestWithdrawAccessRequest_OwnershipChecked(t *testing.T) {
