@@ -19,9 +19,28 @@ import (
 // to UpdateUser (which enforces email uniqueness) but constructs the request from
 // the authenticated userID, so a caller can never change username/is_active or
 // target another user.
-func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, displayName, email string) (*models.User, error) {
+//
+// An email change additionally requires the caller's current password, mirroring
+// ChangePassword's re-authentication check. The email is often the recovery/identity
+// anchor (password reset delivery, SSO account linking — see ADR-052/ADR-053 related
+// fixes) so a hijacked session (stolen cookie/token, unattended device) must not be
+// able to silently repoint it to an attacker-controlled address and ride the
+// password-reset flow to full takeover. Display-name-only changes are unaffected and
+// need no password. currentPassword is ignored when the email is not changing.
+func (c *KeyorixCore) UpdateOwnProfile(ctx context.Context, userID uint, displayName, email, currentPassword string) (*models.User, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
+	}
+	if email != "" {
+		user, err := c.storage.GetUser(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+		}
+		if email != user.Email {
+			if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+				return nil, fmt.Errorf("%s: current password is incorrect", i18n.T("ErrorValidation", nil))
+			}
+		}
 	}
 	return c.UpdateUser(ctx, &UpdateUserRequest{
 		ID:          userID,
