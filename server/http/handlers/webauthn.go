@@ -42,7 +42,10 @@ func (h *AuthHandler) BeginWebAuthnRegistration(w http.ResponseWriter, r *http.R
 }
 
 // FinishWebAuthnRegistration verifies the attestation and stores the passkey.
-// Body: { webauthn_session, name, credential: <PublicKeyCredential> }.
+// Requires a current TOTP code or the account password to re-authenticate the
+// caller (#372): this is the step that actually adds a new trust factor to the
+// account, so it must not be reachable by a bearer token alone.
+// Body: { webauthn_session, name, code, password, credential: <PublicKeyCredential> }.
 func (h *AuthHandler) FinishWebAuthnRegistration(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -52,6 +55,8 @@ func (h *AuthHandler) FinishWebAuthnRegistration(w http.ResponseWriter, r *http.
 	var body struct {
 		WebAuthnSession string          `json:"webauthn_session"`
 		Name            string          `json:"name"`
+		Code            string          `json:"code"`
+		Password        string          `json:"password"`
 		Credential      json.RawMessage `json:"credential"`
 	}
 	if err := decodeJSON(r, &body); err != nil || len(body.Credential) == 0 {
@@ -63,7 +68,11 @@ func (h *AuthHandler) FinishWebAuthnRegistration(w http.ResponseWriter, r *http.
 		sendError(w, "BadRequest", "Invalid attestation", http.StatusBadRequest, nil)
 		return
 	}
-	cred, err := h.coreService.FinishWebAuthnRegistration(r.Context(), userCtx.UserID, body.WebAuthnSession, strings.TrimSpace(body.Name), parsed)
+	proof := body.Code
+	if proof == "" {
+		proof = body.Password
+	}
+	cred, err := h.coreService.FinishWebAuthnRegistration(r.Context(), userCtx.UserID, body.WebAuthnSession, strings.TrimSpace(body.Name), proof, parsed)
 	if err != nil {
 		h.writeWebAuthnErr(w, err)
 		return
@@ -99,7 +108,11 @@ func (h *AuthHandler) ListWebAuthnCredentials(w http.ResponseWriter, r *http.Req
 	sendSuccess(w, out, "")
 }
 
-// DeleteWebAuthnCredential removes one of the caller's passkeys.
+// DeleteWebAuthnCredential removes one of the caller's passkeys. Requires a
+// current TOTP code or the account password to re-authenticate the caller (#372):
+// deleting the last passkey silently disables WebAuthn account-wide, a full
+// second-factor downgrade that must not be reachable by a bearer token alone.
+// Body: { code, password } (either satisfies the re-auth check).
 func (h *AuthHandler) DeleteWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -111,7 +124,21 @@ func (h *AuthHandler) DeleteWebAuthnCredential(w http.ResponseWriter, r *http.Re
 		sendError(w, "InvalidParameter", "Invalid credential id", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.DeleteWebAuthnCredential(r.Context(), userCtx.UserID, uint(id)); err != nil {
+	var body struct {
+		Code     string `json:"code"`
+		Password string `json:"password"`
+	}
+	// An empty body simply fails the re-auth check below; only malformed JSON is a
+	// bad request.
+	if err := decodeJSON(r, &body); err != nil && !errors.Is(err, io.EOF) {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	proof := body.Code
+	if proof == "" {
+		proof = body.Password
+	}
+	if err := h.coreService.DeleteWebAuthnCredential(r.Context(), userCtx.UserID, uint(id), proof); err != nil {
 		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
 		return
 	}

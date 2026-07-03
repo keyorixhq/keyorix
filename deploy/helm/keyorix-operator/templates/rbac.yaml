@@ -2,6 +2,21 @@
 The operator needs cluster-wide read on KeyorixSecrets and read/write on the Secrets it
 materialises, plus a namespaced lease for leader election. The Secret verbs match the
 controller's generated RBAC (operator/config/rbac/role.yaml).
+
+NOTE (#327): this ClusterRole/ClusterRoleBinding (rather than a per-namespace Role/
+RoleBinding) reflects the operator's actual deployment model -- a single cluster-wide
+instance watching KeyorixSecret CRs (a namespaced CRD) across every namespace, with no
+--watch-namespaces flag or other dynamic-namespace-discovery mechanism. It genuinely cannot
+predict ahead of time which namespace the next CR (and its TokenSecretRef/target Secret)
+will land in, and Kubernetes RBAC has no way to scope list/watch by resourceNames or to a
+dynamically changing namespace set -- so per-managed-namespace RoleBindings aren't possible
+without also adding namespace-scoping to the operator's deployment model.
+
+To bound the blast radius of this necessarily cluster-wide Secret grant (e.g. if the
+operator process is ever compromised via #184/#240), operator/cmd/main.go scopes the
+manager's Secret informer cache to only Secrets carrying the operator's managed-by label, so
+the operator does not hold an in-memory cache of every Secret in the cluster -- only the
+ones it already owns via this same RBAC.
 */}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

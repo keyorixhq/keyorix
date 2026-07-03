@@ -92,6 +92,37 @@ func TestLoadConfig_MissingFile(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// #178: a non-https keyorix_url must be rejected, UNLESS the host is loopback (local
+// development against a Keyorix instance on the same machine) — matching the
+// established #122/#544 convention (internal/mcp.NewKeyorixClient).
+func TestLoadConfig_KeyorixURLScheme(t *testing.T) {
+	mappings := `
+mappings:
+  - {ref: e/n, namespace: ns, name: s, key: K}
+`
+	cases := map[string]struct {
+		url     string
+		wantErr bool
+	}{
+		"https allowed":            {"https://keyorix.internal", false},
+		"http non-loopback denied": {"http://keyorix.internal", true},
+		"http localhost allowed":   {"http://localhost:8080", false},
+		"http 127.0.0.1 allowed":   {"http://127.0.0.1:8080", false},
+		"http ::1 allowed":         {"http://[::1]:8080", false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := LoadConfig(writeConfig(t, "keyorix_url: "+tc.url+mappings))
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.url, cfg.KeyorixURL)
+			}
+		})
+	}
+}
+
 func TestSync_LogsSummary(t *testing.T) {
 	var lines []string
 	logf := func(format string, args ...interface{}) {

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/testhelper"
@@ -73,6 +74,26 @@ func TestGroupService_Members(t *testing.T) {
 	members, err = svc.GetGroupMembers(groupCtx(), &pb.GetGroupMembersRequest{Id: g.GetId()})
 	require.NoError(t, err)
 	assert.Empty(t, members.GetMembers())
+}
+
+// TestGroupService_NameLengthMatchesHTTP verifies gRPC rejects an over-255-char Name
+// with the same limit HTTP's `validate:"...,max=255"` tag enforces (backlog #190) —
+// the core-layer CreateGroup/UpdateGroup validation both transports call must reject
+// it, not just the (gRPC-bypassed) HTTP validator.
+func TestGroupService_NameLengthMatchesHTTP(t *testing.T) {
+	svc, _ := newGroupService(t)
+	tooLong := strings.Repeat("a", 256)
+
+	_, err := svc.CreateGroup(groupCtx(), &pb.CreateGroupRequest{Name: tooLong})
+	require.Error(t, err, "a 256-char group name must be rejected over gRPC, matching HTTP's 255-char cap")
+
+	// A name at exactly the limit is still accepted.
+	g, err := svc.CreateGroup(groupCtx(), &pb.CreateGroupRequest{Name: strings.Repeat("a", 255)})
+	require.NoError(t, err)
+
+	// UpdateGroup enforces the same cap.
+	_, err = svc.UpdateGroup(groupCtx(), &pb.UpdateGroupRequest{Id: g.GetId(), Name: tooLong})
+	require.Error(t, err, "a 256-char rename must be rejected over gRPC, matching HTTP's 255-char cap")
 }
 
 func TestGroupService_Unauthenticated(t *testing.T) {

@@ -21,7 +21,14 @@ func TestNew(t *testing.T) {
 		assert.IsType(t, &OutOfBandDelivery{}, d)
 	})
 
-	t.Run("log selects LogDelivery", func(t *testing.T) {
+	t.Run("log refuses to activate without the explicit opt-in env var", func(t *testing.T) {
+		t.Setenv(EnvAllowInsecureLogDelivery, "")
+		_, err := New(Config{Mode: ModeLog})
+		require.Error(t, err, "mode=log discloses a live setup link into the log; it must fail closed by default")
+	})
+
+	t.Run("log selects LogDelivery once the operator opts in", func(t *testing.T) {
+		t.Setenv(EnvAllowInsecureLogDelivery, "true")
 		d, err := New(Config{Mode: ModeLog})
 		require.NoError(t, err)
 		assert.IsType(t, &LogDelivery{}, d)

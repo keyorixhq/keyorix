@@ -97,7 +97,7 @@ func TestGetComplianceControls_SummaryTallies(t *testing.T) {
 	got, err := c.GetComplianceControls(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, len(got.Controls), got.Summary.Total)
-	assert.Equal(t, got.Summary.Total, got.Summary.Pass+got.Summary.Gap+got.Summary.NotConfigured)
+	assert.Equal(t, got.Summary.Total, got.Summary.Pass+got.Summary.Gap+got.Summary.NotConfigured+got.Summary.Unknown)
 	assert.False(t, got.GeneratedAt.IsZero())
 }
 

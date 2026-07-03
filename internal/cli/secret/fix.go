@@ -100,7 +100,7 @@ func runFix(cmd *cobra.Command, args []string) error {
 
 	// Apply fixes
 	for _, plan := range plans {
-		if err := applyFix(plan); err != nil {
+		if err := applyFix(absPath, plan); err != nil {
 			fmt.Printf("Error fixing %s: %v\n", plan.File, err)
 			continue
 		}
@@ -180,8 +180,13 @@ func findAndPlanFix(basePath, envVarName string) ([]fixPlan, error) {
 	return plans, err
 }
 
-func applyFix(plan fixPlan) error {
-	content, err := os.ReadFile(filepath.Clean(plan.File)) // #nosec G304 G122 -- path sourced from filepath.Walk within operator-controlled basePath
+func applyFix(basePath string, plan fixPlan) error {
+	// plan.File was recorded by findAndPlanFix relative to basePath (the same
+	// --path the plan was built from), so it must be resolved against that
+	// same basePath here — not the process's CWD — or the fix reads/writes
+	// an unrelated file that merely shares the same relative path.
+	fullPath := filepath.Join(basePath, plan.File)
+	content, err := os.ReadFile(filepath.Clean(fullPath)) // #nosec G304 G122 -- fullPath is basePath (operator-supplied --path) joined with a relative path from filepath.Walk rooted at that same basePath
 	if err != nil {
 		return err
 	}
@@ -190,5 +195,5 @@ func applyFix(plan fixPlan) error {
 		return fmt.Errorf("line %d out of range", plan.Line)
 	}
 	lines[plan.Line-1] = plan.NewLine
-	return os.WriteFile(plan.File, []byte(strings.Join(lines, "\n")), 0600) // #nosec G703 -- plan.File is a relative path from filepath.Walk within operator-supplied basePath; path traversal not a realistic threat for this local CLI tool
+	return os.WriteFile(fullPath, []byte(strings.Join(lines, "\n")), 0600) // #nosec G703 -- fullPath is basePath (operator-supplied --path) joined with a relative path from filepath.Walk rooted at that same basePath; path traversal not a realistic threat for this local CLI tool
 }

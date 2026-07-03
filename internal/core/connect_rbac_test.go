@@ -23,6 +23,7 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 		&models.Role{}, &models.UserRole{}, &models.MachineIdentityRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.ConnectRefGrant{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	if len(conns) > 0 {
@@ -210,10 +211,38 @@ func TestRefMatches(t *testing.T) {
 		{"db?", "db1", true}, // single-char wildcard
 		{"db?", "db", false},
 		{"[", "anything", false}, // malformed glob matches nothing
+		// #326: a traversal-shaped ref must never match, even though a raw
+		// strings.HasPrefix(ref, pattern) would report a literal match.
+		{"secret/data/myapp/", "secret/data/myapp/../otherapp/secret", false},
+		{"secret/data/myapp/", "secret/data/myapp/config", true}, // sibling non-traversal ref still matches
 	}
 	for _, tc := range cases {
 		assert.Equalf(t, tc.want, refMatches(tc.pattern, tc.ref), "refMatches(%q, %q)", tc.pattern, tc.ref)
 	}
+}
+
+// TestConnectRefRBAC_CrossTenantTraversalDenied proves the exact exploit trace from
+// finding #326 at the ADR-045 per-reference RBAC layer: a role granted only
+// "secret/data/myapp/" on the vault connector cannot read
+// "secret/data/otherapp/secret" by requesting the ref
+// "secret/data/myapp/../otherapp/secret". A raw strings.HasPrefix check would treat
+// that ref as matching the grant (the literal string starts with the granted
+// prefix); refMatches must reject it outright.
+func TestConnectRefRBAC_CrossTenantTraversalDenied(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "vault", val: "myapp-secret"})
+	seedRoleForUser(t, db, 1, 5, "myapp-reader")
+	seedGrant(t, c, 5, "vault", "secret/data/myapp/")
+	ctx := context.Background()
+
+	_, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "vault", "secret/data/myapp/../otherapp/secret")
+	require.Error(t, err, "the cross-tenant traversal ref must be denied by the per-reference grant")
+	assert.Contains(t, err.Error(), "not permitted")
+
+	// The legitimate ref within the granted prefix still works through the same
+	// code path (connectRefAllowed -> refMatches -> GetSecret).
+	val, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "vault", "secret/data/myapp/config")
+	require.NoError(t, err)
+	assert.Equal(t, "myapp-secret", val)
 }
 
 func TestConnectRefAllowed_Direct(t *testing.T) {

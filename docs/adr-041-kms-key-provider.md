@@ -102,9 +102,28 @@ but the `Encrypt`/`Decrypt` interface is unchanged. `kms_key_id` holds the Key
 Vault **key identifier URL**
 (`https://{vault}.vault.azure.net/keys/{name}[/{version}]`; an omitted version uses
 the key's current version); credentials come from `DefaultAzureCredential` (env,
-managed identity, workload identity). Like GCP, the operation names the key, so the
-key is inherently pinned — the ciphertext cannot select a different key. Keyorix now
-offers AWS, GCP, **or** Azure for the wrapping key.
+managed identity, workload identity). Keyorix now offers AWS, GCP, **or** Azure for
+the wrapping key.
+
+## Addendum (2026-07-03): Azure key-version pinning (#346)
+
+Unlike AWS/GCP, an Azure Key Vault wrap/unwrap operation targets a specific key
+*version*, and an unversioned `kms_key_id` (the form described above) resolves to
+whatever version is "current" **at call time**. Because `KMSKeyProvider.KEK()`
+calls `Decrypt` with that same unversioned identifier on every server startup,
+routine Key Vault key rotation — no attacker involved — would silently change
+which version "current" resolves to between the wrap (first run) and a later
+unwrap (any subsequent restart), and the new version cannot unwrap ciphertext
+produced by the old one: total, self-inflicted master-DEK-unavailability.
+`internal/crypto/azurekms.Encrypt` now captures the exact key version Key Vault
+actually used (from the response `KID`, which is always fully versioned, even for
+an unversioned request) and embeds it in the returned wrapped-key blob behind a
+package-local magic prefix; `Decrypt` recognizes that prefix and targets the
+pinned version instead of "current", making newly-wrapped KEKs immune to
+rotation. Ciphertext wrapped before this change (no prefix) is unaffected and
+still decrypts via the old "current"/configured-version resolution — a config
+already pinned to an explicit version, or freshly re-wrapped data, is unaffected
+either way.
 
 ## Addendum (2026-06-12): KEK-provider migration tool
 

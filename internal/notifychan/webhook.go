@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -36,6 +37,13 @@ type WebhookConfig struct {
 	Endpoint           string // full destination URL (POST target)
 	Token              string // optional bearer token (Authorization: Bearer <token>)
 	InsecureSkipVerify bool   // skip TLS verification (test/self-signed only)
+	// AllowPrivateNetworkTarget opts the endpoint out of the SSRF guard (a literal
+	// or DNS-resolved private/link-local destination is refused by default) — a
+	// SEPARATE decision from InsecureSkipVerify (#130): trusting a self-signed cert
+	// doesn't mean the endpoint should be allowed to live on an internal network,
+	// and a legitimate on-prem receiver with a real cert still needs this to reach
+	// its private address.
+	AllowPrivateNetworkTarget bool
 	// SigningSecret, when set, signs each payload with HMAC-SHA256 so the receiver can
 	// verify it came from Keyorix: header X-Keyorix-Signature: sha256=<hex(hmac(body))>.
 	SigningSecret string
@@ -60,11 +68,12 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*WebhookSink, err
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("notifychan: webhook endpoint is required")
 	}
-	if err := validateEndpoint(cfg.Endpoint, cfg.InsecureSkipVerify); err != nil {
+	if err := validateEndpoint(cfg.Endpoint, cfg.AllowPrivateNetworkTarget); err != nil {
 		return nil, err
 	}
 	transport := &http.Transport{}
 	if cfg.InsecureSkipVerify {
+		log.Printf("WARNING: notifychan webhook %q has TLS verification disabled (insecure_skip_verify); do not use in production", cfg.Endpoint)
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- opt-in for self-signed endpoints
 	}
 	s := &WebhookSink{

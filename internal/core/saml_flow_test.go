@@ -84,7 +84,7 @@ func TestCompleteSAML_ExistingUser(t *testing.T) {
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-1").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ReturnTo: "/home", ExpiresAt: time.Now().Add(time.Minute)}, nil)
-	store.On("GetUserByExternalID", mock.Anything, "corp|123").Return(&models.User{ID: 7}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return(&models.User{ID: 7}, nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 7, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(7), mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -129,10 +129,95 @@ func TestCompleteSAML_NoAccountNoProvision(t *testing.T) {
 	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-4").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
-	store.On("GetUserByExternalID", mock.Anything, "corp|999").Return((*models.User)(nil), userNotFound())
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|999").Return((*models.User)(nil), userNotFound())
 	store.On("GetUserByEmail", mock.Anything, "noone@x.io").Return((*models.User)(nil), userNotFound())
 
 	_, _, _, err := c.CompleteSAML(context.Background(), "corp",
 		httptest.NewRequest(http.MethodPost, "/", nil), "relay-4", "", "")
 	require.ErrorContains(t, err, "no Keyorix account")
+}
+
+// TestCompleteSAML_NativeAdminTakeoverRejectedByDefault pins #89: SAML has no
+// per-assertion equivalent of OIDC's email_verified claim — the assertion being
+// IdP-signed only proves the IdP sent it, not that the IdP verified the user OWNS
+// that address. CompleteSAML previously passed emailVerified=true unconditionally,
+// so a self-service/low-trust SAML IdP could hijack an EXISTING native (password-
+// based) admin account merely by asserting its email. Without the provider opting
+// in via TrustAssertedEmail (off by default), the email fallback must not even
+// query for a match — the login is refused outright (AutoProvision off here).
+func TestCompleteSAML_NativeAdminTakeoverRejectedByDefault(t *testing.T) {
+	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@company.com", Name: "Mallory"}}
+	store := new(MockStorage)
+	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: false}
+	require.False(t, p.TrustAssertedEmail, "precondition: opt-in is off by default")
+	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
+	store.On("ConsumeSSOLoginState", mock.Anything, "relay-5").Return(
+		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|evil").Return((*models.User)(nil), userNotFound())
+
+	session, user, _, err := c.CompleteSAML(context.Background(), "corp",
+		httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil), "relay-5", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "no Keyorix account")
+	assert.Nil(t, session)
+	assert.Nil(t, user)
+	// The native admin's email must never even be looked up.
+	store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// TestCompleteSAML_CrossProviderEmailTakeoverRejected pins the SAML provider-confusion
+// fix: a validly-signed assertion from provider "corp" must NOT be able to take over an
+// account already bound to a different SSO provider ("azure") merely by asserting its
+// email — even with auto-provisioning enabled and TrustAssertedEmail on. The login must
+// fail closed and mint no session.
+func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
+	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@x.io", Name: "Mallory"}}
+	store := new(MockStorage)
+	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, TrustAssertedEmail: true}
+	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
+	store.On("ConsumeSSOLoginState", mock.Anything, "relay-6").Return(
+		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	// No account under corp's scoped id...
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|evil").Return((*models.User)(nil), userNotFound())
+	// ...but the email belongs to an admin bound to provider "azure".
+	store.On("GetUserByEmail", mock.Anything, "admin@x.io").
+		Return(&models.User{ID: 1, Email: "admin@x.io", ExternalID: "sso:azure:admin-sub"}, nil)
+
+	session, user, _, err := c.CompleteSAML(context.Background(), "corp",
+		httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil), "relay-6", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "different SSO provider")
+	assert.Nil(t, session)
+	assert.Nil(t, user)
+	// The takeover must never reach session creation.
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount is the positive
+// control: an operator who has decided to trust a specific SAML provider's
+// asserted email can still opt in, and the existing (never-federated) account
+// linking behavior works exactly as it does for a verified OIDC email.
+func TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount(t *testing.T) {
+	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|123", Email: "ada@x.io", Name: "Ada"}}
+	store := new(MockStorage)
+	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, TrustAssertedEmail: true}
+	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
+	store.On("ConsumeSSOLoginState", mock.Anything, "relay-7").Return(
+		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return((*models.User)(nil), userNotFound())
+	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
+	store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
+		return u.ID == 9 && u.ExternalID == "sso:corp:corp|123"
+	})).Return(&models.User{ID: 9, ExternalID: "sso:corp:corp|123"}, nil)
+	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 9, SessionToken: "tok"}, nil)
+	store.On("UpdateLastLogin", mock.Anything, uint(9), mock.Anything).Return(nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	session, user, _, err := c.CompleteSAML(context.Background(), "corp",
+		httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil), "relay-7", "ua", "1.2.3.4")
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	assert.Equal(t, uint(9), user.ID)
+	assert.Equal(t, "tok", session.SessionToken)
 }

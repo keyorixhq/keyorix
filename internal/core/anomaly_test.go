@@ -36,7 +36,10 @@ func (c *captureStore) CreateAnomalyAlert(_ context.Context, _ *models.AnomalyAl
 func (c *captureStore) ListAnomalyAlerts(_ context.Context, _ *bool) ([]models.AnomalyAlert, error) {
 	return nil, nil
 }
-func (c *captureStore) AcknowledgeAnomalyAlert(_ context.Context, _ uint) error { return nil }
+func (c *captureStore) PrincipalSecretFirstSeen(_ context.Context, _ time.Time) (map[string]map[uint]time.Time, error) {
+	return nil, nil
+}
+func (c *captureStore) LogAuditEvent(_ context.Context, _ *models.AuditEvent) error { return nil }
 
 // The recent-access scan window must honor the configured lookback (so a longer scan
 // cadence scans a proportionally longer window), and be floored at one hour.
@@ -81,6 +84,44 @@ type detectionTestErr struct{}
 
 func (*detectionTestErr) Error() string { return "boom" }
 
+// perSecretFailStore fails ListSecretAccessLogs only for a chosen secret ID (on
+// whichever call — baseline or recent-window — comes first for that secret), letting
+// other secrets in the same RunDetection pass succeed normally. Lets a test tell "one
+// secret's read failed" apart from "every read failed".
+type perSecretFailStore struct {
+	*captureStore
+	failSecretID uint
+}
+
+func (s *perSecretFailStore) ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error) {
+	if secretID == s.failSecretID {
+		return nil, assertAnErr
+	}
+	return s.captureStore.ListSecretAccessLogs(ctx, secretID, since)
+}
+
+// #365: a ListSecretAccessLogs failure for one secret must (a) be logged with the
+// specific secret ID so an operator can tell a transient hiccup from a genuine gap
+// (the detection window is only the last hour and is never retroactively
+// re-evaluated), and (b) not block detection for a sibling secret in the same pass.
+func TestRunDetection_LogsAndContinuesOnAccessLogReadError(t *testing.T) {
+	store := &perSecretFailStore{captureStore: &captureStore{}, failSecretID: 1}
+	d := NewAnomalyDetector(store)
+
+	var err error
+	logged := captureLog(t, func() {
+		err = d.RunDetection(context.Background(), []models.SecretNode{{ID: 1, Name: "broken"}, {ID: 2, Name: "healthy"}})
+	})
+	require.Error(t, err, "a per-secret read failure must surface as a non-nil pass error, not a silent success")
+	assert.Contains(t, err.Error(), "1 storage failure")
+
+	// The healthy secret's baseline+recent calls both went through despite secret 1's
+	// failure — RunDetection didn't abort the whole pass.
+	assert.GreaterOrEqual(t, len(store.sinces), 2, "the healthy secret's reads still ran")
+
+	assert.Contains(t, logged, "secret 1", "the failing secret's ID must appear in the operator-visible log line")
+}
+
 func TestBuildBaseline(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	windowStart := now.Add(-1 * time.Hour) // the live detection window — excluded from the baseline
@@ -89,7 +130,10 @@ func TestBuildBaseline(t *testing.T) {
 		{IPAddress: "10.0.0.2", AccessedBy: "bob", AccessTime: now.Add(-2 * 24 * time.Hour)},      // in 7d, before window
 		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: now.Add(-20 * 24 * time.Hour)},   // older than 7d
 	}
-	b := buildBaseline(logs, now, windowStart)
+	// quarantine=0: isolates this test to the live-window exclusion behavior; the
+	// quarantine-specific promotion delay is covered separately by
+	// TestBuildBaseline_QuarantineWithholdsRecentlySeenIdentities.
+	b := buildBaseline(logs, now, windowStart, 0)
 	// The in-window read must NOT seed the baseline, else it would mask its own anomaly.
 	if b.knownIPs["203.0.113.9"] || b.knownUsers["mallory"] {
 		t.Fatalf("in-window read must be excluded from the baseline, got IPs=%v users=%v", b.knownIPs, b.knownUsers)
@@ -103,6 +147,29 @@ func TestBuildBaseline(t *testing.T) {
 	// Of the pre-window reads, only bob's (-2d) is within the last 7 days → dailyAvg = 1/7.
 	if want := 1.0 / 7.0; b.dailyAvg != want {
 		t.Fatalf("dailyAvg = %v, want %v", b.dailyAvg, want)
+	}
+}
+
+// #101: an IP/user must have been observed for at least `quarantine` before the live
+// window, not merely before it, to be trusted as baseline — otherwise a single access
+// one lookback interval ago (e.g. 1h) is enough to poison the baseline and silence
+// new_ip/new_user for that identity on the very next pass.
+func TestBuildBaseline_QuarantineWithholdsRecentlySeenIdentities(t *testing.T) {
+	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
+	windowStart := now.Add(-1 * time.Hour)
+	quarantine := 24 * time.Hour
+	logs := []models.SecretAccessLog{
+		// First seen 2h before the live window — well short of the 24h quarantine.
+		{IPAddress: "203.0.113.9", AccessedBy: "mallory", AccessTime: windowStart.Add(-2 * time.Hour)},
+		// First seen 48h before the live window — clears the 24h quarantine.
+		{IPAddress: "10.0.0.1", AccessedBy: "alice", AccessTime: windowStart.Add(-48 * time.Hour)},
+	}
+	b := buildBaseline(logs, now, windowStart, quarantine)
+	if b.knownIPs["203.0.113.9"] || b.knownUsers["mallory"] {
+		t.Fatalf("a recently-first-seen identity must stay quarantined, got IPs=%v users=%v", b.knownIPs, b.knownUsers)
+	}
+	if !b.knownIPs["10.0.0.1"] || !b.knownUsers["alice"] {
+		t.Fatalf("an identity first seen before the quarantine cutoff must be trusted, got IPs=%v users=%v", b.knownIPs, b.knownUsers)
 	}
 }
 
@@ -153,17 +220,30 @@ func TestDetectAnomalies(t *testing.T) {
 		}
 	})
 
-	t.Run("empty baseline suppresses new-ip/new-user", func(t *testing.T) {
-		// Bootstrapping: with no history, an unknown IP/user must not flag (only off-hours,
-		// which is time-based, can fire). Use a business-hours time so nothing fires.
+	t.Run("empty baseline still flags first-ever access, at low severity (#101)", func(t *testing.T) {
+		// A brand-new secret's first-ever access used to be silently waved through with
+		// zero novelty signal — exactly the blind spot an attacker deliberately
+		// targeting a freshly-provisioned, never-accessed secret would rely on. It must
+		// now still surface (auditable), but at "low" severity since there's no
+		// established pattern being violated, only an absence of history. Business-hours
+		// time so only new_ip/new_user are in play.
 		lg := models.SecretAccessLog{
 			IPAddress:  "8.8.8.8",
 			AccessedBy: "mallory",
 			AccessTime: time.Date(2026, 6, 17, 14, 0, 0, 0, time.UTC),
 		}
 		empty := accessBaseline{knownIPs: map[string]bool{}, knownUsers: map[string]bool{}}
-		if alerts := detectAnomalies(secret, lg, empty, defaultOffHoursPolicy()); len(alerts) != 0 {
-			t.Fatalf("expected no alerts against an empty baseline, got %v", kindsOf(alerts))
+		alerts := detectAnomalies(secret, lg, empty, defaultOffHoursPolicy())
+		got := kindsOf(alerts)
+		for _, want := range []string{"new_ip", "new_user"} {
+			if !got[want] {
+				t.Errorf("expected %s alert against an empty baseline, got %v", want, got)
+			}
+		}
+		for _, a := range alerts {
+			if a.Severity != "low" {
+				t.Errorf("expected low severity for a first-ever access with no baseline, got %s alert at %s", a.AlertType, a.Severity)
+			}
 		}
 	})
 }
@@ -199,21 +279,31 @@ func TestOffHoursPolicy(t *testing.T) {
 func TestSetBusinessHours(t *testing.T) {
 	d := NewAnomalyDetector(nil)
 
+	ctx := context.Background()
+
 	// Timezone only: the default 22–6 band is kept (both hours 0 = unset).
-	require.NoError(t, d.SetBusinessHours("America/New_York", 0, 0))
+	require.NoError(t, d.SetBusinessHours(ctx, "America/New_York", 0, 0))
 	assert.Equal(t, "America/New_York", d.offHours.loc.String())
 	assert.Equal(t, 22, d.offHours.start)
 	assert.Equal(t, 6, d.offHours.end)
 
 	// Custom band applied.
-	require.NoError(t, d.SetBusinessHours("UTC", 20, 7))
+	require.NoError(t, d.SetBusinessHours(ctx, "UTC", 20, 7))
 	assert.Equal(t, 20, d.offHours.start)
 	assert.Equal(t, 7, d.offHours.end)
 
 	// Invalid timezone: error, and the prior policy is left unchanged.
 	before := d.offHours
-	require.Error(t, d.SetBusinessHours("Not/AZone", 1, 2))
+	require.Error(t, d.SetBusinessHours(ctx, "Not/AZone", 1, 2))
 	assert.Equal(t, before, d.offHours, "an invalid timezone must not mutate the policy")
+
+	// #144: a degenerate non-zero start==end band matches no hour in isOffHours,
+	// silently disabling the rule — must be rejected, and the prior policy kept.
+	before = d.offHours
+	err := d.SetBusinessHours(ctx, "UTC", 9, 9)
+	require.Error(t, err, "an equal, non-zero start/end band must be rejected")
+	assert.Contains(t, err.Error(), "must differ")
+	assert.Equal(t, before, d.offHours, "a rejected degenerate band must not mutate the policy")
 }
 
 func TestVolumeSpike(t *testing.T) {

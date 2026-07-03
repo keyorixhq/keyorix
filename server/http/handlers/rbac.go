@@ -138,6 +138,45 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// #294: reserved role names (super_admin/admin/system_admin/project_admin/...) must
+	// never be creatable through the API. Bootstrap-seeded builtins (admin, system_admin,
+	// project_admin, ...) already collide with an existing row on the DB's unique(name)
+	// constraint, but "super_admin" and "auditor" are pinned as builtin/reserved (see
+	// IsBuiltinRole) WITHOUT ever being seeded — nothing previously stopped a roles.write
+	// holder from creating an empty-permission role literally named "super_admin".
+	// roleSetContainsAdmin (authz.go) grants a full admin bypass by NAME match alone, not
+	// by permission content, so that role — despite holding zero permissions and
+	// trivially satisfying #169's "must already hold every bundled permission" check —
+	// would function as a complete admin-bypass switch the moment it's assigned.
+	if core.IsBuiltinRole(req.Name) {
+		sendError(w, "ConflictError", "this role name is reserved and cannot be created", http.StatusConflict, nil)
+		return
+	}
+
+	// #169: resolve + authorize every requested permission BEFORE creating anything,
+	// so a request naming even one permission the actor doesn't hold fails the whole
+	// creation loudly (403) instead of silently creating a role missing just that
+	// permission — which would let the actor believe they got what they asked for.
+	// Unknown permission names are still skipped (not a security boundary), but an
+	// authorization failure on a KNOWN permission is fatal to the request.
+	toAssign := make([]*models.Permission, 0, len(req.Permissions))
+	for _, permName := range req.Permissions {
+		perm, err := h.findPermissionByName(r.Context(), permName)
+		if err != nil {
+			continue // skip unknown permission names
+		}
+		ok, aerr := h.coreService.Authorize(r.Context(), userCtx.UserID, perm.Name, core.Scope{})
+		if aerr != nil {
+			sendError(w, "InternalError", "Failed to resolve actor authority", http.StatusInternalServerError, nil)
+			return
+		}
+		if !ok {
+			sendError(w, "Forbidden", fmt.Sprintf("cannot bundle permission %q into a role: you do not hold it yourself", permName), http.StatusForbidden, nil)
+			return
+		}
+		toAssign = append(toAssign, perm)
+	}
+
 	role, err := h.coreService.Storage().CreateRole(r.Context(), &models.Role{Name: req.Name, Description: req.Description})
 	if err != nil {
 		log.Printf("Error creating role: %v", err)
@@ -149,15 +188,12 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Assign named permissions by looking up each permission by name.
 	var assignedPerms []*models.Permission
-	for _, permName := range req.Permissions {
-		perm, err := h.findPermissionByName(r.Context(), permName)
-		if err != nil {
-			continue // skip unknown permission names
-		}
+	for _, perm := range toAssign {
 		if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, role.ID, perm.ID); err != nil {
-			log.Printf("Warning: could not assign permission %q to role %d: %v", permName, role.ID, err)
+			// Already authorized above; only a race (permission deleted concurrently) or
+			// storage error reaches here — log it, the role still exists with the rest.
+			log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, role.ID, err)
 		} else {
 			assignedPerms = append(assignedPerms, perm)
 		}
@@ -229,6 +265,34 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// #169: resolve + authorize every requested permission BEFORE touching the
+	// role's existing permission set — otherwise a request naming even one
+	// permission the actor doesn't hold would strip the role's current permissions
+	// (RemovePermissionFromRole runs unconditionally below) and then fail partway
+	// through re-adding them, leaving the role broken. An authorization failure on a
+	// KNOWN permission must abort before any mutation. Unknown names are still
+	// skipped later, matching CreateRole's convention.
+	var toAssign []*models.Permission
+	if req.Permissions != nil {
+		toAssign = make([]*models.Permission, 0, len(*req.Permissions))
+		for _, permName := range *req.Permissions {
+			perm, err := h.findPermissionByName(r.Context(), permName)
+			if err != nil {
+				continue
+			}
+			ok, aerr := h.coreService.Authorize(r.Context(), userCtx.UserID, perm.Name, core.Scope{})
+			if aerr != nil {
+				sendError(w, "InternalError", "Failed to resolve actor authority", http.StatusInternalServerError, nil)
+				return
+			}
+			if !ok {
+				sendError(w, "Forbidden", fmt.Sprintf("cannot bundle permission %q into a role: you do not hold it yourself", permName), http.StatusForbidden, nil)
+				return
+			}
+			toAssign = append(toAssign, perm)
+		}
+	}
+
 	if req.Description != nil {
 		role.Description = *req.Description
 	}
@@ -245,12 +309,10 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		for _, ep := range existing {
 			_ = h.coreService.RemovePermissionFromRole(r.Context(), userCtx.UserID, id, ep.ID)
 		}
-		for _, permName := range *req.Permissions {
-			perm, err := h.findPermissionByName(r.Context(), permName)
-			if err != nil {
-				continue
+		for _, perm := range toAssign {
+			if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, id, perm.ID); err != nil {
+				log.Printf("Warning: could not assign permission %q to role %d: %v", perm.Name, id, err)
 			}
-			_ = h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, id, perm.ID)
 		}
 	}
 
@@ -500,9 +562,13 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 
 	if err := h.coreService.AssignPermissionToRole(r.Context(), userCtx.UserID, roleID, body.PermissionID); err != nil {
 		log.Printf("Error assigning permission to role: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
-		} else {
+		case strings.Contains(err.Error(), "do not hold it yourself"):
+			// #169: the actor doesn't hold the permission being bundled — 403, not 500.
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+		default:
 			sendError(w, "InternalError", "Failed to assign permission", http.StatusInternalServerError, nil)
 		}
 		return

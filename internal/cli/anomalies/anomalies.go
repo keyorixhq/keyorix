@@ -1,12 +1,11 @@
 package anomalies
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
 	"strconv"
 
-	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/spf13/cobra"
 )
 
@@ -36,55 +35,48 @@ func init() {
 	AnomaliesCmd.AddCommand(acknowledgeCmd)
 }
 
+// anomalyAlert mirrors the alert shape returned by GET /api/v1/audit/anomalies.
+type anomalyAlert struct {
+	ID           uint   `json:"ID"`
+	SecretName   string `json:"SecretName"`
+	AlertType    string `json:"AlertType"`
+	Severity     string `json:"Severity"`
+	Description  string `json:"Description"`
+	AccessedBy   string `json:"AccessedBy"`
+	IPAddress    string `json:"IPAddress"`
+	DetectedAt   string `json:"DetectedAt"`
+	Acknowledged bool   `json:"Acknowledged"`
+}
+
+type anomalyListResponse struct {
+	Alerts []anomalyAlert `json:"alerts"`
+	Total  int            `json:"total"`
+}
+
 func runList(cmd *cobra.Command, args []string) error {
-	cfg, err := cliconfig.LoadCLIConfig("")
-	if err != nil {
+	rc, ok := common.NewRemoteClient()
+	if !ok {
 		return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 	}
-	url := cfg.Client.Endpoint + "/api/v1/audit/anomalies"
+	return runListRemote(rc)
+}
+
+func runListRemote(rc *common.RemoteClient) error {
+	path := "/api/v1/audit/anomalies"
 	if flagUnacknowledged {
-		url += "?unacknowledged=true"
+		path += "?unacknowledged=true"
 	}
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
+	var result anomalyListResponse
+	if err := rc.Get(context.Background(), path, &result); err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Client.Auth.GetAPIKey())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("server returned %d", resp.StatusCode)
-	}
-	var result struct {
-		Data struct {
-			Alerts []struct {
-				ID           uint   `json:"ID"`
-				SecretName   string `json:"SecretName"`
-				AlertType    string `json:"AlertType"`
-				Severity     string `json:"Severity"`
-				Description  string `json:"Description"`
-				AccessedBy   string `json:"AccessedBy"`
-				IPAddress    string `json:"IPAddress"`
-				DetectedAt   string `json:"DetectedAt"`
-				Acknowledged bool   `json:"Acknowledged"`
-			} `json:"alerts"`
-			Total int `json:"total"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
-	}
-	alerts := result.Data.Alerts
-	if len(alerts) == 0 {
+	if len(result.Alerts) == 0 {
 		fmt.Println("No anomaly alerts found.")
 		return nil
 	}
-	fmt.Printf("Anomaly Alerts (%d total)\n", result.Data.Total)
+	fmt.Printf("Anomaly Alerts (%d total)\n", result.Total)
 	fmt.Println("======================")
-	for _, a := range alerts {
+	for _, a := range result.Alerts {
 		ack := ""
 		if a.Acknowledged {
 			ack = " [ACK]"
@@ -101,23 +93,17 @@ func runAcknowledge(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid alert ID: %s", args[0])
 	}
-	cfg, err := cliconfig.LoadCLIConfig("")
-	if err != nil {
+	rc, ok := common.NewRemoteClient()
+	if !ok {
 		return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 	}
-	url := fmt.Sprintf("%s/api/v1/audit/anomalies/%d/acknowledge", cfg.Client.Endpoint, id)
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
+	return runAcknowledgeRemote(rc, id)
+}
+
+func runAcknowledgeRemote(rc *common.RemoteClient, id uint64) error {
+	path := fmt.Sprintf("/api/v1/audit/anomalies/%d/acknowledge", id)
+	if err := rc.Post(context.Background(), path, map[string]interface{}{}, nil); err != nil {
 		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Client.Auth.GetAPIKey())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("server returned %d", resp.StatusCode)
 	}
 	fmt.Printf("Alert %d acknowledged.\n", id)
 	return nil

@@ -117,7 +117,7 @@ func TestCertificatePosture(t *testing.T) {
 	c, db, _ := newCertExpiryCore(t)
 
 	// Before any scan/inspection, no cert has a cached expiry → all "not evaluated".
-	pre := c.certificatePosture(ctx)
+	pre := c.certificatePosture(ctx, &CompliancePosture{})
 	assert.Equal(t, 4, pre.TotalCertificates)
 	assert.Equal(t, 4, pre.NotEvaluated)
 	assert.Equal(t, 0, pre.Expired)
@@ -127,7 +127,7 @@ func TestCertificatePosture(t *testing.T) {
 	_, err := c.ScanCertificateExpiry(ctx, 30)
 	require.NoError(t, err)
 
-	post := c.certificatePosture(ctx)
+	post := c.certificatePosture(ctx, &CompliancePosture{})
 	assert.Equal(t, 4, post.TotalCertificates)
 	assert.Equal(t, 1, post.Expired)
 	assert.Equal(t, 1, post.ExpiringSoon)

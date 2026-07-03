@@ -29,6 +29,7 @@ var (
 	keygenPurpose string
 	keygenKeyID   string
 	keygenDir     string
+	keygenForce   bool
 )
 
 var keygenCmd = &cobra.Command{
@@ -51,6 +52,22 @@ var keygenCmd = &cobra.Command{
 			return fmt.Errorf("--key-id is required (e.g. %s-2026)", purpose)
 		}
 
+		privPath := filepath.Join(keygenDir, keyID+".private.pem")
+		pubPath := filepath.Join(keygenDir, keyID+".public.pem")
+
+		// Refuse to clobber an existing keypair (in particular the offline private key)
+		// unless --force is passed. Check BOTH paths before writing either one, so a
+		// re-run without --force is a clean no-op rather than a partial overwrite.
+		if !keygenForce {
+			for _, p := range []string{privPath, pubPath} {
+				if _, statErr := os.Stat(p); statErr == nil {
+					return fmt.Errorf("%s already exists — refusing to overwrite an existing signing key; use --force to overwrite", p)
+				} else if !os.IsNotExist(statErr) {
+					return fmt.Errorf("check %s: %w", p, statErr)
+				}
+			}
+		}
+
 		pub, priv, err := itrust.GenerateKey()
 		if err != nil {
 			return fmt.Errorf("generate key: %w", err)
@@ -67,8 +84,6 @@ var keygenCmd = &cobra.Command{
 		privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
 		pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
 
-		privPath := filepath.Join(keygenDir, keyID+".private.pem")
-		pubPath := filepath.Join(keygenDir, keyID+".public.pem")
 		// Both at 0600 — the private key is a signing secret; the public key need not be
 		// world-readable here (it is published separately).
 		if err := os.WriteFile(privPath, privPEM, 0o600); err != nil {
@@ -93,5 +108,6 @@ func init() {
 	keygenCmd.Flags().StringVar(&keygenPurpose, "purpose", "", "key purpose: update | license (required)")
 	keygenCmd.Flags().StringVar(&keygenKeyID, "key-id", "", "key identifier, e.g. update-2026 (required)")
 	keygenCmd.Flags().StringVar(&keygenDir, "dir", ".", "directory to write the keypair into")
+	keygenCmd.Flags().BoolVar(&keygenForce, "force", false, "overwrite an existing keypair at the target paths (dangerous)")
 	TrustCmd.AddCommand(keygenCmd)
 }

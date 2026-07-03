@@ -71,9 +71,17 @@ func migrateAPIClients(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun b
 		if err != nil {
 			return fmt.Errorf("failed to encrypt client secret for client %s: %w", client.ClientID, err)
 		}
+		// Clear the plaintext column in the same update that writes the encrypted
+		// value — leaving it populated after a "successful" migration defeats the
+		// point: the #278 compromise surface (a readable plaintext column) would
+		// still be sitting right next to its encrypted replacement. NULL, not "",
+		// since a second migrated row with "" would collide with any unique index
+		// on the column; NULL is exempt from uniqueness checks on every backend
+		// this CLI targets (sqlite/postgres).
 		if err := db.Model(&client).Updates(map[string]interface{}{
 			"encrypted_client_secret": enc,
 			"client_secret_metadata":  meta,
+			"client_secret":           nil,
 		}).Error; err != nil {
 			return fmt.Errorf("failed to update client %s: %w", client.ClientID, err)
 		}
@@ -95,9 +103,12 @@ func migrateSessions(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun boo
 		if err != nil {
 			return fmt.Errorf("failed to encrypt session token for session %d: %w", session.ID, err)
 		}
+		// See migrateAPIClients for why the plaintext column is cleared (set to
+		// NULL, not "") in the same update as the encrypted write.
 		if err := db.Model(&session).Updates(map[string]interface{}{
 			"encrypted_session_token": enc,
 			"session_token_metadata":  meta,
+			"session_token":           nil,
 		}).Error; err != nil {
 			return fmt.Errorf("failed to update session %d: %w", session.ID, err)
 		}
@@ -119,9 +130,12 @@ func migrateAPITokens(db *gorm.DB, authEnc *encryption.AuthEncryption, dryRun bo
 		if err != nil {
 			return fmt.Errorf("failed to encrypt API token %d: %w", token.ID, err)
 		}
+		// See migrateAPIClients for why the plaintext column is cleared (set to
+		// NULL, not "") in the same update as the encrypted write.
 		if err := db.Model(&token).Updates(map[string]interface{}{
 			"encrypted_token": enc,
 			"token_metadata":  meta,
+			"token":           nil,
 		}).Error; err != nil {
 			return fmt.Errorf("failed to update API token %d: %w", token.ID, err)
 		}
@@ -143,9 +157,12 @@ func migratePasswordResetTokens(db *gorm.DB, authEnc *encryption.AuthEncryption,
 		if err != nil {
 			return fmt.Errorf("failed to encrypt password reset token %d: %w", reset.ID, err)
 		}
+		// See migrateAPIClients for why the plaintext column is cleared (set to
+		// NULL, not "") in the same update as the encrypted write.
 		if err := db.Model(&reset).Updates(map[string]interface{}{
 			"encrypted_token": enc,
 			"token_metadata":  meta,
+			"token":           nil,
 		}).Error; err != nil {
 			return fmt.Errorf("failed to update password reset token %d: %w", reset.ID, err)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode"
@@ -25,6 +26,11 @@ const (
 	EventRoleCreated = "role.created"
 	EventRoleUpdated = "role.updated"
 	EventRoleDeleted = "role.deleted"
+	// Group membership: adding/removing a member confers/revokes every role the
+	// group holds — the same blast radius as a direct role grant/removal, so these
+	// land in the RBAC audit trail alongside role.assigned/role.removed (#233).
+	EventGroupMemberAdded   = "group.member_added"
+	EventGroupMemberRemoved = "group.member_removed"
 )
 
 // rbacAuditEventTypes is the set of event types that make up the RBAC audit log.
@@ -33,6 +39,7 @@ var rbacAuditEventTypes = []string{
 	EventRoleGroupAssigned, EventRoleGroupRemoved,
 	EventPermissionAdded, EventPermissionRemoved,
 	EventRoleCreated, EventRoleUpdated, EventRoleDeleted,
+	EventGroupMemberAdded, EventGroupMemberRemoved,
 }
 
 // rbacAuditDetail is the structured payload stored in an RBAC event's Diff field,
@@ -84,6 +91,26 @@ func (c *KeyorixCore) logGroupRoleChange(ctx context.Context, eventType, verb st
 		RoleID:        roleID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
+	})
+}
+
+// LogGroupMemberAdded / LogGroupMemberRemoved record a user being added to / removed
+// from a group. Because membership confers every role the group holds, this is a
+// role-grant-equivalent action and lands in the RBAC audit trail (#233). See
+// LogRoleAssigned for actorID semantics.
+func (c *KeyorixCore) LogGroupMemberAdded(ctx context.Context, actorID, userID, groupID uint) {
+	c.logGroupMemberChange(ctx, EventGroupMemberAdded, "added to group", actorID, userID, groupID)
+}
+
+func (c *KeyorixCore) LogGroupMemberRemoved(ctx context.Context, actorID, userID, groupID uint) {
+	c.logGroupMemberChange(ctx, EventGroupMemberRemoved, "removed from group", actorID, userID, groupID)
+}
+
+func (c *KeyorixCore) logGroupMemberChange(ctx context.Context, eventType, verb string, actorID, userID, groupID uint) {
+	desc := fmt.Sprintf("user %d %s %d", userID, verb, groupID)
+	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{
+		TargetUserID: userID,
+		GroupID:      groupID,
 	})
 }
 
@@ -212,9 +239,11 @@ func sanitizeAuditText(s string) string {
 	}, s)
 }
 
-// writeAccessLog persists a secret_access_logs row.
+// writeAccessLog persists a secret_access_logs row. A failure here is a gap in the
+// secret-access trail, so it is surfaced loudly rather than silently discarded —
+// mirroring emitAudit's handling of a failed audit_events write.
 func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accessedBy, action, ip, ua string) {
-	log := &models.SecretAccessLog{
+	entry := &models.SecretAccessLog{
 		SecretNodeID: secretID,
 		AccessedBy:   accessedBy,
 		AccessTime:   time.Now(),
@@ -222,7 +251,10 @@ func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accesse
 		IPAddress:    ip,
 		UserAgent:    ua,
 	}
-	_ = c.storage.CreateSecretAccessLog(ctx, log)
+	if err := c.storage.CreateSecretAccessLog(ctx, entry); err != nil {
+		log.Printf("SECURITY: failed to persist secret access log (secret=%d action=%q accessedBy=%q): %v",
+			secretID, action, accessedBy, err)
+	}
 }
 
 // LogSecretRead writes audit_events + secret_access_logs for a secret read.

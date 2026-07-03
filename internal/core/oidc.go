@@ -20,6 +20,21 @@ import (
 // oidcClockSkew is the leeway allowed on exp/nbf to tolerate small clock drift.
 const oidcClockSkew = 60 * time.Second
 
+// defaultOIDCMaxTokenAge bounds how old (now - iat) a federated token may be when
+// an issuer doesn't configure its own ceiling. exp alone doesn't bound this: a
+// token minted with a far-future exp (misconfigured or malicious issuer/CI
+// pipeline) would otherwise verify — and be replayable — for as long as that exp,
+// regardless of how long ago it was actually issued.
+const defaultOIDCMaxTokenAge = 24 * time.Hour
+
+// oidcClaims extends the JWT registered claims with azp (authorized party) — an
+// OIDC-specific claim not in the RFC 7519 registered set, needed to disambiguate
+// a multi-audience token's intended recipient.
+type oidcClaims struct {
+	jwt.RegisteredClaims
+	Azp string `json:"azp,omitempty"`
+}
+
 // JWKSResolver returns the public signing key for an (issuer, kid). The
 // production implementation fetches and caches the issuer's JWKS; tests inject a
 // static key.
@@ -28,25 +43,33 @@ type JWKSResolver interface {
 }
 
 // OIDCTrustedIssuer is one operator-configured issuer the verifier will accept.
+// MaxTokenAge bounds (now - iat); zero uses defaultOIDCMaxTokenAge.
 type OIDCTrustedIssuer struct {
-	Issuer    string
-	Audiences []string
+	Issuer      string
+	Audiences   []string
+	MaxTokenAge time.Duration
+}
+
+type oidcIssuerTrust struct {
+	audiences map[string]struct{}
+	maxAge    time.Duration
 }
 
 // OIDCVerifier verifies federated JWTs against an operator-curated set of
 // trusted issuers. It is pure token logic — no storage — so it is unit-testable
 // with a generated key and no network.
 type OIDCVerifier struct {
-	issuers map[string]map[string]struct{} // issuer -> set of allowed audiences
+	issuers map[string]oidcIssuerTrust
 	jwks    JWKSResolver
 	leeway  time.Duration
+	now     func() time.Time
 }
 
 // NewOIDCVerifier builds a verifier over the trusted issuers. An issuer with no
 // configured audiences is rejected at build time — audience binding is required
 // (fail closed), since an unaudienced token is replayable across services.
 func NewOIDCVerifier(issuers []OIDCTrustedIssuer, jwks JWKSResolver) (*OIDCVerifier, error) {
-	m := make(map[string]map[string]struct{}, len(issuers))
+	m := make(map[string]oidcIssuerTrust, len(issuers))
 	for _, iss := range issuers {
 		if strings.TrimSpace(iss.Issuer) == "" {
 			return nil, fmt.Errorf("oidc: an issuer entry has an empty issuer URL")
@@ -60,9 +83,16 @@ func NewOIDCVerifier(issuers []OIDCTrustedIssuer, jwks JWKSResolver) (*OIDCVerif
 				auds[a] = struct{}{}
 			}
 		}
-		m[iss.Issuer] = auds
+		if len(auds) == 0 {
+			return nil, fmt.Errorf("oidc: issuer %q has no usable audiences after filtering empty values — configure at least one non-empty audience", iss.Issuer)
+		}
+		maxAge := iss.MaxTokenAge
+		if maxAge <= 0 {
+			maxAge = defaultOIDCMaxTokenAge
+		}
+		m[iss.Issuer] = oidcIssuerTrust{audiences: auds, maxAge: maxAge}
 	}
-	return &OIDCVerifier{issuers: m, jwks: jwks, leeway: oidcClockSkew}, nil
+	return &OIDCVerifier{issuers: m, jwks: jwks, leeway: oidcClockSkew, now: time.Now}, nil
 }
 
 // Verify checks the JWT's signature against the issuer's JWKS and validates
@@ -70,7 +100,7 @@ func NewOIDCVerifier(issuers []OIDCTrustedIssuer, jwks JWKSResolver) (*OIDCVerif
 // returns the (issuer, subject) on success. Asymmetric algorithms only — HMAC
 // is rejected so a leaked JWKS document can never be used to forge tokens.
 func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject string, err error) {
-	var claims jwt.RegisteredClaims
+	var claims oidcClaims
 	parser := jwt.NewParser(
 		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"}),
 		jwt.WithLeeway(v.leeway),
@@ -97,13 +127,13 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject 
 		return "", "", fmt.Errorf("oidc token invalid")
 	}
 
-	auds, ok := v.issuers[claims.Issuer]
+	trust, ok := v.issuers[claims.Issuer]
 	if !ok {
 		return "", "", fmt.Errorf("untrusted issuer")
 	}
 	audOK := false
 	for _, a := range claims.Audience {
-		if _, ok := auds[a]; ok {
+		if _, ok := trust.audiences[a]; ok {
 			audOK = true
 			break
 		}
@@ -111,8 +141,32 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (issuer, subject 
 	if !audOK {
 		return "", "", fmt.Errorf("oidc token audience not allowed")
 	}
+	// A token naming MORE THAN ONE audience is, per OIDC, ambiguous about which
+	// party it was actually issued to — any one of the audiences matching our
+	// allowlist isn't enough, since a multi-tenant IdP could mint a token shared
+	// across several relying parties and an attacker holding a copy issued to a
+	// DIFFERENT (also-trusted) party could replay it here. azp (authorized party)
+	// disambiguates the true recipient and must itself be one of our trusted
+	// audiences.
+	if len(claims.Audience) > 1 {
+		if claims.Azp == "" {
+			return "", "", fmt.Errorf("oidc token has multiple audiences but no azp claim")
+		}
+		if _, ok := trust.audiences[claims.Azp]; !ok {
+			return "", "", fmt.Errorf("oidc token azp not allowed")
+		}
+	}
 	if strings.TrimSpace(claims.Subject) == "" {
 		return "", "", fmt.Errorf("oidc token has no subject")
+	}
+	// exp alone doesn't bound how long ago a token was minted — a far-future exp
+	// (misconfigured or malicious issuer) would otherwise verify indefinitely.
+	// Require iat and cap its age per-issuer.
+	if claims.IssuedAt == nil {
+		return "", "", fmt.Errorf("oidc token has no iat claim")
+	}
+	if age := v.now().Sub(claims.IssuedAt.Time); age > trust.maxAge+v.leeway {
+		return "", "", fmt.Errorf("oidc token exceeds max age (issued %s ago)", age.Round(time.Second))
 	}
 	return claims.Issuer, claims.Subject, nil
 }
@@ -169,9 +223,22 @@ func (c *KeyorixCore) ValidateOIDCToken(ctx context.Context, raw string) (*model
 // CreateOIDCBinding binds an external (issuer, subject) to a machine identity in
 // the given project. Audited; the machine must belong to the project (the
 // handler also gates roles.assign there).
+//
+// (issuer, subject) is a GLOBAL namespace — GetMachineByOIDCSubject / the token
+// verify path resolve it with no project scoping — but until this check, only
+// project-scoped authority (roles.assign within THAT project) was required to
+// claim a slice of it (#127). A project-A admin could pre-claim another team's
+// well-known, not-yet-bound subject (predictable per issuer, e.g. a Kubernetes
+// service-account or CI workflow identity) for their own machine; the victim
+// workload's genuine token would then authenticate as the attacker's machine
+// identity instead. Creating a binding is therefore gated on GLOBAL admin
+// authority, matching the scope of what it actually claims.
 func (c *KeyorixCore) CreateOIDCBinding(ctx context.Context, projectID, machineID uint, issuer, subject string, actorID uint) (*models.MachineIdentityOIDCBinding, error) {
 	if strings.TrimSpace(issuer) == "" || strings.TrimSpace(subject) == "" {
 		return nil, fmt.Errorf("issuer and subject are required")
+	}
+	if err := c.requireAuthorityForRole(ctx, actorID, 0, "system_admin"); err != nil {
+		return nil, fmt.Errorf("binding an OIDC subject requires install-wide admin authority: %w", err)
 	}
 	// Surface operator typos early: a binding to an issuer Keyorix doesn't trust
 	// would never authenticate (Verify rejects untrusted issuers independently),

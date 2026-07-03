@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -22,4 +23,8 @@ func (rs *RemoteStorage) ListBreakGlassActivations(_ context.Context, _ uint) ([
 
 func (rs *RemoteStorage) UpdateBreakGlassActivation(_ context.Context, _ *models.BreakGlassActivation) error {
 	return remoteUnsupported("UpdateBreakGlassActivation")
+}
+
+func (rs *RemoteStorage) RevokeBreakGlassActivation(_ context.Context, _, _ uint, _ time.Time) error {
+	return remoteUnsupported("RevokeBreakGlassActivation")
 }
