@@ -265,11 +265,12 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
-	offset := (filter.Page - 1) * filter.PageSize
+	pageSize := clampPageSize(filter.PageSize)
+	offset := (filter.Page - 1) * pageSize
 	if filter.Offset > 0 {
 		offset = filter.Offset
 	}
-	query = query.Offset(offset).Limit(filter.PageSize)
+	query = query.Offset(offset).Limit(pageSize)
 
 	var users []*models.User
 	if err := query.Find(&users).Error; err != nil {
