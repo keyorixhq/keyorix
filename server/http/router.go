@@ -517,6 +517,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/configs", dynamicSecretHandler.ListConfigs)
 			r.Get("/configs/{id}", dynamicSecretHandler.GetConfig)
 			r.Patch("/configs/{id}/classification", dynamicSecretHandler.ClassifyConfig)
+			r.Patch("/configs/{id}/enabled", dynamicSecretHandler.SetConfigEnabled)
 			r.Post("/configs/{id}/issue", dynamicSecretHandler.IssueLease)
 			r.Get("/configs/{id}/leases", dynamicSecretHandler.ListLeases)
 			r.Post("/configs/{id}/revoke-all", dynamicSecretHandler.RevokeAllLeases)

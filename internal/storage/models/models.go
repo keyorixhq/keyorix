@@ -594,9 +594,18 @@ type DynamicSecretConfig struct {
 	// public|internal|confidential|restricted. Folds into the classification posture
 	// so dynamic credentials are covered alongside static secrets.
 	Classification string `gorm:"index"`
-	CreatedBy      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// Disabled refuses new IssueLease calls against this config (#369). Set
+	// automatically when the owning project is soft-deleted (DeleteProject's
+	// cascade), so a principal who still holds a role scoped to the "deleted"
+	// project cannot keep minting fresh database credentials against it. Not
+	// cleared automatically by RestoreProject — re-enabling a dynamic-secret
+	// config (which can mint live database credentials) is a higher-consequence
+	// action than restoring a static secret, so it requires an explicit,
+	// deliberate re-enable rather than silently resurrecting with the project.
+	Disabled  bool `gorm:"default:false"`
+	CreatedBy string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // DynamicSecretLease is one issued credential: a short-lived role on the target

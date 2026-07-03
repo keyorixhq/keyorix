@@ -126,6 +126,16 @@ func (c *KeyorixCore) ProjectRequiresMFA(ctx context.Context, projectID uint) (b
 // DeleteProject deletes a project by ID.
 // By default (force=false) it returns an error if the project still contains secrets (ADR-019).
 // Pass force=true to delete the project and all its secrets (cascade).
+//
+// #369: the storage-layer cascade (LocalStorage.DeleteProject) also disables every
+// dynamic-secret config scoped to the project in the same transaction, so IssueLease/
+// RenewLease refuse to touch it from the instant the delete commits. Once that commits,
+// this revokes every active (and previously revoke_failed) lease under those configs
+// against their real targets — deliberately AFTER the transaction, and best-effort: each
+// call is real network I/O to an operator-defined external database, which must not hold
+// a DB transaction open, and a target being unreachable must not block the project delete
+// itself (the lease stays revoke_failed/retryable, same as any other RevokeLeasesForConfig
+// use, and is reachable again via the sweep or a manual retry once the target recovers).
 func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) error {
 	// #313: the guard count and the cascade delete used to be two separate top-level
 	// storage calls, with core-layer control flow in between — a secret created in that
@@ -133,7 +143,7 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 	// to be rejected. Run the guard and the delete inside one transaction (a nested
 	// savepoint over LocalStorage.DeleteProject's own transaction) so the count that
 	// gates the reject is the same one the cascade acts on, not a stale read.
-	return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 		if !force {
 			projectID := id
 			_, total, err := tx.ListSecrets(ctx, &storage.SecretFilter{
@@ -149,7 +159,46 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 			}
 		}
 		return tx.DeleteProject(ctx, id)
-	})
+	}); err != nil {
+		return err
+	}
+	c.revokeProjectDynamicSecretLeases(ctx, id)
+	return nil
+}
+
+// revokeProjectDynamicSecretLeases is DeleteProject's post-commit dynamic-secrets
+// cascade (#369): it revokes every active lease under every dynamic-secret config
+// scoped to id (the config rows themselves were already marked Disabled inside
+// DeleteProject's transaction). Best-effort and system-actored (userID 0, like the
+// expiry sweep) — a target-side revoke failure is recorded per-lease (revoke_failed,
+// retryable) by RevokeLeasesForConfig and must not fail project deletion itself, which
+// has already committed by the time this runs.
+func (c *KeyorixCore) revokeProjectDynamicSecretLeases(ctx context.Context, projectID uint) {
+	configs, err := c.storage.ListDynamicSecretConfigs(ctx, projectID, 0)
+	if err != nil {
+		c.writeAuditEventFull(ctx, "dynamic_secret.project_cascade_failed", nil, nil, &projectID, "",
+			fmt.Sprintf("failed to list dynamic-secret configs to revoke after project %d deletion: %v — revoke them manually", projectID, err))
+		return
+	}
+	if len(configs) == 0 {
+		return
+	}
+	var revokedTotal, failedTotal int
+	for _, cfg := range configs {
+		revoked, failed, rerr := c.RevokeLeasesForConfig(ctx, cfg.ID, 0, "project deleted")
+		if rerr != nil {
+			// RevokeLeasesForConfig only errors on a failure to even list the config's
+			// leases (not on a per-lease target failure, which it counts in `failed`
+			// instead) — still non-fatal here; audited below alongside the summary.
+			failedTotal++
+			continue
+		}
+		revokedTotal += revoked
+		failedTotal += failed
+	}
+	c.writeAuditEventFull(ctx, "dynamic_secret.project_cascade_revoke", nil, nil, &projectID, "",
+		fmt.Sprintf("project %d delete disabled %d dynamic-secret config(s) and revoked %d active lease(s) (%d failed — see per-lease audit)",
+			projectID, len(configs), revokedTotal, failedTotal))
 }
 
 // RestoreProject reverses a soft-delete, bringing back the project and the
@@ -165,6 +214,19 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 // before restoring, this checks that aggregate role SET against the actor's own
 // authority — the same treatment #147 applies to group restore. See
 // requireGlobalAdminToReinstateAdminRoles.
+//
+// #369: unlike secrets/environments, this deliberately does NOT re-enable the
+// project's dynamic-secret configs that DeleteProject's cascade disabled. A
+// resurrected dynamic-secret config can immediately mint live database
+// credentials against a real external target the instant it's re-enabled — a
+// materially higher-consequence "silent resurrection" than a restored static
+// secret (whose value is inert until read). Leaving configs disabled-until-
+// manually-re-enabled means an admin must make an explicit, auditable decision
+// (SetDynamicSecretConfigEnabled, per config) rather than a bulk project
+// restore quietly reinstating database-credential issuance nobody explicitly
+// asked to bring back. Restoring leases themselves is not on the table at all
+// — they were revoked against the real target, not just marked; there is no
+// "credential" left to restore.
 func (c *KeyorixCore) RestoreProject(ctx context.Context, actorID, id uint) error {
 	if err := c.requireAuthorityToReinstateProjectRoles(ctx, actorID, id, "project"); err != nil {
 		return err

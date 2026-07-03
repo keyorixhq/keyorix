@@ -162,6 +162,44 @@ func (c *KeyorixCore) ListDynamicSecretLeases(ctx context.Context, configID uint
 	return c.storage.ListDynamicSecretLeases(ctx, configID)
 }
 
+// SetDynamicSecretConfigEnabled toggles a config's Disabled flag and audits the
+// change with a before/after diff (mirrors ClassifyDynamicSecretConfig). A
+// disabled config refuses new IssueLease/RenewLease calls (#369). DeleteProject's
+// cascade sets this automatically when the owning project is soft-deleted; this
+// is also how an admin deliberately disables a config directly (e.g. incident
+// response short of a full RevokeLeasesForConfig kill switch) or re-enables one
+// afterward — including after restoring a project, which deliberately does NOT
+// re-enable its configs on its own (see RestoreProject).
+func (c *KeyorixCore) SetDynamicSecretConfigEnabled(ctx context.Context, actorID uint, configID uint, enabled bool) (*models.DynamicSecretConfig, error) {
+	if configID == 0 {
+		return nil, fmt.Errorf("config id is required")
+	}
+	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
+	if err != nil {
+		return nil, fmt.Errorf("dynamic-secret config not found: %w", err)
+	}
+	disabled := !enabled
+	if cfg.Disabled == disabled {
+		return cfg, nil // no-op
+	}
+	old := cfg.Disabled
+	cfg.Disabled = disabled
+	cfg.UpdatedAt = c.now()
+	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+		return nil, err
+	}
+	aid := actorID
+	pid := cfg.ProjectID
+	state := "enabled"
+	if disabled {
+		state = "disabled"
+	}
+	diff := fmt.Sprintf(`{"disabled":{"before":%t,"after":%t}}`, old, disabled)
+	c.writeAuditEventDiff(ctx, "dynamic_secret.config_"+state, &aid, nil, &pid, "",
+		fmt.Sprintf("dynamic-secret config %q %s", cfg.Name, state), diff)
+	return cfg, nil
+}
+
 func (c *KeyorixCore) GetDynamicSecretLease(ctx context.Context, leaseID string) (*models.DynamicSecretLease, error) {
 	return c.storage.GetDynamicSecretLease(ctx, leaseID)
 }
@@ -184,6 +222,18 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, configID)
 	if err != nil {
 		return nil, fmt.Errorf("dynamic-secret config not found")
+	}
+	// #369: refuse to mint against a config DeleteProject's cascade (or an admin)
+	// disabled, and refuse when the owning project/environment has since been
+	// soft-deleted directly — a principal who still holds a role scoped to a
+	// "deleted" project must not be able to keep minting fresh database
+	// credentials against it just because the RBAC join that resolved their
+	// authority doesn't itself check project liveness.
+	if cfg.Disabled {
+		return nil, fmt.Errorf("dynamic-secret config is disabled")
+	}
+	if err := c.requireLiveProjectAndEnvironment(ctx, cfg.ProjectID, cfg.EnvironmentID); err != nil {
+		return nil, err
 	}
 	engine, err := c.dynamicEngine(cfg.BackendType)
 	if err != nil {
@@ -445,6 +495,25 @@ func (c *KeyorixCore) RevokeLeasesForConfig(ctx context.Context, configID, userI
 	return revoked, failed, nil
 }
 
+// requireLiveProjectAndEnvironment refuses when projectID or (if non-zero)
+// environmentID is missing or soft-deleted — GetProject/GetEnvironment apply
+// GORM's default soft-delete scope (models.Project/Environment use gorm.DeletedAt),
+// so a soft-deleted row already surfaces as "not found" here without a separate
+// deleted_at predicate. Shared by IssueLease and RenewLease (#369): a project's
+// soft-delete does not, on its own, revoke the role grants scoped to it, so
+// issuance/renewal need their own explicit liveness gate independent of RBAC.
+func (c *KeyorixCore) requireLiveProjectAndEnvironment(ctx context.Context, projectID, environmentID uint) error {
+	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
+		return fmt.Errorf("cannot issue lease: project not found or deleted")
+	}
+	if environmentID != 0 {
+		if _, err := c.storage.GetEnvironment(ctx, environmentID); err != nil {
+			return fmt.Errorf("cannot issue lease: environment not found or deleted")
+		}
+	}
+	return nil
+}
+
 // dynamicTTL resolves the requested TTL (override, else config default, else 1h),
 // clamps it to the config's MaxTTLSeconds ceiling when one is set, and always clamps
 // it to the install-wide max-lease-TTL ceiling on top (#97) — the per-config ceiling
@@ -498,6 +567,19 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	cfg, err := c.storage.GetDynamicSecretConfig(ctx, lease.ConfigID)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("config not found")
+	}
+	// #369: mirrors IssueLease — a renewal is functionally a fresh mint of trust
+	// (it extends how long the credential stays live), so it gets the same
+	// disabled-config / soft-deleted-project-or-environment refusal. In the
+	// ordinary case DeleteProject's cascade will already have revoked this lease
+	// (flipping its status away from "active", which the check above already
+	// catches); this closes the race window between that cascade committing and
+	// its best-effort revoke actually reaching the target.
+	if cfg.Disabled {
+		return time.Time{}, fmt.Errorf("dynamic-secret config is disabled")
+	}
+	if err := c.requireLiveProjectAndEnvironment(ctx, cfg.ProjectID, cfg.EnvironmentID); err != nil {
+		return time.Time{}, err
 	}
 	// Cloud-IAM backends (AWS STS) mint self-expiring credentials whose lifetime is
 	// fixed by the provider at issue — they cannot be renewed; issue a new lease.

@@ -108,6 +108,7 @@ func TestRestoreProjectAndEnvironmentRoutesRequireRolesAssign(t *testing.T) {
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.AuditEvent{}, &models.Session{}, &models.Project{}, &models.Environment{},
 		&models.SecretNode{}, &models.SecretVersion{},
+		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	))
 	now := time.Now()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "a@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
