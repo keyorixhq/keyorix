@@ -40,11 +40,30 @@ func (ls *LocalStorage) ListAccessReviewCampaigns(ctx context.Context, projectID
 	return rows, nil
 }
 
-func (ls *LocalStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) error {
-	if err := ls.db.WithContext(ctx).Save(c).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+// accessReviewCampaignOpen mirrors core.CampaignStateOpen (the store package cannot
+// import core: core already imports storage/store). Both sides of this state
+// machine — core's pre-check and this conditional UPDATE — must agree on the same
+// "still open" sentinel string.
+const accessReviewCampaignOpen = "open"
+
+// UpdateAccessReviewCampaign persists a campaign state transition with a conditional
+// UPDATE (`WHERE id = ? AND state = 'open'`), not the prior unconditional Save. The
+// only mutation path today is CloseAccessReviewCampaign (open -> closed): a plain
+// read-then-write left a window for two concurrent close calls — or a close racing a
+// concurrent decision that read the campaign while it was still "open" — to both pass
+// their in-memory precondition before either write lands. Making the persist itself
+// the single conditional statement closes that race the same way #319 closed it at
+// the item layer: whichever call's UPDATE lands first wins (RowsAffected==1); the
+// loser is told so instead of silently re-closing (or clobbering) the winner's record.
+func (ls *LocalStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.AccessReviewCampaign{}).
+		Where("id = ? AND state = ?", c.ID, accessReviewCampaignOpen).
+		Select("*").
+		Updates(c)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
-	return nil
+	return res.RowsAffected == 1, nil
 }
 
 // --- Items ---
@@ -86,19 +105,27 @@ func (ls *LocalStorage) GetAccessReviewItem(ctx context.Context, id uint) (*mode
 const accessReviewItemPending = "pending"
 
 // UpdateAccessReviewItem persists a recertification decision with a conditional
-// UPDATE (`WHERE id = ? AND decision = 'pending'`), not an unconditional Save. A
-// decision is a one-way transition (pending -> attested|revoked): DecideAccessReviewItem
-// reads the item, checks it's still pending, then acts and persists — a plain
+// UPDATE (`WHERE id = ? AND decision = 'pending' AND campaign_id IN (SELECT id FROM
+// access_review_campaigns WHERE id = ? AND state = 'open')`), not an unconditional
+// Save. A decision is a one-way transition (pending -> attested|revoked):
+// DecideAccessReviewItem reads the item AND the campaign, checks the item is still
+// pending and the campaign is still open, then acts and persists — a plain
 // read-then-write with a gap in between (the action itself, plus everything else in
 // the request) wide enough for two concurrent/replayed decisions to both pass the
-// pending check before either writes. Making the persist itself the single
-// conditional statement closes that race: whichever call's UPDATE lands first wins
-// (RowsAffected==1); the loser's UPDATE matches zero rows and is told so, instead of
-// silently overwriting the winner's decision and corrupting the compliance evidence
-// trail.
+// pending check before either writes (#319), or for a decision to observe the
+// campaign as "open" immediately before a concurrent force-close freezes it (#343).
+// Making the persist itself a single conditional statement that verifies BOTH
+// preconditions atomically closes both races in one shot: whichever write lands
+// first wins (RowsAffected==1); the loser's UPDATE matches zero rows and is told so,
+// instead of silently overwriting the winner's decision (#319) or landing a fresh
+// decision into a campaign whose evidence snapshot was supposed to be frozen at
+// close time (#343).
 func (ls *LocalStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error) {
+	openCampaign := ls.db.Model(&models.AccessReviewCampaign{}).
+		Select("id").
+		Where("id = ? AND state = ?", item.CampaignID, accessReviewCampaignOpen)
 	res := ls.db.WithContext(ctx).Model(&models.AccessReviewItem{}).
-		Where("id = ? AND decision = ?", item.ID, accessReviewItemPending).
+		Where("id = ? AND decision = ? AND campaign_id IN (?)", item.ID, accessReviewItemPending, openCampaign).
 		Select("*").
 		Updates(item)
 	if res.Error != nil {
