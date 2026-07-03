@@ -2,10 +2,12 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/secrettemplate"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -223,4 +225,68 @@ func TestRenderSecretTemplate_RecordsReadPerSecret(t *testing.T) {
 		require.NotNil(t, e.ProjectID)
 		assert.Equal(t, projectID, *e.ProjectID)
 	}
+}
+
+// #443: a template that repeats the SAME reference many times must resolve (decrypt)
+// it exactly once and log exactly one secret read — not once per occurrence. Without
+// this, a caller could submit a template with thousands of repeated references to one
+// secret to force thousands of redundant decryptions and audit rows for what is, in
+// substance, a single read. This exercises the fix end-to-end through the real
+// GetSecretValue/audit-logging path, not just the pure secrettemplate.Render layer.
+func TestRenderSecretTemplate_DedupesRepeatedReference(t *testing.T) {
+	ctx := context.Background()
+	c, db, projectID, _ := newRenderFixture(t)
+
+	var tmpl string
+	for i := 0; i < 50; i++ {
+		tmpl += "${secret:production/db-password}"
+	}
+	out, err := c.RenderSecretTemplate(ctx, tmpl, projectID, 1, "owner", "10.0.0.1", "ua")
+	require.NoError(t, err)
+
+	var want string
+	for i := 0; i < 50; i++ {
+		want += "s3cr3t"
+	}
+	assert.Equal(t, want, out, "every occurrence still substitutes the resolved value")
+
+	// Reads are logged in a detached goroutine — poll briefly, then assert the count
+	// settles at exactly one (not 50).
+	var n int64
+	for i := 0; i < 200; i++ {
+		require.NoError(t, db.Model(&models.SecretAccessLog{}).Where("accessed_by = ?", "owner").Count(&n).Error)
+		if n > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Give any (incorrect) duplicate log writes a moment to land before the final count.
+	time.Sleep(20 * time.Millisecond)
+	require.NoError(t, db.Model(&models.SecretAccessLog{}).Where("accessed_by = ?", "owner").Count(&n).Error)
+	assert.EqualValues(t, 1, n, "50 occurrences of the same reference must produce exactly one access-log row")
+
+	var eventCount int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "secret.read").Count(&eventCount).Error)
+	assert.EqualValues(t, 1, eventCount, "50 occurrences of the same reference must produce exactly one audit event")
+}
+
+// #443: a template naming more distinct references than
+// secrettemplate.MaxDistinctReferences must be rejected before any secret is resolved
+// (no partial reads, no audit rows), even though most callers legitimately need far
+// fewer.
+func TestRenderSecretTemplate_RejectsTooManyDistinctReferences(t *testing.T) {
+	ctx := context.Background()
+	c, db, projectID, _ := newRenderFixture(t)
+
+	var tmpl string
+	for i := 0; i < secrettemplate.MaxDistinctReferences+1; i++ {
+		tmpl += fmt.Sprintf("${secret:production/ref-%d}", i)
+	}
+	_, err := c.RenderSecretTemplate(ctx, tmpl, projectID, 1, "owner", "10.0.0.1", "ua")
+	require.Error(t, err)
+
+	time.Sleep(20 * time.Millisecond) // let any (incorrect) stray audit writes land
+	var n int64
+	require.NoError(t, db.Model(&models.SecretAccessLog{}).Count(&n).Error)
+	assert.Zero(t, n, "an over-cap template must be rejected before resolving/reading any secret")
 }

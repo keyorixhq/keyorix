@@ -2,6 +2,8 @@ package secrettemplate
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -126,4 +128,104 @@ func TestRender_RejectsEmbeddedControlChars_NoPartialOutput(t *testing.T) {
 	out, err := Render("A=${secret:prod/clean} B=${secret:prod/dirty}", resolve)
 	require.Error(t, err)
 	assert.Empty(t, out)
+}
+
+// #443: a template that repeats the same reference many times must resolve it exactly
+// once — not once per occurrence. This is both the DoS fix (a caller can't force
+// N decryptions with N-1 of them wasted on byte-identical duplicates) and a
+// correctness improvement (no reason to decrypt the same secret twice in one render).
+func TestRender_DedupesRepeatedReferences(t *testing.T) {
+	calls := map[string]int{}
+	resolve := func(ref string) (string, error) {
+		calls[ref]++
+		return "<" + ref + ">", nil
+	}
+
+	var tmpl strings.Builder
+	for i := 0; i < 5000; i++ {
+		fmt.Fprintf(&tmpl, "${secret:prod/db}")
+	}
+	out, err := Render(tmpl.String(), resolve)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, calls["prod/db"], "resolve must be called exactly once for 5000 occurrences of the same reference")
+	assert.Equal(t, strings.Repeat("<prod/db>", 5000), out, "every occurrence still substitutes the resolved value")
+}
+
+// A template naming multiple distinct references, some of which repeat, must resolve
+// each distinct reference exactly once while still substituting every occurrence
+// correctly (interleaved duplicates, not just adjacent ones).
+func TestRender_DedupesRepeatedReferences_MultipleDistinct(t *testing.T) {
+	calls := map[string]int{}
+	resolve := func(ref string) (string, error) {
+		calls[ref]++
+		return "<" + ref + ">", nil
+	}
+
+	tmpl := strings.Repeat("${secret:a}${secret:b}${secret:a}${secret:c}${secret:b}", 200)
+	out, err := Render(tmpl, resolve)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, calls["a"])
+	assert.Equal(t, 1, calls["b"])
+	assert.Equal(t, 1, calls["c"])
+	assert.Equal(t, strings.Repeat("<a><b><a><c><b>", 200), out)
+}
+
+// #443: even after dedup, a template naming more DISTINCT references than
+// MaxDistinctReferences must be rejected outright — defense in depth against a
+// template naming enough distinct secrets to still be a decryption/audit-log bomb
+// despite the per-reference dedup.
+func TestRender_RejectsTooManyDistinctReferences(t *testing.T) {
+	calls := 0
+	resolve := func(ref string) (string, error) {
+		calls++
+		return "x", nil
+	}
+
+	var tmpl strings.Builder
+	for i := 0; i < MaxDistinctReferences+1; i++ {
+		fmt.Fprintf(&tmpl, "${secret:ref-%d}", i)
+	}
+	out, err := Render(tmpl.String(), resolve)
+	require.Error(t, err)
+	assert.Empty(t, out)
+	assert.Contains(t, err.Error(), fmt.Sprintf("%d", MaxDistinctReferences))
+	assert.Equal(t, 0, calls, "the cap must be enforced before any resolver call, not partway through resolution")
+}
+
+// A template naming exactly MaxDistinctReferences distinct references — the boundary —
+// must still be accepted and render correctly.
+func TestRender_AllowsExactlyMaxDistinctReferences(t *testing.T) {
+	resolve := func(ref string) (string, error) { return "<" + ref + ">", nil }
+
+	var tmpl strings.Builder
+	var want strings.Builder
+	for i := 0; i < MaxDistinctReferences; i++ {
+		fmt.Fprintf(&tmpl, "${secret:ref-%d}", i)
+		fmt.Fprintf(&want, "<ref-%d>", i)
+	}
+	out, err := Render(tmpl.String(), resolve)
+	require.NoError(t, err)
+	assert.Equal(t, want.String(), out)
+}
+
+// A normal, reasonably-sized template with a handful of distinct references (well
+// under the cap, no duplicates) renders exactly as before this change.
+func TestRender_NormalTemplateUnaffected(t *testing.T) {
+	resolve := func(ref string) (string, error) { return "<" + ref + ">", nil }
+	out, err := Render("host=${secret:prod/host} user=${secret:prod/user} pass=${secret:prod/pass}", resolve)
+	require.NoError(t, err)
+	assert.Equal(t, "host=<prod/host> user=<prod/user> pass=<prod/pass>", out)
+}
+
+// References() must respect the same distinct-reference cap as Render, since it shares
+// the same parse pass.
+func TestReferences_RejectsTooManyDistinctReferences(t *testing.T) {
+	var tmpl strings.Builder
+	for i := 0; i < MaxDistinctReferences+1; i++ {
+		fmt.Fprintf(&tmpl, "${secret:ref-%d}", i)
+	}
+	_, err := References(tmpl.String())
+	require.Error(t, err)
 }
