@@ -34,6 +34,7 @@ func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamic.FakeEngi
 	require.NoError(t, db.AutoMigrate(
 		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{},
 		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
@@ -121,6 +122,7 @@ func TestDynamicSecrets_AdminDSNTransplantBetweenConfigsFailsToDecrypt(t *testin
 		Name: "other-db", ProjectID: 1, BackendType: "postgres",
 		AdminDSN: "postgres://admin:different@other-db.internal:5432/app",
 		DefaultTTLSeconds: 3600,
+		ActorID:           testAdminActorID,
 	})
 	require.NoError(t, err)
 
@@ -533,6 +535,7 @@ func TestDynamicSecrets_RealFactoryValidatesBackend(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.DynamicSecretConfig{}, &models.AuditEvent{},
 		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
