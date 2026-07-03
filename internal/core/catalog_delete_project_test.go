@@ -188,7 +188,7 @@ func TestDeleteProject_RealStorage_ForceCascadesOverSecrets(t *testing.T) {
 func TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}, &models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
 	require.NoError(t, enc.Initialize("test-passphrase"))
@@ -201,6 +201,11 @@ func TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases(
 
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p"}).Error)
 	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env"}).Error)
+	// CreateDynamicSecretConfig requires admin authority on the project (#162) — seed
+	// a global admin role and grant it to the requesting actor.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	const actorID = uint(42)
+	require.NoError(t, db.Create(&models.UserRole{UserID: actorID, RoleID: 1}).Error)
 
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &core.CreateDynamicSecretConfigRequest{
 		Name:              "app-db",
@@ -211,6 +216,7 @@ func TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases(
 		CreationTemplate:  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};",
 		DefaultTTLSeconds: 3600,
 		CreatedBy:         "alice",
+		ActorID:           actorID,
 	})
 	require.NoError(t, err)
 
