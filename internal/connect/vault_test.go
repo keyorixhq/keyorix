@@ -110,7 +110,10 @@ func TestVault_GetSecret_RejectsTraversalAndInjection(t *testing.T) {
 	t.Run("path traversal is rejected before any request", func(t *testing.T) {
 		_, err := c.GetSecret(context.Background(), "secret/data/team-a/../../../sys/policies/acl")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "traversal")
+		// prefixAllowed (the allowed_refs layer) now rejects the traversal-shaped
+		// ref outright, before sanitizeVaultRef's own defense-in-depth check even
+		// runs — so the error surfaces as "not permitted" rather than "traversal".
+		assert.Contains(t, err.Error(), "not permitted")
 		assert.Empty(t, hits, "no request should reach Vault for a traversal ref")
 	})
 
@@ -123,4 +126,111 @@ func TestVault_GetSecret_RejectsTraversalAndInjection(t *testing.T) {
 		assert.Empty(t, hits[0].rawQuery, "the injected ?list=true must not become a Vault query parameter")
 		assert.Contains(t, hits[0].rawURI, "%3F", "the ? is percent-escaped into the path")
 	})
+}
+
+// TestVault_GetSecret_CrossTenantTraversalIsRejected proves the exact exploit trace
+// from finding #326: a caller scoped by allowed_refs to "secret/data/myapp/" cannot
+// read "secret/data/otherapp/secret" by requesting the ref
+// "secret/data/myapp/../otherapp/secret". strings.HasPrefix on that ref against the
+// granted prefix "secret/data/myapp/" is true (the literal string starts with the
+// allowed prefix), so without a traversal guard the request would reach Vault, whose
+// HTTP layer resolves the ".." per RFC 3986 to a path outside the granted prefix —
+// a cross-tenant read through one shared connector.
+func TestVault_GetSecret_CrossTenantTraversalIsRejected(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		// Simulate the victim secret actually existing at the path the traversal
+		// resolves to, so a failure to reject would silently succeed.
+		if r.URL.Path == "/v1/secret/data/otherapp/secret" {
+			_, _ = w.Write([]byte(`{"data":{"data":{"password":"victim-secret"},"metadata":{}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewVaultConnector("v", srv.URL, "tok", []string{"secret/data/myapp/"})
+
+	_, err := c.GetSecret(context.Background(), "secret/data/myapp/../otherapp/secret")
+	require.Error(t, err, "the cross-tenant traversal ref must be rejected")
+	// Rejected at the allowed_refs layer (prefixAllowed) before sanitizeVaultRef's
+	// defense-in-depth check even runs.
+	assert.Contains(t, err.Error(), "not permitted")
+	assert.Zero(t, hits, "no request should ever reach Vault for a traversal ref")
+}
+
+// TestVault_GetSecret_LegitimateScopedRefStillWorks proves the traversal guard does
+// not collaterally break an ordinary, non-traversal ref within the granted prefix —
+// the same GetSecret code path (prefixAllowed then sanitizeVaultRef) must still let
+// a legitimately scoped caller read their own secret.
+func TestVault_GetSecret_LegitimateScopedRefStillWorks(t *testing.T) {
+	srv := fakeVault(t, "tok", map[string]string{
+		"/v1/secret/data/myapp/config": `{"data":{"data":{"password":"p@ss"},"metadata":{}}}`,
+	})
+	c := NewVaultConnector("v", srv.URL, "tok", []string{"secret/data/myapp/"})
+
+	val, err := c.GetSecret(context.Background(), "secret/data/myapp/config")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"password":"p@ss"}`, val)
+}
+
+// TestVault_GetSecret_RefusesCrossHostRedirect proves #98: a compromised/MITM'd Vault
+// endpoint that answers a GET with a 3xx to a different host must NOT cause the live
+// X-Vault-Token to be forwarded there. Go's default redirect policy strips
+// Authorization/Cookie/WWW-Authenticate on a cross-host hop, but NOT the custom
+// X-Vault-Token header — so without an explicit CheckRedirect override, the token
+// would leak to the attacker-controlled host. The connector refuses to follow the
+// redirect at all, so the attacker host must never even receive a request.
+func TestVault_GetSecret_RefusesCrossHostRedirect(t *testing.T) {
+	var attackerHits int
+	var attackerSawToken bool
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits++
+		if r.Header.Get("X-Vault-Token") != "" {
+			attackerSawToken = true
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(attacker.Close)
+
+	vault := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A "compromised" Vault endpoint redirecting the client to an
+		// attacker-controlled host, on a different origin than vault's own.
+		http.Redirect(w, r, attacker.URL+"/steal", http.StatusFound)
+	}))
+	t.Cleanup(vault.Close)
+
+	c := NewVaultConnector("v", vault.URL, "supersecret-token", nil)
+	_, err := c.GetSecret(context.Background(), "secret/data/myapp")
+
+	require.Error(t, err, "a redirect response must not be treated as a successful read")
+	assert.Contains(t, err.Error(), "HTTP 302", "the redirect status itself surfaces as the (non-200) response")
+	assert.Zero(t, attackerHits, "the connector must never follow the redirect to the attacker-controlled host")
+	assert.False(t, attackerSawToken, "the live Vault token must never reach the attacker-controlled host")
+}
+
+// TestVault_GetSecret_RefusesSameHostRedirect proves the refusal is unconditional
+// (not merely cross-host-aware): even a same-host redirect (e.g. to a path an
+// operator didn't intend to be reachable) is refused rather than followed, since
+// Vault's real KV-read API has no legitimate reason to redirect a GET at all.
+func TestVault_GetSecret_RefusesSameHostRedirect(t *testing.T) {
+	var redirectTargetHits int
+	var mux http.ServeMux
+	srv := httptest.NewServer(&mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/v1/secret/data/myapp", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/v1/secret/data/other", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/v1/secret/data/other", func(w http.ResponseWriter, r *http.Request) {
+		redirectTargetHits++
+		_, _ = w.Write([]byte(`{"data":{"data":{"x":"y"},"metadata":{}}}`))
+	})
+
+	c := NewVaultConnector("v", srv.URL, "tok", nil)
+	_, err := c.GetSecret(context.Background(), "secret/data/myapp")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 301")
+	assert.Zero(t, redirectTargetHits, "even a same-host redirect target must never be requested")
 }

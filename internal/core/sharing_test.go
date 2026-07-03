@@ -267,6 +267,44 @@ func TestKeyorixCore_RevokeShare(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
+// TestKeyorixCore_RevokeShare_NoPhantomAuditOnDeleteFailure locks in #283: when
+// storage.DeleteShareRecord fails, RevokeShare must return the error to the
+// caller and must NOT have already written a "share_revoked" audit event — a
+// phantom revoke record while the share stays live is worse than no record.
+func TestKeyorixCore_RevokeShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
+	mockStorage := new(MockStorage)
+	core := &KeyorixCore{
+		storage: mockStorage,
+		now:     time.Now,
+	}
+	ctx := context.Background()
+
+	secret := &models.SecretNode{
+		ID:      1,
+		Name:    "test-secret",
+		OwnerID: 1,
+	}
+	shareRecord := &models.ShareRecord{
+		ID:          1,
+		SecretID:    1,
+		OwnerID:     1,
+		RecipientID: 2,
+		IsGroup:     false,
+		Permission:  "read",
+	}
+
+	mockStorage.On("GetShareRecord", ctx, uint(1)).Return(shareRecord, nil)
+	mockStorage.On("GetSecret", ctx, uint(1)).Return(secret, nil)
+	mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(errors.New("storage unavailable"))
+
+	err := core.RevokeShare(ctx, 1, 1)
+
+	require.Error(t, err)
+	mockStorage.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
+	mockStorage.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+	mockStorage.AssertExpectations(t)
+}
+
 func TestKeyorixCore_ListSharedSecrets(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)

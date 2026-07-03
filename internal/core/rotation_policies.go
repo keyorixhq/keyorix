@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -237,6 +238,7 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID, environm
 
 	var entries []*RotationStatusEntry
 	now := c.now()
+	var failedPolicies int
 
 	for _, policy := range policies {
 		if !policy.IsActive || !policyAppliesToEnv(policy, environmentID) {
@@ -245,6 +247,15 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID, environm
 
 		secrets, err := c.scopedPolicySecrets(ctx, policy, environmentID)
 		if err != nil {
+			// #363: a per-policy scope-listing failure must not silently vanish that
+			// policy's secrets from the result — every caller here (compliance
+			// posture/evidence, the rotation-plan/status HTTP routes, the reminder
+			// scheduler) already treats a non-nil error as "don't trust this result",
+			// so failing the whole call (after logging + finishing the loop so every
+			// failure is recorded) surfaces as degraded/unknown instead of a silently
+			// short count that reads as "fully covered".
+			log.Printf("rotation status: list secrets for policy %d (%q): %v", policy.ID, policy.Name, err)
+			failedPolicies++
 			continue
 		}
 
@@ -282,6 +293,10 @@ func (c *KeyorixCore) GetRotationStatus(ctx context.Context, projectID, environm
 		}
 	}
 
+	if failedPolicies > 0 {
+		return nil, fmt.Errorf("rotation status: %d rotation polic(y/ies) could not be evaluated due to a storage error — result is incomplete", failedPolicies)
+	}
+
 	return entries, nil
 }
 
@@ -293,6 +308,7 @@ func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID, e
 
 	var evaluations []*RotationPolicyEvaluation
 	now := c.now()
+	var failedPolicies int
 
 	for _, policy := range policies {
 		if !policy.IsActive || !policyAppliesToEnv(policy, environmentID) {
@@ -301,6 +317,12 @@ func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID, e
 
 		secrets, err := c.scopedPolicySecrets(ctx, policy, environmentID)
 		if err != nil {
+			// #363: see the identical handling + rationale in GetRotationStatus above —
+			// this result also feeds the admin-nudge reminder scheduler
+			// (rotation_reminders.go), which already bails out on a non-nil error rather
+			// than sending reminders derived from a silently-incomplete evaluation.
+			log.Printf("rotation evaluate: list secrets for policy %d (%q): %v", policy.ID, policy.Name, err)
+			failedPolicies++
 			continue
 		}
 
@@ -331,6 +353,10 @@ func (c *KeyorixCore) EvaluateRotationPolicies(ctx context.Context, projectID, e
 				})
 			}
 		}
+	}
+
+	if failedPolicies > 0 {
+		return nil, fmt.Errorf("rotation evaluate: %d rotation polic(y/ies) could not be evaluated due to a storage error — result is incomplete", failedPolicies)
 	}
 
 	return evaluations, nil

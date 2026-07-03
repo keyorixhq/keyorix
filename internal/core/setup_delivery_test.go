@@ -24,6 +24,11 @@ type fakeDeliverer struct {
 	result   delivery.DeliveryResult
 	echoLink bool
 	err      error
+	// done, when non-nil, is closed after DeliverSetupLink returns — lets a test
+	// whose caller dispatches delivery in a background goroutine (e.g.
+	// RequestPasswordReset, #117) synchronize an assertion with the async work
+	// instead of racing it.
+	done chan struct{}
 }
 
 func (f *fakeDeliverer) DeliverSetupLink(_ context.Context, req delivery.SetupLinkRequest) (delivery.DeliveryResult, error) {
@@ -32,6 +37,9 @@ func (f *fakeDeliverer) DeliverSetupLink(_ context.Context, req delivery.SetupLi
 	res := f.result
 	if f.echoLink {
 		res.LinkForAdmin = req.Link
+	}
+	if f.done != nil {
+		defer close(f.done)
 	}
 	return res, f.err
 }

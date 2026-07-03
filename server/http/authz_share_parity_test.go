@@ -40,7 +40,7 @@ func TestAuthzParity_HTTPvsGRPC_ShareCreate(t *testing.T) {
 		&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{},
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Session{}, &models.AuditEvent{}, &models.ShareRecord{},
+		&models.Session{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.SystemMetadata{},
 	))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
@@ -131,6 +131,128 @@ func TestAuthzParity_HTTPvsGRPC_ShareCreate(t *testing.T) {
 			name:        "project-writer re-shares a secret it does NOT own",
 			httpAllowed: httpShare(writerToken, sec.ID, 502),
 			grpcAllowed: grpcShare(gctx(writer.ID, "writer"), sec.ID, 502),
+			wantAllowed: false,
+		},
+	}
+
+	for _, tc := range cases {
+		require.Equal(t, tc.wantAllowed, tc.httpAllowed, "%s: HTTP decision", tc.name)
+		require.Equal(t, tc.wantAllowed, tc.grpcAllowed, "%s: gRPC decision", tc.name)
+		require.Equal(t, tc.httpAllowed, tc.grpcAllowed, "%s: HTTP and gRPC must agree", tc.name)
+	}
+}
+
+// TestAuthzParity_HTTPvsGRPC_ShareList pins the SAME authorization decision across HTTP
+// and gRPC for LISTING a secret's shares (GET /secrets/{id}/shares vs
+// ShareService.ListSecretShares). The share graph (who has access, at what tier) is
+// owner-only by the code's own documented design — a project-WRITER (secrets.write, and
+// therefore also secrets.read, on the project) who does NOT own the secret must NOT be
+// able to enumerate its shares on either surface, even though the route-level RBAC gate
+// (secrets.read) alone would let it through. A divergence here is the #246 regression:
+// HTTP called the raw, ownership-blind ListSecretShares while gRPC already required
+// ownership via ListSecretSharesWithPermissionCheck.
+func TestAuthzParity_HTTPvsGRPC_ShareList(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+
+	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_journal_mode=WAL")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{},
+		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
+		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Session{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.SystemMetadata{},
+	))
+	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	ctx := context.Background()
+
+	c.SetBootstrapToken("test-bootstrap-token")
+	_, err = c.BootstrapSystem(ctx, &core.BootstrapRequest{
+		Username: "admin", Email: "admin@example.com", Password: "Qr7#Kp2$Lm5@Vn9!", Token: "test-bootstrap-token",
+	})
+	require.NoError(t, err)
+
+	var editorRole models.Role // editor = secrets.read + secrets.write
+	require.NoError(t, db.Where("name = ?", "editor").First(&editorRole).Error)
+
+	login := func(username, password string) string {
+		s, _, lerr := c.Login(ctx, &core.LoginRequest{Username: username, Password: password})
+		require.NoError(t, lerr)
+		return s.SessionToken
+	}
+
+	// owner — has secrets.write/read on p1 AND owns the secret (can list its shares).
+	owner, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "owner2", Email: "owner2@example.com", Password: "Qr7#Kp2$Lm5@Vn9!"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.UserRole{UserID: owner.ID, RoleID: editorRole.ID, ProjectID: 1}).Error)
+	ownerToken := login("owner2", "Qr7#Kp2$Lm5@Vn9!")
+
+	// writer — has secrets.write/read on p1 but does NOT own the secret (must not
+	// enumerate its shares — the #246 exploit shape).
+	writer, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "writer2", Email: "writer2@example.com", Password: "Qr7#Kp2$Lm5@Vn9!"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.UserRole{UserID: writer.ID, RoleID: editorRole.ID, ProjectID: 1}).Error)
+	writerToken := login("writer2", "Qr7#Kp2$Lm5@Vn9!")
+
+	recipient, err := c.CreateUser(ctx, &core.CreateUserRequest{Username: "recipient2", Email: "recipient2@example.com", Password: "Qr7#Kp2$Lm5@Vn9!"})
+	require.NoError(t, err)
+
+	// The secret, owned by owner in project 1, shared once with recipient so the list
+	// isn't trivially empty.
+	sec, err := c.CreateSecret(ctx, &core.CreateSecretRequest{
+		Name: "shared-sec-list", Value: []byte("v"), ProjectID: 1, EnvironmentID: 1,
+		Type: "password", Classification: "internal", OwnerID: owner.ID, CreatedBy: "owner2",
+	})
+	require.NoError(t, err)
+	_, err = c.ShareSecret(ctx, &core.ShareSecretRequest{
+		SecretID: sec.ID, RecipientID: recipient.ID, IsGroup: false, Permission: "read", SharedBy: owner.ID,
+	})
+	require.NoError(t, err)
+
+	shareSvc := services.NewShareService(c)
+	gctx := func(userID uint, name string) context.Context {
+		return context.WithValue(ctx, interceptors.GetUserContextKey(),
+			&interceptors.UserContext{UserID: userID, Username: name})
+	}
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	router, err := NewRouter(cfg, c)
+	require.NoError(t, err)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+	client := srv.Client()
+
+	httpListAllowed := func(token string, secretID uint) bool {
+		r, _ := http.NewRequest("GET", srv.URL+fmt.Sprintf("/api/v1/secrets/%d/shares", secretID), nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		resp, derr := client.Do(r)
+		require.NoError(t, derr)
+		_ = resp.Body.Close()
+		return resp.StatusCode >= 200 && resp.StatusCode < 300
+	}
+	grpcListAllowed := func(ctx context.Context, secretID uint) bool {
+		_, gerr := shareSvc.ListSecretShares(ctx, &pb.ListSecretSharesRequest{SecretId: uint32(secretID)})
+		return gerr == nil
+	}
+
+	cases := []struct {
+		name        string
+		httpAllowed bool
+		grpcAllowed bool
+		wantAllowed bool
+	}{
+		{
+			name:        "owner lists shares on its own secret (has secrets.read + ownership)",
+			httpAllowed: httpListAllowed(ownerToken, sec.ID),
+			grpcAllowed: grpcListAllowed(gctx(owner.ID, "owner2"), sec.ID),
+			wantAllowed: true,
+		},
+		{
+			name:        "project-writer lists shares on a secret it does NOT own",
+			httpAllowed: httpListAllowed(writerToken, sec.ID),
+			grpcAllowed: grpcListAllowed(gctx(writer.ID, "writer2"), sec.ID),
 			wantAllowed: false,
 		},
 	}

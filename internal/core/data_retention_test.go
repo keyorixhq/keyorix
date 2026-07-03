@@ -73,3 +73,39 @@ func TestRetentionPolicy_Configured(t *testing.T) {
 	require.True(t, RetentionPolicy{AnomalyAlertsDays: 1}.Configured())
 	require.True(t, RetentionPolicy{ResolvedAccessRequestsDays: 90}.Configured())
 }
+
+// #160: applying the retention policy at startup must leave an audit trail of the
+// configured windows, not just of the purge counts it later produces — an operator
+// with filesystem+restart access who shortens a window otherwise leaves no record
+// of the CHANGE itself.
+func TestSetRetentionPolicy_EmitsAuditEvent(t *testing.T) {
+	policy := RetentionPolicy{
+		AnomalyAlertsDays:          30,
+		ClosedAccessReviewsDays:    365,
+		BreakGlassDays:             90,
+		ResolvedAccessRequestsDays: 180,
+	}
+	store := new(MockStorage)
+	var captured *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		if e.EventType == "data_retention.policy_configured" {
+			captured = e
+			return true
+		}
+		return false
+	})).Return(nil)
+
+	c := NewKeyorixCore(store)
+	c.SetRetentionPolicy(context.Background(), policy)
+
+	require.Equal(t, policy, c.RetentionPolicy())
+	require.NotNil(t, captured, "SetRetentionPolicy must emit an audit event")
+	require.Equal(t, ActorTypeSystem, captured.ActorType)
+	require.NotNil(t, captured.Success)
+	require.True(t, *captured.Success)
+	require.Contains(t, captured.Description, "anomaly_alerts=30d")
+	require.Contains(t, captured.Description, "closed_access_reviews=365d")
+	require.Contains(t, captured.Description, "break_glass=90d")
+	require.Contains(t, captured.Description, "resolved_access_requests=180d")
+	store.AssertExpectations(t)
+}

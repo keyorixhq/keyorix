@@ -394,6 +394,50 @@ func TestExtract_PersistedVersionBlocksDowngrade(t *testing.T) {
 	}
 }
 
+// TestExtract_MissingMarkerInNonEmptyDestRefused pins #111: the installed-version
+// marker is a plaintext file in the SAME operator-writable staging directory the
+// import itself writes into — an import-capable adversary who deletes it (to fake
+// a "first install") must not be able to re-stage an OLDER signed release over an
+// existing, populated install just because there's no marker left to compare
+// against. A destDir that already holds staged content but no marker is refused,
+// not silently treated as a first install.
+func TestExtract_MissingMarkerInNonEmptyDestRefused(t *testing.T) {
+	dest := t.TempDir()
+
+	newRaw, newReg, _ := signedBundle(t, map[string]string{"images/a.tar": "new"}, "v1.2.0", "update-2026", "")
+	if _, err := Extract(bytes.NewReader(newRaw), newReg, dest, ""); err != nil {
+		t.Fatalf("install v1.2.0: %v", err)
+	}
+
+	// Attacker: delete the marker to erase the evidence of what's installed.
+	if err := os.Remove(filepath.Join(dest, installedVersionMarker)); err != nil {
+		t.Fatalf("remove marker: %v", err)
+	}
+
+	// Attempt to re-stage an OLDER v1.0.0 with no flag — must be refused because the
+	// destination already has staged content, not silently accepted as "first install".
+	oldRaw, oldReg, _ := signedBundle(t, map[string]string{"images/a.tar": "old"}, "v1.0.0", "update-2026", "")
+	if _, err := Extract(bytes.NewReader(oldRaw), oldReg, dest, ""); err == nil {
+		t.Fatalf("expected the downgrade to be refused, but Extract succeeded")
+	}
+
+	// The older content must not have overwritten the installed component.
+	got, _ := os.ReadFile(filepath.Join(dest, "images", "a.tar"))
+	if string(got) != "new" {
+		t.Fatalf("downgrade staged content = %q, want the installed 'new'", got)
+	}
+}
+
+// A genuinely first install (empty/nonexistent destDir, no marker) is still allowed
+// — the fix must not break the legitimate case.
+func TestExtract_FirstInstallOnEmptyDestStillAllowed(t *testing.T) {
+	dest := t.TempDir()
+	raw, reg, _ := signedBundle(t, map[string]string{"images/a.tar": "x"}, "v1.0.0", "update-2026", "")
+	if _, err := Extract(bytes.NewReader(raw), reg, dest, ""); err != nil {
+		t.Fatalf("first install on an empty destination must succeed: %v", err)
+	}
+}
+
 // assertDirEmpty fails if dir contains any regular file (temp files included), proving a
 // fail-closed Extract staged nothing.
 func assertDirEmpty(t *testing.T, dir string) {

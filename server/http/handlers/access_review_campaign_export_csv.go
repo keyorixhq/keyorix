@@ -72,18 +72,18 @@ func (h *CatalogHandler) ExportAccessReviewCampaignCSV(w http.ResponseWriter, r 
 	})
 	for _, it := range detail.Items {
 		_ = cw.Write([]string{
-			it.PrincipalType,
-			it.PrincipalName,
-			it.Email,
-			it.Source,
-			it.RoleName,
-			it.AccessLevel,
+			csvSafe(it.PrincipalType),
+			csvSafe(it.PrincipalName),
+			csvSafe(it.Email),
+			csvSafe(it.Source),
+			csvSafe(it.RoleName),
+			csvSafe(it.AccessLevel),
 			strconv.FormatUint(uint64(it.EnvironmentID), 10),
-			it.SecretName,
+			csvSafe(it.SecretName),
 			tstr(it.LastUsedAt),
-			it.Decision,
-			it.Reason,
-			deciderName[it.DecidedBy],
+			csvSafe(it.Decision),
+			csvSafe(it.Reason),
+			csvSafe(deciderName[it.DecidedBy]),
 			tstr(it.DecidedAt),
 		})
 	}

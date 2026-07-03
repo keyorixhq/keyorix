@@ -166,6 +166,13 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 		return fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
 	}
 
+	if err := c.storage.DeleteShareRecord(ctx, shareID); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Only log the revocation once the storage mutation has actually succeeded —
+	// logging first would leave a phantom "revoked" audit record if the delete
+	// failed and the share stayed live (#283).
 	auditCtx := &ShareAuditContext{
 		ActorID:     revokedBy,
 		SecretID:    shareRecord.SecretID,
@@ -177,10 +184,6 @@ func (c *KeyorixCore) RevokeShare(ctx context.Context, shareID uint, revokedBy u
 		c.LogGroupShareRevoked(ctx, auditCtx)
 	} else {
 		c.LogShareRevoked(ctx, auditCtx)
-	}
-
-	if err := c.storage.DeleteShareRecord(ctx, shareID); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	// Tell the affected user(s) their access was revoked. Best-effort.
 	if shareRecord.IsGroup {
@@ -220,6 +223,12 @@ func (c *KeyorixCore) RemoveSelfFromShare(ctx context.Context, secretID, userID 
 		return fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 
+	if err := c.storage.DeleteShareRecord(ctx, shareToRemove.ID); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Only log the removal once the storage mutation has actually succeeded — see
+	// RevokeShare for why (#283).
 	c.LogSelfRemovalFromShare(ctx, &ShareAuditContext{
 		ActorID:     userID,
 		SecretID:    secretID,
@@ -227,9 +236,5 @@ func (c *KeyorixCore) RemoveSelfFromShare(ctx context.Context, secretID, userID 
 		IsGroup:     false,
 		Permission:  shareToRemove.Permission,
 	})
-
-	if err := c.storage.DeleteShareRecord(ctx, shareToRemove.ID); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
 	return nil
 }

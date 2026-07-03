@@ -8,6 +8,8 @@ package rotation
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -95,4 +97,24 @@ func prefixAllowed(allowed []string, ref string) bool {
 		}
 	}
 	return false
+}
+
+// sqlStringLiteral matches a single-quoted SQL string literal, including the
+// standard ''-doubling escape for an embedded quote (used by both PostgreSQL
+// and MySQL's default ANSI_QUOTES-off mode).
+var sqlStringLiteral = regexp.MustCompile(`'(?:[^']|'')*'`)
+
+// redactSQLError wraps err with a value-free message: the SQL rotation backends
+// (postgres.go, mysql.go) inline the new password into an ALTER ROLE/USER
+// statement as a quoted literal, and a driver error can echo the failing
+// statement or its position back verbatim (e.g. a syntax error near the
+// literal) — %w/%v-wrapping that raw error let the LIVE credential egress into
+// the rotation-failure SIEM audit Description and the Slack/webhook broadcast
+// on a statement-echoing failure (#132). Any single-quoted literal in the
+// error text is replaced with a placeholder before the error is ever wrapped,
+// so the operator still gets the backend name, ref, and whatever non-literal
+// diagnostic context (error class, position) the driver returned.
+func redactSQLError(backend, ref string, err error) error {
+	redacted := sqlStringLiteral.ReplaceAllString(err.Error(), "'***'")
+	return fmt.Errorf("%s: rotate %q: %s", backend, ref, redacted)
 }

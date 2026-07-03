@@ -74,9 +74,13 @@ func (c *KeyorixCore) provisionSetupLink(ctx context.Context, req IssueSetupToke
 // the cap, so the race defeats the sole mail-bombing control). setupResendMu is held
 // across the check + IssueSetupToken so the count and the write that the next count
 // will see are one critical section. Delivery runs after the lock is released — a
-// slow SMTP send must not block every other resend. Used by every resend path; the
-// initial-provision callers (new account / new invitation) start from a zero count
-// and call provisionSetupLink directly.
+// slow SMTP send must not block every other resend. Used by every resend path and by
+// the invitation initial-send paths (InviteToProjectWithLink / InviteGlobalWithLink,
+// #345) — a loop-called initial invite is otherwise indistinguishable from a
+// loop-called resend as an SMTP-relay abuse vector, so both are held to the same
+// per-(purpose, email) limit. CreateUserWithSetupLink is the one caller that still
+// goes through the unthrottled provisionSetupLink: it runs only once CreateUser has
+// already claimed the (unique) email, so it cannot be looped for the same subject.
 func (c *KeyorixCore) provisionSetupLinkThrottled(ctx context.Context, req IssueSetupTokenRequest, displayName, assignmentSummary string) (*ProvisionSetupResult, error) {
 	if c.setupBaseURL == "" {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrSetupBaseURLRequired)

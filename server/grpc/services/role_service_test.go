@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -76,10 +77,57 @@ func TestRoleService_CreateRole_MissingFields(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
+// TestRoleService_CreateRole_NameTooShort mirrors HTTP's CreateRoleRequest.Name
+// `min=3` bound (server/http/handlers/rbac.go) — gRPC must reject the same
+// input HTTP would (#191).
+func TestRoleService_CreateRole_NameTooShort(t *testing.T) {
+	svc, h := newRoleService(t)
+	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: "ab", Description: "a valid description", Permissions: []string{somePermission(t, h)},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestRoleService_CreateRole_NameTooLong mirrors HTTP's `max=50` bound (#191).
+func TestRoleService_CreateRole_NameTooLong(t *testing.T) {
+	svc, h := newRoleService(t)
+	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: strings.Repeat("a", 51), Description: "a valid description", Permissions: []string{somePermission(t, h)},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestRoleService_CreateRole_DescriptionTooLong mirrors HTTP's
+// `max=200` bound on Description (#191).
+func TestRoleService_CreateRole_DescriptionTooLong(t *testing.T) {
+	svc, h := newRoleService(t)
+	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: "valid-role-name", Description: strings.Repeat("d", 201), Permissions: []string{somePermission(t, h)},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestRoleService_UpdateRole_DescriptionTooLong(t *testing.T) {
+	svc, h := newRoleService(t)
+	created, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: "u-role-len", Description: "old", Permissions: []string{somePermission(t, h)},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpdateRole(roleAdminCtx(), &pb.UpdateRoleRequest{
+		Id: created.GetId(), Description: strPtr(strings.Repeat("d", 201)),
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
 func TestRoleService_CreateRole_UnknownPermission(t *testing.T) {
 	svc, _ := newRoleService(t)
 	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
-		Name: "x", Description: "y", Permissions: []string{"does.not.exist"},
+		Name: "unknown-perm-role", Description: "y", Permissions: []string{"does.not.exist"},
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -228,6 +276,91 @@ func TestRoleService_AssignRole_ScopedCrossProjectDenied(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// #169: the gRPC path closes the same escalation as HTTP — an actor holding ONLY
+// roles.write (no system.write, no admin role) must not be able to bundle
+// system.write into a role's definition, whether creating a new role or updating an
+// existing one they already hold.
+func TestRoleService_CreateRole_RolesWriteHolderCannotBundleSystemWrite(t *testing.T) {
+	svc, h := newRoleService(t)
+	roleEditor := h.CreateTestRole(t, "role-editor", "can edit roles only", 100)
+	require.NoError(t, h.DB.Exec(
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		roleEditor.ID).Error)
+	h.CreateTestUser(t, "attacker", 700)
+	h.AssignUserRole(t, 700, roleEditor.ID, nil)
+
+	ctx := authCtx(700, "attacker")
+	_, err := svc.CreateRole(ctx, &pb.CreateRoleRequest{
+		Name: "self-promote", Description: "escalation attempt", Permissions: []string{"system.write"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	var roleCount int64
+	require.NoError(t, h.DB.Model(&models.Role{}).Where("name = ?", "self-promote").Count(&roleCount).Error)
+	assert.Zero(t, roleCount, "no role must be created when a bundled permission is refused")
+}
+
+func TestRoleService_UpdateRole_RolesWriteHolderCannotAddSystemWrite(t *testing.T) {
+	svc, h := newRoleService(t)
+	roleEditor := h.CreateTestRole(t, "role-editor", "can edit roles only", 100)
+	require.NoError(t, h.DB.Exec(
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		roleEditor.ID).Error)
+	target := h.CreateTestRole(t, "target", "a role the attacker already holds", 101)
+	require.NoError(t, h.DB.Exec(
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		target.ID).Error)
+	h.CreateTestUser(t, "attacker2", 701)
+	h.AssignUserRole(t, 701, roleEditor.ID, nil)
+	h.AssignUserRole(t, 701, target.ID, nil)
+
+	ctx := authCtx(701, "attacker2")
+	_, err := svc.UpdateRole(ctx, &pb.UpdateRoleRequest{
+		Id: uint32(target.ID), Permissions: []string{"roles.write", "system.write"},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+
+	var permCount int64
+	require.NoError(t, h.DB.Table("role_permissions").Where("role_id = ?", target.ID).Count(&permCount).Error)
+	assert.Equal(t, int64(1), permCount, "the role's permission set must be unchanged")
+}
+
+// #294: closes the same reserved-name admin-bypass gap as the HTTP handler test
+// (rbac_role_escalation_test.go's TestCreateRole_CannotClaimReservedAdminBypassName)
+// over gRPC, which has its own independent CreateRole path.
+func TestRoleService_CreateRole_CannotClaimReservedAdminBypassName(t *testing.T) {
+	svc, h := newRoleService(t)
+	roleEditor := h.CreateTestRole(t, "role-editor-2", "can edit roles only", 102)
+	require.NoError(t, h.DB.Exec(
+		"INSERT INTO role_permissions (role_id, permission_id) SELECT ?, id FROM permissions WHERE name = 'roles.write'",
+		roleEditor.ID).Error)
+	h.CreateTestUser(t, "attacker3", 702)
+	h.AssignUserRole(t, 702, roleEditor.ID, nil)
+
+	ctx := authCtx(702, "attacker3")
+	// RBACTestHelper.SeedDefaultRolesAndPermissions pre-seeds "super_admin"/"admin"/
+	// "editor"/"viewer"/"auditor"/"system_viewer" as realistic fixture roles — a fresh
+	// create attempt for any of THOSE names would collide with the unique(name)
+	// constraint regardless of this fix, so AlreadyExists alone doesn't prove the
+	// reserved-name guard fired for them. "system_admin" and "project_admin" are NOT
+	// pre-seeded by this harness, so their rejection can only come from the guard.
+	for _, reserved := range []string{"super_admin", "auditor", "admin", "system_admin", "project_admin"} {
+		_, err := svc.CreateRole(ctx, &pb.CreateRoleRequest{
+			Name: reserved, Description: "reserved-name attempt", Permissions: []string{"roles.write"},
+		})
+		require.Error(t, err, "creating a role named %q must be refused", reserved)
+		assert.Equal(t, codes.AlreadyExists, status.Code(err))
+	}
+
+	var count int64
+	require.NoError(t, h.DB.Model(&models.Role{}).Where("name = ?", "system_admin").Count(&count).Error)
+	assert.Zero(t, count, "no role named system_admin must exist — this name isn't pre-seeded, so its rejection proves the guard fired")
+	require.NoError(t, h.DB.Model(&models.Role{}).Where("name = ?", "project_admin").Count(&count).Error)
+	assert.Zero(t, count, "no role named project_admin must exist — this name isn't pre-seeded, so its rejection proves the guard fired")
 }
 
 func TestRoleService_RemoveRole(t *testing.T) {

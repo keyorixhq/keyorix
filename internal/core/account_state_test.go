@@ -31,6 +31,48 @@ func TestAccountStateHelpers(t *testing.T) {
 	assert.Equal(t, AccountActive, clearRestrictionOnPasswordChange(""))
 }
 
+// TestIsValidAccountState proves #334's write-path validation: the empty string
+// and every canonical ADR-025 value are valid, and nothing else is.
+func TestIsValidAccountState(t *testing.T) {
+	for _, s := range []string{"", AccountActive, AccountPendingFirstLogin, AccountPasswordResetRequired, AccountSuspended, AccountDeprovisioned} {
+		assert.True(t, IsValidAccountState(s), "expected %q to be valid", s)
+	}
+	for _, s := range []string{"SUSPENDED", "suspend", "Active", "not-a-real-state", " "} {
+		assert.False(t, IsValidAccountState(s), "expected %q to be invalid", s)
+	}
+}
+
+// TestAccountState_UnrecognizedValueFailsClosed proves #334's defense-in-depth
+// backstop: an unrecognized account_state value (e.g. one persisted before the
+// write-path validation shipped) is treated as restricted — never as fully
+// active/unrestricted — while still not being an outright login block, since a
+// restricted session can self-heal via a password change.
+func TestAccountState_UnrecognizedValueFailsClosed(t *testing.T) {
+	garbage := "not-a-real-state"
+
+	assert.True(t, AccountRestricted(garbage), "unrecognized state must fail closed to restricted")
+	assert.False(t, AccountLoginBlocked(garbage), "unrecognized state must not hard-lock out login (no self-heal path)")
+
+	// An unrecognized-but-restricted state still self-heals to active on the
+	// next password change, exactly like the canonical restricted states.
+	assert.Equal(t, AccountActive, clearRestrictionOnPasswordChange(garbage))
+
+	// The canonical, previously-tested behaviors are unchanged by the new default.
+	assert.True(t, AccountRestricted(AccountPendingFirstLogin))
+	assert.True(t, AccountRestricted(AccountPasswordResetRequired))
+	assert.False(t, AccountRestricted(AccountActive))
+	assert.False(t, AccountRestricted(AccountSuspended))
+	assert.False(t, AccountRestricted(AccountDeprovisioned))
+	assert.False(t, AccountRestricted(""))
+
+	assert.True(t, AccountLoginBlocked(AccountSuspended))
+	assert.True(t, AccountLoginBlocked(AccountDeprovisioned))
+	assert.False(t, AccountLoginBlocked(AccountActive))
+	assert.False(t, AccountLoginBlocked(AccountPendingFirstLogin))
+	assert.False(t, AccountLoginBlocked(AccountPasswordResetRequired))
+	assert.False(t, AccountLoginBlocked(""))
+}
+
 func newAccountCore(store *MockStorage) *KeyorixCore {
 	fixed := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
 	return &KeyorixCore{storage: store, now: func() time.Time { return fixed }, passwordPolicy: DefaultPasswordPolicy()}

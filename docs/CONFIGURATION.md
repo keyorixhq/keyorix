@@ -492,7 +492,7 @@ notifications:
     username: "keyorix"
     password: ""                 # prefer the KEYORIX_NOTIFY_SMTP_PASSWORD env var
     from: "keyorix@example.com"
-    tls: "starttls"              # starttls | implicit | none(dev-only)
+    tls: "starttls"              # starttls | implicit | none(dev-only) — none requires KEYORIX_ALLOW_INSECURE_SMTP=true
   slack:
     enabled: true
     webhook_url: ""              # prefer the KEYORIX_NOTIFY_SLACK_WEBHOOK env var
@@ -964,6 +964,15 @@ credential_delivery:
 `out_of_band` / `log` return or log the link instead of emailing it (useful when no
 mail relay is available). A link-producing mode with an empty `base_url` is a
 misconfiguration — link minting refuses it rather than emitting a relative link.
+
+`mode: log` writes a live, usable setup link to the application log (dev/test only) and
+`smtp.tls: none` sends mail — and any relay credentials — in cleartext. Both are refused
+at startup unless the operator explicitly opts in by setting
+`KEYORIX_ALLOW_INSECURE_LOG_DELIVERY=true` (for `mode: log`) or
+`KEYORIX_ALLOW_INSECURE_SMTP=true` (for `smtp.tls: none`), mirroring how other insecure
+toggles in this codebase require an explicit acknowledgement rather than defaulting on.
+The same `KEYORIX_ALLOW_INSECURE_SMTP` gate also applies to `notify.smtp.tls: none` for
+the notification-email channel.
 
 ## connect
 

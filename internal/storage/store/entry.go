@@ -56,6 +56,28 @@ import (
 	"gorm.io/gorm"
 )
 
+// maxStoragePageSize is a defense-in-depth ceiling applied directly inside
+// LocalStorage's paginated queries (secrets, users, audit events), on top of
+// whatever clamp (if any) the caller already applied. External HTTP/gRPC
+// handlers already clamp page_size to <=100 before it reaches storage, but
+// several trusted internal callers intentionally request larger single-shot
+// pages (e.g. secretInventoryMaxRows/csvExportMaxRows = 10000, ListSecrets
+// with OwnerID PageSize 10000). 10000 is chosen to sit above every current
+// legitimate call site in the repo — this clamp is a true no-op for existing
+// behavior today, and only guards a FUTURE caller that forgets to clamp
+// (or passes a hostile/overflowed value) from forcing an unbounded SQL LIMIT.
+const maxStoragePageSize = 10000
+
+// clampPageSize bounds a caller-supplied page size to (0, maxStoragePageSize].
+// A non-positive size is passed through unchanged — several callers rely on
+// their own default/zero-value handling before this clamp runs.
+func clampPageSize(pageSize int) int {
+	if pageSize > maxStoragePageSize {
+		return maxStoragePageSize
+	}
+	return pageSize
+}
+
 // RemoteStorage implements storage.Storage via the Keyorix REST API.
 type RemoteStorage struct {
 	client *remote.HTTPClient
@@ -80,9 +102,15 @@ type LocalStorage struct {
 	// SAME mutex as its parent — otherwise an audit append inside a transaction would
 	// not serialize against concurrent appends on the base store.
 	auditChainMu *sync.Mutex
+	// auditCheckpointMu serializes WriteAuditCheckpoint's chain-walk + decide +
+	// create-checkpoint sequence within this process (ADR-029/#300). The PostgreSQL
+	// advisory lock in WithAuditCheckpointLock extends this across processes/replicas
+	// (ADR-039 HA). A pointer for the same reason as auditChainMu — a transaction-scoped
+	// LocalStorage must share its parent's mutex.
+	auditCheckpointMu *sync.Mutex
 }
 
 // NewLocalStorage creates a LocalStorage backed by the given *gorm.DB.
 func NewLocalStorage(db *gorm.DB) *LocalStorage {
-	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}}
+	return &LocalStorage{db: db, auditChainMu: &sync.Mutex{}, auditCheckpointMu: &sync.Mutex{}}
 }
