@@ -147,6 +147,14 @@ type Storage interface {
 	GetSecretDependency(ctx context.Context, id uint) (*models.SecretDependency, error)
 	ListSecretDependenciesForProject(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 	DeleteSecretDependency(ctx context.Context, id uint) error
+	// ListSecretDependenciesForProjectForUpdate is ListSecretDependenciesForProject,
+	// taking a row-level write lock on every returned edge on backends that support
+	// one (Postgres FOR UPDATE), mirroring LockUserForUpdate/
+	// ListGlobalAdminAssignmentsForUpdate (#260). Used inside a WithTransaction so
+	// AddSecretDependency's cycle-check read and the edge it writes serialize
+	// against a concurrent racing edge addition for the same project on Postgres/HA;
+	// secretDependencyMu covers same-process callers (SQLite, single instance).
+	ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.

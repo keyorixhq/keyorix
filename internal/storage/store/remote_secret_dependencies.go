@@ -20,6 +20,10 @@ func (rs *RemoteStorage) ListSecretDependenciesForProject(_ context.Context, _ u
 	return nil, remoteUnsupported("ListSecretDependenciesForProject")
 }
 
+func (rs *RemoteStorage) ListSecretDependenciesForProjectForUpdate(_ context.Context, _ uint) ([]*models.SecretDependency, error) {
+	return nil, remoteUnsupported("ListSecretDependenciesForProjectForUpdate")
+}
+
 func (rs *RemoteStorage) DeleteSecretDependency(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteSecretDependency")
 }
