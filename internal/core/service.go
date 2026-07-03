@@ -112,9 +112,28 @@ type KeyorixCore struct {
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).
 	auditStream *auditBroker
-	// notificationSink fans each in-app notification out to an external channel
-	// (email/webhook). nil = in-app only. Set from config via SetNotificationSink.
+	// notificationSink broadcasts a deployment-wide, aggregate notification (the
+	// compliance digest, an auto-rotation-failure summary) to every enabled external
+	// channel, including Slack/Teams/webhook. nil = no channel configured. Set from
+	// config via SetNotificationSink. Deliberately NOT used for per-user/per-project
+	// events (see recipientNotificationSink) — see #391.
 	notificationSink NotificationSink
+	// recipientNotificationSink fans a per-user/per-project notification (secret
+	// shared, share revoked, ownership transferred, access requested, anomaly alert,
+	// break-glass activation, …) out to external channels that can actually address a
+	// single recipient — currently just email. nil = in-app only.
+	//
+	// #391: chat (Slack/Teams) and generic webhook channels are, by design, ONE fixed
+	// deployment-wide destination an operator configures (there is no per-user chat-
+	// identity mapping in this codebase to DM a specific Slack user). Handing a
+	// per-user event straight to those channels — as the old single notificationSink
+	// did — broadcasts it to every member of that channel regardless of project
+	// membership or secret access, defeating every recipient-scoping computation this
+	// package does for the in-app row. So per-user events are routed ONLY to
+	// recipient-addressable channels (email, which already drops any event with no
+	// resolved address) and never to chat/webhook. Set from config via
+	// SetRecipientNotificationSink.
+	recipientNotificationSink NotificationSink
 	// connectManager proxies read-through federation to external secret stores
 	// (ADR-043). nil = Keyorix Connect disabled. Set via SetConnectManager.
 	connectManager *connect.Manager
@@ -337,10 +356,21 @@ type NotificationSink interface {
 	Deliver(ev NotificationEvent)
 }
 
-// SetNotificationSink wires an external notification sink. The server calls this at
-// startup when the install configures a notifications channel. nil = in-app only.
+// SetNotificationSink wires the broadcast (deployment-wide, aggregate) notification
+// sink used by SendComplianceDigest and notifyRotationFailures — typically every
+// enabled channel (email/Slack/Teams/webhook). The server calls this at startup when
+// the install configures a notifications channel. nil = no channel configured.
 func (c *KeyorixCore) SetNotificationSink(s NotificationSink) {
 	c.notificationSink = s
+}
+
+// SetRecipientNotificationSink wires the sink used for per-user/per-project
+// notifications (see recipientNotificationSink). The server calls this at startup
+// with ONLY the recipient-addressable channels it configured (currently email) —
+// never chat/webhook, which have no per-user identity mapping (#391). nil = in-app
+// only.
+func (c *KeyorixCore) SetRecipientNotificationSink(s NotificationSink) {
+	c.recipientNotificationSink = s
 }
 
 // NewKeyorixCore creates a new instance of the core business logic.

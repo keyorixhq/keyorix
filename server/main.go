@@ -407,10 +407,23 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("SIEM audit forwarding enabled (provider=%s)", sc.Provider)
 	}
 
-	// Wire external notification channels if configured. Each in-app notification is
-	// fanned out to every enabled channel (best-effort, async); with none enabled it
-	// stays in-app only.
-	var notifySinks []core.NotificationSink
+	// Wire external notification channels if configured.
+	//
+	// #391: two distinct fan-out sets are built, not one. broadcastSinks (every
+	// enabled channel) backs the deployment-wide, aggregate notifications
+	// (compliance digest, auto-rotation-failure summary) — those are genuinely
+	// relevant to the whole deployment's ops audience. recipientSinks (only
+	// channels that can address a single user — currently email) backs every
+	// per-user/per-project notification (secret shared, share revoked, ownership
+	// transferred, access requested, anomaly alert, break-glass activation, …).
+	// Slack/Teams/webhook are deliberately excluded from recipientSinks: they are
+	// one fixed destination an operator configures, with no per-user chat-identity
+	// mapping in this codebase to target a specific recipient, so routing a
+	// per-user event there would broadcast it to everyone with channel visibility
+	// regardless of project membership or secret access. See
+	// internal/core/notifications.go and internal/core/service.go.
+	var broadcastSinks []core.NotificationSink
+	var recipientSinks []core.NotificationSink
 	if wc := cfg.Notifications.Webhook; wc.Enabled {
 		sink, werr := notifychan.NewWebhook(notifychan.WebhookConfig{
 			Endpoint:           wc.Endpoint,
@@ -421,7 +434,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if werr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification webhook channel: %w", werr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification webhook channel enabled (endpoint=%s)", wc.Endpoint)
 	}
 	if ec := cfg.Notifications.Email; ec.Enabled {
@@ -436,7 +449,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if eerr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification email channel: %w", eerr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
+		recipientSinks = append(recipientSinks, sink)
 		log.Printf("Notification email channel enabled (host=%s)", ec.Host)
 	}
 	if cfg.Notifications.Slack.Enabled {
@@ -444,7 +458,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if serr != nil {
 			return nil, nil, fmt.Errorf("failed to init Slack notification channel: %w", serr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification Slack channel enabled")
 	}
 	if cfg.Notifications.Teams.Enabled {
@@ -452,11 +466,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if terr != nil {
 			return nil, nil, fmt.Errorf("failed to init Teams notification channel: %w", terr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification Teams channel enabled")
 	}
-	if sink := notifychan.NewMulti(notifySinks...); sink != nil {
+	if sink := notifychan.NewMulti(broadcastSinks...); sink != nil {
 		coreService.SetNotificationSink(sink)
+	}
+	if sink := notifychan.NewMulti(recipientSinks...); sink != nil {
+		coreService.SetRecipientNotificationSink(sink)
 	}
 
 	// Wire Keyorix Connect (ADR-043) read-through federation if enabled.
