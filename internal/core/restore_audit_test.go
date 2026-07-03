@@ -22,6 +22,7 @@ func TestRestoreOperationsAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.Project{}, &models.Environment{}, &models.AuditEvent{},
+		&models.UserRole{}, &models.GroupRole{}, &models.UserGroup{}, &models.Role{}, &models.Group{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()

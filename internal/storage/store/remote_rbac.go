@@ -376,6 +376,11 @@ func (rs *RemoteStorage) GetUserGroupRoleIDsAt(_ context.Context, _ uint, _ stor
 	return nil, fmt.Errorf("not supported in remote storage")
 }
 
+// GetUserRoleScopes is a server-internal authorization primitive.
+func (rs *RemoteStorage) GetUserRoleScopes(_ context.Context, _ uint) ([]storage.Scope, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
 // RoleSetHasPermission is a server-internal authorization primitive.
 func (rs *RemoteStorage) RoleSetHasPermission(_ context.Context, _ []uint, _ string) (bool, error) {
 	return false, fmt.Errorf("not supported in remote storage")

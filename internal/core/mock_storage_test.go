@@ -964,6 +964,14 @@ func (m *MockStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, sc
 	return args.Get(0).([]uint), args.Error(1)
 }
 
+func (m *MockStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]storage.Scope, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.Scope), args.Error(1)
+}
+
 func (m *MockStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
 	args := m.Called(ctx, roleIDs, permission)
 	return args.Bool(0), args.Error(1)

@@ -68,10 +68,18 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleI
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
 	}
-	if ok, aerr := c.Authorize(ctx, actorID, perm.Name, Scope{}); aerr != nil {
-		return fmt.Errorf("failed to resolve actor authority: %w", aerr)
-	} else if !ok {
-		return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)
+	// actorID 0 is the established "system" pseudo-actor used by startup/background
+	// processes that are never attacker-reachable (e.g. ReconcileRBACPermissions's
+	// additive, non-clobbering, once-per-boot top-up of newly-added canonical
+	// permissions — #293). Those callers have no role of their own to hold the
+	// permission being bundled, so the #169 self-permission check only applies to a
+	// real (non-zero) actor.
+	if actorID != 0 {
+		if ok, aerr := c.Authorize(ctx, actorID, perm.Name, Scope{}); aerr != nil {
+			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+		} else if !ok {
+			return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)
+		}
 	}
 	if err := c.storage.AssignPermissionToRole(ctx, roleID, permissionID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

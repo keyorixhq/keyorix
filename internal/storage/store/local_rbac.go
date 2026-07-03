@@ -179,18 +179,79 @@ func (ls *LocalStorage) GetUserRoles(ctx context.Context, userID uint) ([]*model
 // GetUserRoleIDsAt returns the IDs of roles directly assigned to userID that
 // apply at the target scope: a stored assignment applies when its project is
 // global (0) or equal, and its environment is global (0) or equal.
+//
+// A scoped (non-zero) project_id/environment_id must ALSO NOT resolve to a
+// soft-deleted project/environment row — mirroring the groups.deleted_at join
+// GetUserGroupRoleIDsAt already applies for a group's own soft-delete state
+// (#161). Without it, a role bound directly to a project/environment ID keeps
+// authorizing regardless of that project's/environment's own soft-delete state,
+// so deletion doesn't work as an access boundary for directly-bound roles at all.
+// The LEFT JOINs (not INNER) are required because project_id/environment_id 0
+// means "global" and has no corresponding row to join against — the "= 0 OR ..."
+// clause short-circuits before the joined columns are consulted in that case; a
+// scoped project_id/environment_id with no matching row at all (the joined column
+// is SQL NULL) is treated as not-deleted, same as every other "unknown" scope ID
+// this query already tolerates.
 func (ls *LocalStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
-		Where("user_id = ?", userID).
-		Where("project_id = 0 OR project_id = ?", scope.ProjectID).
-		Where("environment_id = 0 OR environment_id = ?", scope.EnvironmentID).
-		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
-		Distinct().Pluck("role_id", &ids).Error
+		Joins("LEFT JOIN projects ON projects.id = user_roles.project_id").
+		Joins("LEFT JOIN environments ON environments.id = user_roles.environment_id").
+		Where("user_roles.user_id = ?", userID).
+		Where("user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
+		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", time.Now()).
+		Distinct().Pluck("user_roles.role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return ids, nil
+}
+
+// GetUserRoleScopes returns the distinct (project, environment) scopes at which
+// userID holds ANY LIVE role, directly (user_roles) or via a live (non-deleted)
+// group (group_roles). See the storage.Storage interface doc for why this exists
+// (#165's scope-aware admin-rank-ceiling check).
+func (ls *LocalStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]storage.Scope, error) {
+	type scopeRow struct {
+		ProjectID     uint
+		EnvironmentID uint
+	}
+	seen := make(map[storage.Scope]struct{})
+
+	var direct []scopeRow
+	if err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
+		Select("project_id, environment_id").
+		Where("user_id = ?", userID).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
+		Group("project_id, environment_id").
+		Scan(&direct).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range direct {
+		seen[storage.Scope{ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID}] = struct{}{}
+	}
+
+	var viaGroups []scopeRow
+	if err := ls.db.WithContext(ctx).Table("group_roles").
+		Select("group_roles.project_id AS project_id, group_roles.environment_id AS environment_id").
+		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Where("user_groups.user_id = ?", userID).
+		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", time.Now()).
+		Group("group_roles.project_id, group_roles.environment_id").
+		Scan(&viaGroups).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range viaGroups {
+		seen[storage.Scope{ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID}] = struct{}{}
+	}
+
+	scopes := make([]storage.Scope, 0, len(seen))
+	for s := range seen {
+		scopes = append(scopes, s)
+	}
+	return scopes, nil
 }
 
 // ListProjectRoleAssignments returns every role assignment scoped to the project
@@ -298,6 +359,11 @@ func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) 
 // GetUserGroupRoleIDsAt returns the IDs of roles userID inherits via group
 // membership that apply at the target scope (same scope-matching rule as
 // GetUserRoleIDsAt).
+// GetUserGroupRoleIDsAt: like GetUserRoleIDsAt but for group-inherited role
+// grants. A scoped (non-zero) project_id/environment_id must ALSO resolve to a
+// LIVE project/environment row, same as GetUserRoleIDsAt (#161) — a group-bound
+// role scoped to a since-soft-deleted project previously kept authorizing every
+// group member regardless of the project's own soft-delete state.
 func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Table("group_roles").
@@ -305,9 +371,11 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 		// A soft-deleted group confers no roles, even though its membership/grant rows
 		// are kept for restore — exclude deleted groups from authorization.
 		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Joins("LEFT JOIN projects ON projects.id = group_roles.project_id").
+		Joins("LEFT JOIN environments ON environments.id = group_roles.environment_id").
 		Where("user_groups.user_id = ?", userID).
-		Where("group_roles.project_id = 0 OR group_roles.project_id = ?", scope.ProjectID).
-		Where("group_roles.environment_id = 0 OR group_roles.environment_id = ?", scope.EnvironmentID).
+		Where("group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
 		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", time.Now()).
 		Distinct().Pluck("group_roles.role_id", &ids).Error
 	if err != nil {

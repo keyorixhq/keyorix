@@ -21,7 +21,7 @@ func newSCIMGuardCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.Session{}, &models.AuditEvent{},
+		&models.Session{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
 	))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }

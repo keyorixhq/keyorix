@@ -19,6 +19,7 @@ func newRBACManagementCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
 	))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }

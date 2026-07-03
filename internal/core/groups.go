@@ -93,9 +93,29 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 
 // RestoreGroup reverses a soft-delete, bringing the group back with the role grants
 // and memberships it had at deletion. See CreateGroup for actorID semantics.
+//
+// #147: restoring reinstates EVERY role the group held atomically — potentially
+// several at once, including admin-tier ones — so before restoring, this checks the
+// group's whole role SET against the actor's own authority (requireGlobalAdmin
+// ToReinstateAdminRoles), the same ceiling roles.assign/requireAuthorityForRole is
+// meant to enforce on a direct grant. Without it, a principal holding only
+// roles.assign (the router's permission gate) who is themselves a member of an
+// admin-conferring group that was soft-deleted (e.g. an incident-response
+// revocation) could restore it and get their admin access back.
 func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+	}
+	roles, err := c.storage.GetGroupRoles(ctx, id)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	roleIDs := make([]uint, 0, len(roles))
+	for _, r := range roles {
+		roleIDs = append(roleIDs, r.ID)
+	}
+	if err := c.requireGlobalAdminToReinstateAdminRoles(ctx, actorID, roleIDs, "group"); err != nil {
+		return err
 	}
 	if err := c.storage.RestoreGroup(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

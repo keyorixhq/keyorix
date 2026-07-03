@@ -100,7 +100,15 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 // deletion-timestamp correlation), but the single generic event previously gave no
 // way to tell HOW MANY environments/secrets came back, so a DR-test or accidental
 // delete-then-undo left no forensic trail distinguishing "1 secret" from "200".
+//
+// #161: restoring reinstates every role bound to the project (any environment), so
+// before restoring, this checks that aggregate role SET against the actor's own
+// authority — the same treatment #147 applies to group restore. See
+// requireGlobalAdminToReinstateAdminRoles.
 func (c *KeyorixCore) RestoreProject(ctx context.Context, actorID, id uint) error {
+	if err := c.requireAuthorityToReinstateProjectRoles(ctx, actorID, id, "project"); err != nil {
+		return err
+	}
 	envCount, secretCount, err := c.storage.RestoreProject(ctx, id)
 	if err != nil {
 		return err
@@ -111,6 +119,23 @@ func (c *KeyorixCore) RestoreProject(ctx context.Context, actorID, id uint) erro
 	return nil
 }
 
+// requireAuthorityToReinstateProjectRoles collects every role bound directly to
+// projectID (any environment, user or group grant) and refuses if that set
+// contains an admin-tier role the actor cannot themselves match. Shared by
+// RestoreProject and RestoreEnvironment (an environment's role grants are a
+// subset of its project's).
+func (c *KeyorixCore) requireAuthorityToReinstateProjectRoles(ctx context.Context, actorID, projectID uint, objectDesc string) error {
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve project role grants: %w", err)
+	}
+	roleIDs := make([]uint, 0, len(assignments))
+	for _, a := range assignments {
+		roleIDs = append(roleIDs, a.RoleID)
+	}
+	return c.requireGlobalAdminToReinstateAdminRoles(ctx, actorID, roleIDs, objectDesc)
+}
+
 // DeleteEnvironment deletes an environment by ID.
 func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	return c.storage.DeleteEnvironment(ctx, id)
@@ -119,7 +144,13 @@ func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 // RestoreEnvironment clears the soft-delete on an environment, scoped to
 // projectID so a caller authorized for one project cannot restore another's.
 // actorID is the acting admin (0 = none). Audited as environment.restored.
+//
+// #161: see RestoreProject — the same aggregate role-set ceiling check applies,
+// scoped to the owning project (the environment's own grants are a subset of it).
 func (c *KeyorixCore) RestoreEnvironment(ctx context.Context, actorID, projectID, id uint) error {
+	if err := c.requireAuthorityToReinstateProjectRoles(ctx, actorID, projectID, "environment"); err != nil {
+		return err
+	}
 	if err := c.storage.RestoreEnvironment(ctx, projectID, id); err != nil {
 		return err
 	}
