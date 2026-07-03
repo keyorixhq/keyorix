@@ -7,8 +7,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -54,6 +56,14 @@ func (c *KeyorixCore) legalHoldGuard(ctx context.Context) error {
 
 // PlaceLegalHold activates a deployment-wide legal hold with a reason. Refuses if a
 // hold is already active. actorID is the placing admin.
+//
+// The active check below and the insert in CreateLegalHold are not atomic: two
+// concurrent calls can both observe "no active hold" before either commits (#305).
+// That TOCTOU window fails SAFE, not open — a partial unique index on legal_holds
+// (released) WHERE released = false means only one of the two inserts can succeed,
+// and the loser's CreateLegalHold returns storage.ErrLegalHoldAlreadyActive, which
+// is mapped to the same "already active" client error as the pre-check below rather
+// than a 500.
 func (c *KeyorixCore) PlaceLegalHold(ctx context.Context, actorID uint, reason string) (*models.LegalHold, error) {
 	if reason == "" {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a reason is required to place a legal hold")
@@ -66,6 +76,9 @@ func (c *KeyorixCore) PlaceLegalHold(ctx context.Context, actorID uint, reason s
 	hold, err := c.storage.CreateLegalHold(ctx, &models.LegalHold{
 		Reason: reason, PlacedBy: actorID, PlacedAt: c.now(), Released: false,
 	})
+	if errors.Is(err, storage.ErrLegalHoldAlreadyActive) {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a legal hold is already active")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
