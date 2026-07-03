@@ -164,9 +164,13 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 	})).Return(nil)
 	// RemoveProjectMember resolves and drops the role grant (best-effort). The
 	// role (5) doesn't carry roles.assign, so the last-admin guard (#236) is a
-	// fast no-op and doesn't need ListProjectRoleAssignments mocked.
+	// fast no-op. ListProjectRoleAssignments is still consulted unconditionally
+	// to build the per-grant RBAC audit trail (#234) before the bulk delete.
 	store.On("GetUserRoleIDsExact", ctx, uint(2), storage.Scope{ProjectID: 1}).Return([]uint{5}, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{5}, "roles.assign").Return(false, nil)
+	store.On("ListProjectRoleAssignments", ctx, uint(1)).Return([]storage.RoleAssignment{
+		{PrincipalType: "user", PrincipalID: 2, RoleID: 5, ProjectID: 1},
+	}, nil)
 	store.On("RemoveAllProjectRoleGrants", ctx, uint(2), uint(1)).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 

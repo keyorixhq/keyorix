@@ -119,6 +119,7 @@ func TestRemoveProjectMember_RevokesEnvironmentScopedGrantToo(t *testing.T) {
 	ctx := context.Background()
 	const proj = uint(7)
 	const prodEnv = uint(99)
+	const actor = uint(55)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "carol", Email: "carol@example.com", IsActive: true})
 	require.NoError(t, err)
@@ -127,7 +128,7 @@ func TestRemoveProjectMember_RevokesEnvironmentScopedGrantToo(t *testing.T) {
 	require.NoError(t, err)
 
 	// Project-level membership (what the Members UI shows)...
-	require.NoError(t, c.AddProjectMember(ctx, proj, u.ID, "project_developer"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_developer"))
 	// ...plus a SEPARATE environment-scoped grant (e.g. "prod-only access"),
 	// created the way POST /user-roles would (gated by GLOBAL roles.assign).
 	require.NoError(t, st.AssignRole(ctx, u.ID, role.ID, storage.Scope{ProjectID: proj, EnvironmentID: prodEnv}))
@@ -140,7 +141,7 @@ func TestRemoveProjectMember_RevokesEnvironmentScopedGrantToo(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, envScoped, 1)
 
-	require.NoError(t, c.RemoveProjectMember(ctx, proj, u.ID))
+	require.NoError(t, c.RemoveProjectMember(ctx, actor, proj, u.ID))
 
 	// Neither the project-level NOR the environment-scoped grant survives.
 	projectScoped, err = st.GetUserRoleIDsExact(ctx, u.ID, storage.Scope{ProjectID: proj})
@@ -158,12 +159,13 @@ func TestRemoveProjectMember_RefusesLastAdmin(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
+	const actor = uint(55)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "dave", Email: "dave@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
 
-	err = c.RemoveProjectMember(ctx, proj, u.ID)
+	err = c.RemoveProjectMember(ctx, actor, proj, u.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "last administrator")
 
@@ -180,12 +182,13 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
+	const actor = uint(55)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "erin", Email: "erin@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, proj, u.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_admin"))
 
-	err = c.SetProjectMemberRole(ctx, proj, u.ID, "project_viewer")
+	err = c.SetProjectMemberRole(ctx, actor, proj, u.ID, "project_viewer")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "last administrator")
 
@@ -201,16 +204,17 @@ func TestRemoveProjectMember_AllowsNonLastAdmin(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
+	const actor = uint(55)
 
 	u1, err := st.CreateUser(ctx, &models.User{Username: "frank", Email: "frank@example.com", IsActive: true})
 	require.NoError(t, err)
 	u2, err := st.CreateUser(ctx, &models.User{Username: "grace", Email: "grace@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, proj, u1.ID, "project_admin"))
-	require.NoError(t, c.AddProjectMember(ctx, proj, u2.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u1.ID, "project_admin"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u2.ID, "project_admin"))
 
 	// Removing one of two admins succeeds — the other keeps the project governed.
-	require.NoError(t, c.RemoveProjectMember(ctx, proj, u1.ID))
+	require.NoError(t, c.RemoveProjectMember(ctx, actor, proj, u1.ID))
 
 	members, err := c.ListProjectMembers(ctx, proj)
 	require.NoError(t, err)
@@ -218,7 +222,7 @@ func TestRemoveProjectMember_AllowsNonLastAdmin(t *testing.T) {
 	assert.Equal(t, "grace", members[0].Username)
 
 	// Now grace IS the last admin — removing her is refused.
-	err = c.RemoveProjectMember(ctx, proj, u2.ID)
+	err = c.RemoveProjectMember(ctx, actor, proj, u2.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "last administrator")
 }
@@ -229,12 +233,13 @@ func TestRemoveProjectMember_NonAdminAlwaysRemovable(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
 	const proj = uint(7)
+	const actor = uint(55)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "henry", Email: "henry@example.com", IsActive: true})
 	require.NoError(t, err)
-	require.NoError(t, c.AddProjectMember(ctx, proj, u.ID, "project_viewer"))
+	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
 
-	require.NoError(t, c.RemoveProjectMember(ctx, proj, u.ID))
+	require.NoError(t, c.RemoveProjectMember(ctx, actor, proj, u.ID))
 	members, err := c.ListProjectMembers(ctx, proj)
 	require.NoError(t, err)
 	assert.Empty(t, members)
