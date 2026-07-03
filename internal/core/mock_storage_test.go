@@ -19,6 +19,11 @@ func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() er
 	return true, fn()
 }
 
+// WithAuditCheckpointLock runs fn directly in tests (single instance, no DB lock).
+func (m *MockStorage) WithAuditCheckpointLock(_ context.Context, fn func() error) error {
+	return fn()
+}
+
 // WithTransaction runs fn directly against the mock (no real transaction in tests).
 func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
 	return fn(m)
@@ -73,8 +78,8 @@ func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
 	return nil
 }
 
-func (m *MockStorage) RestoreProject(_ context.Context, _ uint) error {
-	return nil
+func (m *MockStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
+	return 0, 0, nil
 }
 
 func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
@@ -111,6 +116,14 @@ func (m *MockStorage) ListProjectRoleAssignments(ctx context.Context, projectID 
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+}
+
+// ListGlobalAdminAssignmentsForUpdate is unused by the tests that construct a
+// MockStorage directly (they don't exercise RemoveUserRole's last-admin guard);
+// returns empty so the guard treats "no other admin" as the default in the rare
+// case something reaches it.
+func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
+	return nil, nil
 }
 
 func (m *MockStorage) CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error) {
@@ -208,9 +221,9 @@ func (m *MockStorage) ListAccessReviewCampaigns(ctx context.Context, projectID u
 	return args.Get(0).([]*models.AccessReviewCampaign), args.Error(1)
 }
 
-func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) error {
+func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error) {
 	args := m.Called(ctx, c)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error {
@@ -234,9 +247,9 @@ func (m *MockStorage) GetAccessReviewItem(ctx context.Context, id uint) (*models
 	return args.Get(0).(*models.AccessReviewItem), args.Error(1)
 }
 
-func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error {
+func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error) {
 	args := m.Called(ctx, item)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
@@ -298,6 +311,13 @@ func (m *MockStorage) ListSecretDependenciesForProject(ctx context.Context, proj
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.SecretDependency), args.Error(1)
+}
+
+// ListSecretDependenciesForProjectForUpdate has no row lock in the mock; it
+// reuses the ListSecretDependenciesForProject expectation, mirroring
+// LockUserForUpdate above.
+func (m *MockStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
+	return m.ListSecretDependenciesForProject(ctx, projectID)
 }
 
 func (m *MockStorage) DeleteSecretDependency(ctx context.Context, id uint) error {
@@ -394,6 +414,11 @@ func (m *MockStorage) ListBreakGlassActivations(ctx context.Context, projectID u
 
 func (m *MockStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
 	args := m.Called(ctx, a)
+	return args.Error(0)
+}
+
+func (m *MockStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error {
+	args := m.Called(ctx, id, revokedBy, revokedAt)
 	return args.Error(0)
 }
 
@@ -904,6 +929,11 @@ func (m *MockStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope
 	return args.Error(0)
 }
 
+func (m *MockStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error {
+	args := m.Called(ctx, userID, projectID)
+	return args.Error(0)
+}
+
 func (m *MockStorage) AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope storage.Scope, expiresAt time.Time) error {
 	args := m.Called(ctx, groupID, roleID, scope, expiresAt)
 	return args.Error(0)
@@ -952,6 +982,14 @@ func (m *MockStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, sc
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]uint), args.Error(1)
+}
+
+func (m *MockStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]storage.Scope, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.Scope), args.Error(1)
 }
 
 func (m *MockStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error) {
@@ -1777,7 +1815,10 @@ func (m *MockStorage) CreateWebAuthnCredential(_ context.Context, _ *models.WebA
 func (m *MockStorage) ListWebAuthnCredentials(_ context.Context, _ uint) ([]*models.WebAuthnCredential, error) {
 	return nil, nil
 }
-func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte) (*models.WebAuthnCredential, error) {
+func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (m *MockStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
 	return nil, nil
 }
 func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {

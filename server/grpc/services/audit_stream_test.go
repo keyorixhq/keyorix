@@ -63,7 +63,8 @@ func newStreamCore(t *testing.T) (*AuditGRPCService, *gorm.DB) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin"}).Error)
 	// User 1 = super_admin (global) so the audit.read check passes (stream tests
 	// authenticate as user 1); the denied test uses an ungranted user id.

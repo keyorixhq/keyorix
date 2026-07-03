@@ -27,6 +27,9 @@ func (h *SecretHandler) TransferOwnership(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var reqBody struct {
+		// The `validate:"required"` tag here is decorative: this handler never
+		// calls h.validator.Validate, relying instead on the manual == 0
+		// check below (see the same note in secrets_versions.go, #347).
 		NewOwnerID uint `json:"new_owner_id" validate:"required"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {

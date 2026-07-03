@@ -157,7 +157,16 @@ func (c *KeyorixCore) connectRefAllowed(ctx context.Context, actorType string, p
 // shell-style glob via path.Match, where * does not cross '/'. So "metrics/" still
 // grants everything under metrics/, "metrics/*" grants exactly one further path
 // segment, and "prod/*/db" matches prod/<env>/db. A malformed glob matches nothing.
+//
+// A ref containing a "." or ".." path segment (e.g. "myapp/../otherapp") is rejected
+// outright before either comparison: connect.RefHasDotSegment — see its doc comment —
+// covers the same HasPrefix-vs-RFC-3986-resolution gap this per-reference RBAC grant
+// would otherwise be vulnerable to, mirroring the guard on prefixAllowed for the
+// coarser allowed_refs check.
 func refMatches(pattern, ref string) bool {
+	if connect.RefHasDotSegment(ref) {
+		return false
+	}
 	if !strings.ContainsAny(pattern, "*?[") {
 		return strings.HasPrefix(ref, pattern)
 	}

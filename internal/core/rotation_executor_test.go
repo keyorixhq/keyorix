@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -371,6 +372,80 @@ func TestRunAutoRotation_GenerateUpstreamFailureNotStored(t *testing.T) {
 	assert.Equal(t, 1, latestVersion(t, db, 1).VersionNumber)
 }
 
+// failingProjectSecretsStore wraps LocalStorage and fails ListSecrets only for
+// filter.ProjectID == failProject, simulating a transient storage error scoped to
+// exactly one rotation policy's scope while a sibling project's policy still succeeds.
+type failingProjectSecretsStore struct {
+	*store.LocalStorage
+	failProject uint
+}
+
+func (s *failingProjectSecretsStore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
+	if filter.ProjectID != nil && *filter.ProjectID == s.failProject {
+		return nil, 0, errors.New("simulated storage failure")
+	}
+	return s.LocalStorage.ListSecrets(ctx, filter)
+}
+
+// #364: before the fix, a scopedPolicySecrets failure for one policy silently skipped
+// every auto-rotate-enabled, possibly critically-overdue secret in its scope with ZERO
+// operator-visible trace — contrast the dependency-list error a few lines later in the
+// same function, which already logged and degraded gracefully. This pins that (a) a
+// healthy policy's overdue secret still rotates (the run doesn't abort), and (b) the
+// failure is now logged, unlike before.
+func TestRunAutoRotation_LogsAndContinuesOnScopedSecretsError(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
+	))
+	fixed := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "healthy-proj"}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "broken-proj"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "prod"}).Error)
+	pid1, pid2 := uint(1), uint(2)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "healthy-policy", Scope: "project", ProjectID: &pid1, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 2, Name: "broken-policy", Scope: "project", ProjectID: &pid2, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 1, Name: "due-healthy", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active",
+		AutoRotate: true, LastRotatedAt: timePtr(fixed.Add(-60 * 24 * time.Hour)), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	// A due, auto-rotate-enabled secret under the BROKEN policy's scope — this must be
+	// skipped (its ListSecrets call errors before this row is ever seen), never rotated.
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 2, Name: "due-broken", ProjectID: 2, EnvironmentID: 2, IsSecret: true, Status: "active",
+		AutoRotate: true, LastRotatedAt: timePtr(fixed.Add(-90 * 24 * time.Hour)), CreatedAt: fixed.Add(-90 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 2, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-90 * 24 * time.Hour),
+	}).Error)
+
+	c := &KeyorixCore{storage: &failingProjectSecretsStore{LocalStorage: store.NewLocalStorage(db), failProject: pid2}}
+	c.now = func() time.Time { return fixed }
+
+	var n int
+	logged := captureLog(t, func() {
+		n, err = c.RunAutoRotation(context.Background())
+	})
+	require.NoError(t, err, "a single policy's scope-listing failure must not abort the whole run")
+	assert.Equal(t, 1, n, "the healthy policy's due secret still rotates")
+	assert.Equal(t, 1, latestVersion(t, db, 2).VersionNumber, "the secret under the broken policy's scope was never even considered, so it's untouched")
+
+	assert.Contains(t, logged, "broken-policy", "the failing policy's name must appear in the operator-visible log line")
+	assert.Contains(t, logged, "simulated storage failure")
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
+
 // A rotation failure broadcasts a single summary notification (fakeSink is defined in
 // notification_dispatch_test.go).
 func TestRunAutoRotation_NotifiesFailures(t *testing.T) {
@@ -404,6 +479,80 @@ func TestRunAutoRotation_NoFailuresNoNotify(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, sink.events)
 }
+
+// #391 bonus fix: failures in different projects must broadcast as separate,
+// project-scoped notifications — never bundled into one cross-project message.
+func TestRunAutoRotation_FailuresNotBundledAcrossProjects(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "proj-2"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "prod"}).Error)
+
+	pid1, pid2 := uint(1), uint(2)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid1, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 2, Name: "30-day", Scope: "project", ProjectID: &pid2, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+
+	failA := &fakeExecutor{name: "backend-a", err: errors.New("connection refused")}
+	failB := &fakeExecutor{name: "backend-b", err: errors.New("auth denied")}
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{failA, failB}))
+
+	// Project 1's secret fails via backend-a; project 2's (unrelated) secret fails via
+	// backend-b. Their names/reasons must never land in the same broadcast message.
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 1, Name: "proj1-db-password", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active",
+		AutoRotate: true, RotationBackend: "backend-a", RotationRef: "ref-a",
+		LastRotatedAt: ptrTime(fixed.Add(-60 * 24 * time.Hour)), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("orig1"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 2, Name: "proj2-api-key", ProjectID: 2, EnvironmentID: 2, IsSecret: true, Status: "active",
+		AutoRotate: true, RotationBackend: "backend-b", RotationRef: "ref-b",
+		LastRotatedAt: ptrTime(fixed.Add(-60 * 24 * time.Hour)), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 2, VersionNumber: 1, EncryptedValue: []byte("orig2"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+
+	sink := &fakeSink{}
+	c.SetNotificationSink(sink)
+
+	_, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, sink.events, 2, "one broadcast per project, never a single bundled message")
+	for _, ev := range sink.events {
+		assert.Equal(t, "rotation.failed", ev.Type)
+		require.NotNil(t, ev.ProjectID)
+		switch *ev.ProjectID {
+		case 1:
+			assert.Contains(t, ev.Message, "proj1-db-password")
+			assert.Contains(t, ev.Message, "connection refused")
+			assert.NotContains(t, ev.Message, "proj2-api-key", "project 1's broadcast must not name project 2's secret")
+			assert.NotContains(t, ev.Message, "auth denied", "project 1's broadcast must not carry project 2's failure reason")
+		case 2:
+			assert.Contains(t, ev.Message, "proj2-api-key")
+			assert.Contains(t, ev.Message, "auth denied")
+			assert.NotContains(t, ev.Message, "proj1-db-password", "project 2's broadcast must not name project 1's secret")
+			assert.NotContains(t, ev.Message, "connection refused", "project 2's broadcast must not carry project 1's failure reason")
+		default:
+			t.Fatalf("unexpected project ID %d", *ev.ProjectID)
+		}
+	}
+
+	// The audit trail still records one run-level summary (aggregate count only — no
+	// secret names/reasons, so bundling it is not itself a leak).
+	var auditEvents []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventAutoRotationFailures).Find(&auditEvents).Error)
+	require.Len(t, auditEvents, 1)
+	assert.Contains(t, auditEvents[0].Description, "2 secret")
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
 
 // rotationDriftStore wraps LocalStorage and fails UpdateSecret, so RotateSecret errors AFTER
 // the backend executor has already applied the new credential upstream — the split-brain /
