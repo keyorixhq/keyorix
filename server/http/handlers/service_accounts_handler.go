@@ -151,7 +151,7 @@ func (h *ServiceAccountHandler) CreateServiceAccount(w http.ResponseWriter, r *h
 		return
 	}
 
-	result, err := h.coreService.CreateServiceAccount(r.Context(), &core.CreateServiceAccountRequest{
+	result, err := h.coreService.CreateServiceAccount(r.Context(), userCtx.UserID, &core.CreateServiceAccountRequest{
 		Name:        reqBody.Name,
 		Description: reqBody.Description,
 		Scopes:      reqBody.Scopes,
@@ -233,7 +233,7 @@ func (h *ServiceAccountHandler) UpdateServiceAccount(w http.ResponseWriter, r *h
 		return
 	}
 
-	client, err := h.coreService.UpdateServiceAccount(r.Context(), clientID, &core.UpdateServiceAccountRequest{
+	client, err := h.coreService.UpdateServiceAccount(r.Context(), userCtx.UserID, clientID, &core.UpdateServiceAccountRequest{
 		Name:        reqBody.Name,
 		Description: reqBody.Description,
 		Scopes:      reqBody.Scopes,
@@ -269,7 +269,7 @@ func (h *ServiceAccountHandler) DeactivateServiceAccount(w http.ResponseWriter, 
 	}
 
 	clientID := chi.URLParam(r, "clientId")
-	if err := h.coreService.RevokeServiceAccount(r.Context(), clientID); err != nil {
+	if err := h.coreService.RevokeServiceAccount(r.Context(), userCtx.UserID, clientID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			h.sendError(w, "NotFound", "Service account not found", http.StatusNotFound, nil)
 		} else {
@@ -338,7 +338,7 @@ func (h *ServiceAccountHandler) CreateToken(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	result, err := h.coreService.CreateServiceToken(r.Context(), clientID, &core.CreateServiceTokenRequest{
+	result, err := h.coreService.CreateServiceToken(r.Context(), userCtx.UserID, clientID, &core.CreateServiceTokenRequest{
 		Scope:     reqBody.Scope,
 		ExpiresAt: reqBody.ExpiresAt,
 	})
@@ -384,7 +384,7 @@ func (h *ServiceAccountHandler) RevokeToken(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if err := h.coreService.RevokeServiceToken(r.Context(), uint(tokenID)); err != nil {
+	if err := h.coreService.RevokeServiceToken(r.Context(), userCtx.UserID, uint(tokenID)); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			h.sendError(w, "NotFound", "Token not found", http.StatusNotFound, nil)
 		} else {
