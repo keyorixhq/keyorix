@@ -642,6 +642,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := ensureUserNameIndex(db); err != nil {
 			return err
 		}
+		// Add a DB-level, case-insensitive, live-rows-only unique index on users.email
+		// (#117): CreateUser/signup/invite-accept/SCIM provisioning previously enforced
+		// email uniqueness only via a check-then-act read, letting concurrent creates for
+		// the identical email all succeed and leaving GetUserByEmail to resolve to an
+		// arbitrary one of the resulting rows. Additive + idempotent; the full AutoMigrate
+		// below covers fresh DBs.
+		if err := ensureUserEmailIndex(db); err != nil {
+			return err
+		}
 	}
 
 	// Close the share-create race (#136): a partial unique index on live rows so two
@@ -712,6 +721,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if err := ensureUserNameIndex(db); err != nil {
 		return err
 	}
+	if err := ensureUserEmailIndex(db); err != nil {
+		return err
+	}
 	return ensureShareRecordUniqueIndex(db)
 }
 
@@ -776,6 +788,29 @@ func ensureUserNameIndex(db *gorm.DB) error {
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_username_active ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial users username index: %w", err)
+	}
+	return nil
+}
+
+// ensureUserEmailIndex creates a partial, case-insensitive unique index on users.email
+// scoped to live (non-deleted) rows with a non-empty email (#117). Without a DB-level
+// constraint, email uniqueness was enforced only by a check-then-act read
+// (GetUserByEmail) before each create/update, which is racy: two concurrent
+// CreateUser/signup/invite-accept/SCIM-provision calls for the identical email could
+// both pass their pre-check before either write landed, producing multiple rows sharing
+// one email that GetUserByEmail then resolves to an arbitrary one of — an ambiguous
+// login/identity-resolution bug, empirically reproduced at a 100% rate under
+// concurrency. The index is on LOWER(email) to match GetUserByEmail's own
+// case-insensitive lookup (`LOWER(email) = LOWER(?)`) — an exact-match index would let
+// the race slip through on a case variant (Bob@x vs bob@x). Scoped to
+// `deleted_at IS NULL` so a soft-deleted (e.g. SCIM-deprovisioned) user's email is freed
+// for reuse on re-provisioning, mirroring ensureUserNameIndex; `email <> ''` so any
+// legacy rows with no email recorded don't collide with each other. Idempotent; works on
+// both SQLite and Postgres (both support expression indexes, partial indexes, and
+// IF [NOT] EXISTS).
+func ensureUserEmailIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
+		return fmt.Errorf("failed to create partial users email index: %w", err)
 	}
 	return nil
 }

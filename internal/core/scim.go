@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -143,6 +144,14 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
+		// #117: the FindSCIMUser dedup check above races with a concurrent provision call
+		// for the identical email — both can pass it before either commits. The DB-level
+		// partial unique index catches the loser here and CreateUser wraps it in
+		// ErrDuplicateEmail; surface the same clean error the dedup check above already
+		// returns for the sequential case, instead of a raw constraint-violation message.
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("a user already exists for this externalId/email")
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	// Minimal install-wide baseline role (ADR-021), best-effort.
@@ -173,8 +182,24 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		// identity resolution (SSO matches by email), so silently overwriting a low-priv
 		// account's email to an admin's would corrupt the email→account mapping and
 		// enable account linking/takeover. The create path already guards this.
-		if existing, eerr := c.storage.GetUserByEmail(ctx, *email); eerr == nil && existing != nil && existing.ID != user.ID {
-			return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
+		//
+		// #336: GetUserByEmail returns a non-nil error BOTH when the email is genuinely
+		// unused AND on a real DB failure — treating any error as "no collision" (the
+		// previous `eerr == nil && ...` shape) silently skipped this guard on a transient
+		// error, reintroducing the exact vulnerability it exists to prevent. Distinguish
+		// the two cases the same way FindSCIMUser's create-path lookup does: match the
+		// not-found sentinel text explicitly, and fail CLOSED (refuse the update) on any
+		// other error instead of silently proceeding.
+		existing, eerr := c.storage.GetUserByEmail(ctx, *email)
+		switch {
+		case eerr == nil:
+			if existing != nil && existing.ID != user.ID {
+				return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
+			}
+		case strings.Contains(eerr.Error(), i18n.T("ErrorUserNotFound", nil)):
+			// Genuinely unused — proceed.
+		default:
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), eerr)
 		}
 		user.Email = *email
 	}
@@ -212,6 +237,16 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 	user.UpdatedAt = c.now()
 	updated, err := c.storage.UpdateUser(ctx, user)
 	if err != nil {
+		// #120/#218: the email-uniqueness check above is a plain check-then-act read that
+		// races with a concurrent UpdateSCIMUser (or any other create/update) targeting the
+		// identical email — both can pass it before either commits. The DB-level partial
+		// unique index (uniq_users_email_active, #117) catches the loser here and
+		// UpdateUser wraps it in ErrDuplicateEmail; surface the same clean error the check
+		// above already returns for the sequential case, instead of a raw
+		// constraint-violation message.
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if deactivated {
@@ -230,8 +265,19 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 // everyone out. Mirrors guardLastGlobalAdmin's assignment scan but keyed on the target.
 func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
 	isAdmin, err := c.IsGlobalAdmin(ctx, targetID)
-	if err != nil || !isAdmin {
-		return nil // not an admin (or can't tell) — not the last-admin case
+	if err != nil {
+		// #337: "can't tell" is NOT the same as "confirmed not an admin". The previous
+		// code treated an IsGlobalAdmin lookup error identically to a confirmed non-admin
+		// (both fell through to `return nil`, permitting the deactivation/deprovision),
+		// silently disabling the last-admin lockout guard on exactly the failure mode (a
+		// DB hiccup, or connection-pool exhaustion an attacker could induce) it exists to
+		// protect against — the opposite of the fail-safe behaviour this guard is meant to
+		// provide. Fail CLOSED: refuse the operation rather than risk stranding the
+		// install with zero admins.
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if !isAdmin {
+		return nil // confirmed not an admin — not the last-admin case
 	}
 	adminIDs := c.installAdminRoleIDSet(ctx)
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)

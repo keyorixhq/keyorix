@@ -29,3 +29,15 @@ var ErrBreakGlassNotActive = errors.New("break-glass activation is not active")
 // be told cleanly that the membership already exists, rather than surfacing a raw
 // constraint-violation error or silently leaving an orphaned row.
 var ErrDuplicateActiveMembership = errors.New("an active membership already exists for this project and user")
+
+// ErrDuplicateEmail is returned (wrapped) by CreateUser/CreateUserWithRoleGrants/UpdateUser
+// when the write collides with the partial, case-insensitive unique index on users.email
+// (live rows only). Every email-uniqueness check in this codebase (CreateUser, signup,
+// invite-accept, SSO JIT-provision, SCIM provision/update) is a check-then-act read
+// followed by a later write, which is inherently racy — two concurrent calls for the
+// identical email can both pass their pre-check before either commits (#117). The DB-level
+// index makes the loser's write fail here instead of silently minting a second account
+// sharing the email (which left GetUserByEmail resolving to an arbitrary one of them);
+// callers translate this into a clean "email already in use" error rather than a raw
+// constraint-violation message.
+var ErrDuplicateEmail = errors.New("a user with this email already exists")

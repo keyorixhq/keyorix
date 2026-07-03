@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -27,6 +28,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -423,6 +425,14 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
+		// #117: the FindSCIMUser reuse-check above races with a concurrent JIT-provision
+		// (or any other create) for the identical email — both can pass it before either
+		// commits. The DB-level partial unique index catches the loser here and CreateUser
+		// wraps it in ErrDuplicateEmail; surface a clean error instead of a raw
+		// constraint-violation message.
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("a user with this email already exists")
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	role := strings.TrimSpace(p.DefaultRole)
