@@ -109,15 +109,25 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 // InviteToProjectWithLink creates an invitation and provisions its accept link
 // (ADR-028): an invitation_accept setup token bound to the invitation, delivered via
 // the configured channel. Returns the invitation and the delivery outcome. If
-// provisioning fails (e.g. base_url unset), the invitation still exists and is
-// returned with a nil result and the error, so the caller can resend rather than
-// losing the invite.
+// provisioning fails (e.g. base_url unset, or the resend throttle below), the
+// invitation still exists and is returned with a nil result and the error, so the
+// caller can resend rather than losing the invite.
+//
+// The link provisioning is throttled per (purpose, email) via
+// provisionSetupLinkThrottled — the same control ResendInvitationLink uses (#183) —
+// rather than the unthrottled provisionSetupLink an earlier version called directly.
+// Without this, a principal holding only project-scoped roles.assign could loop-call
+// this endpoint for the same target email to fire unbounded real SMTP sends from the
+// operator's mail relay (#345); reusing the existing (purpose, email) key rather than
+// adding an actor or per-invitation dimension keeps initial invites and resends of the
+// same target subject to one combined rate, matching how ResendInvitationLink already
+// treats every pending invite to the same email as one throttled subject.
 func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	inv, err := c.InviteToProject(ctx, projectID, email, role, invitedBy)
 	if err != nil {
 		return nil, nil, err
 	}
-	prov, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:      SetupPurposeInvitationAccept,
 		SubjectEmail: email,
 		InvitationID: &inv.ID,
@@ -201,13 +211,16 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 // InviteGlobalWithLink creates a global invitation and provisions its accept link
 // (ADR-028), mirroring InviteToProjectWithLink. A nil result with a non-nil error
 // and a non-nil invitation means the invite exists but the link couldn't be
-// delivered (e.g. base_url unset) — the caller can resend.
+// delivered (e.g. base_url unset, or the resend throttle) — the caller can resend.
+// Throttled per (purpose, email) via provisionSetupLinkThrottled for the same reason
+// as InviteToProjectWithLink (#345): the users.write-gated global-invite endpoint is
+// otherwise an equally loop-callable unbounded-SMTP vector.
 func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	inv, err := c.InviteGlobal(ctx, email, systemRole, assignments, invitedBy)
 	if err != nil {
 		return nil, nil, err
 	}
-	prov, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:      SetupPurposeInvitationAccept,
 		SubjectEmail: email,
 		InvitationID: &inv.ID,

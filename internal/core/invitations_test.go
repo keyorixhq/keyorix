@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -274,6 +275,87 @@ func TestListProjectInvitations_LazyExpire(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	assert.Equal(t, InvitationExpired, out[0].State)
+}
+
+// #345: InviteToProjectWithLink used to call the unthrottled provisionSetupLink
+// directly, so a principal with only project-scoped roles.assign could loop-call the
+// invite endpoint for the same target email to fire unbounded real SMTP sends. It must
+// now hit the same per-(purpose, email) min-interval throttle ResendInvitationLink
+// already enforces (#183).
+func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	c.SetCredentialDelivery(&fakeDeliverer{result: delivery.DeliveryResult{Channel: delivery.ChannelSMTP, Delivered: true}}, testBaseURL)
+	ctx := context.Background()
+	fixed := c.now()
+	anyAudit(store)
+
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
+		Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
+	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "a@b.com").Return(nil)
+	store.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
+
+	// First invite: a zero prior count on both windows, so it succeeds and mints a
+	// token — this is the send that a same-email loop must now be throttled against.
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
+
+	inv1, prov1, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9)
+	require.NoError(t, err)
+	require.NotNil(t, inv1)
+	require.NotNil(t, prov1)
+	assert.True(t, prov1.Delivered)
+
+	// Second call for the SAME target email, immediately after. Pre-fix this looped
+	// straight through to a second real SMTP send with no check at all.
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
+
+	inv2, prov2, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9)
+	require.Error(t, err, "the second same-email invite must be throttled, not delivered")
+	assert.Contains(t, err.Error(), "wait")
+	assert.Nil(t, prov2)
+	// The invitation row itself still exists (same contract as a base_url-unset
+	// failure) — only the link/email send is throttled, so the caller can resend once
+	// the window passes rather than losing the invite.
+	require.NotNil(t, inv2)
+	store.AssertNumberOfCalls(t, "CreateSetupToken", 1)
+}
+
+// #345: InviteGlobalWithLink has the same unthrottled-initial-send shape as
+// InviteToProjectWithLink, reachable via the users.write-gated global-invite endpoint.
+func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	c.SetCredentialDelivery(&fakeDeliverer{result: delivery.DeliveryResult{Channel: delivery.ChannelSMTP, Delivered: true}}, testBaseURL)
+	ctx := context.Background()
+	fixed := c.now()
+	anyAudit(store)
+
+	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 2}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
+		Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
+	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "c@d.com").Return(nil)
+	store.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
+
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
+
+	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9)
+	require.NoError(t, err)
+	require.NotNil(t, inv1)
+	require.NotNil(t, prov1)
+
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
+
+	inv2, prov2, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "wait")
+	assert.Nil(t, prov2)
+	require.NotNil(t, inv2)
+	store.AssertNumberOfCalls(t, "CreateSetupToken", 1)
 }
 
 // Access-request approval grants a real role, so both the immediate and TTL-bound
