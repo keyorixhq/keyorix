@@ -74,7 +74,10 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 	return updated, nil
 }
 
-// DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics.
+// DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics. It
+// refuses to delete a group holding the install's last global-admin-conferring
+// role grant (#107; see guardLastGlobalAdminGroupDelete) — deleting a group
+// cascades to remove every role grant it holds.
 func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
@@ -82,6 +85,9 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	group, err := c.storage.GetGroup(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if err := c.guardLastGlobalAdminGroupDelete(ctx, id); err != nil {
+		return err
 	}
 	if err := c.storage.DeleteGroup(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -148,10 +154,15 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, group
 }
 
 // RemoveUserFromGroup removes a user from a group. See AddUserToGroup for actorID
-// semantics.
+// semantics. It refuses to remove a user whose global admin-tier authority comes
+// solely from this group's role grant when no other admin route remains (#107;
+// see guardLastGlobalAdminMembership).
 func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, groupID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+	}
+	if err := c.guardLastGlobalAdminMembership(ctx, userID, groupID); err != nil {
+		return err
 	}
 	if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

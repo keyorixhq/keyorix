@@ -440,6 +440,14 @@ func (rs *RemoteStorage) ListProjectRoleAssignments(_ context.Context, _ uint) (
 	return nil, remoteUnsupported("ListProjectRoleAssignments")
 }
 
+// ListGlobalAdminAssignmentsForUpdate is a server-internal RBAC primitive backing
+// the last-admin-removal guard's atomicity fix (#340); like
+// ListProjectRoleAssignments, RBAC admin-removal guarding runs entirely against
+// LocalStorage server-side, so this is unsupported here.
+func (rs *RemoteStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
+	return nil, remoteUnsupported("ListGlobalAdminAssignmentsForUpdate")
+}
+
 func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {
 	return nil, remoteUnsupported("GetEnvironment")
 }

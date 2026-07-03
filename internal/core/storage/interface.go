@@ -81,6 +81,17 @@ type Storage interface {
 	// rows for a project access review. Global (project 0) grants are excluded:
 	// those are install-level, reviewed separately.
 	ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
+	// ListGlobalAdminAssignmentsForUpdate returns every global-scope (project 0,
+	// environment 0) direct user and group role grant whose role is in
+	// adminRoleIDs, taking a row-level write lock on backends that support one
+	// (Postgres: SELECT ... FOR UPDATE) so a concurrent racing removal serializes
+	// against this read. This is the atomicity fix for #340: guardLastGlobalAdmin's
+	// prior read-then-conditional-write let two admins racing to remove each
+	// other's role assignment both observe "another admin still exists" before
+	// either write landed, stranding the install. On SQLite this is a plain read;
+	// the caller's own process-level mutex serializes same-process callers,
+	// mirroring LockUserForUpdate/LockWebAuthnCredentialForUpdate.
+	ListGlobalAdminAssignmentsForUpdate(ctx context.Context, adminRoleIDs []uint) ([]RoleAssignment, error)
 	// LastUserSecretActivity returns, per user, the most recent secret-access time
 	// in the project (from the audit trail). Backs dormant-access detection in the
 	// access review — a grant whose principal has no recent activity is stale

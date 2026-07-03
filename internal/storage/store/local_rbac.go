@@ -18,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // --- Permissions ---
@@ -275,6 +276,55 @@ func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectI
 
 	var groupRows []models.GroupRole
 	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&groupRows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range groupRows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "group", PrincipalID: r.GroupID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
+}
+
+// ListGlobalAdminAssignmentsForUpdate returns every global-scope (project 0,
+// environment 0) direct user and group role grant whose role is in adminRoleIDs,
+// taking a row-level write lock on backends that support one (Postgres FOR
+// UPDATE), mirroring LockUserForUpdate/LockWebAuthnCredentialForUpdate. See the
+// Storage interface doc (#340) for why this exists: a concurrent racing removal
+// must serialize against this read on Postgres/HA; the caller's own process
+// mutex covers SQLite (single instance, no cross-process concern).
+func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context, adminRoleIDs []uint) ([]storage.RoleAssignment, error) {
+	if len(adminRoleIDs) == 0 {
+		return nil, nil
+	}
+	locked := ls.db.Dialector.Name() == "postgres"
+
+	var out []storage.RoleAssignment
+
+	userQ := ls.db.WithContext(ctx)
+	if locked {
+		userQ = userQ.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var userRows []models.UserRole
+	if err := userQ.Where("project_id = 0 AND environment_id = 0 AND role_id IN ?", adminRoleIDs).
+		Find(&userRows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range userRows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "user", PrincipalID: r.UserID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+
+	groupQ := ls.db.WithContext(ctx)
+	if locked {
+		groupQ = groupQ.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var groupRows []models.GroupRole
+	if err := groupQ.Where("project_id = 0 AND environment_id = 0 AND role_id IN ?", adminRoleIDs).
+		Find(&groupRows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, r := range groupRows {

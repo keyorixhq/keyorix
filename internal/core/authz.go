@@ -330,6 +330,193 @@ func (c *KeyorixCore) requireEqualOrGreaterAdminAuthority(ctx context.Context, a
 	return nil
 }
 
+// requireGranterHoldsRolePermissions refuses to GRANT roleID at scope unless the
+// actor already holds, at that scope or broader, EVERY permission bundled into the
+// role — the admin-rank-ceiling check on the GRANT step (#93/#107/#141), distinct
+// from and complementary to #169's check on role DEFINITION. #169 only stops a
+// roles.write holder from bundling a permission they don't hold into a role's
+// definition; it does nothing to stop a roles.assign holder from GRANTING an
+// already-defined, already-permission-rich role — including a pre-existing/seeded
+// builtin like "editor" — to a third party (or to themselves) without holding any
+// of its bundled permissions. c.Authorize already includes the admin-role bypass
+// and resolves a broader (e.g. global) grant the actor holds at a narrower target
+// scope, so a genuine admin, or an actor who already holds every bundled
+// permission at an equal-or-broader scope, is unaffected.
+//
+// actorID 0 is the established "system" pseudo-actor for genuinely non-attacker-
+// reachable callers (the local CLI's AssignRoleToUser); skipped exactly like
+// #169's analogous check on AssignPermissionToRole.
+func (c *KeyorixCore) requireGranterHoldsRolePermissions(ctx context.Context, actorID, roleID uint, scope Scope) error {
+	if actorID == 0 {
+		return nil
+	}
+	perms, err := c.storage.GetRolePermissions(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve role permissions: %w", err)
+	}
+	for _, p := range perms {
+		ok, aerr := c.Authorize(ctx, actorID, p.Name, scope)
+		if aerr != nil {
+			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+		}
+		if !ok {
+			return fmt.Errorf("cannot grant this role: you do not hold permission %q yourself", p.Name)
+		}
+	}
+	return nil
+}
+
+// groupHoldsGlobalAdminRole reports whether groupID carries a LIVE global-scope
+// (project 0, environment 0) grant of any role in adminIDs, per the pre-fetched
+// assignments — the cheap relevance check every group-path last-admin guard (#107)
+// runs first: a mutation touching a group with no admin-tier grant at all can
+// never strand the install, so there is nothing to compute or refuse.
+func groupHoldsGlobalAdminRole(assignments []storage.RoleAssignment, adminIDs map[uint]bool, groupID uint) bool {
+	for _, a := range assignments {
+		if a.PrincipalType == "group" && a.PrincipalID == groupID && adminIDs[a.RoleID] {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveGlobalAdminHolders expands the given global-scope assignments (both
+// direct user grants and group grants, the latter to their live members) into the
+// set of user IDs who hold admin-tier authority, after applying the optional
+// exclusions. Backs the group-path last-admin guards (#107): unlike
+// guardLastGlobalAdmin's simpler "does another assignment ROW exist" check
+// (sufficient when the removal itself deletes the admin-conferring row), removing
+// a single user from a group leaves the group's own role grant row intact — only
+// that one member's DERIVED authority disappears — so the check must expand group
+// grants to their actual live members, not just count rows.
+//
+//   - excludeAssignment, when non-nil, drops every assignment row it matches:
+//     the one (group, role) grant being removed (RemoveRoleFromGroup), or every
+//     row belonging to a group being deleted (DeleteGroup).
+//   - excludeMember, when non-nil, drops one specific (groupID, userID) member
+//     expansion while leaving the group's grant — and its OTHER members' derived
+//     authority — intact (RemoveUserFromGroup).
+//
+// Any storage error is returned, never swallowed: silently under-counting here
+// only makes the guard MORE likely to refuse (fail closed), but silently mis-
+// resolving a group's membership on a real error could do the opposite.
+func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs map[uint]bool, assignments []storage.RoleAssignment, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) (map[uint]bool, error) {
+	holders := make(map[uint]bool)
+	for _, a := range assignments {
+		if !adminIDs[a.RoleID] {
+			continue
+		}
+		if excludeAssignment != nil && excludeAssignment(a) {
+			continue
+		}
+		switch a.PrincipalType {
+		case "user":
+			holders[a.PrincipalID] = true
+		case "group":
+			members, merr := c.storage.ListGroupMembers(ctx, a.PrincipalID)
+			if merr != nil {
+				return nil, fmt.Errorf("failed to resolve group %d membership: %w", a.PrincipalID, merr)
+			}
+			for _, m := range members {
+				if excludeMember != nil && excludeMember(a.PrincipalID, m.ID) {
+					continue
+				}
+				holders[m.ID] = true
+			}
+		}
+	}
+	return holders, nil
+}
+
+// guardLastGlobalAdminGroupRole is guardLastGlobalAdmin's group-role-removal
+// counterpart (#107): refuses to remove roleID from groupID at the global scope
+// when doing so would leave the install with zero global admin-tier holders.
+func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID, roleID uint, scope Scope) error {
+	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
+		return nil // not the global scope — project admins are recoverable
+	}
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	if !adminIDs[roleID] {
+		return nil // not removing an install-admin role
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("failed to resolve global role assignments: %w", err)
+	}
+	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, func(a storage.RoleAssignment) bool {
+		return a.PrincipalType == "group" && a.PrincipalID == groupID && a.RoleID == roleID
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if len(holders) == 0 {
+		return fmt.Errorf("refusing to remove role %d from group %d: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings", roleID, groupID)
+	}
+	return nil
+}
+
+// guardLastGlobalAdminGroupDelete is guardLastGlobalAdmin's group-deletion
+// counterpart (#107): refuses to delete groupID when it holds a global admin-tier
+// role and doing so would leave the install with zero admin-tier holders —
+// deleting a group cascades to remove EVERY role grant it holds, not just one. A
+// group with no admin-tier grant at all is never blocked, regardless of the
+// install's overall admin count.
+func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, groupID uint) error {
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	if len(adminIDs) == 0 {
+		return nil // no install-admin role seeded — nothing to guard
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("failed to resolve global role assignments: %w", err)
+	}
+	if !groupHoldsGlobalAdminRole(assignments, adminIDs, groupID) {
+		return nil // this group carries no admin-tier grant — irrelevant to the guard
+	}
+	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, func(a storage.RoleAssignment) bool {
+		return a.PrincipalType == "group" && a.PrincipalID == groupID
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if len(holders) == 0 {
+		return fmt.Errorf("refusing to delete group %d: it holds the install's last administrative role grant, and deleting it would leave no super_admin/admin/system_admin at the global scope", groupID)
+	}
+	return nil
+}
+
+// guardLastGlobalAdminMembership is guardLastGlobalAdmin's group-membership-
+// removal counterpart (#107): refuses to remove userID from groupID when the
+// group's admin-tier grant is userID's only remaining route to global admin-tier
+// authority and no other user holds one either. The group's grant row survives
+// this removal, so — unlike the other two guards — this can't be answered by
+// excluding an assignment row; it must exclude just this one member's derived
+// authority via this one group. A group with no admin-tier grant at all is never
+// blocked, regardless of the install's overall admin count.
+func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID, groupID uint) error {
+	adminIDs := c.installAdminRoleIDSet(ctx)
+	if len(adminIDs) == 0 {
+		return nil // no install-admin role seeded — nothing to guard
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return fmt.Errorf("failed to resolve global role assignments: %w", err)
+	}
+	if !groupHoldsGlobalAdminRole(assignments, adminIDs, groupID) {
+		return nil // this group carries no admin-tier grant — irrelevant to the guard
+	}
+	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, nil, func(gID, uID uint) bool {
+		return gID == groupID && uID == userID
+	})
+	if err != nil {
+		return err
+	}
+	if len(holders) == 0 {
+		return fmt.Errorf("refusing to remove user %d from group %d: they may be the install's last administrator via this group's role grant, and removing them would leave no super_admin/admin/system_admin at the global scope", userID, groupID)
+	}
+	return nil
+}
+
 // dedupeUints returns ids with duplicates removed, preserving first-seen order.
 func dedupeUints(ids []uint) []uint {
 	if len(ids) <= 1 {

@@ -595,12 +595,19 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 		currentSet[r.Name] = true
 	}
 
-	// Route through the audited RBAC choke point (AssignUserRole/RemoveUserRole) so
-	// each individual role change lands in the RBAC audit trail with a structured
-	// RoleID, not just the coarse aggregate-count event below (#297). The acting
-	// principal is the logging-in user themself — the same attribution the
-	// aggregate auth.sso_roles_synced event below already used — since the grant is
-	// driven by their own IdP-asserted groups against the admin-configured map.
+	// Route through the audited RBAC choke point (assignUserRoleSystemGrant/
+	// RemoveUserRole) so each individual role change lands in the RBAC audit trail
+	// with a structured RoleID, not just the coarse aggregate-count event below
+	// (#297). The acting principal is the logging-in user themself — the same
+	// attribution the aggregate auth.sso_roles_synced event below already used —
+	// since the grant is driven by their own IdP-asserted groups against the
+	// admin-configured map. The grant deliberately uses assignUserRoleSystemGrant,
+	// not AssignUserRole: the #93/#107/#141 grant-ceiling check would require the
+	// logging-in user to already hold every permission of the role they're being
+	// auto-provisioned — impossible for their FIRST SSO-driven grant, and beside
+	// the point, since authorization here is rooted in the admin-configured
+	// GroupRoleMap and the verified IdP assertion, not in the user's own
+	// roles.assign-derived authority.
 	added, removed := 0, 0
 	for role := range managedRoles {
 		r, rerr := c.storage.GetRoleByName(ctx, role)
@@ -609,7 +616,7 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 		}
 		switch {
 		case desiredRoles[role] && !currentSet[role]:
-			if c.AssignUserRole(ctx, userID, userID, r.ID, Scope{}) == nil {
+			if c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}) == nil {
 				added++
 			}
 		case !desiredRoles[role] && currentSet[role]:
