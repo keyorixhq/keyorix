@@ -240,31 +240,72 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	return updated, nil
 }
 
-// DeleteUser soft-deletes a user by ID, audited under actorID (0 when no
-// actor is known, e.g. an unauthenticated internal caller).
-// The row is retained with deleted_at set; active sessions fail on next request.
-// Soft-deleted users can be restored within the purge retention window (default 30 days).
+// EventUserDeleted/EventUserRestored are audited on the admin delete/restore path
+// (distinct from SCIM's own scim.user_deprovisioned/scim.user_reactivated events).
+const (
+	EventUserDeleted  = "user.deleted"
+	EventUserRestored = "user.restored"
+)
+
+// DeleteUser deprovisions and soft-deletes a user by ID: blocks login
+// (AccountDeprovisioned, mirroring DeprovisionSCIMUser), terminates every session,
+// revokes every personal access token, and evicts them from the auth cache — then
+// soft-deletes the record. Before this, only the row was soft-deleted: IsActive and
+// AccountState were untouched and no session/PAT was revoked, leaving live
+// credentials usable for up to the auth-cache TTL and, since nothing was actually
+// revoked, indefinitely if the account was later restored (see RestoreUser).
+// Refuses to deprovision the install's last global administrator
+// (guardLastAdminDeactivation), same as SCIM DELETE. actorID is the acting admin
+// (for the audit trail; 0 = no actor known, e.g. an unauthenticated internal caller
+// — the audit event's UserID is then left nil rather than pointing at a nonexistent
+// actor).
 func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
-	if _, err := c.storage.GetUser(ctx, id); err != nil {
+	user, err := c.storage.GetUser(ctx, id)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
-	if err := c.storage.DeleteUser(ctx, id); err != nil {
+	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
+		return err
+	}
+	user.IsActive = false
+	if NormalizeAccountState(user.AccountState) != AccountSuspended {
+		user.AccountState = AccountDeprovisioned
+	}
+	user.UpdatedAt = c.now()
+	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, id)
+	var patHashes []string
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if _, err := tx.UpdateUser(ctx, user); err != nil {
+			return err
+		}
+		if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
+			return err
+		}
+		hashes, err := tx.RevokeAllPersonalAccessTokensForUser(ctx, id)
+		if err != nil {
+			return err
+		}
+		patHashes = hashes
+		return tx.DeleteUser(ctx, id)
+	}); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
-	var aid *uint
-	if actorID != 0 {
-		aid = &actorID
-	}
-	c.writeAuditEventFull(ctx, "user.deleted", aid, nil, nil, "",
-		fmt.Sprintf("user %d deleted", id))
+	c.invalidateTokenCache(sessionHashes...)
+	c.invalidateTokenCache(patHashes...)
+	c.writeAuditEvent(ctx, EventUserDeleted, actorPtr(actorID), nil,
+		fmt.Sprintf("deleted user %d (%s)", id, user.Username))
 	return nil
 }
 
-// RestoreUser clears the deleted_at timestamp on a soft-deleted user.
-func (c *KeyorixCore) RestoreUser(ctx context.Context, id uint) error {
+// RestoreUser clears the deleted_at timestamp on a soft-deleted user and forces
+// re-credentialing: the account comes back requiring a password reset rather than
+// silently reactivating, since DeleteUser's revoked sessions/PATs are gone for good
+// (hard-deleted/permanently revoked, not merely soft-deleted) and the old password
+// may be stale after an offboarding. actorID is the acting admin (audit trail).
+func (c *KeyorixCore) RestoreUser(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
@@ -274,6 +315,18 @@ func (c *KeyorixCore) RestoreUser(ctx context.Context, id uint) error {
 		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	user, err := c.storage.GetUser(ctx, id)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	user.IsActive = true
+	user.AccountState = AccountPasswordResetRequired
+	user.UpdatedAt = c.now()
+	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.writeAuditEvent(ctx, EventUserRestored, actorPtr(actorID), nil,
+		fmt.Sprintf("restored user %d (%s); password reset required", id, user.Username))
 	return nil
 }
 

@@ -64,7 +64,14 @@ type KeyorixCore struct {
 	// be seized by whoever calls /system/init first. The server sets this at startup
 	// (from KEYORIX_BOOTSTRAP_TOKEN, or a random value logged for the operator while the
 	// system is uninitialised); init refuses unless the caller presents a matching token.
-	bootstrapToken    string
+	bootstrapToken string
+	// bootstrapMu serializes BootstrapSystem's whole check-then-create sequence
+	// (permanent marker lookup, live user count, then seeding) through the admin
+	// CreateUser call, so two concurrent first calls — e.g. different usernames,
+	// both already holding the valid bootstrap token (#339) — cannot both observe
+	// "not yet initialised" and each create a "first admin". Zero value is ready to
+	// use. See auth_bootstrap.go.
+	bootstrapMu       sync.Mutex
 	secretValuePolicy SecretValuePolicy  // optional quality gate on secret values (off by default)
 	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
 	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
@@ -101,12 +108,6 @@ type KeyorixCore struct {
 	// row lock LockWebAuthnCredentialForUpdate takes on Postgres, the counter stays
 	// monotonic across replicas too. Zero value is ready to use. See webauthn.go.
 	webauthnCredentialMu sync.Mutex
-	// bootstrapMu serializes BootstrapSystem's "is this a fresh install" (total==0)
-	// check through the admin CreateUser call, so two concurrent callers who both
-	// already hold the valid bootstrap token (#339) — e.g. different usernames —
-	// cannot both observe an empty user table and each create a "first admin". Zero
-	// value is ready to use. See auth_bootstrap.go.
-	bootstrapMu sync.Mutex
 	// secretDependencyMu serializes AddSecretDependency's cycle-check read through
 	// the edge it writes (#260), so two concurrent callers racing to add A→B and
 	// B→A in the same project cannot both pass the pre-write cycle check before

@@ -62,6 +62,7 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.Environment{},
 		&models.Permission{},
 		&models.RolePermission{},
+		&models.SystemMetadata{},
 		&models.LoginAttempt{},
 		&models.PasswordHistory{},
 		&models.PersonalAccessToken{},

@@ -290,11 +290,14 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.coreService.DeleteUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error deleting user: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
 			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
-			return
+		case strings.Contains(err.Error(), "last install administrator"):
+			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
+		default:
+			sendError(w, "InternalError", "Failed to delete user", http.StatusInternalServerError, nil)
 		}
-		sendError(w, "InternalError", "Failed to delete user", http.StatusInternalServerError, nil)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -313,7 +316,7 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RestoreUser(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.RestoreUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error restoring user: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", "User not found or not soft-deleted", http.StatusNotFound, nil)
