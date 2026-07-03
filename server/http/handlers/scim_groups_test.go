@@ -10,10 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// provisionUser creates a SCIM user and returns its SCIM id.
+// provisionUser creates a SCIM user (with a real externalId, so it's SCIM-managed
+// per #167/#120's convention — scimManaged only looks at a stored ExternalID, which
+// ProvisionSCIMUser only sets from the payload's own externalId field) and returns
+// its SCIM id.
 func provisionUser(t *testing.T, h *SCIMHandler, userName string) string {
 	t.Helper()
-	body := `{"userName":"` + userName + `"}`
+	body := `{"userName":"` + userName + `","externalId":"idp-` + userName + `"}`
 	w := httptest.NewRecorder()
 	h.CreateUser(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", bytes.NewReader([]byte(body))))
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())

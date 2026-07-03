@@ -46,11 +46,13 @@ type spool struct {
 	stop chan struct{}
 	done chan struct{}
 
-	// replayMu serializes the whole replay() call end-to-end (distinct from mu,
-	// which is deliberately released across delivery). Without it, the loop's
-	// immediate on-start replay() and a concurrently-fired ticker/manual replay()
-	// could both read the same undelivered snapshot before either finishes its
-	// reconcile-and-rewrite, double-delivering every event still in the backlog.
+	// replayMu serializes replay() itself. In production exactly one goroutine (loop)
+	// ever calls replay(), so this never contends — but replay()'s file mutation lock
+	// (mu) is deliberately released across the network delivery calls, so if replay()
+	// were ever invoked concurrently (e.g. a future manual "flush now" trigger racing
+	// the ticker, or a test driving it directly), two overlapping calls would each
+	// independently snapshot the same undelivered lines and double-deliver them before
+	// either rewrites. This queues concurrent callers instead.
 	replayMu sync.Mutex
 }
 
@@ -133,6 +135,7 @@ func (s *spool) loop() {
 func (s *spool) replay() {
 	s.replayMu.Lock()
 	defer s.replayMu.Unlock()
+
 	// Snapshot under the lock, recording the byte length we read; any add() during the
 	// lock-free delivery below only appends BEYOND this offset (add never rewrites), so the
 	// reconcile can cleanly separate "what we attempted" from "what arrived meanwhile".
@@ -173,6 +176,14 @@ func (s *spool) replay() {
 			siemForwards.WithLabelValues(outcomeDelivered).Inc()
 		}
 	}
+	if err := sc.Err(); err != nil {
+		// bufio.Scanner stops silently on any read/token error (e.g. bufio.ErrTooLong for a
+		// line over the buffer cap, or a torn write). Everything from the failing line onward
+		// was never scanned, so it's about to be dropped by the rewrite below — log loudly so
+		// this isn't silent, even though we deliberately don't abort the replay (the lines
+		// already reconciled above are still correctly delivered/kept).
+		log.Printf("siem: spool scan stopped early (data past this point is being dropped from the spool): %v", err)
+	}
 
 	// Reconcile under the lock: the file is now [snapshot bytes][lines add()ed meanwhile].
 	// Rewrite = still-failed snapshot lines + the concurrently-added tail, so nothing that
@@ -200,6 +211,9 @@ func (s *spool) replay() {
 			kept := make([]byte, len(line))
 			copy(kept, line)
 			remaining = append(remaining, kept)
+		}
+		if err := ts.Err(); err != nil {
+			log.Printf("siem: spool tail-scan stopped early (data past this point is being dropped from the spool): %v", err)
 		}
 	}
 

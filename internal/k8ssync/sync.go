@@ -12,6 +12,7 @@ package k8ssync
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -57,12 +58,15 @@ type Sink interface {
 // Result summarises one reconcile pass. Created/Updated/Unchanged count target
 // Secrets (not individual keys); Failed counts targets skipped due to an error;
 // Deleted counts orphaned Secrets reaped by cleanup (or that WOULD be, in dry-run).
+// Revoked counts targets whose materialized Secret was removed because the
+// upstream value is definitively gone (deleted or access revoked) — #140.
 type Result struct {
 	Created   int
 	Updated   int
 	Unchanged int
 	Failed    int
 	Deleted   int
+	Revoked   int
 	Errors    []string
 }
 
@@ -96,6 +100,28 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 	for _, t := range targets {
 		desired, ferr := e.buildDesired(ctx, grouped[t])
 		if ferr != nil {
+			// #140: a DEFINITIVE failure (the upstream secret was deleted, or this
+			// agent's access to it was revoked — 404/401/403, never a transient
+			// network/5xx error) must propagate to the cluster: the materialized
+			// Secret is actively removed rather than left at its last-known,
+			// possibly-compromised or now-unauthorized value indefinitely (the
+			// prior behavior — skip and retry next pass — never converges, since
+			// the SAME definitive failure recurs every pass). A transient failure
+			// still just skips this pass and retries next time, unchanged.
+			if errors.Is(ferr, ErrUpstreamGone) {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: upstream secret gone or access revoked, removing stale value: %v", t, ferr))
+				if e.dryRun {
+					res.Revoked++
+					continue
+				}
+				if derr := e.sink.Delete(ctx, t.namespace, t.name); derr != nil {
+					res.Failed++
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: failed to remove revoked secret: %v", t, derr))
+					continue
+				}
+				res.Revoked++
+				continue
+			}
 			res.Failed++
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", t, ferr))
 			continue

@@ -21,9 +21,16 @@ auth:
 server:
   image:
     repository: ghcr.io/keyorixhq/keyorix-server
-    # Published GHCR tags today are `latest` / `main` / `sha-<commit>` (no semver
-    # tags yet). Pin to a `sha-*` or a future `vX.Y.Z` tag for reproducibility.
+    # `latest`/`main` are MUTABLE — the exact same tag can point at a different
+    # image tomorrow, defeating "what did I actually deploy" and any image-scan
+    # attestation pinned to this value. Pin to an immutable `sha-<commit>` tag, a
+    # `vX.Y.Z` release tag, or (strongest) a digest via `digest:` below for
+    # production.
     tag: "latest"
+    # digest, when set (e.g. "sha256:abc123..."), pins the exact image content —
+    # immune to a tag being retargeted after the fact — and takes precedence over
+    # tag.
+    digest: ""
     pullPolicy: IfNotPresent
   # The server holds the encryption keys on a single ReadWriteOnce volume and is
   # a single logical instance — do not scale beyond 1 replica.
@@ -37,7 +44,13 @@ server:
     size: 1Gi
     storageClass: ""
     accessMode: ReadWriteOnce
-  resources: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -47,13 +60,28 @@ web:
   enabled: true
   image:
     repository: ghcr.io/keyorixhq/keyorix-web
+    # See server.image.tag — the same mutable-tag caveat applies here.
     tag: latest
+    # digest, when set, takes precedence over tag (see server.image.digest).
+    digest: ""
     pullPolicy: IfNotPresent
   replicas: 1
   service:
     type: ClusterIP
     port: 80
-  resources: {}
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+  # corsAllowedOrigins allowlists origins (exact scheme+host+port, e.g.
+  # "https://app.example.com") the nginx-proxied /api, /auth, /system endpoints will
+  # accept CREDENTIALED cross-origin requests from. The bundled web UI's own JS calls
+  # these same-origin (served by this same nginx) and needs no entry here. Empty by
+  # default: no cross-origin API access unless explicitly opted in.
+  corsAllowedOrigins: []
 
 # ── Ingress (for the web UI) ──────────────────────────────────────────────────
 ingress:
@@ -82,7 +110,13 @@ postgresql:
     enabled: true
     size: 8Gi
     storageClass: ""
-  resources: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
 
 # Used when postgresql.enabled is false.
 externalDatabase:
@@ -91,5 +125,13 @@ externalDatabase:
   database: keyorix
   user: keyorix
   sslMode: require
+
+# ── Network policy ────────────────────────────────────────────────────────────
+# Scopes the server API and the bundled Postgres to same-namespace traffic —
+# without this both are reachable from any pod in the cluster that can route to
+# their Service. Disable only if your CNI doesn't support NetworkPolicy, or you
+# have an equivalent policy managed elsewhere.
+networkPolicy:
+  enabled: true
 
 imagePullSecrets: []

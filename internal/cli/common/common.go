@@ -2,6 +2,8 @@ package common
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -10,6 +12,33 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
+
+// cliActorEnvVar lets an operator self-assert their own Keyorix user ID for local
+// CLI mutations (#150). Local mode has no authenticated session — every core
+// mutation it drives is otherwise stamped actorID=0 ("no authenticated
+// principal") in the audit trail, including against a SHARED backend
+// (InitializeCoreService honors storage.type=postgres, not just the embedded
+// SQLite default), which weakens accountability in exactly the highest-blast-
+// radius pathway: someone who already holds the deployment's DB credentials.
+// This is self-asserted, not cryptographically verified — local mode already
+// has no authentication layer to verify against — but a self-asserted operator
+// ID beats an anonymous 0 for post-incident forensic reconstruction.
+const cliActorEnvVar = "KEYORIX_CLI_ACTOR"
+
+// ResolveActorID returns the operator-asserted actor ID from KEYORIX_CLI_ACTOR
+// (#150), or 0 (the existing "no authenticated principal" convention) if unset
+// or unparseable.
+func ResolveActorID() uint {
+	raw := os.Getenv(cliActorEnvVar)
+	if raw == "" {
+		return 0
+	}
+	id, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return uint(id)
+}
 
 // InitializeCoreService creates a core service instance using the storage factory
 // This function should be used by all CLI commands instead of directly creating storage
@@ -42,6 +71,15 @@ func InitializeCoreService() (*core.KeyorixCore, error) {
 	storageImpl, err := factory.CreateStorage(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage: %w", err)
+	}
+
+	// #150: local mode against a SHARED (non-embedded-SQLite) backend bypasses every
+	// HTTP-layer authz gate AND, without an explicit actor, attributes every
+	// mutation to nobody. Warn loudly rather than silently degrading the audit
+	// trail's accountability for what's already the highest-blast-radius pathway.
+	if cfg.Storage.Type != "" && cfg.Storage.Type != "local" && cfg.Storage.Type != "sqlite" && ResolveActorID() == 0 {
+		fmt.Fprintf(os.Stderr, "WARNING: local CLI mode is writing directly to a shared %q backend with no operator identifier set — audit events for these actions will show actorID=0 (\"no authenticated principal\"). Set %s=<your-keyorix-user-id> to attribute them to yourself.\n",
+			cfg.Storage.Type, cliActorEnvVar)
 	}
 
 	// Create core service and wire credential delivery (ADR-028) so a CLI admin can

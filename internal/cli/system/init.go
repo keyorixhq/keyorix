@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
@@ -74,6 +75,7 @@ func init() {
 
 func runInit(cmd *cobra.Command, args []string) error {
 	if initServer != "" {
+		common.WarnInsecureFlag(cmd, "admin-password", "consider leaving it unset and changing the password after first login instead.")
 		return runRemoteInit()
 	}
 
@@ -137,7 +139,7 @@ func generateConfigFile() error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	if err := securefiles.SecureWriteFile(".", configPath, templateData, 0600); err != nil {
+	if err := securefiles.SecureWriteFileSync(".", configPath, templateData, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

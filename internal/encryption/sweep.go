@@ -73,27 +73,32 @@ func SweepAllTables(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionSe
 	}
 	result.PasswordResetsSwept = sweptResets
 
-	// These three tables are also DEK-encrypted (via Service.EncryptSecret) but were
-	// previously omitted from the sweep — so a DEK rotation orphaned their ciphertext
-	// under the wiped old key (TOTP secrets, dynamic-secret admin DSNs and lease
-	// credentials), breaking MFA login and dynamic-secret access irrecoverably.
-	sweptMFA, err := sweepMFASecrets(tx, oldSvc, newSvc, newKeyVersion)
+	// These three tables are also DEK-encrypted but were previously omitted from the
+	// sweep entirely — so a DEK rotation orphaned their ciphertext under the wiped old
+	// key (TOTP secrets, dynamic-secret admin DSNs and lease credentials), breaking
+	// MFA login and dynamic-secret access irrecoverably. They are also AAD-bound
+	// (#94) as of this fix, so — like sweepSecretVersions — each also upgrades any
+	// still-legacy (no-AAD) row it encounters, contributing to LegacyAADUpgraded.
+	sweptMFA, legacyMFA, err := sweepMFASecrets(tx, oldSvc, newSvc, newKeyVersion)
 	if err != nil {
 		return nil, fmt.Errorf("mfa_secrets sweep failed: %w", err)
 	}
 	result.MFASecretsSwept = sweptMFA
+	result.LegacyAADUpgraded += legacyMFA
 
-	sweptDynConfigs, err := sweepDynamicSecretConfigs(tx, oldSvc, newSvc, newKeyVersion)
+	sweptDynConfigs, legacyDynConfigs, err := sweepDynamicSecretConfigs(tx, oldSvc, newSvc, newKeyVersion)
 	if err != nil {
 		return nil, fmt.Errorf("dynamic_secret_configs sweep failed: %w", err)
 	}
 	result.DynamicSecretConfigsSwept = sweptDynConfigs
+	result.LegacyAADUpgraded += legacyDynConfigs
 
-	sweptDynLeases, err := sweepDynamicSecretLeases(tx, oldSvc, newSvc, newKeyVersion)
+	sweptDynLeases, legacyDynLeases, err := sweepDynamicSecretLeases(tx, oldSvc, newSvc, newKeyVersion)
 	if err != nil {
 		return nil, fmt.Errorf("dynamic_secret_leases sweep failed: %w", err)
 	}
 	result.DynamicSecretLeasesSwept = sweptDynLeases
+	result.LegacyAADUpgraded += legacyDynLeases
 
 	return result, nil
 }

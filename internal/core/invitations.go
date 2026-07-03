@@ -59,12 +59,25 @@ func (c *KeyorixCore) requireAuthorityForRole(ctx context.Context, actorID, proj
 	if !isAdminRoleName(role) {
 		return nil
 	}
+	if err := c.requireAdminAuthorityAt(ctx, actorID, projectID); err != nil {
+		return fmt.Errorf("only an administrator can grant the administrative role %q: %w", role, err)
+	}
+	return nil
+}
+
+// requireAdminAuthorityAt refuses unless actorID holds an admin role (adminRoleNames)
+// directly assigned at the given project scope (0 = global). The shared primitive
+// behind requireAuthorityForRole (gating a role GRANT) and any other action that
+// carries equivalent risk without being a role grant per se — e.g. binding a
+// rotation backend to a secret (#90): the backend often carries org-wide admin
+// credentials, so the same escalation-by-proxy ceiling applies.
+func (c *KeyorixCore) requireAdminAuthorityAt(ctx context.Context, actorID, projectID uint) error {
 	ids, err := c.storage.GetUserRoleIDsAt(ctx, actorID, storage.Scope{ProjectID: projectID})
 	if err != nil {
-		return fmt.Errorf("failed to resolve granter authority: %w", err)
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
 	if !c.roleSetContainsAdmin(ctx, ids) {
-		return fmt.Errorf("only an administrator can grant the administrative role %q", role)
+		return fmt.Errorf("admin authority is required")
 	}
 	return nil
 }
@@ -109,15 +122,25 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 // InviteToProjectWithLink creates an invitation and provisions its accept link
 // (ADR-028): an invitation_accept setup token bound to the invitation, delivered via
 // the configured channel. Returns the invitation and the delivery outcome. If
-// provisioning fails (e.g. base_url unset), the invitation still exists and is
-// returned with a nil result and the error, so the caller can resend rather than
-// losing the invite.
+// provisioning fails (e.g. base_url unset, or the resend throttle below), the
+// invitation still exists and is returned with a nil result and the error, so the
+// caller can resend rather than losing the invite.
+//
+// The link provisioning is throttled per (purpose, email) via
+// provisionSetupLinkThrottled — the same control ResendInvitationLink uses (#183) —
+// rather than the unthrottled provisionSetupLink an earlier version called directly.
+// Without this, a principal holding only project-scoped roles.assign could loop-call
+// this endpoint for the same target email to fire unbounded real SMTP sends from the
+// operator's mail relay (#345); reusing the existing (purpose, email) key rather than
+// adding an actor or per-invitation dimension keeps initial invites and resends of the
+// same target subject to one combined rate, matching how ResendInvitationLink already
+// treats every pending invite to the same email as one throttled subject.
 func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	inv, err := c.InviteToProject(ctx, projectID, email, role, invitedBy)
 	if err != nil {
 		return nil, nil, err
 	}
-	prov, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:      SetupPurposeInvitationAccept,
 		SubjectEmail: email,
 		InvitationID: &inv.ID,
@@ -201,13 +224,16 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 // InviteGlobalWithLink creates a global invitation and provisions its accept link
 // (ADR-028), mirroring InviteToProjectWithLink. A nil result with a non-nil error
 // and a non-nil invitation means the invite exists but the link couldn't be
-// delivered (e.g. base_url unset) — the caller can resend.
+// delivered (e.g. base_url unset, or the resend throttle) — the caller can resend.
+// Throttled per (purpose, email) via provisionSetupLinkThrottled for the same reason
+// as InviteToProjectWithLink (#345): the users.write-gated global-invite endpoint is
+// otherwise an equally loop-callable unbounded-SMTP vector.
 func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	inv, err := c.InviteGlobal(ctx, email, systemRole, assignments, invitedBy)
 	if err != nil {
 		return nil, nil, err
 	}
-	prov, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:      SetupPurposeInvitationAccept,
 		SubjectEmail: email,
 		InvitationID: &inv.ID,
@@ -232,7 +258,11 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 			if err != nil {
 				return fmt.Errorf("unknown system role %q: %w", inv.SystemRole, err)
 			}
-			if err := c.storage.AssignRole(ctx, userID, role.ID, storage.Scope{ProjectID: 0}); err != nil {
+			// Routed through the audited wrapper — this is the moment of privilege
+			// grant for a global invitation (up to and including super_admin), which
+			// previously left zero trace of any kind (#299). Attributed to the inviter,
+			// consistent with the per-project assignment grants below.
+			if err := c.AssignUserRole(ctx, inv.InvitedBy, userID, role.ID, Scope{ProjectID: 0}); err != nil {
 				return fmt.Errorf("failed to grant system role: %w", err)
 			}
 		}
@@ -350,6 +380,13 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 			return nil, fmt.Errorf("unknown role %q: %w", suggestedRole, err)
 		}
 	}
+	// The target project must exist and be live — GetProject's default soft-delete scope
+	// excludes a deleted project, so this also refuses a request against one that has been
+	// soft-deleted (#371). Otherwise a request can sit pending against a project an admin
+	// believes is gone, waiting to be approved (and go live) whenever it's restored.
+	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("project %d not found: %w", projectID, err)
+	}
 	now := c.now()
 	expires := now.Add(accessRequestTTL)
 	req := &models.AccessRequest{
@@ -436,6 +473,16 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	if req.State != AccessRequestPending {
 		return nil, fmt.Errorf("only a pending request can be approved (state is %s)", req.State)
 	}
+	// The target project must still be live at approval time (#371) — DeleteProject never
+	// touches access_requests, so a request can otherwise sit pending across a project
+	// soft-delete and be approved afterward, producing a role grant scoped to a
+	// nonexistent project that goes live again — against potentially-stale intent — the
+	// moment the project is later restored, with no re-review of whether the original
+	// approval still makes sense. GetProject's default soft-delete scope makes this check
+	// double as the soft-delete check.
+	if _, err := c.storage.GetProject(ctx, req.ProjectID); err != nil {
+		return nil, fmt.Errorf("cannot approve: project %d no longer exists", req.ProjectID)
+	}
 	// Enforce the request's own TTL here, not only on the list path. GetAccessRequest
 	// returns the stored record verbatim, so a request whose expiry has passed is still
 	// State==pending until something reconciles it — approving it would grant access on a
@@ -521,12 +568,15 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	grantDesc := role
 	if grantTTL > 0 {
 		expiresAt := now.Add(grantTTL)
-		if err := c.storage.AssignRoleWithExpiry(ctx, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
+		// Routed through the audited wrapper so this grant lands in the RBAC audit
+		// trail with a structured RoleID, alongside the generic access_request.approved
+		// event below (#298).
+		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", role, expiresAt.UTC().Format(time.RFC3339), grantTTL)
 	} else {
-		if err := c.storage.AssignRole(ctx, req.UserID, roleModel.ID, scope); err != nil {
+		if err := c.AssignUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 	}

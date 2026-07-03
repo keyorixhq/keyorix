@@ -88,6 +88,59 @@ func TestRevokeRiskException(t *testing.T) {
 	require.NoError(t, c.RevokeRiskException(context.Background(), 3, 5))
 }
 
+// #170: the creator of a risk exception cannot approve their own exception — dual
+// control. The audit trail records the denial distinctly (Success=false) and the
+// exception is left unapproved (no UpdateRiskException call expected).
+func TestApproveRiskException_DeniesSelfApproval(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
+	var audited *models.AuditEvent
+	store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(ev *models.AuditEvent) bool {
+		if ev.EventType == EventRiskExceptionApproved {
+			audited = ev
+			return true
+		}
+		return false
+	})).Return(nil)
+
+	c := riskCore(store, now)
+	err := c.ApproveRiskException(context.Background(), 9, 5) // actor 9 == creator 9
+	require.Error(t, err, "the creator must not be able to approve their own exception")
+	assert.Contains(t, err.Error(), "cannot approve it")
+	require.NotNil(t, audited, "the denial must still be audited")
+	require.NotNil(t, audited.Success)
+	assert.False(t, *audited.Success)
+	store.AssertNotCalled(t, "UpdateRiskException", mock.Anything, mock.Anything)
+}
+
+// A DIFFERENT principal than the creator may approve — the exception is marked
+// approved and attributed to the approver.
+func TestApproveRiskException_DifferentActorSucceeds(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, ExpiresAt: now.Add(24 * time.Hour)}, nil)
+	store.On("UpdateRiskException", mock.Anything, mock.MatchedBy(func(e *models.RiskException) bool {
+		return e.ID == 5 && e.Approved && e.ApprovedBy == 3 && e.ApprovedAt != nil
+	})).Return(nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	c := riskCore(store, now)
+	require.NoError(t, c.ApproveRiskException(context.Background(), 3, 5))
+}
+
+// An already-approved exception cannot be approved again.
+func TestApproveRiskException_RejectsAlreadyApproved(t *testing.T) {
+	now := time.Now()
+	store := new(MockStorage)
+	store.On("GetRiskException", mock.Anything, uint(5)).Return(&models.RiskException{ID: 5, Title: "x", CreatedBy: 9, Approved: true, ExpiresAt: now.Add(24 * time.Hour)}, nil)
+
+	c := riskCore(store, now)
+	err := c.ApproveRiskException(context.Background(), 3, 5)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already approved")
+}
+
 func TestCountActiveRiskExceptions(t *testing.T) {
 	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
 	store := new(MockStorage)

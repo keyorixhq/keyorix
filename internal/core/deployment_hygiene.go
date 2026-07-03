@@ -1,10 +1,12 @@
 // deployment_hygiene.go — install-wide hygiene rollup: aggregate every project's
 // hygiene posture (orphaned / unused / expiring secrets, stale machine identities,
 // rotation-overdue) into deployment-wide totals plus a per-project breakdown of the
-// projects that actually carry debt. Counts only — no names or values of secrets —
-// so it is safe to surface to an admin overseeing many projects, and cheap enough to
-// poll for a dashboard. Parallels the deployment-wide PAT ([[pat_hygiene]]) and
-// machine-token hygiene views; built on the per-project [[project_hygiene]] summary.
+// projects that actually carry debt. Counts only — no secret names or values — but
+// the per-project breakdown DOES name every project deployment-wide, which a
+// zero-membership account has no other route to see, so the route requires audit.read
+// (not the universal system_viewer baseline system.read; see #273). Parallels the
+// deployment-wide PAT ([[pat_hygiene]]) and machine-token hygiene views; built on the
+// per-project [[project_hygiene]] summary.
 package core
 
 import (

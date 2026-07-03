@@ -30,6 +30,47 @@ func init() {
 	utilruntime.Must(secretsv1alpha1.AddToScheme(scheme))
 }
 
+// secretCacheOptions scopes the manager's Secret informer to only Secrets the operator
+// itself manages, and routes every other Secret read straight to the API server instead
+// of through that (now-restricted) cache.
+//
+// The operator is deployed as a single cluster-wide instance: it watches KeyorixSecret CRs
+// (a namespaced CRD) across every namespace, with no --watch-namespaces flag or other
+// dynamic-namespace-discovery mechanism, so its ClusterRole necessarily grants Secret
+// get/list/watch/create/update/patch cluster-wide too — the operator genuinely cannot
+// predict which namespace the next CR (and its TokenSecretRef/target Secret) will land in,
+// and Kubernetes RBAC has no way to scope list/watch by resourceNames or to a dynamically
+// changing namespace set. See #327 and operator/config/rbac/role.yaml /
+// deploy/helm/keyorix-operator/templates/rbac.yaml for the fuller writeup.
+//
+// What IS avoidable is controller-runtime's default behavior of caching every Secret in
+// the cluster in the operator's own process memory just because SetupWithManager calls
+// Owns(&corev1.Secret{}) to watch the Secrets it owns. That default cache would hold the
+// full contents of every Secret in the cluster — including ones this operator has no
+// relationship to — turning a compromise of the operator process (e.g. the SSRF/dependency
+// findings #184/#240) into a trivial in-memory dump of the entire cluster's Secrets instead
+// of just the ones it manages. Restricting the informer to controller.ManagedByLabel closes
+// that gap: only Secrets this operator previously created (and therefore already has full
+// read/write RBAC over anyway) are ever resident in its cache.
+//
+// Token Secrets (read via TokenSecretRef) and not-yet-adopted target Secrets never carry
+// that label, so DisableFor routes their reads around the label-restricted cache to a live
+// API call — they stay correctly readable on every reconcile, just uncached.
+func secretCacheOptions() (cache.Options, client.Options) {
+	managedByThisOperator := labels.SelectorFromSet(map[string]string{
+		controller.ManagedByLabel: controller.ManagedByValue,
+	})
+	return cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {Label: managedByThisOperator},
+			},
+		}, client.Options{
+			Cache: &client.CacheOptions{
+				DisableFor: []client.Object{&corev1.Secret{}},
+			},
+		}
+}
+
 func main() {
 	var metricsAddr, probeAddr, allowedServers string
 	var enableLeaderElection bool
@@ -47,28 +88,18 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	setupLog := ctrl.Log.WithName("setup")
 
+	secretCache, secretClient := secretCacheOptions()
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "keyorix-operator.secrets.keyorix.io",
-		// #124: without this, the default cache watches/caches EVERY Secret in
-		// every namespace the manager can reach — including every token Secret CR
-		// authors reference, unrelated to this operator entirely. Scope the
-		// shared informer cache to only Secrets this operator manages (the label
-		// it always stamps on target Secrets in applySecret); Owns() still fires
-		// correctly since our own target Secrets always carry the label. A token
-		// Secret lookup goes through the manager's uncached APIReader instead
-		// (wired into the reconciler below) — a one-off read has no reason to be
-		// watched/cached at all.
-		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				&corev1.Secret{}: {
-					Label: labels.SelectorFromSet(labels.Set{controller.ManagedByLabel: controller.ManagedByValue}),
-				},
-			},
-		},
+		// Bound the blast radius of the cluster-wide Secret RBAC this operator must hold
+		// (see secretCacheOptions and #327/#124): don't cache every Secret in the cluster,
+		// only ones this operator manages.
+		Cache:  secretCache,
+		Client: secretClient,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

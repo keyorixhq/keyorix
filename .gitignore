@@ -191,3 +191,6 @@ certs/
 
 # compiled binary debris (use bin/ via make build)
 /main
+
+# throwaway binaries / test artifacts
+/.scratch/

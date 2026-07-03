@@ -24,12 +24,28 @@ import (
 // EventAutoRotationFailures is audited once per run when one or more secrets failed.
 const EventAutoRotationFailures = "rotation.failures_alerted"
 
-// notifyRotationFailures broadcasts a single summary of the run's rotation failures to
-// the configured notification channel (Slack/Teams/webhook) — a silently-failed
-// credential rotation is a security event operators must see. No-op when no sink is
-// wired or nothing failed; the sink is non-blocking. Also audited.
-func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, failed map[uint]string) {
-	if len(failed) == 0 {
+// EventSecretRotateFailed and EventSecretRotateIncomplete are audited by
+// RotateSecretOnDemand (#193) when a manual/operator-triggered rotation of a
+// backend-bound secret fails outright, or partially completes (new credential minted
+// but a prior one survived upstream), respectively — distinct from the plain
+// "secret.rotated" success event so an operator can find and act on them.
+const (
+	EventSecretRotateFailed     = "secret.rotate_failed"
+	EventSecretRotateIncomplete = "secret.rotate_incomplete"
+)
+
+// notifyRotationFailures broadcasts a single summary of ONE project's rotation
+// failures to the configured deployment-wide notification channel (Slack/Teams/
+// webhook/email) — a silently-failed credential rotation is a security event
+// operators must see. Scoped to a single project: the caller (RunAutoRotation) calls
+// this once per project rather than once per run, so a broadcast never bundles
+// unrelated projects' secret names/failure reasons into one message (#391) — a
+// deployment-wide channel is still an appropriate destination for this event (unlike
+// the per-user events in notifications.go), it just must not cross project
+// boundaries within a single message. No-op when nothing failed for this project;
+// the sink is non-blocking.
+func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, projectID uint, failed map[uint]string) {
+	if len(failed) == 0 || c.notificationSink == nil {
 		return
 	}
 	lines := make([]string, 0, len(failed))
@@ -37,17 +53,13 @@ func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, failed map[uin
 		lines = append(lines, "• "+msg)
 	}
 	sort.Strings(lines) // stable, deterministic ordering
-	sysCtx := WithActorType(ctx, ActorTypeSystem)
-	c.writeAuditEvent(sysCtx, EventAutoRotationFailures, nil, nil,
-		fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate", len(failed)))
-	if c.notificationSink == nil {
-		return
-	}
+	pid := projectID
 	c.notificationSink.Deliver(NotificationEvent{
-		Type:    "rotation.failed",
-		Title:   fmt.Sprintf("Auto-rotation: %d secret(s) failed to rotate", len(failed)),
-		Message: "The following secrets could not be auto-rotated:\n" + strings.Join(lines, "\n"),
-		Link:    "/secrets",
+		Type:      "rotation.failed",
+		Title:     fmt.Sprintf("Auto-rotation: %d secret(s) failed to rotate in %s", len(failed), c.projectLabel(ctx, projectID)),
+		Message:   "The following secrets could not be auto-rotated:\n" + strings.Join(lines, "\n"),
+		ProjectID: &pid,
+		Link:      fmt.Sprintf("/projects/%d/secrets", projectID),
 	})
 }
 
@@ -176,6 +188,12 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 		}
 		secrets, err := c.scopedPolicySecrets(ctx, policy, nil)
 		if err != nil {
+			// #364: unlike the dependency-list error below (which degrades gracefully
+			// and logs), this was previously a silent skip — auto-rotate-enabled,
+			// possibly critically-overdue secrets under this policy's scope would not
+			// even be considered for rotation this run, with no trace anywhere that it
+			// happened. Log so an operator can see it, matching the sibling handling.
+			log.Printf("auto-rotation: list scoped secrets for policy %d (%q): %v — skipping this policy's secrets this run", policy.ID, policy.Name, err)
 			continue
 		}
 		for _, secret := range secrets {
@@ -214,9 +232,12 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 
 	// Phase 3 — rotate each project's due secrets in dependency-safe wave order.
 	rotated := 0
-	// failed records why each non-rotated secret did not rotate (a genuine failure or a
-	// dependency-driven deferral); surfaced to operators via notifyRotationFailures.
-	failed := map[uint]string{}
+	// totalFailed accumulates every project's failures for the run-level audit summary
+	// only (a bare count, no secret names/reasons — safe to bundle). The per-project
+	// broadcast notification below uses a fresh, project-scoped map instead, so a
+	// Slack/Teams/webhook message never bundles unrelated projects' secret names or
+	// failure reasons together (#391).
+	totalFailed := 0
 	for _, pid := range projectOrder {
 		ids := byProject[pid]
 		candidateSet := make(map[uint]bool, len(ids))
@@ -251,6 +272,11 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 			}
 		}
 
+		// failed records why each non-rotated secret in THIS project did not rotate (a
+		// genuine failure or a dependency-driven deferral). Scoped to this project only
+		// (see totalFailed above / #391) and broadcast right after this project finishes,
+		// before moving on to the next project's map.
+		failed := map[uint]string{}
 		blocked := map[uint]bool{} // due secrets that did not rotate this run (failed or deferred)
 		for _, wave := range waves {
 			for _, id := range wave {
@@ -276,9 +302,15 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 				}
 			}
 		}
+		totalFailed += len(failed)
+		c.notifyRotationFailures(ctx, pid, failed)
 	}
 
-	c.notifyRotationFailures(ctx, failed)
+	if totalFailed > 0 {
+		sysCtx := WithActorType(ctx, ActorTypeSystem)
+		c.writeAuditEvent(sysCtx, EventAutoRotationFailures, nil, nil,
+			fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate", totalFailed))
+	}
 	return rotated, nil
 }
 
@@ -405,6 +437,65 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 	return candidate, nil
 }
 
+// RotateSecretOnDemand handles a manual/operator-triggered rotation request (e.g. the
+// POST /secrets/{id}/rotate API) with the same backend awareness as the auto-rotation
+// scheduler (#193): if the secret is bound to a configured rotation backend (ADR-047),
+// the upstream credential is rotated FIRST via applyBackendRotation — the exact machinery
+// rotateOneSecret uses — and the value actually stored in Keyorix is the one the backend
+// produced/confirmed, never an arbitrary caller-supplied value that could silently drift
+// from what's live upstream. Previously this path stored the caller's value verbatim,
+// left the real (possibly suspected-compromised) upstream credential fully untouched, and
+// still reported "rotated successfully" — an actively misleading incident-response tool.
+//
+// newValue is used as the candidate applied upstream for a password-SET backend; for a
+// generate-upstream backend (e.g. a cloud key API) it is ignored — the upstream mints its
+// own value, matching automated-rotation semantics. A secret with no configured backend
+// rotates exactly as before (delegates straight to RotateSecret).
+//
+// If the upstream rotation fails outright, nothing is stored and an error is returned —
+// the caller must never be told "success" while the suspected-compromised credential is
+// still live and untouched. If it only partially completes (a new credential was minted
+// but a prior one could not be removed upstream — rotation.PartialRotationError), the new
+// value is still stored (never orphan a freshly minted credential — a cloud key API often
+// returns key material only once) but an error is still returned, so the HTTP response is
+// never a clean "success" while a leftover credential needs manual operator removal; the
+// audit trail records the partial state distinctly either way.
+func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValue []byte, rotatedBy string) (*models.SecretNode, error) {
+	secret, err := c.storage.GetSecret(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("secret not found: %w", err)
+	}
+	if secret.RotationBackend == "" {
+		return c.RotateSecret(ctx, id, newValue, rotatedBy)
+	}
+
+	upstreamVal, berr := c.applyBackendRotation(ctx, secret, string(newValue))
+	var partial *rotation.PartialRotationError
+	switch {
+	case errors.As(berr, &partial):
+		// The upstream minted the new credential but a prior, possibly compromised one
+		// could not be removed. Store the new value (discarding it would orphan a live,
+		// untracked credential) but still fail the call — the leftover needs an operator.
+		updated, serr := c.RotateSecret(ctx, id, []byte(partial.Value), rotatedBy)
+		if serr != nil {
+			return nil, serr
+		}
+		sid := id
+		c.writeAuditEvent(ctx, EventSecretRotateIncomplete, nil, &sid,
+			fmt.Sprintf("on-demand rotation INCOMPLETE for secret %q via backend %q ref %q: new credential stored but a prior credential is still live and must be removed manually: %v",
+				secret.Name, secret.RotationBackend, secret.RotationRef, berr))
+		return updated, fmt.Errorf("backend %q rotation for secret %q partially completed: new credential stored but a prior credential is still live upstream and must be removed manually: %w",
+			secret.RotationBackend, secret.Name, berr)
+	case berr != nil:
+		sid := id
+		c.writeAuditEvent(ctx, EventSecretRotateFailed, nil, &sid,
+			fmt.Sprintf("on-demand rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, berr))
+		return nil, fmt.Errorf("backend %q rotation failed for secret %q (upstream credential NOT rotated): %w", secret.RotationBackend, secret.Name, berr)
+	default:
+		return c.RotateSecret(ctx, id, []byte(upstreamVal), rotatedBy)
+	}
+}
+
 // knownRotationCharset reports whether name is a recognized charset (or "" = default).
 func knownRotationCharset(name string) bool {
 	switch name {
@@ -457,6 +548,20 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	secret, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
 		return fmt.Errorf("secret not found: %w", err)
+	}
+	// Binding a backend is a materially bigger grant than scoped secrets.write alone:
+	// the backend often carries an org-wide, admin-credentialed connection (AWS/GCP/
+	// Azure IAM, a shared DB superuser), and the ref only has to pass that backend's
+	// deployment-wide allowed_refs prefix — not any project/segment boundary. Without
+	// this, any project editor could point an org-wide-credentialed backend at a ref
+	// they can influence and have the next scheduler run mint that credential into
+	// their own readable secret (or reset an unrelated target's password) — the same
+	// escalation-by-proxy shape #93/#107 closed for role grants, applied here to
+	// credential-minting backends (#90).
+	if spec.Backend != "" {
+		if err := c.requireAdminAuthorityAt(ctx, actorID, secret.ProjectID); err != nil {
+			return fmt.Errorf("binding a rotation backend requires admin authority on this project: %w", err)
+		}
 	}
 	secret.AutoRotate = spec.Enabled
 	secret.RotationLength = spec.Length

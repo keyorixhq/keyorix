@@ -61,6 +61,16 @@ func TestSensitiveFieldsAreNotJSONSerialized(t *testing.T) {
 			v:       &PasswordReset{Token: "reset-tok", EncryptedToken: []byte("x")},
 			secrets: []string{"reset-tok", "EncryptedToken"},
 		},
+		{
+			name:    "PersonalAccessToken.TokenHash",
+			v:       &PersonalAccessToken{UserID: 1, Name: "ci", TokenHash: "sha256hash"},
+			secrets: []string{"sha256hash", "TokenHash"},
+		},
+		{
+			name:    "SetupToken.TokenHash",
+			v:       &SetupToken{Purpose: "account_setup", TokenHash: "sha256hash"},
+			secrets: []string{"sha256hash", "TokenHash"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

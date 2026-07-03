@@ -124,6 +124,11 @@ func compliancePostureToProto(p *core.CompliancePosture) *pb.CompliancePosture {
 			ActiveExceptions: intToI32(p.Risk.ActiveExceptions),
 			ExpiringSoon:     intToI32(p.Risk.ExpiringSoon),
 		},
+		// #136: Degraded/DegradedReasons must reach every consumer, gRPC included —
+		// silently dropping them here would leave gRPC callers unable to distinguish
+		// a genuinely clean snapshot from one where a sub-rollup query failed.
+		Degraded:        p.Degraded,
+		DegradedReasons: p.DegradedReasons,
 	}
 	if p.LegalHold.PlacedAt != nil {
 		out.LegalHold.PlacedAt = timestamppb.New(*p.LegalHold.PlacedAt)
@@ -172,6 +177,7 @@ func complianceControlsToProto(c *core.ComplianceControls) *pb.ComplianceControl
 			Pass:          intToI32(c.Summary.Pass),
 			Gap:           intToI32(c.Summary.Gap),
 			NotConfigured: intToI32(c.Summary.NotConfigured),
+			Unknown:       intToI32(c.Summary.Unknown),
 		},
 	}
 }

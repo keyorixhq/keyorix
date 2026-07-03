@@ -27,6 +27,16 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
 	}
 	s.mu.RUnlock()
 
+	// Refuse to rotate against a live server (#92): if a server holding this DEK
+	// is running, promoting a new DEK here would leave it silently encrypting new
+	// writes under the OLD key and unable to decrypt rows the sweep re-encrypts,
+	// until its next restart — a permanent-loss window if that restart is delayed
+	// or never happens. AcquireExclusiveKeyLock is released by the deferred
+	// Shutdown() the CLI already calls after this function returns.
+	if err := s.AcquireExclusiveKeyLock(); err != nil {
+		return fmt.Errorf("refusing to rotate: %w — stop the running server before rotating", err)
+	}
+
 	sweepFn := func(oldSvc, newSvc *EncryptionService, newKeyVersion string) error {
 		tx := db.Begin()
 		if tx.Error != nil {
@@ -66,6 +76,73 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
 	}
 	s.encryptionService = encSvc
 	return nil
+}
+
+// UpgradeAuthAAD re-encrypts every legacy (pre-#94), no-AAD row in the AAD-bound auth
+// tables (mfa_secrets, dynamic_secret_configs, dynamic_secret_leases) UNDER THE
+// CURRENT DEK — no key rotation involved. Rows already AAD-bound are re-encrypted
+// too (a fresh nonce, same AAD), so the sweep is idempotent and safe to re-run.
+//
+// This exists so closing the #94 AAD-transplant exposure for these tables doesn't
+// require an operator to perform a full, write-locking DEK rotation (RotateDEKWithSweep)
+// — a live install can run this on its own schedule (or a one-off CLI invocation)
+// while the DEK stays exactly as it was. secret_versions rows are NOT touched here:
+// they've been AAD-bound since the M2 migration and are only ever upgraded as a
+// side effect of a real DEK rotation's sweep.
+//
+// The DB transaction is owned here, matching RotateDEKWithSweep: committed on
+// success, rolled back on any failure.
+func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return nil, fmt.Errorf("encryption service not initialized")
+	}
+	svc := s.encryptionService
+	keyVersion := s.keyManager.GetKeyVersion()
+	s.mu.RUnlock()
+
+	tx := db.Begin()
+	if tx.Error != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	result := &SweepResult{}
+	sweptMFA, legacyMFA, err := sweepMFASecrets(tx, svc, svc, keyVersion)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("mfa_secrets AAD upgrade failed: %w", err)
+	}
+	result.MFASecretsSwept = sweptMFA
+	result.LegacyAADUpgraded += legacyMFA
+
+	sweptDynConfigs, legacyDynConfigs, err := sweepDynamicSecretConfigs(tx, svc, svc, keyVersion)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("dynamic_secret_configs AAD upgrade failed: %w", err)
+	}
+	result.DynamicSecretConfigsSwept = sweptDynConfigs
+	result.LegacyAADUpgraded += legacyDynConfigs
+
+	sweptDynLeases, legacyDynLeases, err := sweepDynamicSecretLeases(tx, svc, svc, keyVersion)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("dynamic_secret_leases AAD upgrade failed: %w", err)
+	}
+	result.DynamicSecretLeasesSwept = sweptDynLeases
+	result.LegacyAADUpgraded += legacyDynLeases
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit AAD upgrade transaction: %w", err)
+	}
+	log.Printf("✅ AAD upgrade committed: %d mfa_secrets, %d dynamic_secret_configs, %d dynamic_secret_leases re-encrypted (%d legacy AAD upgraded)",
+		result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept, result.LegacyAADUpgraded)
+	return result, nil
 }
 
 // RotateDEK rotates the DEK without re-encrypting existing secrets.
@@ -131,12 +208,39 @@ func (s *Service) CleanPendingDEK() {
 	s.keyManager.CleanPendingDEK()
 }
 
-// Shutdown cleanly wipes the DEK from memory.
+// AcquireExclusiveKeyLock takes an exclusive, non-blocking OS advisory lock on
+// the key directory, so no OTHER process using the same DEK — another server
+// instance, or a concurrent rotation — can hold it at the same time (#92). The
+// server calls this once at startup (held for its whole lifetime); rotation
+// calls it at the start of RotateDEKWithSweep (held only for the sweep). Either
+// way it is released by Shutdown. Idempotent: a second call while already held
+// by this Service is a no-op.
+func (s *Service) AcquireExclusiveKeyLock() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.initialized {
+		return fmt.Errorf("encryption service not initialized")
+	}
+	if s.serverLock != nil {
+		return nil
+	}
+	f, err := acquireExclusiveKeyLock(s.keyManager.baseDir)
+	if err != nil {
+		return err
+	}
+	s.serverLock = f
+	return nil
+}
+
+// Shutdown cleanly wipes the DEK from memory and releases the exclusive key
+// lock, if this Service was holding one.
 func (s *Service) Shutdown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.keyManager != nil {
 		s.keyManager.Wipe()
 	}
+	releaseExclusiveKeyLock(s.serverLock)
+	s.serverLock = nil
 	s.initialized = false
 }

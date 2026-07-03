@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,11 +25,45 @@ type KeyorixClient struct {
 }
 
 // NewKeyorixClient builds a client for the given Keyorix base URL and bearer token.
-func NewKeyorixClient(baseURL, token string) *KeyorixClient {
+// Rejects a non-https baseURL unless the host is loopback (#122): every read carries
+// the bearer token in its Authorization header AND returns a plaintext secret value in
+// its response body, so an http:// endpoint (misconfiguration, or a MITM downgrading a
+// redirect) ships both in cleartext over the network. Mirrors the same
+// https-except-loopback rule already enforced for KEYORIX_URL-style bearer-token
+// clients elsewhere (internal/k8ssync/config.go, internal/storage/remote/config.go).
+func NewKeyorixClient(baseURL, token string) (*KeyorixClient, error) {
+	if err := requireHTTPSURL(baseURL); err != nil {
+		return nil, err
+	}
 	return &KeyorixClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		hc:      &http.Client{Timeout: 30 * time.Second},
+	}, nil
+}
+
+// requireHTTPSURL rejects a Keyorix base URL that is not https (http is allowed only
+// for a loopback host — local development/testing against a Keyorix instance running
+// on the same machine as the MCP server).
+func requireHTTPSURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid KEYORIX_URL %q", raw)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" {
+			return nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil
+		}
+		return fmt.Errorf("KEYORIX_URL %q must use https (http is allowed only for localhost): the bearer token and every secret value read through it would otherwise travel in plaintext", raw)
+	default:
+		return fmt.Errorf("KEYORIX_URL %q must use https", raw)
 	}
 }
 

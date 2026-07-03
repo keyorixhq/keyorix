@@ -3,8 +3,12 @@
 // It supports Splunk HEC, Datadog Logs intake, and a generic authenticated
 // webhook. Forwarding is asynchronous and best-effort: Forward enqueues onto a
 // bounded buffer and returns immediately, so a slow or unreachable SIEM never
-// blocks or fails an audited operation. If the buffer is full, events are
-// dropped (and counted) rather than applying backpressure to the request path.
+// blocks or fails an audited operation. A small bounded pool of workers (see
+// numWorkers) delivers concurrently, so an ordinary SLOW (not down) SIEM
+// endpoint doesn't serialize the whole system's audit-forward throughput
+// behind one request/response round trip. If the buffer is full, events are
+// dropped (and counted, with the event's ID/type logged for forensic
+// backfill) rather than applying backpressure to the request path.
 //
 // SECURITY: audit events carry no plaintext secret values (the value diff is a
 // {"changed":true} marker only — see internal/core/audit_diff.go), so an audit
@@ -77,6 +81,14 @@ const (
 	// base ≈ 0.5s+1s+2s of backoff before giving up.
 	maxAttempts        = 4
 	defaultBaseBackoff = 500 * time.Millisecond
+	// numWorkers bounds delivery concurrency (#199). A single strictly-serial worker
+	// meant an ordinary SLOW (not even down) SIEM endpoint — worst case ~4 attempts x
+	// 5s timeout + backoff, ≈23.5s per event — throttled the entire system's audit-
+	// forward throughput to roughly one event per round trip, making silent
+	// queue-overflow drops plausible under normal audited-API volume. A small bounded
+	// pool multiplies throughput without letting a wedged endpoint spawn unbounded
+	// concurrent connections.
+	numWorkers = 4
 )
 
 // Forwarder ships audit events to a configured SIEM asynchronously.
@@ -118,6 +130,7 @@ func newForwarder(cfg Config, baseBackoff time.Duration) (*Forwarder, error) {
 
 	transport := &http.Transport{}
 	if cfg.InsecureSkipVerify {
+		log.Printf("WARNING: SIEM forwarder %q has TLS verification disabled (insecure_skip_verify); do not use in production", cfg.Endpoint)
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 — operator opt-in for self-signed SIEM
 	}
 	f := &Forwarder{
@@ -137,8 +150,10 @@ func newForwarder(cfg Config, baseBackoff time.Duration) (*Forwarder, error) {
 		}
 		f.spool = sp
 	}
-	f.wg.Add(1)
-	go f.worker()
+	f.wg.Add(numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		go f.worker()
+	}
 	return f, nil
 }
 
@@ -162,7 +177,10 @@ func (f *Forwarder) Forward(event *models.AuditEvent) {
 		dropped := f.dropped
 		f.mu.Unlock()
 		siemForwards.WithLabelValues(outcomeDropped).Inc()
-		log.Printf("siem: audit forward queue full, dropped event (total dropped: %d)", dropped)
+		// Log the event's ID/EventType (matching the "failed" path's logging), not just
+		// a running counter — without them a lost event can never be identified for
+		// forensic backfill from the durable DB audit trail (#199).
+		log.Printf("siem: audit forward queue full, dropped event %d (type %q, total dropped: %d)", event.ID, event.EventType, dropped)
 	}
 }
 

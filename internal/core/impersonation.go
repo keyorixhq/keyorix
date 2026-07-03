@@ -59,15 +59,21 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	if !target.IsActive || AccountLoginBlocked(target.AccountState) {
 		return nil, nil, fmt.Errorf("cannot impersonate a suspended or inactive user")
 	}
-	// Prevent privilege escalation via impersonation: a caller who is not a global admin
-	// must not impersonate a global admin (which would confer install-wide super-user).
-	// Today users.impersonate is satisfiable only by global admins, so this is a no-op;
-	// it keeps impersonation from escalating if that permission is ever delegated to a
-	// lower-privileged (sub-admin) role.
-	if targetAdmin, _ := c.IsGlobalAdmin(ctx, targetID); targetAdmin {
-		if callerAdmin, _ := c.IsGlobalAdmin(ctx, adminID); !callerAdmin {
-			return nil, nil, fmt.Errorf("cannot impersonate an administrator")
-		}
+	// Admin-rank-ceiling check (#165): the impersonator must already hold authority
+	// equal to or greater than the target's, at EVERY scope the target holds it —
+	// not just the global scope a plain IsGlobalAdmin(target) check would catch.
+	// Without this, a principal holding only users.impersonate (a permission that
+	// by CONVENTION only global admins hold, but nothing enforces that as an
+	// invariant) could impersonate an actual admin — global OR project-scoped,
+	// direct OR group-inherited — then use that session to grant their own real
+	// account admin via the ordinary role-assignment endpoints; the privilege
+	// persists after the impersonation session ends. Today users.impersonate is
+	// satisfiable only by global admins by convention, so for the common case this
+	// check is a no-op; it keeps impersonation from escalating if that permission
+	// is ever delegated to a lower-privileged (sub-admin) role, or if the target is
+	// merely a project-scoped project_admin the older global-only check never saw.
+	if err := c.requireEqualOrGreaterAdminAuthority(ctx, adminID, targetID, "impersonate"); err != nil {
+		return nil, nil, err
 	}
 	token, err := generateSecureToken()
 	if err != nil {

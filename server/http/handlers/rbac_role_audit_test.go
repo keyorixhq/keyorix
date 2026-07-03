@@ -28,10 +28,19 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.AuditEvent{},
+		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
 	))
 	handler := NewRBACHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 	// CreateRole requires at least one (resolvable) permission name.
 	require.NoError(t, db.Create(&models.Permission{Name: "secrets.read", Resource: "secrets", Action: "read"}).Error)
+	// #169: CreateRole/UpdateRole now require the actor already hold every permission
+	// being bundled — make withUserCtx's actor (UserID 1) a global admin so the bypass
+	// applies. Named distinctly from the literal "admin" role a later subtest creates
+	// (Role.Name is unique).
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator"}
+	require.NoError(t, db.Create(adminRole).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 
 	countEvents := func(eventType string) int64 {
 		var n int64

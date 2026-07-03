@@ -90,6 +90,11 @@ type posture struct {
 		BreakGlassDays             int  `json:"break_glass_days"`
 		ResolvedAccessRequestsDays int  `json:"resolved_access_requests_days"`
 	} `json:"retention"`
+	// Degraded/DegradedReasons (#136): true when one or more sub-rollups above could
+	// not be queried this run — their fields hold an UNKNOWN zero value, not a
+	// verified-clean one. Must be surfaced to the operator, not silently dropped.
+	Degraded        bool     `json:"degraded"`
+	DegradedReasons []string `json:"degraded_reasons"`
 }
 
 // retDays renders a retention window: a day count, or "keep" when 0 (disabled).
@@ -121,6 +126,15 @@ var reportCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Compliance posture — %s\n\n", p.GeneratedAt)
+
+		if p.Degraded {
+			fmt.Println("*** DEGRADED SNAPSHOT — one or more controls could not be collected this run ***")
+			fmt.Println("*** Affected fields below hold an UNKNOWN value, NOT a verified-clean one.   ***")
+			for _, reason := range p.DegradedReasons {
+				fmt.Printf("    - %s\n", reason)
+			}
+			fmt.Println()
+		}
 
 		fmt.Println("Audit integrity (ADR-029)")
 		fmt.Printf("  chain verified : %s (%d chained events)\n", yesNo(p.AuditIntegrity.ChainVerified), p.AuditIntegrity.ChainedEvents)
@@ -228,6 +242,9 @@ type controlMatrix struct {
 		Pass          int `json:"pass"`
 		Gap           int `json:"gap"`
 		NotConfigured int `json:"not_configured"`
+		// Unknown (#136) counts controls whose signal could not be collected this
+		// run — a non-zero value means the matrix is incomplete, not fully passing.
+		Unknown int `json:"unknown"`
 	} `json:"summary"`
 	Controls []struct {
 		Name       string `json:"name"`
@@ -249,6 +266,11 @@ func statusMark(s string) string {
 		return "PASS"
 	case "gap":
 		return "GAP "
+	// #136: "unknown" (collection failed this run) is deliberately distinct from
+	// "not_configured" (the default "n/a ") — an operator must not read a failed
+	// collection as an optional control that simply isn't in use.
+	case "unknown":
+		return "UNK "
 	default:
 		return "n/a "
 	}
@@ -296,7 +318,11 @@ var controlsCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Control matrix — %s\n", m.GeneratedAt)
-		fmt.Printf("  %d controls: %d pass, %d gap, %d not-configured\n\n", m.Summary.Total, m.Summary.Pass, m.Summary.Gap, m.Summary.NotConfigured)
+		fmt.Printf("  %d controls: %d pass, %d gap, %d not-configured, %d unknown\n", m.Summary.Total, m.Summary.Pass, m.Summary.Gap, m.Summary.NotConfigured, m.Summary.Unknown)
+		if m.Summary.Unknown > 0 {
+			fmt.Println("  *** one or more controls could not be collected this run (UNK) — treat this matrix as incomplete, not passing ***")
+		}
+		fmt.Println()
 		for _, ctrl := range m.Controls {
 			fmt.Printf("[%s] %s (%s)\n", statusMark(ctrl.Status), ctrl.Name, ctrl.Area)
 			fmt.Printf("        %s\n", ctrl.Detail)

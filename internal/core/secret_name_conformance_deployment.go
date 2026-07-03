@@ -5,7 +5,8 @@
 // project. The per-project view is [[secret_name_conformance]] (SecretNameConformance);
 // this is the admin's all-projects counterpart, parallel to the deployment-wide asset
 // inventory ([[secret_inventory_deployment]]) and hygiene rollup. Never reads a value.
-// Deployment-wide (route-gated system.read).
+// Deployment-wide (route-gated audit.read — it discloses real secret names, so the
+// universal system_viewer baseline is not enough).
 package core
 
 import (

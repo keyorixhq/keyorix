@@ -69,8 +69,11 @@ func (rs *RemoteStorage) CreateWebAuthnCredential(_ context.Context, _ *models.W
 func (rs *RemoteStorage) ListWebAuthnCredentials(_ context.Context, _ uint) ([]*models.WebAuthnCredential, error) {
 	return nil, remoteUnsupported("ListWebAuthnCredentials")
 }
-func (rs *RemoteStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte) (*models.WebAuthnCredential, error) {
+func (rs *RemoteStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
 	return nil, remoteUnsupported("GetWebAuthnCredentialByCredID")
+}
+func (rs *RemoteStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
+	return nil, remoteUnsupported("LockWebAuthnCredentialForUpdate")
 }
 func (rs *RemoteStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
 	return remoteUnsupported("UpdateWebAuthnCredential")
