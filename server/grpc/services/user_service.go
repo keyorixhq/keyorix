@@ -86,6 +86,17 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		IsActive:    req.IsActive,
 	}
 	if as := req.GetAccountState(); as != "" {
+		// account_state is a gRPC-only free-text field with no proto enum/oneof
+		// validation (this repo has no protoc-gen-validate extensions), and has
+		// no HTTP or CLI equivalent to cross-check against. Reject anything that
+		// isn't a canonical ADR-025 value here rather than persist it verbatim —
+		// downstream, AccountRestricted/AccountLoginBlocked would otherwise
+		// treat a typo'd or garbage value inconsistently with the admin's
+		// actual intent. See #334.
+		if !core.IsValidAccountState(as) {
+			return nil, status.Error(codes.InvalidArgument,
+				"account_state must be one of: active, pending_first_login, password_reset_required, suspended, deprovisioned")
+		}
 		coreReq.AccountState = as
 	}
 
