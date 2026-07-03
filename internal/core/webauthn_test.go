@@ -129,15 +129,83 @@ func TestWebAuthn_DeleteClearsFlagOnLastAndIsUserScoped(t *testing.T) {
 	var cred models.WebAuthnCredential
 	require.NoError(t, db.Where("user_id = ?", 1).First(&cred).Error)
 
-	// A different user cannot delete user 1's passkey by id.
+	// A different user cannot delete user 1's passkey by id (also fails re-auth:
+	// bob has no password set).
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", AccountState: "active"}).Error)
-	require.Error(t, c.DeleteWebAuthnCredential(ctx, 2, cred.ID))
+	require.Error(t, c.DeleteWebAuthnCredential(ctx, 2, cred.ID, webauthnTestPassword))
 
 	// The owner deletes their last passkey → WebAuthn disabled.
-	require.NoError(t, c.DeleteWebAuthnCredential(ctx, 1, cred.ID))
+	require.NoError(t, c.DeleteWebAuthnCredential(ctx, 1, cred.ID, webauthnTestPassword))
 	var user models.User
 	require.NoError(t, db.First(&user, 1).Error)
 	assert.False(t, user.WebAuthnEnabled, "removing the last passkey disables WebAuthn")
+}
+
+// #372: DeleteWebAuthnCredential must reject the deletion without a valid current
+// TOTP code or the account password — otherwise a stolen session/PAT alone can
+// wipe every passkey (and, once the last one is gone, silently disable WebAuthn
+// account-wide). Mirrors TestMFA_RegenerateRequiresReauth's structure.
+func TestWebAuthn_DeleteRequiresReauth(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	var cred models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ?", 1).First(&cred).Error)
+
+	// Wrong password → rejected, credential untouched.
+	err := c.DeleteWebAuthnCredential(ctx, 1, cred.ID, "wrong-password")
+	require.Error(t, err, "delete must reject a bad code/password")
+
+	var stillThere models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ? AND id = ?", 1, cred.ID).First(&stillThere).Error,
+		"a failed re-auth must not remove the credential")
+
+	var user models.User
+	require.NoError(t, db.First(&user, 1).Error)
+	assert.True(t, user.WebAuthnEnabled, "a failed re-auth must not touch the WebAuthnEnabled flag")
+
+	// Correct password → succeeds.
+	require.NoError(t, c.DeleteWebAuthnCredential(ctx, 1, cred.ID, webauthnTestPassword))
+}
+
+// #372: FinishWebAuthnRegistration must reject completion of the ceremony without
+// a valid current TOTP code or the account password — otherwise a stolen session/
+// PAT alone can register an attacker-controlled passkey. The re-auth gate fires
+// before the (single-use) registration session is consumed or any attestation is
+// parsed, so this is provable without constructing a real WebAuthn attestation:
+// a bad password is rejected with the re-auth error, and a correct password
+// advances past the gate to the ceremony-session check (a different error).
+func TestWebAuthn_FinishRegistrationRequiresReauth(t *testing.T) {
+	c, _ := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+
+	_, sessionToken, err := c.BeginWebAuthnRegistration(ctx, 1)
+	require.NoError(t, err)
+
+	// Wrong password is rejected by the re-auth gate itself, before the session is
+	// consumed (confirmed below: the session is still single-use-valid afterwards).
+	_, err = c.FinishWebAuthnRegistration(ctx, 1, sessionToken, "laptop", "wrong-password", nil)
+	require.Error(t, err, "finish must reject a bad code/password")
+	assert.Contains(t, err.Error(), "invalid code or password")
+
+	// The registration session was NOT consumed by the failed re-auth attempt: it
+	// is still there, single-use, to be consumed by a subsequent attempt. Directly
+	// consuming it here (bypassing FinishWebAuthnRegistration) proves it — a prior
+	// consume would make this fail.
+	_, err = c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(sessionToken), c.now())
+	require.NoError(t, err, "a failed re-auth must not consume the single-use ceremony session")
+
+	// Start a fresh ceremony (the previous session was just consumed above) and
+	// confirm a correct password advances PAST the re-auth gate: the next failure
+	// is the ceremony/attestation step, not re-auth (proving the gate opened for a
+	// valid password; completing the ceremony itself needs a real attestation
+	// blob, out of scope for this regression test).
+	_, sessionToken2, err := c.BeginWebAuthnRegistration(ctx, 1)
+	require.NoError(t, err)
+	_, err = c.FinishWebAuthnRegistration(ctx, 1, sessionToken2, "laptop", webauthnTestPassword, &protocol.ParsedCredentialCreationData{})
+	require.Error(t, err, "an empty attestation still fails, just not on re-auth")
+	assert.NotContains(t, err.Error(), "invalid code or password")
 }
 
 func TestWebAuthn_PasswordlessBeginIssuesSession(t *testing.T) {

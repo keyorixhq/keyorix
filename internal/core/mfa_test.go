@@ -53,7 +53,7 @@ func TestVerifyMFALogin_RejectsSuspendedAccount(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
 	require.NoError(t, err)
 
 	// A login is in flight (valid challenge), then the admin suspends the account.
@@ -92,7 +92,7 @@ func TestMFA_FullFlow(t *testing.T) {
 	// ── Activate ──
 	code, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	codes, err := c.ActivateMFA(ctx, 1, code)
+	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword)
 	require.NoError(t, err)
 	assert.Len(t, codes, 10)
 
@@ -152,11 +152,67 @@ func TestMFA_ActivateRejectsWrongCode(t *testing.T) {
 	ctx := context.Background()
 	_, _, err := c.BeginMFAEnrollment(ctx, 1)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, "000000")
+	_, err = c.ActivateMFA(ctx, 1, "000000", mfaTestPassword)
 	require.Error(t, err)
 	u, err := c.storage.GetUser(ctx, 1)
 	require.NoError(t, err)
 	assert.False(t, u.MFAEnabled, "a failed activation must not enable MFA")
+}
+
+// #372: ActivateMFA must require the account password to re-authenticate the
+// caller, not just a valid code for the pending secret. A stolen session or PAT
+// can call BeginMFAEnrollment itself and so always knows a "valid" code for the
+// secret it just generated — the code alone proves nothing about who the caller
+// is. Mirrors TestMFA_RegenerateRequiresReauth's structure for the disable/
+// regenerate re-auth gate.
+func TestMFA_ActivateRequiresReauth(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	// A valid enrolment code with the WRONG password is rejected — this is exactly
+	// the attacker's position with a stolen session/PAT: they can complete
+	// BeginMFAEnrollment and compute a correct code for their own pending secret,
+	// but they do not know the account password.
+	_, err = c.ActivateMFA(ctx, 1, code, "wrong-password")
+	require.Error(t, err, "activation must reject a correct code without the account password")
+
+	u, err := c.storage.GetUser(ctx, 1)
+	require.NoError(t, err)
+	assert.False(t, u.MFAEnabled, "a reauth failure must not enable MFA")
+
+	// The same valid code WITH the correct password succeeds.
+	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword)
+	require.NoError(t, err, "activation must succeed with the correct password")
+	assert.Len(t, codes, 10)
+
+	u, err = c.storage.GetUser(ctx, 1)
+	require.NoError(t, err)
+	assert.True(t, u.MFAEnabled)
+}
+
+// #372: a bearer with a stolen session/PAT cannot bypass the password requirement
+// by re-using the PENDING (not-yet-activated) TOTP secret as its own "re-auth"
+// proof — requireReauth must only ever accept a code against an ALREADY-ACTIVE
+// secret (user.MFAEnabled), never the in-flight enrolment secret being activated.
+func TestMFA_ActivateDoesNotAcceptPendingSecretAsReauth(t *testing.T) {
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	// Passing the pending secret's own code as BOTH the activation code and the
+	// "password" must still fail — a code is never accepted as a password, and
+	// there is no active TOTP secret yet to validate it against as a code either.
+	_, err = c.ActivateMFA(ctx, 1, code, code)
+	require.Error(t, err, "the pending secret's own code must not double as re-auth")
 }
 
 // activateMFAForTest enrols + activates MFA for user 1 and returns the base32
@@ -168,7 +224,7 @@ func activateMFAForTest(t *testing.T, c *KeyorixCore, fixed time.Time) (secret s
 	require.NoError(t, err)
 	code, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	codes, err = c.ActivateMFA(ctx, 1, code)
+	codes, err = c.ActivateMFA(ctx, 1, code, mfaTestPassword)
 	require.NoError(t, err)
 	return secret, codes
 }
@@ -254,7 +310,7 @@ func TestVerifyMFALogin_RejectsReplayedTOTPCode(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
 	require.NoError(t, err)
 
 	code, err := totp.GenerateCode(secret, fixed)
@@ -288,7 +344,7 @@ func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
 	require.NoError(t, err)
 	actCode, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, actCode)
+	_, err = c.ActivateMFA(ctx, 1, actCode, mfaTestPassword)
 	require.NoError(t, err)
 
 	// Three wrong codes → the account locks.

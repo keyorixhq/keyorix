@@ -62,11 +62,22 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 }
 
 // ActivateMFA verifies a TOTP code against the pending secret, enables MFA, and
-// returns N single-use recovery codes (shown once).
-func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code string) ([]string, error) {
+// returns N single-use recovery codes (shown once). password re-authenticates the
+// caller (#372): code alone is NOT sufficient proof of the account holder here,
+// because it is checked against the PENDING secret that BeginMFAEnrollment just
+// generated — an attacker with a stolen session or PAT can call BeginMFAEnrollment
+// themselves and so always knows a "valid" code for it. Unlike DisableMFA/
+// RegenerateMFARecoveryCodes (which re-authenticate against an already-ACTIVE
+// factor and so accept a current TOTP code OR the password), activation happens
+// before MFA is enabled, so there is no pre-existing TOTP factor to check against —
+// the password is the only trustworthy re-proof available at this step.
+func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, password string) ([]string, error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("user not found")
+	}
+	if err := c.requireReauth(ctx, user, password, "activate_reauth"); err != nil {
+		return nil, err
 	}
 	secret, err := c.loadTOTPSecret(ctx, userID)
 	if err != nil {
@@ -109,28 +120,9 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	if !user.MFAEnabled {
 		return fmt.Errorf("MFA is not enabled")
 	}
-	// Per-account lockout gates this self-service re-auth the same way it gates the
-	// second login factor (VerifyMFALogin): a stolen session lets an attacker submit
-	// TOTP guesses without ever having the password, so without this the code check
-	// above is the ONLY throttle on disabling MFA — and it had none. Keyed by user
-	// (not IP), since this is an authenticated-session endpoint, not the pre-auth
-	// login path.
-	if c.loginLocked(user) {
-		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	if err := c.requireReauth(ctx, user, codeOrPassword, "disable"); err != nil {
+		return err
 	}
-	ok := false
-	if secret, err := c.loadTOTPSecret(ctx, userID); err == nil && c.validateTOTP(secret, codeOrPassword) {
-		ok = true
-	}
-	if !ok && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
-		ok = true
-	}
-	if !ok {
-		c.auditMFAFailed(ctx, userID, "disable")
-		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout
-		return fmt.Errorf("invalid code or password")
-	}
-	c.clearLoginFailures(ctx, user)
 	if err := c.storage.SetUserMFAEnabled(ctx, userID, false); err != nil {
 		return err
 	}
@@ -155,25 +147,9 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 	if !user.MFAEnabled {
 		return nil, fmt.Errorf("MFA is not enabled")
 	}
-	// Same account-level lockout gate as DisableMFA (see comment there): a stolen
-	// session with no lockout gating here would let an attacker brute-force the TOTP
-	// code to regenerate (and so invalidate) the legitimate recovery codes.
-	if c.loginLocked(user) {
-		return nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	if err := c.requireReauth(ctx, user, codeOrPassword, "regenerate_recovery_codes"); err != nil {
+		return nil, err
 	}
-	ok := false
-	if secret, err := c.loadTOTPSecret(ctx, userID); err == nil && c.validateTOTP(secret, codeOrPassword) {
-		ok = true
-	}
-	if !ok && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
-		ok = true
-	}
-	if !ok {
-		c.auditMFAFailed(ctx, userID, "regenerate_recovery_codes")
-		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout
-		return nil, fmt.Errorf("invalid code or password")
-	}
-	c.clearLoginFailures(ctx, user)
 	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
 	if err != nil {
 		return nil, err
@@ -340,6 +316,42 @@ func (c *KeyorixCore) validateTOTPStep(secret, code string) (int64, bool) {
 func (c *KeyorixCore) auditMFAFailed(ctx context.Context, userID uint, phase string) {
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.failed", &uid, nil, nil, "", fmt.Sprintf("failed MFA %s for user %d", phase, userID))
+}
+
+// requireReauth is the shared self-service re-authentication gate (#372) for
+// account-security-factor changes: it verifies codeOrPassword against a CURRENT,
+// already-active TOTP secret (only when user.MFAEnabled — never against an
+// in-flight, not-yet-activated enrolment secret, which an attacker who just called
+// BeginMFAEnrollment/BeginWebAuthnRegistration themselves would already know) or
+// the account password. Every caller (DisableMFA, RegenerateMFARecoveryCodes,
+// ActivateMFA, FinishWebAuthnRegistration, DeleteWebAuthnCredential) is reachable
+// with nothing but a bearer token — a stolen session OR a narrowly-scoped PAT,
+// which ADR-042 exempts from MFA policy entirely — so this check is the only thing
+// standing between a leaked bearer and a full account-security-factor takeover.
+// Feeds the same per-account lockout the second login factor (VerifyMFALogin)
+// uses, keyed by user (not IP, since this is an authenticated-session endpoint):
+// without it, this check would be the only throttle on guessing. phase labels the
+// mfa.failed audit event on a failed attempt.
+func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, codeOrPassword, phase string) error {
+	if c.loginLocked(user) {
+		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
+	ok := false
+	if user.MFAEnabled {
+		if secret, err := c.loadTOTPSecret(ctx, user.ID); err == nil && c.validateTOTP(secret, codeOrPassword) {
+			ok = true
+		}
+	}
+	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
+		ok = true
+	}
+	if !ok {
+		c.auditMFAFailed(ctx, user.ID, phase)
+		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout
+		return fmt.Errorf("invalid code or password")
+	}
+	c.clearLoginFailures(ctx, user)
+	return nil
 }
 
 // generateRecoveryCodes returns n human-friendly codes and their SHA-256 hashes.
