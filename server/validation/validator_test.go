@@ -46,6 +46,47 @@ func TestValidate_Required(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestValidate_Required_RejectsWhitespaceAndZeroWidthOnly(t *testing.T) {
+	type payload struct {
+		Name string `json:"name" validate:"required"`
+	}
+	v := NewValidator()
+
+	// Positive case: real content still passes.
+	require.NoError(t, v.Validate(payload{Name: "Payments"}))
+
+	for name, bad := range map[string]string{
+		"pure whitespace":      "   \t\n  ",
+		"zero-width space":     "\u200b\u200b",
+		"zero-width + spaces":  "  \u200b \u200b  ",
+		"non-breaking + ZWNBS": "\u00a0\ufeff",
+	} {
+		err := v.Validate(payload{Name: bad})
+		require.Error(t, err, name)
+	}
+}
+
+func TestValidate_Identifier(t *testing.T) {
+	type payload struct {
+		Name string `json:"name" validate:"omitempty,identifier"`
+	}
+	v := NewValidator()
+
+	for _, good := range []string{"", "Payments", "prod-db_01", "team 42"} {
+		require.NoError(t, v.Validate(payload{Name: good}), good)
+	}
+	zwsp := string(rune(0x200B)) // ZERO WIDTH SPACE
+	for _, bad := range []string{
+		"=cmd|'/c calc'!A1",
+		"name" + zwsp + "with" + zwsp + "zero" + zwsp + "width",
+		"path/traversal",
+		"<script>",
+		"semicolon;here",
+	} {
+		require.Error(t, v.Validate(payload{Name: bad}), bad)
+	}
+}
+
 func TestValidate_Omitempty_SkipsRemainingRules(t *testing.T) {
 	type payload struct {
 		Nickname string `json:"nickname" validate:"omitempty,min=3"`
