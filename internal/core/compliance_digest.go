@@ -30,8 +30,8 @@ func (c *KeyorixCore) BuildComplianceDigest(ctx context.Context) (title, body st
 // formatComplianceDigest renders the digest from a posture snapshot + evaluated
 // controls. Pure (no storage) so it is unit-testable.
 func formatComplianceDigest(p *CompliancePosture, controls []ControlState) (title, body string) {
-	pass, gap := 0, 0
-	var gaps []string
+	pass, gap, unknown := 0, 0, 0
+	var gaps, unknowns []string
 	for _, ctrl := range controls {
 		switch ctrl.Status {
 		case ControlStatusPass:
@@ -39,17 +39,32 @@ func formatComplianceDigest(p *CompliancePosture, controls []ControlState) (titl
 		case ControlStatusGap:
 			gap++
 			gaps = append(gaps, ctrl.Name)
+		case ControlStatusUnknown:
+			unknown++
+			unknowns = append(unknowns, ctrl.Name)
 		}
 	}
 
-	title = fmt.Sprintf("Keyorix compliance digest — %d/%d controls pass", pass, len(controls))
-	if gap > 0 {
+	// #136: a degraded snapshot must be the headline, not a footnote — a collection
+	// failure means this digest is incomplete, and a reader skimming Slack/Teams must
+	// not read "N/N controls pass" as a clean bill of health when it isn't one.
+	switch {
+	case p.Degraded:
+		title = fmt.Sprintf("Keyorix compliance digest — INCOMPLETE (%d control(s) unknown, collection error)", unknown)
+	case gap > 0:
 		title = fmt.Sprintf("Keyorix compliance digest — %d gap%s across %d controls", gap, plural(gap), len(controls))
+	default:
+		title = fmt.Sprintf("Keyorix compliance digest — %d/%d controls pass", pass, len(controls))
 	}
 
 	var b strings.Builder
 	ag := p.AccessGovernance
-	fmt.Fprintf(&b, "Controls: %d pass, %d gap (of %d).\n", pass, gap, len(controls))
+	if p.Degraded {
+		fmt.Fprintf(&b, "WARNING: this snapshot is DEGRADED — %d control(s) could not be collected this run and read as UNKNOWN, not verified-clean: %s.\n",
+			unknown, strings.Join(unknowns, ", "))
+		fmt.Fprintf(&b, "Collection failures: %s.\n", strings.Join(p.DegradedReasons, "; "))
+	}
+	fmt.Fprintf(&b, "Controls: %d pass, %d gap, %d unknown (of %d).\n", pass, gap, unknown, len(controls))
 	if gap > 0 {
 		fmt.Fprintf(&b, "Open gaps: %s.\n", strings.Join(gaps, ", "))
 	}

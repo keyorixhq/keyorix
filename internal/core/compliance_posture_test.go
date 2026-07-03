@@ -54,6 +54,66 @@ func TestGetCompliancePosture_DegradedOnLegalHoldQueryError(t *testing.T) {
 	assert.False(t, p.LegalHold.Active, "the field itself still reads as its zero value")
 	assert.True(t, p.Degraded, "a failed legal-hold query must flip Degraded — the zero value above is UNKNOWN, not verified-clean")
 	assert.True(t, containsSubstring(p.DegradedReasons, "legal_hold"), "expected a legal_hold entry in DegradedReasons, got %v", p.DegradedReasons)
+
+	controls, err := c.GetComplianceControls(context.Background())
+	require.NoError(t, err)
+	lh := findControl(t, controls.Controls, "legal-hold")
+	assert.Equal(t, ControlStatusUnknown, lh.Status, "the legal-hold CONTROL must surface as unknown, not silently pass, when its posture signal is degraded")
+}
+
+// failingRiskExceptionsStore wraps LocalStorage and fails ListRiskExceptions, simulating
+// a DB error on the risk-exception sub-rollup.
+type failingRiskExceptionsStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingRiskExceptionsStore) ListRiskExceptions(_ context.Context, _ bool) ([]*models.RiskException, error) {
+	return nil, errors.New("simulated db failure")
+}
+
+// #136: empirically, dropping the risk_exceptions table flipped a real active exception
+// from count=1 to count=0 — a query failure must surface as Degraded, not a silently-clean
+// zero count.
+func TestGetCompliancePosture_DegradedOnRiskExceptionQueryError(t *testing.T) {
+	c := compliancePostureCore(t)
+	c.storage = &failingRiskExceptionsStore{LocalStorage: c.storage.(*store.LocalStorage)}
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err, "a single failed sub-rollup must not abort the whole snapshot")
+
+	assert.Equal(t, 0, p.Risk.ActiveExceptions, "the field itself still reads as its zero value")
+	assert.True(t, p.Degraded, "a failed risk-exception query must flip Degraded")
+	assert.True(t, containsSubstring(p.DegradedReasons, "risk"), "expected a risk entry in DegradedReasons, got %v", p.DegradedReasons)
+}
+
+// failingSoDPoliciesStore wraps LocalStorage and fails ListSoDPolicies, simulating a DB
+// error on the SoD sub-rollup.
+type failingSoDPoliciesStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingSoDPoliciesStore) ListSoDPolicies(_ context.Context) ([]*models.SoDPolicy, error) {
+	return nil, errors.New("simulated db failure")
+}
+
+// #136: empirically, dropping the sod_policies table flipped a real toxic-combination
+// violation from count>=1 to count=0 — a query failure must surface as Degraded, not a
+// silently-clean zero count.
+func TestGetCompliancePosture_DegradedOnSoDPoliciesQueryError(t *testing.T) {
+	c := compliancePostureCore(t)
+	c.storage = &failingSoDPoliciesStore{LocalStorage: c.storage.(*store.LocalStorage)}
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err, "a single failed sub-rollup must not abort the whole snapshot")
+
+	assert.Equal(t, 0, p.AccessGovernance.SoDViolations, "the field itself still reads as its zero value")
+	assert.True(t, p.Degraded, "a failed SoD-policy query must flip Degraded")
+	assert.True(t, containsSubstring(p.DegradedReasons, "sod_violations"), "expected a sod_violations entry in DegradedReasons, got %v", p.DegradedReasons)
+
+	controls, err := c.GetComplianceControls(context.Background())
+	require.NoError(t, err)
+	sod := findControl(t, controls.Controls, "separation-of-duties")
+	assert.Equal(t, ControlStatusUnknown, sod.Status, "the SoD CONTROL must surface as unknown, not silently pass, when its posture signal is degraded")
 }
 
 func containsSubstring(ss []string, sub string) bool {

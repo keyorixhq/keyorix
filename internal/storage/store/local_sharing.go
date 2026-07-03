@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -98,15 +97,6 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return share, nil
-}
-
-// isUniqueConstraintErr reports whether err is a unique-constraint violation, across
-// both drivers this storage layer supports (SQLite's modernc/mattn error text and
-// Postgres' SQLSTATE 23505), without importing either driver package here.
-func isUniqueConstraintErr(err error) bool {
-	msg := err.Error()
-	return strings.Contains(msg, "UNIQUE constraint failed") || // SQLite
-		strings.Contains(msg, "23505") || strings.Contains(msg, "duplicate key value") // Postgres
 }
 
 // GetShareRecord retrieves a share record by ID.
