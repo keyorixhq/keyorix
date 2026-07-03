@@ -97,6 +97,14 @@ type KeyorixCore struct {
 	// cannot both observe an empty user table and each create a "first admin". Zero
 	// value is ready to use. See auth_bootstrap.go.
 	bootstrapMu sync.Mutex
+	// secretDependencyMu serializes AddSecretDependency's cycle-check read through
+	// the edge it writes (#260), so two concurrent callers racing to add A→B and
+	// B→A in the same project cannot both pass the pre-write cycle check before
+	// either commits, persisting a cycle that later hard-errors rotation planning
+	// for that project. Combined with the row lock
+	// ListSecretDependenciesForProjectForUpdate takes on Postgres, this holds
+	// across replicas too. Zero value is ready to use. See secret_dependencies.go.
+	secretDependencyMu sync.Mutex
 	// accountStateMu serializes the account_state/is_active read-modify-write shared
 	// by setAccountState (SuspendUser/ReactivateUser/RequirePasswordReset) and
 	// UpdateSCIMUser (#344): without it, an admin's incident-response SuspendUser and a
@@ -402,20 +410,28 @@ func (c *KeyorixCore) SetAuthEncryptor(s *encryption.Service) {
 	c.authEncryptor = s
 }
 
-// encryptAuthSecret reversibly encrypts plain; passthrough when encryption is off.
-func (c *KeyorixCore) encryptAuthSecret(plain string) (ct, meta []byte, err error) {
+// encryptAuthSecret reversibly encrypts plain, bound to aad (#94: MFASecretAAD /
+// DynamicSecretConfigAAD / DynamicSecretLeaseAAD — never nil for a live caller, so a
+// DB-write attacker cannot transplant one row's ciphertext onto another's identity and
+// have it decrypt). Passthrough when encryption is off.
+func (c *KeyorixCore) encryptAuthSecret(plain string, aad []byte) (ct, meta []byte, err error) {
 	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
 		return []byte(plain), nil, nil
 	}
-	return c.authEncryptor.EncryptSecret([]byte(plain))
+	return c.authEncryptor.EncryptSecretWithAAD([]byte(plain), aad)
 }
 
-// decryptAuthSecret reverses encryptAuthSecret; passthrough when encryption is off.
-func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte) (string, error) {
+// decryptAuthSecret reverses encryptAuthSecret. aad must be reconstructed from the
+// row's own identity, identically to how it was encrypted. Falls back to a legacy
+// nil-AAD decrypt for rows encrypted before #94 (Service.DecryptSecretWithAAD's own
+// AADVersion branch — see SecretEncryption for the same pattern on secret values);
+// the sweep upgrades those rows to AAD-bound in place. Passthrough when encryption is
+// off.
+func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte, aad []byte) (string, error) {
 	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
 		return string(ct), nil
 	}
-	plain, err := c.authEncryptor.DecryptSecret(ct)
+	plain, err := c.authEncryptor.DecryptSecretWithAAD(ct, aad)
 	if err != nil {
 		return "", err
 	}

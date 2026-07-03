@@ -364,16 +364,28 @@ func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint
 	return nil
 }
 
-// DeleteSecret deletes a secret by ID.
+// DeleteSecret deletes a secret by ID. #370: ShareRecord rows are a fully
+// independent lifecycle from SecretNode's — left untouched, a share grant would
+// silently reactivate (via CheckSharePermission) the instant the secret is later
+// restored from the recycle bin, with zero re-authorization step, even when the
+// secret was deleted specifically to sever a former grantee's access. "Delete
+// means gone" for sharing too, so revoke every active share for this secret in
+// the same transaction as the secret's own soft-delete.
 func (ls *LocalStorage) DeleteSecret(ctx context.Context, id uint) error {
-	result := ls.db.WithContext(ctx).Delete(&models.SecretNode{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
-	}
-	return nil
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Delete(&models.SecretNode{}, id)
+		if result.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		if err := tx.Where("secret_id = ? AND deleted_at IS NULL", id).
+			Delete(&models.ShareRecord{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	})
 }
 
 // GetSecretIncludingDeleted loads a secret even when soft-deleted (Unscoped).
@@ -622,6 +634,20 @@ func (ls *LocalStorage) IncrementSecretReadCount(ctx context.Context, versionID 
 func (ls *LocalStorage) TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.SecretVersion{}).
 		Where("id = ? AND read_count < ?", versionID, maxReads).
+		UpdateColumn("read_count", gorm.Expr("read_count + 1"))
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// TryIncrementSecretNodeReadCount is TryIncrementSecretReadCount's secret-level
+// twin (#133): the same atomic conditional-UPDATE pattern, keyed on the secret
+// (secret_nodes.read_count) instead of a version, so the cap survives rotate/
+// rollback creating a new version.
+func (ls *LocalStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("id = ? AND read_count < ?", secretID, maxReads).
 		UpdateColumn("read_count", gorm.Expr("read_count + 1"))
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)

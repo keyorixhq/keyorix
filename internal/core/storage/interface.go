@@ -147,6 +147,14 @@ type Storage interface {
 	GetSecretDependency(ctx context.Context, id uint) (*models.SecretDependency, error)
 	ListSecretDependenciesForProject(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 	DeleteSecretDependency(ctx context.Context, id uint) error
+	// ListSecretDependenciesForProjectForUpdate is ListSecretDependenciesForProject,
+	// taking a row-level write lock on every returned edge on backends that support
+	// one (Postgres FOR UPDATE), mirroring LockUserForUpdate/
+	// ListGlobalAdminAssignmentsForUpdate (#260). Used inside a WithTransaction so
+	// AddSecretDependency's cycle-check read and the edge it writes serialize
+	// against a concurrent racing edge addition for the same project on Postgres/HA;
+	// secretDependencyMu covers same-process callers (SQLite, single instance).
+	ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.
@@ -183,6 +191,14 @@ type Storage interface {
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
+	// LockMachineIdentityForUpdate re-reads a machine identity by ID, taking a
+	// row-level write lock on backends that support one (Postgres: SELECT … FOR
+	// UPDATE) so a read-modify-write on the row serializes against a concurrent
+	// writer of the same row — mirroring LockUserForUpdate. Use this — not
+	// GetMachineIdentity — inside a WithTransaction whenever a caller conditionally
+	// mutates state (e.g. TransitionMachineIdentity's revoked-is-terminal invariant,
+	// #388) that must not lose an update under concurrency.
+	LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error)
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
 	// ListAllMachineIdentities returns every machine identity across all projects —
@@ -289,6 +305,14 @@ type Storage interface {
 	// already reached (or the version is gone). This is the race-free gate for
 	// max-reads enforcement: concurrent reads can never collectively exceed the cap.
 	TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error)
+	// TryIncrementSecretNodeReadCount is TryIncrementSecretReadCount's secret-level
+	// twin (#133): keyed on the SECRET, not a version, so the count carries forward
+	// across rotate/rollback creating a new version — a per-version counter resets
+	// to zero on every new version, letting a burn-after-N-reads secret become
+	// re-readable simply by rolling back. This is the authoritative max-reads gate;
+	// TryIncrementSecretReadCount remains for the per-version read_count DISPLAY
+	// field only.
+	TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error)
 
 	// Secret Sharing Management
 	CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)

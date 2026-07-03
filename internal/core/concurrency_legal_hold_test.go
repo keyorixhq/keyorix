@@ -32,7 +32,7 @@ func TestConcurrency_PlaceLegalHold_OnlyOneWins(t *testing.T) {
 	dsn := "file:" + filepath.Join(t.TempDir(), "c.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.Role{}, &models.UserRole{}))
 	// The production migration (storage.ensureLegalHoldActiveIndex) creates this;
 	// replicate it for the test DB.
 	require.NoError(t, db.Exec(
@@ -41,6 +41,9 @@ func TestConcurrency_PlaceLegalHold_OnlyOneWins(t *testing.T) {
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
+	// #377: placement now requires an admin-tier role.
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 2}).Error)
 
 	const callers = 32
 	var succeeded atomic.Int64

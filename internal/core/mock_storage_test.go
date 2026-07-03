@@ -66,7 +66,16 @@ func (m *MockStorage) ListProjectsWithCounts(_ context.Context, _ bool) ([]stora
 	return nil, nil
 }
 
-func (m *MockStorage) GetProject(_ context.Context, id uint) (*models.Project, error) {
+func (m *MockStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "GetProject" {
+			args := m.Called(ctx, id)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).(*models.Project), args.Error(1)
+		}
+	}
 	return &models.Project{}, nil
 }
 
@@ -319,6 +328,13 @@ func (m *MockStorage) ListSecretDependenciesForProject(ctx context.Context, proj
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.SecretDependency), args.Error(1)
+}
+
+// ListSecretDependenciesForProjectForUpdate has no row lock in the mock; it
+// reuses the ListSecretDependenciesForProject expectation, mirroring
+// LockUserForUpdate above.
+func (m *MockStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
+	return m.ListSecretDependenciesForProject(ctx, projectID)
 }
 
 func (m *MockStorage) DeleteSecretDependency(ctx context.Context, id uint) error {
@@ -584,6 +600,11 @@ func (m *MockStorage) IncrementSecretReadCount(ctx context.Context, versionID ui
 
 func (m *MockStorage) TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error) {
 	args := m.Called(ctx, versionID, maxReads)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
+	args := m.Called(ctx, secretID, maxReads)
 	return args.Bool(0), args.Error(1)
 }
 
@@ -1486,6 +1507,14 @@ func (m *MockStorage) CreateMachineIdentity(ctx context.Context, mi *models.Mach
 }
 
 func (m *MockStorage) GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentity), args.Error(1)
+}
+
+func (m *MockStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

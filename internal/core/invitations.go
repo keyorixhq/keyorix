@@ -367,6 +367,13 @@ func (c *KeyorixCore) RequestProjectAccess(ctx context.Context, projectID, userI
 			return nil, fmt.Errorf("unknown role %q: %w", suggestedRole, err)
 		}
 	}
+	// The target project must exist and be live — GetProject's default soft-delete scope
+	// excludes a deleted project, so this also refuses a request against one that has been
+	// soft-deleted (#371). Otherwise a request can sit pending against a project an admin
+	// believes is gone, waiting to be approved (and go live) whenever it's restored.
+	if _, err := c.storage.GetProject(ctx, projectID); err != nil {
+		return nil, fmt.Errorf("project %d not found: %w", projectID, err)
+	}
 	now := c.now()
 	expires := now.Add(accessRequestTTL)
 	req := &models.AccessRequest{
@@ -452,6 +459,16 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	}
 	if req.State != AccessRequestPending {
 		return nil, fmt.Errorf("only a pending request can be approved (state is %s)", req.State)
+	}
+	// The target project must still be live at approval time (#371) — DeleteProject never
+	// touches access_requests, so a request can otherwise sit pending across a project
+	// soft-delete and be approved afterward, producing a role grant scoped to a
+	// nonexistent project that goes live again — against potentially-stale intent — the
+	// moment the project is later restored, with no re-review of whether the original
+	// approval still makes sense. GetProject's default soft-delete scope makes this check
+	// double as the soft-delete check.
+	if _, err := c.storage.GetProject(ctx, req.ProjectID); err != nil {
+		return nil, fmt.Errorf("cannot approve: project %d no longer exists", req.ProjectID)
 	}
 	// Enforce the request's own TTL here, not only on the list path. GetAccessRequest
 	// returns the stored record verbatim, so a request whose expiry has passed is still

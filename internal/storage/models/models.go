@@ -118,13 +118,14 @@ func (SoDPolicy) TableName() string { return "sod_policies" }
 // hold is preserved. Placing/lifting is audited; the row history is the evidence
 // of when holds were in effect.
 type LegalHold struct {
-	ID         uint       `gorm:"primaryKey" json:"id"`
-	Reason     string     `json:"reason"`
-	PlacedBy   uint       `json:"placed_by"`
-	PlacedAt   time.Time  `json:"placed_at"`
-	Released   bool       `gorm:"index" json:"released"` // false = active
-	ReleasedBy uint       `json:"released_by,omitempty"`
-	ReleasedAt *time.Time `json:"released_at,omitempty"`
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Reason        string     `json:"reason"`
+	PlacedBy      uint       `json:"placed_by"`
+	PlacedAt      time.Time  `json:"placed_at"`
+	Released      bool       `gorm:"index" json:"released"` // false = active
+	ReleasedBy    uint       `json:"released_by,omitempty"`
+	ReleasedAt    *time.Time `json:"released_at,omitempty"`
+	ReleaseReason string     `json:"release_reason,omitempty"` // why the hold was lifted (#380)
 }
 
 // SSOLoginState is the short-lived CSRF/nonce state for an in-flight OIDC
@@ -459,7 +460,13 @@ type SecretNode struct {
 	// upstream it belongs to, who to contact. Metadata only; never the value.
 	Description string
 	MaxReads    *int
-	Expiration  *time.Time
+	// ReadCount is the secret's LIFETIME read count against MaxReads — deliberately
+	// secret-level, not per-version (#133). A per-version counter resets to zero on
+	// every new version, so a burn-after-N-reads secret became re-readable simply
+	// by rotating or rolling back (which creates a fresh version); this counter
+	// carries forward across both.
+	ReadCount  int
+	Expiration *time.Time
 	Metadata    JSON
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives

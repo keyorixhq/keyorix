@@ -207,16 +207,24 @@ func (c *KeyorixCore) GetSecretValueByVersionWithPermissionCheck(ctx context.Con
 // Shared by GetSecretValue and GetSecretValueWithPermissionCheck.
 func (c *KeyorixCore) readVersionValue(ctx context.Context, secret *models.SecretNode, version *models.SecretVersion) ([]byte, error) {
 	if secret.MaxReads != nil && *secret.MaxReads > 0 {
-		// Atomic check-and-increment: the conditional UPDATE serializes concurrent
-		// reads on the row, so they can never collectively exceed the cap. Fail closed
-		// — if enforcement can't be confirmed, don't hand back the value.
-		ok, err := c.storage.TryIncrementSecretReadCount(ctx, version.ID, *secret.MaxReads)
+		// Atomic check-and-increment against the SECRET (not the version, #133): the
+		// conditional UPDATE serializes concurrent reads on the row, so they can never
+		// collectively exceed the cap, and the count carries forward across rotate/
+		// rollback creating a new version — a per-version counter would reset to zero
+		// on every new version, letting a burn-after-N-reads secret become re-readable
+		// simply by rolling back. Fail closed — if enforcement can't be confirmed,
+		// don't hand back the value.
+		ok, err := c.storage.TryIncrementSecretNodeReadCount(ctx, secret.ID, *secret.MaxReads)
 		if err != nil {
 			return nil, fmt.Errorf("max-reads enforcement failed: %w", err)
 		}
 		if !ok {
 			return nil, fmt.Errorf("%s", i18n.T("ErrorMaxReadsExceeded", nil))
 		}
+		// Best-effort per-version read_count (CLI/gRPC display only, not the
+		// enforcement mechanism above): a failure here must not block an already-
+		// authorized read.
+		_, _ = c.storage.TryIncrementSecretReadCount(ctx, version.ID, *secret.MaxReads)
 	}
 	if c.encryption != nil {
 		return c.encryption.RetrieveSecret(version.ID)

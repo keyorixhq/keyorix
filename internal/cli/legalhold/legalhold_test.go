@@ -28,6 +28,9 @@ func TestLiftRequiresConfirmation(t *testing.T) {
 	t.Setenv("KEYORIX_SERVER", srv.URL)
 	t.Setenv("KEYORIX_TOKEN", "test-token")
 
+	liftReason = "test lift reason"
+	defer func() { liftReason = "" }()
+
 	t.Run("declining the prompt aborts without calling the server", func(t *testing.T) {
 		deleteCalls = 0
 		liftYes = false
@@ -54,5 +57,15 @@ func TestLiftRequiresConfirmation(t *testing.T) {
 		cmd.SetIn(strings.NewReader(""))
 		require.NoError(t, liftCmd.RunE(cmd, nil))
 		assert.Equal(t, 1, deleteCalls, "--yes must skip the prompt and lift the hold")
+	})
+
+	t.Run("missing --reason is refused before the prompt", func(t *testing.T) {
+		deleteCalls = 0
+		liftYes = true
+		liftReason = ""
+		defer func() { liftYes = false; liftReason = "test lift reason" }()
+		cmd := &cobra.Command{}
+		require.Error(t, liftCmd.RunE(cmd, nil))
+		assert.Equal(t, 0, deleteCalls, "a missing reason must not lift the hold")
 	})
 }

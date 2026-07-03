@@ -410,3 +410,37 @@ func TestRegenerateMFARecoveryCodes_FailedCodesFeedAccountLockout(t *testing.T) 
 	_, _, err = c.VerifyMFALogin(ctx, ch, original[0], "ua", "1.2.3.4")
 	require.NoError(t, err, "original recovery code must still work; regenerate was blocked by the lock")
 }
+
+// #94: a DB-write attacker who copies one user's encrypted TOTP seed onto another
+// user's mfa_secrets row must NOT have it decrypt successfully — that would let
+// bob's account accept codes generated from alice's TOTP seed, a stealthy MFA
+// bypass that survives even if alice regenerates her own codes. This directly
+// exercises the live decryptAuthSecret/loadTOTPSecret path (not just the low-level
+// AEAD primitive), proving the AAD wiring — not merely its existence — is correct.
+func TestMFA_TOTPSecretTransplantBetweenUsersFailsToDecrypt(t *testing.T) {
+	c, db, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "b@b.com",
+		PasswordHash: "x", AccountState: "active"}).Error)
+
+	_, aliceSecret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	aliceCode, err := totp.GenerateCode(aliceSecret, fixed)
+	require.NoError(t, err)
+	_, err = c.ActivateMFA(ctx, 1, aliceCode)
+	require.NoError(t, err)
+
+	_, _, err = c.BeginMFAEnrollment(ctx, 2)
+	require.NoError(t, err)
+
+	// Simulate a DB-write attacker: copy alice's encrypted TOTP row onto bob's.
+	aliceRow, err := c.storage.GetMFASecret(ctx, 1)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&models.MFASecret{}).Where("user_id = ?", 2).Updates(map[string]interface{}{
+		"secret_enc":  aliceRow.SecretEnc,
+		"secret_meta": aliceRow.SecretMeta,
+	}).Error)
+
+	_, err = c.loadTOTPSecret(ctx, 2)
+	require.Error(t, err, "a TOTP secret transplanted from another user's row must fail to decrypt, not silently succeed")
+}

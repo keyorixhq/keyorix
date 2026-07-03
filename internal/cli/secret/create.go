@@ -53,6 +53,8 @@ func init() {
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
+	common.WarnInsecureFlag(cmd, "value", "use --interactive or --from-file instead.")
+
 	var (
 		req *core.CreateSecretRequest
 		err error

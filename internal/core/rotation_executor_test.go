@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -370,6 +371,80 @@ func TestRunAutoRotation_GenerateUpstreamFailureNotStored(t *testing.T) {
 	assert.Equal(t, 0, n)
 	assert.Equal(t, 1, latestVersion(t, db, 1).VersionNumber)
 }
+
+// failingProjectSecretsStore wraps LocalStorage and fails ListSecrets only for
+// filter.ProjectID == failProject, simulating a transient storage error scoped to
+// exactly one rotation policy's scope while a sibling project's policy still succeeds.
+type failingProjectSecretsStore struct {
+	*store.LocalStorage
+	failProject uint
+}
+
+func (s *failingProjectSecretsStore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
+	if filter.ProjectID != nil && *filter.ProjectID == s.failProject {
+		return nil, 0, errors.New("simulated storage failure")
+	}
+	return s.LocalStorage.ListSecrets(ctx, filter)
+}
+
+// #364: before the fix, a scopedPolicySecrets failure for one policy silently skipped
+// every auto-rotate-enabled, possibly critically-overdue secret in its scope with ZERO
+// operator-visible trace — contrast the dependency-list error a few lines later in the
+// same function, which already logged and degraded gracefully. This pins that (a) a
+// healthy policy's overdue secret still rotates (the run doesn't abort), and (b) the
+// failure is now logged, unlike before.
+func TestRunAutoRotation_LogsAndContinuesOnScopedSecretsError(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
+	))
+	fixed := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "healthy-proj"}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "broken-proj"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "prod"}).Error)
+	pid1, pid2 := uint(1), uint(2)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "healthy-policy", Scope: "project", ProjectID: &pid1, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 2, Name: "broken-policy", Scope: "project", ProjectID: &pid2, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 1, Name: "due-healthy", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active",
+		AutoRotate: true, LastRotatedAt: timePtr(fixed.Add(-60 * 24 * time.Hour)), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	// A due, auto-rotate-enabled secret under the BROKEN policy's scope — this must be
+	// skipped (its ListSecrets call errors before this row is ever seen), never rotated.
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 2, Name: "due-broken", ProjectID: 2, EnvironmentID: 2, IsSecret: true, Status: "active",
+		AutoRotate: true, LastRotatedAt: timePtr(fixed.Add(-90 * 24 * time.Hour)), CreatedAt: fixed.Add(-90 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 2, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-90 * 24 * time.Hour),
+	}).Error)
+
+	c := &KeyorixCore{storage: &failingProjectSecretsStore{LocalStorage: store.NewLocalStorage(db), failProject: pid2}}
+	c.now = func() time.Time { return fixed }
+
+	var n int
+	logged := captureLog(t, func() {
+		n, err = c.RunAutoRotation(context.Background())
+	})
+	require.NoError(t, err, "a single policy's scope-listing failure must not abort the whole run")
+	assert.Equal(t, 1, n, "the healthy policy's due secret still rotates")
+	assert.Equal(t, 1, latestVersion(t, db, 2).VersionNumber, "the secret under the broken policy's scope was never even considered, so it's untouched")
+
+	assert.Contains(t, logged, "broken-policy", "the failing policy's name must appear in the operator-visible log line")
+	assert.Contains(t, logged, "simulated storage failure")
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
 
 // A rotation failure broadcasts a single summary notification (fakeSink is defined in
 // notification_dispatch_test.go).

@@ -58,12 +58,29 @@ running. Requires --confirm.`,
 	RunE: runRotate,
 }
 
+var upgradeAADCmd = &cobra.Command{
+	Use:   "upgrade-aad",
+	Short: "Bind legacy auth-secret rows to per-row AAD, without rotating the DEK",
+	Long: `Re-encrypt every legacy (pre-#94), no-AAD row in mfa_secrets,
+dynamic_secret_configs, and dynamic_secret_leases under the CURRENT DEK, binding
+each to Additional Authenticated Data derived from its own identity (user id / config
+id / lease id). This closes a ciphertext-transplant exposure — without AAD, a
+DB-write attacker could copy an encrypted blob from one row to another and have it
+decrypt successfully under the wrong identity.
+
+Unlike "rotate", this does NOT change the DEK — it is safe to run repeatedly and
+does not require --confirm, though it does hold a write lock on these three tables
+for the duration of the sweep (typically brief; they are not high-row-count tables).`,
+	RunE: runUpgradeAAD,
+}
+
 var rotateConfirm bool
 
 func init() {
 	EncryptionCmd.AddCommand(initCmd)
 	EncryptionCmd.AddCommand(statusCmd)
 	EncryptionCmd.AddCommand(rotateCmd)
+	EncryptionCmd.AddCommand(upgradeAADCmd)
 	EncryptionCmd.AddCommand(validateCmd)
 	EncryptionCmd.AddCommand(fixPermsCmd)
 	// AuthEncryptionCmd (status/enable/rotate/migrate/validate for the
@@ -222,6 +239,56 @@ func rotateWithConfig(cfg *config.Config, confirm bool) error {
 
 	fmt.Println("✅ DEK rotated successfully")
 	fmt.Printf("📋 New key version: %s\n", service.GetKeyVersion())
+	return nil
+}
+
+func runUpgradeAAD(cmd *cobra.Command, args []string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	return upgradeAADWithConfig(cfg)
+}
+
+// upgradeAADWithConfig is the testable core of runUpgradeAAD — no config loading, no
+// flag parsing. Returns early (before any DB or encryption work) when encryption is
+// disabled or storage is remote, so tests don't need a real database or key files.
+func upgradeAADWithConfig(cfg *config.Config) error {
+	if !cfg.Storage.Encryption.Enabled {
+		return fmt.Errorf("encryption is disabled in configuration")
+	}
+	if cfg.Storage.Type == "remote" {
+		return fmt.Errorf("AAD upgrade must run on the server host. Current storage type is 'remote' — connect to the server and run this command there")
+	}
+
+	baseDir, _ := os.Getwd()
+	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
+
+	passphrase, err := masterPassphrase(cfg)
+	if err != nil {
+		return err
+	}
+	service.CleanPendingDEK()
+	if err := service.Initialize(passphrase); err != nil {
+		return fmt.Errorf("failed to initialize encryption: %w", err)
+	}
+	defer service.Shutdown()
+
+	db, err := storage.OpenGormDB(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to open database for AAD upgrade: %w", err)
+	}
+	defer closeDB(db)
+
+	fmt.Println("🔄 Upgrading legacy auth-secret rows to per-row AAD...")
+	result, err := service.UpgradeAuthAAD(db)
+	if err != nil {
+		return fmt.Errorf("AAD upgrade failed: %w", err)
+	}
+
+	fmt.Println("✅ AAD upgrade complete")
+	fmt.Printf("📋 mfa_secrets: %d, dynamic_secret_configs: %d, dynamic_secret_leases: %d (legacy rows upgraded: %d)\n",
+		result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept, result.LegacyAADUpgraded)
 	return nil
 }
 
