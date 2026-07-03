@@ -18,7 +18,7 @@ func newRestoreTestStore(t *testing.T) *LocalStorage {
 	require.NoError(t, err)
 	// #370: DeleteSecret revokes ShareRecord rows in the same transaction as the
 	// secret's own soft-delete.
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.ShareRecord{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.ShareRecord{}, &models.DynamicSecretConfig{}))
 	return NewLocalStorage(db)
 }
 

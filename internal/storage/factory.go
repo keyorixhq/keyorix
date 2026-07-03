@@ -404,6 +404,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if tableExists(db, "dynamic_secret_configs") && !columnExists(db, "dynamic_secret_configs", "classification") {
 			db.Exec("ALTER TABLE dynamic_secret_configs ADD COLUMN classification TEXT DEFAULT ''")
 		}
+		// Disabled (#369): refuses new leases once the owning project is soft-deleted.
+		// Additive (defaults false = every pre-existing config stays enabled).
+		if !m.HasColumn(&models.DynamicSecretConfig{}, "Disabled") {
+			if err := m.AddColumn(&models.DynamicSecretConfig{}, "Disabled"); err != nil {
+				return fmt.Errorf("failed to add dynamic_secret_configs.disabled column: %w", err)
+			}
+		}
 	}
 	if !dynLeaseExists {
 		if err := db.AutoMigrate(&models.DynamicSecretLease{}); err != nil {

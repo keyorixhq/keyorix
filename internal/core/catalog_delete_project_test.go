@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -40,6 +43,16 @@ type deleteProjectOuterSpy struct {
 func (s *deleteProjectOuterSpy) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
 	s.txCalled = true
 	return fn(s.tx)
+}
+
+// ListDynamicSecretConfigs is called on the OUTER (non-transactional) storage by
+// DeleteProject's #369 post-commit dynamic-secrets cascade, deliberately after
+// WithTransaction returns (see revokeProjectDynamicSecretLeases's doc comment) — so,
+// unlike ListSecrets/DeleteProject above, it must be implemented here, not on the tx
+// spy. Returns none: these tests aren't exercising the dynamic-secrets cascade itself
+// (see TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases).
+func (s *deleteProjectOuterSpy) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
+	return nil, nil
 }
 
 type deleteProjectTxSpy struct {
@@ -117,7 +130,7 @@ func TestDeleteProject_ForceSkipsGuardButStaysTransactional(t *testing.T) {
 func TestDeleteProject_RealStorage_RejectsWhenSecretsExist(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
@@ -136,7 +149,7 @@ func TestDeleteProject_RealStorage_RejectsWhenSecretsExist(t *testing.T) {
 func TestDeleteProject_RealStorage_EmptyProjectSucceeds(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
@@ -152,7 +165,7 @@ func TestDeleteProject_RealStorage_EmptyProjectSucceeds(t *testing.T) {
 func TestDeleteProject_RealStorage_ForceCascadesOverSecrets(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}))
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
@@ -165,4 +178,56 @@ func TestDeleteProject_RealStorage_ForceCascadesOverSecrets(t *testing.T) {
 	var liveSecrets int64
 	require.NoError(t, db.Model(&models.SecretNode{}).Where("project_id = ? AND deleted_at IS NULL", 1).Count(&liveSecrets).Error)
 	assert.Zero(t, liveSecrets, "force=true must cascade-delete the secret along with the project")
+}
+
+// TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases exercises
+// the #369 fix end to end: deleting a project must not leave its dynamic-secret
+// configs live (able to mint new credentials) or their outstanding leases active
+// (real target credentials that should stop working) behind an orphaned/soft-deleted
+// project.
+func TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.SecretVersion{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{}, &models.AuditEvent{}))
+
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+	require.NoError(t, enc.Initialize("test-passphrase"))
+	fake := &dynamic.FakeEngine{NativeExpiry: true}
+
+	c := core.NewKeyorixCore(store.NewLocalStorage(db))
+	c.SetAuthEncryptor(enc)
+	c.SetDynamicEngineFactory(func(string) (dynamic.CredentialEngine, error) { return fake, nil })
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env"}).Error)
+
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &core.CreateDynamicSecretConfigRequest{
+		Name:              "app-db",
+		ProjectID:         1,
+		EnvironmentID:     1,
+		BackendType:       "postgres",
+		AdminDSN:          "postgres://admin:s3cr3t@db.internal:5432/app",
+		CreationTemplate:  "GRANT SELECT ON ALL TABLES IN SCHEMA public TO {{name}};",
+		DefaultTTLSeconds: 3600,
+		CreatedBy:         "alice",
+	})
+	require.NoError(t, err)
+
+	lease, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	require.NoError(t, c.DeleteProject(ctx, 1, false))
+
+	disabled, err := c.GetDynamicSecretConfig(ctx, cfg.ID)
+	require.NoError(t, err)
+	assert.True(t, disabled.Disabled, "the config must be disabled so it can no longer mint new credentials")
+
+	var leaseAfter models.DynamicSecretLease
+	require.NoError(t, db.Where("lease_id = ?", lease.LeaseID).First(&leaseAfter).Error)
+	assert.Equal(t, "revoked", leaseAfter.Status, "the outstanding lease must be revoked, not left active")
+	assert.Contains(t, fake.Revoked, leaseAfter.RoleName, "the real backend credential must have been revoked too")
+
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	assert.Error(t, err, "issuing against a disabled config must be refused")
 }
