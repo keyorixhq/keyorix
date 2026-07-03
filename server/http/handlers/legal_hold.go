@@ -46,9 +46,12 @@ func (h *DashboardHandler) PlaceLegalHold(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "required") || strings.Contains(msg, "already active") {
+		switch {
+		case strings.Contains(msg, "required") || strings.Contains(msg, "already active"):
 			status = http.StatusBadRequest
-		} else {
+		case strings.Contains(msg, "admin-tier principal may place"):
+			status = http.StatusForbidden
+		default:
 			log.Printf("Error placing legal hold: %v", err)
 			msg = clientSafe(err)
 		}
@@ -59,17 +62,27 @@ func (h *DashboardHandler) PlaceLegalHold(w http.ResponseWriter, r *http.Request
 	sendSuccess(w, map[string]interface{}{"hold": hold}, "Legal hold placed")
 }
 
-// LiftLegalHold handles DELETE /api/v1/legal-hold — release the active hold.
+// LiftLegalHold handles DELETE /api/v1/legal-hold — release the active hold. The
+// reason is carried in a JSON body since DELETE requests conventionally have no
+// query-string convention for this codebase's other DELETE-with-body endpoints.
 func (h *DashboardHandler) LiftLegalHold(w http.ResponseWriter, r *http.Request) {
 	actor := middleware.GetUserFromContext(r.Context())
 	if actor == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
-	if err := h.coreService.LiftLegalHold(r.Context(), actor.UserID); err != nil {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil {
+		// Body is optional at the transport level; LiftLegalHold itself enforces
+		// that reason is non-empty, mapped to 400 below.
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+	if err := h.coreService.LiftLegalHold(r.Context(), actor.UserID, body.Reason); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, "no legal hold") {
+		if strings.Contains(msg, "no legal hold") || strings.Contains(msg, "a reason is required") {
 			status = http.StatusBadRequest
 		} else {
 			log.Printf("Error lifting legal hold: %v", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,7 @@ func TestLegalHold_PlaceAndLift(t *testing.T) {
 	defer h.Cleanup()
 	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}))
 	ctx := context.Background()
+	h.AssignUserRole(t, 1, 2, nil) // #377: placement requires an admin-tier role
 
 	// No hold initially.
 	active, err := h.CoreService.IsLegalHoldActive(ctx)
@@ -40,14 +42,77 @@ func TestLegalHold_PlaceAndLift(t *testing.T) {
 	_, err = h.CoreService.PlaceLegalHold(ctx, 1, "another")
 	require.Error(t, err)
 
+	// Lifting requires a reason too (#380).
+	require.Error(t, h.CoreService.LiftLegalHold(ctx, 1, ""))
+
 	// Lift it.
-	require.NoError(t, h.CoreService.LiftLegalHold(ctx, 1))
+	require.NoError(t, h.CoreService.LiftLegalHold(ctx, 1, "litigation INC-7 resolved"))
 	active, err = h.CoreService.IsLegalHoldActive(ctx)
 	require.NoError(t, err)
 	assert.False(t, active)
 
 	// Lifting again (none active) is refused.
-	require.Error(t, h.CoreService.LiftLegalHold(ctx, 1))
+	require.Error(t, h.CoreService.LiftLegalHold(ctx, 1, "n/a"))
+}
+
+// #377: a plain (non-admin-tier) system.write-only principal must not be able to
+// place a legal hold — placement requires an admin-tier role, mirroring #157's
+// tightening of lift.
+func TestLegalHold_PlaceDeniedForNonAdmin(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
+	ctx := context.Background()
+
+	// Actor 9 holds no role at all — not admin-tier.
+	_, err := h.CoreService.PlaceLegalHold(ctx, 9, "bogus decoy hold")
+	require.Error(t, err, "a non-admin-tier actor must not be able to place a legal hold")
+
+	active, aerr := h.CoreService.IsLegalHoldActive(ctx)
+	require.NoError(t, aerr)
+	assert.False(t, active, "the denied placement must not create a hold")
+
+	var failed int64
+	require.NoError(t, h.DB.Model(&models.AuditEvent{}).
+		Where("event_type = ? AND success = ?", core.EventLegalHoldPlaced, false).Count(&failed).Error)
+	assert.Equal(t, int64(1), failed, "the denied placement attempt must be audited")
+
+	// An admin-tier principal may place it.
+	h.AssignUserRole(t, 20, 2, nil) // role 2 = admin (global)
+	hold, err := h.CoreService.PlaceLegalHold(ctx, 20, "litigation INC-9")
+	require.NoError(t, err)
+	assert.False(t, hold.Released)
+}
+
+// #380: lifting a hold records the WHY, not just the who/when — the reason is
+// persisted on the row (ReleaseReason) and appears in the audit description, and an
+// empty reason is rejected just like placement's.
+func TestLegalHold_LiftRecordsReason(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}))
+	ctx := context.Background()
+	h.AssignUserRole(t, 1, 2, nil) // #377: placement requires an admin-tier role
+
+	hold, err := h.CoreService.PlaceLegalHold(ctx, 1, "litigation INC-11")
+	require.NoError(t, err)
+
+	// No reason -> rejected, hold stays active.
+	require.Error(t, h.CoreService.LiftLegalHold(ctx, 1, ""))
+	active, aerr := h.CoreService.IsLegalHoldActive(ctx)
+	require.NoError(t, aerr)
+	assert.True(t, active)
+
+	require.NoError(t, h.CoreService.LiftLegalHold(ctx, 1, "litigation INC-11 settled, no further preservation needed"))
+
+	var lifted models.LegalHold
+	require.NoError(t, h.DB.First(&lifted, hold.ID).Error)
+	assert.True(t, lifted.Released)
+	assert.Equal(t, "litigation INC-11 settled, no further preservation needed", lifted.ReleaseReason)
+
+	var evt models.AuditEvent
+	require.NoError(t, h.DB.Where("event_type = ? AND success = ?", core.EventLegalHoldLifted, true).First(&evt).Error)
+	assert.Contains(t, evt.Description, "litigation INC-11 settled, no further preservation needed")
 }
 
 // The compliance posture reflects an active legal hold.
@@ -60,6 +125,7 @@ func TestLegalHold_SurfacesInPosture(t *testing.T) {
 		&models.RotationPolicy{}, &models.SoDPolicy{},
 	))
 	ctx := context.Background()
+	h.AssignUserRole(t, 1, 2, nil) // #377: placement requires an admin-tier role
 
 	p, err := h.CoreService.GetCompliancePosture(ctx)
 	require.NoError(t, err)
