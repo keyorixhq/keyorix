@@ -38,7 +38,12 @@ type Storage interface {
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
 	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	DeleteProject(ctx context.Context, id uint) error
-	RestoreProject(ctx context.Context, id uint) error
+	// RestoreProject reverses a project soft-delete and cascades to the environments/
+	// secrets that were removed WITH it (matched by deletion timestamp — independently
+	// retired children stay deleted, see LocalStorage.RestoreProject). It returns the
+	// count of environments and secrets the cascade actually restored, so the caller
+	// can audit what came back (#311), not just that "the project" was restored.
+	RestoreProject(ctx context.Context, id uint) (restoredEnvironments, restoredSecrets int, err error)
 	ListProjects(ctx context.Context) ([]*models.Project, error)
 	ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]ProjectWithCounts, error)
 	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
@@ -347,6 +352,14 @@ type Storage interface {
 	// filter on it) and is later swept by DeleteExpiredRoleGrants.
 	AssignRoleWithExpiry(ctx context.Context, userID, roleID uint, scope Scope, expiresAt time.Time) error
 	RemoveRole(ctx context.Context, userID, roleID uint, scope Scope) error
+	// RemoveAllProjectRoleGrants deletes every user_roles row for (userID, projectID),
+	// across ALL environments — not just the project-level (environment_id = 0) grant
+	// RemoveRole's exact-scope match would touch. RemoveProjectMember uses it so that
+	// offboarding a project member also revokes any environment-scoped grant (e.g.
+	// "prod-only access", created via POST /user-roles) they separately hold in the
+	// same project; otherwise it silently survives project-level removal, invisible to
+	// the project admin who performed the offboarding (#232).
+	RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error
 	GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error)
 	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	GetUserRoleIDsExact(ctx context.Context, userID uint, scope Scope) ([]uint, error)

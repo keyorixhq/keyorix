@@ -146,6 +146,22 @@ func (ls *LocalStorage) RemoveRole(ctx context.Context, userID, roleID uint, sco
 	return nil
 }
 
+// RemoveAllProjectRoleGrants deletes every user_roles row for (userID, projectID),
+// regardless of environment_id — unlike RemoveRole, which only ever deletes an
+// exact-scope match. Used by RemoveProjectMember to fully revoke a departing
+// member's access to a project: without it, an environment-scoped grant (e.g.
+// "prod-only access", project_id = P, environment_id = E) survives project-level
+// removal untouched, because it was never an exact match for
+// Scope{ProjectID: P} (environment_id defaults to 0) (#232).
+func (ls *LocalStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error {
+	if err := ls.db.WithContext(ctx).
+		Where("user_id = ? AND project_id = ?", userID, projectID).
+		Delete(&models.UserRole{}).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
 // GetUserRoles retrieves all roles assigned to userID via the user_roles join table.
 func (ls *LocalStorage) GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error) {
 	var roles []*models.Role

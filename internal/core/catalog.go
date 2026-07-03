@@ -94,13 +94,20 @@ func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) er
 
 // RestoreProject reverses a soft-delete, bringing back the project and the
 // environments and secrets that were removed with it. actorID is the acting admin
-// (0 = none). Audited as project.restored.
+// (0 = none). Audited as project.restored, with a per-type count of what the
+// cascade actually resurrected (#311) — the storage layer already refuses to touch
+// children retired independently of the project (see LocalStorage.RestoreProject's
+// deletion-timestamp correlation), but the single generic event previously gave no
+// way to tell HOW MANY environments/secrets came back, so a DR-test or accidental
+// delete-then-undo left no forensic trail distinguishing "1 secret" from "200".
 func (c *KeyorixCore) RestoreProject(ctx context.Context, actorID, id uint) error {
-	if err := c.storage.RestoreProject(ctx, id); err != nil {
+	envCount, secretCount, err := c.storage.RestoreProject(ctx, id)
+	if err != nil {
 		return err
 	}
 	pid := id
-	c.writeAuditEventFull(ctx, "project.restored", actorPtr(actorID), nil, &pid, "", fmt.Sprintf("project %d restored", id))
+	c.writeAuditEventFull(ctx, "project.restored", actorPtr(actorID), nil, &pid, "",
+		fmt.Sprintf("project %d restored (cascade resurrected %d environment(s) and %d secret(s))", id, envCount, secretCount))
 	return nil
 }
 

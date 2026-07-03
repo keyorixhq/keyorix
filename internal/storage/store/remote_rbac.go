@@ -178,6 +178,12 @@ func (rs *RemoteStorage) RemoveRole(ctx context.Context, userID, roleID uint, sc
 	return nil
 }
 
+// RemoveAllProjectRoleGrants is a server-internal RBAC primitive (project
+// membership management runs entirely against LocalStorage); unsupported here.
+func (rs *RemoteStorage) RemoveAllProjectRoleGrants(_ context.Context, _, _ uint) error {
+	return remoteUnsupported("RemoveAllProjectRoleGrants")
+}
+
 // GetUserRoles retrieves all roles for a user via remote API.
 func (rs *RemoteStorage) GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error) {
 	path := fmt.Sprintf("/api/v1/users/%d/roles", userID)
@@ -405,8 +411,8 @@ func (rs *RemoteStorage) DeleteProject(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteProject")
 }
 
-func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) error {
-	return remoteUnsupported("RestoreProject")
+func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
+	return 0, 0, remoteUnsupported("RestoreProject")
 }
 
 func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {

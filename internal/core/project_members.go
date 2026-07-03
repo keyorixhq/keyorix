@@ -12,6 +12,7 @@ import (
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 // ListProjectMembers returns the users with a role at the project's scope.
@@ -43,6 +44,12 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 	if err != nil {
 		return err
 	}
+	// Refuse a demotion that would leave the project with no roles.assign holder
+	// (#236): after this call the user's only project-scope role is roleName, so
+	// check whether THAT role still carries roles.assign before touching anything.
+	if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, []uint{role.ID}); err != nil {
+		return err
+	}
 	hasTarget := false
 	for _, rid := range existing {
 		if rid == role.ID {
@@ -59,8 +66,14 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 	return c.AssignUserRole(ctx, actorID, userID, role.ID, scope)
 }
 
-// RemoveProjectMember removes all of the user's roles at the project scope. See
-// AddProjectMember for actorID semantics.
+// RemoveProjectMember removes ALL of the user's role grants scoped to the
+// project — not just the project-level (environment_id = 0) grant the Members
+// UI shows, but any environment-scoped grant (e.g. "prod-only access") in the
+// same project too. A prior version only deleted the exact-scope match, so an
+// environment-scoped grant silently survived an offboarding admin's removal,
+// invisible and uncorrectable by that admin (project-scoped roles.assign
+// cannot see or edit /user-roles grants, which require global scope) (#232).
+// See AddProjectMember for actorID semantics.
 func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectID, userID uint) error {
 	scope := Scope{ProjectID: projectID}
 	existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
@@ -70,10 +83,87 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 	if len(existing) == 0 {
 		return fmt.Errorf("user is not a member of this project")
 	}
-	for _, rid := range existing {
-		if err := c.RemoveUserRole(ctx, actorID, userID, rid, scope); err != nil {
-			return err
+	// Refuse to remove the project's last roles.assign holder (#236): the ordinary
+	// member-management API has no other safeguard, so without this the sole
+	// remaining project admin could remove themselves (or be removed by anyone
+	// else holding roles.assign), leaving the project with zero project-scoped
+	// admins. Not a permanent lockout — a GLOBAL admin can always re-add one via
+	// GetUserRoleIDsAt's project_id = 0 OR project_id = ? matching — but still an
+	// availability risk worth refusing outright rather than requiring recovery.
+	if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, nil); err != nil {
+		return err
+	}
+	// Capture every grant (any environment) this deletes so each can be recorded
+	// in the RBAC audit trail (#234) — RemoveAllProjectRoleGrants is a single
+	// bulk delete, not a per-role RemoveUserRole loop, so it doesn't audit itself.
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("failed to list project role assignments: %w", err)
+	}
+	if err := c.storage.RemoveAllProjectRoleGrants(ctx, userID, projectID); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	for _, a := range assignments {
+		if a.PrincipalType != "user" || a.PrincipalID != userID {
+			continue
 		}
+		c.LogRoleRemoved(ctx, actorID, userID, a.RoleID, Scope{ProjectID: projectID, EnvironmentID: a.EnvironmentID})
 	}
 	return nil
+}
+
+// guardLastProjectAdmin refuses an operation that would strip targetID's
+// roles.assign authority at projectID's PROJECT scope (environment_id = 0 — a
+// member removal or role change) unless either (a) targetRoleIDsAfter still
+// carries roles.assign, or (b) some OTHER project-level grant (user or group)
+// already carries it, so governance of the project survives. Only environment_id
+// = 0 grants count: RequireScopedPermission on /projects/{id}/members itself
+// only matches project-level grants (GetUserRoleIDsAt's "environment_id = 0 OR
+// environment_id = ?" against a target scope whose EnvironmentID is 0), so an
+// environment-scoped roles.assign grant could not actually administer this
+// project's membership either — it doesn't count as a survivor. Passing a
+// nil/roles.assign-free targetRoleIDsBefore is a fast no-op (the target wasn't
+// an admin to begin with).
+func (c *KeyorixCore) guardLastProjectAdmin(ctx context.Context, projectID, targetID uint, targetRoleIDsBefore, targetRoleIDsAfter []uint) error {
+	hadAssign, err := c.storage.RoleSetHasPermission(ctx, targetRoleIDsBefore, "roles.assign")
+	if err != nil {
+		return err
+	}
+	if !hadAssign {
+		return nil // target wasn't a project admin — not the last-admin case
+	}
+	willHaveAssign, err := c.storage.RoleSetHasPermission(ctx, targetRoleIDsAfter, "roles.assign")
+	if err != nil {
+		return err
+	}
+	if willHaveAssign {
+		return nil // still an admin afterward — no governance gap
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("failed to check project administrators: %w", err)
+	}
+	checked := make(map[uint]bool, len(assignments))
+	for _, a := range assignments {
+		if a.EnvironmentID != 0 {
+			continue // not project-level; can't administer /projects/{id}/members
+		}
+		// A grant belonging to the target themselves doesn't count as "another"
+		// admin — only groups and other users can pick up the slack.
+		if a.PrincipalType == "user" && a.PrincipalID == targetID {
+			continue
+		}
+		hasAssign, ok := checked[a.RoleID]
+		if !ok {
+			hasAssign, err = c.storage.RoleSetHasPermission(ctx, []uint{a.RoleID}, "roles.assign")
+			if err != nil {
+				return err
+			}
+			checked[a.RoleID] = hasAssign
+		}
+		if hasAssign {
+			return nil // another admin (user or group) survives the change
+		}
+	}
+	return fmt.Errorf("cannot remove or demote the project's last administrator; assign another project admin first")
 }
