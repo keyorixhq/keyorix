@@ -65,8 +65,15 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 		c.recordFailedLogin(ctx, user) // increment + lock at the threshold
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
-	// Correct password — clear any accumulated lockout state.
-	c.clearLoginFailures(ctx, user)
+	// Correct password — but a concurrent burst of failed attempts against this
+	// account may have tripped the lock between the snapshot read at the top of
+	// this function and now (TOCTOU). Re-check the lock state under the same
+	// serialization recordFailedLogin uses (the account's mutex shard + a Postgres
+	// row lock) before minting a session, and only then clear any accumulated
+	// failure state — never trust the stale pre-bcrypt snapshot alone.
+	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+		return nil, nil, err
+	}
 	// A deactivated account (IsActive=false — e.g. admin deactivation via UpdateUser,
 	// or a SCIM/IdP deactivation) is refused login regardless of account_state. The
 	// state-based gate below does not cover this, so without it a deactivated user who

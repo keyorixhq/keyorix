@@ -64,11 +64,16 @@ type KeyorixCore struct {
 	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
 	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
 	loginLockout      LoginLockoutPolicy // per-account login lockout (disabled by default)
-	// loginFailureMu serializes the per-account failed-login read-increment-write in
-	// recordFailedLogin so concurrent failures can't lose an increment. Combined with
-	// the row lock LockUserForUpdate takes on Postgres, the lockout counter stays
-	// correct across replicas. Zero value is ready to use. See login_lockout.go.
-	loginFailureMu sync.Mutex
+	// recordFailedLogin (and the pre-session-mint recheck in
+	// checkLockAndClearLoginFailures) so concurrent failures can't lose an increment.
+	// Combined with the row lock LockUserForUpdate takes on Postgres, the lockout
+	// counter stays correct across replicas. Sharded by userID (see
+	// loginFailureLock) so a flood against one account cannot serialize every OTHER
+	// account's failed-login accounting behind a single process-wide lock — a
+	// noisy-neighbour/availability concern distinct from the correctness the
+	// per-shard lock + row lock still provide. Zero value is ready to use (each
+	// shard is its own zero-value sync.Mutex). See login_lockout.go.
+	loginFailureMu [loginFailureMuShards]sync.Mutex
 	// globalAdminGuardMu serializes RemoveUserRole's last-global-admin check and the
 	// removal it guards (guardLastGlobalAdmin) into one atomic unit, so two admins
 	// concurrently removing each other's role assignment cannot both observe
