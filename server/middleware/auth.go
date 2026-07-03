@@ -577,6 +577,15 @@ func derefUint(p *uint) uint {
 // which a deliberately-scoped token must not satisfy. This keeps PAT scoping
 // honoured on this role-based gate, which does not funnel through core.Authorize
 // (where the restriction is otherwise enforced). Fail-closed.
+//
+// WARNING (#308): this match is UNSCOPED — it checks only the role name against
+// userCtx.Roles, with no project/environment scope check at all. It currently has
+// no production route caller (only exercised by auth_test.go). Do NOT wire this
+// onto a machine-token-reachable route: combined with a machine identity's
+// unscoped role list (e.g. store.GetMachineRoles, itself for-display only, see
+// its own warning), it would bypass project/environment scoping entirely for
+// machine principals. If a role-based gate is ever needed on a scoped route, use
+// a scope-aware check (core.Authorize / the RBAC choke point) instead.
 func RequireRole(role string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

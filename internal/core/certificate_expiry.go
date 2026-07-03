@@ -141,9 +141,10 @@ func (c *KeyorixCore) listCertificateSecrets(ctx context.Context) ([]*models.Sec
 // certificatePosture reports certificate hygiene for the compliance posture (ADR-056)
 // from the cached cert expiry — no decryption on this path. Certificates not yet
 // evaluated (cache nil) are counted separately so the gap is visible.
-func (c *KeyorixCore) certificatePosture(ctx context.Context) CertificatePosture {
+func (c *KeyorixCore) certificatePosture(ctx context.Context, cp *CompliancePosture) CertificatePosture {
 	certs, err := c.listCertificateSecrets(ctx)
 	if err != nil {
+		cp.degrade("certificates", err)
 		return CertificatePosture{}
 	}
 	now := c.now()

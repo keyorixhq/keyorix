@@ -229,6 +229,34 @@ func TestWebAuthn_FinishLoginHonorsAccountLockout(t *testing.T) {
 	assert.Contains(t, err.Error(), "locked")
 }
 
+// Platform authenticators (Touch ID, Windows Hello, and most passkeys) never
+// implement a signature counter and always report SignCount 0. persistUpdatedCredential's
+// #306 stale-write guard must not treat a (0, 0) comparison as "stale" — that would
+// silently stop LastUsedAt/blob from ever persisting again after the very first login
+// for the common case, mirroring go-webauthn's own Authenticator.UpdateCounter gate
+// (which also special-cases 0/0 as never a clone signal).
+func TestWebAuthn_PersistUpdatedCredential_ZeroCounterAuthenticatorAlwaysPersists(t *testing.T) {
+	c, db := newWebAuthnTestCore(t, true)
+	ctx := context.Background()
+	seedCredential(t, c, db, 1, "cred-1")
+
+	var before models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ?", 1).First(&before).Error)
+	assert.Nil(t, before.LastUsedAt, "no login yet")
+
+	// Simulate two logins in a row from a zero-counter authenticator.
+	for i := 0; i < 2; i++ {
+		c.now = func() time.Time { return time.Date(2026, 6, 12, 10, i, 0, 0, time.UTC) }
+		c.persistUpdatedCredential(ctx, 1, &webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{SignCount: 0}})
+	}
+
+	var after models.WebAuthnCredential
+	require.NoError(t, db.Where("user_id = ?", 1).First(&after).Error)
+	require.NotNil(t, after.LastUsedAt, "LastUsedAt must still update on every login even when SignCount stays 0")
+	assert.Equal(t, time.Date(2026, 6, 12, 10, 1, 0, 0, time.UTC), after.LastUsedAt.UTC(),
+		"the SECOND login's timestamp must persist too — a (0,0) comparison must not be treated as a stale write")
+}
+
 func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {
 	c, db := newWebAuthnTestCore(t, true)
 	ctx := context.Background()
