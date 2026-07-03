@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -144,6 +145,92 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	require.Len(t, list, 1)
 	assert.Equal(t, core.BreakGlassRevoked, list[0].State)
 	require.Error(t, h.CoreService.RevokeBreakGlass(ctx, 1, proj, act.ID))
+}
+
+// #304: the storage-layer state transition is a single conditional UPDATE
+// (WHERE state = active), not a read-modify-write. Revoking the same activation
+// twice in a row must let only the first call actually transition state — the
+// second must fail cleanly with storage.ErrBreakGlassNotActive, and the first
+// revoker's attribution (RevokedBy/RevokedAt) must survive untouched rather than
+// being silently overwritten by the second attempt.
+func TestRevokeBreakGlassActivation_ConditionalUpdateOnlyFirstAttemptWins(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	require.NoError(t, err)
+
+	firstRevokeAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	require.NoError(t, h.Storage.RevokeBreakGlassActivation(ctx, act.ID, 100, firstRevokeAt))
+
+	secondRevokeAt := time.Now().UTC().Truncate(time.Second)
+	err = h.Storage.RevokeBreakGlassActivation(ctx, act.ID, 200, secondRevokeAt)
+	require.Error(t, err, "a second conditional revoke of an already-revoked activation must fail")
+	assert.ErrorIs(t, err, storage.ErrBreakGlassNotActive)
+
+	got, err := h.Storage.GetBreakGlassActivation(ctx, act.ID)
+	require.NoError(t, err)
+	assert.Equal(t, core.BreakGlassRevoked, got.State)
+	assert.Equal(t, uint(100), got.RevokedBy, "the first revoker's attribution must survive a racing second attempt")
+	require.NotNil(t, got.RevokedAt)
+	assert.WithinDuration(t, firstRevokeAt, *got.RevokedAt, time.Second)
+}
+
+// #304 end to end: two admins racing to revoke the same activation concurrently
+// must not both succeed and must not corrupt RevokedBy/RevokedAt attribution —
+// exactly one RevokeBreakGlass call wins, the other gets a clean "not active" error.
+func TestRevokeBreakGlass_ConcurrentRevokesOnlyOneWins(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
+	// A single shared connection so both goroutines' conditional UPDATEs interleave
+	// through the same in-memory SQLite database rather than each opening its own
+	// independent (and differently-seeded) :memory: connection.
+	h.SqlDB.SetMaxOpenConns(1)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	require.NoError(t, err)
+
+	admins := []uint{100, 200}
+	errs := make([]error, len(admins))
+	var wg sync.WaitGroup
+	for i, admin := range admins {
+		wg.Add(1)
+		go func(i int, admin uint) {
+			defer wg.Done()
+			errs[i] = h.CoreService.RevokeBreakGlass(ctx, admin, proj, act.ID)
+		}(i, admin)
+	}
+	wg.Wait()
+
+	successCount := 0
+	var winner uint
+	for i, e := range errs {
+		if e == nil {
+			successCount++
+			winner = admins[i]
+		}
+	}
+	assert.Equal(t, 1, successCount, "exactly one concurrent revoke must win")
+
+	list, err := h.CoreService.ListBreakGlassActivations(ctx, proj)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, core.BreakGlassRevoked, list[0].State)
+	assert.Equal(t, winner, list[0].RevokedBy, "attribution must belong to whichever admin's conditional update actually won")
 }
 
 // List reports an active record past its expiry as expired (lazy reconciliation).

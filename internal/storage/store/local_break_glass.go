@@ -5,9 +5,19 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// breakGlassActiveState / breakGlassRevokedState mirror core.BreakGlassActive /
+// core.BreakGlassRevoked. Duplicated here (rather than imported) because this
+// package is imported BY internal/core — importing core back would cycle.
+const (
+	breakGlassActiveState  = "active"
+	breakGlassRevokedState = "revoked"
 )
 
 func (ls *LocalStorage) CreateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) (*models.BreakGlassActivation, error) {
@@ -40,6 +50,28 @@ func (ls *LocalStorage) ListBreakGlassActivations(ctx context.Context, projectID
 func (ls *LocalStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error {
 	if err := ls.db.WithContext(ctx).Save(a).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+// RevokeBreakGlassActivation conditionally transitions activation id from active to
+// revoked in a single UPDATE ... WHERE state = 'active' — not a read-then-write —
+// so a concurrent revoke of the same activation cannot silently overwrite this
+// one's RevokedBy/RevokedAt. Returns storage.ErrBreakGlassNotActive (wrapped) if
+// the row was not active (already revoked, or absent).
+func (ls *LocalStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error {
+	result := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
+		Where("id = ? AND state = ?", id, breakGlassActiveState).
+		Updates(map[string]interface{}{
+			"state":      breakGlassRevokedState,
+			"revoked_by": revokedBy,
+			"revoked_at": revokedAt,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), storage.ErrBreakGlassNotActive)
 	}
 	return nil
 }

@@ -397,6 +397,11 @@ func (m *MockStorage) UpdateBreakGlassActivation(ctx context.Context, a *models.
 	return args.Error(0)
 }
 
+func (m *MockStorage) RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error {
+	args := m.Called(ctx, id, revokedBy, revokedAt)
+	return args.Error(0)
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }

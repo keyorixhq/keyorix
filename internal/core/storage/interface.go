@@ -145,6 +145,13 @@ type Storage interface {
 	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)
 	ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error)
 	UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error
+	// RevokeBreakGlassActivation atomically transitions activation id from active to
+	// revoked, recording who revoked it and when, via a single conditional UPDATE
+	// (WHERE state = active) rather than a read-modify-write — so two concurrent
+	// revokes of the same activation cannot both "win": only the first transitions
+	// state, and the second gets ErrBreakGlassNotActive rather than silently
+	// overwriting the first revoker's attribution.
+	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)

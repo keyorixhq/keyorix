@@ -141,7 +141,7 @@ func (ls *LocalStorage) RemoveRole(ctx context.Context, userID, roleID uint, sco
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorRoleNotAssigned", nil))
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotAssigned", nil), storage.ErrRoleNotAssigned)
 	}
 	return nil
 }
