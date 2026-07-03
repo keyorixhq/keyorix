@@ -240,3 +240,19 @@ func TestContainmentRejectsSymlinkEscape(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(outside, "planted.txt"))
 	assert.True(t, os.IsNotExist(statErr), "rejected write must not create a file outside base")
 }
+
+func TestSecureDeleteFile_OverwritesAndRemoves(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dek.key.migrate-backup.123")
+	original := []byte("sensitive-wrapped-dek-bytes-not-random")
+	require.NoError(t, os.WriteFile(path, original, 0600))
+
+	require.NoError(t, SecureDeleteFile(path))
+
+	_, err := os.Stat(path)
+	assert.True(t, os.IsNotExist(err), "file must be removed")
+}
+
+func TestSecureDeleteFile_MissingFileIsNotAnError(t *testing.T) {
+	require.NoError(t, SecureDeleteFile(filepath.Join(t.TempDir(), "does-not-exist")))
+}
