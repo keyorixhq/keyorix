@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -780,38 +781,86 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	return r, nil
 }
 
+// backendRoutePrefixes lists every non-SPA route family registered on the router
+// outside registerWebUI (see router.go's setup above /api/v1, plus /api/v1 itself).
+// #214: NotFound previously only special-cased /api/, so a typo'd path under any
+// other backend family (auth, health checks, SCIM, metrics, SAML/SSO endpoints
+// under /auth, the OpenAPI/swagger docs) silently fell through to the SPA shell
+// with a 200 instead of a 404 — not an auth bypass (same static public shell
+// everyone gets at /), but noisy/incorrect status codes confuse health-check
+// tooling and WAF rules that expect a clean 404 on an unknown path.
+var backendRoutePrefixes = []string{
+	"/api/", "/auth/", "/scim/", "/system/init", "/health", "/readyz", "/metrics", "/status", "/swagger/", "/openapi.yaml",
+}
+
+func isBackendRoute(p string) bool {
+	for _, prefix := range backendRoutePrefixes {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// noDirListing wraps a static file handler so a request that resolves to a
+// directory (no index file inside it) returns 404 instead of falling through to
+// Go's default http.FileServer directory listing (#213). dist/assets has no
+// index.html, so a bare GET /assets/ would otherwise list every bundled filename
+// including .js.map source-map names — low impact (already discoverable via the
+// built JS's own sourceMappingURL comments and index.html's hashed bundle
+// references) but unnecessary and inconsistent with serving no directory index.
+func noDirListing(fsys http.FileSystem, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upath := req.URL.Path
+		if !strings.HasPrefix(upath, "/") {
+			upath = "/" + upath
+		}
+		if f, err := fsys.Open(path.Clean(upath)); err == nil {
+			fi, statErr := f.Stat()
+			_ = f.Close()
+			if statErr == nil && fi.IsDir() {
+				http.NotFound(w, req)
+				return
+			}
+		}
+		h.ServeHTTP(w, req)
+	})
+}
+
 // registerWebUI wires the SPA's static assets and the client-side-routing
 // fallback against fsys, which is rooted at the dist directory (so request paths
 // map directly: /assets/x -> dist/assets/x). fsys is either an on-disk build
 // (http.Dir) or the embedded build (webui.HTTPFS()).
 func registerWebUI(r chi.Router, fsys http.FileSystem) {
 	fileServer := http.FileServer(fsys)
+	assetServer := noDirListing(fsys, fileServer)
 
 	// Static assets are read-only: register GET+HEAD only, so a mutating method
 	// (DELETE/PUT/POST/PATCH) on an asset gets a 405 from chi rather than the file
 	// served with a 200 (http.FileServer ignores the method). Cleaner semantics and a
 	// smaller surface for a security product.
-	serveStatic := func(pattern string, mws ...func(http.Handler) http.Handler) {
+	serveStatic := func(pattern string, h http.Handler, mws ...func(http.Handler) http.Handler) {
 		rr := r.With(mws...)
-		rr.Method(http.MethodGet, pattern, fileServer)
-		rr.Method(http.MethodHead, pattern, fileServer)
+		rr.Method(http.MethodGet, pattern, h)
+		rr.Method(http.MethodHead, pattern, h)
 	}
-	serveStatic("/assets/*", setCacheHeaders)
-	serveStatic("/static/*", setCacheHeaders)
-	serveStatic("/sw.js")
-	serveStatic("/manifest.json")
-	serveStatic("/favicon.ico")
+	serveStatic("/assets/*", assetServer, setCacheHeaders)
+	serveStatic("/static/*", assetServer, setCacheHeaders)
+	serveStatic("/sw.js", fileServer)
+	serveStatic("/manifest.json", fileServer)
+	serveStatic("/favicon.ico", fileServer)
 
 	// SPA fallback: serve index.html for any non-API route that didn't match a
 	// registered handler, so client-side routes (e.g. /admin/users) resolve. Only for
 	// GET/HEAD — a mutating method to an unmatched path is not a page load.
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-		// An unmatched API path is a 404 regardless of method.
-		if strings.HasPrefix(req.URL.Path, "/api/") {
+		// An unmatched path under any known backend route family is a 404
+		// regardless of method — never the SPA shell.
+		if isBackendRoute(req.URL.Path) {
 			http.NotFound(w, req)
 			return
 		}
-		// A mutating method to a non-API, unmatched path is not a page load.
+		// A mutating method to a non-backend, unmatched path is not a page load.
 		if req.Method != http.MethodGet && req.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
