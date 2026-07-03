@@ -12,12 +12,24 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // defaultMaxOpenConns bounds the DB connection pool when the operator hasn't set
 // max_open_conns — Go's own default is unlimited, which lets a request flood exhaust the
 // backing database's connection limit. A conservative cap is safer out of the box.
 const defaultMaxOpenConns = 25
+
+// gormConfig returns the *gorm.Config shared by every gorm.Open call in this
+// package. GORM's zero-value Config leaves its default Warn-level logger active,
+// which interpolates bound query-parameter VALUES into the logged SQL statement
+// whenever a query errors or exceeds the slow-query threshold — meaning secret
+// ciphertext, token hashes, and other sensitive bound parameters would otherwise
+// get written to stdout/logs on any query error or slow query. Silence it here
+// so that never happens by default (#464).
+func gormConfig() *gorm.Config {
+	return &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)}
+}
 
 // StorageFactory creates storage instances based on configuration
 type StorageFactory interface {
@@ -51,7 +63,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		dbPath = "./secrets.db"
 	}
 
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(dbPath), gormConfig())
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -74,7 +86,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 		return nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
 	}
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), gormConfig())
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 	}

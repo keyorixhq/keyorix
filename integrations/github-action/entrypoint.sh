@@ -97,6 +97,20 @@ validate_secret_name() {
   [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
 }
 
+# mask_value registers a GitHub Actions log mask for every line of a (possibly
+# multi-line) secret value. `::add-mask::` operates per-LINE: one directive
+# redacts exactly one line-oriented string, so a multi-line secret (e.g. a PEM
+# private key or a multi-line config blob) previously only had its FIRST line
+# masked — every subsequent line of the same secret would still appear in
+# plaintext in the job log (#466). Emit a mask for each line individually so
+# the whole value is covered no matter how many lines it spans.
+mask_value() {
+  local val="$1" line
+  while IFS= read -r line; do
+    [ -n "$line" ] && echo "::add-mask::$line"
+  done <<<"$val"
+}
+
 inject_env() {
   local json key val delim count
   json="$(keyorix secret export --project "$PROJECT" --env "$ENVIRONMENT" --format json)"
@@ -116,8 +130,9 @@ inject_env() {
       exit 1
     fi
     val="$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k]')"
-    # Mask the value everywhere it might appear in the logs.
-    echo "::add-mask::$val"
+    # Mask the value everywhere it might appear in the logs, one line at a
+    # time so multi-line secrets are fully covered (#466).
+    mask_value "$val"
     if [ "$EXPORT_TO_ENV" = "true" ]; then
       # Heredoc form so multi-line values survive the GITHUB_ENV file format.
       delim="KEYORIX_EOF_${RANDOM}${RANDOM}"
@@ -157,7 +172,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
     while IFS= read -r output_key; do
       [ -n "$output_key" ] || continue
       output_val="$(printf '%s' "$output_json" | jq -r --arg k "$output_key" '.[$k]')"
-      echo "::add-mask::$output_val"
+      mask_value "$output_val"
     done < <(printf '%s' "$output_json" | jq -r 'keys[]')
 
     # Reuse the CLI's dotenv writer (handles quoting) for the file form.

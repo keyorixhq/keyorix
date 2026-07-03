@@ -34,7 +34,7 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 		if dsn == "" {
 			return nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
 		}
-		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		db, err := gorm.Open(postgres.Open(dsn), gormConfig())
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 		}
@@ -47,7 +47,7 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 		if dbPath == "" {
 			dbPath = "./secrets.db"
 		}
-		db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+		db, err := gorm.Open(sqlite.Open(dbPath), gormConfig())
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to database: %w", err)
 		}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Minimal black-box tests for entrypoint.sh, covering the three fixes in
-# this round (HARDENING-BACKLOG #175/#176/#177):
+# Minimal black-box tests for entrypoint.sh, covering fixes across rounds
+# (HARDENING-BACKLOG #175/#176/#177, #466):
 #
 #   #175 — a pinned `version` install must abort if the downloaded binary's
 #          checksum doesn't match the release's published checksums.txt.
@@ -9,6 +9,9 @@
 #   #177 — secret values must be `::add-mask::`d on the output-file path
 #          even when export-to-env=false (so inject_env's masking is
 #          skipped).
+#   #466 — a multi-line secret value (e.g. a private key) must have EVERY
+#          line masked, not just the first — GitHub Actions' ::add-mask::
+#          operates per-line.
 #
 # Runs entrypoint.sh as a real subprocess against a mocked PATH (fake
 # curl/keyorix, in test/fixtures/), so it exercises the actual script, not
@@ -103,6 +106,31 @@ if [ -f "$out_file" ] && grep -q "SUPER_SECRET=topsecretvalue123" "$out_file"; t
   ok "#177: output file was still written with the secret"
 else
   bad "#177: output file was not written as expected"
+fi
+
+# --- #466: a multi-line secret value must have EVERY line masked, not just
+# the first. ::add-mask:: registers exactly one line-oriented string per
+# call, so a naive single `::add-mask::$val` on a value containing embedded
+# newlines only redacts its first line in the job log.
+cp "${fixtures}/mock_keyorix_multiline.sh" "${mockbin}/keyorix"
+
+set +e
+PATH="${mockbin}:${PATH}" \
+  KEYORIX_SERVER="https://example.invalid" \
+  KEYORIX_TOKEN="dummy-token" \
+  INPUT_EXPORT_TO_ENV="true" \
+  GITHUB_ENV="${workdir}/github_env" \
+  bash "$entrypoint" >"${workdir}/stdout3.log" 2>"${workdir}/stderr3.log"
+rc3=$?
+set -e
+
+if [ "$rc3" -eq 0 ] \
+  && grep -q "::add-mask::line-one-secret" "${workdir}/stdout3.log" \
+  && grep -q "::add-mask::line-two-secret" "${workdir}/stdout3.log" \
+  && grep -q "::add-mask::line-three-secret" "${workdir}/stdout3.log"; then
+  ok "#466: every line of a multi-line secret is masked"
+else
+  bad "#466: multi-line secret was not fully masked (rc=${rc3}); stdout: $(cat "${workdir}/stdout3.log")"
 fi
 
 echo
