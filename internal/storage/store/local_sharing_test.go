@@ -119,6 +119,55 @@ func TestDeleteShareRecord_RemovesAllDuplicatesForSameTuple(t *testing.T) {
 	assert.Equal(t, int64(0), postCount, "both duplicate rows must be removed by a single revoke")
 }
 
+// #370: DeleteSecret must revoke every active ShareRecord for that secret, not just
+// soft-delete the secret itself — otherwise a share grant silently resurrects with zero
+// re-authorization when the secret is later restored from the recycle bin, even when the
+// secret was deleted specifically to sever a former grantee's access.
+func TestDeleteSecret_RevokesActiveShares(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "grantee", Email: "g@x.io"}).Error)
+	proj, err := ls.CreateProject(ctx, &models.Project{Name: "app"})
+	require.NoError(t, err)
+	env, err := ls.CreateEnvironment(ctx, &models.Environment{Name: "prod", ProjectID: proj.ID})
+	require.NoError(t, err)
+	sec, err := ls.CreateSecret(ctx, &models.SecretNode{
+		ProjectID: proj.ID, EnvironmentID: env.ID, Name: "db-pw", IsSecret: true, Type: "text",
+		Status: "active", OwnerID: 1,
+	})
+	require.NoError(t, err)
+
+	share, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: sec.ID, RecipientID: 2, IsGroup: false, OwnerID: 1, Permission: "read",
+	})
+	require.NoError(t, err)
+
+	// Sanity: the grantee has access before the delete.
+	perm, err := ls.CheckSharePermission(ctx, sec.ID, 2)
+	require.NoError(t, err)
+	assert.Equal(t, "read", perm)
+
+	// Delete the secret specifically to sever the grantee's access.
+	require.NoError(t, ls.DeleteSecret(ctx, sec.ID))
+
+	var deletedShare models.ShareRecord
+	require.NoError(t, db.Unscoped().First(&deletedShare, share.ID).Error)
+	assert.True(t, deletedShare.DeletedAt.Valid, "the share record must be revoked (soft-deleted) alongside the secret")
+
+	// Restore the secret (via project restore, the only supported path once the parent
+	// project stays live — RestoreSecret alone also works when the project is live).
+	require.NoError(t, ls.RestoreSecret(ctx, sec.ID))
+
+	// The previously-revoked share must NOT silently reactivate: CheckSharePermission
+	// must deny the former grantee post-restore with zero new authorization step.
+	perm, err = ls.CheckSharePermission(ctx, sec.ID, 2)
+	require.Error(t, err, "a share revoked by secret delete must not resurrect when the secret is restored")
+	assert.Equal(t, "", perm)
+}
+
 // #136: CheckSharePermission's OwnerID==userID check must not match when both are the
 // zero value. A machine actor's ID is also 0, so an unguarded equality would grant it
 // owner-level "write" on every ownerless (machine-created) secret.

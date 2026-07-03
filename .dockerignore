@@ -1,0 +1,55 @@
+# Build context for server/Dockerfile, cmd/keyorix-k8s-sync/Dockerfile, and
+# cmd/keyorix-mcp/Dockerfile — all three build from repo-root context `.` and
+# `COPY . .`, so this excludes anything none of them need (#115): without it,
+# the full .git history, docs, and dev-only tooling all get sent to the builder
+# and are then reachable by any build step that runs after `COPY . .`.
+#
+# Keep: go.mod, go.sum, go.work*, main.go, server/, cmd/, internal/ — shared by
+# all three image builds.
+
+.git
+.github
+.claude
+.task
+
+# Docs, examples, and non-build directories.
+docs/
+demo/
+examples/
+migrations/
+integrations/
+scripts/
+deploy/
+configs/
+operator/
+
+# Prose / metadata files, not needed to build a binary.
+*.md
+LICENSE
+LICENSING.md
+COPYRIGHT
+BACKLOG.md
+
+# Dev-only tooling and local-only configs.
+.env.example
+.env
+.env.*
+.pre-commit-config.yaml
+.golangci.yml
+.gitleaks.toml
+.gitattributes
+revive.toml
+Taskfile.yml
+buf.yaml
+buf.gen.yaml
+docker-compose.yml
+Caddyfile
+keyorix.docker.yaml
+push-all.sh
+install.sh
+
+# Never send local secrets/keys into a build context.
+*.key
+*.pem
+dek.key*
+kek.salt*

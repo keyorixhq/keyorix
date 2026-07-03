@@ -392,24 +392,50 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 func TestSyncSSORoles(t *testing.T) {
 	t.Run("authoritative over mapped roles only", func(t *testing.T) {
 		c, store, key, p := ssoTestCore(t)
-		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin", "keyorix-auditors": "system_auditor"}
-		// IdP asserts only keyorix-admins → system_admin desired; system_auditor (mapped,
-		// not asserted) must be removed; system_viewer (NOT mapped) left alone.
-		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
+		p.GroupRoleMap = map[string]string{"keyorix-secrets-rw": "secrets_writer", "keyorix-auditors": "system_auditor"}
+		// IdP asserts only keyorix-secrets-rw → secrets_writer desired; system_auditor
+		// (mapped, not asserted) must be removed; system_viewer (NOT mapped) left alone.
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-secrets-rw"}})
 		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{
 			{ID: 20, Name: "system_auditor"}, {ID: 30, Name: "system_viewer"},
 		}, nil)
-		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
+		store.On("GetRoleByName", mock.Anything, "secrets_writer").Return(&models.Role{ID: 10, Name: "secrets_writer"}, nil)
 		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 20, Name: "system_auditor"}, nil)
+		// RemoveUserRole's last-global-admin guard (unrelated to this test's role, but
+		// exercised on every removal) looks up every install-admin role name
+		// (installAdminRoleNames: super_admin/admin/system_admin) to build the
+		// admin-role-ID set.
+		store.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, assert.AnError)
+		store.On("GetRoleByName", mock.Anything, "admin").Return(nil, assert.AnError)
+		store.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError)
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 		c.syncSSORoles(context.Background(), p, 7, raw)
 
-		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // system_admin granted
+		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // secrets_writer granted
 		store.AssertCalled(t, "RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything)    // system_auditor revoked
 		store.AssertNotCalled(t, "RemoveRole", mock.Anything, uint(7), uint(30), mock.Anything) // system_viewer (unmapped) untouched
+	})
+
+	// TestSyncSSORoles/refuses-to-grant-an-admin-tier-role pins #96: GroupRoleMap
+	// mapped a group directly to an admin-tier role with no guard (unlike
+	// reconcileSSOGroups's admin-conferring-GROUP check) — an IdP group that is
+	// frequently self-service or governed by non-Keyorix-admins could grant global
+	// admin to anyone who joins it. AssignRole must never be called for an
+	// admin-tier mapped role.
+	t.Run("refuses to grant an admin-tier role from a group mapping", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
+		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{}, nil)
+		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		c.syncSSORoles(context.Background(), p, 7, raw)
+
+		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("absent groups claim → no-op (never touches roles)", func(t *testing.T) {
@@ -432,6 +458,58 @@ func TestSyncSSORoles(t *testing.T) {
 		c.syncSSORoles(context.Background(), p, 7, raw)
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
+}
+
+// SSO login-time role reconciliation grants/revokes a real role, so it must land in
+// the RBAC audit trail with a structured RoleID like every other grant path — not
+// just the coarse aggregate auth.sso_roles_synced count (#297). Uses real storage so
+// ListRBACAuditLogs (reading the actual persisted rows) is exercised end to end.
+func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{}, &models.AuditEvent{}))
+	ls := store.NewLocalStorage(db)
+	c := NewKeyorixCore(ls)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.User{ID: 7, Username: "alice"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "system_auditor"}).Error)
+	p := &SSOProvider{Name: "okta", GroupRoleMap: map[string]string{"keyorix-auditors": "system_auditor"}}
+
+	// IdP asserts keyorix-auditors → system_auditor should be granted.
+	c.reconcileSSORoles(ctx, p, 7, []string{"keyorix-auditors"})
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var assigned *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned {
+			assigned = e
+		}
+	}
+	require.NotNil(t, assigned, "SSO-driven role grant must appear in the RBAC audit trail")
+	require.NotNil(t, assigned.TargetUserID)
+	assert.Equal(t, uint(7), *assigned.TargetUserID)
+	require.NotNil(t, assigned.RoleID)
+	assert.Equal(t, uint(10), *assigned.RoleID)
+
+	// A later login with no group asserted must revoke system_admin, also audited.
+	c.reconcileSSORoles(ctx, p, 7, nil)
+
+	entries, _, err = c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var removed *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleRemoved {
+			removed = e
+		}
+	}
+	require.NotNil(t, removed, "SSO-driven role revoke must appear in the RBAC audit trail")
+	require.NotNil(t, removed.TargetUserID)
+	assert.Equal(t, uint(7), *removed.TargetUserID)
+	require.NotNil(t, removed.RoleID)
+	assert.Equal(t, uint(10), *removed.RoleID)
 }
 
 func TestBeginSSO_BuildsAuthURLWithStateAndNonce(t *testing.T) {
@@ -460,9 +538,55 @@ func TestBeginSSO_UnknownProvider(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestBeginSSO_RejectsSAMLTypedProvider is the #320 regression: a provider configured
+// with Type: "saml" has OAuth == nil (server/main.go only ever sets OAuth for OIDC
+// providers), so the old code — which dereferenced p.OAuth.AuthCodeURL unconditionally
+// — panicked on any GET /auth/sso/{name}/login for a SAML provider name, an
+// unauthenticated, unlimited, automatable crash-and-recover reachable by anyone who'd
+// enumerated the name via GET /auth/sso/providers. BeginSSO must instead return a
+// clean error, and — since the old panic happened AFTER CreateSSOLoginState — must not
+// leave an orphaned SSOLoginState row behind (asserted by AssertNotCalled).
+func TestBeginSSO_RejectsSAMLTypedProvider(t *testing.T) {
+	stub := &stubSAML{redirect: "https://idp.example/sso", requestID: "req-1"}
+	c, store := samlTestCore(stub)
+
+	_, err := c.BeginSSO(context.Background(), "corp", "/secrets")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "nil pointer", "must be a clean error, not a recovered panic")
+	store.AssertNotCalled(t, "CreateSSOLoginState", mock.Anything, mock.Anything)
+}
+
+// TestCompleteSSO_RejectsSAMLTypedProvider mirrors TestBeginSSO_RejectsSAMLTypedProvider
+// for the callback side (#320): CompleteSSO dereferences p.OAuth.Exchange unconditionally
+// too. Even though a real attacker can't reach this without first obtaining a valid,
+// unexpired SSOLoginState row (the state token is never returned before BeginSSO's old
+// panic), the guard must hold defensively — and must fire BEFORE touching storage, so a
+// type-mismatched callback never even attempts to consume a login state.
+func TestCompleteSSO_RejectsSAMLTypedProvider(t *testing.T) {
+	stub := &stubSAML{redirect: "https://idp.example/sso", requestID: "req-1"}
+	c, store := samlTestCore(stub)
+
+	_, _, _, err := c.CompleteSSO(context.Background(), "corp", "code", "some-state", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "nil pointer", "must be a clean error, not a recovered panic")
+	store.AssertNotCalled(t, "ConsumeSSOLoginState", mock.Anything, mock.Anything)
+}
+
 func TestSanitizeReturnTo(t *testing.T) {
 	assert.Equal(t, "/secrets", sanitizeReturnTo("/secrets"))
 	assert.Equal(t, "", sanitizeReturnTo("//evil.com"))
 	assert.Equal(t, "", sanitizeReturnTo("https://evil.com"))
 	assert.Equal(t, "", sanitizeReturnTo("evil"))
+	// A backslash right after the leading slash is normalized to "/" by several
+	// browsers, so "/\evil.com" is effectively "//evil.com" — a protocol-relative
+	// open redirect to an external host. It must be rejected even though it starts
+	// with a single "/" and contains no literal "//".
+	assert.Equal(t, "", sanitizeReturnTo(`/\evil.com`))
+	assert.Equal(t, "", sanitizeReturnTo(`/\/evil.com`))
+	assert.Equal(t, "", sanitizeReturnTo(`/\\evil.com`))
+	// A backslash anywhere else in the value is rejected too, not just right after
+	// the leading slash.
+	assert.Equal(t, "", sanitizeReturnTo(`/ok/\evil.com`))
+	// A same-origin path with a subpath still passes.
+	assert.Equal(t, "/secrets/view", sanitizeReturnTo("/secrets/view"))
 }

@@ -8,13 +8,20 @@ import (
 )
 
 func TestMLConfigWithDefaults(t *testing.T) {
+	// #101: an unset seed is drawn from crypto/rand, not the fixed constant 1 — assert
+	// it's positive and non-deterministic across calls, not a specific value.
 	got := MLConfig{Enabled: true}.withDefaults()
-	if got.Threshold != 0.60 || got.NumTrees != 100 || got.SampleSize != 256 || got.Seed != 1 {
+	if got.Threshold != 0.60 || got.NumTrees != 100 || got.SampleSize != 256 || got.Seed <= 0 {
 		t.Fatalf("defaults not applied: %+v", got)
 	}
+	got2 := MLConfig{Enabled: true}.withDefaults()
+	if got.Seed == got2.Seed {
+		t.Fatalf("two unset-seed defaults collided (seed=%d) — the seed must not be a fixed constant", got.Seed)
+	}
+
 	// Out-of-range values are corrected; valid ones are kept.
 	got = MLConfig{Enabled: true, Threshold: 1.5, NumTrees: -3, SampleSize: 0, Seed: -1}.withDefaults()
-	if got.Threshold != 0.60 || got.NumTrees != 100 || got.SampleSize != 256 || got.Seed != 1 {
+	if got.Threshold != 0.60 || got.NumTrees != 100 || got.SampleSize != 256 || got.Seed <= 0 {
 		t.Fatalf("out-of-range not corrected: %+v", got)
 	}
 	got = MLConfig{Enabled: true, Threshold: 0.8, NumTrees: 50, SampleSize: 128, Seed: 9}.withDefaults()

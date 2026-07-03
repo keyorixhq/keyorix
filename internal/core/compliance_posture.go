@@ -3,12 +3,14 @@
 // state of the controls Keyorix already enforces — audit-trail integrity, access
 // recertification coverage, dormant standing access, secret-rotation hygiene,
 // second-factor coverage, and break-glass usage — into one structured object,
-// grouped by control area. Read-only; gated by system.read.
+// grouped by control area. Read-only; gated by audit.read (not the universal
+// system_viewer baseline — see #255/#272 disclosure-family fix in router.go).
 package core
 
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -185,6 +187,22 @@ type CompliancePosture struct {
 func (p *CompliancePosture) degrade(area string, err error) {
 	p.Degraded = true
 	p.DegradedReasons = append(p.DegradedReasons, fmt.Sprintf("%s: %v", area, err))
+}
+
+// DegradedArea reports whether any recorded DegradedReasons entry names an area
+// starting with one of the given prefixes — i.e. whether the specific signal a
+// consumer (e.g. the control-framework matrix) depends on failed to collect this
+// run. Used so a downstream "pass/gap" evaluation derived from a degraded field
+// can surface as unknown rather than silently trusting the field's zero value.
+func (p *CompliancePosture) DegradedArea(prefixes ...string) bool {
+	for _, reason := range p.DegradedReasons {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(reason, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SupplyChainPosture reports software-supply-chain integrity: whether this deployment

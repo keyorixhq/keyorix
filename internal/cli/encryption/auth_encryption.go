@@ -159,7 +159,7 @@ func runRotateAuthEncryption(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
 	fmt.Println("🔄 Starting authentication encryption key rotation...")
-	if err := authEnc.RotateAuthEncryption(); err != nil {
+	if err := authEnc.RotateAuthEncryption(passphrase); err != nil {
 		return fmt.Errorf("failed to rotate auth encryption keys: %w", err)
 	}
 	fmt.Println("✅ Authentication encryption key rotation completed successfully")

@@ -124,6 +124,11 @@ func (rs *RemoteStorage) ListSecretAccessLogs(_ context.Context, _ uint, _ time.
 	return nil, fmt.Errorf("ListSecretAccessLogs not available in remote mode")
 }
 
+// PrincipalSecretFirstSeen is not available in remote mode; anomaly detection is server-side.
+func (rs *RemoteStorage) PrincipalSecretFirstSeen(_ context.Context, _ time.Time) (map[string]map[uint]time.Time, error) {
+	return nil, fmt.Errorf("PrincipalSecretFirstSeen not available in remote mode")
+}
+
 // MostAccessedSecrets is not available in remote mode; usage analytics aggregate server-side.
 func (rs *RemoteStorage) MostAccessedSecrets(_ context.Context, _ *uint, _ time.Time, _ int) ([]storage.SecretUsageStat, error) {
 	return nil, fmt.Errorf("MostAccessedSecrets not available in remote mode")
