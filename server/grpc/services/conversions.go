@@ -8,6 +8,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -19,6 +20,43 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// --- Error sanitization ---
+
+// clientSafe returns a generic, client-safe message in place of err's raw
+// Error() text. The other RPC error-mapping helpers in this package
+// (mapUserError, groupError, etc.) already do this by falling back to a
+// hardcoded message on their unclassified/codes.Internal branch; clientSafe
+// exists for the handful of call sites that don't go through one of those
+// switches and would otherwise reflect a raw error — e.g. a storage/ORM
+// failure or an upstream secret-store connector error (backlog #116) —
+// straight into the gRPC status. The caller MUST still log the original err
+// server-side before calling this.
+func clientSafe(err error) string {
+	if err == nil {
+		return ""
+	}
+	return "an internal error occurred; please try again or contact support if the problem persists"
+}
+
+// isSafeConnectError mirrors the HTTP handlers' connect.go allowlist: it
+// reports whether msg is one of the small set of deliberately-crafted, safe
+// messages core.ReadFederatedSecret / CreateConnectRefGrant /
+// DeleteConnectRefGrant themselves produce. Anything else may originate from
+// storage or an upstream connector (e.g. Vault) and must be sanitized.
+func isSafeConnectError(msg string) bool {
+	for _, marker := range []string{
+		"keyorix connect is not enabled",
+		"unknown connector",
+		"a role is required for a connect ref-grant",
+		"is not permitted for your roles on connector",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
 
 // --- Identity & authorization ---
 

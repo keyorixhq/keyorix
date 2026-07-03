@@ -8,6 +8,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,7 +33,8 @@ func (h *CatalogHandler) ListProjectMemberships(w http.ResponseWriter, r *http.R
 	if r.URL.Query().Get("stale") == "true" {
 		all, err := h.coreService.StaleInvites(r.Context(), staleInviteThreshold)
 		if err != nil {
-			sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+			log.Printf("Error listing stale invites: %v", err)
+			sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 			return
 		}
 		// StaleInvites is install-wide; narrow to this project for the endpoint.
@@ -47,7 +49,8 @@ func (h *CatalogHandler) ListProjectMemberships(w http.ResponseWriter, r *http.R
 	}
 	memberships, err := h.coreService.ListProjectMemberships(r.Context(), uint(id))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing memberships for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"memberships": memberships}, "")
@@ -81,13 +84,17 @@ func (h *CatalogHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	m, err := h.coreService.InviteMember(r.Context(), uint(id), body.UserID, body.Role, actor.UserID, body.IDPResolved)
 	if err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "already has"):
+		case strings.Contains(msg, "already has"):
 			status = http.StatusConflict
-		case strings.Contains(err.Error(), "unknown role"), strings.Contains(err.Error(), "required"):
+		case strings.Contains(msg, "unknown role"), strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error inviting member to project %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -127,13 +134,17 @@ func (h *CatalogHandler) TransitionMembership(w http.ResponseWriter, r *http.Req
 	m, err := h.coreService.TransitionMembership(r.Context(), uint(projectID), uint(membershipID), to, actor.UserID)
 	if err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "cannot transition"):
+		case strings.Contains(msg, "cannot transition"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error transitioning membership %d for project %d: %v", membershipID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"membership": m}, "Membership updated")

@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -151,7 +153,14 @@ func (s *AuditGRPCService) WriteAuditCheckpoint(ctx context.Context, _ *emptypb.
 	if err != nil {
 		// The chain did not verify (broken, or a prior signed checkpoint proves a
 		// truncation) — refuse to notarise it. A precondition failure, not an error.
-		return nil, status.Error(codes.FailedPrecondition, err.Error())
+		// core.WriteAuditCheckpoint also propagates raw storage-layer errors on this
+		// path, which must not reach the client verbatim.
+		msg := err.Error()
+		if !strings.Contains(msg, "refusing to checkpoint") {
+			log.Printf("Error writing audit checkpoint: %v", err)
+			msg = clientSafe(err)
+		}
+		return nil, status.Error(codes.FailedPrecondition, msg)
 	}
 	if !written {
 		return nil, status.Error(codes.FailedPrecondition,

@@ -6,6 +6,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -16,9 +17,15 @@ import (
 // SAMLMetadata handles GET /auth/saml/{provider}/metadata — the SP metadata XML the IdP
 // administrator imports to register Keyorix.
 func (h *AuthHandler) SAMLMetadata(w http.ResponseWriter, r *http.Request) {
-	md, err := h.coreService.SAMLMetadata(chi.URLParam(r, "provider"))
+	provider := chi.URLParam(r, "provider")
+	md, err := h.coreService.SAMLMetadata(provider)
 	if err != nil {
-		sendError(w, "SSOError", err.Error(), http.StatusNotFound, nil)
+		msg := err.Error()
+		if !isSafeSSOError(msg) {
+			log.Printf("Error generating SAML metadata for provider %q: %v", provider, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "SSOError", msg, http.StatusNotFound, nil)
 		return
 	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
@@ -33,7 +40,12 @@ func (h *AuthHandler) BeginSAML(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	redirectURL, err := h.coreService.BeginSAML(r.Context(), provider, r.URL.Query().Get("return_to"))
 	if err != nil {
-		sendError(w, "SSOError", err.Error(), http.StatusBadRequest, nil)
+		msg := err.Error()
+		if !isSafeSSOError(msg) {
+			log.Printf("Error beginning SAML login via provider %q: %v", provider, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "SSOError", msg, http.StatusBadRequest, nil)
 		return
 	}
 	// redirectURL is built by core from the provider's operator-configured IdP SSO
@@ -60,7 +72,12 @@ func (h *AuthHandler) CompleteSAML(w http.ResponseWriter, r *http.Request) {
 	session, _, returnTo, err := h.coreService.CompleteSAML(
 		r.Context(), provider, r, relayState, r.Header.Get("User-Agent"), r.RemoteAddr)
 	if err != nil {
-		h.redirectFragment(w, r, completeURL, url.Values{"error": {err.Error()}})
+		msg := err.Error()
+		if !isSafeSSOError(msg) {
+			log.Printf("Error completing SAML login via provider %q: %v", provider, err)
+			msg = clientSafe(err)
+		}
+		h.redirectFragment(w, r, completeURL, url.Values{"error": {msg}})
 		return
 	}
 

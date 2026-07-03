@@ -178,6 +178,12 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 		}
 		secrets, err := c.scopedPolicySecrets(ctx, policy, nil)
 		if err != nil {
+			// #364: unlike the dependency-list error below (which degrades gracefully
+			// and logs), this was previously a silent skip — auto-rotate-enabled,
+			// possibly critically-overdue secrets under this policy's scope would not
+			// even be considered for rotation this run, with no trace anywhere that it
+			// happened. Log so an operator can see it, matching the sibling handling.
+			log.Printf("auto-rotation: list scoped secrets for policy %d (%q): %v — skipping this policy's secrets this run", policy.ID, policy.Name, err)
 			continue
 		}
 		for _, secret := range secrets {

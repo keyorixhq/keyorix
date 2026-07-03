@@ -13,6 +13,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -23,8 +24,40 @@ import (
 
 // --- Project / Environment ---
 
+// maxEnvironmentListing caps how many environments a single ListEnvironmentsByProject
+// (or ...IncludingDeleted) call returns (#386). This is defense-in-depth behind the
+// creation-time cap on CreateProjectWithEnvs (#383, maxEnvNamesPerCreate in
+// internal/core/catalog.go): that cap bounds a single fan-out create, but a project
+// can still accrete environments one at a time via repeated single-environment-create
+// calls, and this backstop keeps the listing query/response bounded independent of
+// that limit — including for any pre-existing data created before #383 shipped. Set
+// well above the create-time cap so it never trips under normal use.
+const maxEnvironmentListing = 1000
+
+// isDuplicateProjectNameViolation reports whether err is a unique-constraint violation
+// on specifically the partial projects-name index (uniq_projects_name_active, #385), as
+// distinct from any other unique constraint. Both SQLite and Postgres include the
+// violated index name in the driver-native error text for an expression index like this
+// one, mirroring isDuplicateEmailViolation's treatment of users.email (#117).
+func isDuplicateProjectNameViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "uniq_projects_name_active")
+}
+
 func (ls *LocalStorage) CreateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	return project, ls.db.WithContext(ctx).Create(project).Error
+	if err := ls.db.WithContext(ctx).Create(project).Error; err != nil {
+		if isDuplicateProjectNameViolation(err) {
+			// The partial unique index uniq_projects_name_active (#385) caught a
+			// case-insensitive duplicate: another project already holds this name (in any
+			// case). Translate to the sentinel so callers can surface a clean "project name
+			// already in use" error instead of a raw constraint-violation message.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, err)
+		}
+		return nil, err
+	}
+	return project, nil
 }
 
 func (ls *LocalStorage) CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error) {
@@ -111,6 +144,11 @@ func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Projec
 
 func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
 	if err := ls.db.WithContext(ctx).Save(project).Error; err != nil {
+		if isDuplicateProjectNameViolation(err) {
+			// See CreateProject's comment: a rename collided with the partial
+			// case-insensitive unique index (#385).
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, err)
+		}
 		return nil, fmt.Errorf("failed to update project: %w", err)
 	}
 	return project, nil
@@ -205,14 +243,16 @@ func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environ
 
 func (ls *LocalStorage) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	var environments []*models.Environment
-	return environments, ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&environments).Error
+	return environments, ls.db.WithContext(ctx).Where("project_id = ?", projectID).
+		Limit(maxEnvironmentListing).Find(&environments).Error
 }
 
 // ListEnvironmentsByProjectIncludingDeleted is like ListEnvironmentsByProject but
 // also returns soft-deleted environments (DeletedAt populated), for the restore UI.
 func (ls *LocalStorage) ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	var environments []*models.Environment
-	return environments, ls.db.WithContext(ctx).Unscoped().Where("project_id = ?", projectID).Find(&environments).Error
+	return environments, ls.db.WithContext(ctx).Unscoped().Where("project_id = ?", projectID).
+		Limit(maxEnvironmentListing).Find(&environments).Error
 }
 
 func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {

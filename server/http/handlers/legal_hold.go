@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -16,7 +17,8 @@ import (
 func (h *DashboardHandler) GetLegalHold(w http.ResponseWriter, r *http.Request) {
 	hold, err := h.coreService.GetActiveLegalHold(r.Context())
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error getting active legal hold: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	if hold == nil {
@@ -43,13 +45,17 @@ func (h *DashboardHandler) PlaceLegalHold(w http.ResponseWriter, r *http.Request
 	hold, err := h.coreService.PlaceLegalHold(r.Context(), actor.UserID, body.Reason)
 	if err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "already active"):
+		case strings.Contains(msg, "required") || strings.Contains(msg, "already active"):
 			status = http.StatusBadRequest
-		case strings.Contains(err.Error(), "admin-tier principal may place"):
+		case strings.Contains(msg, "admin-tier principal may place"):
 			status = http.StatusForbidden
+		default:
+			log.Printf("Error placing legal hold: %v", err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -75,11 +81,14 @@ func (h *DashboardHandler) LiftLegalHold(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.coreService.LiftLegalHold(r.Context(), actor.UserID, body.Reason); err != nil {
 		status := http.StatusInternalServerError
-		switch {
-		case strings.Contains(err.Error(), "no legal hold") || strings.Contains(err.Error(), "a reason is required"):
+		msg := err.Error()
+		if strings.Contains(msg, "no legal hold") || strings.Contains(msg, "a reason is required") {
 			status = http.StatusBadRequest
+		} else {
+			log.Printf("Error lifting legal hold: %v", err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Legal hold lifted")
