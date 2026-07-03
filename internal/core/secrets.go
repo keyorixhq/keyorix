@@ -203,12 +203,14 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	secret.UpdatedAt = time.Now()
 
 	if len(req.Value) > 0 {
-		latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
-		nextVersionNumber := 1
-		if err == nil && latestVersion != nil {
-			nextVersionNumber = latestVersion.VersionNumber + 1
-		}
-		if err := c.storeSecretVersion(ctx, secret, req.Value, nextVersionNumber); err != nil {
+		// #121 follow-up: two concurrent UpdateSecret calls on the same secret (or one
+		// racing a RotateSecret) can both compute the same "next" version number from a
+		// stale GetLatestSecretVersion read; the uniq_secret_versions_node_version index
+		// (storage.ensureSecretVersionIndex) makes the loser's insert fail rather than
+		// silently duplicate, but a plain storeSecretVersion call surfaced that as a hard
+		// error to a caller doing nothing wrong. storeNextSecretVersion retries against a
+		// freshly re-read version number instead, same as RotateSecret already does.
+		if err := c.storeNextSecretVersion(ctx, secret, req.Value); err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 	}
