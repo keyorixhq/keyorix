@@ -62,8 +62,14 @@ func TestCopyEnvironmentSecretsRequiresSourceRead(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2, ProjectID: 1}).Error)
 
-	seedSession(t, db, 1, "writer-tok")
-	seedSession(t, db, 2, "reader-writer-tok")
+	// Note: token literals are hashed and cached in the process-wide auth token cache
+	// (server/middleware/auth.go's tokenCache) keyed only by the token string, with no
+	// per-test/per-DB scoping. Reusing a generic literal like "copyenv-writer-tok" that another
+	// test file in this package also seeds (for a differently-permissioned user, in an
+	// unrelated in-memory DB) risks that later test observing THIS test's stale cached
+	// auth result. Use names unique to this test to avoid any cross-test collision.
+	seedSession(t, db, 1, "copyenv-writer-tok")
+	seedSession(t, db, 2, "copyenv-reader-writer-tok")
 
 	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
@@ -102,11 +108,11 @@ func TestCopyEnvironmentSecretsRequiresSourceRead(t *testing.T) {
 	// The fix: secrets.write alone (no secrets.read on the source) is rejected — a
 	// write-only-scoped, secret-owning principal can no longer use the bulk copy to
 	// exfiltrate the value into an environment it can read.
-	assert.Equal(t, http.StatusForbidden, copySecrets("writer-tok"),
+	assert.Equal(t, http.StatusForbidden, copySecrets("copyenv-writer-tok"),
 		"secrets.write without secrets.read on the source environment must be denied")
 
 	// A principal holding secrets.read on the source (in addition to secrets.write) may
 	// still perform the copy — the fix must not over-restrict the legitimate case.
-	assert.Equal(t, http.StatusOK, copySecrets("reader-writer-tok"),
+	assert.Equal(t, http.StatusOK, copySecrets("copyenv-reader-writer-tok"),
 		"secrets.write + secrets.read on the source environment must still succeed")
 }
