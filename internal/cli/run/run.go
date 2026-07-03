@@ -300,9 +300,47 @@ func toEnvKey(name string) string {
 	return b.String()
 }
 
+// sensitiveEnvSuffixes mark a KEYORIX_-prefixed env var as this CLI invocation's own
+// credential (an auth token, password, API key, secret, or DB DSN) rather than
+// something a launched command needs.
+var sensitiveEnvSuffixes = []string{"_TOKEN", "_PASSWORD", "_SECRET", "_API_KEY", "_DSN", "_KEK"}
+
+// filterSensitiveEnv drops Keyorix's own credential env vars (e.g. KEYORIX_TOKEN, the
+// token this invocation used to authenticate) from the environment inherited by the
+// child process. 'keyorix run' still inherits the rest of the parent environment
+// unchanged (PATH, HOME, and any other var) — that inheritance is the point of `run`,
+// matching how a plain subshell behaves — but the child (and anything it in turn
+// spawns) has no legitimate need for the credentials THIS CLI invocation used to reach
+// Keyorix, so those are withheld rather than handed down by default.
+func filterSensitiveEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if isSensitiveKeyorixEnv(key) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// isSensitiveKeyorixEnv reports whether key is a Keyorix-internal credential variable
+// (KEYORIX_ prefix plus a token/password/secret/key/DSN suffix).
+func isSensitiveKeyorixEnv(key string) bool {
+	if !strings.HasPrefix(key, "KEYORIX_") {
+		return false
+	}
+	for _, suf := range sensitiveEnvSuffixes {
+		if strings.HasSuffix(key, suf) {
+			return true
+		}
+	}
+	return false
+}
+
 // execChild builds the child environment and executes the command.
 func execChild(args []string, extraEnv map[string]string) error {
-	childEnv := os.Environ()
+	childEnv := filterSensitiveEnv(os.Environ())
 	for k, v := range extraEnv {
 		childEnv = append(childEnv, k+"="+v)
 	}

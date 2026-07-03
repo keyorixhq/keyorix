@@ -34,7 +34,7 @@ func runAddMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
-	if err := service.AddUserToGroup(ctx, addMemberUserID, addMemberGroupID); err != nil {
+	if err := service.AddUserToGroup(ctx, 0, addMemberUserID, addMemberGroupID); err != nil { // actorID 0: local/unauthenticated CLI
 		return fmt.Errorf("failed to add member: %w", err)
 	}
 	fmt.Printf("User %d added to group %d.\n", addMemberUserID, addMemberGroupID)

@@ -18,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // --- Permissions ---
@@ -113,10 +114,30 @@ func (ls *LocalStorage) assignUserRole(ctx context.Context, userID, roleID uint,
 	err := ls.db.WithContext(ctx).
 		Where("user_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
 			userID, roleID, scope.ProjectID, scope.EnvironmentID).First(&existing).Error
-	if err == nil {
-		return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
-	}
-	if err != gorm.ErrRecordNotFound {
+	switch err {
+	case nil:
+		// A row already exists at this exact (user, role, project, environment) key. A
+		// still-live grant (no expiry, or an expiry still in the future) genuinely blocks
+		// a duplicate assignment. But an EXPIRED grant is a stale, un-reaped row — e.g. a
+		// prior break-glass activation whose time-bound grant naturally lapsed — and must
+		// be treated as ABSENT for this check, or a second real-incident activation for
+		// the same user/role/scope is permanently refused with "already assigned" even
+		// though nothing live is actually being duplicated (#263). Delete the stale row
+		// so the composite primary key (user_id, role_id, project_id, environment_id) is
+		// free for the fresh Create below, mirroring how live-authorization queries
+		// elsewhere (e.g. GetUserRoles) already exclude expired grants.
+		if existing.ExpiresAt == nil || existing.ExpiresAt.After(time.Now()) {
+			return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
+		}
+		if derr := ls.db.WithContext(ctx).
+			Where("user_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
+				userID, roleID, scope.ProjectID, scope.EnvironmentID).
+			Delete(&models.UserRole{}).Error; derr != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), derr)
+		}
+	case gorm.ErrRecordNotFound:
+		// no existing row for this key — proceed to create.
+	default:
 		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
 	userRole := models.UserRole{
@@ -141,7 +162,23 @@ func (ls *LocalStorage) RemoveRole(ctx context.Context, userID, roleID uint, sco
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorRoleNotAssigned", nil))
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotAssigned", nil), storage.ErrRoleNotAssigned)
+	}
+	return nil
+}
+
+// RemoveAllProjectRoleGrants deletes every user_roles row for (userID, projectID),
+// regardless of environment_id — unlike RemoveRole, which only ever deletes an
+// exact-scope match. Used by RemoveProjectMember to fully revoke a departing
+// member's access to a project: without it, an environment-scoped grant (e.g.
+// "prod-only access", project_id = P, environment_id = E) survives project-level
+// removal untouched, because it was never an exact match for
+// Scope{ProjectID: P} (environment_id defaults to 0) (#232).
+func (ls *LocalStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error {
+	if err := ls.db.WithContext(ctx).
+		Where("user_id = ? AND project_id = ?", userID, projectID).
+		Delete(&models.UserRole{}).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
 }
@@ -163,18 +200,79 @@ func (ls *LocalStorage) GetUserRoles(ctx context.Context, userID uint) ([]*model
 // GetUserRoleIDsAt returns the IDs of roles directly assigned to userID that
 // apply at the target scope: a stored assignment applies when its project is
 // global (0) or equal, and its environment is global (0) or equal.
+//
+// A scoped (non-zero) project_id/environment_id must ALSO NOT resolve to a
+// soft-deleted project/environment row — mirroring the groups.deleted_at join
+// GetUserGroupRoleIDsAt already applies for a group's own soft-delete state
+// (#161). Without it, a role bound directly to a project/environment ID keeps
+// authorizing regardless of that project's/environment's own soft-delete state,
+// so deletion doesn't work as an access boundary for directly-bound roles at all.
+// The LEFT JOINs (not INNER) are required because project_id/environment_id 0
+// means "global" and has no corresponding row to join against — the "= 0 OR ..."
+// clause short-circuits before the joined columns are consulted in that case; a
+// scoped project_id/environment_id with no matching row at all (the joined column
+// is SQL NULL) is treated as not-deleted, same as every other "unknown" scope ID
+// this query already tolerates.
 func (ls *LocalStorage) GetUserRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
-		Where("user_id = ?", userID).
-		Where("project_id = 0 OR project_id = ?", scope.ProjectID).
-		Where("environment_id = 0 OR environment_id = ?", scope.EnvironmentID).
-		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
-		Distinct().Pluck("role_id", &ids).Error
+		Joins("LEFT JOIN projects ON projects.id = user_roles.project_id").
+		Joins("LEFT JOIN environments ON environments.id = user_roles.environment_id").
+		Where("user_roles.user_id = ?", userID).
+		Where("user_roles.project_id = 0 OR (user_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("user_roles.environment_id = 0 OR (user_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
+		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", time.Now()).
+		Distinct().Pluck("user_roles.role_id", &ids).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return ids, nil
+}
+
+// GetUserRoleScopes returns the distinct (project, environment) scopes at which
+// userID holds ANY LIVE role, directly (user_roles) or via a live (non-deleted)
+// group (group_roles). See the storage.Storage interface doc for why this exists
+// (#165's scope-aware admin-rank-ceiling check).
+func (ls *LocalStorage) GetUserRoleScopes(ctx context.Context, userID uint) ([]storage.Scope, error) {
+	type scopeRow struct {
+		ProjectID     uint
+		EnvironmentID uint
+	}
+	seen := make(map[storage.Scope]struct{})
+
+	var direct []scopeRow
+	if err := ls.db.WithContext(ctx).Model(&models.UserRole{}).
+		Select("project_id, environment_id").
+		Where("user_id = ?", userID).
+		Where("expires_at IS NULL OR expires_at > ?", time.Now()).
+		Group("project_id, environment_id").
+		Scan(&direct).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range direct {
+		seen[storage.Scope{ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID}] = struct{}{}
+	}
+
+	var viaGroups []scopeRow
+	if err := ls.db.WithContext(ctx).Table("group_roles").
+		Select("group_roles.project_id AS project_id, group_roles.environment_id AS environment_id").
+		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Where("user_groups.user_id = ?", userID).
+		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", time.Now()).
+		Group("group_roles.project_id, group_roles.environment_id").
+		Scan(&viaGroups).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range viaGroups {
+		seen[storage.Scope{ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID}] = struct{}{}
+	}
+
+	scopes := make([]storage.Scope, 0, len(seen))
+	for s := range seen {
+		scopes = append(scopes, s)
+	}
+	return scopes, nil
 }
 
 // ListProjectRoleAssignments returns every role assignment scoped to the project
@@ -198,6 +296,55 @@ func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectI
 
 	var groupRows []models.GroupRole
 	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&groupRows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range groupRows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "group", PrincipalID: r.GroupID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
+}
+
+// ListGlobalAdminAssignmentsForUpdate returns every global-scope (project 0,
+// environment 0) direct user and group role grant whose role is in adminRoleIDs,
+// taking a row-level write lock on backends that support one (Postgres FOR
+// UPDATE), mirroring LockUserForUpdate/LockWebAuthnCredentialForUpdate. See the
+// Storage interface doc (#340) for why this exists: a concurrent racing removal
+// must serialize against this read on Postgres/HA; the caller's own process
+// mutex covers SQLite (single instance, no cross-process concern).
+func (ls *LocalStorage) ListGlobalAdminAssignmentsForUpdate(ctx context.Context, adminRoleIDs []uint) ([]storage.RoleAssignment, error) {
+	if len(adminRoleIDs) == 0 {
+		return nil, nil
+	}
+	locked := ls.db.Dialector.Name() == "postgres"
+
+	var out []storage.RoleAssignment
+
+	userQ := ls.db.WithContext(ctx)
+	if locked {
+		userQ = userQ.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var userRows []models.UserRole
+	if err := userQ.Where("project_id = 0 AND environment_id = 0 AND role_id IN ?", adminRoleIDs).
+		Find(&userRows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	for _, r := range userRows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "user", PrincipalID: r.UserID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+
+	groupQ := ls.db.WithContext(ctx)
+	if locked {
+		groupQ = groupQ.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var groupRows []models.GroupRole
+	if err := groupQ.Where("project_id = 0 AND environment_id = 0 AND role_id IN ?", adminRoleIDs).
+		Find(&groupRows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, r := range groupRows {
@@ -282,6 +429,11 @@ func (ls *LocalStorage) ListProjectMembers(ctx context.Context, projectID uint) 
 // GetUserGroupRoleIDsAt returns the IDs of roles userID inherits via group
 // membership that apply at the target scope (same scope-matching rule as
 // GetUserRoleIDsAt).
+// GetUserGroupRoleIDsAt: like GetUserRoleIDsAt but for group-inherited role
+// grants. A scoped (non-zero) project_id/environment_id must ALSO resolve to a
+// LIVE project/environment row, same as GetUserRoleIDsAt (#161) — a group-bound
+// role scoped to a since-soft-deleted project previously kept authorizing every
+// group member regardless of the project's own soft-delete state.
 func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope storage.Scope) ([]uint, error) {
 	var ids []uint
 	err := ls.db.WithContext(ctx).Table("group_roles").
@@ -289,9 +441,11 @@ func (ls *LocalStorage) GetUserGroupRoleIDsAt(ctx context.Context, userID uint, 
 		// A soft-deleted group confers no roles, even though its membership/grant rows
 		// are kept for restore — exclude deleted groups from authorization.
 		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Joins("LEFT JOIN projects ON projects.id = group_roles.project_id").
+		Joins("LEFT JOIN environments ON environments.id = group_roles.environment_id").
 		Where("user_groups.user_id = ?", userID).
-		Where("group_roles.project_id = 0 OR group_roles.project_id = ?", scope.ProjectID).
-		Where("group_roles.environment_id = 0 OR group_roles.environment_id = ?", scope.EnvironmentID).
+		Where("group_roles.project_id = 0 OR (group_roles.project_id = ? AND projects.deleted_at IS NULL)", scope.ProjectID).
+		Where("group_roles.environment_id = 0 OR (group_roles.environment_id = ? AND environments.deleted_at IS NULL)", scope.EnvironmentID).
 		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", time.Now()).
 		Distinct().Pluck("group_roles.role_id", &ids).Error
 	if err != nil {
@@ -318,20 +472,46 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 	return count > 0, nil
 }
 
-// CheckPermission returns true if userID has the given resource/action permission.
-// Resolved transitively: user → role → permission.
+// CheckPermission returns true if userID holds the given resource/action
+// permission via a DIRECT OR group-inherited role, resolved transitively: user
+// (or group membership) → role → permission (#376). It is intentionally
+// scope-blind (an assignment at ANY project/environment counts, matching its
+// pre-existing "any assignment anywhere" contract) and does not apply the
+// admin-role bypass Authorize() grants — this is a raw role/permission-grant
+// existence check, not a live authorization decision. The production diagnostic
+// that needs the FULL Authorize()-equivalent answer (group-inclusive,
+// scope-aware, admin-bypass-aware) is core.HasPermissionByEmail, which resolves
+// it via Authorize/scopedRoleIDs per scope rather than calling this method.
 func (ls *LocalStorage) CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error) {
+	now := time.Now()
 	var count int64
 	err := ls.db.WithContext(ctx).Table("permissions").
 		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
 		Joins("JOIN user_roles ON role_permissions.role_id = user_roles.role_id").
 		Where("user_roles.user_id = ? AND permissions.resource = ? AND permissions.action = ?", userID, resource, action).
-		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", time.Now()).
+		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", now).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
-	return count > 0, nil
+	if count > 0 {
+		return true, nil
+	}
+
+	var viaGroup int64
+	err = ls.db.WithContext(ctx).Table("permissions").
+		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
+		Joins("JOIN group_roles ON role_permissions.role_id = group_roles.role_id").
+		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		// A soft-deleted group confers no permissions (matches authz resolution).
+		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Where("user_groups.user_id = ? AND permissions.resource = ? AND permissions.action = ?", userID, resource, action).
+		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", now).
+		Count(&viaGroup).Error
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+	}
+	return viaGroup > 0, nil
 }
 
 // ListPermissions returns all permissions.
@@ -408,6 +588,24 @@ func (ls *LocalStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return grants, nil
+}
+
+// ListGroupRoleAssignments returns every role grant held by groupID across all
+// scopes, unlike GetGroupRoles/GetGroupRoleGrants which return the role but not
+// which scope it was granted at.
+func (ls *LocalStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
+	var rows []models.GroupRole
+	if err := ls.db.WithContext(ctx).Where("group_id = ?", groupID).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	out := make([]storage.RoleAssignment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "group", PrincipalID: r.GroupID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
 }
 
 // AssignRoleToGroup assigns a permanent role to a group at scope; errors if

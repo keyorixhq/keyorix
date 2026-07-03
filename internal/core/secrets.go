@@ -86,6 +86,18 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "invalid classification")
 	}
 
+	// #390: normalize req.Tags UP FRONT, before creating anything, so a caller intending
+	// an immediate "reviewed"/"exempt"-style tag at creation time gets a clear validation
+	// error instead of a silently-dropped tag list — CreateSecret previously never read
+	// req.Tags at all despite both the HTTP and gRPC handlers passing it through.
+	var normalizedTags []string
+	if len(req.Tags) > 0 {
+		normalizedTags, err = normalizeTags(req.Tags)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	secret := &models.SecretNode{
 		Name:           req.Name,
 		ProjectID:      req.ProjectID,
@@ -113,6 +125,22 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 			log.Printf("warning: failed to cleanup orphaned secret %d after failed version creation: %v", createdSecret.ID, delErr)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Apply the create-time tags (#390) now that the secret and its first version both
+	// exist. Calling the storage layer directly (not the core SetSecretTags wrapper)
+	// is deliberate: SetSecretTags re-enforces write permission via
+	// EnforceSecretWritePermission, which is redundant here (the caller already had
+	// secrets.write on this scope to reach CreateSecret at all) and would require
+	// resolving an actor ID that CreateSecretRequest doesn't carry uniformly across
+	// every caller (HTTP/gRPC/CLI). Tags were already normalized/validated up front.
+	if len(normalizedTags) > 0 {
+		if err := c.storage.SetSecretTags(ctx, createdSecret.ID, normalizedTags); err != nil {
+			if delErr := c.storage.DeleteSecret(ctx, createdSecret.ID); delErr != nil {
+				log.Printf("warning: failed to cleanup orphaned secret %d after failed tag creation: %v", createdSecret.ID, delErr)
+			}
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
 	}
 
 	return createdSecret, nil
@@ -175,12 +203,14 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	secret.UpdatedAt = time.Now()
 
 	if len(req.Value) > 0 {
-		latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
-		nextVersionNumber := 1
-		if err == nil && latestVersion != nil {
-			nextVersionNumber = latestVersion.VersionNumber + 1
-		}
-		if err := c.storeSecretVersion(ctx, secret, req.Value, nextVersionNumber); err != nil {
+		// #121 follow-up: two concurrent UpdateSecret calls on the same secret (or one
+		// racing a RotateSecret) can both compute the same "next" version number from a
+		// stale GetLatestSecretVersion read; the uniq_secret_versions_node_version index
+		// (storage.ensureSecretVersionIndex) makes the loser's insert fail rather than
+		// silently duplicate, but a plain storeSecretVersion call surfaced that as a hard
+		// error to a caller doing nothing wrong. storeNextSecretVersion retries against a
+		// freshly re-read version number instead, same as RotateSecret already does.
+		if err := c.storeNextSecretVersion(ctx, secret, req.Value); err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 	}
@@ -212,12 +242,7 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
 	}
-	latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
-	nextVersionNumber := 1
-	if err == nil && latestVersion != nil {
-		nextVersionNumber = latestVersion.VersionNumber + 1
-	}
-	if err := c.storeSecretVersion(ctx, secret, newValue, nextVersionNumber); err != nil {
+	if err := c.storeNextSecretVersion(ctx, secret, newValue); err != nil {
 		return nil, fmt.Errorf("failed to store rotated secret: %w", err)
 	}
 	now := time.Now()

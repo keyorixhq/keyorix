@@ -20,7 +20,12 @@ func NewDashboardHandler(coreService *core.KeyorixCore) *DashboardHandler {
 	return &DashboardHandler{coreService: coreService}
 }
 
-// GetStats handles GET /api/v1/dashboard/stats
+// GetStats handles GET /api/v1/dashboard/stats — the caller's own home dashboard
+// (their secret/share counts, expiring secrets). Gated by system.read in the router
+// (every real principal must hold at least the baseline); the deployment-wide
+// aggregate fields it also returns are separately scoped to audit.read inside
+// GetDashboardStats, so a baseline caller sees their own numbers with the org-wide
+// aggregates zeroed rather than a 403 on their own home page (#272).
 func (h *DashboardHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -38,7 +43,8 @@ func (h *DashboardHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetCompliancePosture handles GET /api/v1/compliance/posture — the deployment-wide
-// controls-posture snapshot for auditors (gated by system.read in the router).
+// controls-posture snapshot for auditors (gated by audit.read in the router, not the
+// universal system_viewer baseline).
 func (h *DashboardHandler) GetCompliancePosture(w http.ResponseWriter, r *http.Request) {
 	posture, err := h.coreService.GetCompliancePosture(r.Context())
 	if err != nil {
@@ -51,7 +57,7 @@ func (h *DashboardHandler) GetCompliancePosture(w http.ResponseWriter, r *http.R
 // GetComplianceDigest handles GET /api/v1/compliance/digest — the on-demand,
 // human-readable compliance digest (the same title + body otherwise broadcast on a
 // schedule to the notification channels), so an admin can pull a point-in-time
-// summary without waiting for the scheduled send. Gated by system.read in the router.
+// summary without waiting for the scheduled send. Gated by audit.read in the router.
 func (h *DashboardHandler) GetComplianceDigest(w http.ResponseWriter, r *http.Request) {
 	title, body, err := h.coreService.BuildComplianceDigest(r.Context())
 	if err != nil {
@@ -84,7 +90,7 @@ func (h *DashboardHandler) VerifyComplianceEvidence(w http.ResponseWriter, r *ht
 
 // GetComplianceControls handles GET /api/v1/compliance/controls — the control
 // matrix mapping each enforced control to its ISO 27001 / SOC 2 / NIS2 / DORA
-// references with a live status; gated by system.read in the router.
+// references with a live status; gated by audit.read in the router.
 func (h *DashboardHandler) GetComplianceControls(w http.ResponseWriter, r *http.Request) {
 	controls, err := h.coreService.GetComplianceControls(r.Context())
 	if err != nil {
@@ -95,7 +101,7 @@ func (h *DashboardHandler) GetComplianceControls(w http.ResponseWriter, r *http.
 }
 
 // GetComplianceEvidence handles GET /api/v1/compliance/evidence — the auditor
-// evidence pack (posture + supporting records); gated by system.read in the router.
+// evidence pack (posture + supporting records); gated by audit.read in the router.
 func (h *DashboardHandler) GetComplianceEvidence(w http.ResponseWriter, r *http.Request) {
 	evidence, err := h.coreService.GenerateComplianceEvidence(r.Context())
 	if err != nil {

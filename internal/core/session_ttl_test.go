@@ -37,6 +37,20 @@ func captureCreatedSession(store *MockStorage) *models.Session {
 	return captured
 }
 
+// captureRotatedSession records the replacement session handed to RotateSession (so
+// the test can assert on the computed expiry fields) and reports the CAS a win,
+// echoing the same pointer back as "created". Use for RefreshSession success-path
+// tests; the old row's id must equal oldID for the mock to match.
+func captureRotatedSession(store *MockStorage, oldID uint) *models.Session {
+	captured := &models.Session{}
+	store.On("RotateSession", mock.Anything, oldID, mock.AnythingOfType("*models.Session"), mock.Anything).
+		Run(func(args mock.Arguments) {
+			*captured = *args.Get(2).(*models.Session)
+		}).
+		Return(captured, true, nil)
+	return captured
+}
+
 // mintSession with no absolute TTL configured stamps only the access window.
 func TestMintSession_AccessTTLOnly(t *testing.T) {
 	store := new(MockStorage)
@@ -94,36 +108,35 @@ func TestMintSession_DefaultAccessTTL(t *testing.T) {
 // session and starts a fresh access window. The old session is deleted.
 func TestRefreshSession_CarriesCeiling(t *testing.T) {
 	store := new(MockStorage)
-	captured := captureCreatedSession(store)
+	captured := captureRotatedSession(store, 7)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
 
 	ceiling := sessionTestNow.Add(8 * time.Hour) // still within the window
 	oldExpiry := sessionTestNow.Add(-5 * time.Minute)
-	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", ExpiresAt: &oldExpiry, AbsoluteExpiresAt: &ceiling}
-	store.On("GetSession", mock.Anything, "old").Return(old, nil)
+	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", FamilyID: "fam-1", ExpiresAt: &oldExpiry, AbsoluteExpiresAt: &ceiling}
+	store.On("GetSessionAny", mock.Anything, "old").Return(old, nil)
 	store.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountActive}, nil)
-	store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
 
 	out, err := c.RefreshSession(context.Background(), "old")
 	require.NoError(t, err)
 	require.NotEqual(t, "old", out.SessionToken, "token rotated")
+	require.Equal(t, "fam-1", captured.FamilyID, "family id carried unchanged")
 	require.Equal(t, sessionTestNow.Add(30*time.Minute), *captured.ExpiresAt, "fresh access window")
 	require.NotNil(t, captured.AbsoluteExpiresAt)
 	require.Equal(t, ceiling, *captured.AbsoluteExpiresAt, "ceiling unchanged")
-	store.AssertCalled(t, "DeleteSession", mock.Anything, uint(7))
+	store.AssertCalled(t, "RotateSession", mock.Anything, uint(7), mock.Anything, mock.Anything)
 }
 
 // The last access window before the ceiling is clamped so it cannot overrun it.
 func TestRefreshSession_ClampsLastWindowToCeiling(t *testing.T) {
 	store := new(MockStorage)
-	captured := captureCreatedSession(store)
+	captured := captureRotatedSession(store, 7)
 	c := newSessionCore(store, 30*time.Minute, 12*time.Hour)
 
 	ceiling := sessionTestNow.Add(10 * time.Minute) // less than one access window away
 	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", AbsoluteExpiresAt: &ceiling}
-	store.On("GetSession", mock.Anything, "old").Return(old, nil)
+	store.On("GetSessionAny", mock.Anything, "old").Return(old, nil)
 	store.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountActive}, nil)
-	store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
 
 	_, err := c.RefreshSession(context.Background(), "old")
 	require.NoError(t, err)
@@ -138,7 +151,7 @@ func TestRefreshSession_RefusedPastCeiling(t *testing.T) {
 
 	ceiling := sessionTestNow.Add(-1 * time.Minute) // already past
 	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", AbsoluteExpiresAt: &ceiling}
-	store.On("GetSession", mock.Anything, "old").Return(old, nil)
+	store.On("GetSessionAny", mock.Anything, "old").Return(old, nil)
 	store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
 
 	_, err := c.RefreshSession(context.Background(), "old")
@@ -157,7 +170,7 @@ func TestRefreshSession_RefusesImpersonationSession(t *testing.T) {
 
 	admin := uint(9)
 	old := &models.Session{ID: 7, UserID: 1, SessionToken: "imp", ImpersonatedBy: &admin}
-	store.On("GetSession", mock.Anything, "imp").Return(old, nil)
+	store.On("GetSessionAny", mock.Anything, "imp").Return(old, nil)
 
 	_, err := c.RefreshSession(context.Background(), "imp")
 	require.Error(t, err)
@@ -168,13 +181,12 @@ func TestRefreshSession_RefusesImpersonationSession(t *testing.T) {
 // With no ceiling (legacy behaviour) a session refreshes indefinitely.
 func TestRefreshSession_NoCeilingRefreshesForever(t *testing.T) {
 	store := new(MockStorage)
-	captured := captureCreatedSession(store)
+	captured := captureRotatedSession(store, 7)
 	c := newSessionCore(store, 24*time.Hour, 0)
 
 	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old"} // AbsoluteExpiresAt nil
-	store.On("GetSession", mock.Anything, "old").Return(old, nil)
+	store.On("GetSessionAny", mock.Anything, "old").Return(old, nil)
 	store.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountActive}, nil)
-	store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
 
 	_, err := c.RefreshSession(context.Background(), "old")
 	require.NoError(t, err)
@@ -201,7 +213,7 @@ func TestRefreshSession_RefusedForInactiveOrBlockedAccount(t *testing.T) {
 
 			ceiling := sessionTestNow.Add(8 * time.Hour) // still within the window
 			old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", AbsoluteExpiresAt: &ceiling}
-			store.On("GetSession", mock.Anything, "old").Return(old, nil)
+			store.On("GetSessionAny", mock.Anything, "old").Return(old, nil)
 			store.On("GetUser", mock.Anything, uint(1)).Return(tc.user, nil)
 			store.On("DeleteSession", mock.Anything, uint(7)).Return(nil)
 
@@ -257,4 +269,63 @@ func TestValidateSessionToken_AbsoluteCeilingEnforcedAtBoundary(t *testing.T) {
 		require.Equal(t, uint(2), user.ID)
 		require.Equal(t, []string{"viewer"}, roles)
 	})
+}
+
+// A replay of an already-rotated session token (#211) must be detected distinctly
+// from ordinary "not found"/expiry — audited as a reuse event, with the whole
+// session family (every session descended from the same login) revoked, not just
+// silently treated as an unknown token. The client-facing error stays the generic
+// "not found or expired" (no oracle distinguishing reuse from a garbage token).
+func TestRefreshSession_ReplayOfRotatedTokenDetectedAndFamilyRevoked(t *testing.T) {
+	store := new(MockStorage)
+	c := newSessionCore(store, 30*time.Minute, 0)
+
+	rotatedAt := sessionTestNow.Add(-time.Minute)
+	old := &models.Session{ID: 7, UserID: 1, SessionToken: "stale", FamilyID: "fam-1", RotatedAt: &rotatedAt, IPAddress: "203.0.113.5"}
+	store.On("GetSessionAny", mock.Anything, "stale").Return(old, nil)
+	store.On("ListSessionTokenHashesByFamily", mock.Anything, "fam-1").Return([]string{"hash-a", "hash-b"}, nil)
+	store.On("DeleteSessionsByFamily", mock.Anything, "fam-1").Return(nil)
+	var loggedType string
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { loggedType = args.Get(1).(*models.AuditEvent).EventType }).
+		Return(nil)
+
+	_, err := c.RefreshSession(context.Background(), "stale")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found or expired", "the client-facing error stays generic (no oracle)")
+	require.Equal(t, EventSessionReuseDetected, loggedType, "a reuse of an already-rotated token must be audited distinctly")
+	store.AssertCalled(t, "DeleteSessionsByFamily", mock.Anything, "fam-1")
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "RotateSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// A concurrent-refresh race — two refreshes of the SAME not-yet-rotated token,
+// racing the atomic RotateSession CAS — must let only ONE succeed (#211). The
+// loser is treated exactly like a reuse-of-an-already-rotated-token replay: audited
+// distinctly and the session family revoked, so it can't silently mint a second
+// live session from one token use.
+func TestRefreshSession_LosingRotationRaceIsTreatedAsReuse(t *testing.T) {
+	store := new(MockStorage)
+	c := newSessionCore(store, 30*time.Minute, 0)
+
+	old := &models.Session{ID: 7, UserID: 1, SessionToken: "old", FamilyID: "fam-1"}
+	store.On("GetSessionAny", mock.Anything, "old").Return(old, nil)
+	store.On("GetUser", mock.Anything, uint(1)).Return(&models.User{ID: 1, IsActive: true, AccountState: AccountActive}, nil)
+	// The CAS in RotateSession is what a concurrent racer already won — this call
+	// reports the loss (won=false, created=nil), exactly like the local_auth.go
+	// implementation would when another goroutine's UPDATE already flipped
+	// rotated_at first.
+	store.On("RotateSession", mock.Anything, uint(7), mock.AnythingOfType("*models.Session"), mock.Anything).
+		Return(nil, false, nil)
+	store.On("ListSessionTokenHashesByFamily", mock.Anything, "fam-1").Return([]string{"hash-a"}, nil)
+	store.On("DeleteSessionsByFamily", mock.Anything, "fam-1").Return(nil)
+	var loggedType string
+	store.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { loggedType = args.Get(1).(*models.AuditEvent).EventType }).
+		Return(nil)
+
+	_, err := c.RefreshSession(context.Background(), "old")
+	require.Error(t, err, "the losing side of a rotation race must not mint a second session")
+	require.Equal(t, EventSessionReuseDetected, loggedType)
+	store.AssertCalled(t, "DeleteSessionsByFamily", mock.Anything, "fam-1")
 }

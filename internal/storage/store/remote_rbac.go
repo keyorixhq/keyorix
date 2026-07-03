@@ -178,6 +178,12 @@ func (rs *RemoteStorage) RemoveRole(ctx context.Context, userID, roleID uint, sc
 	return nil
 }
 
+// RemoveAllProjectRoleGrants is a server-internal RBAC primitive (project
+// membership management runs entirely against LocalStorage); unsupported here.
+func (rs *RemoteStorage) RemoveAllProjectRoleGrants(_ context.Context, _, _ uint) error {
+	return remoteUnsupported("RemoveAllProjectRoleGrants")
+}
+
 // GetUserRoles retrieves all roles for a user via remote API.
 func (rs *RemoteStorage) GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error) {
 	path := fmt.Sprintf("/api/v1/users/%d/roles", userID)
@@ -319,6 +325,13 @@ func (rs *RemoteStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mo
 	return result, nil
 }
 
+// ListGroupRoleAssignments is not supported in remote storage — the client reaches
+// group role state through GetGroupRoles/GetGroupRoleGrants (per-group, scope-less)
+// via their REST endpoints; there is no all-scope listing endpoint to proxy to.
+func (rs *RemoteStorage) ListGroupRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
+	return nil, remoteUnsupported("ListGroupRoleAssignments")
+}
+
 // AssignRoleToGroup assigns a role to a group at scope via remote API.
 func (rs *RemoteStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
 	path := fmt.Sprintf("/api/v1/groups/%d/roles", groupID)
@@ -370,6 +383,11 @@ func (rs *RemoteStorage) GetUserGroupRoleIDsAt(_ context.Context, _ uint, _ stor
 	return nil, fmt.Errorf("not supported in remote storage")
 }
 
+// GetUserRoleScopes is a server-internal authorization primitive.
+func (rs *RemoteStorage) GetUserRoleScopes(_ context.Context, _ uint) ([]storage.Scope, error) {
+	return nil, fmt.Errorf("not supported in remote storage")
+}
+
 // RoleSetHasPermission is a server-internal authorization primitive.
 func (rs *RemoteStorage) RoleSetHasPermission(_ context.Context, _ []uint, _ string) (bool, error) {
 	return false, fmt.Errorf("not supported in remote storage")
@@ -405,8 +423,8 @@ func (rs *RemoteStorage) DeleteProject(_ context.Context, _ uint) error {
 	return remoteUnsupported("DeleteProject")
 }
 
-func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) error {
-	return remoteUnsupported("RestoreProject")
+func (rs *RemoteStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
+	return 0, 0, remoteUnsupported("RestoreProject")
 }
 
 func (rs *RemoteStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
@@ -427,6 +445,14 @@ func (rs *RemoteStorage) ListProjectMembers(_ context.Context, _ uint) ([]storag
 
 func (rs *RemoteStorage) ListProjectRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
 	return nil, remoteUnsupported("ListProjectRoleAssignments")
+}
+
+// ListGlobalAdminAssignmentsForUpdate is a server-internal RBAC primitive backing
+// the last-admin-removal guard's atomicity fix (#340); like
+// ListProjectRoleAssignments, RBAC admin-removal guarding runs entirely against
+// LocalStorage server-side, so this is unsupported here.
+func (rs *RemoteStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
+	return nil, remoteUnsupported("ListGlobalAdminAssignmentsForUpdate")
 }
 
 func (rs *RemoteStorage) GetEnvironment(_ context.Context, _ uint) (*models.Environment, error) {

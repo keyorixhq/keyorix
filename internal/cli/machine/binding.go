@@ -110,8 +110,9 @@ func runBindingAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	// Local mode has no authenticated user; record a system (0) creator.
-	b, err := svc.CreateOIDCBinding(ctx, projectID, m.ID, bindingIssuer, bindingSubject, 0)
+	// Local mode has no authenticated user; #150: record the operator-asserted
+	// KEYORIX_CLI_ACTOR if set, otherwise the existing anonymous (0) creator.
+	b, err := svc.CreateOIDCBinding(ctx, projectID, m.ID, bindingIssuer, bindingSubject, common.ResolveActorID())
 	if err != nil {
 		return fmt.Errorf("failed to create OIDC binding: %w", err)
 	}
@@ -195,7 +196,8 @@ func runBindingRm(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	if err := svc.DeleteOIDCBinding(ctx, projectID, m.ID, uint(bindingID), 0); err != nil {
+	// #150: record the operator-asserted KEYORIX_CLI_ACTOR if set.
+	if err := svc.DeleteOIDCBinding(ctx, projectID, m.ID, uint(bindingID), common.ResolveActorID()); err != nil {
 		return fmt.Errorf("failed to remove OIDC binding: %w", err)
 	}
 	fmt.Printf("OIDC binding %d removed from machine %q.\n", bindingID, m.Name)

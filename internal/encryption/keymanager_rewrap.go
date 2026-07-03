@@ -8,6 +8,7 @@
 package encryption
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,35 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 		return fmt.Errorf("re-wrap DEK: %s provider returned a %d-byte KEK, expected %d", newProvider.Name(), len(newKEK), crypto.KEKSize)
 	}
 
+	// #195: acquire the cross-process exclusive DEK lock before touching
+	// dek.key.pending at all, so this can never interleave with a concurrent
+	// RotateDEKWithSweep (or another RewrapDEK) running in a different
+	// process — both write to the same dek.key.pending → dek.key path.
+	lock, err := km.acquireExclusiveKeyLock()
+	if err != nil {
+		return fmt.Errorf("re-wrap DEK: %w", err)
+	}
+	defer lock.release()
+
+	// Mutual exclusion alone is not sufficient: km.currentDEK was captured
+	// whenever this process's own Initialize() ran, which may be long before
+	// this call and long before the lock above was even contended for. If a
+	// concurrent RotateDEKWithSweep replaced dek.key with a NEW DEK (and
+	// fully re-encrypted the database under it) in the meantime, our cached
+	// currentDEK is now stale — re-wrapping and promoting it would silently
+	// overwrite the freshly-rotated DEK with the superseded one, orphaning
+	// every row the rotation just re-encrypted. Re-read the on-disk DEK
+	// under the lock and compare it, byte-for-byte, against the snapshot
+	// taken when currentDEK was set: any difference means another process
+	// wrote dek.key since, so fail closed instead of clobbering it.
+	onDisk, err := securefiles.SafeReadFile(km.baseDir, km.dekPath)
+	if err != nil {
+		return fmt.Errorf("re-wrap DEK: re-read active DEK under lock: %w", err)
+	}
+	if !bytes.Equal(onDisk, km.dekSnapshot) {
+		return fmt.Errorf("re-wrap DEK: the on-disk DEK changed since this process started — a concurrent DEK rotation likely completed in the meantime, so the in-memory DEK here is stale. Aborting without writing to avoid discarding the newer key; re-run migrate-provider now that the rotation has finished")
+	}
+
 	wrapped, err := wrapKey(km.currentDEK, newKEK)
 	if err != nil {
 		return fmt.Errorf("re-wrap DEK: wrap DEK with new KEK: %w", err)
@@ -69,5 +99,6 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
 		return fmt.Errorf("re-wrap DEK: fsync key directory after promote: %w", err)
 	}
+	km.dekSnapshot = append([]byte(nil), wrapped...)
 	return nil
 }
