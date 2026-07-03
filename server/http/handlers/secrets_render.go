@@ -4,11 +4,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -38,6 +40,13 @@ func (h *SecretHandler) RenderTemplate(w http.ResponseWriter, r *http.Request) {
 	rendered, err := h.coreService.RenderSecretTemplate(r.Context(), reqBody.Template, uint(id), userCtx.UserID, userCtx.Username, r.RemoteAddr, r.Header.Get("User-Agent"))
 	if err != nil {
 		switch {
+		// core.ErrSecretRefNotFound is returned uniformly for BOTH "no such secret" and
+		// "secret exists but the caller can't read it" (see RenderSecretTemplate) — a
+		// project viewer must not be able to tell those apart via 404-vs-403 (#181), so
+		// this one case owns both and must be checked before the generic "not found" /
+		// "permission" substring branches below.
+		case errors.Is(err, core.ErrSecretRefNotFound):
+			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "not found"):
 			h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):

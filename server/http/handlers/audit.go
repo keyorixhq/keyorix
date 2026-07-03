@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -384,6 +385,18 @@ func (h *AuditHandler) VerifyAuditChain(w http.ResponseWriter, r *http.Request) 
 	if v.CheckpointReason != "" {
 		resp["checkpoint_reason"] = v.CheckpointReason
 	}
+	// Surface the latest checkpoint's raw external-notary (RFC 3161) receipt, when one
+	// exists — so an operator/monitor can capture it here (this is the surface an
+	// operator actually polls, since checkpoints are normally written by the
+	// background scheduler, not this request) and verify it independently against the
+	// TSA out-of-band, without having to trust this server's own verification (#182).
+	if len(v.AnchorToken) > 0 {
+		resp["anchor_token"] = base64.StdEncoding.EncodeToString(v.AnchorToken)
+		resp["anchor_provider"] = v.AnchorProvider
+		if v.AnchoredAt != nil {
+			resp["anchored_at"] = v.AnchoredAt.UTC()
+		}
+	}
 	sendSuccess(w, resp, "")
 }
 
@@ -428,10 +441,15 @@ func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Reque
 		"head_hash":      cp.HeadHash,
 		"key_version":    cp.KeyVersion,
 	}
-	// Surface the external-notary anchor when one was obtained (ADR-029).
+	// Surface the external-notary anchor when one was obtained (ADR-029), including the
+	// raw receipt token — the operator's only chance to capture it from THIS write's
+	// response, since checkpoints are normally written by the background scheduler, not
+	// this endpoint (#182: independent/off-box verification needs the raw token, not
+	// just the asserted time/provider strings).
 	if cp.AnchoredAt != nil {
 		resp["anchored_at"] = cp.AnchoredAt.UTC()
 		resp["anchor_provider"] = cp.AnchorProvider
+		resp["anchor_token"] = base64.StdEncoding.EncodeToString(cp.AnchorToken)
 	}
 	sendSuccess(w, resp, "audit checkpoint written")
 }

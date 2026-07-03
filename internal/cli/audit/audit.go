@@ -85,6 +85,13 @@ type verifyResult struct {
 	Reason           string `json:"reason"`
 	Checkpointed     bool   `json:"checkpointed"`
 	CheckpointReason string `json:"checkpoint_reason"`
+	// AnchorToken (base64) / AnchoredAt / AnchorProvider surface the latest
+	// checkpoint's raw external-notary (RFC 3161) receipt, when one exists — so it
+	// can be captured here and verified independently against the TSA out-of-band,
+	// without trusting this server's own verification of it (#182).
+	AnchorToken    string `json:"anchor_token,omitempty"`
+	AnchoredAt     string `json:"anchored_at,omitempty"`
+	AnchorProvider string `json:"anchor_provider,omitempty"`
 }
 
 var verifyCmd = &cobra.Command{
@@ -129,6 +136,11 @@ var verifyCmd = &cobra.Command{
 				fmt.Printf("  reason:           %s\n", v.Reason)
 			} else if v.CheckpointReason != "" {
 				fmt.Printf("  note:             %s\n", v.CheckpointReason)
+			}
+			if v.AnchorToken != "" {
+				fmt.Printf("  anchored at:      %s\n", v.AnchoredAt)
+				fmt.Printf("  anchor:           %s\n", v.AnchorProvider)
+				fmt.Printf("  anchor token:     %s\n", v.AnchorToken)
 			}
 		}
 
@@ -265,6 +277,10 @@ type checkpointResult struct {
 	KeyVersion     string `json:"key_version"`
 	AnchoredAt     string `json:"anchored_at"`
 	AnchorProvider string `json:"anchor_provider"`
+	// AnchorToken (base64) is the raw external-notary receipt (#182) — capture it
+	// here, since checkpoints are normally written by the background scheduler and
+	// this on-demand write may be the only time an operator sees this response.
+	AnchorToken string `json:"anchor_token"`
 }
 
 var checkpointCmd = &cobra.Command{
@@ -297,6 +313,7 @@ verify (broken, or a prior signed checkpoint proves a truncation).`,
 		if out.AnchoredAt != "" {
 			fmt.Printf("  anchored at:    %s\n", out.AnchoredAt)
 			fmt.Printf("  anchor:         %s\n", out.AnchorProvider)
+			fmt.Printf("  anchor token:   %s\n", out.AnchorToken)
 		}
 		return nil
 	},

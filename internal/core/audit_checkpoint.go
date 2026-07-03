@@ -276,6 +276,20 @@ func (c *KeyorixCore) enforceAuditCheckpoint(ctx context.Context, v *storage.Aud
 
 	v.Checkpointed = true
 
+	// Surface the checkpoint's raw external-notary receipt (if any) on the verdict,
+	// regardless of the signature/anchor checks below — an operator or an independent
+	// monitor can verify this token against the TSA out-of-band without trusting this
+	// server's own verification (#182: the whole point of an external anchor is that
+	// it doesn't require trusting the box being anchored). Previously this token was
+	// never surfaced anywhere outside the DB row, even though VerifyCheckpointAnchor
+	// could already re-check it internally — an operator had no way to pull the proof
+	// out for independent verification.
+	if len(cp.AnchorToken) > 0 {
+		v.AnchorToken = cp.AnchorToken
+		v.AnchoredAt = cp.AnchoredAt
+		v.AnchorProvider = cp.AnchorProvider
+	}
+
 	if !c.checkpointSignatureValid(cp) {
 		c.failCheckpoint(v, nil,
 			fmt.Sprintf("audit checkpoint #%d does not verify under the current signing key — the checkpoint was tampered, or a DEK rotation occurred and no fresh checkpoint has been written yet", cp.ID))

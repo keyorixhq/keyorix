@@ -971,6 +971,19 @@ type AuditChainVerification struct {
 	// under a superseded key version, which is recorded but not enforced).
 	Checkpointed     bool
 	CheckpointReason string
+
+	// AnchorToken/AnchoredAt/AnchorProvider surface the latest checkpoint's raw
+	// external-notary (RFC 3161) receipt (ADR-029), when one exists — regardless of
+	// whether this server was able to (re-)verify it locally (i.e. even without a
+	// configured trust root, or when local re-verification fails). Handing back the
+	// opaque token lets an operator or an independent monitor verify it themselves
+	// against the TSA out-of-band, without having to trust this server's own
+	// verification of it — the point of an external anchor in the first place.
+	// Empty when checkpoints are unavailable, no checkpoint exists yet, or the
+	// latest checkpoint was never anchored.
+	AnchorToken    []byte
+	AnchoredAt     *time.Time
+	AnchorProvider string
 }
 
 // UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when
