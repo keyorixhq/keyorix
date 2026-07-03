@@ -555,4 +555,16 @@ func TestSanitizeReturnTo(t *testing.T) {
 	assert.Equal(t, "", sanitizeReturnTo("//evil.com"))
 	assert.Equal(t, "", sanitizeReturnTo("https://evil.com"))
 	assert.Equal(t, "", sanitizeReturnTo("evil"))
+	// A backslash right after the leading slash is normalized to "/" by several
+	// browsers, so "/\evil.com" is effectively "//evil.com" — a protocol-relative
+	// open redirect to an external host. It must be rejected even though it starts
+	// with a single "/" and contains no literal "//".
+	assert.Equal(t, "", sanitizeReturnTo(`/\evil.com`))
+	assert.Equal(t, "", sanitizeReturnTo(`/\/evil.com`))
+	assert.Equal(t, "", sanitizeReturnTo(`/\\evil.com`))
+	// A backslash anywhere else in the value is rejected too, not just right after
+	// the leading slash.
+	assert.Equal(t, "", sanitizeReturnTo(`/ok/\evil.com`))
+	// A same-origin path with a subpath still passes.
+	assert.Equal(t, "/secrets/view", sanitizeReturnTo("/secrets/view"))
 }

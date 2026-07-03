@@ -33,18 +33,6 @@ const (
 	EventGroupMemberRemoved = "group.member_removed"
 )
 
-// Service-account lifecycle event types (#279). A service account is an identity/
-// credential object, not an RBAC grant, so these are NOT part of rbacAuditEventTypes —
-// they land in the general audit log (surfaced by GetActivityFeed / GetAuditLogs),
-// the same family as setup_token.*/machine_identity.* events.
-const (
-	EventServiceAccountCreated = "service_account.created"
-	EventServiceAccountUpdated = "service_account.updated"
-	EventServiceAccountRevoked = "service_account.revoked"
-	EventServiceTokenCreated   = "service_token.created" // #nosec G101 -- audit event type, not a credential
-	EventServiceTokenRevoked   = "service_token.revoked" // #nosec G101 -- audit event type, not a credential
-)
-
 // rbacAuditEventTypes is the set of event types that make up the RBAC audit log.
 var rbacAuditEventTypes = []string{
 	EventRoleAssigned, EventRoleRemoved, EventRoleExpired,
@@ -163,55 +151,6 @@ func (c *KeyorixCore) LogRoleDeleted(ctx context.Context, actorID, roleID uint, 
 func (c *KeyorixCore) logRoleDefinitionChange(ctx context.Context, eventType, verb string, actorID, roleID uint, name string) {
 	desc := fmt.Sprintf("role %q (id %d) %s", name, roleID, verb)
 	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{RoleID: roleID})
-}
-
-// LogServiceAccountCreated / LogServiceAccountUpdated / LogServiceAccountRevoked
-// record a change to a service-account DEFINITION (create/update/revoke) — same
-// silent-audit-gap family as #233/#234, closed here for service accounts (#279).
-// actorID is the admin who made the change (0 = no authenticated principal, e.g. a
-// local CLI invocation).
-func (c *KeyorixCore) LogServiceAccountCreated(ctx context.Context, actorID uint, clientID, name string) {
-	c.logServiceAccountChange(ctx, EventServiceAccountCreated, "created", actorID, clientID, name)
-}
-
-func (c *KeyorixCore) LogServiceAccountUpdated(ctx context.Context, actorID uint, clientID, name string) {
-	c.logServiceAccountChange(ctx, EventServiceAccountUpdated, "updated", actorID, clientID, name)
-}
-
-func (c *KeyorixCore) LogServiceAccountRevoked(ctx context.Context, actorID uint, clientID, name string) {
-	c.logServiceAccountChange(ctx, EventServiceAccountRevoked, "revoked", actorID, clientID, name)
-}
-
-func (c *KeyorixCore) logServiceAccountChange(ctx context.Context, eventType, verb string, actorID uint, clientID, name string) {
-	desc := fmt.Sprintf("service account %q (%s) %s", name, clientID, verb)
-	var actor *uint
-	if actorID != 0 {
-		a := actorID
-		actor = &a
-	}
-	c.writeAuditEventFull(ctx, eventType, actor, nil, nil, "", desc)
-}
-
-// LogServiceTokenCreated / LogServiceTokenRevoked record a create/revoke change to an
-// API token issued under a service account (#279). clientID is the owning service
-// account's numeric row id (APIClient.ID), available at both call sites without an
-// extra lookup. See LogServiceAccountCreated for actorID semantics.
-func (c *KeyorixCore) LogServiceTokenCreated(ctx context.Context, actorID, tokenID, clientID uint) {
-	c.logServiceTokenChange(ctx, EventServiceTokenCreated, "created", actorID, tokenID, clientID)
-}
-
-func (c *KeyorixCore) LogServiceTokenRevoked(ctx context.Context, actorID, tokenID, clientID uint) {
-	c.logServiceTokenChange(ctx, EventServiceTokenRevoked, "revoked", actorID, tokenID, clientID)
-}
-
-func (c *KeyorixCore) logServiceTokenChange(ctx context.Context, eventType, verb string, actorID, tokenID, clientID uint) {
-	desc := fmt.Sprintf("API token %d for service account %d %s", tokenID, clientID, verb)
-	var actor *uint
-	if actorID != 0 {
-		a := actorID
-		actor = &a
-	}
-	c.writeAuditEventFull(ctx, eventType, actor, nil, nil, "", desc)
 }
 
 // writeRBACAudit is the shared writer for RBAC audit events: actor as UserID,

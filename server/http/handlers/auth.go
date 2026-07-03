@@ -226,6 +226,25 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get("User-Agent"), ip)
 	if err != nil {
+		// The new password was accepted, but the account has MFA (TOTP) or a passkey
+		// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)
+		// so a password reset cannot be used to silently bypass the second factor.
+		// Issue a short-lived challenge instead of a session; the client completes
+		// VerifyMFALogin (or the WebAuthn ceremony) to get a real session.
+		if errors.Is(err, core.ErrMFARequired) {
+			challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), result.User.ID)
+			if cerr != nil {
+				sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
+				return
+			}
+			sendSuccess(w, map[string]interface{}{
+				"mfa_required":       true,
+				"mfa_challenge":      challenge,
+				"totp_available":     result.User.MFAEnabled,
+				"webauthn_available": result.User.WebAuthnEnabled,
+			}, "MFA required")
+			return
+		}
 		// Only a password-policy failure surfaces its reason (the link is still live,
 		// so the user can fix the password and retry). Every other failure — dead/used
 		// token, missing or already-existing account, internal error — is reported

@@ -1235,11 +1235,17 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 
 	// Create HTTP server
 	server := &http.Server{
-		Addr:         fmt.Sprintf(":%s", cfg.Server.HTTP.Port),
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:    fmt.Sprintf(":%s", cfg.Server.HTTP.Port),
+		Handler: router,
+		// ReadHeaderTimeout bounds how long a client can dribble in request headers one
+		// byte at a time before the connection is dropped (gosec G112 / slowloris-style
+		// DoS via a client that never finishes sending headers, holding the connection —
+		// and a worker goroutine — open indefinitely). Shorter than ReadTimeout since
+		// headers should arrive promptly even for a slow body upload.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// Configure TLS if enabled

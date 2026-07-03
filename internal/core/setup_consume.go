@@ -120,6 +120,22 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 		return nil, err
 	}
 
+	// Accounts with any second factor (TOTP or a passkey) enrolled must NOT get an
+	// auto-login session from a password reset — that would silently bypass MFA for
+	// this session, mirroring exactly the gate Login applies after the password step
+	// (see ErrMFARequired in auth.go). Still evict every existing session (keepID=0,
+	// i.e. keep none) so a stolen session is locked out immediately, same invariant as
+	// the auto-login path below — the reset must not leave a thief's session alive
+	// just because the new session isn't minted yet. The caller completes the second
+	// factor via CreateMFAChallenge → VerifyMFALogin (or the WebAuthn ceremony) using
+	// the password that was just accepted.
+	if user.MFAEnabled || user.WebAuthnEnabled {
+		_ = c.deleteSessionsForUserAndEvict(ctx, user.ID, 0, "")
+		c.writeAuditEventFull(ctx, "account.setup_completed", &user.ID, nil, nil, ip,
+			fmt.Sprintf("account setup completed via %s (MFA required before session)", tok.Purpose))
+		return &SetupConsumeResult{User: user}, ErrMFARequired
+	}
+
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

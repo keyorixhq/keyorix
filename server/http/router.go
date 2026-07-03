@@ -37,14 +37,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
 
-	// CORS configuration - updated for web dashboard
+	// CORS configuration - updated for web dashboard. AllowCredentials is
+	// deliberately NOT set: this API is bearer-token-only (Authorization header),
+	// never cookie-based, so there is no credentialed cross-origin request to allow.
+	// Leaving it unset (defaults false) means a future cookie-based auth addition
+	// must explicitly opt back in here — and get re-reviewed — rather than silently
+	// inheriting a permissive flag that predates it.
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   getAllowedOrigins(cfg),
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
-		ExposedHeaders:   []string{"Link", "X-Total-Count", "X-Page-Count"},
-		AllowCredentials: true,
-		MaxAge:           300,
+		AllowedOrigins: getAllowedOrigins(cfg),
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
+		ExposedHeaders: []string{"Link", "X-Total-Count", "X-Page-Count"},
+		MaxAge:         300,
 	}))
 
 	// Initialize handlers
@@ -595,25 +599,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/", rbacHandler.ListPermissions)
 		})
 
-		saHandler := handlers.NewServiceAccountHandler(coreService)
-		r.Route("/service-accounts", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("users.read"))
-			r.Get("/", saHandler.ListServiceAccounts)
-			r.With(customMiddleware.RequirePermission("users.write")).
-				Post("/", saHandler.CreateServiceAccount)
-			r.Get("/{clientId}", saHandler.GetServiceAccount)
-			r.With(customMiddleware.RequirePermission("users.write")).
-				Put("/{clientId}", saHandler.UpdateServiceAccount)
-			r.With(customMiddleware.RequirePermission("users.write")).
-				Delete("/{clientId}", saHandler.DeactivateServiceAccount)
-			r.Get("/{clientId}/tokens", saHandler.ListTokens)
-			// Blocked while impersonating: a service-account token is a durable credential
-			// that must not be mintable under a bounded impersonation session.
-			r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequirePermission("users.write")).
-				Post("/{clientId}/tokens", saHandler.CreateToken)
-			r.With(customMiddleware.RequirePermission("users.write")).
-				Delete("/{clientId}/tokens/{tokenId}", saHandler.RevokeToken)
-		})
+		// NOTE: the legacy admin-managed "service accounts" (APIClient/APIToken)
+		// issuance/management routes were removed here (finding #131): the tokens
+		// they minted were never accepted by any authentication path (validateToken
+		// in server/middleware/auth.go has no branch for them), making them a dead,
+		// unscannable credential type. Machine identities (ADR-030, kx_machine_
+		// tokens) are the actual wired, RBAC-integrated non-human-identity
+		// credential and are the intended replacement — see docs/adr-030 and
+		// docs/adr-027 (which documents this exact gap). The models/DB tables and
+		// KEK-rotation sweep code for APIClient/APIToken are left in place for any
+		// legacy rows in already-deployed databases.
 
 		// User roles endpoints
 		r.Route("/user-roles", func(r chi.Router) {

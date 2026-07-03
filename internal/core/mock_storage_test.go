@@ -1326,55 +1326,6 @@ func (m *MockStorage) CountSetupTokensSince(ctx context.Context, purpose, email 
 	return args.Get(0).(int64), args.Error(1)
 }
 
-// API Client Management
-
-func (m *MockStorage) CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {
-	args := m.Called(ctx, client)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.APIClient), args.Error(1)
-}
-
-func (m *MockStorage) GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error) {
-	args := m.Called(ctx, clientID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.APIClient), args.Error(1)
-}
-
-func (m *MockStorage) RevokeAPIClient(ctx context.Context, clientID string) error {
-	args := m.Called(ctx, clientID)
-	return args.Error(0)
-}
-
-func (m *MockStorage) ListAPIClients(_ context.Context) ([]*models.APIClient, error) {
-	return nil, nil
-}
-
-func (m *MockStorage) UpdateAPIClient(_ context.Context, client *models.APIClient) (*models.APIClient, error) {
-	return client, nil
-}
-
-// API Token Management
-
-func (m *MockStorage) CreateAPIToken(_ context.Context, token *models.APIToken) (*models.APIToken, error) {
-	return token, nil
-}
-
-func (m *MockStorage) GetAPIToken(_ context.Context, id uint) (*models.APIToken, error) {
-	return &models.APIToken{ID: id}, nil
-}
-
-func (m *MockStorage) ListAPITokens(_ context.Context, _ *uint) ([]*models.APIToken, error) {
-	return nil, nil
-}
-
-func (m *MockStorage) RevokeAPIToken(_ context.Context, _ uint) error {
-	return nil
-}
-
 // Health and Maintenance
 
 func (m *MockStorage) HealthCheck(ctx context.Context) error {
