@@ -126,7 +126,13 @@ type KeyorixCore struct {
 	// Combined with the row lock LockUserForUpdate takes on Postgres, this holds
 	// across replicas too. Zero value is ready to use. See account_state.go / scim.go.
 	accountStateMu sync.Mutex
-	auditForwarder AuditForwarder
+	// rateLimitUnsupportedWarnOnce guards the #452 operator warning logged the
+	// first time IsLoginRateLimited/IsPasswordResetRateLimited observe that the
+	// active storage backend can never satisfy CountRecentLoginAttempts (as
+	// opposed to an ordinary transient storage error) — once per process, not
+	// once per request. Zero value is ready to use. See rate_limit.go.
+	rateLimitUnsupportedWarnOnce sync.Once
+	auditForwarder               AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).
