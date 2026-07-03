@@ -89,6 +89,10 @@ type HTTPJWKSResolver struct {
 
 	mu    sync.Mutex
 	cache map[string]*jwksEntry // issuer -> cached keys
+	// lastFetchAttempt records when a refetch was last ATTEMPTED for an issuer —
+	// success or failure — so jwksMinRefetchInterval can gate the stale-cache
+	// refetch path the same way it gates the fresh-cache-unknown-kid path (see Key).
+	lastFetchAttempt map[string]time.Time
 }
 
 type jwksEntry struct {
@@ -112,7 +116,8 @@ func NewHTTPJWKSResolver(jwksURIs map[string]string) (*HTTPJWKSResolver, error) 
 			Timeout:       10 * time.Second,
 			CheckRedirect: noCrossOriginRedirect,
 		},
-		cache: map[string]*jwksEntry{},
+		cache:            map[string]*jwksEntry{},
+		lastFetchAttempt: map[string]time.Time{},
 	}, nil
 }
 
@@ -175,21 +180,37 @@ func (r *HTTPJWKSResolver) Key(ctx context.Context, issuer, kid string) (interfa
 	r.mu.Lock()
 	entry := r.cache[issuer]
 	fresh := entry != nil && time.Since(entry.fetchedAt) < jwksCacheTTL
-	r.mu.Unlock()
-
 	if fresh {
 		if k, ok := entry.keys[kid]; ok {
+			r.mu.Unlock()
 			return k, nil
 		}
-		// Unknown kid on a fresh cache: the key may have just rotated. Refetch — but
-		// not more than once per jwksMinRefetchInterval per issuer, so a flood of
-		// tokens bearing a trusted iss and random kids can't amplify into a refetch
-		// storm against the IdP. (A legitimate rotation is picked up on the next
-		// refetch the interval allows; the cache TTL still bounds staleness.)
-		if time.Since(entry.fetchedAt) < jwksMinRefetchInterval {
-			return nil, fmt.Errorf("no signing key with kid %q at issuer %q", kid, issuer)
-		}
 	}
+	// Past this point a refetch is needed — either because the cache is
+	// stale/missing, or because it's fresh but doesn't have this kid (possible
+	// rotation). BOTH cases are rate-limited the same way: at most one refetch
+	// ATTEMPT per jwksMinRefetchInterval per issuer, tracked by lastFetchAttempt
+	// (set on every attempt, success or failure) rather than entry.fetchedAt (set
+	// only on success). Previously only the "fresh cache, unknown kid" case was
+	// gated; the stale-cache path — e.g. during an IdP outage, where every refetch
+	// fails and the cache never becomes fresh again — had NO gate at all, so it
+	// could be hit on every single request to force an unbounded stream of
+	// outbound JWKS fetches: a DoS amplifier against the IdP and against this
+	// server's own outbound budget/latency.
+	lastAttempt, attempted := r.lastFetchAttempt[issuer]
+	if entry != nil && attempted && time.Since(lastAttempt) < jwksMinRefetchInterval {
+		r.mu.Unlock()
+		// Still within the stale-grace window: serve the cached key if we have it
+		// rather than paying for (or waiting on) a refetch we've decided to skip.
+		if time.Since(entry.fetchedAt) < jwksCacheTTL+jwksStaleGrace {
+			if k, ok := entry.keys[kid]; ok {
+				return k, nil
+			}
+		}
+		return nil, fmt.Errorf("no signing key with kid %q at issuer %q (refetch rate-limited)", kid, issuer)
+	}
+	r.lastFetchAttempt[issuer] = time.Now()
+	r.mu.Unlock()
 
 	keys, err := r.fetchAndCache(ctx, issuer, jwksURI)
 	if err != nil {

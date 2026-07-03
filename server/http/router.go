@@ -185,6 +185,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// SCIM 2.0 provisioning (RFC 7644) — opt-in, authenticated by a static bearer
 	// token (NOT the session/PAT auth) so an IdP can provision/deprovision users.
 	if cfg.SCIM.Enabled {
+		// Fail startup on a too-short SCIM bearer token rather than silently serving
+		// the provisioning endpoint behind a weak, brute-forceable credential (unlike
+		// a PAT/machine token, this one is operator-supplied, not server-generated).
+		if err := core.ValidateSCIMTokenStrength(cfg.SCIM.GetToken()); err != nil {
+			return nil, fmt.Errorf("scim: %w", err)
+		}
 		scimHandler := handlers.NewSCIMHandler(coreService)
 		r.Route("/scim/v2", func(r chi.Router) {
 			r.Use(customMiddleware.NoStore)

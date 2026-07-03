@@ -78,26 +78,20 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 	if displayName == "" {
 		displayName = req.GetUsername()
 	}
+	// AccountState is deliberately NOT taken from the client (mirrors the HTTP
+	// CreateUser handler, which has no account_state field in its request body at
+	// all): the field is a server-derived lifecycle state, not something a caller —
+	// however privileged — should self-set at creation time. The proto still
+	// declares account_state for wire compatibility, but its value is ignored here
+	// so a caller cannot mint a new account already in, e.g., "active" bypassing the
+	// setup-link/one-time-password flows below, which set it themselves
+	// (pending_first_login / password_reset_required) when applicable.
 	coreReq := &core.CreateUserRequest{
 		Username:    req.GetUsername(),
 		Email:       req.GetEmail(),
 		DisplayName: displayName,
 		Password:    req.GetPassword(),
 		IsActive:    req.IsActive,
-	}
-	if as := req.GetAccountState(); as != "" {
-		// account_state is a gRPC-only free-text field with no proto enum/oneof
-		// validation (this repo has no protoc-gen-validate extensions), and has
-		// no HTTP or CLI equivalent to cross-check against. Reject anything that
-		// isn't a canonical ADR-025 value here rather than persist it verbatim —
-		// downstream, AccountRestricted/AccountLoginBlocked would otherwise
-		// treat a typo'd or garbage value inconsistently with the admin's
-		// actual intent. See #334.
-		if !core.IsValidAccountState(as) {
-			return nil, status.Error(codes.InvalidArgument,
-				"account_state must be one of: active, pending_first_login, password_reset_required, suspended, deprovisioned")
-		}
-		coreReq.AccountState = as
 	}
 
 	resp := &pb.CreateUserResponse{}

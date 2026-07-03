@@ -226,6 +226,10 @@ func (rs *RemoteStorage) ListGroups(_ context.Context) ([]*models.Group, error) 
 	return nil, remoteUnsupported("ListGroups")
 }
 
+func (rs *RemoteStorage) ListGroupsPage(_ context.Context, _, _ int) ([]*models.Group, int64, error) {
+	return nil, 0, remoteUnsupported("ListGroupsPage")
+}
+
 func (rs *RemoteStorage) AddUserToGroup(_ context.Context, _, _ uint) error {
 	return remoteUnsupported("AddUserToGroup")
 }

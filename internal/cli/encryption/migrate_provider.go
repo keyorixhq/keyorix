@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -407,12 +408,20 @@ func migrateProviderWithConfig(cfg *config.Config, opts migrateOpts, confirm boo
 // and its directory so the copy is durable. The backup this produces is the
 // rollback target if migration verification fails — a non-durable backup lost to a
 // crash could leave neither a valid old nor new wrapped DEK on disk.
+//
+// O_NOFOLLOW refuses to write THROUGH a final-component symlink at dst: without
+// it, an attacker with write access to dst's parent directory (the DEK's own
+// directory, or the migrate-backup path next to it) could pre-plant a symlink
+// there pointing at an arbitrary file this process can write, and the backup/
+// restore write would silently clobber that file instead of the intended DEK/
+// backup path. With O_NOFOLLOW the open fails (ELOOP) instead of following it —
+// the same protection securefiles.SecureWriteFile applies to its writes.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src) // #nosec G304 -- operator-configured key path under baseDir
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) // #nosec G304 -- operator-configured key path under baseDir (local CLI tool, not network input)
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600) // #nosec G304 -- operator-configured key path under baseDir (local CLI tool, not network input)
 	if err != nil {
 		return err
 	}

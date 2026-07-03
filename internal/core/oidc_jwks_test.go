@@ -131,6 +131,56 @@ func TestHTTPJWKSResolver_UnknownKidRefetchRateLimited(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// The stale-cache refetch path (cache past jwksCacheTTL) is rate-limited the same
+// way the fresh-cache-unknown-kid path is: at most one refetch ATTEMPT per
+// jwksMinRefetchInterval per issuer. Before the fix this path had no gate at all —
+// every single Key() call on a stale/expired cache triggered a real outbound
+// fetch, so a caller (or an outage that keeps refetches failing) could force an
+// unbounded stream of them.
+func TestHTTPJWKSResolver_StaleRefetchRateLimited(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusInternalServerError) // keep failing so the cache stays stale
+	}))
+	defer srv.Close()
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
+
+	seedStaleCache := func() {
+		r.mu.Lock()
+		r.cache["https://iss"] = &jwksEntry{
+			keys:      map[string]interface{}{"k1": &key.PublicKey},
+			fetchedAt: time.Now().Add(-(jwksCacheTTL + time.Minute)), // stale, still within grace
+		}
+		r.mu.Unlock()
+	}
+
+	seedStaleCache()
+	// First call on the stale cache: not yet rate-limited, attempts a real refetch
+	// (which fails), then falls back to the stale-but-in-grace cached key.
+	got, err := r.Key(context.Background(), "https://iss", "k1")
+	require.NoError(t, err)
+	assert.Equal(t, &key.PublicKey, got)
+	require.Equal(t, 1, hits, "first stale-cache call attempts exactly one refetch")
+
+	// A flood of further calls immediately after: all within jwksMinRefetchInterval
+	// of the first attempt, so none should reach the server again.
+	for i := 0; i < 20; i++ {
+		_, _ = r.Key(context.Background(), "https://iss", "k1")
+	}
+	assert.Equal(t, 1, hits, "repeated calls on a still-rate-limited stale cache must not amplify into a fetch storm")
+
+	// Once the last-attempt timestamp is old enough, a call is allowed to attempt a
+	// refetch again.
+	r.mu.Lock()
+	r.lastFetchAttempt["https://iss"] = time.Now().Add(-(jwksMinRefetchInterval + time.Second))
+	r.mu.Unlock()
+	_, _ = r.Key(context.Background(), "https://iss", "k1")
+	assert.Equal(t, 2, hits, "after the rate-limit window elapses, a call may attempt a refetch again")
+}
+
 // A JWKS with more keys than maxJWKSKeys is capped so a pathological key set can't
 // bloat the cache.
 func TestHTTPJWKSResolver_CapsKeyCount(t *testing.T) {
