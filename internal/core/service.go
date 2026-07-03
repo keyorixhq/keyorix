@@ -97,6 +97,14 @@ type KeyorixCore struct {
 	// cannot both observe an empty user table and each create a "first admin". Zero
 	// value is ready to use. See auth_bootstrap.go.
 	bootstrapMu sync.Mutex
+	// secretDependencyMu serializes AddSecretDependency's cycle-check read through
+	// the edge it writes (#260), so two concurrent callers racing to add A→B and
+	// B→A in the same project cannot both pass the pre-write cycle check before
+	// either commits, persisting a cycle that later hard-errors rotation planning
+	// for that project. Combined with the row lock
+	// ListSecretDependenciesForProjectForUpdate takes on Postgres, this holds
+	// across replicas too. Zero value is ready to use. See secret_dependencies.go.
+	secretDependencyMu sync.Mutex
 	// accountStateMu serializes the account_state/is_active read-modify-write shared
 	// by setAccountState (SuspendUser/ReactivateUser/RequirePasswordReset) and
 	// UpdateSCIMUser (#344): without it, an admin's incident-response SuspendUser and a

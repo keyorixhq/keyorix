@@ -313,6 +313,13 @@ func (m *MockStorage) ListSecretDependenciesForProject(ctx context.Context, proj
 	return args.Get(0).([]*models.SecretDependency), args.Error(1)
 }
 
+// ListSecretDependenciesForProjectForUpdate has no row lock in the mock; it
+// reuses the ListSecretDependenciesForProject expectation, mirroring
+// LockUserForUpdate above.
+func (m *MockStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
+	return m.ListSecretDependenciesForProject(ctx, projectID)
+}
+
 func (m *MockStorage) DeleteSecretDependency(ctx context.Context, id uint) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
