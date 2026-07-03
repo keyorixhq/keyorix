@@ -1,9 +1,8 @@
-// local_auth.go — Session and API Client/Token operations for LocalStorage.
+// local_auth.go — Session and Personal Access Token / Setup Token operations for
+// LocalStorage.
 //
 // Covers: CreateSession, GetSession, DeleteSession, CleanupExpiredSessions,
-//
-//	CreateAPIClient, GetAPIClient, RevokeAPIClient, ListAPIClients, UpdateAPIClient,
-//	CreateAPIToken, GetAPIToken, ListAPITokens, RevokeAPIToken.
+// personal access tokens (ADR-027), and setup tokens (ADR-028).
 //
 // All operations use direct GORM queries.
 // For the remote (HTTP) equivalent see remote_auth.go.
@@ -45,13 +44,91 @@ func (ls *LocalStorage) CreateSession(ctx context.Context, session *models.Sessi
 	return session, nil
 }
 
+// GetSession looks up a LIVE session by the hash of the presented token — the row
+// stores only the hash. A rotated row (RotatedAt set) is excluded: it must
+// authenticate nothing, exactly like a deleted row (#211).
 func (ls *LocalStorage) GetSession(ctx context.Context, token string) (*models.Session, error) {
-	// Look up by the hash of the presented token — the row stores only the hash.
+	var session models.Session
+	if err := ls.db.WithContext(ctx).
+		Where("session_token = ? AND rotated_at IS NULL", hashSessionToken(token)).
+		First(&session).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	return &session, nil
+}
+
+// GetSessionAny looks up a session by token hash regardless of rotation state —
+// used only by RefreshSession's reuse-detection path (#211), which must tell an
+// already-rotated token (a reuse signal) apart from one that never existed.
+func (ls *LocalStorage) GetSessionAny(ctx context.Context, token string) (*models.Session, error) {
 	var session models.Session
 	if err := ls.db.WithContext(ctx).Where("session_token = ?", hashSessionToken(token)).First(&session).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
 	}
 	return &session, nil
+}
+
+// RotateSession atomically supersedes the session at oldID with newSession, inside
+// one DB transaction (#211). The conditional UPDATE's WHERE guard (rotated_at IS
+// NULL) is the CAS: under concurrent refreshes of the same token, only the caller
+// whose UPDATE matches a still-live row wins (won=true) and gets its replacement
+// created in the SAME transaction, so a crash between the two steps can never leave
+// an old row marked rotated with no live descendant. The loser's UPDATE matches zero
+// rows (won=false, created=nil) — the caller must treat that exactly like an
+// out-of-band replay of an already-rotated token.
+func (ls *LocalStorage) RotateSession(ctx context.Context, oldID uint, newSession *models.Session, now time.Time) (*models.Session, bool, error) {
+	var created *models.Session
+	won := false
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&models.Session{}).
+			Where("id = ? AND rotated_at IS NULL", oldID).
+			Update("rotated_at", now)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil // lost the race / already rotated — won stays false, not an error
+		}
+		won = true
+		plaintext := newSession.SessionToken
+		newSession.SessionToken = hashSessionToken(plaintext)
+		if err := tx.Create(newSession).Error; err != nil {
+			return err
+		}
+		newSession.SessionToken = plaintext
+		created = newSession
+		return nil
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return created, won, nil
+}
+
+// ListSessionTokenHashesByFamily returns the stored session_token hashes for every
+// (live or rotated) session sharing familyID, so the reuse-detection path can evict
+// each from the auth cache before deleting them (#211).
+func (ls *LocalStorage) ListSessionTokenHashesByFamily(ctx context.Context, familyID string) ([]string, error) {
+	var hashes []string
+	if err := ls.db.WithContext(ctx).Model(&models.Session{}).
+		Where("family_id = ?", familyID).
+		Pluck("session_token", &hashes).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return hashes, nil
+}
+
+// DeleteSessionsByFamily removes every session sharing familyID — used to revoke
+// the whole lineage descended from one login when a refresh-token reuse is
+// detected (#211), not just the single replayed row.
+func (ls *LocalStorage) DeleteSessionsByFamily(ctx context.Context, familyID string) error {
+	if familyID == "" {
+		return nil
+	}
+	if err := ls.db.WithContext(ctx).Where("family_id = ?", familyID).Delete(&models.Session{}).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
 }
 
 func (ls *LocalStorage) GetSessionByID(ctx context.Context, id uint) (*models.Session, error) {
@@ -145,98 +222,6 @@ func (ls *LocalStorage) TouchSession(ctx context.Context, id uint, seenAt time.T
 // CleanupExpiredSessions hard-deletes all sessions whose expires_at is in the past.
 func (ls *LocalStorage) CleanupExpiredSessions(ctx context.Context) error {
 	return ls.db.WithContext(ctx).Where("expires_at < ?", time.Now()).Delete(&models.Session{}).Error
-}
-
-// --- API Clients ---
-
-func (ls *LocalStorage) CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {
-	if err := ls.db.WithContext(ctx).Create(client).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return client, nil
-}
-
-func (ls *LocalStorage) GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error) {
-	var client models.APIClient
-	if err := ls.db.WithContext(ctx).Where("client_id = ?", clientID).First(&client).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
-	}
-	return &client, nil
-}
-
-// RevokeAPIClient sets is_active = false; does not delete the record.
-func (ls *LocalStorage) RevokeAPIClient(ctx context.Context, clientID string) error {
-	result := ls.db.WithContext(ctx).Model(&models.APIClient{}).
-		Where("client_id = ?", clientID).
-		Update("is_active", false)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
-	}
-	return nil
-}
-
-func (ls *LocalStorage) ListAPIClients(ctx context.Context) ([]*models.APIClient, error) {
-	var clients []*models.APIClient
-	if err := ls.db.WithContext(ctx).Find(&clients).Error; err != nil {
-		return nil, fmt.Errorf("failed to list API clients: %w", err)
-	}
-	return clients, nil
-}
-
-func (ls *LocalStorage) UpdateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {
-	if err := ls.db.WithContext(ctx).Save(client).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return client, nil
-}
-
-// --- API Tokens ---
-
-func (ls *LocalStorage) CreateAPIToken(ctx context.Context, token *models.APIToken) (*models.APIToken, error) {
-	if err := ls.db.WithContext(ctx).Create(token).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-	}
-	return token, nil
-}
-
-func (ls *LocalStorage) GetAPIToken(ctx context.Context, id uint) (*models.APIToken, error) {
-	var token models.APIToken
-	if err := ls.db.WithContext(ctx).First(&token, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
-		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	return &token, nil
-}
-
-func (ls *LocalStorage) ListAPITokens(ctx context.Context, clientID *uint) ([]*models.APIToken, error) {
-	query := ls.db.WithContext(ctx).Model(&models.APIToken{})
-	if clientID != nil {
-		query = query.Where("client_id = ?", *clientID)
-	}
-	var tokens []*models.APIToken
-	if err := query.Find(&tokens).Error; err != nil {
-		return nil, fmt.Errorf("failed to list API tokens: %w", err)
-	}
-	return tokens, nil
-}
-
-// RevokeAPIToken sets revoked = true; does not delete the record.
-func (ls *LocalStorage) RevokeAPIToken(ctx context.Context, id uint) error {
-	result := ls.db.WithContext(ctx).Model(&models.APIToken{}).
-		Where("id = ?", id).
-		Update("revoked", true)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
-	}
-	return nil
 }
 
 // --- Personal Access Tokens (ADR-027) ---

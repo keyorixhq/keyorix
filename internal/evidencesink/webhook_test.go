@@ -3,6 +3,7 @@ package evidencesink
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -18,6 +19,12 @@ import (
 // internal-target destination at construction, so the bearer token + compliance pack
 // are never shipped in cleartext or to an internal host.
 func TestWebhook_RejectsInsecureEndpoints(t *testing.T) {
+	orig := lookupIPAddr
+	defer func() { lookupIPAddr = orig }()
+	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("203.0.113.5")}}, nil // a public TEST-NET-3 address
+	}
+
 	// Cleartext http to a non-loopback host → rejected.
 	_, err := NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", Token: "ev-tok"})
 	require.ErrorContains(t, err, "must use https")
@@ -30,9 +37,13 @@ func TestWebhook_RejectsInsecureEndpoints(t *testing.T) {
 	_, err = NewWebhook(WebhookConfig{Endpoint: "https://collector.example.com/evidence"})
 	require.NoError(t, err)
 
-	// The insecure opt-in permits http (trusted self-signed / lab).
+	// #130: InsecureSkipVerify (a TLS-certificate-trust decision) must NOT also
+	// bypass the https/SSRF guard — that coupling was the bug. Only the dedicated
+	// AllowPrivateNetworkTarget opt-in does.
 	_, err = NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", InsecureSkipVerify: true})
-	require.NoError(t, err)
+	require.Error(t, err, "InsecureSkipVerify alone must not bypass the https requirement")
+	_, err = NewWebhook(WebhookConfig{Endpoint: "http://collector.example.com/evidence", AllowPrivateNetworkTarget: true})
+	require.NoError(t, err, "AllowPrivateNetworkTarget is the dedicated opt-in for a non-https/internal target")
 }
 
 func TestWebhook_PostsEvidenceWithAuth(t *testing.T) {

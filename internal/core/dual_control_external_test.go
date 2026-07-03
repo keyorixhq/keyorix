@@ -28,6 +28,10 @@ func TestApprove_SingleControlDefault(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)  // requester
 	h.CreateTestUser(t, "admin1", 11) // approver
+	// #93/#107/#141: the approver must themselves hold every permission of the
+	// role being granted (editor: secrets.read/write, users.read) — grant them
+	// "admin" globally so the ceiling check's admin bypass applies.
+	h.AssignUserRole(t, 11, 2, nil)
 	reqID := seedPendingRequest(t, h, 10)
 
 	req, err := h.CoreService.ApproveAccessRequestWithExpiry(ctx, 2, reqID, 11, "", 0)
@@ -50,6 +54,11 @@ func TestApprove_DualControl(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)  // requester
 	h.CreateTestUser(t, "admin1", 11) // approver 1
 	h.CreateTestUser(t, "admin2", 12) // approver 2
+	// #93/#107/#141: the threshold-crossing approver must themselves hold every
+	// permission of the role being granted — grant both "admin" globally so the
+	// ceiling check's admin bypass applies regardless of which one crosses it.
+	h.AssignUserRole(t, 11, 2, nil)
+	h.AssignUserRole(t, 12, 2, nil)
 	h.CoreService.SetDualControlPolicy(2)
 	reqID := seedPendingRequest(t, h, 10)
 
@@ -90,6 +99,12 @@ func TestApprove_DualControl_RoleLockedToRequest(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)  // requester — asks for "editor"
 	h.CreateTestUser(t, "admin1", 11) // approver 1
 	h.CreateTestUser(t, "admin2", 12) // approver 2 (would-be escalator)
+	// #93/#107/#141: the threshold-crossing approver must themselves hold every
+	// permission of the role being granted — grant both "admin" globally so the
+	// ceiling check's admin bypass applies (independent of the dual-control
+	// role-lock this test actually exercises).
+	h.AssignUserRole(t, 11, 2, nil)
+	h.AssignUserRole(t, 12, 2, nil)
 	h.CoreService.SetDualControlPolicy(2)
 	reqID := seedPendingRequest(t, h, 10) // SuggestedRole "editor"
 

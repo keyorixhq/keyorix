@@ -29,7 +29,9 @@ your workflow as **masked environment variables**.
 
 How it works: installs the Keyorix CLI (via the official installer, or a pinned
 `version`), runs `keyorix secret export --format json`, masks each value with
-`::add-mask::`, and writes them to `$GITHUB_ENV`. Secret names are injected
-verbatim — name them as valid env identifiers (e.g. `STRIPE_KEY`).
+`::add-mask::`, and writes them to `$GITHUB_ENV`. Secret names must be valid env
+identifiers (e.g. `STRIPE_KEY`, matching `^[A-Za-z_][A-Za-z0-9_]*$`) — the action
+refuses and fails the step if any secret name doesn't match, rather than writing it
+to `$GITHUB_ENV` unsanitized.
 
 See [docs/CI_CD.md](../../docs/CI_CD.md) for GitLab CI and CircleCI examples.

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -129,25 +130,47 @@ func (c *KeyorixCore) ListStaleMachineIdentities(ctx context.Context, projectID 
 // enforcing the state machine, and audits the change. The machine must belong to
 // projectID — the caller's authorization is scoped to that project, so a machine
 // in another project must not be reachable through it (cross-project guard).
+//
+// #388: the read-check-write is done inside a transaction against a row obtained via
+// LockMachineIdentityForUpdate, not a plain GetMachineIdentity — without a DB-level
+// guard, two concurrent transitions racing off the same pre-transition state (e.g.
+// one to revoked, one racing back to active from suspended) can each independently
+// pass canTransitionMachine, and whichever plain Save landed last would silently win
+// outright, un-revoking a just-revoked machine identity. The row lock (Postgres:
+// SELECT ... FOR UPDATE) serializes this across replicas; the transaction alone
+// serializes it on SQLite (always single-process).
 func (c *KeyorixCore) TransitionMachineIdentity(ctx context.Context, projectID, id uint, to string, actorID uint) (*models.MachineIdentity, error) {
-	m, err := c.machineInProject(ctx, projectID, id)
+	now := c.now()
+	var result *models.MachineIdentity
+	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		m, err := tx.LockMachineIdentityForUpdate(ctx, id)
+		if err != nil {
+			return fmt.Errorf("machine identity not found")
+		}
+		if m.ProjectID != projectID {
+			// Cross-project guard: report as "not found" (not a permission error) to
+			// avoid confirming the machine's existence to a caller scoped elsewhere.
+			return fmt.Errorf("machine identity not found")
+		}
+		if !canTransitionMachine(m.State, to) {
+			return fmt.Errorf("cannot transition machine identity from %s to %s", m.State, to)
+		}
+		m.State = to
+		m.UpdatedAt = now
+		if to == MachineRevoked {
+			m.RevokedAt = &now
+		}
+		if err := tx.UpdateMachineIdentity(ctx, m); err != nil {
+			return fmt.Errorf("failed to update machine identity: %w", err)
+		}
+		result = m
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	if !canTransitionMachine(m.State, to) {
-		return nil, fmt.Errorf("cannot transition machine identity from %s to %s", m.State, to)
-	}
-	now := c.now()
-	m.State = to
-	m.UpdatedAt = now
-	if to == MachineRevoked {
-		m.RevokedAt = &now
-	}
-	if err := c.storage.UpdateMachineIdentity(ctx, m); err != nil {
-		return nil, fmt.Errorf("failed to update machine identity: %w", err)
-	}
-	c.logMachineEvent(ctx, "machine_identity."+machineVerb(to), m, actorID)
-	return m, nil
+	c.logMachineEvent(ctx, "machine_identity."+machineVerb(to), result, actorID)
+	return result, nil
 }
 
 // ClassifyMachineIdentity sets (or clears, with "") the data-classification label

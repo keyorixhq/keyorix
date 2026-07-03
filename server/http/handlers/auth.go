@@ -226,6 +226,25 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get("User-Agent"), ip)
 	if err != nil {
+		// The new password was accepted, but the account has MFA (TOTP) or a passkey
+		// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)
+		// so a password reset cannot be used to silently bypass the second factor.
+		// Issue a short-lived challenge instead of a session; the client completes
+		// VerifyMFALogin (or the WebAuthn ceremony) to get a real session.
+		if errors.Is(err, core.ErrMFARequired) {
+			challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), result.User.ID)
+			if cerr != nil {
+				sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
+				return
+			}
+			sendSuccess(w, map[string]interface{}{
+				"mfa_required":       true,
+				"mfa_challenge":      challenge,
+				"totp_available":     result.User.MFAEnabled,
+				"webauthn_available": result.User.WebAuthnEnabled,
+			}, "MFA required")
+			return
+		}
 		// Only a password-policy failure surfaces its reason (the link is still live,
 		// so the user can fix the password and retry). Every other failure — dead/used
 		// token, missing or already-existing account, internal error — is reported
@@ -503,7 +522,28 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 
 // PasswordReset handles POST /auth/password-reset.
 // Always returns success to prevent email enumeration.
+//
+// This route is intentionally unauthenticated (anyone must be able to request a
+// reset for their own account), which also makes it reachable by anyone for ANY
+// target email — with no compensating auth barrier the way the admin-triggered
+// resend flows have (users.write / roles.assign). checkResendThrottle
+// (ADR-028, per-email 10/day + 60s min-interval, already serialized per-process
+// via setupResendMu) is the primary abuse control, but as a defense-in-depth
+// backstop specific to this unauthenticated entry point, an IP-based budget
+// (ADR-040's existing cluster-wide, DB-backed limiter, reused here) caps how
+// many reset requests — and therefore how many outbound emails — a single
+// source can trigger, independent of which email(s) it targets (#249).
 func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
+	ip := r.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	if h.coreService.IsPasswordResetRateLimited(r.Context(), ip) {
+		sendError(w, "TooManyRequests", "Too many password reset requests. Try again later.", http.StatusTooManyRequests, nil)
+		return
+	}
+	h.coreService.RecordPasswordResetAttempt(r.Context(), ip)
+
 	var body passwordResetRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)

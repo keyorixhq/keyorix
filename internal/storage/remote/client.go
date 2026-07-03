@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -31,7 +33,11 @@ type HTTPClient struct {
 	retryAttempts int
 	userAgent     string
 
-	// Circuit breaker state
+	// Circuit breaker state. cbMux guards all three fields (#316): HTTPClient is a
+	// long-lived singleton shared by every concurrent request-handling goroutine
+	// when storage.type: remote, and these were read/written with no
+	// synchronization at all — a genuine data race under concurrent use.
+	cbMux           sync.Mutex
 	failureCount    int
 	lastFailureTime time.Time
 	circuitOpen     bool
@@ -96,25 +102,47 @@ type APIError struct {
 	Details string `json:"details,omitempty"`
 }
 
-// Error implements the error interface
+// Error implements the error interface. Nil-safe (#314): every remote_*.go call
+// site does resp.Error.Error() as soon as resp.Success is false, and makeRequest
+// can return Success:false with a nil Error (an upstream 2xx whose JSON body
+// simply omits "error") — without this guard, that call site pattern panics.
 func (e *APIError) Error() string {
+	if e == nil {
+		return "unknown error"
+	}
 	if e.Details != "" {
 		return fmt.Sprintf("%s: %s (%s)", e.Code, e.Message, e.Details)
 	}
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
+// circuitBreakerOpen reports whether the circuit breaker currently refuses
+// requests, closing it first if the 30s cooldown has elapsed (#316: guarded by
+// cbMux instead of being read/written unsynchronized).
+func (c *HTTPClient) circuitBreakerOpen() bool {
+	c.cbMux.Lock()
+	defer c.cbMux.Unlock()
+	if !c.circuitOpen {
+		return false
+	}
+	if time.Since(c.lastFailureTime) > 30*time.Second {
+		c.circuitOpen = false
+		c.failureCount = 0
+		return false
+	}
+	return true
+}
+
+func (c *HTTPClient) resetFailureCount() {
+	c.cbMux.Lock()
+	c.failureCount = 0
+	c.cbMux.Unlock()
+}
+
 // Request makes an HTTP request with retry logic and circuit breaker
 func (c *HTTPClient) Request(ctx context.Context, method, path string, body interface{}) (*APIResponse, error) {
-	// Check circuit breaker
-	if c.circuitOpen {
-		// Check if we should try to close the circuit
-		if time.Since(c.lastFailureTime) > 30*time.Second {
-			c.circuitOpen = false
-			c.failureCount = 0
-		} else {
-			return nil, fmt.Errorf("circuit breaker is open, service unavailable")
-		}
+	if c.circuitBreakerOpen() {
+		return nil, fmt.Errorf("circuit breaker is open, service unavailable")
 	}
 
 	var lastErr error
@@ -143,7 +171,7 @@ func (c *HTTPClient) Request(ctx context.Context, method, path string, body inte
 		}
 
 		// Reset failure count on success
-		c.failureCount = 0
+		c.resetFailureCount()
 		return resp, nil
 	}
 
@@ -153,6 +181,8 @@ func (c *HTTPClient) Request(ctx context.Context, method, path string, body inte
 
 // recordFailure records a failure and potentially opens the circuit breaker
 func (c *HTTPClient) recordFailure() {
+	c.cbMux.Lock()
+	defer c.cbMux.Unlock()
 	c.failureCount++
 	c.lastFailureTime = time.Now()
 
@@ -219,17 +249,63 @@ func (c *HTTPClient) makeRequest(ctx context.Context, method, path string, body 
 				Message: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, resp.Status),
 			}
 		}
-		// Return error for HTTP error status codes to trigger retry logic
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		// Return a typed status error so isRetryableError can distinguish a
+		// transient server-side failure (worth retrying) from a client error like
+		// 401/403/404 (retrying can never succeed — the request itself is wrong).
+		return nil, &httpStatusError{StatusCode: resp.StatusCode, Status: resp.Status}
+	}
+
+	// #314: a 2xx/3xx upstream response can still carry Success:false with no
+	// "error" field populated (e.g. a proxy/WAF/CDN interstitial, or a degraded
+	// upstream returning "{}") — every remote_*.go call site immediately does
+	// resp.Error.Error() as soon as !resp.Success, which would otherwise panic
+	// on this nil field. Synthesize a generic error so callers always have
+	// something safe to report.
+	if !apiResp.Success && apiResp.Error == nil {
+		apiResp.Error = &APIError{
+			Code:    "UPSTREAM_UNSUCCESSFUL",
+			Message: "upstream returned an unsuccessful response with no error detail",
+		}
 	}
 
 	return &apiResp, nil
 }
 
-// isRetryableError determines if an error is retryable
+// httpStatusError carries the upstream HTTP status so isRetryableError can
+// distinguish a transient server failure from a client error (#317).
+type httpStatusError struct {
+	StatusCode int
+	Status     string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Status)
+}
+
+// isRetryableError determines whether a failed request is worth retrying
+// (#317: this previously always returned true regardless of the error,
+// meaning genuinely non-retryable failures — a marshal error, or a 401/403/404
+// — burned the full retry budget with quadratic backoff for no benefit).
+//
+// Retryable: network-level failures (connection refused/reset, DNS, timeout —
+// anything from http.Client.Do or reading the response body) and 5xx/429
+// upstream statuses. Not retryable: request-construction failures (marshal,
+// NewRequest) and 4xx client errors other than 429 — none of these can ever
+// succeed on retry, since the request itself (not the network) is the problem.
 func isRetryableError(err error) bool {
-	// Retry on network errors, timeouts, etc.
-	// This is a simplified implementation
+	if err == nil {
+		return false
+	}
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode >= 500 || statusErr.StatusCode == http.StatusTooManyRequests
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "failed to marshal request body") || strings.Contains(msg, "failed to create request") {
+		return false
+	}
+	// Everything else reaching here is a network-level failure (request failed:
+	// ..., failed to read response body: ...) — transient by nature.
 	return true
 }
 

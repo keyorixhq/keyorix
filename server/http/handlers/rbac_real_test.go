@@ -43,7 +43,10 @@ func mustCreateGroup(t *testing.T, db *gorm.DB, name string) *models.Group {
 	return group
 }
 
-// openTestDB opens a fresh in-memory SQLite DB and auto-migrates RBAC tables.
+// openTestDB opens a fresh in-memory SQLite DB and auto-migrates RBAC tables. Makes
+// the test user (withUserCtx's UserID 1) a global admin so AssignPermissionToRole's
+// #169 self-permission check (via the admin bypass) doesn't block these RBAC-plumbing
+// tests, which aren't testing that authorization boundary themselves.
 func openTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -54,9 +57,18 @@ func openTestDB(t *testing.T) *gorm.DB {
 		&models.RolePermission{},
 		&models.UserRole{},
 		&models.Group{},
+		&models.UserGroup{},
 		&models.GroupRole{},
 		&models.User{},
+		&models.Project{},
+		&models.Environment{},
 	))
+	// A distinct name from any role individual tests create via mustCreateRole (some
+	// create their own role literally named "admin" for unrelated purposes) — Role.Name
+	// is unique, so this must not collide with those.
+	adminRole := &models.Role{Name: "system_admin", Description: "Administrator"}
+	require.NoError(t, db.Create(adminRole).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: adminRole.ID}).Error)
 	return db
 }
 
@@ -347,7 +359,9 @@ func TestRBACReal_AssignRole_PastExpiry_400(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	var n int64
-	require.NoError(t, db.Model(&models.UserRole{}).Count(&n).Error)
+	// Scoped to the specific (user, role) under test, not a bare table count — openTestDB
+	// itself seeds a UserRole granting the test actor admin authority (#169).
+	require.NoError(t, db.Model(&models.UserRole{}).Where("user_id = ? AND role_id = ?", user.ID, role.ID).Count(&n).Error)
 	assert.Zero(t, n, "no grant should be written when the expiry is rejected")
 }
 

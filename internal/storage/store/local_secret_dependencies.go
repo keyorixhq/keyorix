@@ -10,6 +10,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm/clause"
 )
 
 func (ls *LocalStorage) CreateSecretDependency(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
@@ -30,6 +31,24 @@ func (ls *LocalStorage) GetSecretDependency(ctx context.Context, id uint) (*mode
 func (ls *LocalStorage) ListSecretDependenciesForProject(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
 	var rows []*models.SecretDependency
 	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Order("id ASC").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
+}
+
+// ListSecretDependenciesForProjectForUpdate is ListSecretDependenciesForProject,
+// adding SELECT … FOR UPDATE on Postgres so a cycle-check read inside a
+// transaction serializes against a concurrent writer racing to add an edge in the
+// same project (#260 — see AddSecretDependency). SQLite has no row-level lock, so
+// the clause is omitted there and the caller (secretDependencyMu) serializes
+// in-process; SQLite is always single-process, so that suffices.
+func (ls *LocalStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
+	q := ls.db.WithContext(ctx)
+	if ls.db.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var rows []*models.SecretDependency
+	if err := q.Where("project_id = ?", projectID).Order("id ASC").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil

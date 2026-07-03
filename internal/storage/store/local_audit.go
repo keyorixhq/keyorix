@@ -23,12 +23,67 @@ func (ls *LocalStorage) CreateSecretAccessLog(ctx context.Context, log *models.S
 	return ls.db.WithContext(ctx).Create(log).Error
 }
 
+// maxSecretAccessLogRows caps how many rows a single ListSecretAccessLogs call can
+// return (#101). Without a cap, a secret read continuously over a long window (a busy
+// CI pipeline, or an attacker deliberately hammering reads to bloat the log) makes the
+// anomaly detector — which calls this per secret, per pass, over a 30-day window —
+// load an unbounded result set into memory, a self-inflicted latency/OOM vector.
+// Ordered newest-first so a capped result keeps the most recent (most relevant) rows.
+const maxSecretAccessLogRows = 50_000
+
 func (ls *LocalStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error) {
 	var logs []models.SecretAccessLog
 	result := ls.db.WithContext(ctx).
 		Where("secret_node_id = ? AND access_time >= ?", secretID, since).
+		Order("access_time DESC").
+		Limit(maxSecretAccessLogRows).
 		Find(&logs)
 	return logs, result.Error
+}
+
+// PrincipalSecretFirstSeen returns, for every (principal, secret) pair with at least one
+// access log row at or after `since`, the EARLIEST access time in that range —
+// aggregated in SQL (GROUP BY + MIN), not loaded as full log rows, so this stays cheap
+// regardless of per-secret read volume (#101).
+//
+// The `since` SQL boundary is deliberately coarse (the 30-day baseline window, not the
+// live scan window): a stored AccessTime preserves its writer's local UTC offset as
+// text (e.g. "...+02:00"), rather than being normalised to a single format, so a SQL
+// WHERE boundary that's narrow relative to "now" (same-day/same-hour) compares that text
+// lexicographically against a differently-offset-formatted bound parameter and can
+// silently misclassify rows near the boundary — a real-but-latent issue across this
+// codebase's time-range queries, only ever safe today because every other WHERE
+// boundary here is date-scale (7d/30d), never hour-scale. Callers needing the
+// hour-scale "is this within the live window" distinction must make it in Go against
+// the returned time.Time (which is location-independent to compare), not by pushing a
+// second, narrower bound into this query.
+func (ls *LocalStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error) {
+	type row struct {
+		AccessedBy   string
+		SecretNodeID uint
+		FirstSeen    scanTime
+	}
+	var rows []row
+	err := ls.db.WithContext(ctx).
+		Model(&models.SecretAccessLog{}).
+		Select("accessed_by, secret_node_id, MIN(access_time) AS first_seen").
+		Where("access_time >= ? AND accessed_by != ''", since).
+		Group("accessed_by, secret_node_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[uint]time.Time, len(rows))
+	for _, r := range rows {
+		if r.FirstSeen.t == nil {
+			continue
+		}
+		if out[r.AccessedBy] == nil {
+			out[r.AccessedBy] = make(map[uint]time.Time)
+		}
+		out[r.AccessedBy][r.SecretNodeID] = *r.FirstSeen.t
+	}
+	return out, nil
 }
 
 // scanTime portably scans a SQL timestamp that some drivers return as time.Time
@@ -308,8 +363,12 @@ func (ls *LocalStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *boo
 	return alerts, result.Error
 }
 
-func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
-	res := ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Update("acknowledged", true)
+func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id, actorID uint, at time.Time) error {
+	res := ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"acknowledged":    true,
+		"acknowledged_by": actorID,
+		"acknowledged_at": at,
+	})
 	if res.Error != nil {
 		return res.Error
 	}

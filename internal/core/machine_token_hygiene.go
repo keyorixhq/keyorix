@@ -3,7 +3,8 @@
 // revoked, or stale (unused for a long window). The non-human counterpart to PAT
 // hygiene ([[pat_hygiene]]): an abandoned or expired machine token is the same kind of
 // reusable credential an attacker prizes. Read-only; never returns a token hash.
-// Admin-scoped (route-gated).
+// Route-gated on audit.read (not the universal system_viewer baseline; see #274) —
+// discloses credential names/prefixes/expiry deployment-wide.
 package core
 
 import (

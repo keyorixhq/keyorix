@@ -74,7 +74,10 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 	return updated, nil
 }
 
-// DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics.
+// DeleteGroup deletes a group by ID. See CreateGroup for actorID semantics. It
+// refuses to delete a group holding the install's last global-admin-conferring
+// role grant (#107; see guardLastGlobalAdminGroupDelete) — deleting a group
+// cascades to remove every role grant it holds.
 func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
@@ -82,6 +85,9 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 	group, err := c.storage.GetGroup(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if err := c.guardLastGlobalAdminGroupDelete(ctx, id); err != nil {
+		return err
 	}
 	if err := c.storage.DeleteGroup(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -93,9 +99,29 @@ func (c *KeyorixCore) DeleteGroup(ctx context.Context, actorID, id uint) error {
 
 // RestoreGroup reverses a soft-delete, bringing the group back with the role grants
 // and memberships it had at deletion. See CreateGroup for actorID semantics.
+//
+// #147: restoring reinstates EVERY role the group held atomically — potentially
+// several at once, including admin-tier ones — so before restoring, this checks the
+// group's whole role SET against the actor's own authority (requireGlobalAdmin
+// ToReinstateAdminRoles), the same ceiling roles.assign/requireAuthorityForRole is
+// meant to enforce on a direct grant. Without it, a principal holding only
+// roles.assign (the router's permission gate) who is themselves a member of an
+// admin-conferring group that was soft-deleted (e.g. an incident-response
+// revocation) could restore it and get their admin access back.
 func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "group ID is required")
+	}
+	roles, err := c.storage.GetGroupRoles(ctx, id)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	roleIDs := make([]uint, 0, len(roles))
+	for _, r := range roles {
+		roleIDs = append(roleIDs, r.ID)
+	}
+	if err := c.requireGlobalAdminToReinstateAdminRoles(ctx, actorID, roleIDs, "group"); err != nil {
+		return err
 	}
 	if err := c.storage.RestoreGroup(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -113,25 +139,60 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 	return groups, nil
 }
 
-// AddUserToGroup adds a user to a group.
-func (c *KeyorixCore) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+// AddUserToGroup adds a user to a group. actorID is the admin performing it (0 = no
+// authenticated principal, e.g. a local CLI invocation). Membership confers every
+// role the group holds, so this is recorded in the RBAC audit trail (#233).
+//
+// Joining an admin-conferring group inherits that access just as directly as a
+// role grant, so every global-scope admin role the group already holds is gated
+// by the same escalation-by-proxy ceiling AssignRoleToGroup applies
+// (requireAuthorityForRole): a non-admin roles.assign holder must not be able to
+// self-escalate by joining a privileged group instead of being granted the role.
+// The local CLI (actorID 0) is exempt — it is already fully trusted (it can grant
+// any role directly via AssignRoleToUser, which bypasses this ceiling entirely) and
+// the exemption avoids forcing an existing admin group deployment through this new
+// check retroactively.
+func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+	}
+	if actorID != 0 {
+		grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, g := range grants {
+			role, err := c.storage.GetRole(ctx, g.RoleID)
+			if err != nil {
+				continue
+			}
+			if err := c.requireAuthorityForRole(ctx, actorID, g.ProjectID, role.Name); err != nil {
+				return err
+			}
+		}
 	}
 	if err := c.storage.AddUserToGroup(ctx, userID, groupID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogGroupMemberAdded(ctx, actorID, userID, groupID)
 	return nil
 }
 
-// RemoveUserFromGroup removes a user from a group.
-func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
+// RemoveUserFromGroup removes a user from a group. See AddUserToGroup for actorID
+// semantics. It refuses to remove a user whose global admin-tier authority comes
+// solely from this group's role grant when no other admin route remains (#107;
+// see guardLastGlobalAdminMembership).
+func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, groupID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+	}
+	if err := c.guardLastGlobalAdminMembership(ctx, userID, groupID); err != nil {
+		return err
 	}
 	if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogGroupMemberRemoved(ctx, actorID, userID, groupID)
 	return nil
 }
 
@@ -153,12 +214,18 @@ func (c *KeyorixCore) validateCreateGroupRequest(req *CreateGroupRequest) error 
 	if req.Name == "" {
 		return fmt.Errorf("group name is required")
 	}
+	if err := validateNameLength("group name", req.Name); err != nil {
+		return err
+	}
 	return validateDescription(req.Description)
 }
 
 func (c *KeyorixCore) validateUpdateGroupRequest(req *UpdateGroupRequest) error {
 	if req.ID == 0 {
 		return fmt.Errorf("group ID is required")
+	}
+	if err := validateNameLength("group name", req.Name); err != nil {
+		return err
 	}
 	return validateDescription(req.Description)
 }
