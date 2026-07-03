@@ -62,37 +62,6 @@ func Logger() func(next http.Handler) http.Handler {
 	}
 }
 
-// sensitiveURLPathPrefixes lists path prefixes whose remainder is a
-// bearer-equivalent credential embedded in the URL — a setup token, delivered as
-// a user-facing "click this link" URL, so it can't simply move to a header/body
-// like every other credential in this app. Proxies/load balancers/browser
-// history already see it in the URL; this server's own access log (Logger,
-// above) must not compound that by writing the token to disk/stdout too.
-var sensitiveURLPathPrefixes = []string{"/auth/setup/"}
-
-// setupConsumePath is the one route under sensitiveURLPathPrefixes that does NOT
-// carry a token in its path (the token there is in the POST body) and so is
-// exempt from redaction.
-const setupConsumePath = "/auth/setup/consume"
-
-// RedactSensitiveURLs replaces r.RequestURI — the raw request line Logger()
-// formats into the access log — with a redacted placeholder for routes matched
-// by sensitiveURLPathPrefixes, before the request reaches Logger(). It must run
-// BEFORE Logger() in the middleware chain. Only RequestURI (used for display) is
-// rewritten, never r.URL.Path (used for chi's route matching), so request
-// handling is unaffected.
-func RedactSensitiveURLs(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for _, prefix := range sensitiveURLPathPrefixes {
-			if strings.HasPrefix(r.URL.Path, prefix) && r.URL.Path != setupConsumePath {
-				r.RequestURI = prefix + "[REDACTED]"
-				break
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 // CustomLogger returns a custom logging middleware with more detailed information
 func CustomLogger() func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
