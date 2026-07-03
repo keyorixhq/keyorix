@@ -1,8 +1,9 @@
 // sso.go — human single-sign-on via OIDC (authorization-code flow). A user clicks
 // "Sign in with SSO", is redirected to their IdP, and on callback Keyorix verifies
 // the id_token (signature via the issuer's JWKS, issuer, audience=client_id, expiry,
-// and the nonce it issued), maps the identity to a Keyorix user (the SCIM externalId
-// first, then email), and mints the SAME session a password login would — so an
+// and the nonce it issued), maps the identity to a Keyorix user (this provider's
+// scoped externalId first, then a provider-gated email fallback), and mints the SAME
+// session a password login would — so an
 // IdP-provisioned (passwordless) user can actually sign in. SSO logins bypass
 // Keyorix-local MFA: the IdP is the trusted authenticator.
 //
@@ -194,7 +195,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		return nil, nil, "", err
 	}
 
-	user, err := c.resolveSSOUser(ctx, sub, email, emailVerified)
+	user, err := c.resolveSSOUser(ctx, p.Name, sub, email, emailVerified)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -313,7 +314,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	// low-trust SAML IdP claim an EXISTING account (up to a native admin) merely
 	// by asserting its address (#89). Gate on the provider's explicit opt-in
 	// instead; see SSOProvider.TrustAssertedEmail.
-	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email, p.TrustAssertedEmail)
+	user, err := c.resolveSSOUser(ctx, p.Name, info.Subject, info.Email, p.TrustAssertedEmail)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -351,29 +352,48 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	return session, user, st.ReturnTo, nil
 }
 
-// resolveSSOUser maps the IdP identity to a Keyorix user: the SCIM externalId
-// (subject) first, then email. Returns (nil, nil) when neither matches — the caller
-// decides whether to refuse the login or JIT-provision the account.
+// ssoExternalIDScheme namespaces an SSO-provider-managed identity inside the shared
+// external_id column. A scoped value "sso:<provider>:<subject>" binds the account to
+// exactly ONE SSO provider, so a second IdP that asserts the same subject — or the same
+// email — cannot claim it (see resolveSSOUser). Bare external_ids (SCIM externalId,
+// RFC 7644) and empty values (local accounts) are deliberately left unscoped so they
+// stay interoperable; only JIT-provisioned SSO accounts carry the scheme.
+const ssoExternalIDScheme = "sso:"
+
+// ssoExternalID builds the provider-scoped external_id for an SSO identity. Provider
+// names are configuration keys (no ':'), so the scheme + provider form a stable prefix.
+func ssoExternalID(provider, subject string) string {
+	return ssoExternalIDScheme + provider + ":" + subject
+}
+
+// ssoBoundToOtherProvider reports whether externalID is an SSO-scoped identity owned by
+// a provider OTHER than `provider`. An account in that state must never be linked to
+// `provider`'s assertion — doing so is exactly the cross-provider account takeover this
+// guards against. Bare/empty external_ids are not provider-bound and return false.
+func ssoBoundToOtherProvider(externalID, provider string) bool {
+	return strings.HasPrefix(externalID, ssoExternalIDScheme) &&
+		!strings.HasPrefix(externalID, ssoExternalID(provider, ""))
+}
+
+// resolveSSOUser maps a verified IdP identity from `provider` to a Keyorix user: this
+// provider's own scoped external_id first, then email. Returns (nil, nil) when neither
+// matches — the caller decides whether to refuse the login or JIT-provision the account.
 //
 // The email fallback carries two guards that close a cross-provider account-takeover
 // vector when more than one SSO provider is trusted (e.g. a corporate IdP plus a
 // weaker/partner IdP). (1) The email must be EXPLICITLY verified: an IdP that lets a
 // user self-assert an address — or merely omits email_verified — cannot use it to
 // claim an EXISTING account (a brand-new JIT account is still provisionable, since
-// there is nothing to take over). (2) The matched account must not already be bound
-// to a DIFFERENT federated identity; otherwise a second IdP asserting the same email
-// could take over an account owned by the first. A never-federated (native or
-// SCIM-by-email) account is claimed by this subject on first link, so a later
-// provider can't re-link it by asserting the same address.
-//
-// Residual (documented): a malicious provider that can choose its subjects could still
-// forge a sub equal to a victim's externalId and match via the subject branch. Fully
-// closing that requires binding each federated identity to its issuer (as the machine
-// OIDC path does) — a schema change tracked separately.
-func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string, emailVerified bool) (*models.User, error) {
+// there is nothing to take over). (2) The matched account must not already be bound to
+// a scoped identity owned by a DIFFERENT provider (see ssoBoundToOtherProvider);
+// otherwise a second IdP asserting the same email could take over an account owned by
+// the first. A never-federated (native or SCIM-by-email) account is claimed for THIS
+// provider+subject on first link, so a later provider can't re-link it by asserting the
+// same address.
+func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email string, emailVerified bool) (*models.User, error) {
 	notFound := i18n.T("ErrorUserNotFound", nil)
 	if sub != "" {
-		if u, err := c.storage.GetUserByExternalID(ctx, sub); err == nil {
+		if u, err := c.storage.GetUserByExternalID(ctx, ssoExternalID(provider, sub)); err == nil {
 			return u, nil
 		} else if !strings.Contains(err.Error(), notFound) {
 			return nil, err
@@ -389,14 +409,14 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string, ema
 		}
 		return nil, err
 	}
-	if u.ExternalID != "" && u.ExternalID != sub {
-		return nil, fmt.Errorf("this email is already linked to a different SSO identity")
+	if ssoBoundToOtherProvider(u.ExternalID, provider) {
+		return nil, fmt.Errorf("the email %q is already linked to a different SSO provider", email)
 	}
 	if u.ExternalID == "" && sub != "" {
-		// Claim this never-federated account for the verifying subject so a later
-		// provider can't re-link it by asserting the same email. Best-effort: a failed
-		// update just means we re-link on the next login.
-		u.ExternalID = sub
+		// Claim this never-federated account for the verifying provider+subject so a
+		// later provider can't re-link it by asserting the same email. Best-effort: a
+		// failed update just means we re-link on the next login.
+		u.ExternalID = ssoExternalID(provider, sub)
 		if updated, uerr := c.storage.UpdateUser(ctx, u); uerr == nil {
 			u = updated
 		}
@@ -421,11 +441,9 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	// reuse it rather than create a duplicate. This MUST go through resolveSSOUser (not a
 	// raw email lookup), so the same guards apply — an EXISTING account is reused via an
 	// email match ONLY when the email is verified, and never when it is bound to a
-	// different federated identity. A raw FindSCIMUser(sub, email) here re-introduced the
-	// unverified-email account-takeover that resolveSSOUser exists to prevent: an IdP that
-	// omits email_verified could assert a victim's email and have the JIT path "reuse"
-	// (i.e. log in as) the victim's existing account.
-	if existing, ferr := c.resolveSSOUser(ctx, sub, email, emailVerified); ferr != nil {
+	// different provider's federated identity. Re-running the SAME gated resolution
+	// means the race path cannot bypass either check.
+	if existing, ferr := c.resolveSSOUser(ctx, p.Name, sub, email, emailVerified); ferr != nil {
 		return nil, ferr
 	} else if existing != nil {
 		return existing, nil
@@ -445,7 +463,7 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	now := c.now()
 	created, err := c.storage.CreateUser(ctx, &models.User{
 		Username: username, Email: email, DisplayName: displayName,
-		PasswordHash: hash, IsActive: true, AccountState: AccountActive, ExternalID: sub,
+		PasswordHash: hash, IsActive: true, AccountState: AccountActive, ExternalID: ssoExternalID(p.Name, sub),
 		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
