@@ -70,8 +70,10 @@ func (c *KeyorixCore) RetentionPolicy() RetentionPolicy {
 // types. When anything was removed it emits one system-actored
 // `data.retention_purged` audit event with the per-type counts.
 //
-// CALLERS MUST gate this on legal-hold status (the scheduler does): an active hold
-// must preserve all records, so this is not invoked while a hold is in effect.
+// #378: the scheduler also gates its own call on legal-hold status, but this function
+// does not rely solely on that caller discipline (a doc-comment invariant checked only
+// upstream is not self-enforcing) — it re-checks the hold itself below, immediately
+// before any delete, so the invariant holds regardless of what future callers do.
 func (c *KeyorixCore) PurgeExpiredComplianceRecords(ctx context.Context, now time.Time, policy RetentionPolicy) (*RetentionResult, error) {
 	// Authoritative legal-hold re-check inside the locked purge (see PurgeExpiredSoftDeletes):
 	// closes the TOCTOU where a hold placed after the scheduler's pre-lock check would not

@@ -112,13 +112,14 @@ func (SoDPolicy) TableName() string { return "sod_policies" }
 // hold is preserved. Placing/lifting is audited; the row history is the evidence
 // of when holds were in effect.
 type LegalHold struct {
-	ID         uint       `gorm:"primaryKey" json:"id"`
-	Reason     string     `json:"reason"`
-	PlacedBy   uint       `json:"placed_by"`
-	PlacedAt   time.Time  `json:"placed_at"`
-	Released   bool       `gorm:"index" json:"released"` // false = active
-	ReleasedBy uint       `json:"released_by,omitempty"`
-	ReleasedAt *time.Time `json:"released_at,omitempty"`
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Reason        string     `json:"reason"`
+	PlacedBy      uint       `json:"placed_by"`
+	PlacedAt      time.Time  `json:"placed_at"`
+	Released      bool       `gorm:"index" json:"released"` // false = active
+	ReleasedBy    uint       `json:"released_by,omitempty"`
+	ReleasedAt    *time.Time `json:"released_at,omitempty"`
+	ReleaseReason string     `json:"release_reason,omitempty"` // why the hold was lifted (#380)
 }
 
 // SSOLoginState is the short-lived CSRF/nonce state for an in-flight OIDC
