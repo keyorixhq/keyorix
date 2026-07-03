@@ -2,11 +2,63 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// #383: bounds on the project/environment catalog so a single request can't blow
+// past a reasonable working set. maxEnvNamesPerCreate is generous relative to
+// defaultEnvironmentNames' 3-entry convention — a few dozen covers realistic
+// per-region/per-service environment fan-out — while still keeping
+// CreateProjectWithEnvs's loop bounded instead of open to a ~10 MiB request body
+// (a JSON array entry as short as `"a",` fits roughly 1-2 million times in that
+// budget) requesting on the order of a million environments in one call.
+// maxProjectNameLen/maxEnvironmentNameLen cap the unbounded `Name` text columns
+// (Project.Name/Environment.Name) so an oversized name can't compound the same
+// row/index bloat; a few hundred characters is generous for a name field.
+const (
+	maxEnvNamesPerCreate  = 50
+	maxProjectNameLen     = 200
+	maxEnvironmentNameLen = 200
+)
+
+// validateProjectName bounds Project.Name (#383): required, and capped so an
+// unbounded text column can't be used to bloat storage/index size.
+func validateProjectName(name string) error {
+	if name == "" {
+		return fmt.Errorf("%s: project name is required", i18n.T("ErrorValidation", nil))
+	}
+	if len(name) > maxProjectNameLen {
+		return fmt.Errorf("%s: project name exceeds %d characters", i18n.T("ErrorValidation", nil), maxProjectNameLen)
+	}
+	return nil
+}
+
+// validateEnvironmentName bounds Environment.Name (#383), mirroring validateProjectName.
+func validateEnvironmentName(name string) error {
+	if name == "" {
+		return fmt.Errorf("%s: environment name is required", i18n.T("ErrorValidation", nil))
+	}
+	if len(name) > maxEnvironmentNameLen {
+		return fmt.Errorf("%s: environment name exceeds %d characters", i18n.T("ErrorValidation", nil), maxEnvironmentNameLen)
+	}
+	return nil
+}
+
+// translateProjectNameError surfaces storage.ErrDuplicateProjectName (#385, the
+// case-insensitive partial unique index on projects.name) as a clean "name already in
+// use" validation error, mirroring CreateUser's translation of ErrDuplicateEmail (#117),
+// rather than letting a raw constraint-violation message reach the caller.
+func translateProjectNameError(err error) error {
+	if errors.Is(err, storage.ErrDuplicateProjectName) {
+		return fmt.Errorf("%s: a project with this name already exists", i18n.T("ErrorValidation", nil))
+	}
+	return err
+}
 
 // ListProjects returns all projects from storage.
 func (c *KeyorixCore) ListProjects(ctx context.Context) ([]*models.Project, error) {
@@ -29,8 +81,8 @@ func (c *KeyorixCore) GetProject(ctx context.Context, id uint) (*models.Project,
 // requireMFA is non-nil — its per-project MFA requirement (ADR-037). A nil
 // requireMFA leaves the flag unchanged (backward-compatible).
 func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, description string, requireMFA *bool) (*models.Project, error) {
-	if name == "" {
-		return nil, fmt.Errorf("project name is required")
+	if err := validateProjectName(name); err != nil {
+		return nil, err
 	}
 	if err := validateDescription(description); err != nil {
 		return nil, err
@@ -47,7 +99,7 @@ func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, descript
 	}
 	updated, err := c.storage.UpdateProject(ctx, project)
 	if err != nil {
-		return nil, err
+		return nil, translateProjectNameError(err)
 	}
 	if mfaChanged {
 		pid := id
@@ -169,14 +221,17 @@ func (c *KeyorixCore) RestoreEnvironment(ctx context.Context, actorID, projectID
 
 // CreateProject creates a new project and seeds it with default environments.
 func (c *KeyorixCore) CreateProject(ctx context.Context, name, description string) (*models.Project, error) {
-	if name == "" {
-		return nil, fmt.Errorf("project name is required")
+	if err := validateProjectName(name); err != nil {
+		return nil, err
 	}
 	if err := validateDescription(description); err != nil {
 		return nil, err
 	}
 	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
 	if err != nil {
+		if errors.Is(err, storage.ErrDuplicateProjectName) {
+			return nil, translateProjectNameError(err)
+		}
 		return nil, fmt.Errorf("failed to create project: %w", err)
 	}
 	// Seed default environments for new project
@@ -211,17 +266,45 @@ func (c *KeyorixCore) GetEnvironment(ctx context.Context, id uint) (*models.Envi
 	return c.storage.GetEnvironment(ctx, id)
 }
 
+// CreateEnvironment creates a single environment under an existing project,
+// validating the name (#383). This is the single-environment counterpart to
+// CreateProjectWithEnvs's fan-out create; callers (the HTTP
+// POST /projects/{id}/environments handler, the `keyorix project env create`
+// CLI) previously wrote straight to storage, bypassing any name-length guard.
+func (c *KeyorixCore) CreateEnvironment(ctx context.Context, projectID uint, name string) (*models.Environment, error) {
+	if err := validateEnvironmentName(name); err != nil {
+		return nil, err
+	}
+	return c.storage.CreateEnvironment(ctx, &models.Environment{ProjectID: projectID, Name: name})
+}
+
 // CreateProjectWithEnvs creates a new project seeded with the specified environment names.
 // Used when the CLI --envs flag overrides the default development/staging/production set.
 func (c *KeyorixCore) CreateProjectWithEnvs(ctx context.Context, name, description string, envNames []string) (*models.Project, error) {
-	if name == "" {
-		return nil, fmt.Errorf("project name is required")
+	if err := validateProjectName(name); err != nil {
+		return nil, err
 	}
 	if err := validateDescription(description); err != nil {
 		return nil, err
 	}
+	// #383: cap the environment fan-out before touching storage at all — without
+	// this, a single ~10 MiB request (a JSON array entry as short as `"a",` fits
+	// roughly 1-2 million times in that budget) could request on the order of a
+	// million environments, degrading the shared install for every other tenant.
+	if len(envNames) > maxEnvNamesPerCreate {
+		return nil, fmt.Errorf("%s: at most %d environments per project create (got %d)",
+			i18n.T("ErrorValidation", nil), maxEnvNamesPerCreate, len(envNames))
+	}
+	for _, envName := range envNames {
+		if err := validateEnvironmentName(envName); err != nil {
+			return nil, err
+		}
+	}
 	project, err := c.storage.CreateProject(ctx, &models.Project{Name: name, Description: description})
 	if err != nil {
+		if errors.Is(err, storage.ErrDuplicateProjectName) {
+			return nil, translateProjectNameError(err)
+		}
 		return nil, fmt.Errorf("failed to create project: %w", err)
 	}
 	for _, envName := range envNames {
