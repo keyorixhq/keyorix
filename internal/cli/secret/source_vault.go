@@ -49,8 +49,18 @@ func newVaultClient() (*vaultClient, error) {
 		token:     token,
 		mount:     strings.Trim(vaultMount, "/"),
 		kvVersion: vaultKVVersion,
-		hc:        &http.Client{},
+		// No redirect is legitimate for a fixed, operator-supplied Vault address — the
+		// default client would otherwise follow a 30x carrying the live X-Vault-Token
+		// header wherever a compromised/misconfigured Vault (or a MITM) points it (#114,
+		// twin of #98's server-side connector).
+		hc: &http.Client{CheckRedirect: refuseVaultRedirect},
 	}, nil
+}
+
+// refuseVaultRedirect makes the client return the first (redirect) response as-is
+// instead of following it — see newVaultClient.
+func refuseVaultRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // fetchFromVault walks the KV tree under --vault-path and returns every field as
