@@ -1,6 +1,6 @@
 -- 🌐 Reference tables: namespaces, zones, environments
 
-CREATE TABLE namespaces (
+CREATE TABLE IF NOT EXISTS namespaces (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   description TEXT,
@@ -8,7 +8,7 @@ CREATE TABLE namespaces (
   updated_at TIMESTAMP
 );
 
-CREATE TABLE zones (
+CREATE TABLE IF NOT EXISTS zones (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   description TEXT,
@@ -16,14 +16,14 @@ CREATE TABLE zones (
   updated_at TIMESTAMP
 );
 
-CREATE TABLE environments (
+CREATE TABLE IF NOT EXISTS environments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE
 );
 
 -- 🔐 Secrets and versions
 
-CREATE TABLE secret_nodes (
+CREATE TABLE IF NOT EXISTS secret_nodes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   parent_id INTEGER REFERENCES secret_nodes(id) ON DELETE CASCADE,
   namespace_id INTEGER NOT NULL REFERENCES namespaces(id),
@@ -41,7 +41,7 @@ CREATE TABLE secret_nodes (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE secret_versions (
+CREATE TABLE IF NOT EXISTS secret_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   secret_node_id INTEGER NOT NULL REFERENCES secret_nodes(id) ON DELETE CASCADE,
   version_number INTEGER NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE secret_versions (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE secret_access_logs (
+CREATE TABLE IF NOT EXISTS secret_access_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   secret_node_id INTEGER NOT NULL REFERENCES secret_nodes(id),
   secret_version_id INTEGER NOT NULL REFERENCES secret_versions(id),
@@ -62,7 +62,7 @@ CREATE TABLE secret_access_logs (
   user_agent TEXT
 );
 
-CREATE TABLE secret_metadata_history (
+CREATE TABLE IF NOT EXISTS secret_metadata_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   secret_node_id INTEGER NOT NULL REFERENCES secret_nodes(id),
   changed_by TEXT,
@@ -73,7 +73,7 @@ CREATE TABLE secret_metadata_history (
 
 -- 🧑‍💻 Users, roles, groups
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
   email TEXT,
@@ -81,32 +81,32 @@ CREATE TABLE users (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE roles (
+CREATE TABLE IF NOT EXISTS roles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   description TEXT
 );
 
-CREATE TABLE user_roles (
+CREATE TABLE IF NOT EXISTS user_roles (
   user_id INTEGER NOT NULL REFERENCES users(id),
   role_id INTEGER NOT NULL REFERENCES roles(id),
   namespace_id INTEGER REFERENCES namespaces(id),
   PRIMARY KEY (user_id, role_id, namespace_id)
 );
 
-CREATE TABLE groups (
+CREATE TABLE IF NOT EXISTS groups (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   description TEXT
 );
 
-CREATE TABLE user_groups (
+CREATE TABLE IF NOT EXISTS user_groups (
   user_id INTEGER NOT NULL REFERENCES users(id),
   group_id INTEGER NOT NULL REFERENCES groups(id),
   PRIMARY KEY (user_id, group_id)
 );
 
-CREATE TABLE group_roles (
+CREATE TABLE IF NOT EXISTS group_roles (
   group_id INTEGER NOT NULL REFERENCES groups(id),
   role_id INTEGER NOT NULL REFERENCES roles(id),
   namespace_id INTEGER REFERENCES namespaces(id),
@@ -115,7 +115,7 @@ CREATE TABLE group_roles (
 
 -- 🛡️ Authentication
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
   session_token TEXT NOT NULL UNIQUE,
@@ -123,7 +123,7 @@ CREATE TABLE sessions (
   expires_at TIMESTAMP
 );
 
-CREATE TABLE password_resets (
+CREATE TABLE IF NOT EXISTS password_resets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
   token TEXT NOT NULL UNIQUE,
@@ -133,12 +133,12 @@ CREATE TABLE password_resets (
 
 -- 🏷️ Tags
 
-CREATE TABLE tags (
+CREATE TABLE IF NOT EXISTS tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE secret_tags (
+CREATE TABLE IF NOT EXISTS secret_tags (
   secret_node_id INTEGER NOT NULL REFERENCES secret_nodes(id),
   tag_id INTEGER NOT NULL REFERENCES tags(id),
   PRIMARY KEY (secret_node_id, tag_id)
@@ -146,7 +146,7 @@ CREATE TABLE secret_tags (
 
 -- 📬 Notifications
 
-CREATE TABLE notifications (
+CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
   secret_node_id INTEGER REFERENCES secret_nodes(id),
@@ -156,7 +156,7 @@ CREATE TABLE notifications (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE audit_events (
+CREATE TABLE IF NOT EXISTS audit_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_type TEXT NOT NULL,
   user_id INTEGER REFERENCES users(id),
@@ -167,7 +167,7 @@ CREATE TABLE audit_events (
 
 -- ⚙️ Settings
 
-CREATE TABLE settings (
+CREATE TABLE IF NOT EXISTS settings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER REFERENCES users(id),
   key TEXT NOT NULL,
@@ -175,7 +175,7 @@ CREATE TABLE settings (
   UNIQUE(user_id, key)
 );
 
-CREATE TABLE system_metadata (
+CREATE TABLE IF NOT EXISTS system_metadata (
   key TEXT PRIMARY KEY,
   value TEXT,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -183,7 +183,7 @@ CREATE TABLE system_metadata (
 
 -- 🔐 API and integrations
 
-CREATE TABLE api_clients (
+CREATE TABLE IF NOT EXISTS api_clients (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   description TEXT,
@@ -194,7 +194,7 @@ CREATE TABLE api_clients (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE api_tokens (
+CREATE TABLE IF NOT EXISTS api_tokens (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id INTEGER NOT NULL REFERENCES api_clients(id),
   user_id INTEGER REFERENCES users(id),
@@ -205,7 +205,7 @@ CREATE TABLE api_tokens (
   revoked BOOLEAN DEFAULT FALSE
 );
 
-CREATE TABLE rate_limits (
+CREATE TABLE IF NOT EXISTS rate_limits (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id INTEGER NOT NULL REFERENCES api_clients(id),
   method TEXT NOT NULL,
@@ -213,7 +213,7 @@ CREATE TABLE rate_limits (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE api_call_logs (
+CREATE TABLE IF NOT EXISTS api_call_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id INTEGER REFERENCES api_clients(id),
   user_id INTEGER REFERENCES users(id),
@@ -228,7 +228,7 @@ CREATE TABLE api_call_logs (
 
 -- 🧠 gRPC
 
-CREATE TABLE grpc_services (
+CREATE TABLE IF NOT EXISTS grpc_services (
   name TEXT PRIMARY KEY,
   version TEXT,
   description TEXT
@@ -236,7 +236,7 @@ CREATE TABLE grpc_services (
 
 -- 🌐 IdentityProvider (OIDC/LDAP/SSO)
 
-CREATE TABLE identity_providers (
+CREATE TABLE IF NOT EXISTS identity_providers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   type TEXT NOT NULL,
@@ -245,7 +245,7 @@ CREATE TABLE identity_providers (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE external_identities (
+CREATE TABLE IF NOT EXISTS external_identities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   provider_id INTEGER NOT NULL REFERENCES identity_providers(id),
   user_id INTEGER NOT NULL REFERENCES users(id),
