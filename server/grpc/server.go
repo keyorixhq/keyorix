@@ -31,9 +31,17 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 
 	// Create server options
 	opts := []grpc.ServerOption{
+		// grpc.ChainUnaryInterceptor/ChainStreamInterceptor run interceptors in the
+		// order listed: the first is OUTERMOST (executes first on the way in, last on
+		// the way out), wrapping every interceptor listed after it. RecoveryInterceptor
+		// / StreamRecoveryInterceptor are listed FIRST so a panic in ANY later
+		// interceptor — logging, timeout, auth, metrics, or the handler itself — is
+		// caught, instead of only panics inside the handler. A panic that unwound past
+		// an inner (non-outermost) recovery interceptor would otherwise crash the
+		// request with none of Recovery's clean INTERNAL status + logged stack trace.
 		grpc.ChainUnaryInterceptor(
-			interceptors.LoggingInterceptor(),
 			interceptors.RecoveryInterceptor(),
+			interceptors.LoggingInterceptor(),
 			// Cap each unary RPC at the same 60s the HTTP API's Timeout middleware
 			// enforces, so a hung handler can't tie up resources over gRPC when it would
 			// be bounded over HTTP. Streams are intentionally exempt (StreamAuditLogs is
@@ -43,8 +51,8 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			interceptors.MetricsInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
-			interceptors.StreamLoggingInterceptor(),
 			interceptors.StreamRecoveryInterceptor(),
+			interceptors.StreamLoggingInterceptor(),
 			interceptors.StreamAuthInterceptor(coreService, cfg.Security.RequireMFA),
 		),
 	}

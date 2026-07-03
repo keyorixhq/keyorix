@@ -140,11 +140,15 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	now := c.now()
 	expiresAt := now.Add(ttl)
 	scope := storage.Scope{ProjectID: projectID}
-	// Self-granted: actor == the activating user. Time-bound so it auto-expires.
-	if err := c.AssignUserRoleWithExpiry(ctx, userID, userID, role.ID, scope, expiresAt); err != nil {
-		return nil, fmt.Errorf("failed to grant emergency role: %w", err)
-	}
 
+	// Create the activation record FIRST, before granting anything. This is the
+	// actual race gate: a partial unique index on (project_id, user_id) WHERE
+	// state='active' (ensureBreakGlassActiveIndex) makes the insert itself the source
+	// of truth for "at most one active activation", closing the gap in the
+	// list-and-scan check above — under a race, two concurrent callers could both pass
+	// that check before either inserted. Creating the record before the role grant
+	// (rather than after, as before) also means a losing racer here never grants
+	// itself the emergency role at all.
 	activation, err := c.storage.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
 		ProjectID:     projectID,
 		UserID:        userID,
@@ -156,7 +160,22 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		CreatedAt:     now,
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrBreakGlassAlreadyActive) {
+			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you already have an active break-glass grant on this project; revoke it before activating again")
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Self-granted: actor == the activating user. Time-bound so it auto-expires. If
+	// this fails, the activation record already claimed the race slot above but no
+	// access was actually granted — reconcile it to revoked rather than leaving a
+	// phantom "active" record with no corresponding role, and free the slot so the
+	// user can retry.
+	if err := c.AssignUserRoleWithExpiry(ctx, userID, userID, role.ID, scope, expiresAt); err != nil {
+		activation.State = BreakGlassRevoked
+		activation.RevokedAt = &now
+		_ = c.storage.UpdateBreakGlassActivation(ctx, activation)
+		return nil, fmt.Errorf("failed to grant emergency role: %w", err)
 	}
 
 	c.auditProjectScoped(ctx, EventBreakGlassActivated, userID, projectID,

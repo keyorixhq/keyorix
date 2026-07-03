@@ -41,6 +41,50 @@ func newMFATestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	return c, db, fixed
 }
 
+// BeginMFAEnrollment must refuse to enrol when at-rest encryption is unavailable
+// (no authEncryptor wired at all — e.g. a core built without SetAuthEncryptor). The
+// TOTP secret is an always-sensitive credential; enrolling it must never silently
+// fall back to encryptAuthSecret's plaintext passthrough.
+func TestBeginMFAEnrollment_RefusesWhenNoEncryptor(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{}, &models.AuditEvent{}))
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com", AccountState: "active"}).Error)
+
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now, passwordPolicy: DefaultPasswordPolicy()}
+	// No SetAuthEncryptor call — authEncryptor is nil, exactly the "encryption not
+	// wired" state a server started with encryption disabled would leave it in.
+
+	_, _, err = c.BeginMFAEnrollment(context.Background(), 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "encryption")
+
+	// No pending MFASecret row was ever written — confirms the refusal happens
+	// before any (plaintext) secret would be persisted.
+	var count int64
+	require.NoError(t, db.Model(&models.MFASecret{}).Where("user_id = ?", 1).Count(&count).Error)
+	assert.Zero(t, count, "no MFA secret — plaintext or otherwise — may be persisted when encryption is unavailable")
+}
+
+// The same refusal applies when an authEncryptor IS wired but explicitly disabled in
+// config (Enabled: false) — not just when it's nil. Both are the same underlying
+// "encryption is off" state encryptAuthSecret treats as passthrough.
+func TestBeginMFAEnrollment_RefusesWhenEncryptorDisabled(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{}, &models.AuditEvent{}))
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com", AccountState: "active"}).Error)
+
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: false}, t.TempDir())
+
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now, passwordPolicy: DefaultPasswordPolicy()}
+	c.SetAuthEncryptor(enc)
+
+	_, _, err = c.BeginMFAEnrollment(context.Background(), 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "encryption")
+}
+
 // A suspended account must not complete a second factor: the challenge can be
 // issued (password step passed) just before an admin suspends the account, and the
 // MFA-completion path must refuse it rather than mint a session.

@@ -34,8 +34,21 @@ const (
 // BeginMFAEnrollment generates a fresh TOTP secret, stores it encrypted in a
 // pending (not-activated) state, and returns the otpauth:// URI (QR) plus the
 // base32 secret (manual entry). Supersedes any prior pending enrolment. Refused
-// if MFA is already enabled (disable first).
+// if MFA is already enabled (disable first), or if at-rest encryption is
+// unavailable (see the authEncryptor check below).
 func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpauthURI, base32Secret string, err error) {
+	// The TOTP secret is a distinct, always-sensitive credential — unlike a general
+	// secret VALUE (whose at-rest encryption is an explicit, informed operator
+	// trade-off when disabled), a user enrolling MFA has no visibility into or
+	// control over the server's encryption setting. Silently falling back to
+	// encryptAuthSecret's plaintext passthrough would store the TOTP seed in the
+	// clear with no signal to anyone. Fail closed instead, mirroring how this
+	// codebase treats other capabilities that need encryption (audit-checkpoint
+	// signing, evidence signing): "unavailable" when encryption is off, not
+	// silently weaker.
+	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
+		return "", "", fmt.Errorf("MFA enrolment requires at-rest encryption to be enabled (the TOTP secret must not be stored in plaintext); ask an administrator to enable encryption")
+	}
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
 		return "", "", fmt.Errorf("user not found")
