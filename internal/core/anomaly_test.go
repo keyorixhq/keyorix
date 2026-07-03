@@ -105,10 +105,10 @@ func TestRunDetection_LogsAndContinuesOnAccessLogReadError(t *testing.T) {
 	store := &perSecretFailStore{captureStore: &captureStore{}, failSecretID: 1}
 	d := NewAnomalyDetector(store)
 
-	buf, restore := captureLog(t)
-	defer restore()
-
-	err := d.RunDetection(context.Background(), []models.SecretNode{{ID: 1, Name: "broken"}, {ID: 2, Name: "healthy"}})
+	var err error
+	logged := captureLog(t, func() {
+		err = d.RunDetection(context.Background(), []models.SecretNode{{ID: 1, Name: "broken"}, {ID: 2, Name: "healthy"}})
+	})
 	require.Error(t, err, "a per-secret read failure must surface as a non-nil pass error, not a silent success")
 	assert.Contains(t, err.Error(), "1 storage failure")
 
@@ -116,7 +116,6 @@ func TestRunDetection_LogsAndContinuesOnAccessLogReadError(t *testing.T) {
 	// failure — RunDetection didn't abort the whole pass.
 	assert.GreaterOrEqual(t, len(store.sinces), 2, "the healthy secret's reads still ran")
 
-	logged := buf.String()
 	assert.Contains(t, logged, "secret 1", "the failing secret's ID must appear in the operator-visible log line")
 }
 

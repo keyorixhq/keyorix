@@ -432,15 +432,14 @@ func TestRunAutoRotation_LogsAndContinuesOnScopedSecretsError(t *testing.T) {
 	c := &KeyorixCore{storage: &failingProjectSecretsStore{LocalStorage: store.NewLocalStorage(db), failProject: pid2}}
 	c.now = func() time.Time { return fixed }
 
-	buf, restore := captureLog(t)
-	defer restore()
-
-	n, err := c.RunAutoRotation(context.Background())
+	var n int
+	logged := captureLog(t, func() {
+		n, err = c.RunAutoRotation(context.Background())
+	})
 	require.NoError(t, err, "a single policy's scope-listing failure must not abort the whole run")
 	assert.Equal(t, 1, n, "the healthy policy's due secret still rotates")
 	assert.Equal(t, 1, latestVersion(t, db, 2).VersionNumber, "the secret under the broken policy's scope was never even considered, so it's untouched")
 
-	logged := buf.String()
 	assert.Contains(t, logged, "broken-policy", "the failing policy's name must appear in the operator-visible log line")
 	assert.Contains(t, logged, "simulated storage failure")
 }

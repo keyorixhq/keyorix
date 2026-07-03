@@ -10,9 +10,7 @@
 package core
 
 import (
-	"bytes"
 	"context"
-	"log"
 	"testing"
 	"time"
 
@@ -81,43 +79,38 @@ func rotationPoliciesFailOpenCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Ti
 	return c, db, fixed
 }
 
-// captureLog temporarily redirects the standard logger to a buffer and returns a
-// restore func — used to assert the previously-silent scopedPolicySecrets failure now
-// leaves an operator-visible trace.
-func captureLog(t *testing.T) (*bytes.Buffer, func()) {
-	t.Helper()
-	var buf bytes.Buffer
-	orig := log.Writer()
-	log.SetOutput(&buf)
-	return &buf, func() { log.SetOutput(orig) }
-}
-
 // #363: GetRotationStatus must log the per-policy failure and must not return a
 // silently-short "clean" result — before the fix, this returned (1 entry, nil error),
 // indistinguishable from "rotation coverage is fully known and only 1 secret exists".
 func TestGetRotationStatus_LogsAndFailsOnScopedSecretsError(t *testing.T) {
 	c, _, _ := rotationPoliciesFailOpenCore(t)
-	buf, restore := captureLog(t)
-	defer restore()
 
-	entries, err := c.GetRotationStatus(context.Background(), nil, nil)
+	var entries []*RotationStatusEntry
+	var err error
+	logged := captureLog(t, func() {
+		entries, err = c.GetRotationStatus(context.Background(), nil, nil)
+	})
+
 	require.Error(t, err, "a per-policy scope failure must surface as a whole-call error, not a silently-short result")
 	assert.Nil(t, entries)
-	assert.Contains(t, buf.String(), "broken-policy", "the failing policy's name must appear in the operator-visible log line")
-	assert.Contains(t, buf.String(), "simulated storage failure")
+	assert.Contains(t, logged, "broken-policy", "the failing policy's name must appear in the operator-visible log line")
+	assert.Contains(t, logged, "simulated storage failure")
 }
 
 // #363: same fix, EvaluateRotationPolicies — this result also feeds the admin-nudge
 // reminder scheduler (rotation_reminders.go), which already bails on a non-nil error.
 func TestEvaluateRotationPolicies_LogsAndFailsOnScopedSecretsError(t *testing.T) {
 	c, _, _ := rotationPoliciesFailOpenCore(t)
-	buf, restore := captureLog(t)
-	defer restore()
 
-	evals, err := c.EvaluateRotationPolicies(context.Background(), nil, nil)
+	var evals []*RotationPolicyEvaluation
+	var err error
+	logged := captureLog(t, func() {
+		evals, err = c.EvaluateRotationPolicies(context.Background(), nil, nil)
+	})
+
 	require.Error(t, err)
 	assert.Nil(t, evals)
-	assert.Contains(t, buf.String(), "broken-policy")
+	assert.Contains(t, logged, "broken-policy")
 
 	// The reminder scheduler must not silently send zero reminders while reporting
 	// success — it must propagate the failure too.
