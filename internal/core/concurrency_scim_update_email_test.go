@@ -51,7 +51,7 @@ func TestConcurrency_UpdateSCIMUser_NoDuplicateEmail(t *testing.T) {
 	for i := 0; i < attackers; i++ {
 		require.NoError(t, db.Create(&models.User{
 			ID: uint(i + 1), Username: fmt.Sprintf("user%d", i), Email: fmt.Sprintf("user%d@x.io", i),
-			IsActive: true, AccountState: core.AccountActive,
+			IsActive: true, AccountState: core.AccountActive, ExternalID: fmt.Sprintf("okta|user%d", i),
 		}).Error)
 	}
 

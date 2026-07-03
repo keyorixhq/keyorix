@@ -119,7 +119,7 @@ func TestUpdateSCIMUser_FailsClosedOnTransientEmailLookupError(t *testing.T) {
 func TestUpdateSCIMUser_ProceedsWhenEmailGenuinelyUnused(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "bob@x.io", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "bob@x.io", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}).Error)
 
 	newEmail := "unused@x.io"
 	updated, err := c.UpdateSCIMUser(ctx, 9, 2, nil, &newEmail, nil)
