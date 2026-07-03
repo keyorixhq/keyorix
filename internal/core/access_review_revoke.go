@@ -129,6 +129,14 @@ func (c *KeyorixCore) revokeReviewShare(ctx context.Context, projectID uint, d A
 // AttestAccessReviewGrant records that the reviewer examined the grant and chose to
 // keep it. It changes no state — the access_review.attested event is the evidence
 // that the recertification was performed. actorID is the reviewer.
+//
+// Before recording that evidence, the referenced grant is re-verified against a live
+// lookup (mirroring RevokeAccessReviewGrant's validated branches), not just trusted
+// from the campaign item's cached snapshot — the grant could have been revoked
+// through an unrelated path since the campaign was generated, or the campaign data
+// could simply be stale/wrong. An attestation asserts "I reviewed and confirmed this
+// access is still needed and correct"; recording it for a grant that no longer exists
+// would certify a false state in the compliance evidence trail (#209).
 func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, projectID uint, d AccessReviewDecision) error {
 	if projectID == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
@@ -136,8 +144,70 @@ func (c *KeyorixCore) AttestAccessReviewGrant(ctx context.Context, actorID, proj
 	if d.Source == "" {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source is required")
 	}
+	if err := c.verifyAccessReviewGrantExists(ctx, projectID, d); err != nil {
+		return err
+	}
 	c.logAccessReviewDecision(ctx, EventAccessReviewAttested, "attested", actorID, projectID, d)
 	return nil
+}
+
+// verifyAccessReviewGrantExists re-queries the actual grant a decision references —
+// the role assignment, share, or ownership row — rather than trusting the decision's
+// (possibly stale) fields. Returns a clear "no longer exists, re-sync" error when the
+// live lookup finds nothing, mirroring the same real removal calls
+// RevokeAccessReviewGrant uses (which likewise fail when the grant is already gone).
+func (c *KeyorixCore) verifyAccessReviewGrantExists(ctx context.Context, projectID uint, d AccessReviewDecision) error {
+	switch d.Source {
+	case "role":
+		if d.PrincipalID == 0 || d.RoleID == 0 {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to attest a role grant")
+		}
+		assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		wantGroup := d.PrincipalType == "group"
+		for _, a := range assignments {
+			if (a.PrincipalType == "group") == wantGroup && a.PrincipalID == d.PrincipalID &&
+				a.RoleID == d.RoleID && a.EnvironmentID == d.EnvironmentID {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
+			"the role grant being attested no longer exists — the review is stale, re-sync and try again")
+	case "direct_share", "group_share":
+		if d.PrincipalID == 0 || d.SecretID == 0 {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest a share")
+		}
+		isGroup := d.Source == "group_share"
+		shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, sh := range shares {
+			if sh.RecipientID == d.PrincipalID && sh.IsGroup == isGroup {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
+			"the share being attested no longer exists — the review is stale, re-sync and try again")
+	case "owner":
+		if d.PrincipalID == 0 || d.SecretID == 0 {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to attest ownership")
+		}
+		secret, err := c.storage.GetSecret(ctx, d.SecretID)
+		if err != nil || secret == nil {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
+				"the secret being attested no longer exists — the review is stale, re-sync and try again")
+		}
+		if secret.OwnerID != d.PrincipalID {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil),
+				"the ownership grant being attested no longer exists — the review is stale, re-sync and try again")
+		}
+		return nil
+	default:
+		return fmt.Errorf("%s: unknown access-review source %q", i18n.T("ErrorValidation", nil), d.Source)
+	}
 }
 
 // logAccessReviewDecision writes the recertification audit event (actor as UserID,

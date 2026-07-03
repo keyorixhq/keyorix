@@ -446,6 +446,47 @@ func TestRunAutoRotation_LogsAndContinuesOnScopedSecretsError(t *testing.T) {
 
 func timePtr(t time.Time) *time.Time { return &t }
 
+// #194: a generate-upstream backend whose old-credential delete failed must NOT be
+// reported as a clean, unconditional success. The new credential is minted upstream
+// (often returned only once, e.g. a cloud key API), so RunAutoRotation MUST still
+// store it — but the run has to surface the leftover credential as a distinct,
+// operator-visible partial-failure signal rather than a normal "auto-rotated" line,
+// so it's neither silently swallowed nor lost from the audit trail. This exercises
+// the orchestration layer (rotateOneSecret's PartialRotationError branch); the
+// per-backend executors (AWS IAM/Azure AD/GCP SA) that construct PartialRotationError
+// are covered individually in internal/rotation/*_test.go.
+func TestRunAutoRotation_GenerateUpstreamPartialDelete_StoresButFlagsIncomplete(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	newCred := `{"access_key_id":"AKIANEW","secret_access_key":"s3cr3t"}`
+	fake := &fakeGenExecutor{name: "cloud", err: &rotation.PartialRotationError{
+		Value: newCred,
+		Err:   errors.New("aws-iam: rotated \"svc-app\" but failed to delete prior access key(s) [AKIAOLD] (the old credential is still live and must be removed manually): AccessDenied"),
+	}}
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	// The new credential IS stored (it must not be discarded/orphaned)...
+	require.Equal(t, 1, n, "the new credential is still stored despite the incomplete cleanup")
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber)
+	assert.Equal(t, newCred, string(v.EncryptedValue))
+
+	// ...but the run must NOT report this as a clean, indistinguishable success: exactly
+	// one auto-rotation audit event, and it must flag the leftover credential distinctly.
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretAutoRotated).Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0].Description, "INCOMPLETE", "a surviving old credential must be a distinct signal, not a silent success")
+	assert.Contains(t, events[0].Description, "AKIAOLD", "the audit trail must name the leftover credential for operator cleanup")
+	assert.NotContains(t, events[0].Description, "auto-rotated secret", "must not read as the normal clean-success line")
+}
+
 // A rotation failure broadcasts a single summary notification (fakeSink is defined in
 // notification_dispatch_test.go).
 func TestRunAutoRotation_NotifiesFailures(t *testing.T) {

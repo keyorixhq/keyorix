@@ -322,6 +322,13 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
+	// Audit as a secret read, mirroring the HTTP handler (secrets_versions.go) —
+	// without this, listing version history over gRPC left no secret.read event,
+	// an HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168).
+	// Best-effort metadata fetch, same as HTTP: a miss just skips the audit call.
+	if secret, sErr := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); sErr == nil && secret != nil {
+		go s.core.LogSecretReadWithProject(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
+	}
 	out := make([]*pb.SecretVersion, 0, len(versions))
 	for _, v := range versions {
 		out = append(out, &pb.SecretVersion{
