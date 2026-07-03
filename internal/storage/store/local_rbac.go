@@ -307,6 +307,24 @@ func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectI
 	return out, nil
 }
 
+// ListProjectMachineRoleAssignments returns every machine-identity role grant
+// scoped to the project (project_id = projectID, any environment) — the machine
+// counterpart to ListProjectRoleAssignments's user/group rows.
+func (ls *LocalStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	var rows []models.MachineIdentityRole
+	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	out := make([]storage.RoleAssignment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "machine", PrincipalID: r.MachineIdentityID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
+}
+
 // ListGlobalAdminAssignmentsForUpdate returns every global-scope (project 0,
 // environment 0) direct user and group role grant whose role is in adminRoleIDs,
 // taking a row-level write lock on backends that support one (Postgres FOR

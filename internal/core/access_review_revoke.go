@@ -37,7 +37,7 @@ const (
 //   - Source "group_share"  → PrincipalID (the group) + SecretID
 type AccessReviewDecision struct {
 	Source        string `json:"source"`         // role | direct_share | group_share
-	PrincipalType string `json:"principal_type"` // user | group (for role grants)
+	PrincipalType string `json:"principal_type"` // user | group | machine (for role grants)
 	PrincipalID   uint   `json:"principal_id"`
 	RoleID        uint   `json:"role_id,omitempty"`
 	EnvironmentID uint   `json:"environment_id,omitempty"`
@@ -70,11 +70,16 @@ func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, proj
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and role_id are required to revoke a role grant")
 		}
 		scope := Scope{ProjectID: projectID, EnvironmentID: d.EnvironmentID}
-		if d.PrincipalType == "group" {
+		switch d.PrincipalType {
+		case "group":
 			if err := c.RemoveRoleFromGroup(ctx, actorID, d.PrincipalID, d.RoleID, scope); err != nil {
 				return err
 			}
-		} else {
+		case "machine":
+			if err := c.RemoveMachineRole(ctx, d.PrincipalID, d.RoleID, scope, actorID); err != nil {
+				return err
+			}
+		default:
 			if err := c.RemoveUserRole(ctx, actorID, d.PrincipalID, d.RoleID, scope); err != nil {
 				return err
 			}

@@ -127,6 +127,14 @@ func (m *MockStorage) ListProjectRoleAssignments(ctx context.Context, projectID 
 	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
 }
 
+func (m *MockStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+}
+
 // ListGlobalAdminAssignmentsForUpdate is unused by the tests that construct a
 // MockStorage directly (they don't exercise RemoveUserRole's last-admin guard);
 // returns empty so the guard treats "no other admin" as the default in the rare
