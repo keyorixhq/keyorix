@@ -145,6 +145,10 @@ func TestApproveAccessRequest_PermanentByDefault(t *testing.T) {
 	const proj = uint(2)
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
+	// #93/#107/#141: the approver must themselves hold every permission of the
+	// role being granted — grant "admin" globally so the ceiling check's admin
+	// bypass applies.
+	h.AssignUserRole(t, 1, 2, nil)
 
 	created, err := h.Storage.CreateAccessRequest(ctx, &models.AccessRequest{
 		ProjectID: proj, UserID: 10, SuggestedRole: "editor", State: core.AccessRequestPending,

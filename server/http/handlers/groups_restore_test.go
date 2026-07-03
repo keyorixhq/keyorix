@@ -20,7 +20,7 @@ func TestRestoreGroupHandler(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{}, &models.Role{}))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	h, err := NewGroupHandler(c)
 	require.NoError(t, err)

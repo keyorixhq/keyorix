@@ -84,15 +84,18 @@ func TestScopedRBACEnforcement(t *testing.T) {
 	}
 
 	// Per-secret reads: viewer-A may read project-A's secret, not project-B's.
-	// /shares avoids decrypting the value while still exercising ScopeFromSecretParam.
-	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets/1/shares", "viewerA-tok"),
+	// /risk avoids decrypting the value while still exercising ScopeFromSecretParam,
+	// and (unlike /shares, which is owner-only by design — see #246) has no
+	// additional per-secret ownership gate, so it isolates the route-scoping check
+	// this test is about.
+	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets/1/risk", "viewerA-tok"),
 		"viewer-A reads a secret in project A")
-	assert.Equal(t, http.StatusForbidden, do(t, "GET", "/api/v1/secrets/2/shares", "viewerA-tok"),
+	assert.Equal(t, http.StatusForbidden, do(t, "GET", "/api/v1/secrets/2/risk", "viewerA-tok"),
 		"viewer-A must be denied a secret in project B")
 
 	// Admin (global) reads both.
-	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets/1/shares", "admin-tok"))
-	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets/2/shares", "admin-tok"))
+	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets/1/risk", "admin-tok"))
+	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets/2/risk", "admin-tok"))
 
 	// Listing: viewer-A may list scoped to project A, not project B, and not unscoped.
 	assert.Equal(t, http.StatusOK, do(t, "GET", "/api/v1/secrets?project_id=1", "viewerA-tok"),

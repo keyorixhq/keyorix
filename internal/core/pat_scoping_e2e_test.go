@@ -27,6 +27,7 @@ func newPATScopingCore(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.PersonalAccessToken{},
+		&models.SystemMetadata{},
 	))
 	st := store.NewLocalStorage(db)
 	c := NewKeyorixCore(st)

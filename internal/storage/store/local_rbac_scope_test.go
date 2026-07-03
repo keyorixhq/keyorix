@@ -27,6 +27,7 @@ func newRBACScopeTestStore(t *testing.T) *LocalStorage {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.UserRole{}, &models.GroupRole{}, &models.UserGroup{}, &models.Role{}, &models.Group{},
+		&models.Project{}, &models.Environment{}, &models.Permission{}, &models.RolePermission{},
 	))
 	return NewLocalStorage(db)
 }
@@ -74,6 +75,82 @@ func TestGetUserRoleIDsAt_ScopeBoundary(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
+}
+
+// #161: a role bound directly to a project must stop authorizing the moment the
+// project is soft-deleted, and resume once the project is restored — mirroring
+// how groups.deleted_at already gates group-inherited roles. Before this fix,
+// GetUserRoleIDsAt had no join against the projects table at all, so a
+// project-scoped role kept authorizing regardless of the project's own
+// soft-delete state.
+func TestGetUserRoleIDsAt_DeletedProjectStopsAuthorizing(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Create(&models.Project{ID: 5, Name: "proj-5"}).Error)
+	require.NoError(t, ls.db.Create(&models.UserRole{UserID: 1, RoleID: 20, ProjectID: 5, EnvironmentID: 0}).Error)
+
+	got, err := ls.GetUserRoleIDsAt(ctx, 1, sc(5, 0))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{20}, got, "live project: the project-scoped grant authorizes")
+
+	require.NoError(t, ls.db.Delete(&models.Project{}, 5).Error)
+	got, err = ls.GetUserRoleIDsAt(ctx, 1, sc(5, 0))
+	require.NoError(t, err)
+	assert.Empty(t, got, "soft-deleted project: the grant must stop authorizing")
+
+	require.NoError(t, ls.db.Model(&models.Project{}).Unscoped().Where("id = ?", 5).Update("deleted_at", nil).Error)
+	got, err = ls.GetUserRoleIDsAt(ctx, 1, sc(5, 0))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{20}, got, "restored project: the grant authorizes again")
+}
+
+// #161: the same deleted_at gate applies to an ENVIRONMENT-scoped direct grant.
+func TestGetUserRoleIDsAt_DeletedEnvironmentStopsAuthorizing(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Create(&models.Project{ID: 5, Name: "proj-5"}).Error)
+	require.NoError(t, ls.db.Create(&models.Environment{ID: 9, ProjectID: 5, Name: "prod"}).Error)
+	require.NoError(t, ls.db.Create(&models.UserRole{UserID: 1, RoleID: 30, ProjectID: 5, EnvironmentID: 9}).Error)
+
+	got, err := ls.GetUserRoleIDsAt(ctx, 1, sc(5, 9))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{30}, got, "live environment: the env-scoped grant authorizes")
+
+	require.NoError(t, ls.db.Delete(&models.Environment{}, 9).Error)
+	got, err = ls.GetUserRoleIDsAt(ctx, 1, sc(5, 9))
+	require.NoError(t, err)
+	assert.Empty(t, got, "soft-deleted environment: the grant must stop authorizing")
+
+	require.NoError(t, ls.db.Model(&models.Environment{}).Unscoped().Where("id = ?", 9).Update("deleted_at", nil).Error)
+	got, err = ls.GetUserRoleIDsAt(ctx, 1, sc(5, 9))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{30}, got, "restored environment: the grant authorizes again")
+}
+
+// #161: the missing join was ALSO present on the group-inherited path
+// (GetUserGroupRoleIDsAt) — a group-bound role scoped to a since-soft-deleted
+// project previously kept authorizing every group member.
+func TestGetUserGroupRoleIDsAt_DeletedProjectStopsAuthorizing(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Create(&models.Project{ID: 5, Name: "proj-5"}).Error)
+	require.NoError(t, ls.db.Create(&models.Group{ID: 100, Name: "g100"}).Error)
+	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 1, GroupID: 100}).Error)
+	require.NoError(t, ls.db.Create(&models.GroupRole{GroupID: 100, RoleID: 50, ProjectID: 5, EnvironmentID: 0}).Error)
+
+	got, err := ls.GetUserGroupRoleIDsAt(ctx, 1, sc(5, 0))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{50}, got, "live project: the group's project-scoped grant authorizes")
+
+	require.NoError(t, ls.db.Delete(&models.Project{}, 5).Error)
+	got, err = ls.GetUserGroupRoleIDsAt(ctx, 1, sc(5, 0))
+	require.NoError(t, err)
+	assert.Empty(t, got, "soft-deleted project: the group's grant must stop authorizing")
+
+	require.NoError(t, ls.db.Model(&models.Project{}).Unscoped().Where("id = ?", 5).Update("deleted_at", nil).Error)
+	got, err = ls.GetUserGroupRoleIDsAt(ctx, 1, sc(5, 0))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{50}, got, "restored project: the group's grant authorizes again")
 }
 
 func TestGetUserRoleIDsExact_NoGlobalMatching(t *testing.T) {

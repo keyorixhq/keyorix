@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"syscall"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var rotateCmd = &cobra.Command{
@@ -21,14 +24,27 @@ var rotateValue string
 var rotateEnv string
 
 func init() {
-	rotateCmd.Flags().StringVarP(&rotateValue, "value", "v", "", "New secret value (required)")
+	rotateCmd.Flags().StringVarP(&rotateValue, "value", "v", "", "New secret value (omit to be prompted interactively)")
 	rotateCmd.Flags().StringVarP(&rotateEnv, "env", "e", "production", "Environment name")
-	_ = rotateCmd.MarkFlagRequired("value") // #nosec G104
 	SecretCmd.AddCommand(rotateCmd)
 }
 
 func runRotate(cmd *cobra.Command, args []string) error {
 	name := args[0]
+
+	common.WarnInsecureFlag(cmd, "value", "omit the flag to be prompted instead.")
+	if !cmd.Flags().Changed("value") {
+		fmt.Print("New secret value (hidden): ")
+		valueBytes, perr := term.ReadPassword(int(syscall.Stdin))
+		fmt.Println()
+		if perr != nil {
+			return fmt.Errorf("failed to read secret value: %w", perr)
+		}
+		if len(valueBytes) == 0 {
+			return fmt.Errorf("secret value is required (use --value or enter it at the prompt)")
+		}
+		rotateValue = string(valueBytes)
+	}
 
 	cfg, err := cliconfig.LoadCLIConfig("")
 	if err != nil {

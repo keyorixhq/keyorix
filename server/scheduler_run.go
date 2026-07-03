@@ -27,7 +27,22 @@ func runScheduler(ctx context.Context, name string, interval time.Duration, tick
 		defer ticker.Stop()
 		run := func() {
 			start := time.Now()
-			outcome := safeTick(name, tick)
+			// #314: a scheduler job must never be able to take down the whole
+			// process. This goroutine previously had no recover() at all — any
+			// panic inside tick() (e.g. the remote-storage client's now-fixed nil
+			// *APIError dereference, or a future bug) would crash the entire
+			// server, and would crash again on the next tick after restart if the
+			// underlying condition (a degraded upstream, ordinary operational
+			// noise like an LB/WAF/CDN interstitial) persisted — a repeated-crash
+			// DoS from conditions far short of a deliberate attack. Every other
+			// job on this same ticker keeps running regardless of one job's panic.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("scheduler %q: recovered from panic: %v", name, r)
+					middleware.RecordSchedulerRun(name, middleware.SchedulerFailure, time.Since(start))
+				}
+			}()
+			outcome := tick()
 			middleware.RecordSchedulerRun(name, outcome, time.Since(start))
 		}
 		run() // run once immediately on startup
@@ -40,22 +55,6 @@ func runScheduler(ctx context.Context, name string, interval time.Duration, tick
 			}
 		}
 	}()
-}
-
-// safeTick recovers a panic from tick, converting it into a SchedulerFailure outcome
-// instead of crashing the goroutine (and, since this is the process's only goroutine
-// for `name`, silently ending that scheduler forever). This guards work a job's tick
-// closure does BEFORE acquiring the advisory lock (e.g. legalHoldBlocks' DB read in
-// main.go) — storage.WithSchedulerLock's own runProtected only covers work done AFTER
-// the lock is held.
-func safeTick(name string, tick func() middleware.SchedulerOutcome) (outcome middleware.SchedulerOutcome) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("%s scheduler tick panicked: %v", name, r)
-			outcome = middleware.SchedulerFailure
-		}
-	}()
-	return tick()
 }
 
 // lockedRun executes fn under scheduler advisory lock key and maps the result to a

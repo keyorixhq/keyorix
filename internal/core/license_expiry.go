@@ -64,24 +64,35 @@ func (c *KeyorixCore) ScanLicenseExpiry(ctx context.Context, leadDays int) (int,
 	return sent, nil
 }
 
+// globalAdminIDsPageSize bounds each page of the active-users walk in globalAdminIDs.
+// A single fixed-size page silently under-lists admins once the install has more
+// active users than the page size; paginating through every page instead keeps
+// this correct at any install scale.
+const globalAdminIDsPageSize = 500
+
 // globalAdminIDs returns the user IDs of every active install-wide admin.
 func (c *KeyorixCore) globalAdminIDs(ctx context.Context) ([]uint, error) {
 	active := true
-	users, _, err := c.storage.ListUsers(ctx, &storage.UserFilter{IsActive: &active, Page: 1, PageSize: 1000})
-	if err != nil {
-		return nil, err
-	}
 	var ids []uint
-	for _, u := range users {
-		roles, rerr := c.storage.GetUserRoles(ctx, u.ID)
-		if rerr != nil {
-			continue
+	for page := 1; ; page++ {
+		users, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{IsActive: &active, Page: page, PageSize: globalAdminIDsPageSize})
+		if err != nil {
+			return nil, err
 		}
-		for _, r := range roles {
-			if _, ok := globalAdminRoleNames[r.Name]; ok {
-				ids = append(ids, u.ID)
-				break
+		for _, u := range users {
+			roles, rerr := c.storage.GetUserRoles(ctx, u.ID)
+			if rerr != nil {
+				continue
 			}
+			for _, r := range roles {
+				if _, ok := globalAdminRoleNames[r.Name]; ok {
+					ids = append(ids, u.ID)
+					break
+				}
+			}
+		}
+		if len(users) < globalAdminIDsPageSize || int64(page*globalAdminIDsPageSize) >= total {
+			break
 		}
 	}
 	return ids, nil

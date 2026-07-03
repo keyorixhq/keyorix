@@ -1,6 +1,7 @@
 package notifychan
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -8,11 +9,19 @@ import (
 )
 
 // validateEndpoint rejects a non-https notification endpoint — which would send the
-// bearer token and payload in cleartext — allowing http only for an explicit insecure
-// opt-in or a loopback target (local testing). It also refuses a literal private /
-// link-local destination IP (e.g. cloud metadata 169.254.169.254 or an internal host)
-// unless the insecure opt-in is set — SSRF/exfil hardening.
-func validateEndpoint(raw string, allowInsecure bool) error {
+// bearer token and payload in cleartext — allowing http only for a loopback target
+// (local testing) or the explicit allowPrivateNetwork opt-in. It also refuses a
+// destination whose hostname RESOLVES to a private/link-local IP (e.g. cloud metadata
+// 169.254.169.254 or an internal host) unless allowPrivateNetwork is set —
+// SSRF/exfil hardening.
+//
+// allowPrivateNetwork is INTENTIONALLY a separate knob from TLS-certificate
+// verification (#130): "I trust this endpoint's self-signed cert" and "this
+// endpoint is allowed to live on an internal network" are different trust
+// decisions — an operator with a self-signed public webhook receiver should not
+// have to also disable the SSRF guard, and vice versa for a legitimate on-prem
+// receiver with a real cert.
+func validateEndpoint(raw string, allowPrivateNetwork bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("notifychan: invalid endpoint %q: %w", raw, err)
@@ -21,14 +30,16 @@ func validateEndpoint(raw string, allowInsecure bool) error {
 	case "https":
 		// scheme OK; fall through to the destination-IP check
 	case "http":
-		if !allowInsecure && !isLoopbackHost(u.Hostname()) {
-			return fmt.Errorf("notifychan: endpoint %q must use https (set insecure_skip_verify only for a trusted self-signed or loopback target)", raw)
+		if !allowPrivateNetwork && !isLoopbackHost(u.Hostname()) {
+			return fmt.Errorf("notifychan: endpoint %q must use https (set allow_private_network_target only for a trusted internal or loopback target)", raw)
 		}
 	default:
 		return fmt.Errorf("notifychan: endpoint %q must use https", raw)
 	}
-	if !allowInsecure && isDisallowedIPHost(u.Hostname()) {
-		return fmt.Errorf("notifychan: endpoint %q targets a private/link-local address; refusing to send to an internal host", raw)
+	if !allowPrivateNetwork {
+		if err := refuseDisallowedHost(u.Hostname()); err != nil {
+			return fmt.Errorf("notifychan: endpoint %q %w", raw, err)
+		}
 	}
 	return nil
 }
@@ -43,12 +54,40 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// isDisallowedIPHost reports whether host is a literal private or link-local IP (loopback
-// is permitted as a dev target). Hostnames are not resolved here (no DNS at config time),
-// so this catches the literal-IP SSRF cases without a resolution side effect.
-func isDisallowedIPHost(host string) bool {
-	ip := net.ParseIP(host)
-	if ip == nil || ip.IsLoopback() {
+// lookupIPAddr resolves a hostname to its IP addresses — a var so tests can
+// substitute a fake resolver without a real DNS query.
+var lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(context.Background(), host)
+}
+
+// refuseDisallowedHost rejects host when it — or any address it RESOLVES to — is a
+// private, link-local, or otherwise disallowed IP (loopback is permitted as a dev
+// target). A literal-IP-only check lets a hostname like attacker.example (which
+// resolves to 169.254.169.254 or an RFC 1918 address) straight through; this
+// resolves the hostname and checks every returned address.
+func refuseDisallowedHost(host string) error {
+	if ip := net.ParseIP(host); ip != nil {
+		if isDisallowedIP(ip) {
+			return fmt.Errorf("targets a private/link-local address; refusing to send to an internal host")
+		}
+		return nil
+	}
+	addrs, err := lookupIPAddr(host)
+	if err != nil {
+		return fmt.Errorf("could not resolve hostname to verify it is not private/internal: %w", err)
+	}
+	for _, a := range addrs {
+		if isDisallowedIP(a.IP) {
+			return fmt.Errorf("resolves to a private/link-local address (%s); refusing to send to an internal host", a.IP)
+		}
+	}
+	return nil
+}
+
+// isDisallowedIP reports whether ip is a private or link-local address (loopback is
+// permitted as a dev target).
+func isDisallowedIP(ip net.IP) bool {
+	if ip.IsLoopback() {
 		return false
 	}
 	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
