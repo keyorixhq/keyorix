@@ -60,6 +60,11 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 
 	if result.Error == nil {
 		existing.Permission = share.Permission
+		// ExpiresAt reflects the caller's requested value verbatim (nil = permanent,
+		// non-nil = time-bound), mirroring UpdateShareRecord's behaviour — a re-share
+		// must be able to tighten (or clear) an existing grant's expiry, not just its
+		// permission. Save writes nil as NULL.
+		existing.ExpiresAt = share.ExpiresAt
 		existing.UpdatedAt = time.Now()
 		if err := ls.db.Save(&existing).Error; err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
