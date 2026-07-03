@@ -113,25 +113,30 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 	return groups, nil
 }
 
-// AddUserToGroup adds a user to a group.
-func (c *KeyorixCore) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
+// AddUserToGroup adds a user to a group. actorID is the admin performing it (0 = no
+// authenticated principal, e.g. a local CLI invocation). Membership confers every
+// role the group holds, so this is recorded in the RBAC audit trail (#233).
+func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
 	if err := c.storage.AddUserToGroup(ctx, userID, groupID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogGroupMemberAdded(ctx, actorID, userID, groupID)
 	return nil
 }
 
-// RemoveUserFromGroup removes a user from a group.
-func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error {
+// RemoveUserFromGroup removes a user from a group. See AddUserToGroup for actorID
+// semantics.
+func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, groupID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
 	}
 	if err := c.storage.RemoveUserFromGroup(ctx, userID, groupID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	c.LogGroupMemberRemoved(ctx, actorID, userID, groupID)
 	return nil
 }
 

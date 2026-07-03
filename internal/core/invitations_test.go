@@ -77,6 +77,11 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 		return e.EventType == "access_request.approved"
 	})).Return(nil)
+	// The grant now also routes through the audited RBAC choke point (#298), which
+	// records its own structured role.assigned event alongside the generic one above.
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventRoleAssigned
+	})).Return(nil)
 	store.On("ListAccessRequestApprovals", ctx, uint(3)).Return([]*models.AccessRequestApproval{}, nil)
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 
@@ -85,6 +90,9 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
 	store.AssertCalled(t, "AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
+	store.AssertCalled(t, "LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventRoleAssigned
+	}))
 }
 
 func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
@@ -266,4 +274,57 @@ func TestListProjectInvitations_LazyExpire(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	assert.Equal(t, InvitationExpired, out[0].State)
+}
+
+// Access-request approval grants a real role, so both the immediate and TTL-bound
+// grant branches must land in the RBAC audit trail with a structured RoleID — not
+// just the generic access_request.approved event (#298). Uses real storage so
+// ListRBACAuditLogs is exercised end to end.
+func TestApproveAccessRequestWithExpiry_IsRBACAudited(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	approver, err := st.CreateUser(ctx, &models.User{Username: "approver", Email: "approver@example.com", IsActive: true})
+	require.NoError(t, err)
+	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
+	require.NoError(t, err)
+	req, err := st.CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: 1, UserID: requester.ID, SuggestedRole: "project_viewer", State: AccessRequestPending,
+	})
+	require.NoError(t, err)
+
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, 1, req.ID, approver.ID, "", 0)
+	require.NoError(t, err)
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var assigned *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned {
+			assigned = e
+		}
+	}
+	require.NotNil(t, assigned, "access-request approval grant must appear in the RBAC audit trail")
+	require.NotNil(t, assigned.ActorUserID)
+	assert.Equal(t, approver.ID, *assigned.ActorUserID)
+	require.NotNil(t, assigned.TargetUserID)
+	assert.Equal(t, requester.ID, *assigned.TargetUserID)
+
+	// Time-bound (TTL) grant branch is audited the same way.
+	req2, err := st.CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: 1, UserID: requester.ID, SuggestedRole: "project_developer", State: AccessRequestPending,
+	})
+	require.NoError(t, err)
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, 1, req2.ID, approver.ID, "", time.Hour)
+	require.NoError(t, err)
+
+	entries, _, err = c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var count int
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned && e.TargetUserID != nil && *e.TargetUserID == requester.ID {
+			count++
+		}
+	}
+	assert.Equal(t, 2, count, "both the immediate and TTL-bound grants are RBAC-audited")
 }

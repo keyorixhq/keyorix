@@ -25,6 +25,11 @@ const (
 	EventRoleCreated = "role.created"
 	EventRoleUpdated = "role.updated"
 	EventRoleDeleted = "role.deleted"
+	// Group membership: adding/removing a member confers/revokes every role the
+	// group holds — the same blast radius as a direct role grant/removal, so these
+	// land in the RBAC audit trail alongside role.assigned/role.removed (#233).
+	EventGroupMemberAdded   = "group.member_added"
+	EventGroupMemberRemoved = "group.member_removed"
 )
 
 // rbacAuditEventTypes is the set of event types that make up the RBAC audit log.
@@ -33,6 +38,7 @@ var rbacAuditEventTypes = []string{
 	EventRoleGroupAssigned, EventRoleGroupRemoved,
 	EventPermissionAdded, EventPermissionRemoved,
 	EventRoleCreated, EventRoleUpdated, EventRoleDeleted,
+	EventGroupMemberAdded, EventGroupMemberRemoved,
 }
 
 // rbacAuditDetail is the structured payload stored in an RBAC event's Diff field,
@@ -84,6 +90,26 @@ func (c *KeyorixCore) logGroupRoleChange(ctx context.Context, eventType, verb st
 		RoleID:        roleID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
+	})
+}
+
+// LogGroupMemberAdded / LogGroupMemberRemoved record a user being added to / removed
+// from a group. Because membership confers every role the group holds, this is a
+// role-grant-equivalent action and lands in the RBAC audit trail (#233). See
+// LogRoleAssigned for actorID semantics.
+func (c *KeyorixCore) LogGroupMemberAdded(ctx context.Context, actorID, userID, groupID uint) {
+	c.logGroupMemberChange(ctx, EventGroupMemberAdded, "added to group", actorID, userID, groupID)
+}
+
+func (c *KeyorixCore) LogGroupMemberRemoved(ctx context.Context, actorID, userID, groupID uint) {
+	c.logGroupMemberChange(ctx, EventGroupMemberRemoved, "removed from group", actorID, userID, groupID)
+}
+
+func (c *KeyorixCore) logGroupMemberChange(ctx context.Context, eventType, verb string, actorID, userID, groupID uint) {
+	desc := fmt.Sprintf("user %d %s %d", userID, verb, groupID)
+	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{
+		TargetUserID: userID,
+		GroupID:      groupID,
 	})
 }
 

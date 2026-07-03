@@ -134,6 +134,11 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
 		return
 	}
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
 	var body struct {
 		UserID uint   `json:"user_id"`
 		Role   string `json:"role"`
@@ -146,7 +151,7 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		sendError(w, "ValidationError", "user_id and role are required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddProjectMember(r.Context(), uint(id), body.UserID, body.Role); err != nil {
+	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, uint(id), body.UserID, body.Role); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "already") {
 			status = http.StatusConflict
@@ -172,6 +177,11 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
 	var body struct {
 		Role string `json:"role"`
 	}
@@ -183,7 +193,7 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 		sendError(w, "ValidationError", "role is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.SetProjectMemberRole(r.Context(), uint(id), uint(userID), body.Role); err != nil {
+	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, uint(id), uint(userID), body.Role); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "unknown role") {
 			status = http.StatusBadRequest
@@ -206,7 +216,12 @@ func (h *CatalogHandler) RemoveProjectMember(w http.ResponseWriter, r *http.Requ
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RemoveProjectMember(r.Context(), uint(id), uint(userID)); err != nil {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	if err := h.coreService.RemoveProjectMember(r.Context(), userCtx.UserID, uint(id), uint(userID)); err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "not a member") {
 			status = http.StatusNotFound

@@ -571,6 +571,12 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 		currentSet[r.Name] = true
 	}
 
+	// Route through the audited RBAC choke point (AssignUserRole/RemoveUserRole) so
+	// each individual role change lands in the RBAC audit trail with a structured
+	// RoleID, not just the coarse aggregate-count event below (#297). The acting
+	// principal is the logging-in user themself — the same attribution the
+	// aggregate auth.sso_roles_synced event below already used — since the grant is
+	// driven by their own IdP-asserted groups against the admin-configured map.
 	added, removed := 0, 0
 	for role := range managedRoles {
 		r, rerr := c.storage.GetRoleByName(ctx, role)
@@ -579,11 +585,11 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 		}
 		switch {
 		case desiredRoles[role] && !currentSet[role]:
-			if c.storage.AssignRole(ctx, userID, r.ID, Scope{}) == nil {
+			if c.AssignUserRole(ctx, userID, userID, r.ID, Scope{}) == nil {
 				added++
 			}
 		case !desiredRoles[role] && currentSet[role]:
-			if c.storage.RemoveRole(ctx, userID, r.ID, Scope{}) == nil {
+			if c.RemoveUserRole(ctx, userID, userID, r.ID, Scope{}) == nil {
 				removed++
 			}
 		}
