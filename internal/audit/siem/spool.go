@@ -176,6 +176,14 @@ func (s *spool) replay() {
 			siemForwards.WithLabelValues(outcomeDelivered).Inc()
 		}
 	}
+	if err := sc.Err(); err != nil {
+		// bufio.Scanner stops silently on any read/token error (e.g. bufio.ErrTooLong for a
+		// line over the buffer cap, or a torn write). Everything from the failing line onward
+		// was never scanned, so it's about to be dropped by the rewrite below — log loudly so
+		// this isn't silent, even though we deliberately don't abort the replay (the lines
+		// already reconciled above are still correctly delivered/kept).
+		log.Printf("siem: spool scan stopped early (data past this point is being dropped from the spool): %v", err)
+	}
 
 	// Reconcile under the lock: the file is now [snapshot bytes][lines add()ed meanwhile].
 	// Rewrite = still-failed snapshot lines + the concurrently-added tail, so nothing that
@@ -203,6 +211,9 @@ func (s *spool) replay() {
 			kept := make([]byte, len(line))
 			copy(kept, line)
 			remaining = append(remaining, kept)
+		}
+		if err := ts.Err(); err != nil {
+			log.Printf("siem: spool tail-scan stopped early (data past this point is being dropped from the spool): %v", err)
 		}
 	}
 
