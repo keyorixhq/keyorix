@@ -360,8 +360,8 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLClampsIssue(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
-		// No MaxTTLSeconds — the per-config ceiling is unset/unbounded.
 		ActorID: testAdminActorID,
+		// No MaxTTLSeconds — the per-config ceiling is unset/unbounded.
 	})
 	require.NoError(t, err)
 
