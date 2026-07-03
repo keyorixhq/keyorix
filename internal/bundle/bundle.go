@@ -320,7 +320,7 @@ func process(r io.Reader, reg *trust.KeyRegistry, opts *extractOpts) (*Manifest,
 				return nil, err
 			}
 		}
-		if err := os.MkdirAll(opts.destDir, 0o750); err != nil {
+		if err := mkdirAllNoSymlink(opts.destDir, opts.destDir); err != nil {
 			return nil, fmt.Errorf("bundle: create destination: %w", err)
 		}
 	}
@@ -448,7 +448,7 @@ func streamComponent(tr io.Reader, comp Component, destDir string) error {
 			return err
 		}
 		finalPath = final
-		if err := os.MkdirAll(filepath.Dir(finalPath), 0o750); err != nil {
+		if err := mkdirAllNoSymlink(destDir, filepath.Dir(finalPath)); err != nil {
 			return fmt.Errorf("bundle: mkdir for %s: %w", comp.Path, err)
 		}
 		tmp, err = os.CreateTemp(filepath.Dir(finalPath), ".kxbundle-*")
@@ -484,6 +484,63 @@ func streamComponent(tr io.Reader, comp Component, destDir string) error {
 		if err := os.Rename(tmpPath, finalPath); err != nil {
 			cleanup()
 			return fmt.Errorf("bundle: stage %s: %w", comp.Path, err)
+		}
+	}
+	return nil
+}
+
+// mkdirAllNoSymlink creates dir (and any missing parents, down to and including root
+// itself) without ever traversing through an existing symlink. Unlike os.MkdirAll — which
+// happily walks through a symlink at any path component and treats it as "the directory
+// already exists" — this Lstats every component and refuses the moment one is a symlink.
+// That closes the classic insecure-staging-directory attack: a local attacker with write
+// access to the destination path pre-plants a symlink (e.g. "<dest>/images" pointing at
+// "/tmp/evil") before a legitimate operator runs a genuinely-signed bundle import; without
+// this check, extraction would follow the symlink and write trusted bundle contents outside
+// the intended staging tree. root is re-checked on every call (including when root == dir,
+// i.e. staging-root creation itself) so a pre-planted symlink AT the staging root's own path
+// is caught too, not just symlinks nested underneath it.
+func mkdirAllNoSymlink(root, dir string) error {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("bundle: resolve staging root: %w", err)
+	}
+	dirAbs, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("bundle: resolve target directory: %w", err)
+	}
+	rel, err := filepath.Rel(rootAbs, dirAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("bundle: refusing to create directory %q outside staging root %q", dir, root)
+	}
+
+	var parts []string
+	if rel != "." {
+		parts = strings.Split(filepath.ToSlash(rel), "/")
+	}
+	// Walk from the staging root's own path down to dir, one component at a time.
+	segments := append([]string{filepath.Base(rootAbs)}, parts...)
+	cur := filepath.Dir(rootAbs)
+	for _, part := range segments {
+		if part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		fi, statErr := os.Lstat(cur)
+		switch {
+		case statErr == nil:
+			if fi.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("bundle: refusing to follow pre-existing symlink at %q", cur)
+			}
+			if !fi.IsDir() {
+				return fmt.Errorf("bundle: %q exists and is not a directory", cur)
+			}
+		case os.IsNotExist(statErr):
+			if mkErr := os.Mkdir(cur, 0o750); mkErr != nil {
+				return fmt.Errorf("bundle: mkdir %q: %w", cur, mkErr)
+			}
+		default:
+			return fmt.Errorf("bundle: stat %q: %w", cur, statErr)
 		}
 	}
 	return nil
