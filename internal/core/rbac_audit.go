@@ -19,7 +19,7 @@ import (
 // whom, at what scope, and when.
 type RBACAuditEntry struct {
 	ID           uint
-	Action       string // role.assigned | role.removed | role.group_assigned | role.group_removed
+	Action       string // role.assigned | role.removed | role.group_assigned | role.group_removed | group.member_added | group.member_removed
 	ActorUserID  *uint  // the principal who made the change (nil for system/CLI)
 	TargetUserID *uint  // set for user-role events
 	GroupID      *uint  // set for group-role events

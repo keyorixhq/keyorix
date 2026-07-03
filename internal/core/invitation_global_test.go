@@ -137,3 +137,38 @@ func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
 	require.NoError(t, err)
 	store.AssertExpectations(t)
 }
+
+// The system-role grant on global-invitation acceptance is the moment of privilege
+// (up to and including super_admin) — it must land in the RBAC audit trail like every
+// other grant path, not vanish with zero trace (#299). Uses real storage so
+// ListRBACAuditLogs is exercised end to end.
+func TestApplyInvitationGrants_SystemRoleIsRBACAudited(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	inviter, err := st.CreateUser(ctx, &models.User{Username: "admin-inviter", Email: "inviter@example.com", IsActive: true})
+	require.NoError(t, err)
+	invitee, err := st.CreateUser(ctx, &models.User{Username: "carol", Email: "carol@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	inv := &models.ProjectInvitation{
+		ID: 1, ProjectID: 0, Email: invitee.Email, InvitedBy: inviter.ID,
+		SystemRole: "system_auditor",
+	}
+
+	require.NoError(t, c.applyInvitationGrants(ctx, inv, invitee.ID))
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var assigned *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned {
+			assigned = e
+		}
+	}
+	require.NotNil(t, assigned, "global-invitation system-role grant must appear in the RBAC audit trail")
+	require.NotNil(t, assigned.ActorUserID)
+	assert.Equal(t, inviter.ID, *assigned.ActorUserID)
+	require.NotNil(t, assigned.TargetUserID)
+	assert.Equal(t, invitee.ID, *assigned.TargetUserID)
+}

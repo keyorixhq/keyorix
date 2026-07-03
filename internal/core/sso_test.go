@@ -401,6 +401,10 @@ func TestSyncSSORoles(t *testing.T) {
 		}, nil)
 		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
 		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 20, Name: "system_auditor"}, nil)
+		// RemoveUserRole's last-global-admin guard (unrelated to this test's role, but
+		// exercised on every removal) looks up the other install-admin role names too.
+		store.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, assert.AnError)
+		store.On("GetRoleByName", mock.Anything, "admin").Return(nil, assert.AnError)
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -432,6 +436,58 @@ func TestSyncSSORoles(t *testing.T) {
 		c.syncSSORoles(context.Background(), p, 7, raw)
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
+}
+
+// SSO login-time role reconciliation grants/revokes a real role, so it must land in
+// the RBAC audit trail with a structured RoleID like every other grant path — not
+// just the coarse aggregate auth.sso_roles_synced count (#297). Uses real storage so
+// ListRBACAuditLogs (reading the actual persisted rows) is exercised end to end.
+func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{}, &models.AuditEvent{}))
+	ls := store.NewLocalStorage(db)
+	c := NewKeyorixCore(ls)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.User{ID: 7, Username: "alice"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "system_auditor"}).Error)
+	p := &SSOProvider{Name: "okta", GroupRoleMap: map[string]string{"keyorix-auditors": "system_auditor"}}
+
+	// IdP asserts keyorix-auditors → system_auditor should be granted.
+	c.reconcileSSORoles(ctx, p, 7, []string{"keyorix-auditors"})
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var assigned *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned {
+			assigned = e
+		}
+	}
+	require.NotNil(t, assigned, "SSO-driven role grant must appear in the RBAC audit trail")
+	require.NotNil(t, assigned.TargetUserID)
+	assert.Equal(t, uint(7), *assigned.TargetUserID)
+	require.NotNil(t, assigned.RoleID)
+	assert.Equal(t, uint(10), *assigned.RoleID)
+
+	// A later login with no group asserted must revoke system_admin, also audited.
+	c.reconcileSSORoles(ctx, p, 7, nil)
+
+	entries, _, err = c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var removed *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleRemoved {
+			removed = e
+		}
+	}
+	require.NotNil(t, removed, "SSO-driven role revoke must appear in the RBAC audit trail")
+	require.NotNil(t, removed.TargetUserID)
+	assert.Equal(t, uint(7), *removed.TargetUserID)
+	require.NotNil(t, removed.RoleID)
+	assert.Equal(t, uint(10), *removed.RoleID)
 }
 
 func TestBeginSSO_BuildsAuthURLWithStateAndNonce(t *testing.T) {

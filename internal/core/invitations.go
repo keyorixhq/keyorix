@@ -232,7 +232,11 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 			if err != nil {
 				return fmt.Errorf("unknown system role %q: %w", inv.SystemRole, err)
 			}
-			if err := c.storage.AssignRole(ctx, userID, role.ID, storage.Scope{ProjectID: 0}); err != nil {
+			// Routed through the audited wrapper — this is the moment of privilege
+			// grant for a global invitation (up to and including super_admin), which
+			// previously left zero trace of any kind (#299). Attributed to the inviter,
+			// consistent with the per-project assignment grants below.
+			if err := c.AssignUserRole(ctx, inv.InvitedBy, userID, role.ID, Scope{ProjectID: 0}); err != nil {
 				return fmt.Errorf("failed to grant system role: %w", err)
 			}
 		}
@@ -521,12 +525,15 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	grantDesc := role
 	if grantTTL > 0 {
 		expiresAt := now.Add(grantTTL)
-		if err := c.storage.AssignRoleWithExpiry(ctx, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
+		// Routed through the audited wrapper so this grant lands in the RBAC audit
+		// trail with a structured RoleID, alongside the generic access_request.approved
+		// event below (#298).
+		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", role, expiresAt.UTC().Format(time.RFC3339), grantTTL)
 	} else {
-		if err := c.storage.AssignRole(ctx, req.UserID, roleModel.ID, scope); err != nil {
+		if err := c.AssignUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 	}
