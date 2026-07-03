@@ -25,7 +25,8 @@ type machineTokenHygieneEntry struct {
 
 // MachineTokenHygiene handles GET /api/v1/machine-token-hygiene?days=N — the
 // deployment-wide non-revoked machine credentials that are expired-but-active or stale.
-// Global system.read is enforced by the router. days defaults to 90, cap 3650.
+// Global audit.read is enforced by the router, not the universal system_viewer
+// baseline. days defaults to 90, cap 3650.
 func (h *CatalogHandler) MachineTokenHygiene(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)

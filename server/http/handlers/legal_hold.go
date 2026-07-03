@@ -1,5 +1,7 @@
 // legal_hold.go — deployment-wide legal-hold endpoints (ISO 27001 A.5.34). Status
-// reads need system.read; placing/lifting needs system.write (wired in router.go).
+// reads need audit.read (discloses the free-text hold reason, so the universal
+// system_viewer baseline is not enough); placing/lifting needs system.write (wired in
+// router.go).
 package handlers
 
 import (

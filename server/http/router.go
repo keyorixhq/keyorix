@@ -236,7 +236,20 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Post("/notifications/{id}/read", notificationHandler.MarkRead)
 
 		// Dashboard endpoints
-		r.Get("/dashboard/stats", dashboardHandler.GetStats)
+		// GetStats is the caller's OWN home dashboard (their secret/share counts,
+		// their expiring secrets) so it stays reachable by any real principal — but it
+		// previously required NO permission at all, not even the universal system_viewer
+		// baseline, so a principal holding zero permissions in this system (e.g. a
+		// narrowly-scoped machine identity/PAT) could still reach it. Require system.read
+		// to close that: every human user holds it from CreateUser (ADR-021), so this is
+		// a no-op for the product's normal users and only turns away a principal with no
+		// legitimate standing here at all. The deployment-wide aggregate fields the
+		// handler also returns (active users, audit-event counts, failed-auth counts) are
+		// separately scoped to audit.read INSIDE GetDashboardStats (core/dashboard.go),
+		// mirroring the recent-activity scoping already there — a baseline caller gets
+		// their own numbers with the org-wide aggregates zeroed, not a 403 on their own
+		// home page.
+		r.With(customMiddleware.RequirePermission("system.read")).Get("/dashboard/stats", dashboardHandler.GetStats)
 		// The full activity feed is org-wide audit data — gate it behind audit.read.
 		// (Per-user dashboard stats scope their own recent-activity in core.)
 		r.With(customMiddleware.RequirePermission("audit.read")).Get("/dashboard/activity", dashboardHandler.GetActivity)
@@ -390,13 +403,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/usage/most-accessed", secretHandler.UsageMostAccessed)
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromQuery)).Get("/usage/unused", secretHandler.UsageUnused)
 			// Org-wide secret asset inventory (ISO 27001 A.5.9) — CSV manifest of every
-			// project's secrets, metadata only (no values). Deployment-wide system.read;
-			// static path, before /{id}.
-			r.With(customMiddleware.RequirePermission("system.read")).Get("/inventory.csv", secretHandler.DeploymentSecretsInventoryCSV)
+			// project's secrets, metadata only (no values), but it DOES disclose every
+			// secret's real NAME/classification/owner deployment-wide, so it is gated on
+			// audit.read (global), NOT the universal system_viewer baseline system.read —
+			// same disclosure-family calibration as /compliance/evidence. Static path,
+			// before /{id}.
+			r.With(customMiddleware.RequirePermission("audit.read")).Get("/inventory.csv", secretHandler.DeploymentSecretsInventoryCSV)
 			// Org-wide naming-policy conformance — every project's secrets whose names
-			// violate the current (global) policy. Deployment-wide system.read; static
+			// violate the current (global) policy; discloses the violating secrets' real
+			// names deployment-wide, so audit.read (global), not the baseline. Static
 			// path, before /{id}.
-			r.With(customMiddleware.RequirePermission("system.read")).Get("/name-conformance", secretHandler.DeploymentSecretNameConformance)
+			r.With(customMiddleware.RequirePermission("audit.read")).Get("/name-conformance", secretHandler.DeploymentSecretNameConformance)
 			// By-reference value read (ESO etc.): resolve project/environment/name → the
 			// secret's value. Scoped to the resolved secret; static path, before /{id}.
 			r.With(customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromRefQuery)).Get("/value", secretHandler.GetSecretValueByRef)
@@ -643,25 +660,37 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/license/status", licenseHandler.GetLicenseStatus)
 
 		// Personal-access-token hygiene — deployment-wide stale / expired-but-active
-		// tokens an admin should revoke (token sprawl).
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/pat-hygiene", patHandler.PATHygiene)
+		// tokens an admin should revoke (token sprawl). Discloses every user's PAT
+		// names/scopes/project-env-scope/AllowedCIDRs/owning user ID deployment-wide, so
+		// gated on audit.read (global), NOT the universal system_viewer baseline
+		// system.read — same disclosure-family calibration as /compliance/evidence.
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/pat-hygiene", patHandler.PATHygiene)
 		// Machine-token hygiene — deployment-wide stale / expired-but-active machine
-		// credentials an admin should revoke (non-human token sprawl).
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/machine-token-hygiene", catalogHandler.MachineTokenHygiene)
+		// credentials an admin should revoke (non-human token sprawl). Same calibration
+		// as /pat-hygiene: audit.read, not the baseline.
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/machine-token-hygiene", catalogHandler.MachineTokenHygiene)
 		// Secret-hygiene rollup — deployment-wide totals of every project's posture
-		// (orphaned / unused / expiring / stale-MI / rotation-overdue) + per-project breakdown.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/hygiene", secretHandler.DeploymentHygiene)
+		// (orphaned / unused / expiring / stale-MI / rotation-overdue) + per-project
+		// breakdown identified by project name. Same calibration: audit.read.
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/hygiene", secretHandler.DeploymentHygiene)
 
-		// Compliance posture — deployment-wide controls snapshot for auditors.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
+		// Compliance posture — deployment-wide controls snapshot for auditors. Part of
+		// the same disclosure family as /compliance/evidence (SoD-violation counts,
+		// legal-hold reason, risk-register counts): gated on audit.read, not the
+		// universal system_viewer baseline.
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/posture", dashboardHandler.GetCompliancePosture)
 		// Compliance control matrix — controls mapped to ISO/SOC2/NIS2/DORA + status.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/controls", dashboardHandler.GetComplianceControls)
-		// Control matrix as CSV — the same matrix for an auditor's spreadsheet.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/controls.csv", dashboardHandler.ExportComplianceControlsCSV)
-		// Compliance digest — on-demand human-readable summary (the scheduled-broadcast text).
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/compliance/digest", dashboardHandler.GetComplianceDigest)
-		// Legal hold (ISO A.5.34): status reads system.read; place/lift system.write.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/legal-hold", dashboardHandler.GetLegalHold)
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/controls", dashboardHandler.GetComplianceControls)
+		// Control matrix as CSV — the same matrix for an auditor's spreadsheet; same gate
+		// as the JSON endpoint above (a lower-tier CSV export would just be a bypass).
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/controls.csv", dashboardHandler.ExportComplianceControlsCSV)
+		// Compliance digest — on-demand human-readable summary (the scheduled-broadcast
+		// text); restates the same posture data, same gate.
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/digest", dashboardHandler.GetComplianceDigest)
+		// Legal hold (ISO A.5.34): status discloses the free-text hold reason
+		// deployment-wide, so reads need audit.read; place/lift stay system.write
+		// (an admin action, not a read disclosure).
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/legal-hold", dashboardHandler.GetLegalHold)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/legal-hold", dashboardHandler.PlaceLegalHold)
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/legal-hold", dashboardHandler.LiftLegalHold)
 		// Compliance evidence pack — posture + supporting records, for archival. Gated on
@@ -673,17 +702,21 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission("audit.read")).Get("/compliance/evidence", dashboardHandler.GetComplianceEvidence)
 		// Verify a previously-exported evidence pack against its detached signature.
 		r.With(customMiddleware.RequirePermission("audit.read")).Post("/compliance/evidence/verify", dashboardHandler.VerifyComplianceEvidence)
-		// Risk register (ISO A.5.8): list reads system.read; create/revoke system.write.
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/risk-exceptions", dashboardHandler.ListRiskExceptions)
+		// Risk register (ISO A.5.8): list discloses free-text Reference/Justification
+		// (which may itself name a secret) deployment-wide, so reads need audit.read;
+		// create/revoke stay system.write.
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/risk-exceptions", dashboardHandler.ListRiskExceptions)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskException)
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/risk-exceptions/{id}", dashboardHandler.RevokeRiskException)
 
-		// Separation of duties (ISO A.5.3): list policies/violations (system.read);
-		// create/delete policies (system.write).
+		// Separation of duties (ISO A.5.3): policy definitions (name/permission pair, no
+		// PII) stay at the baseline system.read; the violations list discloses
+		// deployment-wide violator names/emails, so it needs audit.read; create/delete
+		// policies need system.write.
 		r.With(customMiddleware.RequirePermission("system.read")).Get("/sod/policies", catalogHandler.ListSoDPolicies)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/sod/policies", catalogHandler.CreateSoDPolicy)
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/sod/policies/{id}", catalogHandler.DeleteSoDPolicy)
-		r.With(customMiddleware.RequirePermission("system.read")).Get("/sod/violations", catalogHandler.ListSoDViolations)
+		r.With(customMiddleware.RequirePermission("audit.read")).Get("/sod/violations", catalogHandler.ListSoDViolations)
 
 		// On-demand triggers for the notification/alert jobs that otherwise run only on
 		// their background schedulers — dispatch immediately after an incident or config

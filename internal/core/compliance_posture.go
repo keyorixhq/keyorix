@@ -3,7 +3,8 @@
 // state of the controls Keyorix already enforces — audit-trail integrity, access
 // recertification coverage, dormant standing access, secret-rotation hygiene,
 // second-factor coverage, and break-glass usage — into one structured object,
-// grouped by control area. Read-only; gated by system.read.
+// grouped by control area. Read-only; gated by audit.read (not the universal
+// system_viewer baseline — see #255/#272 disclosure-family fix in router.go).
 package core
 
 import (
