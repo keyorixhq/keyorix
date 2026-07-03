@@ -1,9 +1,11 @@
 package core
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"math"
-	"math/rand"
+	mathrand "math/rand"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -53,8 +55,15 @@ type MLConfig struct {
 // tuned to this feature set's score distribution: with the low-dimensional access
 // features, normal accesses cluster near 0.5 and the genuinely rare tail reaches
 // ~0.65–0.8, so 0.60 cleanly separates them while staying clear of the noise floor.
-// A non-positive seed becomes a fixed constant so scoring stays deterministic across
-// restarts rather than drifting with wall-clock entropy.
+//
+// A non-positive seed is drawn from crypto/rand, not a fixed constant (#101): every
+// default deployment used to run an IDENTICAL, publicly-known-from-source forest
+// structure (seed=1), so an attacker who knew (or could infer) the training data could
+// precompute which subsamples/splits an access would land in and craft one that the
+// forest isolates poorly — i.e. tune an access to score low on purpose. An operator who
+// genuinely wants reproducible scoring (e.g. to diff forest behavior across a config
+// change) can still set Seed explicitly; only the *unset* default stops being a known
+// constant.
 func (c MLConfig) withDefaults() MLConfig {
 	if c.Threshold <= 0.5 || c.Threshold >= 1.0 {
 		c.Threshold = 0.60
@@ -66,9 +75,24 @@ func (c MLConfig) withDefaults() MLConfig {
 		c.SampleSize = 256
 	}
 	if c.Seed <= 0 {
-		c.Seed = 1
+		c.Seed = randomSeed()
 	}
 	return c
+}
+
+// randomSeed draws a positive int64 from crypto/rand for MLConfig's default seed. Falls
+// back to a time-based seed only if the OS CSPRNG is unavailable — vanishingly rare, and
+// still per-process-unique rather than a hardcoded constant.
+func randomSeed() int64 {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return time.Now().UnixNano()
+	}
+	v := int64(binary.BigEndian.Uint64(buf[:]) >> 1) // clear sign bit: always positive
+	if v <= 0 {
+		v = 1
+	}
+	return v
 }
 
 // accessFeatures turns one access-log entry into the feature vector the forest splits
@@ -123,7 +147,11 @@ func mlOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models
 		train[i] = accessFeatures(lg, ipFreq, userFreq)
 	}
 
-	rng := rand.New(rand.NewSource(cfg.Seed)) // #nosec G404 -- model sampling must be reproducible, not unpredictable; no security decision rides on this RNG
+	// #nosec G404 -- math/rand, seeded from cfg.Seed, drives tree-building sampling only;
+	// the seed itself is crypto/rand-sourced by default (see randomSeed), so an attacker
+	// cannot predict the forest structure. An explicitly configured seed opts back into
+	// deterministic-for-reproducibility behavior on purpose.
+	rng := mathrand.New(mathrand.NewSource(cfg.Seed))
 	forest := newIsolationForest(train, cfg.NumTrees, cfg.SampleSize, rng)
 	if forest == nil {
 		return nil

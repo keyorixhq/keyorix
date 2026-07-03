@@ -16,7 +16,9 @@ func newPurgeTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Project{}, &models.Environment{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Project{}, &models.Environment{},
+		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.ShareRecord{},
+		&models.PersonalAccessToken{}, &models.Session{}))
 	return NewLocalStorage(db)
 }
 
@@ -46,6 +48,44 @@ func TestPurgeDeletedUsersBefore(t *testing.T) {
 	var purged int64
 	require.NoError(t, ls.db.Unscoped().Model(&models.User{}).Where("id = ?", 2).Count(&purged).Error)
 	assert.Equal(t, int64(0), purged, "row hard-deleted")
+}
+
+// TestPurgeDeletedUsersBefore_CascadesDependentRows pins #106: before the fix,
+// purging a soft-deleted user only deleted the users row, leaving its UserRole,
+// UserGroup, received ShareRecord, PersonalAccessToken, and Session rows orphaned
+// forever (nothing else purges them). All five must be gone once the user is purged.
+func TestPurgeDeletedUsersBefore_CascadesDependentRows(t *testing.T) {
+	ls := newPurgeTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	old := now.AddDate(0, 0, -40)
+	cutoff := now.AddDate(0, 0, -30)
+
+	require.NoError(t, ls.db.Create(&models.User{ID: 1, Username: "ghost", Email: "g@x"}).Error)
+	require.NoError(t, ls.db.Create(&models.User{ID: 2, Username: "owner", Email: "o@x"}).Error)
+	require.NoError(t, ls.db.Create(&models.Group{ID: 1, Name: "g1"}).Error)
+	require.NoError(t, ls.db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
+	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 1, GroupID: 1}).Error)
+	require.NoError(t, ls.db.Create(&models.ShareRecord{SecretID: 1, OwnerID: 2, RecipientID: 1, IsGroup: false}).Error)
+	require.NoError(t, ls.db.Create(&models.PersonalAccessToken{UserID: 1, Name: "tok", TokenHash: "h1"}).Error)
+	require.NoError(t, ls.db.Create(&models.Session{UserID: 1, SessionToken: "s1"}).Error)
+	require.NoError(t, ls.db.Unscoped().Model(&models.User{}).Where("id = ?", 1).Update("deleted_at", old).Error)
+
+	n, err := ls.PurgeDeletedUsersBefore(ctx, cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n)
+
+	var count int64
+	require.NoError(t, ls.db.Model(&models.UserRole{}).Where("user_id = ?", 1).Count(&count).Error)
+	assert.Zero(t, count, "UserRole must be purged with the user")
+	require.NoError(t, ls.db.Model(&models.UserGroup{}).Where("user_id = ?", 1).Count(&count).Error)
+	assert.Zero(t, count, "UserGroup must be purged with the user")
+	require.NoError(t, ls.db.Unscoped().Model(&models.ShareRecord{}).Where("recipient_id = ? AND is_group = ?", 1, false).Count(&count).Error)
+	assert.Zero(t, count, "a share the user RECEIVED must be purged with the user")
+	require.NoError(t, ls.db.Model(&models.PersonalAccessToken{}).Where("user_id = ?", 1).Count(&count).Error)
+	assert.Zero(t, count, "PersonalAccessToken must be purged with the user")
+	require.NoError(t, ls.db.Model(&models.Session{}).Where("user_id = ?", 1).Count(&count).Error)
+	assert.Zero(t, count, "Session must be purged with the user")
 }
 
 func TestPurgeDeletedProjectsAndEnvironments(t *testing.T) {

@@ -1,7 +1,9 @@
 // secrets_inventory_deployment_csv.go — DeploymentSecretsInventoryCSV handler: the
 // org-wide secret asset inventory (every project's secrets, metadata only, never
-// values) as a CSV attachment for compliance. Deployment-wide system.read is enforced
-// by the router. Parallels the per-project secrets_inventory_csv handler.
+// values) as a CSV attachment for compliance. Deployment-wide audit.read is enforced
+// by the router (it discloses real secret names/classification/owner deployment-wide,
+// so the universal system_viewer baseline is not enough). Parallels the per-project
+// secrets_inventory_csv handler.
 package handlers
 
 import (

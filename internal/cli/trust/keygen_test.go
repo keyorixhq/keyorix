@@ -36,6 +36,44 @@ func TestKeygen_WritesUsableKeypair(t *testing.T) {
 	require.NoError(t, reg.Verify(itrust.PurposeUpdate, "upd-test", msg, ed25519.Sign(priv, msg)))
 }
 
+func TestKeygen_RefusesOverwriteWithoutForce_AllowsWithForce(t *testing.T) {
+	dir := t.TempDir()
+	keygenPurpose, keygenKeyID, keygenDir, keygenForce = "update", "upd-reuse", dir, false
+	require.NoError(t, keygenCmd.RunE(keygenCmd, nil))
+
+	privPath := filepath.Join(dir, "upd-reuse.private.pem")
+	pubPath := filepath.Join(dir, "upd-reuse.public.pem")
+	origPriv, err := os.ReadFile(privPath) //nolint:gosec // test-controlled temp path
+	require.NoError(t, err)
+	origPub, err := os.ReadFile(pubPath) //nolint:gosec // test-controlled temp path
+	require.NoError(t, err)
+
+	// Re-run with the same --dir/--key-id and no --force: must fail cleanly, and
+	// neither file may be touched (not even the one written first on the prior run).
+	err = keygenCmd.RunE(keygenCmd, nil)
+	require.Error(t, err, "a re-run without --force must be refused")
+	assert.Contains(t, err.Error(), "--force")
+
+	stillPriv, err := os.ReadFile(privPath) //nolint:gosec // test-controlled temp path
+	require.NoError(t, err)
+	stillPub, err := os.ReadFile(pubPath) //nolint:gosec // test-controlled temp path
+	require.NoError(t, err)
+	assert.Equal(t, origPriv, stillPriv, "private key must be untouched by the rejected re-run")
+	assert.Equal(t, origPub, stillPub, "public key must be untouched by the rejected re-run")
+
+	// With --force, the overwrite proceeds and produces a fresh (different) keypair.
+	keygenForce = true
+	t.Cleanup(func() { keygenForce = false })
+	require.NoError(t, keygenCmd.RunE(keygenCmd, nil), "--force must allow the overwrite")
+
+	newPriv, err := os.ReadFile(privPath) //nolint:gosec // test-controlled temp path
+	require.NoError(t, err)
+	newPub, err := os.ReadFile(pubPath) //nolint:gosec // test-controlled temp path
+	require.NoError(t, err)
+	assert.NotEqual(t, origPriv, newPriv, "--force must actually overwrite the private key")
+	assert.NotEqual(t, origPub, newPub, "--force must actually overwrite the public key")
+}
+
 func TestKeygen_RejectsBadPurposeAndMissingKeyID(t *testing.T) {
 	keygenPurpose, keygenKeyID, keygenDir = "bogus", "x", t.TempDir()
 	require.Error(t, keygenCmd.RunE(keygenCmd, nil), "an invalid purpose is rejected")

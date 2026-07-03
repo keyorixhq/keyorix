@@ -120,6 +120,22 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 		return nil, err
 	}
 
+	// Accounts with any second factor (TOTP or a passkey) enrolled must NOT get an
+	// auto-login session from a password reset — that would silently bypass MFA for
+	// this session, mirroring exactly the gate Login applies after the password step
+	// (see ErrMFARequired in auth.go). Still evict every existing session (keepID=0,
+	// i.e. keep none) so a stolen session is locked out immediately, same invariant as
+	// the auto-login path below — the reset must not leave a thief's session alive
+	// just because the new session isn't minted yet. The caller completes the second
+	// factor via CreateMFAChallenge → VerifyMFALogin (or the WebAuthn ceremony) using
+	// the password that was just accepted.
+	if user.MFAEnabled || user.WebAuthnEnabled {
+		_ = c.deleteSessionsForUserAndEvict(ctx, user.ID, 0, "")
+		c.writeAuditEventFull(ctx, "account.setup_completed", &user.ID, nil, nil, ip,
+			fmt.Sprintf("account setup completed via %s (MFA required before session)", tok.Purpose))
+		return &SetupConsumeResult{User: user}, ErrMFARequired
+	}
+
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -180,13 +196,15 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
 	}
 
-	// Consume the token (single-use, atomic) before materializing. tok was already
-	// inspected by CompleteSetup, so consume it directly (no re-lookup).
-	if err := c.consumeInspectedToken(ctx, tok, SetupPurposeInvitationAccept); err != nil {
-		return nil, err
-	}
-
 	// Lazily create the account with the chosen password (active — they just set it).
+	// SECURITY (#155): create the account BEFORE consuming the token, not after. If a
+	// concurrent account-creation for the same email (e.g. another invite, an admin
+	// directly adding the address) wins the race, CreateUser fails here and the token
+	// is left untouched, so the legitimate holder can retry the SAME link — at which
+	// point the GetUserByEmail guard above now sees the winning account and returns
+	// the clean "account already exists" message instead of a dead "token already
+	// used" error. Consuming up front (the previous order) permanently burned the
+	// invite link for the loser of that race even though nothing unsafe happened.
 	username, err := c.deriveUsername(ctx, inv.Email)
 	if err != nil {
 		return nil, err
@@ -199,6 +217,12 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Consume the token (single-use, atomic) now that the account exists. tok was
+	// already inspected by CompleteSetup, so consume it directly (no re-lookup).
+	if err := c.consumeInspectedToken(ctx, tok, SetupPurposeInvitationAccept); err != nil {
+		return nil, err
 	}
 
 	// Materialize the invitation's grants under the invite-time validation mode. For a

@@ -1,0 +1,11 @@
+# Dependabot for the github-actions ecosystem (#115). Every action `uses:` line
+# is now pinned to a full commit SHA rather than a mutable tag — Dependabot
+# natively supports bumping a pinned SHA (opening a PR that updates both the SHA
+# and its trailing `# vX.Y.Z` comment) for exactly this reason. Without this
+# config, SHA-pinning would silently freeze every action forever.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

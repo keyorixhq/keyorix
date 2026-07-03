@@ -2,10 +2,12 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/delivery"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -68,6 +70,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	// Admin upgrades the grant to developer.
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
@@ -77,6 +80,11 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 		return e.EventType == "access_request.approved"
 	})).Return(nil)
+	// The grant now also routes through the audited RBAC choke point (#298), which
+	// records its own structured role.assigned event alongside the generic one above.
+	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventRoleAssigned
+	})).Return(nil)
 	store.On("ListAccessRequestApprovals", ctx, uint(3)).Return([]*models.AccessRequestApproval{}, nil)
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
 
@@ -85,6 +93,9 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, AccessRequestApproved, out.State)
 	store.AssertCalled(t, "AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
+	store.AssertCalled(t, "LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		return e.EventType == EventRoleAssigned
+	}))
 }
 
 func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
@@ -94,6 +105,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(nil)
@@ -151,6 +163,7 @@ func TestApproveAccessRequest_RejectsAdminGrantByNonAdmin(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "admin", State: AccessRequestPending,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	stubAdminRoleLookups(store, ctx)
 	// Approver 9 holds only a non-admin role (id 6) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{6}, nil)
@@ -172,6 +185,7 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "admin", State: AccessRequestPending,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	stubAdminRoleLookups(store, ctx)
 	// Approver 9 holds the admin role (id 2) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{2}, nil)
@@ -197,6 +211,7 @@ func TestApproveAccessRequest_RejectsExpired(t *testing.T) {
 	store.On("GetAccessRequest", ctx, uint(3)).Return(&models.AccessRequest{
 		ID: 3, ProjectID: 1, UserID: 2, SuggestedRole: "project_viewer", State: AccessRequestPending, ExpiresAt: &past,
 	}, nil)
+	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	store.On("UpdateAccessRequest", ctx, mock.MatchedBy(func(r *models.AccessRequest) bool {
 		return r.State == AccessRequestExpired
 	})).Return(nil)
@@ -236,6 +251,75 @@ func TestApproveAccessRequest_RejectsOtherProject(t *testing.T) {
 	store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
+// #371: a request against a project that no longer exists (never created, or already
+// soft-deleted) must be refused at creation time — otherwise it could sit pending
+// against a project retired specifically to shut off further access, waiting to be
+// approved (and go live) whenever the project is restored.
+func TestRequestProjectAccess_RejectsUnknownProject(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	ctx := context.Background()
+	store.On("GetProject", ctx, uint(404)).Return(nil, fmt.Errorf("project not found"))
+
+	_, err := c.RequestProjectAccess(ctx, 404, 2, "", "please")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+	store.AssertNotCalled(t, "CreateAccessRequest", mock.Anything, mock.Anything)
+}
+
+// #371: RequestProjectAccess must refuse a soft-deleted project the same way it refuses
+// an unknown one — GetProject's default soft-delete scope makes this the same check.
+func TestRequestProjectAccess_RejectsSoftDeletedProject(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
+	require.NoError(t, err)
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "retiring"})
+	require.NoError(t, err)
+	require.NoError(t, st.DeleteProject(ctx, proj.ID))
+
+	_, err = c.RequestProjectAccess(ctx, proj.ID, requester.ID, "project_viewer", "please")
+	require.Error(t, err, "requesting access to a soft-deleted project must be refused")
+}
+
+// #371: ApproveAccessRequestWithExpiry must refuse to approve a request whose target
+// project has been soft-deleted in the meantime — DeleteProject never touches
+// access_requests, so without this check a stale pending request could be approved
+// after the fact and go live the moment the project is later restored, against
+// potentially-stale intent and with no re-review.
+func TestApproveAccessRequestWithExpiry_RejectsSoftDeletedProject(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	approver, err := st.CreateUser(ctx, &models.User{Username: "approver2", Email: "approver2@example.com", IsActive: true})
+	require.NoError(t, err)
+	adminRole, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
+	requester, err := st.CreateUser(ctx, &models.User{Username: "requester2", Email: "requester2@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "retiring2"})
+	require.NoError(t, err)
+	req, err := st.CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: proj.ID, UserID: requester.ID, SuggestedRole: "project_viewer", State: AccessRequestPending,
+	})
+	require.NoError(t, err)
+
+	// The project is soft-deleted AFTER the request was filed, but before it's approved.
+	require.NoError(t, st.DeleteProject(ctx, proj.ID))
+
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, proj.ID, req.ID, approver.ID, "", 0)
+	require.Error(t, err, "approving a request against a soft-deleted project must be refused")
+	assert.Contains(t, err.Error(), "no longer exists")
+
+	// No role grant landed.
+	ids, err := st.GetUserRoleIDsAt(ctx, requester.ID, storage.Scope{ProjectID: proj.ID})
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
 func TestWithdrawAccessRequest_OwnershipChecked(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)
@@ -266,4 +350,144 @@ func TestListProjectInvitations_LazyExpire(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	assert.Equal(t, InvitationExpired, out[0].State)
+}
+
+// #345: InviteToProjectWithLink used to call the unthrottled provisionSetupLink
+// directly, so a principal with only project-scoped roles.assign could loop-call the
+// invite endpoint for the same target email to fire unbounded real SMTP sends. It must
+// now hit the same per-(purpose, email) min-interval throttle ResendInvitationLink
+// already enforces (#183).
+func TestInviteToProjectWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	c.SetCredentialDelivery(&fakeDeliverer{result: delivery.DeliveryResult{Channel: delivery.ChannelSMTP, Delivered: true}}, testBaseURL)
+	ctx := context.Background()
+	fixed := c.now()
+	anyAudit(store)
+
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
+		Return(&models.ProjectInvitation{ID: 7, State: InvitationPending}, nil)
+	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "a@b.com").Return(nil)
+	store.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
+
+	// First invite: a zero prior count on both windows, so it succeeds and mints a
+	// token — this is the send that a same-email loop must now be throttled against.
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
+
+	inv1, prov1, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9)
+	require.NoError(t, err)
+	require.NotNil(t, inv1)
+	require.NotNil(t, prov1)
+	assert.True(t, prov1.Delivered)
+
+	// Second call for the SAME target email, immediately after. Pre-fix this looped
+	// straight through to a second real SMTP send with no check at all.
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "a@b.com", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
+
+	inv2, prov2, err := c.InviteToProjectWithLink(ctx, 1, "a@b.com", "project_developer", 9)
+	require.Error(t, err, "the second same-email invite must be throttled, not delivered")
+	assert.Contains(t, err.Error(), "wait")
+	assert.Nil(t, prov2)
+	// The invitation row itself still exists (same contract as a base_url-unset
+	// failure) — only the link/email send is throttled, so the caller can resend once
+	// the window passes rather than losing the invite.
+	require.NotNil(t, inv2)
+	store.AssertNumberOfCalls(t, "CreateSetupToken", 1)
+}
+
+// #345: InviteGlobalWithLink has the same unthrottled-initial-send shape as
+// InviteToProjectWithLink, reachable via the users.write-gated global-invite endpoint.
+func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
+	store := new(MockStorage)
+	c := newInviteCore(store)
+	c.SetCredentialDelivery(&fakeDeliverer{result: delivery.DeliveryResult{Channel: delivery.ChannelSMTP, Delivered: true}}, testBaseURL)
+	ctx := context.Background()
+	fixed := c.now()
+	anyAudit(store)
+
+	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 2}, nil)
+	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
+		Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
+	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "c@d.com").Return(nil)
+	store.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
+
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-24*time.Hour)).Return(int64(0), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-resendMinInterval)).Return(int64(0), nil).Once()
+
+	inv1, prov1, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9)
+	require.NoError(t, err)
+	require.NotNil(t, inv1)
+	require.NotNil(t, prov1)
+
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-24*time.Hour)).Return(int64(1), nil).Once()
+	store.On("CountSetupTokensSince", ctx, SetupPurposeInvitationAccept, "c@d.com", fixed.Add(-resendMinInterval)).Return(int64(1), nil).Once()
+
+	inv2, prov2, err := c.InviteGlobalWithLink(ctx, "c@d.com", "", nil, 9)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "wait")
+	assert.Nil(t, prov2)
+	require.NotNil(t, inv2)
+	store.AssertNumberOfCalls(t, "CreateSetupToken", 1)
+}
+
+// Access-request approval grants a real role, so both the immediate and TTL-bound
+// grant branches must land in the RBAC audit trail with a structured RoleID — not
+// just the generic access_request.approved event (#298). Uses real storage so
+// ListRBACAuditLogs is exercised end to end.
+func TestApproveAccessRequestWithExpiry_IsRBACAudited(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	approver, err := st.CreateUser(ctx, &models.User{Username: "approver", Email: "approver@example.com", IsActive: true})
+	require.NoError(t, err)
+	// #93/#107/#141: the approver must themselves hold every permission of the
+	// role being granted — grant "admin" globally so the ceiling check's admin
+	// bypass applies.
+	adminRole, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
+	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
+	require.NoError(t, err)
+	req, err := st.CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: 1, UserID: requester.ID, SuggestedRole: "project_viewer", State: AccessRequestPending,
+	})
+	require.NoError(t, err)
+
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, 1, req.ID, approver.ID, "", 0)
+	require.NoError(t, err)
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var assigned *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned {
+			assigned = e
+		}
+	}
+	require.NotNil(t, assigned, "access-request approval grant must appear in the RBAC audit trail")
+	require.NotNil(t, assigned.ActorUserID)
+	assert.Equal(t, approver.ID, *assigned.ActorUserID)
+	require.NotNil(t, assigned.TargetUserID)
+	assert.Equal(t, requester.ID, *assigned.TargetUserID)
+
+	// Time-bound (TTL) grant branch is audited the same way.
+	req2, err := st.CreateAccessRequest(ctx, &models.AccessRequest{
+		ProjectID: 1, UserID: requester.ID, SuggestedRole: "project_developer", State: AccessRequestPending,
+	})
+	require.NoError(t, err)
+	_, err = c.ApproveAccessRequestWithExpiry(ctx, 1, req2.ID, approver.ID, "", time.Hour)
+	require.NoError(t, err)
+
+	entries, _, err = c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var count int
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned && e.TargetUserID != nil && *e.TargetUserID == requester.ID {
+			count++
+		}
+	}
+	assert.Equal(t, 2, count, "both the immediate and TTL-bound grants are RBAC-audited")
 }

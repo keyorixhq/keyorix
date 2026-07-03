@@ -19,6 +19,13 @@ const (
 	ControlStatusPass          ControlStatus = "pass"
 	ControlStatusGap           ControlStatus = "gap"
 	ControlStatusNotConfigured ControlStatus = "not_configured"
+	// ControlStatusUnknown marks a control whose underlying signal could not be
+	// collected this run (its posture sub-rollup query failed — see
+	// CompliancePosture.Degraded). #136: a failed collection must never silently
+	// read as "pass" just because the zero-value field it's evaluated from looks
+	// clean — an auditor relying on this matrix needs to see "unknown", not a false
+	// "pass".
+	ControlStatusUnknown ControlStatus = "unknown"
 )
 
 // FrameworkRefs maps a control to clauses across the regimes Keyorix targets.
@@ -49,6 +56,9 @@ type ControlsSummary struct {
 	Pass          int `json:"pass"`
 	Gap           int `json:"gap"`
 	NotConfigured int `json:"not_configured"`
+	// Unknown counts controls whose signal could not be collected this run (#136) —
+	// a non-zero value here means the matrix is incomplete, not fully passing.
+	Unknown int `json:"unknown"`
 }
 
 // ComplianceControls is the evaluated control matrix at a point in time.
@@ -75,9 +85,22 @@ func (c *KeyorixCore) GetComplianceControls(ctx context.Context) (*ComplianceCon
 			out.Summary.Gap++
 		case ControlStatusNotConfigured:
 			out.Summary.NotConfigured++
+		case ControlStatusUnknown:
+			out.Summary.Unknown++
 		}
 	}
 	return out, nil
+}
+
+// controlStatus evaluates a control's status, but overrides to ControlStatusUnknown
+// whenever `degraded` is true — i.e. whenever the posture sub-rollup(s) this control
+// depends on failed to collect this run (#136). `bad` (the ordinary gapIf input) is
+// only trusted when the underlying signal is known-good.
+func controlStatus(degraded, bad bool) ControlStatus {
+	if degraded {
+		return ControlStatusUnknown
+	}
+	return gapIf(bad)
 }
 
 // gapIf returns Gap when bad is true, else Pass — the common two-state evaluation.
@@ -96,61 +119,63 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 	return []ControlState{
 		{
 			ID: "audit-trail-integrity", Name: "Tamper-evident audit trail", Area: "Audit & accountability",
-			Status:     gapIf(!p.AuditIntegrity.ChainVerified),
+			Status:     controlStatus(p.DegradedArea("audit_integrity"), !p.AuditIntegrity.ChainVerified),
 			Detail:     fmt.Sprintf("chain verified=%t, checkpointed=%t, %d events", p.AuditIntegrity.ChainVerified, p.AuditIntegrity.Checkpointed, p.AuditIntegrity.ChainedEvents),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.28", "A.8.15"}, SOC2: []string{"CC7.2", "CC4.1"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}, ENS: []string{"op.exp.8", "op.exp.10"}},
 		},
 		{
 			ID: "access-recertification", Name: "Access recertification at planned intervals", Area: "Access governance",
-			Status:     gapIf(ag.ProjectsOverdue > 0 || ag.ProjectsNeverReviewed > 0),
+			Status:     controlStatus(p.DegradedArea("access_governance:campaigns:"), ag.ProjectsOverdue > 0 || ag.ProjectsNeverReviewed > 0),
 			Detail:     fmt.Sprintf("%d overdue, %d never reviewed, %d pending items", ag.ProjectsOverdue, ag.ProjectsNeverReviewed, ag.PendingItems),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18"}, SOC2: []string{"CC6.2", "CC6.3"}, NIS2: []string{"Art.21(2)(i)"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.4"}},
 		},
 		{
 			ID: "dormant-access", Name: "No dormant standing access", Area: "Access governance",
-			Status:     gapIf(ag.DormantRoleGrants > 0),
+			Status:     controlStatus(p.DegradedArea("dormant_role_grants:"), ag.DormantRoleGrants > 0),
 			Detail:     fmt.Sprintf("%d dormant role grant(s)", ag.DormantRoleGrants),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.18", "A.8.2"}, SOC2: []string{"CC6.1"}, ENS: []string{"op.acc.2", "op.acc.4"}},
 		},
 		{
 			ID: "separation-of-duties", Name: "Separation of duties (no toxic combinations)", Area: "Access governance",
-			Status:     gapIf(ag.SoDViolations > 0),
+			Status:     controlStatus(p.DegradedArea("sod_violations", "evidence:sod_violations"), ag.SoDViolations > 0),
 			Detail:     fmt.Sprintf("%d SoD violation(s)", ag.SoDViolations),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.3"}, SOC2: []string{"CC5.1"}, DORA: []string{"Art.5"}, ENS: []string{"op.acc.3"}},
 		},
 		{
 			ID: "second-factor", Name: "Second-factor coverage", Area: "Identity",
-			Status:     gapIf(p.Identity.SecondFactorPercent < 100),
+			Status:     controlStatus(p.DegradedArea("identity"), p.Identity.SecondFactorPercent < 100),
 			Detail:     fmt.Sprintf("%d%% of active users have a second factor", p.Identity.SecondFactorPercent),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.17", "A.8.5"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(j)"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.5", "op.acc.6"}},
 		},
 		{
 			ID: "secret-rotation", Name: "Secret-rotation hygiene", Area: "Cryptography",
-			Status:     gapIf(p.Rotation.Overdue > 0),
+			Status:     controlStatus(p.DegradedArea("rotation", "evidence:rotation_overdue"), p.Rotation.Overdue > 0),
 			Detail:     fmt.Sprintf("%d overdue, %d due soon of %d covered", p.Rotation.Overdue, p.Rotation.DueSoon, p.Rotation.CoveredSecrets),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
 		},
 		{
 			ID: "certificate-hygiene", Name: "Certificate expiry hygiene", Area: "Cryptography",
-			Status:     gapIf(p.Certificates.Expired > 0),
+			Status:     controlStatus(p.DegradedArea("certificates"), p.Certificates.Expired > 0),
 			Detail:     fmt.Sprintf("%d expired, %d expiring soon of %d certificate(s) (%d not yet evaluated)", p.Certificates.Expired, p.Certificates.ExpiringSoon, p.Certificates.TotalCertificates, p.Certificates.NotEvaluated),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
 		},
 		{
 			ID: "data-classification", Name: "Secret data classification", Area: "Asset management",
-			Status:     gapIf(p.Classification.Unclassified > 0),
+			Status:     controlStatus(p.DegradedArea("classification:"), p.Classification.Unclassified > 0),
 			Detail:     fmt.Sprintf("%d of %d secrets unclassified", p.Classification.Unclassified, p.Classification.TotalSecrets),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.12", "A.5.13"}, SOC2: []string{"CC3.2"}, ENS: []string{"mp.info.2"}},
 		},
 		{
 			ID: "anomaly-detection", Name: "Access-anomaly detection & response", Area: "Detection",
-			Status:     gapIf(p.Anomalies.HighSeverityOpen > 0),
+			Status:     controlStatus(p.DegradedArea("anomalies"), p.Anomalies.HighSeverityOpen > 0),
 			Detail:     fmt.Sprintf("%d open anomalies (%d high severity)", p.Anomalies.Unacknowledged, p.Anomalies.HighSeverityOpen),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.8.16"}, SOC2: []string{"CC7.2", "CC7.3"}, NIS2: []string{"Art.21(2)(b)"}, DORA: []string{"Art.10"}, ENS: []string{"op.mon.1", "op.exp.7"}},
 		},
 		{
 			ID: "emergency-access", Name: "Governed emergency (break-glass) access", Area: "Access governance",
-			Status:     ControlStatusPass, // presence of the register is the control; usage is informational
+			// presence of the register is the control; usage is informational — but a
+			// failed collection still needs to surface as unknown, not a default Pass.
+			Status:     controlStatus(p.DegradedArea("emergency_access:", "evidence:break_glass:"), false),
 			Detail:     fmt.Sprintf("%d active, %d total activations (all audited)", p.EmergencyAccess.ActiveActivations, p.EmergencyAccess.TotalActivations),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15"}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{"op.acc.4", "op.exp.7"}},
 		},
@@ -162,8 +187,11 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 		},
 		{
 			ID: "legal-hold", Name: "Litigation/investigation legal hold", Area: "Data governance",
-			Status:     ControlStatusPass, // capability present; active state is informational
-			Detail:     legalHoldDetail(p.LegalHold),
+			// capability present; active state is informational — but #136's worst
+			// instance is exactly here: a failed query previously read byte-identical
+			// to "no hold", so a degraded collection must surface as unknown instead.
+			Status:     controlStatus(p.DegradedArea("legal_hold"), false),
+			Detail:     legalHoldDetail(p, p.DegradedArea("legal_hold")),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.34"}, DORA: []string{"Art.12"}, ENS: []string{"mp.info.6"}},
 		},
 		{
@@ -207,9 +235,16 @@ func retentionDetail(r RetentionPosture) string {
 		r.AnomalyAlertsDays, r.ClosedAccessReviewsDays, r.BreakGlassDays, r.ResolvedAccessRequestsDays)
 }
 
-func legalHoldDetail(h LegalHoldPosture) string {
-	if h.Active {
-		return fmt.Sprintf("ACTIVE — purges blocked (%s)", h.Reason)
+// legalHoldDetail describes the legal-hold state. When degraded is true, the
+// underlying query failed this run — #136: LegalHold.Active=false is then the
+// query's zero-value fallback, NOT a verified "no hold in effect", so the detail
+// must say so explicitly rather than implying "none currently active".
+func legalHoldDetail(p *CompliancePosture, degraded bool) string {
+	if degraded {
+		return "UNKNOWN — legal-hold status could not be verified this run (query failed); do not treat as inactive"
+	}
+	if p.LegalHold.Active {
+		return fmt.Sprintf("ACTIVE — purges blocked (%s)", p.LegalHold.Reason)
 	}
 	return "available; none currently active"
 }

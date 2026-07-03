@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -371,6 +372,121 @@ func TestRunAutoRotation_GenerateUpstreamFailureNotStored(t *testing.T) {
 	assert.Equal(t, 1, latestVersion(t, db, 1).VersionNumber)
 }
 
+// failingProjectSecretsStore wraps LocalStorage and fails ListSecrets only for
+// filter.ProjectID == failProject, simulating a transient storage error scoped to
+// exactly one rotation policy's scope while a sibling project's policy still succeeds.
+type failingProjectSecretsStore struct {
+	*store.LocalStorage
+	failProject uint
+}
+
+func (s *failingProjectSecretsStore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
+	if filter.ProjectID != nil && *filter.ProjectID == s.failProject {
+		return nil, 0, errors.New("simulated storage failure")
+	}
+	return s.LocalStorage.ListSecrets(ctx, filter)
+}
+
+// #364: before the fix, a scopedPolicySecrets failure for one policy silently skipped
+// every auto-rotate-enabled, possibly critically-overdue secret in its scope with ZERO
+// operator-visible trace — contrast the dependency-list error a few lines later in the
+// same function, which already logged and degraded gracefully. This pins that (a) a
+// healthy policy's overdue secret still rotates (the run doesn't abort), and (b) the
+// failure is now logged, unlike before.
+func TestRunAutoRotation_LogsAndContinuesOnScopedSecretsError(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
+	))
+	fixed := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "healthy-proj"}).Error)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "broken-proj"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "prod"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "prod"}).Error)
+	pid1, pid2 := uint(1), uint(2)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "healthy-policy", Scope: "project", ProjectID: &pid1, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 2, Name: "broken-policy", Scope: "project", ProjectID: &pid2, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 1, Name: "due-healthy", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active",
+		AutoRotate: true, LastRotatedAt: timePtr(fixed.Add(-60 * 24 * time.Hour)), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	// A due, auto-rotate-enabled secret under the BROKEN policy's scope — this must be
+	// skipped (its ListSecrets call errors before this row is ever seen), never rotated.
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 2, Name: "due-broken", ProjectID: 2, EnvironmentID: 2, IsSecret: true, Status: "active",
+		AutoRotate: true, LastRotatedAt: timePtr(fixed.Add(-90 * 24 * time.Hour)), CreatedAt: fixed.Add(-90 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 2, VersionNumber: 1, EncryptedValue: []byte("orig"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-90 * 24 * time.Hour),
+	}).Error)
+
+	c := &KeyorixCore{storage: &failingProjectSecretsStore{LocalStorage: store.NewLocalStorage(db), failProject: pid2}}
+	c.now = func() time.Time { return fixed }
+
+	var n int
+	logged := captureLog(t, func() {
+		n, err = c.RunAutoRotation(context.Background())
+	})
+	require.NoError(t, err, "a single policy's scope-listing failure must not abort the whole run")
+	assert.Equal(t, 1, n, "the healthy policy's due secret still rotates")
+	assert.Equal(t, 1, latestVersion(t, db, 2).VersionNumber, "the secret under the broken policy's scope was never even considered, so it's untouched")
+
+	assert.Contains(t, logged, "broken-policy", "the failing policy's name must appear in the operator-visible log line")
+	assert.Contains(t, logged, "simulated storage failure")
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
+
+// #194: a generate-upstream backend whose old-credential delete failed must NOT be
+// reported as a clean, unconditional success. The new credential is minted upstream
+// (often returned only once, e.g. a cloud key API), so RunAutoRotation MUST still
+// store it — but the run has to surface the leftover credential as a distinct,
+// operator-visible partial-failure signal rather than a normal "auto-rotated" line,
+// so it's neither silently swallowed nor lost from the audit trail. This exercises
+// the orchestration layer (rotateOneSecret's PartialRotationError branch); the
+// per-backend executors (AWS IAM/Azure AD/GCP SA) that construct PartialRotationError
+// are covered individually in internal/rotation/*_test.go.
+func TestRunAutoRotation_GenerateUpstreamPartialDelete_StoresButFlagsIncomplete(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	newCred := `{"access_key_id":"AKIANEW","secret_access_key":"s3cr3t"}`
+	fake := &fakeGenExecutor{name: "cloud", err: &rotation.PartialRotationError{
+		Value: newCred,
+		Err:   errors.New("aws-iam: rotated \"svc-app\" but failed to delete prior access key(s) [AKIAOLD] (the old credential is still live and must be removed manually): AccessDenied"),
+	}}
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-60*24*time.Hour))
+
+	n, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+	// The new credential IS stored (it must not be discarded/orphaned)...
+	require.Equal(t, 1, n, "the new credential is still stored despite the incomplete cleanup")
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber)
+	assert.Equal(t, newCred, string(v.EncryptedValue))
+
+	// ...but the run must NOT report this as a clean, indistinguishable success: exactly
+	// one auto-rotation audit event, and it must flag the leftover credential distinctly.
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretAutoRotated).Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0].Description, "INCOMPLETE", "a surviving old credential must be a distinct signal, not a silent success")
+	assert.Contains(t, events[0].Description, "AKIAOLD", "the audit trail must name the leftover credential for operator cleanup")
+	assert.NotContains(t, events[0].Description, "auto-rotated secret", "must not read as the normal clean-success line")
+}
+
 // A rotation failure broadcasts a single summary notification (fakeSink is defined in
 // notification_dispatch_test.go).
 func TestRunAutoRotation_NotifiesFailures(t *testing.T) {
@@ -404,6 +520,80 @@ func TestRunAutoRotation_NoFailuresNoNotify(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, sink.events)
 }
+
+// #391 bonus fix: failures in different projects must broadcast as separate,
+// project-scoped notifications — never bundled into one cross-project message.
+func TestRunAutoRotation_FailuresNotBundledAcrossProjects(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	require.NoError(t, db.Create(&models.Project{ID: 2, Name: "proj-2"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 2, Name: "prod"}).Error)
+
+	pid1, pid2 := uint(1), uint(2)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 1, Name: "30-day", Scope: "project", ProjectID: &pid1, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+	require.NoError(t, db.Create(&models.RotationPolicy{
+		ID: 2, Name: "30-day", Scope: "project", ProjectID: &pid2, IntervalDays: 30, IsActive: true, CreatedBy: "admin",
+	}).Error)
+
+	failA := &fakeExecutor{name: "backend-a", err: errors.New("connection refused")}
+	failB := &fakeExecutor{name: "backend-b", err: errors.New("auth denied")}
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{failA, failB}))
+
+	// Project 1's secret fails via backend-a; project 2's (unrelated) secret fails via
+	// backend-b. Their names/reasons must never land in the same broadcast message.
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 1, Name: "proj1-db-password", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active",
+		AutoRotate: true, RotationBackend: "backend-a", RotationRef: "ref-a",
+		LastRotatedAt: ptrTime(fixed.Add(-60 * 24 * time.Hour)), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 1, VersionNumber: 1, EncryptedValue: []byte("orig1"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 2, Name: "proj2-api-key", ProjectID: 2, EnvironmentID: 2, IsSecret: true, Status: "active",
+		AutoRotate: true, RotationBackend: "backend-b", RotationRef: "ref-b",
+		LastRotatedAt: ptrTime(fixed.Add(-60 * 24 * time.Hour)), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{
+		SecretNodeID: 2, VersionNumber: 1, EncryptedValue: []byte("orig2"), EncryptionMetadata: []byte("{}"), CreatedAt: fixed.Add(-60 * 24 * time.Hour),
+	}).Error)
+
+	sink := &fakeSink{}
+	c.SetNotificationSink(sink)
+
+	_, err := c.RunAutoRotation(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, sink.events, 2, "one broadcast per project, never a single bundled message")
+	for _, ev := range sink.events {
+		assert.Equal(t, "rotation.failed", ev.Type)
+		require.NotNil(t, ev.ProjectID)
+		switch *ev.ProjectID {
+		case 1:
+			assert.Contains(t, ev.Message, "proj1-db-password")
+			assert.Contains(t, ev.Message, "connection refused")
+			assert.NotContains(t, ev.Message, "proj2-api-key", "project 1's broadcast must not name project 2's secret")
+			assert.NotContains(t, ev.Message, "auth denied", "project 1's broadcast must not carry project 2's failure reason")
+		case 2:
+			assert.Contains(t, ev.Message, "proj2-api-key")
+			assert.Contains(t, ev.Message, "auth denied")
+			assert.NotContains(t, ev.Message, "proj1-db-password", "project 2's broadcast must not name project 1's secret")
+			assert.NotContains(t, ev.Message, "connection refused", "project 2's broadcast must not carry project 1's failure reason")
+		default:
+			t.Fatalf("unexpected project ID %d", *ev.ProjectID)
+		}
+	}
+
+	// The audit trail still records one run-level summary (aggregate count only — no
+	// secret names/reasons, so bundling it is not itself a leak).
+	var auditEvents []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventAutoRotationFailures).Find(&auditEvents).Error)
+	require.Len(t, auditEvents, 1)
+	assert.Contains(t, auditEvents[0].Description, "2 secret")
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
 
 // rotationDriftStore wraps LocalStorage and fails UpdateSecret, so RotateSecret errors AFTER
 // the backend executor has already applied the new credential upstream — the split-brain /
@@ -439,4 +629,142 @@ func TestRunAutoRotation_BackendSucceedsStoreFails_AuditsDrift(t *testing.T) {
 	require.Len(t, events, 1)
 	assert.Contains(t, events[0].Description, "DRIFT", "the backend-succeeded-store-failed case must be audited as drift")
 	assert.Contains(t, events[0].Description, "app_svc", "the audit must name the upstream ref to reconcile")
+}
+
+// ── #193: RotateSecretOnDemand — the manual/operator rotation path must actually drive
+// backend rotation for a backend-bound secret, never silently store an arbitrary
+// caller-supplied value while leaving the real upstream credential untouched. ──
+
+// fakePartialGenExecutor is a generate-upstream backend whose GenerateUpstream can
+// return a rotation.PartialRotationError: the new credential is minted upstream but a
+// follow-up cleanup step (deleting the prior one) fails — the new value must still be
+// stored (never orphan a freshly minted, untracked credential).
+type fakePartialGenExecutor struct {
+	name    string
+	value   string
+	partial bool
+	gotRef  string
+}
+
+func (f *fakePartialGenExecutor) Name() string { return f.name }
+func (f *fakePartialGenExecutor) Type() string { return "fakepartial" }
+func (f *fakePartialGenExecutor) Rotate(context.Context, string, string) error {
+	return errors.New("use GenerateUpstream")
+}
+func (f *fakePartialGenExecutor) GenerateUpstream(_ context.Context, ref string) (string, error) {
+	f.gotRef = ref
+	if f.partial {
+		return "", &rotation.PartialRotationError{Value: f.value, Err: errors.New("could not delete prior key")}
+	}
+	return f.value, nil
+}
+
+// A secret with no configured rotation backend rotates exactly as before: the
+// caller-supplied value is stored verbatim.
+func TestRotateSecretOnDemand_NoBackendStoresCallerValue(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "plain", false, fixed.Add(-24*time.Hour))
+
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("caller-value"), "alice")
+	require.NoError(t, err)
+	assert.NotNil(t, updated.LastRotatedAt)
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, "caller-value", string(v.EncryptedValue))
+}
+
+// The core #193 regression: a manual on-demand rotate of a backend-bound secret must
+// actually invoke the backend rotation executor (not just overwrite the stored value),
+// and the value stored in Keyorix is the one the backend applied/confirmed.
+func TestRotateSecretOnDemand_AppliesBackend(t *testing.T) {
+	fake := &fakeExecutor{name: "pg"}
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
+
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("operator-supplied"), "alice")
+	require.NoError(t, err)
+
+	require.True(t, fake.called, "the manual rotate must actually invoke the backend executor")
+	assert.Equal(t, "app_svc", fake.gotRef)
+	assert.Equal(t, "operator-supplied", fake.gotVal, "the caller's candidate is what gets applied upstream")
+
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber)
+	assert.Equal(t, fake.gotVal, string(v.EncryptedValue), "the stored value matches what was actually applied upstream")
+	assert.NotNil(t, updated.LastRotatedAt)
+}
+
+// For a generate-upstream backend the caller's candidate is ignored — the stored value
+// is what the upstream minted, matching automated-rotation semantics.
+func TestRotateSecretOnDemand_GenerateUpstreamIgnoresCandidate(t *testing.T) {
+	fake := &fakePartialGenExecutor{name: "cloud", value: `{"access_key_id":"AKIANEW"}`}
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-24*time.Hour))
+
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("ignored-candidate"), "alice")
+	require.NoError(t, err)
+	assert.Equal(t, "svc-app", fake.gotRef)
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, fake.value, string(v.EncryptedValue))
+}
+
+// If the upstream rotation fails outright, nothing is stored — the response must never
+// be a misleading "success" while the suspected-compromised credential is untouched.
+func TestRotateSecretOnDemand_BackendFailureRefused(t *testing.T) {
+	fake := &fakeExecutor{name: "pg", err: errors.New("connection refused")}
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
+
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("operator-supplied"), "alice")
+	require.Error(t, err, "an upstream rotation failure must never look like success")
+	assert.Contains(t, err.Error(), "backend")
+	assert.Contains(t, err.Error(), "NOT rotated")
+
+	require.True(t, fake.called)
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 1, v.VersionNumber, "no new value is stored when the upstream apply fails")
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretRotateFailed).Find(&events).Error)
+	require.Len(t, events, 1, "the failure is audited distinctly")
+	assert.Contains(t, events[0].Description, "app_svc")
+}
+
+// A partial upstream failure (new credential minted, prior one could not be removed)
+// still stores the new value — discarding it would orphan a live, untracked credential —
+// but the call still returns an error so the caller is never told "success" while a
+// leftover credential needs manual removal.
+func TestRotateSecretOnDemand_PartialFailureStoresButErrors(t *testing.T) {
+	fake := &fakePartialGenExecutor{name: "cloud", value: `{"access_key_id":"AKIANEW"}`, partial: true}
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{fake}))
+	seedBackendSecret(t, db, 1, "cloud", "svc-app", fixed.Add(-24*time.Hour))
+
+	updated, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("ignored"), "alice")
+	require.Error(t, err, "a partial upstream cleanup failure must not report success")
+	assert.NotNil(t, updated, "the new value is still returned/stored — never orphan a freshly minted credential")
+
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 2, v.VersionNumber)
+	assert.Equal(t, fake.value, string(v.EncryptedValue), "the newly minted credential is stored despite the partial failure")
+
+	var events []models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", EventSecretRotateIncomplete).Find(&events).Error)
+	require.Len(t, events, 1, "the partial outcome is audited distinctly from both success and outright failure")
+}
+
+// An unknown backend name (misconfigured after a manager reload) is refused, not
+// silently treated as a plain Keyorix-only rotation.
+func TestRotateSecretOnDemand_UnknownBackendRefused(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "other"}}))
+	seedBackendSecret(t, db, 1, "pg", "app_svc", fixed.Add(-24*time.Hour))
+
+	_, err := c.RotateSecretOnDemand(context.Background(), 1, []byte("x"), "alice")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown rotation backend")
+	v := latestVersion(t, db, 1)
+	assert.Equal(t, 1, v.VersionNumber, "nothing is stored for an unresolvable backend")
 }

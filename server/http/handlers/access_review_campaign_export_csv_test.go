@@ -66,6 +66,36 @@ func TestExportAccessReviewCampaignCSV(t *testing.T) {
 		assert.Contains(t, body, "auditor", "decider username is resolved")
 	})
 
+	t.Run("neutralizes formula-injection payloads in attacker/reviewer-controlled fields", func(t *testing.T) {
+		require.NoError(t, db.Create(&models.AccessReviewCampaign{
+			ID: 6, ProjectID: 1, Name: "Q1 2027", State: "closed", CreatedBy: 1, CreatedAt: time.Now(),
+		}).Error)
+		require.NoError(t, db.Create(&models.AccessReviewItem{
+			ID: 3, CampaignID: 6, PrincipalType: "user", PrincipalID: 12,
+			PrincipalName: "=1+1", Email: "+cmd|calc!A0",
+			Source: "role", RoleName: "@SUM(A1:A9)", AccessLevel: "-2+3", EnvironmentID: 2,
+			SecretName: "=HYPERLINK(http://evil)", Decision: "revoked",
+			Reason: "+cmd|calc!A0", DecidedBy: 1, DecidedAt: &decided,
+		}).Error)
+
+		req := withChiParams(withUserCtx(httptest.NewRequest(http.MethodGet,
+			"/api/v1/projects/1/access-review/campaigns/6/export.csv", nil)),
+			map[string]string{"id": "1", "campaignId": "6"})
+		w := httptest.NewRecorder()
+		h.ExportAccessReviewCampaignCSV(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, "'=1+1")
+		assert.Contains(t, body, "'+cmd|calc!A0")
+		assert.Contains(t, body, "'@SUM(A1:A9)")
+		assert.Contains(t, body, "'-2+3")
+		assert.Contains(t, body, "'=HYPERLINK(http://evil)")
+		// Every raw (unescaped) payload must not appear on its own — only prefixed.
+		assert.NotContains(t, body, "\n=1+1")
+		assert.NotContains(t, body, ",=1+1")
+	})
+
 	t.Run("requires a user context", func(t *testing.T) {
 		req := withChiParams(httptest.NewRequest(http.MethodGet,
 			"/api/v1/projects/1/access-review/campaigns/5/export.csv", nil),

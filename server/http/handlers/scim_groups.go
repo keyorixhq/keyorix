@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -76,7 +77,8 @@ var scimGroupNameFilter = regexp.MustCompile(`(?i)displayName\s+eq\s+"([^"]+)"`)
 func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	groups, err := h.coreService.ListGroups(r.Context())
 	if err != nil {
-		scimError(w, http.StatusInternalServerError, err.Error())
+		log.Printf("Error listing SCIM groups: %v", err)
+		scimError(w, http.StatusInternalServerError, clientSafe(err))
 		return
 	}
 	var wantName string
