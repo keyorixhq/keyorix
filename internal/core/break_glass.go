@@ -13,6 +13,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -201,16 +202,28 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, projectID, 
 	if activation.State != BreakGlassActive {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active")
 	}
-	// Remove the grant early. If it already auto-expired the row is gone — ignore
-	// that error and still reconcile the record.
+	// Remove the grant early. A benign "the row is already gone" case (it already
+	// auto-expired, or a racing revoke already removed it — see the conditional
+	// state transition below) is not an error: proceed to reconcile the record. A
+	// genuine storage failure, however, must abort the revoke here — proceeding to
+	// mark the record "revoked" while the removal itself failed would leave the
+	// emergency role grant LIVE in user_roles (the table RBAC actually reads) but
+	// reported as revoked everywhere else (API response, audit trail).
 	scope := storage.Scope{ProjectID: projectID}
-	_ = c.RemoveUserRole(ctx, actorID, activation.UserID, activation.RoleID, scope)
+	if err := c.RemoveUserRole(ctx, actorID, activation.UserID, activation.RoleID, scope); err != nil && !errors.Is(err, storage.ErrRoleNotAssigned) {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
 
+	// Conditional UPDATE (WHERE state = active), not a read-modify-write: the initial
+	// state check above is only a fast-path convenience, not the enforcement — two
+	// concurrent revokes of the same activation can both pass it. Only the first
+	// concurrent caller's conditional update actually transitions state; the second
+	// gets ErrBreakGlassNotActive instead of silently overwriting RevokedBy/RevokedAt.
 	now := c.now()
-	activation.State = BreakGlassRevoked
-	activation.RevokedBy = actorID
-	activation.RevokedAt = &now
-	if err := c.storage.UpdateBreakGlassActivation(ctx, activation); err != nil {
+	if err := c.storage.RevokeBreakGlassActivation(ctx, activation.ID, actorID, now); err != nil {
+		if errors.Is(err, storage.ErrBreakGlassNotActive) {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active")
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.auditProjectScoped(ctx, EventBreakGlassRevoked, actorID, projectID,

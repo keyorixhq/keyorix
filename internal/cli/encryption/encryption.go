@@ -66,6 +66,13 @@ func init() {
 	EncryptionCmd.AddCommand(rotateCmd)
 	EncryptionCmd.AddCommand(validateCmd)
 	EncryptionCmd.AddCommand(fixPermsCmd)
+	// AuthEncryptionCmd (status/enable/rotate/migrate/validate for the
+	// authentication-data encryption subsystem — API client secrets, session
+	// tokens, API tokens, password reset tokens) is defined in auth_encryption.go
+	// but was never wired into the tree, leaving it dead code (#292). It is
+	// distinct from the DEK-rotation `rotate`/`validate` above, which operate on
+	// secret VALUES, not auth credentials.
+	EncryptionCmd.AddCommand(AuthEncryptionCmd)
 
 	rotateCmd.Flags().BoolVar(&rotateConfirm, "confirm", false,
 		"required acknowledgement that the database will be write-locked during the sweep")

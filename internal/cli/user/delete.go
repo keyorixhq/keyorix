@@ -15,6 +15,7 @@ import (
 var (
 	deleteUserID uint
 	deleteForce  bool
+	deleteBy     string
 )
 
 var deleteCmd = &cobra.Command{
@@ -26,11 +27,17 @@ var deleteCmd = &cobra.Command{
 func init() {
 	deleteCmd.Flags().UintVar(&deleteUserID, "id", 0, "User ID (required)")
 	deleteCmd.Flags().BoolVar(&deleteForce, "force", false, "Skip the confirmation prompt")
+	deleteCmd.Flags().StringVar(&deleteBy, "by", "", "Acting admin email (required, for audit)")
+	_ = deleteCmd.MarkFlagRequired("id")
+	_ = deleteCmd.MarkFlagRequired("by")
 }
 
 func runDelete(cmd *cobra.Command, args []string) error {
 	if deleteUserID == 0 {
 		return errors.New("user id is required (use --id)")
+	}
+	if deleteBy == "" {
+		return errors.New("acting admin email is required (use --by)")
 	}
 
 	service, err := common.InitializeCoreService()
@@ -38,6 +45,11 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
+
+	adminID, err := resolveAdminID(ctx, service, deleteBy)
+	if err != nil {
+		return err
+	}
 
 	// Deleting a user is irreversible, so require an explicit confirmation unless
 	// the caller opted out with --force (e.g. for scripted/CI use).
@@ -52,7 +64,7 @@ func runDelete(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := service.DeleteUser(ctx, deleteUserID); err != nil {
+	if err := service.DeleteUser(ctx, adminID, deleteUserID); err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
 	fmt.Printf("User %d deleted.\n", deleteUserID)

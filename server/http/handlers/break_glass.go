@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -49,6 +50,9 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 		case strings.Contains(msg, "required") || strings.Contains(msg, "ttl must") ||
 			strings.Contains(msg, "no emergency role") || strings.Contains(msg, "not found"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error activating break-glass for project %d: %v", id, err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return
@@ -66,7 +70,8 @@ func (h *CatalogHandler) ListBreakGlassActivations(w http.ResponseWriter, r *htt
 	}
 	activations, err := h.coreService.ListBreakGlassActivations(r.Context(), uint(id))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing break-glass activations for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"activations": activations, "count": len(activations)}, "")
@@ -97,6 +102,9 @@ func (h *CatalogHandler) RevokeBreakGlass(w http.ResponseWriter, r *http.Request
 			status = http.StatusNotFound
 		case strings.Contains(msg, "not active") || strings.Contains(msg, "required"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error revoking break-glass activation %d for project %d: %v", activationID, id, err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return

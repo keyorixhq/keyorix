@@ -139,7 +139,7 @@ func generateConfigFile() error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	if err := securefiles.SecureWriteFile(".", configPath, templateData, 0600); err != nil {
+	if err := securefiles.SecureWriteFileSync(".", configPath, templateData, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

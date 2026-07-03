@@ -1,6 +1,7 @@
 // deployment_hygiene.go — DeploymentHygiene handler: the install-wide hygiene rollup
 // (per-project posture summed across every project, plus a breakdown of the projects
-// that carry debt). Counts only. Deployment-wide system.read is enforced by the router.
+// that carry debt). Counts only, but names every project deployment-wide. Deployment-
+// wide audit.read is enforced by the router (not the universal system_viewer baseline).
 package handlers
 
 import (

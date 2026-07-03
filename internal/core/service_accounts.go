@@ -10,6 +10,27 @@
 //	GET    /{clientId}/tokens           — List tokens for a service account
 //	POST   /{clientId}/tokens           — Create token (returns plain token once)
 //	DELETE /{clientId}/tokens/{tokenId} — Revoke token
+//
+// Credential storage (#278): CreateServiceAccount/CreateServiceToken persist only the
+// SHA-256 hash of the client secret/token (models.APIClient.ClientSecret /
+// models.APIToken.Token), never the plaintext, matching PAT/session/machine-token
+// handling — a DB-only read (backup, replica, injection, insider) yields no usable
+// credential. This column was reused in place rather than routed through
+// AuthEncryption's reversible Encrypted* columns (those are legacy/unused for this
+// model): a one-way hash is strictly stronger, since it stays safe even against an
+// attacker who also holds the DEK. Caveat for deployments that upgraded across this
+// fix: a row's ClientSecret/Token column has always been a 64-hex-char value (the
+// stored secret pre-fix, its hash post-fix) with no schema-level marker distinguishing
+// the two, so a stored value cannot be programmatically classified as "still
+// plaintext" after the fact — hashing an unknown-provenance value risks silently
+// double-hashing an already-safe row. Deployments upgrading from a pre-fix build
+// should revoke and reissue every service-account credential created before the
+// upgrade (compare APIClient.CreatedAt/APIToken.CreatedAt against the upgrade
+// timestamp) rather than rely on an automated in-place migration.
+//
+// Audit trail (#279): every lifecycle transition below (account create/update/revoke,
+// token create/revoke) calls the matching LogServiceAccount*/LogServiceToken*
+// helper (audit.go) so it surfaces in the general audit log.
 package core
 
 import (
@@ -56,8 +77,10 @@ type CreateServiceTokenResult struct {
 }
 
 // CreateServiceAccount generates a new service account with a random client ID and secret.
-// The plain secret is returned only in the result and never stored retrievably.
-func (c *KeyorixCore) CreateServiceAccount(ctx context.Context, req *CreateServiceAccountRequest) (*CreateServiceAccountResult, error) {
+// The plain secret is returned only in the result and never stored retrievably. actorID
+// is the admin creating the account (0 = no authenticated principal, e.g. local CLI);
+// the creation is audited (#279).
+func (c *KeyorixCore) CreateServiceAccount(ctx context.Context, actorID uint, req *CreateServiceAccountRequest) (*CreateServiceAccountResult, error) {
 	clientID, err := generateClientID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate client ID: %w", err)
@@ -83,6 +106,7 @@ func (c *KeyorixCore) CreateServiceAccount(ctx context.Context, req *CreateServi
 	if err != nil {
 		return nil, fmt.Errorf("failed to create service account: %w", err)
 	}
+	c.LogServiceAccountCreated(ctx, actorID, created.ClientID, created.Name)
 	return &CreateServiceAccountResult{APIClient: created, PlainClientSecret: secret}, nil
 }
 
@@ -104,8 +128,9 @@ func (c *KeyorixCore) ListServiceAccounts(ctx context.Context) ([]*models.APICli
 	return clients, nil
 }
 
-// UpdateServiceAccount applies name/description/scopes/is_active changes to a service account.
-func (c *KeyorixCore) UpdateServiceAccount(ctx context.Context, clientID string, req *UpdateServiceAccountRequest) (*models.APIClient, error) {
+// UpdateServiceAccount applies name/description/scopes/is_active changes to a service
+// account. actorID is the admin making the change; the update is audited (#279).
+func (c *KeyorixCore) UpdateServiceAccount(ctx context.Context, actorID uint, clientID string, req *UpdateServiceAccountRequest) (*models.APIClient, error) {
 	client, err := c.storage.GetAPIClient(ctx, clientID)
 	if err != nil {
 		return nil, fmt.Errorf("service account not found")
@@ -120,23 +145,28 @@ func (c *KeyorixCore) UpdateServiceAccount(ctx context.Context, clientID string,
 	if err != nil {
 		return nil, fmt.Errorf("failed to update service account: %w", err)
 	}
+	c.LogServiceAccountUpdated(ctx, actorID, updated.ClientID, updated.Name)
 	return updated, nil
 }
 
-// RevokeServiceAccount marks the service account as inactive (soft revoke).
-func (c *KeyorixCore) RevokeServiceAccount(ctx context.Context, clientID string) error {
-	if _, err := c.storage.GetAPIClient(ctx, clientID); err != nil {
+// RevokeServiceAccount marks the service account as inactive (soft revoke). actorID is
+// the admin revoking the account; the revocation is audited (#279).
+func (c *KeyorixCore) RevokeServiceAccount(ctx context.Context, actorID uint, clientID string) error {
+	client, err := c.storage.GetAPIClient(ctx, clientID)
+	if err != nil {
 		return fmt.Errorf("service account not found")
 	}
 	if err := c.storage.RevokeAPIClient(ctx, clientID); err != nil {
 		return fmt.Errorf("failed to revoke service account: %w", err)
 	}
+	c.LogServiceAccountRevoked(ctx, actorID, client.ClientID, client.Name)
 	return nil
 }
 
 // CreateServiceToken generates a new API token for the given service account.
-// The plain token is returned only in the result and never stored retrievably.
-func (c *KeyorixCore) CreateServiceToken(ctx context.Context, clientID string, req *CreateServiceTokenRequest) (*CreateServiceTokenResult, error) {
+// The plain token is returned only in the result and never stored retrievably. actorID
+// is the admin creating the token; the creation is audited (#279).
+func (c *KeyorixCore) CreateServiceToken(ctx context.Context, actorID uint, clientID string, req *CreateServiceTokenRequest) (*CreateServiceTokenResult, error) {
 	client, err := c.storage.GetAPIClient(ctx, clientID)
 	if err != nil {
 		return nil, fmt.Errorf("service account not found")
@@ -165,6 +195,7 @@ func (c *KeyorixCore) CreateServiceToken(ctx context.Context, clientID string, r
 	if err != nil {
 		return nil, fmt.Errorf("failed to create API token: %w", err)
 	}
+	c.LogServiceTokenCreated(ctx, actorID, created.ID, client.ID)
 	return &CreateServiceTokenResult{APIToken: created, PlainToken: plainToken}, nil
 }
 
@@ -190,14 +221,17 @@ func (c *KeyorixCore) ListServiceTokens(ctx context.Context, clientID string) ([
 	return tokens, nil
 }
 
-// RevokeServiceToken marks an API token as revoked.
-func (c *KeyorixCore) RevokeServiceToken(ctx context.Context, id uint) error {
-	if _, err := c.storage.GetAPIToken(ctx, id); err != nil {
+// RevokeServiceToken marks an API token as revoked. actorID is the admin revoking the
+// token; the revocation is audited (#279).
+func (c *KeyorixCore) RevokeServiceToken(ctx context.Context, actorID, id uint) error {
+	tok, err := c.storage.GetAPIToken(ctx, id)
+	if err != nil {
 		return fmt.Errorf("token not found")
 	}
 	if err := c.storage.RevokeAPIToken(ctx, id); err != nil {
 		return fmt.Errorf("failed to revoke token: %w", err)
 	}
+	c.LogServiceTokenRevoked(ctx, actorID, tok.ID, tok.ClientID)
 	return nil
 }
 

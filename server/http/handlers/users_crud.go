@@ -288,7 +288,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.DeleteUser(r.Context(), uint(id)); err != nil {
+	if err := h.coreService.DeleteUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		log.Printf("Error deleting user: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
