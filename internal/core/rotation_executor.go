@@ -24,6 +24,16 @@ import (
 // EventAutoRotationFailures is audited once per run when one or more secrets failed.
 const EventAutoRotationFailures = "rotation.failures_alerted"
 
+// EventSecretRotateFailed and EventSecretRotateIncomplete are audited by
+// RotateSecretOnDemand (#193) when a manual/operator-triggered rotation of a
+// backend-bound secret fails outright, or partially completes (new credential minted
+// but a prior one survived upstream), respectively — distinct from the plain
+// "secret.rotated" success event so an operator can find and act on them.
+const (
+	EventSecretRotateFailed     = "secret.rotate_failed"
+	EventSecretRotateIncomplete = "secret.rotate_incomplete"
+)
+
 // notifyRotationFailures broadcasts a single summary of ONE project's rotation
 // failures to the configured deployment-wide notification channel (Slack/Teams/
 // webhook/email) — a silently-failed credential rotation is a security event
@@ -425,6 +435,65 @@ func (c *KeyorixCore) applyBackendRotation(ctx context.Context, secret *models.S
 		return "", err
 	}
 	return candidate, nil
+}
+
+// RotateSecretOnDemand handles a manual/operator-triggered rotation request (e.g. the
+// POST /secrets/{id}/rotate API) with the same backend awareness as the auto-rotation
+// scheduler (#193): if the secret is bound to a configured rotation backend (ADR-047),
+// the upstream credential is rotated FIRST via applyBackendRotation — the exact machinery
+// rotateOneSecret uses — and the value actually stored in Keyorix is the one the backend
+// produced/confirmed, never an arbitrary caller-supplied value that could silently drift
+// from what's live upstream. Previously this path stored the caller's value verbatim,
+// left the real (possibly suspected-compromised) upstream credential fully untouched, and
+// still reported "rotated successfully" — an actively misleading incident-response tool.
+//
+// newValue is used as the candidate applied upstream for a password-SET backend; for a
+// generate-upstream backend (e.g. a cloud key API) it is ignored — the upstream mints its
+// own value, matching automated-rotation semantics. A secret with no configured backend
+// rotates exactly as before (delegates straight to RotateSecret).
+//
+// If the upstream rotation fails outright, nothing is stored and an error is returned —
+// the caller must never be told "success" while the suspected-compromised credential is
+// still live and untouched. If it only partially completes (a new credential was minted
+// but a prior one could not be removed upstream — rotation.PartialRotationError), the new
+// value is still stored (never orphan a freshly minted credential — a cloud key API often
+// returns key material only once) but an error is still returned, so the HTTP response is
+// never a clean "success" while a leftover credential needs manual operator removal; the
+// audit trail records the partial state distinctly either way.
+func (c *KeyorixCore) RotateSecretOnDemand(ctx context.Context, id uint, newValue []byte, rotatedBy string) (*models.SecretNode, error) {
+	secret, err := c.storage.GetSecret(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("secret not found: %w", err)
+	}
+	if secret.RotationBackend == "" {
+		return c.RotateSecret(ctx, id, newValue, rotatedBy)
+	}
+
+	upstreamVal, berr := c.applyBackendRotation(ctx, secret, string(newValue))
+	var partial *rotation.PartialRotationError
+	switch {
+	case errors.As(berr, &partial):
+		// The upstream minted the new credential but a prior, possibly compromised one
+		// could not be removed. Store the new value (discarding it would orphan a live,
+		// untracked credential) but still fail the call — the leftover needs an operator.
+		updated, serr := c.RotateSecret(ctx, id, []byte(partial.Value), rotatedBy)
+		if serr != nil {
+			return nil, serr
+		}
+		sid := id
+		c.writeAuditEvent(ctx, EventSecretRotateIncomplete, nil, &sid,
+			fmt.Sprintf("on-demand rotation INCOMPLETE for secret %q via backend %q ref %q: new credential stored but a prior credential is still live and must be removed manually: %v",
+				secret.Name, secret.RotationBackend, secret.RotationRef, berr))
+		return updated, fmt.Errorf("backend %q rotation for secret %q partially completed: new credential stored but a prior credential is still live upstream and must be removed manually: %w",
+			secret.RotationBackend, secret.Name, berr)
+	case berr != nil:
+		sid := id
+		c.writeAuditEvent(ctx, EventSecretRotateFailed, nil, &sid,
+			fmt.Sprintf("on-demand rotation FAILED for secret %q via backend %q ref %q: %v", secret.Name, secret.RotationBackend, secret.RotationRef, berr))
+		return nil, fmt.Errorf("backend %q rotation failed for secret %q (upstream credential NOT rotated): %w", secret.RotationBackend, secret.Name, berr)
+	default:
+		return c.RotateSecret(ctx, id, []byte(upstreamVal), rotatedBy)
+	}
 }
 
 // knownRotationCharset reports whether name is a recognized charset (or "" = default).
