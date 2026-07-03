@@ -686,16 +686,6 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
-	// Close the share-create race (#136): a partial unique index on live rows so two
-	// concurrent CreateShareRecord calls for the same (secret, recipient, is_group)
-	// can no longer both succeed as separate rows. Additive + idempotent; the full
-	// AutoMigrate below covers fresh DBs (which get the index further down too).
-	if tableExists(db, "share_records") {
-		if err := ensureShareRecordUniqueIndex(db); err != nil {
-			return err
-		}
-	}
-
 	// Skip full AutoMigrate if already initialised (projects table present).
 	if projectsExists {
 		return nil
