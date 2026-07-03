@@ -27,7 +27,7 @@ func newRBACScopeTestStore(t *testing.T) *LocalStorage {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.UserRole{}, &models.GroupRole{}, &models.UserGroup{}, &models.Role{}, &models.Group{},
-		&models.Project{}, &models.Environment{},
+		&models.Project{}, &models.Environment{}, &models.Permission{}, &models.RolePermission{},
 	))
 	return NewLocalStorage(db)
 }
