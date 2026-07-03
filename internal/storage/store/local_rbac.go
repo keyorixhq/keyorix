@@ -590,6 +590,24 @@ func (ls *LocalStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([
 	return grants, nil
 }
 
+// ListGroupRoleAssignments returns every role grant held by groupID across all
+// scopes, unlike GetGroupRoles/GetGroupRoleGrants which return the role but not
+// which scope it was granted at.
+func (ls *LocalStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
+	var rows []models.GroupRole
+	if err := ls.db.WithContext(ctx).Where("group_id = ?", groupID).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	out := make([]storage.RoleAssignment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "group", PrincipalID: r.GroupID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
+}
+
 // AssignRoleToGroup assigns a permanent role to a group at scope; errors if
 // already assigned there.
 func (ls *LocalStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {

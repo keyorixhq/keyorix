@@ -135,14 +135,14 @@ func (h *CatalogHandler) AttestProjectAccessReview(w http.ResponseWriter, r *htt
 
 // AddProjectMember handles POST /api/v1/projects/{id}/members
 func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
-	if err != nil {
-		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
-		return
-	}
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
 		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
 		return
 	}
 	var body struct {
@@ -178,6 +178,11 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 
 // UpdateProjectMember handles PUT /api/v1/projects/{id}/members/{userId}
 func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
@@ -186,11 +191,6 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 	userID, err := strconv.ParseUint(chi.URLParam(r, "userId"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
-		return
-	}
-	userCtx := middleware.GetUserFromContext(r.Context())
-	if userCtx == nil {
-		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
 	var body struct {

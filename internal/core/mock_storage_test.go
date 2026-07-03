@@ -135,6 +135,14 @@ func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ [
 	return nil, nil
 }
 
+func (m *MockStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, groupID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+}
+
 func (m *MockStorage) CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error) {
 	args := m.Called(ctx, inv)
 	if args.Get(0) == nil {

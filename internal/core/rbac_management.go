@@ -120,14 +120,22 @@ func (c *KeyorixCore) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*
 	return grants, nil
 }
 
-// AssignRoleToGroup verifies both exist then assigns the role at scope and
-// records an RBAC audit event. actorID is the acting principal (0 = none).
+// AssignRoleToGroup verifies both exist, applies the escalation-by-proxy ceiling
+// (requireAuthorityForRole — granting a group an admin role inherits to every
+// member, so it is gated exactly like a direct user grant), then assigns the role
+// at scope and records an RBAC audit event. actorID is the acting principal (0 =
+// none; requireAuthorityForRole refuses an admin grant for an unauthenticated
+// actor, since this path is only ever reached via an authenticated HTTP request).
 func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
-	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
+	}
+	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
+		return err
 	}
 	if err := c.storage.AssignRoleToGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
