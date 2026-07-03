@@ -106,12 +106,26 @@ func (c *KeyorixCore) SSOCompleteURL(provider string) (string, bool) {
 	return "", false
 }
 
+// oidcProvider resolves a configured OIDC provider by name. buildSSOProviders
+// (server/main.go) never sets Type for an OIDC provider — it's left as the zero
+// value, "" — so "not saml" is treated as OIDC here, mirroring samlProvider's
+// reciprocal check. This guards the OIDC flow (which dereferences OAuth
+// unconditionally) against being invoked for a provider configured with
+// Type: "saml", whose OAuth field is always nil.
+func (c *KeyorixCore) oidcProvider(name string) (*SSOProvider, error) {
+	p, ok := c.ssoProviders[name]
+	if !ok || p.Type == "saml" || p.OAuth == nil {
+		return nil, fmt.Errorf("unknown SSO provider %q", name)
+	}
+	return p, nil
+}
+
 // BeginSSO creates and stores the CSRF state + nonce and returns the IdP
 // authorization URL to redirect the browser to.
 func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo string) (string, error) {
-	p, ok := c.ssoProviders[providerName]
-	if !ok {
-		return "", fmt.Errorf("unknown SSO provider %q", providerName)
+	p, err := c.oidcProvider(providerName)
+	if err != nil {
+		return "", err
 	}
 	state, err := randToken()
 	if err != nil {
@@ -138,8 +152,8 @@ func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo strin
 // to a user, and mints a session. Returns the session, the user, and the in-app path
 // to land on (ReturnTo, may be empty).
 func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state, userAgent, ip string) (*models.Session, *models.User, string, error) {
-	p, ok := c.ssoProviders[providerName]
-	if !ok {
+	p, err := c.oidcProvider(providerName)
+	if err != nil {
 		return nil, nil, "", fmt.Errorf("unknown SSO provider")
 	}
 	st, err := c.storage.ConsumeSSOLoginState(ctx, state)
