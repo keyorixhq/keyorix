@@ -110,7 +110,10 @@ func TestVault_GetSecret_RejectsTraversalAndInjection(t *testing.T) {
 	t.Run("path traversal is rejected before any request", func(t *testing.T) {
 		_, err := c.GetSecret(context.Background(), "secret/data/team-a/../../../sys/policies/acl")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "traversal")
+		// prefixAllowed (the allowed_refs layer) now rejects the traversal-shaped
+		// ref outright, before sanitizeVaultRef's own defense-in-depth check even
+		// runs — so the error surfaces as "not permitted" rather than "traversal".
+		assert.Contains(t, err.Error(), "not permitted")
 		assert.Empty(t, hits, "no request should reach Vault for a traversal ref")
 	})
 
@@ -123,4 +126,51 @@ func TestVault_GetSecret_RejectsTraversalAndInjection(t *testing.T) {
 		assert.Empty(t, hits[0].rawQuery, "the injected ?list=true must not become a Vault query parameter")
 		assert.Contains(t, hits[0].rawURI, "%3F", "the ? is percent-escaped into the path")
 	})
+}
+
+// TestVault_GetSecret_CrossTenantTraversalIsRejected proves the exact exploit trace
+// from finding #326: a caller scoped by allowed_refs to "secret/data/myapp/" cannot
+// read "secret/data/otherapp/secret" by requesting the ref
+// "secret/data/myapp/../otherapp/secret". strings.HasPrefix on that ref against the
+// granted prefix "secret/data/myapp/" is true (the literal string starts with the
+// allowed prefix), so without a traversal guard the request would reach Vault, whose
+// HTTP layer resolves the ".." per RFC 3986 to a path outside the granted prefix —
+// a cross-tenant read through one shared connector.
+func TestVault_GetSecret_CrossTenantTraversalIsRejected(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		// Simulate the victim secret actually existing at the path the traversal
+		// resolves to, so a failure to reject would silently succeed.
+		if r.URL.Path == "/v1/secret/data/otherapp/secret" {
+			_, _ = w.Write([]byte(`{"data":{"data":{"password":"victim-secret"},"metadata":{}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewVaultConnector("v", srv.URL, "tok", []string{"secret/data/myapp/"})
+
+	_, err := c.GetSecret(context.Background(), "secret/data/myapp/../otherapp/secret")
+	require.Error(t, err, "the cross-tenant traversal ref must be rejected")
+	// Rejected at the allowed_refs layer (prefixAllowed) before sanitizeVaultRef's
+	// defense-in-depth check even runs.
+	assert.Contains(t, err.Error(), "not permitted")
+	assert.Zero(t, hits, "no request should ever reach Vault for a traversal ref")
+}
+
+// TestVault_GetSecret_LegitimateScopedRefStillWorks proves the traversal guard does
+// not collaterally break an ordinary, non-traversal ref within the granted prefix —
+// the same GetSecret code path (prefixAllowed then sanitizeVaultRef) must still let
+// a legitimately scoped caller read their own secret.
+func TestVault_GetSecret_LegitimateScopedRefStillWorks(t *testing.T) {
+	srv := fakeVault(t, "tok", map[string]string{
+		"/v1/secret/data/myapp/config": `{"data":{"data":{"password":"p@ss"},"metadata":{}}}`,
+	})
+	c := NewVaultConnector("v", srv.URL, "tok", []string{"secret/data/myapp/"})
+
+	val, err := c.GetSecret(context.Background(), "secret/data/myapp/config")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"password":"p@ss"}`, val)
 }
