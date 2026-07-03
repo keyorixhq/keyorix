@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -16,9 +17,32 @@ import (
 
 func (ls *LocalStorage) CreateProjectMembership(ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error) {
 	if err := ls.db.WithContext(ctx).Create(m).Error; err != nil {
+		if isUniqueViolation(err) {
+			// The partial unique index uniq_project_memberships_active (#309) caught a
+			// concurrent duplicate: another invite for the same (project, user) committed
+			// first. Translate to the sentinel so callers (InviteMember) can surface the
+			// same clean "already has a membership" error a sequential caller would get,
+			// instead of a raw constraint-violation message.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateActiveMembership, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return m, nil
+}
+
+// isUniqueViolation reports whether err looks like a unique-constraint violation from
+// either backing DB driver. Neither SQLite's nor Postgres's default GORM dialector
+// wraps a typed error here (that needs the gorm.Config{TranslateError: true} opt-in,
+// which this codebase doesn't set), so this matches the driver-native message text —
+// the same approach already used for "not found" detection elsewhere (e.g. sso.go,
+// users.go, scim.go).
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") || // SQLite
+		strings.Contains(msg, "duplicate key value violates unique constraint") // Postgres
 }
 
 func (ls *LocalStorage) GetProjectMembership(ctx context.Context, id uint) (*models.ProjectMembership, error) {

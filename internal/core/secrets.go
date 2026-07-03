@@ -212,12 +212,7 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
 	}
-	latestVersion, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
-	nextVersionNumber := 1
-	if err == nil && latestVersion != nil {
-		nextVersionNumber = latestVersion.VersionNumber + 1
-	}
-	if err := c.storeSecretVersion(ctx, secret, newValue, nextVersionNumber); err != nil {
+	if err := c.storeNextSecretVersion(ctx, secret, newValue); err != nil {
 		return nil, fmt.Errorf("failed to store rotated secret: %w", err)
 	}
 	now := time.Now()

@@ -47,6 +47,22 @@ func TestSecureWriteAndReadRoundTrip(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+func TestSecureWriteFileEnforcesPermsOnExistingFile(t *testing.T) {
+	base := t.TempDir()
+	// A pre-existing file with looser perms must be tightened to the requested mode
+	// (O_TRUNC alone keeps the old mode; the explicit Chmod fixes it) — same guarantee
+	// as SecureWriteFileSync, just without the fsync.
+	require.NoError(t, os.WriteFile(filepath.Join(base, "config.yaml"), []byte("old"), 0644))
+	require.NoError(t, SecureWriteFile(base, "config.yaml", []byte("new"), 0600))
+
+	info, err := os.Stat(filepath.Join(base, "config.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	got, err := SafeReadFile(base, "config.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("new"), got)
+}
+
 func TestSecureWriteFileSyncRoundTripAndPerms(t *testing.T) {
 	base := t.TempDir()
 	want := []byte("durable-key-bytes")

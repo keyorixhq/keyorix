@@ -7,8 +7,14 @@ import (
 )
 
 type Project struct {
-	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"uniqueIndex;not null"`
+	ID uint `gorm:"primaryKey"`
+	// Name uniqueness is enforced by a case-insensitive PARTIAL unique index
+	// (LOWER(name) WHERE deleted_at IS NULL), created in migrateDatabase (#385) — not
+	// the plain `uniqueIndex` tag — so "Production"/"production" can't land as two
+	// distinct rows (closing a shadow-project confusion vector against the
+	// case-insensitive CLI project-name resolution), while a soft-deleted project's
+	// name is still freed for reuse.
+	Name        string `gorm:"not null"`
 	Description string
 	// RequireMFA, when true, denies interactive (session-authenticated) callers
 	// without a second factor access to this project's scoped resources, even when
@@ -635,9 +641,9 @@ type Session struct {
 type PersonalAccessToken struct {
 	ID          uint   `gorm:"primaryKey"`
 	UserID      uint   `gorm:"index;not null"`
-	Name        string `gorm:"not null"`             // user-facing label
-	TokenHash   string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
-	TokenPrefix string `gorm:"index"`                // leading chars of the raw token, for display ("kx_pat_ab12…")
+	Name        string `gorm:"not null"`                      // user-facing label
+	TokenHash   string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenPrefix string `gorm:"index"`                         // leading chars of the raw token, for display ("kx_pat_ab12…")
 	// Scopes is a JSON-encoded []string permission allowlist (ADR-042). Empty/null =
 	// the token inherits the owner's full permission set (legacy v1 behaviour, the
 	// default for existing rows). When non-empty, the token may exercise ONLY the
@@ -671,7 +677,7 @@ type PersonalAccessToken struct {
 // stored, and lookup is by hash, mirroring PersonalAccessToken.
 type SetupToken struct {
 	ID        uint   `gorm:"primaryKey"`
-	TokenHash string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenHash string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex of the raw token (never the plaintext)
 
 	// Purpose scopes the token: invitation_accept | account_setup | password_reset_link.
 	// A token minted for one purpose can never drive another, even if the raw string

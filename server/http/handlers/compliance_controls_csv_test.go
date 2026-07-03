@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -53,5 +54,26 @@ func TestExportComplianceControlsCSV(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ExportComplianceControlsCSV(w, req)
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("every cell is written through csvSafe even though none currently starts with attacker content", func(t *testing.T) {
+		// The only operator/free-text field reachable in this otherwise system-
+		// generated export is LegalHoldPosture.Reason, but legalHoldDetail always
+		// embeds it after a fixed "ACTIVE — purges blocked (" prefix, so it can never
+		// land as the leading character of the "detail" cell — a formula-injection
+		// payload here is inert today. Every string cell is still routed through
+		// csvSafe (matching the audit / inventory export handlers) as defense in
+		// depth against a future Detail-builder that puts free text first.
+		require.NoError(t, db.Create(&models.LegalHold{
+			Reason: "=1+1", PlacedBy: 1, PlacedAt: time.Now(), Released: false,
+		}).Error)
+
+		req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/compliance/controls.csv", nil))
+		w := httptest.NewRecorder()
+		h.ExportComplianceControlsCSV(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		body := w.Body.String()
+		assert.Contains(t, body, "ACTIVE — purges blocked (=1+1)", "embedded mid-cell: correctly left unescaped")
 	})
 }

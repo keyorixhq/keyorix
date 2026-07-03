@@ -9,12 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// #93/#107 — the admin-rank ceiling (requireAuthorityForRole) must gate every path
-// that can confer an admin role, not just the invitation/membership flows: direct
-// project-member grants, machine-role grants, and group role/membership grants
-// (joining an admin-conferring group inherits its access just as directly as a
-// role grant). These tests pin the escalation-by-proxy fix on each entry point,
-// plus the last-install-administrator invariant on the group removal paths.
+// #93/#107 — the admin-rank ceiling must gate every path that can confer an admin
+// role, not just the invitation/membership flows: direct project-member grants,
+// machine-role grants, and group role/membership grants (joining an
+// admin-conferring group inherits its access just as directly as a role grant).
+// AddProjectMember/SetProjectMemberRole funnel through AssignUserRole, so their
+// ceiling is requireGranterHoldsRolePermissions (#93/#107/#141: the actor must
+// already hold every permission the role bundles); AssignMachineRole/
+// AssignRoleToGroup/AssignGroupRoleWithExpiry/AddUserToGroup are gated directly by
+// requireAuthorityForRole (the actor must hold an admin-tier role). These tests pin
+// the escalation-by-proxy fix on each entry point, plus the last-install-
+// administrator invariant on the group removal paths.
 
 // #93: AddProjectMember must refuse a non-admin actor granting an admin role.
 func TestAddProjectMember_EscalationByProxyBlocked(t *testing.T) {
@@ -25,14 +30,17 @@ func TestAddProjectMember_EscalationByProxyBlocked(t *testing.T) {
 
 	err := c.AddProjectMember(ctx, attacker, 1, victim, "admin")
 	require.Error(t, err, "a non-admin actor must not be able to grant the admin role directly")
-	assert.Contains(t, err.Error(), "administrator")
+	assert.Contains(t, err.Error(), "cannot grant this role")
 }
 
-// #93: AddProjectMember still works for a non-admin role (the common case).
+// #93: AddProjectMember still works for a non-admin role the actor already holds
+// every bundled permission of (the common case). The actor holds project_developer
+// itself, so requireGranterHoldsRolePermissions (#93/#107/#141) is trivially
+// satisfied granting that same role to someone else — this isn't an escalation.
 func TestAddProjectMember_NonAdminRoleAllowed(t *testing.T) {
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
-	actor := seedUserWithRole(t, st, "pm-actor", "project_viewer", storage.Scope{ProjectID: 1})
+	actor := seedUserWithRole(t, st, "pm-actor", "project_developer", storage.Scope{ProjectID: 1})
 	victim := seedUserWithRole(t, st, "pm-victim2", "project_viewer", storage.Scope{ProjectID: 2})
 
 	require.NoError(t, c.AddProjectMember(ctx, actor, 1, victim, "project_developer"))
@@ -48,7 +56,7 @@ func TestSetProjectMemberRole_EscalationByProxyBlocked(t *testing.T) {
 
 	err := c.SetProjectMemberRole(ctx, attacker, 1, victim, "project_admin")
 	require.Error(t, err, "a non-admin actor must not be able to promote a member to project_admin")
-	assert.Contains(t, err.Error(), "administrator")
+	assert.Contains(t, err.Error(), "cannot grant this role")
 }
 
 // #93: AssignMachineRole must refuse a non-admin actor granting an admin role to
@@ -150,7 +158,7 @@ func TestRemoveRoleFromGroup_LastGlobalAdminBlocked(t *testing.T) {
 
 	err = c.RemoveRoleFromGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{})
 	require.Error(t, err, "removing the group's grant would leave the install with no global admin")
-	assert.Contains(t, err.Error(), "last install administrator")
+	assert.Contains(t, err.Error(), "no super_admin/admin/system_admin")
 }
 
 // #107: DeleteGroup must refuse to delete a group that is the install's last
@@ -171,7 +179,7 @@ func TestDeleteGroup_LastGlobalAdminBlocked(t *testing.T) {
 
 	err = c.DeleteGroup(ctx, bootstrapAdmin.ID, group.ID)
 	require.Error(t, err, "deleting the group would leave the install with no global admin")
-	assert.Contains(t, err.Error(), "last install administrator")
+	assert.Contains(t, err.Error(), "last administrative role grant")
 }
 
 // #107: RemoveUserFromGroup must refuse to remove the last LIVE member of an
@@ -196,7 +204,7 @@ func TestRemoveUserFromGroup_LastMemberBlocked(t *testing.T) {
 	// global-admin path runs through it.
 	err = c.RemoveUserFromGroup(ctx, bootstrapAdmin.ID, bootstrapAdmin.ID, group.ID)
 	require.Error(t, err, "removing the group's last member would leave no one able to manage the install")
-	assert.Contains(t, err.Error(), "last member")
+	assert.Contains(t, err.Error(), "last administrator")
 }
 
 // #107 positive control: removing a member is fine when another live admin path

@@ -16,6 +16,18 @@ import (
 // AssignUserRoleWithExpiry assigns a time-bound role to a user at scope (the grant
 // stops authorizing once expiresAt passes) and records the assignment. actorID is
 // the granting principal (0 = unauthenticated/system).
+//
+// KNOWN GAP (tracked, not fixed here): unlike AssignUserRole, this does NOT run
+// requireGranterHoldsRolePermissions (#93/#107/#141) — it writes directly via
+// storage, bypassing the grant-ceiling check entirely. The HTTP JIT-assign-with-
+// expiry path (POST /user-roles with expires_at) and the access-request TTL-grant
+// path (invitations.go) both reach this unguarded, so a roles.assign holder can
+// currently bundle-grant a time-bound role with a permission they don't hold. Left
+// unfixed in this change deliberately: break_glass.go's self-service emergency
+// grant also calls this, and legitimately MUST elevate a user beyond their current
+// permissions (that's break-glass's entire purpose) — closing this gap needs a
+// break-glass-aware carve-out, which is its own follow-up, not a mechanical mirror
+// of AssignUserRole's fix.
 func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time) error {
 	if err := c.storage.AssignRoleWithExpiry(ctx, userID, roleID, scope, expiresAt); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

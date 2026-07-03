@@ -103,14 +103,38 @@ func (s *ChatSink) send(ctx context.Context, ev core.NotificationEvent) (retryab
 	return retryable, fmt.Errorf("%s webhook returned %s", s.cfg.Kind, strings.TrimSpace(resp.Status))
 }
 
+// mrkdwnEscaper neutralizes Slack/Teams mrkdwn control syntax before a
+// user-controllable string (secret name, project name, or anything else that
+// ultimately traces back to a Title/Message an ordinary, non-admin user can choose —
+// e.g. by naming a secret they own and sharing it, ADR-024) is interpolated into a
+// chat payload. Slack's incoming-webhook `text` field is rendered as mrkdwn by
+// default, where `<...>` is parsed as a link/mention token: `<!channel>`/`<!here>`/
+// `<!everyone>` trigger a mass ping, `<@USERID>` mentions a specific user, and
+// `<https://evil.example|label>` renders as a clickable link with an
+// attacker-chosen label. Escaping `<`/`>` (per Slack's own escaping rules, along
+// with `&` so the escape sequences themselves can't be re-interpreted) turns any
+// such sequence back into inert literal text — this is Slack's documented escaping
+// convention, and Teams' MessageCard fields share the same HTML-ish convention, so
+// the same replacer is safe for both platforms.
+var mrkdwnEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// escapeMrkdwn applies mrkdwnEscaper to a single string.
+func escapeMrkdwn(s string) string {
+	return mrkdwnEscaper.Replace(s)
+}
+
 // chatText renders the notification as a single plain-text message (no remote
-// resources), shared by both platforms.
+// resources), shared by both platforms. Title/Message may embed user-controllable
+// values (secret/project names), so both are mrkdwn-escaped before interpolation —
+// this is the single choke point every caller's text passes through, so escaping
+// here (rather than at each notification call site) covers every current and
+// future producer of a NotificationEvent.
 func chatText(ev core.NotificationEvent) string {
 	var b strings.Builder
 	if ev.Title != "" {
-		fmt.Fprintf(&b, "*%s*\n", ev.Title)
+		fmt.Fprintf(&b, "*%s*\n", escapeMrkdwn(ev.Title))
 	}
-	b.WriteString(ev.Message)
+	b.WriteString(escapeMrkdwn(ev.Message))
 	if ev.Link != "" {
 		fmt.Fprintf(&b, "\n%s", ev.Link)
 	}
@@ -118,7 +142,10 @@ func chatText(ev core.NotificationEvent) string {
 }
 
 // chatPayload builds the platform-specific JSON body. Slack incoming webhooks take
-// {text}; Teams connectors take a MessageCard.
+// {text}; Teams connectors take a MessageCard. Every field sourced from
+// user-controllable data (Title, Message) is mrkdwn-escaped (via chatText/
+// escapeMrkdwn) before it reaches either payload shape — Link is excluded because it
+// is always a server-generated path (e.g. "/secrets/%d"), never user input.
 func chatPayload(kind ChatKind, ev core.NotificationEvent) interface{} {
 	text := chatText(ev)
 	if kind == ChatTeams {
@@ -129,9 +156,9 @@ func chatPayload(kind ChatKind, ev core.NotificationEvent) interface{} {
 		return map[string]interface{}{
 			"@type":    "MessageCard",
 			"@context": "https://schema.org/extensions",
-			"summary":  title,
-			"title":    title,
-			"text":     ev.Message,
+			"summary":  escapeMrkdwn(title),
+			"title":    escapeMrkdwn(title),
+			"text":     escapeMrkdwn(ev.Message),
 		}
 	}
 	return map[string]string{"text": text}

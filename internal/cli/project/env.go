@@ -101,10 +101,7 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
-	env, err := svc.Storage().CreateEnvironment(ctx, &models.Environment{
-		ProjectID: projectID,
-		Name:      envCreateName,
-	})
+	env, err := svc.CreateEnvironment(ctx, projectID, envCreateName)
 	if err != nil {
 		return fmt.Errorf("failed to create environment: %w", err)
 	}

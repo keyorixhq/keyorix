@@ -171,7 +171,45 @@ func TestDynamicSecrets_RevokeFailureMarksLease(t *testing.T) {
 	after, _ := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
 	assert.Equal(t, "revoke_failed", after.Status, "the lease is flagged for an operator")
 	assert.NotEmpty(t, after.RevokeError)
-	assert.NotNil(t, after.RevokedAt)
+	// RevokedAt must NOT be stamped on a failed attempt: the target drop failed, so the
+	// credential is still live. Stamping it would make the audit trail falsely claim the
+	// role was dropped at this time.
+	assert.Nil(t, after.RevokedAt, "a failed revoke must not be timestamped as revoked")
+
+	// A second attempt that also fails must leave the lease in revoke_failed, not
+	// silently mark it revoked — and still without a RevokedAt timestamp.
+	err = c.RevokeLease(ctx, issued.LeaseID, 7, "retry")
+	require.Error(t, err, "the retry is attempted, not refused, but still fails on target")
+	stillFailed, _ := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	assert.Equal(t, "revoke_failed", stillFailed.Status, "a second failed attempt stays revoke_failed")
+	assert.Nil(t, stillFailed.RevokedAt)
+}
+
+// A lease stuck in revoke_failed (its credential still live from an earlier failed
+// attempt) must be directly retryable via RevokeLease once the target recovers — not
+// just through the expiry sweep — and only THEN does RevokedAt get stamped.
+func TestDynamicSecrets_RevokeLeaseRetrySucceeds(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	fake.FailRevoke = true
+	require.Error(t, c.RevokeLease(ctx, issued.LeaseID, 7, "manual"))
+	failed, _ := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	require.Equal(t, "revoke_failed", failed.Status)
+	require.Nil(t, failed.RevokedAt)
+
+	// The target recovers; a direct retry (not the sweep) must be accepted and succeed.
+	fake.FailRevoke = false
+	require.NoError(t, c.RevokeLease(ctx, issued.LeaseID, 7, "retry"))
+
+	after, _ := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	assert.Equal(t, "revoked", after.Status)
+	assert.NotNil(t, after.RevokedAt, "a genuinely successful revoke IS timestamped")
+	assert.Contains(t, fake.Revoked, issued.Username)
 }
 
 // A revoke_failed lease (its credential still live) must remain retryable — manually and
@@ -311,6 +349,74 @@ func TestDynamicSecrets_RevokeLeasesForConfig(t *testing.T) {
 	revoked2, _, err := c.RevokeLeasesForConfig(ctx, cfg.ID, 7, "incident")
 	require.NoError(t, err)
 	assert.Equal(t, 0, revoked2)
+}
+
+// The bulk incident-response kill switch is the last line of defense for
+// backends with no DB-level native expiry (MySQL/Mongo/Redis): the target
+// drop/dropUser/ACL-DELUSER call is the only enforcement mechanism. A lease already
+// stuck in revoke_failed (its credential still live from an earlier failed attempt)
+// must NOT be silently skipped — it must be retried right alongside the still-active
+// leases, so an operator responding to "this target/config is compromised" actually
+// kills every outstanding credential, not just the ones that happened to revoke
+// cleanly on the first try.
+func TestDynamicSecrets_RevokeLeasesForConfigRetriesRevokeFailed(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	stuck, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	stillActive, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	// The first lease's revoke fails once (transient outage) and is left revoke_failed —
+	// its credential is still live on the target.
+	fake.FailRevoke = true
+	require.Error(t, c.RevokeLease(ctx, stuck.LeaseID, 7, "manual"))
+	before, _ := c.storage.GetDynamicSecretLease(ctx, stuck.LeaseID)
+	require.Equal(t, "revoke_failed", before.Status, "precondition: the lease is stuck")
+	require.Nil(t, before.RevokedAt, "precondition: not falsely timestamped as revoked")
+
+	// The target recovers, and an incident responder now believes the whole config is
+	// compromised and pulls the kill switch.
+	fake.FailRevoke = false
+	revoked, failed, err := c.RevokeLeasesForConfig(ctx, cfg.ID, 7, "incident: compromised target")
+	require.NoError(t, err)
+	assert.Equal(t, 0, failed)
+	assert.Equal(t, 2, revoked, "both the still-active lease AND the previously revoke_failed one must be revoked")
+
+	after, _ := c.storage.GetDynamicSecretLease(ctx, stuck.LeaseID)
+	assert.Equal(t, "revoked", after.Status, "the revoke_failed lease is NOT permanently stuck — the kill switch reaches it")
+	assert.NotNil(t, after.RevokedAt, "the now-successful revoke IS timestamped")
+	assert.Contains(t, fake.Revoked, stuck.Username, "the previously-stranded credential was actually dropped on the target")
+	assert.Contains(t, fake.Revoked, stillActive.Username)
+}
+
+// If the target is still down when the kill switch is pulled, a revoke_failed lease
+// must remain revoke_failed (not be silently marked revoked) and still carry no
+// RevokedAt timestamp — the bulk path must not paper over a persistent failure.
+func TestDynamicSecrets_RevokeLeasesForConfigReportsPersistentFailure(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	stuck, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	fake.FailRevoke = true
+	require.Error(t, c.RevokeLease(ctx, stuck.LeaseID, 7, "manual"))
+	before, _ := c.storage.GetDynamicSecretLease(ctx, stuck.LeaseID)
+	require.Equal(t, "revoke_failed", before.Status)
+
+	// Target is STILL down when the kill switch is pulled.
+	revoked, failed, err := c.RevokeLeasesForConfig(ctx, cfg.ID, 7, "incident: still down")
+	require.NoError(t, err, "RevokeLeasesForConfig itself never errors — failures are counted")
+	assert.Equal(t, 0, revoked)
+	assert.Equal(t, 1, failed)
+
+	after, _ := c.storage.GetDynamicSecretLease(ctx, stuck.LeaseID)
+	assert.Equal(t, "revoke_failed", after.Status, "still stuck, not silently marked revoked")
+	assert.Nil(t, after.RevokedAt, "not falsely timestamped as revoked")
 }
 
 func TestDynamicSecrets_RenewRejectsInactiveLease(t *testing.T) {
