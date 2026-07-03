@@ -114,10 +114,30 @@ func (ls *LocalStorage) assignUserRole(ctx context.Context, userID, roleID uint,
 	err := ls.db.WithContext(ctx).
 		Where("user_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
 			userID, roleID, scope.ProjectID, scope.EnvironmentID).First(&existing).Error
-	if err == nil {
-		return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
-	}
-	if err != gorm.ErrRecordNotFound {
+	switch err {
+	case nil:
+		// A row already exists at this exact (user, role, project, environment) key. A
+		// still-live grant (no expiry, or an expiry still in the future) genuinely blocks
+		// a duplicate assignment. But an EXPIRED grant is a stale, un-reaped row — e.g. a
+		// prior break-glass activation whose time-bound grant naturally lapsed — and must
+		// be treated as ABSENT for this check, or a second real-incident activation for
+		// the same user/role/scope is permanently refused with "already assigned" even
+		// though nothing live is actually being duplicated (#263). Delete the stale row
+		// so the composite primary key (user_id, role_id, project_id, environment_id) is
+		// free for the fresh Create below, mirroring how live-authorization queries
+		// elsewhere (e.g. GetUserRoles) already exclude expired grants.
+		if existing.ExpiresAt == nil || existing.ExpiresAt.After(time.Now()) {
+			return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
+		}
+		if derr := ls.db.WithContext(ctx).
+			Where("user_id = ? AND role_id = ? AND project_id = ? AND environment_id = ?",
+				userID, roleID, scope.ProjectID, scope.EnvironmentID).
+			Delete(&models.UserRole{}).Error; derr != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), derr)
+		}
+	case gorm.ErrRecordNotFound:
+		// no existing row for this key — proceed to create.
+	default:
 		return fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
 	userRole := models.UserRole{
