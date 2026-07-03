@@ -162,7 +162,9 @@ func (c *RemoteClient) GetRaw(ctx context.Context, path string) ([]byte, error) 
 	return body, nil
 }
 
-// Post serialises body as JSON, POSTs to path, strips the envelope, and decodes into out.
+// Post serialises body as JSON, POSTs to path, strips the envelope, and decodes
+// into out (out may be nil, matching Put/Patch, when the caller doesn't need the
+// response body).
 func (c *RemoteClient) Post(ctx context.Context, path string, body interface{}, out interface{}) error {
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -186,7 +188,10 @@ func (c *RemoteClient) Post(ctx context.Context, path string, body interface{}, 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
 	}
-	return decodeEnvelope(resp, out, path)
+	if out != nil {
+		return decodeEnvelope(resp, out, path)
+	}
+	return nil
 }
 
 // decodeEnvelope strips {"data":…} and unmarshals the inner payload into out.

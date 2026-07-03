@@ -240,10 +240,11 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	return updated, nil
 }
 
-// DeleteUser soft-deletes a user by ID.
+// DeleteUser soft-deletes a user by ID, audited under actorID (0 when no
+// actor is known, e.g. an unauthenticated internal caller).
 // The row is retained with deleted_at set; active sessions fail on next request.
 // Soft-deleted users can be restored within the purge retention window (default 30 days).
-func (c *KeyorixCore) DeleteUser(ctx context.Context, id uint) error {
+func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")
 	}
@@ -253,6 +254,12 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, id uint) error {
 	if err := c.storage.DeleteUser(ctx, id); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	var aid *uint
+	if actorID != 0 {
+		aid = &actorID
+	}
+	c.writeAuditEventFull(ctx, "user.deleted", aid, nil, nil, "",
+		fmt.Sprintf("user %d deleted", id))
 	return nil
 }
 
