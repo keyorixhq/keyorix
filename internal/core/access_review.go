@@ -24,7 +24,7 @@ import (
 //   - "direct_share"  — a secret shared directly with a user (SecretID set)
 //   - "group_share"   — a secret shared with a group (SecretID set)
 type AccessReviewEntry struct {
-	PrincipalType string `json:"principal_type"` // "user" | "group"
+	PrincipalType string `json:"principal_type"` // "user" | "group" | "machine"
 	PrincipalID   uint   `json:"principal_id"`
 	PrincipalName string `json:"principal_name"` // username or group name
 	Email         string `json:"email,omitempty"`
@@ -73,6 +73,16 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	// Machine identities (CI runners, k8s workloads, service accounts) are project
+	// members with role grants exactly like users/groups, but were never enumerated
+	// here — a privileged CI/k8s principal held a secrets.write/delete-conferring
+	// role and passed through a "completed" recertification campaign entirely
+	// un-attested (#91).
+	machineAssignments, err := c.storage.ListProjectMachineRoleAssignments(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	assignments = append(assignments, machineAssignments...)
 
 	type roleInfo struct{ name, action string }
 	roleCache := map[uint]roleInfo{}
@@ -116,6 +126,18 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 		groupCache[id] = n
 		return n
 	}
+	machineCache := map[uint]string{}
+	resolveMachine := func(id uint) string {
+		if n, ok := machineCache[id]; ok {
+			return n
+		}
+		n := ""
+		if m, err := c.storage.GetMachineIdentity(ctx, id); err == nil && m != nil {
+			n = m.Name
+		}
+		machineCache[id] = n
+		return n
+	}
 
 	var entries []*AccessReviewEntry
 
@@ -138,9 +160,12 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 			AccessLevel:   ri.action,
 			EnvironmentID: a.EnvironmentID,
 		}
-		if a.PrincipalType == "group" {
+		switch a.PrincipalType {
+		case "group":
 			entry.PrincipalName = resolveGroup(a.PrincipalID)
-		} else {
+		case "machine":
+			entry.PrincipalName = resolveMachine(a.PrincipalID)
+		default:
 			entry.PrincipalName, entry.Email = resolveUser(a.PrincipalID)
 		}
 		entries = append(entries, entry)

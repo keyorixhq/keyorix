@@ -192,6 +192,11 @@ storage:
   data under a portable provider (or re-seal per host) and note that a TPM
   clear/replacement makes the blob unrecoverable. Move an existing install on with
   `keyorix encryption migrate-provider --to-type tpm --to-wrapped-key-path keys/kek.tpm`.
+  ⚠️ **No PCR policy binding yet**: the seal is bound to "this TPM chip", not to a
+  verified/measured boot state — no PolicyPCR session is used. Any code capable of
+  asking the TPM to unseal the blob succeeds regardless of firmware/bootloader/kernel
+  integrity, so this provider does **not** currently protect against a compromised
+  boot chain on an otherwise-genuine, present TPM.
 - **`aws-kms`** / **`gcp-kms`** / **`azure-kms`** (ADR-041): the KEK is a random key
   **wrapped by a cloud KMS/HSM key**; only the wrapped blob is on disk
   (`wrapped_key_path`), unwrapped via the KMS at startup. The wrapping key never
@@ -492,7 +497,7 @@ notifications:
     username: "keyorix"
     password: ""                 # prefer the KEYORIX_NOTIFY_SMTP_PASSWORD env var
     from: "keyorix@example.com"
-    tls: "starttls"              # starttls | implicit | none(dev-only)
+    tls: "starttls"              # starttls | implicit | none(dev-only) — none requires KEYORIX_ALLOW_INSECURE_SMTP=true
   slack:
     enabled: true
     webhook_url: ""              # prefer the KEYORIX_NOTIFY_SLACK_WEBHOOK env var
@@ -964,6 +969,15 @@ credential_delivery:
 `out_of_band` / `log` return or log the link instead of emailing it (useful when no
 mail relay is available). A link-producing mode with an empty `base_url` is a
 misconfiguration — link minting refuses it rather than emitting a relative link.
+
+`mode: log` writes a live, usable setup link to the application log (dev/test only) and
+`smtp.tls: none` sends mail — and any relay credentials — in cleartext. Both are refused
+at startup unless the operator explicitly opts in by setting
+`KEYORIX_ALLOW_INSECURE_LOG_DELIVERY=true` (for `mode: log`) or
+`KEYORIX_ALLOW_INSECURE_SMTP=true` (for `smtp.tls: none`), mirroring how other insecure
+toggles in this codebase require an explicit acknowledgement rather than defaulting on.
+The same `KEYORIX_ALLOW_INSECURE_SMTP` gate also applies to `notify.smtp.tls: none` for
+the notification-email channel.
 
 ## connect
 

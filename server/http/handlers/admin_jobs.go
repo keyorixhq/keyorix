@@ -6,6 +6,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -32,7 +33,8 @@ func (h *AdminJobsHandler) RunAnomalyAlerts(w http.ResponseWriter, r *http.Reque
 	}
 	n, err := h.coreService.AlertNewAnomalies(r.Context())
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error running anomaly alerts job: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"alerted": n}, "")
@@ -47,7 +49,8 @@ func (h *AdminJobsHandler) RunRotationReminders(w http.ResponseWriter, r *http.R
 	}
 	n, err := h.coreService.SendRotationReminders(r.Context())
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error running rotation reminders job: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"sent": n}, "")
@@ -69,7 +72,8 @@ func (h *AdminJobsHandler) RunExpiryReminders(w http.ResponseWriter, r *http.Req
 	}
 	n, err := h.coreService.SendExpiryReminders(r.Context(), leadDays)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error running expiry reminders job: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"sent": n}, "")
@@ -84,7 +88,8 @@ func (h *AdminJobsHandler) RunComplianceDigest(w http.ResponseWriter, r *http.Re
 	}
 	sent, err := h.coreService.SendComplianceDigest(r.Context())
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error running compliance digest job: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"sent": sent}, "")

@@ -2,7 +2,9 @@ package secret
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -120,37 +122,57 @@ func displayVersionsTable(secret *models.SecretNode, versions []*models.SecretVe
 	}
 }
 
+// jsonVersionEntry/jsonVersionsOutput are the `secret versions --format json`
+// shape. Built and marshaled via encoding/json (not fmt.Printf string
+// interpolation) so a secret name/type containing quotes or control
+// characters is correctly escaped rather than able to break out of the JSON
+// string and inject arbitrary keys (#354).
+type jsonVersionEntry struct {
+	ID                 uint            `json:"id"`
+	VersionNumber      int             `json:"version_number"`
+	SizeBytes          int             `json:"size_bytes"`
+	ReadCount          int             `json:"read_count"`
+	CreatedAt          string          `json:"created_at"`
+	EncryptionMetadata json.RawMessage `json:"encryption_metadata,omitempty"`
+}
+
+type jsonVersionsOutput struct {
+	Secret struct {
+		ID   uint   `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"secret"`
+	TotalVersions int                `json:"total_versions"`
+	Versions      []jsonVersionEntry `json:"versions"`
+}
+
 func displayVersionsJSON(secret *models.SecretNode, versions []*models.SecretVersion) {
-	fmt.Printf("{\n")
-	fmt.Printf("  \"secret\": {\n")
-	fmt.Printf("    \"id\": %d,\n", secret.ID)
-	fmt.Printf("    \"name\": \"%s\",\n", secret.Name)
-	fmt.Printf("    \"type\": \"%s\"\n", secret.Type)
-	fmt.Printf("  },\n")
-	fmt.Printf("  \"total_versions\": %d,\n", len(versions))
-	fmt.Printf("  \"versions\": [\n")
+	var out jsonVersionsOutput
+	out.Secret.ID = secret.ID
+	out.Secret.Name = secret.Name
+	out.Secret.Type = secret.Type
+	out.TotalVersions = len(versions)
+	out.Versions = make([]jsonVersionEntry, 0, len(versions))
 
-	for i, version := range versions {
-		fmt.Printf("    {\n")
-		fmt.Printf("      \"id\": %d,\n", version.ID)
-		fmt.Printf("      \"version_number\": %d,\n", version.VersionNumber)
-		fmt.Printf("      \"size_bytes\": %d,\n", len(version.EncryptedValue))
-		fmt.Printf("      \"read_count\": %d,\n", version.ReadCount)
-		fmt.Printf("      \"created_at\": \"%s\"", version.CreatedAt.Format(time.RFC3339))
-
+	for _, version := range versions {
+		entry := jsonVersionEntry{
+			ID:            version.ID,
+			VersionNumber: version.VersionNumber,
+			SizeBytes:     len(version.EncryptedValue),
+			ReadCount:     version.ReadCount,
+			CreatedAt:     version.CreatedAt.Format(time.RFC3339),
+		}
 		if len(version.EncryptionMetadata) > 0 {
-			fmt.Printf(",\n      \"encryption_metadata\": %s", string(version.EncryptionMetadata))
+			entry.EncryptionMetadata = json.RawMessage(version.EncryptionMetadata)
 		}
-
-		fmt.Printf("\n    }")
-		if i < len(versions)-1 {
-			fmt.Printf(",")
-		}
-		fmt.Printf("\n")
+		out.Versions = append(out.Versions, entry)
 	}
 
-	fmt.Printf("  ]\n")
-	fmt.Printf("}\n")
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode JSON output: %v\n", err)
+	}
 }
 
 func formatBytes(bytes int) string {

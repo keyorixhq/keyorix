@@ -56,28 +56,50 @@ func (c *KeyorixCore) ListUserRolesByEmail(ctx context.Context, userEmail string
 	return roles, nil
 }
 
-// HasPermissionByEmail checks if a user has a specific permission by email.
+// HasPermissionByEmail checks if a user has a specific permission by email, at
+// ANY scope the user holds a role — the CLI diagnostic used for offboarding and
+// incident-response access checks (#376). It deliberately delegates to Authorize
+// (mirroring scopedRoleIDs in authz.go) at every scope the user has a grant,
+// rather than running its own parallel query, so it stays in lockstep with the
+// live authorization path on all three axes that previously drifted: it honors
+// group-inherited roles, it evaluates the permission per-scope (not a flat,
+// scope-blind "any assignment anywhere" match), and it honors the admin-role
+// bypass Authorize() applies. A role-less user (no grant at any scope) is still
+// checked once at the global scope, matching Authorize's own "no roles, no
+// permission" resolution.
 func (c *KeyorixCore) HasPermissionByEmail(ctx context.Context, userEmail, resource, action string) (bool, error) {
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
-	hasPermission, err := c.storage.CheckPermission(ctx, user.ID, resource, action)
+	permission := resource + "." + action
+	scopes, err := c.storage.GetUserRoleScopes(ctx, user.ID)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
-	return hasPermission, nil
+	if len(scopes) == 0 {
+		scopes = []Scope{{}}
+	}
+	for _, scope := range scopes {
+		ok, aerr := c.Authorize(ctx, user.ID, permission, scope)
+		if aerr != nil {
+			return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), aerr)
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
-// ListUserPermissionsByEmail lists permissions for a user by email.
+// ListUserPermissionsByEmail lists a user's effective permission set (direct AND
+// group-derived) for the CLI's `rbac list-permissions` — the same secondary
+// symptom of the #219/#374 root cause called out for the HTTP dashboard endpoint
+// (#375): union both sources rather than reporting direct roles only.
 func (c *KeyorixCore) ListUserPermissionsByEmail(ctx context.Context, userEmail string) ([]*storage.Permission, error) {
 	user, err := c.storage.GetUserByEmail(ctx, userEmail)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
-	permissions, err := c.storage.GetUserPermissions(ctx, user.ID)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	return permissions, nil
+	return c.GetUserPermissionsByID(ctx, user.ID)
 }

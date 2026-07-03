@@ -211,6 +211,28 @@ func DecodePATScopes(raw string) []string {
 	return out
 }
 
+// CurrentPATRestriction re-fetches a PAT's restriction fresh from storage by its
+// raw token, bypassing any cached UserContext snapshot the auth middleware may be
+// holding (#146). The middleware's short-circuit cache holds a validated token's
+// full UserContext — including PATRestriction.AllowedCIDRs — for up to
+// validTokenTTL; on a cache HIT the network-allowlist check would otherwise be
+// enforced against that stale snapshot, not the token's current restriction. This
+// lets the network check re-verify fresh on every request regardless of cache
+// state, at the cost of one extra lightweight lookup per PAT-authenticated
+// request (session/machine tokens carry no such per-request-narrowable
+// restriction and are unaffected). Returns an error on any lookup failure — the
+// caller must NOT treat that as "unrestricted" (that would fail OPEN on the exact
+// check this exists to keep honest); falling back to the last-known (possibly
+// stale, but still a real, previously-enforced) restriction is the correct
+// degraded behavior on a transient storage error.
+func (c *KeyorixCore) CurrentPATRestriction(ctx context.Context, raw string) (*PATRestriction, error) {
+	pat, err := c.storage.GetPersonalAccessTokenByHash(ctx, sha256Hex(raw))
+	if err != nil {
+		return nil, err
+	}
+	return patRestrictionFrom(pat), nil
+}
+
 // patRestrictionFrom builds the request-time restriction for a token, or nil when
 // the token is unrestricted (no scopes and no project confinement).
 func patRestrictionFrom(pat *models.PersonalAccessToken) *PATRestriction {

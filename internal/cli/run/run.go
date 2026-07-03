@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	runEnv     string
-	runProject string
-	runToken   string
+	runEnv      string
+	runProject  string
+	runToken    string
+	runCleanEnv bool
 )
 
 // RunCmd is the top-level 'run' command.
@@ -46,7 +47,16 @@ Authentication:
   • Session tokens written by 'keyorix auth login' are used automatically
     when the CLI is in client mode.
   • For service accounts / CI/CD, set KEYORIX_TOKEN (or --token) and
-    point the CLI at a server with 'keyorix connect' or KEYORIX_SERVER.`,
+    point the CLI at a server with 'keyorix connect' or KEYORIX_SERVER.
+
+Environment isolation:
+  • By default the child process inherits the FULL parent environment plus
+    the injected secrets, matching how most shells/tools behave.
+  • Pass --clean-env to start the child from ONLY the injected secrets
+    (plus a minimal PATH/HOME baseline) instead — use this when you don't
+    want the child to also see whatever else is already exported in the
+    invoking shell (a leftover token from a prior 'keyorix run', an
+    unrelated CI secret, etc.).`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runRun,
 }
@@ -55,6 +65,7 @@ func init() {
 	RunCmd.Flags().StringVar(&runEnv, "env", "development", "Environment name (e.g. production)")
 	RunCmd.Flags().StringVar(&runProject, "project", "", "Project name (overrides KEYORIX_PROJECT and active project)")
 	RunCmd.Flags().StringVar(&runToken, "token", "", "Service or session token (overrides KEYORIX_TOKEN env var)")
+	RunCmd.Flags().BoolVar(&runCleanEnv, "clean-env", false, "Start the child process with ONLY the injected secrets (plus a minimal PATH/HOME baseline) instead of the full inherited parent environment")
 }
 
 func runRun(cmd *cobra.Command, args []string) error {
@@ -90,7 +101,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fetchErr
 	}
 
-	return execChild(args, envVars)
+	return execChild(args, envVars, runCleanEnv)
 }
 
 // ── Embedded mode ─────────────────────────────────────────────────────────────
@@ -300,12 +311,56 @@ func toEnvKey(name string) string {
 	return b.String()
 }
 
-// execChild builds the child environment and executes the command.
-func execChild(args []string, extraEnv map[string]string) error {
-	childEnv := os.Environ()
-	for k, v := range extraEnv {
-		childEnv = append(childEnv, k+"="+v)
+// sensitiveEnvSuffixes mark a KEYORIX_-prefixed env var as this CLI invocation's own
+// credential (an auth token, password, API key, secret, or DB DSN) rather than
+// something a launched command needs.
+var sensitiveEnvSuffixes = []string{"_TOKEN", "_PASSWORD", "_SECRET", "_API_KEY", "_DSN", "_KEK"}
+
+// filterSensitiveEnv drops Keyorix's own credential env vars (e.g. KEYORIX_TOKEN, the
+// token this invocation used to authenticate) from the environment inherited by the
+// child process. 'keyorix run' still inherits the rest of the parent environment
+// unchanged (PATH, HOME, and any other var) — that inheritance is the point of `run`,
+// matching how a plain subshell behaves — but the child (and anything it in turn
+// spawns) has no legitimate need for the credentials THIS CLI invocation used to reach
+// Keyorix, so those are withheld rather than handed down by default.
+func filterSensitiveEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if isSensitiveKeyorixEnv(key) {
+			continue
+		}
+		out = append(out, kv)
 	}
+	return out
+}
+
+// isSensitiveKeyorixEnv reports whether key is a Keyorix-internal credential variable
+// (KEYORIX_ prefix plus a token/password/secret/key/DSN suffix).
+func isSensitiveKeyorixEnv(key string) bool {
+	if !strings.HasPrefix(key, "KEYORIX_") {
+		return false
+	}
+	for _, suf := range sensitiveEnvSuffixes {
+		if strings.HasSuffix(key, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// execChild builds the child environment and executes the command. By default (cleanEnv
+// false) the child inherits the FULL parent environment (minus Keyorix's own credential
+// vars — filterSensitiveEnv, #103) plus the injected secrets — the long-standing,
+// backward-compatible behavior. With cleanEnv true (--clean-env), the child starts from
+// ONLY the injected secrets plus a minimal PATH/HOME baseline so it can still locate
+// binaries and its home directory; every other variable already present in the invoking
+// shell (a leftover token from a prior `keyorix run`, an unrelated CI secret, etc.) is NOT
+// inherited. This is opt-in hardening for #164 — broader than #103's Keyorix-specific
+// filtering, for callers who don't want the child to see the invoking shell's environment
+// at all.
+func execChild(args []string, extraEnv map[string]string, cleanEnv bool) error {
+	childEnv := buildChildEnv(extraEnv, cleanEnv)
 
 	c := exec.Command(args[0], args[1:]...) // #nosec G204
 	c.Stdin = os.Stdin
@@ -321,4 +376,27 @@ func execChild(args []string, extraEnv map[string]string) error {
 		return fmt.Errorf("command failed: %w", err)
 	}
 	return nil
+}
+
+// buildChildEnv computes the environment slice passed to the child process. By default
+// (cleanEnv false) it starts from the FULL parent environment minus Keyorix's own
+// credential vars (filterSensitiveEnv, #103) — the long-standing, backward-compatible
+// behavior. With cleanEnv true it starts from ONLY a minimal PATH/HOME baseline (so the
+// child can still locate binaries and its home directory), NOT the rest of the parent
+// environment. In both cases extraEnv (the injected secrets) is appended last.
+func buildChildEnv(extraEnv map[string]string, cleanEnv bool) []string {
+	var childEnv []string
+	if cleanEnv {
+		for _, k := range []string{"PATH", "HOME"} {
+			if v, ok := os.LookupEnv(k); ok {
+				childEnv = append(childEnv, k+"="+v)
+			}
+		}
+	} else {
+		childEnv = filterSensitiveEnv(os.Environ())
+	}
+	for k, v := range extraEnv {
+		childEnv = append(childEnv, k+"="+v)
+	}
+	return childEnv
 }

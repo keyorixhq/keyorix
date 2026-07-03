@@ -3,7 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"log"
+	"path"
 	"strings"
 )
 
@@ -67,18 +68,46 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (map[stri
 	}
 }
 
+// genericReadError is returned to the LLM-visible tool result for every
+// keyorix_get_secret failure, regardless of cause (#122). The underlying error
+// (permission denied vs. not-found vs. transport failure) is logged to stderr for an
+// operator, but NOT echoed into the tool result: a 404-vs-403 distinction is an
+// enumeration oracle a prompt-injected agent could use to map which refs exist versus
+// which are merely out of the token's scope.
+const genericReadError = "could not read the requested secret"
+
+// genericListError is the equivalent for keyorix_list_secrets.
+const genericListError = "could not list secrets"
+
 func (s *Server) toolGetSecret(ctx context.Context, args json.RawMessage) map[string]interface{} {
 	var a struct {
 		Ref string `json:"ref"`
 	}
 	_ = json.Unmarshal(args, &a)
-	if strings.TrimSpace(a.Ref) == "" {
+	ref := strings.TrimSpace(a.Ref)
+	if ref == "" {
 		return errorResult("ref is required (project/environment/name)")
 	}
-	value, err := s.reader.GetSecret(ctx, a.Ref)
-	if err != nil {
-		return errorResult(fmt.Sprintf("could not read %q: %v", a.Ref, err))
+	if !refAllowed(s.allowedRefs, ref) {
+		log.Printf("keyorix_get_secret: ref %q rejected by the configured allowlist", ref)
+		return errorResult(genericReadError)
 	}
+	// #122: a per-process cap on how many secret VALUES this session serves, even if
+	// an agent is manipulated (by a prior tool result whose text contains an
+	// injected instruction) into requesting far more reads than the original task
+	// needed. Checked-then-incremented: a benign small overshoot under concurrent
+	// calls is an acceptable race for a soft cap: the real defense is the low ceiling
+	// itself and Keyorix's own server-side max_reads/audit, not exact enforcement.
+	if s.maxReads > 0 && s.readCount.Load() >= s.maxReads {
+		log.Printf("keyorix_get_secret: per-process read cap (%d) reached; refusing further reads this session", s.maxReads)
+		return errorResult(genericReadError)
+	}
+	value, err := s.reader.GetSecret(ctx, ref)
+	if err != nil {
+		log.Printf("keyorix_get_secret: read of %q failed: %v", ref, err)
+		return errorResult(genericReadError)
+	}
+	s.readCount.Add(1)
 	return textResult(value)
 }
 
@@ -89,20 +118,43 @@ func (s *Server) toolListSecrets(ctx context.Context, args json.RawMessage) map[
 	_ = json.Unmarshal(args, &a)
 	infos, err := s.reader.ListSecrets(ctx, a.Environment)
 	if err != nil {
-		return errorResult(fmt.Sprintf("could not list secrets: %v", err))
-	}
-	if len(infos) == 0 {
-		return textResult("(no secrets visible to this token)")
+		log.Printf("keyorix_list_secrets: failed: %v", err)
+		return errorResult(genericListError)
 	}
 	var b strings.Builder
+	shown := 0
 	for _, info := range infos {
+		if !refAllowed(s.allowedRefs, info.Ref) {
+			continue // #122: never reveal a ref outside the configured allowlist
+		}
 		b.WriteString(info.Ref)
 		if info.Type != "" {
 			b.WriteString("  (" + info.Type + ")")
 		}
 		b.WriteByte('\n')
+		shown++
+	}
+	if shown == 0 {
+		return textResult("(no secrets visible to this token)")
 	}
 	return textResult(strings.TrimRight(b.String(), "\n"))
+}
+
+// refAllowed reports whether ref matches at least one of patterns (path.Match-style
+// globs, e.g. "app/production/*"). An empty/nil patterns list allows everything — the
+// allowlist is opt-in defense-in-depth, not a replacement for server-side RBAC (#122).
+// A malformed pattern never grants access (fails closed): path.Match's own syntax
+// error is treated as "does not match" rather than propagated.
+func refAllowed(patterns []string, ref string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, p := range patterns {
+		if ok, err := path.Match(p, ref); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // textResult / errorResult build the MCP tool-result envelope (content blocks). A tool

@@ -1320,6 +1320,12 @@ message CompliancePosture {
   LegalHoldPosture legal_hold = 9;
   RetentionPosture retention = 10;
   RiskPosture risk = 11;
+  // degraded is true when one or more sub-rollups above could not be queried this
+  // run (#136) — the zero/clean values they carry are UNKNOWN, not verified-clean.
+  // A consumer must treat a degraded snapshot as incomplete, not passing.
+  bool degraded = 12;
+  // degraded_reasons names each failed sub-rollup with its underlying error.
+  repeated string degraded_reasons = 13;
 }
 
 message FrameworkRefs {
@@ -1345,6 +1351,9 @@ message ControlsSummary {
   int32 pass = 2;
   int32 gap = 3;
   int32 not_configured = 4;
+  // unknown (#136) counts controls whose signal could not be collected this run —
+  // a non-zero value means the matrix is incomplete, not fully passing.
+  int32 unknown = 5;
 }
 
 message ComplianceControls {
@@ -1390,6 +1399,7 @@ message ConnectRefGrant {
   uint32 role_id = 2;
   string connector = 3;
   string ref_prefix = 4;
+  optional google.protobuf.Timestamp expires_at = 5;
 }
 
 message ConnectRefGrantList {
@@ -1400,6 +1410,7 @@ message CreateConnectRefGrantRequest {
   uint32 role_id = 1;
   string connector = 2;
   string ref_prefix = 3;
+  optional google.protobuf.Timestamp expires_at = 4;
 }
 
 message DeleteConnectRefGrantRequest {

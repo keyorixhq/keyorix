@@ -14,19 +14,66 @@ import (
 	"strings"
 )
 
-// prefixAllowed reports whether ref is permitted by an allowlist of prefixes. An
-// empty allowlist permits everything (the backend identity's own scope is then the
-// only bound). Shared by the connectors as a defense-in-depth guardrail (ADR-043).
-func prefixAllowed(allowed []string, ref string) bool {
-	if len(allowed) == 0 {
-		return true
-	}
-	for _, p := range allowed {
-		if p != "" && strings.HasPrefix(ref, p) {
+// RefHasDotSegment reports whether ref contains a "." or ".." path segment, e.g.
+// "secret/data/myapp/../otherapp/secret". strings.HasPrefix (used by prefixAllowed
+// below and core.refMatches for ADR-045 ref-grants) is a purely literal, start-only
+// string comparison: "secret/data/myapp/../otherapp/secret" satisfies
+// HasPrefix(ref, "secret/data/myapp/") even though a downstream HTTP layer (Vault's
+// own API, an intermediating proxy, or any RFC 3986-conformant resolver) collapses
+// the ".." and climbs the request outside the allowed prefix entirely. Rejecting a
+// dot-segment ref here means neither the allowed_refs check nor the ADR-045
+// per-reference RBAC grant can be satisfied by a traversal-shaped ref in the first
+// place, independent of whatever additional defense-in-depth an individual
+// connector's GetSecret applies at its own URL-construction point (e.g. vault.go's
+// sanitizeVaultRef). Unlike azure.go's blanket `/?#%` rejection, this only rejects
+// the traversal segments themselves — a legitimate multi-segment ref (Vault paths,
+// GCP resource names, AWS Secrets Manager friendly names) still contains plain "/".
+func RefHasDotSegment(ref string) bool {
+	for _, seg := range strings.Split(ref, "/") {
+		if seg == "." || seg == ".." {
 			return true
 		}
 	}
 	return false
+}
+
+// prefixAllowed reports whether ref is permitted by an allowlist of prefixes. An
+// empty allowlist permits everything (the backend identity's own scope is then the
+// only bound). Shared by the connectors as a defense-in-depth guardrail (ADR-043). A
+// traversal-shaped ref is rejected outright, before the prefix comparison, so it can
+// never be considered "allowed" regardless of the configured allowlist.
+func prefixAllowed(allowed []string, ref string) bool {
+	if RefHasDotSegment(ref) {
+		return false
+	}
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, p := range allowed {
+		if p != "" && refWithinPrefix(p, ref) {
+			return true
+		}
+	}
+	return false
+}
+
+// refWithinPrefix reports whether ref is scoped by prefix p on a path-segment
+// boundary rather than a bare substring match: ref must equal p exactly, or extend
+// it starting with '/'. This stops a prefix such as "db/prod" from also matching
+// the unrelated sibling "db/production-other-team" — an over-grant a plain
+// strings.HasPrefix would allow. A prefix already ending in '/' is treated as
+// already segment-scoped (any continuation is fine).
+func refWithinPrefix(p, ref string) bool {
+	if ref == p {
+		return true
+	}
+	if !strings.HasPrefix(ref, p) {
+		return false
+	}
+	if strings.HasSuffix(p, "/") {
+		return true
+	}
+	return ref[len(p)] == '/'
 }
 
 // Connector reads a secret value from one external store. It is read-only: there is

@@ -38,6 +38,17 @@ type SoDViolation struct {
 	// Detail explains a non-obvious basis for the violation, e.g. that the principal
 	// holds both sides only by virtue of an admin permission-bypass role.
 	Detail string `json:"detail,omitempty"`
+	// Reference is the stable, matchable identifier for this specific violation
+	// (policy + principal) — copy it verbatim into a "sod"-category risk
+	// exception's Reference field to have that exception suppress THIS violation,
+	// and only this one, from the compliance posture (#170).
+	Reference string `json:"reference"`
+}
+
+// sodViolationReference builds the stable per-(policy, principal) reference a
+// governed risk exception matches against to suppress this specific violation.
+func sodViolationReference(policyID uint, principalType string, principalID uint) string {
+	return fmt.Sprintf("sod:policy:%d:%s:%d", policyID, principalType, principalID)
 }
 
 // CreateSoDPolicy defines a toxic-combination rule. The two permissions must be
@@ -138,7 +149,8 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 				PolicyID: pol.ID, PolicyName: pol.Name,
 				PrincipalType: "user", UserID: u.ID, Username: u.Username, Email: u.Email,
 				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
-				Detail: detail,
+				Detail:    detail,
+				Reference: sodViolationReference(pol.ID, "user", u.ID),
 			})
 		}
 		return out
@@ -166,6 +178,7 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 				PolicyID: pol.ID, PolicyName: pol.Name,
 				PrincipalType: "user", UserID: u.ID, Username: u.Username, Email: u.Email,
 				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
+				Reference:   sodViolationReference(pol.ID, "user", u.ID),
 			})
 		}
 	}
@@ -209,6 +222,7 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, policies []*mode
 				PolicyID: pol.ID, PolicyName: pol.Name,
 				PrincipalType: "machine", UserID: m.ID, Username: m.Name,
 				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
+				Reference:   sodViolationReference(pol.ID, "machine", m.ID),
 			})
 		}
 	}

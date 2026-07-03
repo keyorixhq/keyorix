@@ -36,8 +36,8 @@ func ListAnomalyAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Optional ?severity=low|medium|high and ?alertType=off_hours|new_ip|new_user|
-	// frequency_spike|ml_outlier narrow the list server-side (an empty value is no
-	// constraint).
+	// frequency_spike|ml_outlier|principal_breadth narrow the list server-side (an
+	// empty value is no constraint).
 	alerts = core.FilterAlerts(alerts, r.URL.Query().Get("severity"), r.URL.Query().Get("alertType"))
 	sendSuccess(w, map[string]interface{}{"alerts": alerts, "total": len(alerts)}, "")
 }

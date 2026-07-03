@@ -63,6 +63,7 @@ func TestValidateOIDCToken_CrossIssuerBindingIsolation(t *testing.T) {
 	claims := func(iss string) jwt.MapClaims {
 		return jwt.MapClaims{
 			"iss": iss, "sub": subject, "aud": []string{"keyorix"},
+			"iat": time.Now().Unix(),
 			"exp": time.Now().Add(time.Hour).Unix(),
 		}
 	}
