@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	"unicode"
@@ -299,9 +300,11 @@ func sanitizeAuditText(s string) string {
 	}, s)
 }
 
-// writeAccessLog persists a secret_access_logs row.
+// writeAccessLog persists a secret_access_logs row. A failure here is a gap in the
+// secret-access trail, so it is surfaced loudly rather than silently discarded —
+// mirroring emitAudit's handling of a failed audit_events write.
 func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accessedBy, action, ip, ua string) {
-	log := &models.SecretAccessLog{
+	entry := &models.SecretAccessLog{
 		SecretNodeID: secretID,
 		AccessedBy:   accessedBy,
 		AccessTime:   time.Now(),
@@ -309,7 +312,10 @@ func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accesse
 		IPAddress:    ip,
 		UserAgent:    ua,
 	}
-	_ = c.storage.CreateSecretAccessLog(ctx, log)
+	if err := c.storage.CreateSecretAccessLog(ctx, entry); err != nil {
+		log.Printf("SECURITY: failed to persist secret access log (secret=%d action=%q accessedBy=%q): %v",
+			secretID, action, accessedBy, err)
+	}
 }
 
 // LogSecretRead writes audit_events + secret_access_logs for a secret read.
