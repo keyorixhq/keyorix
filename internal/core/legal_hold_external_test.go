@@ -124,11 +124,15 @@ func TestLegalHold_LiftDeniedForThirdParty(t *testing.T) {
 	require.NoError(t, h.DB.AutoMigrate(&models.LegalHold{}, &models.AuditEvent{}, &models.User{}, &models.UserRole{}))
 	ctx := context.Background()
 
+	// #377: placement itself now requires an admin-tier actor — make the placer (1)
+	// admin-tier so PlaceLegalHold succeeds; the point under test here is who may
+	// LIFT relative to the placer, not placement's own authority gate.
+	h.AssignUserRole(t, 1, 2, nil) // role 2 = admin (global)
 	_, err := h.CoreService.PlaceLegalHold(ctx, 1, "litigation INC-9")
 	require.NoError(t, err)
 
 	// Actor 9 holds no role at all — neither the placer nor admin-tier.
-	err = h.CoreService.LiftLegalHold(ctx, 9)
+	err = h.CoreService.LiftLegalHold(ctx, 9, "attempted lift")
 	require.Error(t, err, "a non-placer, non-admin actor must not be able to lift the hold")
 
 	active, aerr := h.CoreService.IsLegalHoldActive(ctx)
@@ -144,7 +148,7 @@ func TestLegalHold_LiftDeniedForThirdParty(t *testing.T) {
 
 	// A DIFFERENT admin-tier principal (not the placer) may still lift it.
 	h.AssignUserRole(t, 20, 2, nil) // role 2 = admin (global)
-	require.NoError(t, h.CoreService.LiftLegalHold(ctx, 20))
+	require.NoError(t, h.CoreService.LiftLegalHold(ctx, 20, "litigation INC-9 resolved by admin"))
 	active, aerr = h.CoreService.IsLegalHoldActive(ctx)
 	require.NoError(t, aerr)
 	assert.False(t, active, "an admin-tier non-placer must be able to lift the hold")
