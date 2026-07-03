@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -151,38 +152,62 @@ func (c *KeyorixCore) RequirePasswordReset(ctx context.Context, adminID, userID 
 }
 
 // setAccountState persists a new account state and writes an audit event.
+//
+// #344: this read-modify-write races with UpdateSCIMUser's — a routine SCIM/IdP
+// resync's GetUser can read the row before an admin's SuspendUser here commits, and
+// whichever caller's full-row Save lands last would otherwise win outright, silently
+// reverting the other's change with no error to either side. accountStateMu (held for
+// the whole read-modify-write, not just the DB write) serializes this against
+// UpdateSCIMUser in-process, and LockUserForUpdate's row lock (Postgres: SELECT ...
+// FOR UPDATE) does the same across replicas — the identical pattern recordFailedLogin
+// uses for the login-lockout counter (see login_lockout.go).
 func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint, state, eventType string) error {
 	if userID == 0 {
 		return fmt.Errorf("user ID is required")
 	}
-	user, err := c.storage.GetUser(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("user not found: %w", err)
-	}
-	// Capture the user's current session-token HASHES BEFORE mutating so we can evict their
-	// auth-cache entries. The HTTP auth cache fast path serves a frozen identity without
-	// re-reading the DB, so without eviction a suspend/deactivate/restrict would not take
-	// effect until the positive-cache TTL — a window where a blocked user keeps full access.
-	// The stored session_token IS the SHA-256 hash, which is exactly the cache key.
-	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+	c.accountStateMu.Lock()
+	defer c.accountStateMu.Unlock()
 
-	user.AccountState = state
-	user.UpdatedAt = c.now()
-	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
+	var sessionHashes []string
+	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		user, err := tx.LockUserForUpdate(ctx, userID)
+		if err != nil {
+			return err
+		}
+		// Capture the user's current session-token HASHES BEFORE mutating so we can evict
+		// their auth-cache entries after commit. The HTTP auth cache fast path serves a
+		// frozen identity without re-reading the DB, so without eviction a
+		// suspend/deactivate/restrict would not take effect until the positive-cache TTL —
+		// a window where a blocked user keeps full access. The stored session_token IS the
+		// SHA-256 hash, which is exactly the cache key.
+		sessionHashes, _ = tx.ListSessionTokenHashesForUser(ctx, userID)
+
+		user.AccountState = state
+		user.UpdatedAt = c.now()
+		if _, err := tx.UpdateUser(ctx, user); err != nil {
+			return err
+		}
+		// A state that blocks login must also terminate the user's existing sessions AND
+		// PATs, so suspension is effective immediately instead of lingering until the
+		// token expires. ValidateSessionToken/ValidatePATToken also reject blocked
+		// accounts as a slow-path backstop, but the cache fast path bypasses it — so
+		// evict here too. Revoked PAT hashes are folded into sessionHashes so they're
+		// evicted from the auth cache alongside the session hashes after commit.
+		if AccountLoginBlocked(state) {
+			_ = tx.DeleteSessionsForUserExcept(ctx, userID, 0)
+			if hashes, herr := tx.RevokeAllPersonalAccessTokensForUser(ctx, userID); herr == nil {
+				sessionHashes = append(sessionHashes, hashes...)
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("failed to update account state: %w", err)
 	}
-	// A state that blocks login must also terminate the user's existing sessions AND PATs,
-	// so suspension is effective immediately instead of lingering until the token expires.
-	// ValidateSessionToken/ValidatePATToken also reject blocked accounts as a slow-path
-	// backstop, but the cache fast path bypasses it — so evict here too.
-	if AccountLoginBlocked(state) {
-		_ = c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
-		if hashes, herr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, userID); herr == nil {
-			c.invalidateTokenCache(hashes...)
-		}
-	}
-	// Evict the captured session-token hashes from the auth cache so the new state (blocked,
-	// or merely restricted) is reflected on the very next request, not after the cache TTL.
+	// Evict the captured session/PAT-token hashes from the auth cache — AFTER commit,
+	// so a rolled-back transaction never evicts a still-valid cache entry — so the new
+	// state (blocked, or merely restricted) is reflected on the very next request, not
+	// after the cache TTL.
 	c.invalidateTokenCache(sessionHashes...)
 	aid := adminID
 	c.writeAuditEventFull(ctx, eventType, &aid, nil, nil, "",

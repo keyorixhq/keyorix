@@ -87,7 +87,17 @@ type KeyorixCore struct {
 	// already hold the valid bootstrap token (#339) — e.g. different usernames —
 	// cannot both observe an empty user table and each create a "first admin". Zero
 	// value is ready to use. See auth_bootstrap.go.
-	bootstrapMu    sync.Mutex
+	bootstrapMu sync.Mutex
+	// accountStateMu serializes the account_state/is_active read-modify-write shared
+	// by setAccountState (SuspendUser/ReactivateUser/RequirePasswordReset) and
+	// UpdateSCIMUser (#344): without it, an admin's incident-response SuspendUser and a
+	// routine SCIM/IdP resync for the same user can each GetUser before the other's
+	// Save commits, and whichever full-row Save lands last silently clobbers the
+	// other's change — e.g. a suspend committed, then a SCIM sync's stale in-memory
+	// "active" copy overwrites it back to active with no error to either caller.
+	// Combined with the row lock LockUserForUpdate takes on Postgres, this holds
+	// across replicas too. Zero value is ready to use. See account_state.go / scim.go.
+	accountStateMu sync.Mutex
 	auditForwarder AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
