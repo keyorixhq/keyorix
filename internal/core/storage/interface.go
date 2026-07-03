@@ -297,6 +297,14 @@ type Storage interface {
 	// already reached (or the version is gone). This is the race-free gate for
 	// max-reads enforcement: concurrent reads can never collectively exceed the cap.
 	TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error)
+	// TryIncrementSecretNodeReadCount is TryIncrementSecretReadCount's secret-level
+	// twin (#133): keyed on the SECRET, not a version, so the count carries forward
+	// across rotate/rollback creating a new version — a per-version counter resets
+	// to zero on every new version, letting a burn-after-N-reads secret become
+	// re-readable simply by rolling back. This is the authoritative max-reads gate;
+	// TryIncrementSecretReadCount remains for the per-version read_count DISPLAY
+	// field only.
+	TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error)
 
 	// Secret Sharing Management
 	CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)
