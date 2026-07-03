@@ -286,6 +286,12 @@ func TestApproveAccessRequestWithExpiry_IsRBACAudited(t *testing.T) {
 
 	approver, err := st.CreateUser(ctx, &models.User{Username: "approver", Email: "approver@example.com", IsActive: true})
 	require.NoError(t, err)
+	// #93/#107/#141: the approver must themselves hold every permission of the
+	// role being granted — grant "admin" globally so the ceiling check's admin
+	// bypass applies.
+	adminRole, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, approver.ID, adminRole.ID, storage.Scope{}))
 	requester, err := st.CreateUser(ctx, &models.User{Username: "requester", Email: "requester@example.com", IsActive: true})
 	require.NoError(t, err)
 	req, err := st.CreateAccessRequest(ctx, &models.AccessRequest{

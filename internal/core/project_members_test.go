@@ -6,9 +6,27 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// grantGlobalAdmin gives actorID the "admin" role at the global scope, so it
+// satisfies the #93/#107/#141 grant-ceiling check (AssignUserRole requires the
+// granting actor already hold every permission bundled into the role being
+// granted; the admin bypass in Authorize covers that trivially) for these
+// project-member tests, which weren't otherwise concerned with the actor's own
+// authority. A GLOBAL grant doesn't show up in a per-project assignment listing
+// (ListProjectRoleAssignments filters on the exact project ID), so it also does
+// NOT get counted as "another project admin" by guardLastProjectAdmin — the
+// last-project-admin scenarios these tests exercise are unaffected.
+func grantGlobalAdmin(t *testing.T, st *store.LocalStorage, actorID uint) {
+	t.Helper()
+	ctx := context.Background()
+	role, err := st.GetRoleByName(ctx, "admin")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, actorID, role.ID, storage.Scope{}))
+}
 
 func TestProjectMemberLifecycle(t *testing.T) {
 	c, st := newBootstrappedCore(t)
@@ -24,6 +42,7 @@ func TestProjectMemberLifecycle(t *testing.T) {
 	assert.Empty(t, members)
 
 	const actor = uint(99)
+	grantGlobalAdmin(t, st, actor)
 
 	// Add as project_viewer.
 	require.NoError(t, c.AddProjectMember(ctx, actor, proj, u.ID, "project_viewer"))
@@ -75,6 +94,7 @@ func TestProjectMemberGrantIsRBACAudited(t *testing.T) {
 	ctx := context.Background()
 	const proj = uint(9)
 	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "carol", Email: "carol@example.com", IsActive: true})
 	require.NoError(t, err)
@@ -120,6 +140,7 @@ func TestRemoveProjectMember_RevokesEnvironmentScopedGrantToo(t *testing.T) {
 	const proj = uint(7)
 	const prodEnv = uint(99)
 	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "carol", Email: "carol@example.com", IsActive: true})
 	require.NoError(t, err)
@@ -160,6 +181,7 @@ func TestRemoveProjectMember_RefusesLastAdmin(t *testing.T) {
 	ctx := context.Background()
 	const proj = uint(7)
 	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "dave", Email: "dave@example.com", IsActive: true})
 	require.NoError(t, err)
@@ -183,6 +205,7 @@ func TestSetProjectMemberRole_RefusesLastAdminDemotion(t *testing.T) {
 	ctx := context.Background()
 	const proj = uint(7)
 	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "erin", Email: "erin@example.com", IsActive: true})
 	require.NoError(t, err)
@@ -205,6 +228,7 @@ func TestRemoveProjectMember_AllowsNonLastAdmin(t *testing.T) {
 	ctx := context.Background()
 	const proj = uint(7)
 	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
 
 	u1, err := st.CreateUser(ctx, &models.User{Username: "frank", Email: "frank@example.com", IsActive: true})
 	require.NoError(t, err)
@@ -234,6 +258,7 @@ func TestRemoveProjectMember_NonAdminAlwaysRemovable(t *testing.T) {
 	ctx := context.Background()
 	const proj = uint(7)
 	const actor = uint(55)
+	grantGlobalAdmin(t, st, actor)
 
 	u, err := st.CreateUser(ctx, &models.User{Username: "henry", Email: "henry@example.com", IsActive: true})
 	require.NoError(t, err)

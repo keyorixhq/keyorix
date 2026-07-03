@@ -137,10 +137,15 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 }
 
 // RemoveRoleFromGroup verifies the group exists then removes the role at scope
-// and records an RBAC audit event. actorID is the acting principal (0 = none).
+// and records an RBAC audit event. actorID is the acting principal (0 = none). It
+// refuses to remove the install's last global-admin-conferring group grant (#107;
+// see guardLastGlobalAdminGroupRole).
 func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID, roleID uint, scope Scope) error {
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
+	}
+	if err := c.guardLastGlobalAdminGroupRole(ctx, groupID, roleID, scope); err != nil {
+		return err
 	}
 	if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -245,8 +250,36 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 // AssignUserRole assigns a role to a user at the given scope and records an RBAC
 // audit event. actorID is the acting principal (0 when unauthenticated, e.g. a
 // local CLI invocation). This is the audited choke point all role-assignment
-// paths funnel through.
+// paths funnel through. See requireGranterHoldsRolePermissions for the
+// admin-rank-ceiling check on the grant (#93/#107/#141).
 func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
+	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope); err != nil {
+		return err
+	}
+	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.LogRoleAssigned(ctx, actorID, userID, roleID, scope)
+	return nil
+}
+
+// assignUserRoleSystemGrant performs the same audited grant as AssignUserRole but
+// deliberately SKIPS the #93/#107/#141 grant-ceiling check. Use it ONLY where the
+// authorization root for the grant is not the acting principal's own
+// roles.assign-derived authority, but an independently validated, admin-
+// configured trust mapping — today that is exactly one caller: SSO group-role
+// reconciliation (sso.go), where an install admin (not the logging-in user)
+// decided which IdP groups map to which roles ahead of time, and the login itself
+// was verified against the IdP's signed id_token. Requiring the logging-in user to
+// already hold the very role they're being auto-provisioned would defeat the
+// feature's whole purpose — this mirrors the actorID-0 "system pseudo-actor"
+// bypass AssignPermissionToRole uses for #169, but keyed on the call site instead
+// of the actor ID, since SSO reconciliation attributes the grant to the real
+// logging-in user (actorID = userID) for audit purposes, not to actor 0.
+// actorID is still recorded as the audit actor. Never call this from a path
+// reachable by an ordinary authenticated request exercising roles.assign — that
+// path must go through AssignUserRole so the ceiling check applies.
+func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
 	if err := c.storage.AssignRole(ctx, userID, roleID, scope); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -258,12 +291,30 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 // RBAC audit event. See AssignUserRole for actorID semantics. It refuses to remove
 // the last install administrator (see guardLastGlobalAdmin). This is the choke point
 // SetUserRoles and the HTTP/gRPC role-removal handlers funnel through.
+//
+// The last-admin check and the removal itself run inside a single storage
+// transaction, held under globalAdminGuardMu for its whole duration (#340):
+// without this, two concurrent removals of two different admins' role
+// assignments could each observe "another admin still exists" before either
+// write commits, stranding the install with zero admins. The transaction's
+// ListGlobalAdminAssignmentsForUpdate read takes a row-level lock on every
+// candidate admin-conferring assignment on backends that support one (Postgres),
+// serializing HA replicas; globalAdminGuardMu serializes same-process callers —
+// the same two-layer pattern login_lockout.go's recordFailedLogin uses.
 func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
-	if err := c.guardLastGlobalAdmin(ctx, userID, roleID, scope); err != nil {
+	c.globalAdminGuardMu.Lock()
+	defer c.globalAdminGuardMu.Unlock()
+	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := c.guardLastGlobalAdmin(ctx, tx, userID, roleID, scope); err != nil {
+			return err
+		}
+		if err := tx.RemoveRole(ctx, userID, roleID, scope); err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	})
+	if err != nil {
 		return err
-	}
-	if err := c.storage.RemoveRole(ctx, userID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
 	return nil
@@ -277,9 +328,20 @@ var installAdminRoleNames = []string{"super_admin", "admin", "system_admin"}
 // installAdminRoleIDSet resolves installAdminRoleNames to their role IDs (skipping
 // any that a given install did not seed).
 func (c *KeyorixCore) installAdminRoleIDSet(ctx context.Context) map[uint]bool {
+	return c.installAdminRoleIDSetFrom(ctx, c.storage)
+}
+
+// installAdminRoleIDSetFrom is installAdminRoleIDSet against an explicit Storage
+// handle. Callers running inside a WithTransaction callback (guardLastGlobalAdmin,
+// #340) MUST pass the transaction-scoped Storage they were handed, not c.storage:
+// on the local (DB) backend, a read issued through c.storage while a transaction
+// is still open checks out a SEPARATE pooled connection — for SQLite ":memory:"
+// specifically, a distinct, empty database — silently missing the very rows the
+// transaction just wrote or is checking.
+func (c *KeyorixCore) installAdminRoleIDSetFrom(ctx context.Context, s storage.Storage) map[uint]bool {
 	set := make(map[uint]bool, len(installAdminRoleNames))
 	for _, name := range installAdminRoleNames {
-		if role, err := c.storage.GetRoleByName(ctx, name); err == nil && role != nil {
+		if role, err := s.GetRoleByName(ctx, name); err == nil && role != nil {
 			set[role.ID] = true
 		}
 	}
@@ -291,22 +353,28 @@ func (c *KeyorixCore) installAdminRoleIDSet(ctx context.Context) map[uint]bool {
 // self-inflicted or malicious-insider lockout that strands the install with no
 // administrator (and no recovery short of DB surgery). Only the global scope is
 // guarded: a project-scoped admin can always be restored by a global admin.
-func (c *KeyorixCore) guardLastGlobalAdmin(ctx context.Context, userID, roleID uint, scope Scope) error {
+//
+// tx is the transaction-scoped Storage the caller (RemoveUserRole) is running
+// inside (#340): the read MUST go through it, not c.storage, so the row lock
+// ListGlobalAdminAssignmentsForUpdate takes is actually held for the lifetime of
+// this decision rather than released before the caller's own write runs.
+func (c *KeyorixCore) guardLastGlobalAdmin(ctx context.Context, tx storage.Storage, userID, roleID uint, scope Scope) error {
 	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
 		return nil // not the global scope — project admins are recoverable
 	}
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs := c.installAdminRoleIDSetFrom(ctx, tx)
 	if !adminIDs[roleID] {
 		return nil // not removing an install-admin role
 	}
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	ids := make([]uint, 0, len(adminIDs))
+	for id := range adminIDs {
+		ids = append(ids, id)
+	}
+	assignments, err := tx.ListGlobalAdminAssignmentsForUpdate(ctx, ids)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	for _, a := range assignments {
-		if !adminIDs[a.RoleID] {
-			continue
-		}
 		// Ignore the exact assignment being removed; any OTHER global admin grant
 		// (held by another user, or by a group) means governance survives.
 		if a.PrincipalType == "user" && a.PrincipalID == userID && a.RoleID == roleID {

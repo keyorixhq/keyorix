@@ -24,6 +24,7 @@ func TestGroupCRUDAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.Group{}, &models.GroupRole{}, &models.UserGroup{}, &models.AuditEvent{}, &models.Role{},
+		&models.UserRole{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	ctx := context.Background()
@@ -74,6 +75,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.Group{}, &models.User{}, &models.UserGroup{}, &models.AuditEvent{},
+		&models.Role{}, &models.UserRole{}, &models.GroupRole{},
 	))
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 11, Username: "alice", Email: "alice@example.com"}).Error)

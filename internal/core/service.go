@@ -68,6 +68,14 @@ type KeyorixCore struct {
 	// the row lock LockUserForUpdate takes on Postgres, the lockout counter stays
 	// correct across replicas. Zero value is ready to use. See login_lockout.go.
 	loginFailureMu sync.Mutex
+	// globalAdminGuardMu serializes RemoveUserRole's last-global-admin check and the
+	// removal it guards (guardLastGlobalAdmin) into one atomic unit, so two admins
+	// concurrently removing each other's role assignment cannot both observe
+	// "another admin still exists" before either write lands (#340). Combined with
+	// the row lock ListGlobalAdminAssignmentsForUpdate takes on Postgres, the guard
+	// stays correct across HA replicas too. Zero value is ready to use. See
+	// rbac_management.go.
+	globalAdminGuardMu sync.Mutex
 	// setupResendMu serializes the count-then-issue window of the setup-link resend
 	// throttle (checkResendThrottle + IssueSetupToken) so two concurrent resends for
 	// the same (purpose, email) cannot both clear the per-day cap / min-interval

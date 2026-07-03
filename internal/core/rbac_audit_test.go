@@ -16,7 +16,11 @@ func newRBACAuditCore(t *testing.T) *KeyorixCore {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.UserRole{}))
+	require.NoError(t, db.AutoMigrate(
+		&models.AuditEvent{}, &models.UserRole{}, &models.Role{}, &models.Permission{},
+		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
+	))
 	return NewKeyorixCore(store.NewLocalStorage(db))
 }
 
