@@ -42,6 +42,16 @@ var ErrDuplicateActiveMembership = errors.New("an active membership already exis
 // constraint-violation message.
 var ErrDuplicateEmail = errors.New("a user with this email already exists")
 
+// ErrDuplicateProjectName is returned (wrapped) by CreateProject/UpdateProject when the
+// write collides with the partial, case-insensitive unique index on projects.name (live
+// rows only, #385). Without this, "Production"/"production" landed as two distinct,
+// both-succeeding rows — and the CLI's project name resolution (resolveProjectID)
+// resolves case-insensitively over an unordered project list, returning the FIRST match —
+// so a same-name-different-case shadow project could silently hijack a later `keyorix
+// secret import/export --project production`. Callers translate this into a clean
+// "project name already in use" error rather than a raw constraint-violation message.
+var ErrDuplicateProjectName = errors.New("a project with this name already exists")
+
 // ErrDuplicateSecretVersion is returned (wrapped) by CreateSecretVersion when the insert
 // collides with the unique index on (secret_node_id, version_number). RotateSecret's
 // GetLatestSecretVersion -> +1 -> storeSecretVersion sequence is a read-then-write race

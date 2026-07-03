@@ -673,6 +673,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
+	// Swap the plain unique index on projects.name for a case-insensitive, live-rows-
+	// only partial one (#385): "Production"/"production" previously landed as two
+	// distinct, all-succeeding rows, and the CLI's project name resolution
+	// (resolveProjectID) is case-insensitive and returns the first match — so a
+	// same-name-different-case shadow project the exact-match index didn't block could
+	// silently hijack a later `keyorix secret import/export --project production`.
+	// Additive + idempotent; the full AutoMigrate below covers fresh DBs.
+	if projectsExists {
+		if err := ensureProjectNameIndex(db); err != nil {
+			return err
+		}
+	}
+
 	// Skip full AutoMigrate if already initialised (projects table present).
 	if projectsExists {
 		return nil
@@ -722,9 +735,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	); err != nil {
 		return err
 	}
-	// The Group and User models carry no plain unique tag on name/username; enforce
-	// uniqueness only among live rows via partial indexes (so a soft-deleted name or
-	// username can be reused, e.g. on SCIM re-provisioning).
+	// The Group, User, and Project models carry no plain unique tag on
+	// name/username/name; enforce uniqueness only among live rows via partial indexes
+	// (so a soft-deleted name/username can be reused, e.g. on SCIM re-provisioning).
 	if err := ensureGroupNameIndex(db); err != nil {
 		return err
 	}
@@ -732,6 +745,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		return err
 	}
 	if err := ensureUserEmailIndex(db); err != nil {
+		return err
+	}
+	if err := ensureProjectNameIndex(db); err != nil {
 		return err
 	}
 	if err := ensureShareRecordUniqueIndex(db); err != nil {
@@ -837,6 +853,34 @@ func ensureUserNameIndex(db *gorm.DB) error {
 func ensureUserEmailIndex(db *gorm.DB) error {
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial users email index: %w", err)
+	}
+	return nil
+}
+
+// ensureProjectNameIndex creates a partial, case-insensitive unique index on
+// projects.name scoped to live (non-deleted) rows with a non-empty name (#385).
+// Project.Name previously carried only a plain, case-sensitive `uniqueIndex` tag, so
+// "Production"/"production" (and any other case variant) were distinct, both-succeeding
+// rows — and the CLI's project name resolution (resolveProjectID, import.go) resolves by
+// case-insensitive comparison over an unordered project list, returning the FIRST match.
+// A secrets.write holder could therefore plant a same-name-different-case shadow project
+// the old index didn't block, and a later `keyorix secret import/export --project
+// production` could silently resolve against the shadow project instead of the intended
+// one. The index is on LOWER(name) so it catches every case variant, mirroring
+// ensureUserEmailIndex's treatment of users.email (#117) for the identical
+// shadow-identity class of bug. Scoped to `deleted_at IS NULL` so a soft-deleted
+// project's name is freed for reuse on re-creation, mirroring ensureGroupNameIndex/
+// ensureUserNameIndex; `name <> ''` so any legacy rows with no name recorded don't
+// collide with each other. Idempotent; works on both SQLite and Postgres.
+//
+// Known residual limitation: this closes the case-folding gap but not the
+// Unicode-homoglyph one — "Prοduction" (Greek omicron, U+03BF) still normalizes to a
+// distinct LOWER() value from "production" and would still create a separate row. Full
+// NFKC normalization plus homoglyph/confusable detection is a materially harder problem
+// (Unicode Technical Standard #39) and is intentionally out of scope here.
+func ensureProjectNameIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_projects_name_active ON projects (LOWER(name)) WHERE deleted_at IS NULL AND name <> ''").Error; err != nil {
+		return fmt.Errorf("failed to create partial projects name index: %w", err)
 	}
 	return nil
 }

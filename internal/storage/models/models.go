@@ -7,8 +7,14 @@ import (
 )
 
 type Project struct {
-	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"uniqueIndex;not null"`
+	ID uint `gorm:"primaryKey"`
+	// Name uniqueness is enforced by a case-insensitive PARTIAL unique index
+	// (LOWER(name) WHERE deleted_at IS NULL), created in migrateDatabase (#385) — not
+	// the plain `uniqueIndex` tag — so "Production"/"production" can't land as two
+	// distinct rows (closing a shadow-project confusion vector against the
+	// case-insensitive CLI project-name resolution), while a soft-deleted project's
+	// name is still freed for reuse.
+	Name        string `gorm:"not null"`
 	Description string
 	// RequireMFA, when true, denies interactive (session-authenticated) callers
 	// without a second factor access to this project's scoped resources, even when

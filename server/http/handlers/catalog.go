@@ -232,10 +232,7 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 		sendError(w, "NotFound", "Project not found", http.StatusNotFound, nil)
 		return
 	}
-	env, err := h.coreService.Storage().CreateEnvironment(r.Context(), &models.Environment{
-		ProjectID: uint(id),
-		Name:      body.Name,
-	})
+	env, err := h.coreService.CreateEnvironment(r.Context(), uint(id), body.Name)
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
 		return
