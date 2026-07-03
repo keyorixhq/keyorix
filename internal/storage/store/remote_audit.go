@@ -190,7 +190,7 @@ func (rs *RemoteStorage) ListAnomalyAlerts(_ context.Context, _ *bool) ([]models
 }
 
 // AcknowledgeAnomalyAlert is not available in remote mode.
-func (rs *RemoteStorage) AcknowledgeAnomalyAlert(_ context.Context, _ uint) error {
+func (rs *RemoteStorage) AcknowledgeAnomalyAlert(_ context.Context, _, _ uint, _ time.Time) error {
 	return fmt.Errorf("AcknowledgeAnomalyAlert not available in remote mode")
 }
 

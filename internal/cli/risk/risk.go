@@ -30,6 +30,10 @@ type exceptionView struct {
 	Status        string `json:"status"`
 	ExpiresAt     string `json:"expires_at"`
 	CreatedBy     uint   `json:"created_by"`
+	// Approved is dual-control (#170): the exception only suppresses its matched
+	// violation from the compliance posture once a different system.write holder
+	// than the creator approves it (`keyorix risk approve`).
+	Approved bool `json:"approved"`
 }
 
 var listAll bool
@@ -58,7 +62,11 @@ var listCmd = &cobra.Command{
 			return nil
 		}
 		for _, e := range out.Exceptions {
-			fmt.Printf("[%s] #%d %s (category=%s, ref=%q)\n", e.Status, e.ID, e.Title, e.Category, e.Reference)
+			approval := "pending approval"
+			if e.Approved {
+				approval = "approved"
+			}
+			fmt.Printf("[%s, %s] #%d %s (category=%s, ref=%q)\n", e.Status, approval, e.ID, e.Title, e.Category, e.Reference)
 			fmt.Printf("        expires %s — %s\n", e.ExpiresAt, e.Justification)
 		}
 		return nil
@@ -102,6 +110,32 @@ var addCmd = &cobra.Command{
 	},
 }
 
+var approveID uint
+
+var approveCmd = &cobra.Command{
+	Use:   "approve",
+	Short: "Approve a risk exception so it takes effect (dual control — must not be its own creator)",
+	Long: `An exception is inert until approved: it does not suppress its matched
+violation from the compliance posture until a DIFFERENT system.write holder than
+the one who created it approves it. This prevents a single principal from
+unilaterally creating and self-approving a suppression of their own risk.`,
+	SilenceUsage: true,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if approveID == 0 {
+			return fmt.Errorf("--id is required")
+		}
+		c, ok := common.NewRemoteClient()
+		if !ok {
+			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
+		}
+		if err := c.Post(context.Background(), fmt.Sprintf("/api/v1/risk-exceptions/%d/approve", approveID), nil, nil); err != nil {
+			return err
+		}
+		fmt.Printf("Risk exception %d approved.\n", approveID)
+		return nil
+	},
+}
+
 var revokeID uint
 
 var revokeCmd = &cobra.Command{
@@ -131,6 +165,7 @@ func init() {
 	addCmd.Flags().StringVar(&addReference, "reference", "", "What it applies to (a user, an SoD pair, a secret)")
 	addCmd.Flags().StringVar(&addJustification, "justification", "", "Why the risk is accepted (required, recorded for audit)")
 	addCmd.Flags().StringVar(&addExpires, "expires", "", "When the exception sunsets (RFC3339, required)")
+	approveCmd.Flags().UintVar(&approveID, "id", 0, "ID of the exception to approve (required)")
 	revokeCmd.Flags().UintVar(&revokeID, "id", 0, "ID of the exception to revoke (required)")
-	RiskCmd.AddCommand(listCmd, addCmd, revokeCmd)
+	RiskCmd.AddCommand(listCmd, addCmd, approveCmd, revokeCmd)
 }

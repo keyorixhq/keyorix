@@ -38,6 +38,13 @@ func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamic.FakeEngi
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
+	// Every config created via mkConfig (or inline in these tests) targets
+	// ProjectID 1 / EnvironmentID 2 — seed real, live rows so IssueLease/
+	// RenewLease's #369 project-liveness check passes for the ordinary-path
+	// tests (project soft-delete behavior itself is exercised separately in
+	// catalog_delete_project_test.go / a dedicated dynamic-secrets test below).
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "dyn-test-project"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 2, ProjectID: 1, Name: "dyn-test-env"}).Error)
 
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
 	require.NoError(t, enc.Initialize("test-passphrase"))
@@ -353,8 +360,8 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLClampsIssue(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
-		// No MaxTTLSeconds — the per-config ceiling is unset/unbounded.
 		ActorID: testAdminActorID,
+		// No MaxTTLSeconds — the per-config ceiling is unset/unbounded.
 	})
 	require.NoError(t, err)
 

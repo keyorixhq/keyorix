@@ -549,6 +549,20 @@ func (c *KeyorixCore) SetSecretAutoRotate(ctx context.Context, id uint, spec Aut
 	if err != nil {
 		return fmt.Errorf("secret not found: %w", err)
 	}
+	// Binding a backend is a materially bigger grant than scoped secrets.write alone:
+	// the backend often carries an org-wide, admin-credentialed connection (AWS/GCP/
+	// Azure IAM, a shared DB superuser), and the ref only has to pass that backend's
+	// deployment-wide allowed_refs prefix — not any project/segment boundary. Without
+	// this, any project editor could point an org-wide-credentialed backend at a ref
+	// they can influence and have the next scheduler run mint that credential into
+	// their own readable secret (or reset an unrelated target's password) — the same
+	// escalation-by-proxy shape #93/#107 closed for role grants, applied here to
+	// credential-minting backends (#90).
+	if spec.Backend != "" {
+		if err := c.requireAdminAuthorityAt(ctx, actorID, secret.ProjectID); err != nil {
+			return fmt.Errorf("binding a rotation backend requires admin authority on this project: %w", err)
+		}
+	}
 	secret.AutoRotate = spec.Enabled
 	secret.RotationLength = spec.Length
 	secret.RotationCharset = spec.Charset

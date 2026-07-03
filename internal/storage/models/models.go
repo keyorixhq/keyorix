@@ -161,6 +161,13 @@ type RiskException struct {
 	Revoked       bool       `gorm:"index" json:"revoked"`    // true = withdrawn before expiry
 	RevokedBy     uint       `json:"revoked_by,omitempty"`
 	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	// Approved/ApprovedBy/ApprovedAt implement dual control (#170): an exception
+	// only suppresses its matched violation once a DIFFERENT system.write holder
+	// than the creator approves it, so the same actor can't unilaterally create
+	// and self-approve a suppression of their own risk.
+	Approved   bool       `gorm:"default:false" json:"approved"`
+	ApprovedBy uint       `json:"approved_by,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 }
 
 // BreakGlassActivation records a self-service emergency-access elevation: a user
@@ -168,6 +175,11 @@ type RiskException struct {
 // written justification, for incident response (NIS2/DORA). The grant itself is a
 // JIT time-bound role assignment that auto-expires; this record is the queryable,
 // auditable evidence for post-hoc review. State: active → expired | revoked.
+//
+// A partial unique index on (project_id, user_id) WHERE state='active' (created by
+// the storage migration, not expressible via a plain gorm tag) enforces at most one
+// active activation per project+user even under a race — see
+// storage.ErrBreakGlassAlreadyActive.
 type BreakGlassActivation struct {
 	ID            uint       `gorm:"primaryKey" json:"id"`
 	ProjectID     uint       `gorm:"index" json:"project_id"`
@@ -436,6 +448,11 @@ type ConnectRefGrant struct {
 	RoleID    uint   `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:1"`
 	Connector string `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:2"`
 	RefPrefix string `gorm:"not null;uniqueIndex:uq_connect_ref_grant,priority:3"`
+	// ExpiresAt makes a grant time-bound (just-in-time access): nil = permanent;
+	// otherwise the grant stops authorizing the moment it passes. Enforcement checks
+	// this directly so an expired grant is denied immediately, mirroring
+	// UserRole.ExpiresAt / ShareRecord.ExpiresAt.
+	ExpiresAt *time.Time `gorm:"index"`
 	CreatedAt time.Time
 }
 
@@ -490,6 +507,9 @@ type SecretNode struct {
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives
 	// the classification posture and lets a review find high-sensitivity secrets.
+	// LABEL ONLY, NOT A CONTROL — see the KNOWN LIMITATION note on the package doc of
+	// internal/core/classification.go; a "restricted" secret is not currently treated
+	// any differently at read time than a "public" one.
 	Classification string `gorm:"index"`
 	Status         string `gorm:"default:'active'"`
 	CreatedBy      string
@@ -586,10 +606,20 @@ type DynamicSecretConfig struct {
 	// mints (ISO 27001 A.5.12/A.5.13): "" = unclassified, else one of
 	// public|internal|confidential|restricted. Folds into the classification posture
 	// so dynamic credentials are covered alongside static secrets.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
-	CreatedBy      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// Disabled refuses new IssueLease calls against this config (#369). Set
+	// automatically when the owning project is soft-deleted (DeleteProject's
+	// cascade), so a principal who still holds a role scoped to the "deleted"
+	// project cannot keep minting fresh database credentials against it. Not
+	// cleared automatically by RestoreProject — re-enabling a dynamic-secret
+	// config (which can mint live database credentials) is a higher-consequence
+	// action than restoring a static secret, so it requires an explicit,
+	// deliberate re-enable rather than silently resurrecting with the project.
+	Disabled  bool `gorm:"default:false"`
+	CreatedBy string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // DynamicSecretLease is one issued credential: a short-lived role on the target
@@ -998,6 +1028,13 @@ type AnomalyAlert struct {
 	IPAddress    string
 	DetectedAt   time.Time `gorm:"index"`
 	Acknowledged bool      `gorm:"default:false"`
+	// AcknowledgedBy/AcknowledgedAt attribute WHO dismissed this alert and WHEN
+	// (#217) — a privileged principal could otherwise suppress evidence of their
+	// own malicious access with the acknowledged flag alone leaving no forensic
+	// trail on the row itself (a separate audit event is also emitted, but the
+	// row-level attribution lets the posture/digest surface it directly).
+	AcknowledgedBy uint       `json:"acknowledged_by,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
 	// Alerted is set once the anomaly has been pushed out (admin notification +
 	// SIEM forward) so the alerter doesn't re-notify on every scan.
 	Alerted   bool `gorm:"default:false;index"`
@@ -1023,6 +1060,7 @@ type MachineIdentity struct {
 	RevokedAt    *time.Time
 	// Classification is the data-sensitivity tier this machine identity handles
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
 }
 
@@ -1043,6 +1081,7 @@ type MachineIdentityCredential struct {
 	CreatedAt         time.Time
 	// Classification is the data-sensitivity tier of what this credential can reach
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
 }
 

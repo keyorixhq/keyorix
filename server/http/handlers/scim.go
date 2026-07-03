@@ -147,7 +147,12 @@ func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resources := []map[string]interface{}{}
-		if user != nil {
+		// FindSCIMUser falls back to an email match against ANY user so
+		// ProvisionSCIMUser's create-time dedup can still refuse a colliding email —
+		// but that means a userName-filter query here could otherwise surface (and
+		// leak the numeric id of) a NATIVE account SCIM never provisioned. Only
+		// SCIM-managed accounts are real matches for discovery/reconciliation (#120).
+		if user != nil && user.ExternalID != "" {
 			resources = append(resources, toSCIMUser(user))
 		}
 		writeSCIM(w, http.StatusOK, listResponse(resources))

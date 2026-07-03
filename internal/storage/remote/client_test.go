@@ -111,6 +111,54 @@ func TestHTTPClient_Get_WithCaching(t *testing.T) {
 	assert.Equal(t, 1, requestCount) // Should still be 1 due to caching
 }
 
+// A successful mutating request (PUT here, standing in for an UpdateSecret/
+// rotate/revoke call) invalidates the GET cache, so a subsequent read through the
+// SAME client instance is not served the pre-write cached value for up to the
+// full 5-minute TTL — closing the "revoked/rotated secret served stale from
+// cache" gap for the read-your-own-write case.
+func TestHTTPClient_Get_CacheInvalidatedOnWrite(t *testing.T) {
+	var getCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			getCount++
+		}
+		response := APIResponse{Success: true, Data: json.RawMessage(`{"ok":true}`)}
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	config := &Config{
+		BaseURL:        server.URL,
+		APIKey:         "test-key",
+		TimeoutSeconds: 30,
+		RetryAttempts:  3,
+		TLSVerify:      false,
+	}
+	client, err := NewHTTPClient(config)
+	require.NoError(t, err)
+
+	// Prime the cache for /secrets/1.
+	_, err = client.Get(context.Background(), "/secrets/1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, getCount)
+
+	// Cached: no new GET.
+	_, err = client.Get(context.Background(), "/secrets/1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, getCount, "second GET should be served from cache")
+
+	// A write — even to a DIFFERENT path, mirroring UpdateSecret's PUT
+	// /secrets/{id} vs GetSecretByName's /secrets/by-name/... cache key mismatch —
+	// must invalidate the whole cache, not just a matching key.
+	_, err = client.Put(context.Background(), "/secrets/1", map[string]string{"value": "new"})
+	require.NoError(t, err)
+
+	// Next GET must hit the server again, not the stale cached value.
+	_, err = client.Get(context.Background(), "/secrets/1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, getCount, "GET after a write must not be served from the pre-write cache")
+}
+
 func TestHTTPClient_Post(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

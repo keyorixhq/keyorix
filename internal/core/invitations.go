@@ -59,12 +59,25 @@ func (c *KeyorixCore) requireAuthorityForRole(ctx context.Context, actorID, proj
 	if !isAdminRoleName(role) {
 		return nil
 	}
+	if err := c.requireAdminAuthorityAt(ctx, actorID, projectID); err != nil {
+		return fmt.Errorf("only an administrator can grant the administrative role %q: %w", role, err)
+	}
+	return nil
+}
+
+// requireAdminAuthorityAt refuses unless actorID holds an admin role (adminRoleNames)
+// directly assigned at the given project scope (0 = global). The shared primitive
+// behind requireAuthorityForRole (gating a role GRANT) and any other action that
+// carries equivalent risk without being a role grant per se — e.g. binding a
+// rotation backend to a secret (#90): the backend often carries org-wide admin
+// credentials, so the same escalation-by-proxy ceiling applies.
+func (c *KeyorixCore) requireAdminAuthorityAt(ctx context.Context, actorID, projectID uint) error {
 	ids, err := c.storage.GetUserRoleIDsAt(ctx, actorID, storage.Scope{ProjectID: projectID})
 	if err != nil {
-		return fmt.Errorf("failed to resolve granter authority: %w", err)
+		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
 	if !c.roleSetContainsAdmin(ctx, ids) {
-		return fmt.Errorf("only an administrator can grant the administrative role %q", role)
+		return fmt.Errorf("admin authority is required")
 	}
 	return nil
 }

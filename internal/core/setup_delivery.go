@@ -55,33 +55,20 @@ type ProvisionSetupResult struct {
 // provisionSetupLink issues a setup token for the request's subject and delivers it
 // via the configured channel, returning the outcome. Requires a configured base URL
 // (a relative link is a misconfiguration, not a fallback).
+//
+// Always enforces the per-subject resend throttle (ADR-028 abuse section,
+// checkResendThrottle) — including on what looks like an "initial" provision, not just
+// explicit resends. Without this, a create→soft-delete→recreate loop against the same
+// email would bypass the throttle entirely: DeleteUser is an unconditional soft delete
+// and GetUserByEmail excludes soft-deleted rows, so the same address becomes immediately
+// reusable for another "initial" CreateUserWithSetupLink, each one an unthrottled SMTP
+// send against the org's own mail relay (#183). checkResendThrottle is keyed on the raw
+// email address in the setup-token store, independent of the (deletable/recreatable) user
+// row, so the count survives the delete. The count-then-act window (check, then
+// IssueSetupToken) is serialized under setupResendMu so a concurrent burst for the same
+// (purpose, email) can't all observe a sub-cap count before any of them writes the token
+// that would push the next check over the cap.
 func (c *KeyorixCore) provisionSetupLink(ctx context.Context, req IssueSetupTokenRequest, displayName, assignmentSummary string) (*ProvisionSetupResult, error) {
-	if c.setupBaseURL == "" {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrSetupBaseURLRequired)
-	}
-	issued, err := c.IssueSetupToken(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return c.deliverSetupLink(ctx, issued, req, displayName, assignmentSummary)
-}
-
-// provisionSetupLinkThrottled is provisionSetupLink with the per-subject resend
-// throttle (ADR-028 abuse section) applied atomically. The throttle check counts
-// recent tokens and then a new token is minted; without serialization two concurrent
-// resends for the same (purpose, email) both see a sub-cap count and both mint,
-// exceeding the daily cap / min-interval (the count-then-act is the only way past
-// the cap, so the race defeats the sole mail-bombing control). setupResendMu is held
-// across the check + IssueSetupToken so the count and the write that the next count
-// will see are one critical section. Delivery runs after the lock is released — a
-// slow SMTP send must not block every other resend. Used by every resend path and by
-// the invitation initial-send paths (InviteToProjectWithLink / InviteGlobalWithLink,
-// #345) — a loop-called initial invite is otherwise indistinguishable from a
-// loop-called resend as an SMTP-relay abuse vector, so both are held to the same
-// per-(purpose, email) limit. CreateUserWithSetupLink is the one caller that still
-// goes through the unthrottled provisionSetupLink: it runs only once CreateUser has
-// already claimed the (unique) email, so it cannot be looped for the same subject.
-func (c *KeyorixCore) provisionSetupLinkThrottled(ctx context.Context, req IssueSetupTokenRequest, displayName, assignmentSummary string) (*ProvisionSetupResult, error) {
 	if c.setupBaseURL == "" {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrSetupBaseURLRequired)
 	}
@@ -96,6 +83,14 @@ func (c *KeyorixCore) provisionSetupLinkThrottled(ctx context.Context, req Issue
 		return nil, err
 	}
 	return c.deliverSetupLink(ctx, issued, req, displayName, assignmentSummary)
+}
+
+// provisionSetupLinkThrottled is now a thin alias for provisionSetupLink, kept as an
+// explicitly-named entry point at resend/reset call sites where the throttle is the whole
+// point — provisionSetupLink itself always enforces checkResendThrottle (see above), so
+// there is no longer a distinct unthrottled variant to be paired with.
+func (c *KeyorixCore) provisionSetupLinkThrottled(ctx context.Context, req IssueSetupTokenRequest, displayName, assignmentSummary string) (*ProvisionSetupResult, error) {
+	return c.provisionSetupLink(ctx, req, displayName, assignmentSummary)
 }
 
 // deliverSetupLink builds the absolute setup link from a freshly issued token and

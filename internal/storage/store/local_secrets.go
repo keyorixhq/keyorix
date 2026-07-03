@@ -173,6 +173,19 @@ func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 			Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
 			return fmt.Errorf("failed to soft-delete project environments: %w", err)
 		}
+		// Disable every dynamic-secret config scoped to the project (#369): a
+		// disabled project must not go on minting live database credentials.
+		// IssueLease/RenewLease refuse against a Disabled config; the caller
+		// (core.DeleteProject) revokes the configs' outstanding active leases
+		// against their real targets AFTER this transaction commits — that's
+		// network I/O to arbitrary external systems and must not hold this DB
+		// transaction open. Unlike secrets/environments, Disabled is a plain
+		// boolean with no cascade timestamp: RestoreProject deliberately does
+		// NOT clear it (see the Disabled field doc on DynamicSecretConfig).
+		if err := tx.Model(&models.DynamicSecretConfig{}).
+			Where("project_id = ? AND disabled = ?", id, false).Update("disabled", true).Error; err != nil {
+			return fmt.Errorf("failed to disable project dynamic-secret configs: %w", err)
+		}
 		// Soft-delete the project itself with the same timestamp.
 		result := tx.Model(&models.Project{}).
 			Where("id = ?", id).Update("deleted_at", deletedAt)
@@ -513,8 +526,9 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
-	offset := (filter.Page - 1) * filter.PageSize
-	query = query.Offset(offset).Limit(filter.PageSize)
+	pageSize := clampPageSize(filter.PageSize)
+	offset := (filter.Page - 1) * pageSize
+	query = query.Offset(offset).Limit(pageSize)
 
 	var secrets []*models.SecretNode
 	if err := query.Find(&secrets).Error; err != nil {

@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -27,7 +28,7 @@ const EventAnomalyAcknowledged = "security.anomaly_acknowledged" // #nosec G101 
 // the audit trail. actorID is the operator performing the dismissal. The acknowledge is
 // gated at the transport by a write-level permission (it mutates a detection record).
 func (c *KeyorixCore) AcknowledgeAnomalyAlert(ctx context.Context, actorID, alertID uint) error {
-	if err := c.storage.AcknowledgeAnomalyAlert(ctx, alertID); err != nil {
+	if err := c.storage.AcknowledgeAnomalyAlert(ctx, alertID, actorID, c.now()); err != nil {
 		return err
 	}
 	var aid *uint
@@ -73,8 +74,14 @@ func (c *KeyorixCore) AlertNewAnomalies(ctx context.Context) (int, error) {
 		c.writeAuditEventFull(ctx, EventAnomalyDetected, nil, sid, pid, a.IPAddress,
 			fmt.Sprintf("anomaly (%s, %s): %s", a.AlertType, a.Severity, a.Description))
 
-		// In-app: alert the project's approver-role members.
-		c.notifyAnomalyAdmins(ctx, projectID, a)
+		// In-app: alert the project's approver-role members. The audit/SIEM event
+		// above is already durable regardless, so this is a detection-latency gap
+		// on failure, not a control failure — surface it loudly rather than
+		// swallowing it (#166, same silent-fail-on-ListProjectMembers-error pattern
+		// as notifyBreakGlassAdmins).
+		if nerr := c.notifyAnomalyAdmins(ctx, projectID, a); nerr != nil {
+			log.Printf("SECURITY: anomaly alert %d (project %d): admin notification failed: %v", a.ID, projectID, nerr)
+		}
 
 		if err := c.storage.MarkAnomalyAlertAlerted(ctx, a.ID); err != nil {
 			// Couldn't mark alerted — skip counting so a retry re-announces rather
@@ -86,16 +93,18 @@ func (c *KeyorixCore) AlertNewAnomalies(ctx context.Context) (int, error) {
 	return announced, nil
 }
 
-// notifyAnomalyAdmins sends an in-app alert to the project's approver-role members
-// (best-effort). With no resolvable project the in-app notify is skipped (the audit
-// + SIEM event still carries it).
-func (c *KeyorixCore) notifyAnomalyAdmins(ctx context.Context, projectID uint, a *models.AnomalyAlert) {
+// notifyAnomalyAdmins sends an in-app alert to the project's approver-role members.
+// With no resolvable project the in-app notify is skipped (the audit + SIEM event
+// still carries it) — not an error. Individual notify() delivery stays best-effort,
+// but a failure to list the project's members is a distinct, louder failure mode
+// (no admin was even considered), so that's returned as an error (#166).
+func (c *KeyorixCore) notifyAnomalyAdmins(ctx context.Context, projectID uint, a *models.AnomalyAlert) error {
 	if projectID == 0 {
-		return
+		return nil
 	}
 	members, err := c.storage.ListProjectMembers(ctx, projectID)
 	if err != nil {
-		return
+		return fmt.Errorf("list project %d members: %w", projectID, err)
 	}
 	pid := projectID
 	title := fmt.Sprintf("Anomaly detected (%s)", a.Severity)
@@ -107,4 +116,5 @@ func (c *KeyorixCore) notifyAnomalyAdmins(ctx context.Context, projectID uint, a
 		}
 		c.notify(ctx, m.UserID, EventAnomalyDetected, title, msg, &pid, link)
 	}
+	return nil
 }

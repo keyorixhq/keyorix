@@ -101,7 +101,7 @@ func parseDotenv(path string) ([]secretEntry, error) {
 // Format 2 — real Vault/Medusa export (multiple keys per path):
 //
 //	secret/production/database:
-//	  password: pg-prod-xK9mN2pQ
+//	  password: REPLACE_WITH_YOUR_DB_PASSWORD
 //	  username: app_user
 //
 // → secrets named "database-password" and "database-username".

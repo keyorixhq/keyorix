@@ -2,8 +2,11 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,6 +63,7 @@ func newReconciler(t *testing.T, fetcher valueFetcher, objs ...client.Object) (*
 		// server-validation behavior itself is covered by TestValidateServer.
 		AllowedServers: []string{"https://keyorix.internal"},
 		newClient:      func(_, _ string) valueFetcher { return fetcher },
+		hashKey:        []byte("test-fixture-hmac-key"),
 	}, c
 }
 
@@ -131,6 +135,25 @@ func TestReconcile_CreatesTargetSecretOwnedByCR(t *testing.T) {
 	assert.Equal(t, int64(1), ks.Status.ObservedGeneration)
 }
 
+// TestReconcile_RefreshIntervalFloored pins #124: spec.refreshInterval had no
+// minimum, so a CR author (or a compromised CR-writer) could set an absurdly
+// small value (e.g. "1ms") and every successful reconcile would immediately
+// requeue itself, driving a reconcile/API/etcd storm that starves the shared
+// workqueue for every other KeyorixSecret in the cluster.
+func TestReconcile_RefreshIntervalFloored(t *testing.T) {
+	ks := ksFixture()
+	ks.Spec.RefreshInterval = &metav1.Duration{Duration: time.Millisecond}
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"), "app/production/api-key": []byte("k3y"),
+	}}
+	r, _ := newReconciler(t, fetcher, ks, tokenSecret())
+
+	res, err := reconcile(t, r)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, res.RequeueAfter, minRefreshInterval,
+		"an absurdly small refreshInterval must be floored, not honored verbatim")
+}
+
 func TestReconcile_RefusesToOverwriteUnmanagedSecret(t *testing.T) {
 	// A pre-existing Secret with the target name that the operator did NOT create.
 	foreign := &corev1.Secret{
@@ -187,6 +210,41 @@ func TestReconcile_FetchFailureFailsClosed(t *testing.T) {
 	assert.Equal(t, "SyncError", ks.Status.Conditions[0].Reason)
 }
 
+// TestReconcile_TokenSecretReadUsesAPIReader pins #124: the token Secret lookup
+// must go through the uncached APIReader (when set), not the shared/cached
+// Client — the shared cache is scoped to only Secrets this operator manages, so
+// an arbitrary token Secret would never appear there in production. Prove the
+// reconciler actually reads via APIReader by giving it a SEPARATE fake client
+// that holds the token Secret while the main Client does not.
+func TestReconcile_TokenSecretReadUsesAPIReader(t *testing.T) {
+	s := testScheme(t)
+	mainClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&secretsv1alpha1.KeyorixSecret{}).
+		WithObjects(ksFixture()). // no token Secret here
+		Build()
+	apiReader := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(tokenSecret()). // the token Secret lives only in the "uncached" reader
+		Build()
+
+	r := &KeyorixSecretReconciler{
+		Client:         mainClient,
+		Scheme:         s,
+		APIReader:      apiReader,
+		AllowedServers: []string{"https://keyorix.internal"},
+		newClient: func(_, _ string) valueFetcher {
+			return &fakeFetcher{values: map[string][]byte{
+				"app/production/db-password": []byte("p4ss"), "app/production/api-key": []byte("k3y"),
+			}}
+		},
+		hashKey: []byte("test-fixture-hmac-key"),
+	}
+
+	_, err := reconcile(t, r)
+	require.NoError(t, err, "the token Secret must be found via APIReader even though it is absent from Client")
+}
+
 func TestReconcile_MissingTokenSecretFails(t *testing.T) {
 	// No token Secret present.
 	r, _ := newReconciler(t, &fakeFetcher{}, ksFixture())
@@ -226,10 +284,30 @@ func TestReconcile_RemovedKeyIsPruned(t *testing.T) {
 }
 
 func TestHashData_StableAndSensitive(t *testing.T) {
+	key := []byte("test-hmac-key")
 	a := map[string][]byte{"x": []byte("1"), "y": []byte("2")}
 	b := map[string][]byte{"y": []byte("2"), "x": []byte("1")}
-	assert.Equal(t, hashData(a), hashData(b), "hash is independent of map iteration order")
-	assert.NotEqual(t, hashData(a), hashData(map[string][]byte{"x": []byte("1"), "y": []byte("3")}))
+	assert.Equal(t, hashData(key, a), hashData(key, b), "hash is independent of map iteration order")
+	assert.NotEqual(t, hashData(key, a), hashData(key, map[string][]byte{"x": []byte("1"), "y": []byte("3")}))
+}
+
+// TestHashData_KeyedAgainstBruteForce pins #124: status.syncedHash is a CR
+// subresource commonly readable without any RBAC on the underlying Secret. A
+// plain, unkeyed sha256 there would let a CR-getter brute-force a low-entropy
+// value offline with zero Secret-read access. Keying the hash means an
+// observer who only ever sees the hash (never the key, which lives in the
+// operator process's memory) cannot precompute/verify guesses against it.
+func TestHashData_KeyedAgainstBruteForce(t *testing.T) {
+	data := map[string][]byte{"password": []byte("hunter2")}
+	h1 := hashData([]byte("key-one"), data)
+	h2 := hashData([]byte("key-two"), data)
+	assert.NotEqual(t, h1, h2, "the same data must hash differently under a different key")
+
+	// An attacker who only knows a candidate value and the algorithm (sha256,
+	// no key) cannot reproduce a keyed hash — confirms this isn't just a plain
+	// sha256 in disguise.
+	plainSHA := sha256.Sum256([]byte("password\x00hunter2\x00"))
+	assert.NotEqual(t, hex.EncodeToString(plainSHA[:]), h1)
 }
 
 // validateServer is the confused-deputy guard: the operator must only ever send a token

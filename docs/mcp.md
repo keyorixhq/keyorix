@@ -23,11 +23,27 @@ mutate secrets is out of scope for v1.
 
 The server needs two environment variables:
 
-- `KEYORIX_URL` — the Keyorix server base URL (e.g. `https://keyorix.internal`).
+- `KEYORIX_URL` — the Keyorix server base URL (e.g. `https://keyorix.internal`). Must be
+  `https://` — `http://` is rejected unless the host is loopback (`localhost`/`127.0.0.1`/
+  `::1`, for local development), since the bearer token and every secret value read
+  through it would otherwise travel in cleartext.
 - `KEYORIX_TOKEN` — a **least-privilege machine-identity token** (ADR-030) with
   `secrets.read` only for the secrets the agent should reach. Create one with
   `keyorix machine create …`. The token is read from the environment, never from a tool
   argument, so the model can't coax it out.
+
+Two more are optional, opt-in **defense-in-depth on top of** (never instead of) the
+token's own server-side RBAC scope — useful when an agent's task only needs a narrow
+slice of what the token can technically reach:
+
+- `KEYORIX_MCP_ALLOWED_REFS` — a comma-separated list of `project/environment/name`
+  glob patterns (e.g. `app/production/*,app/staging/db-*`). When set, both tools refuse
+  any ref that doesn't match at least one pattern — `keyorix_list_secrets` also omits
+  non-matching refs from its output, so they're never even named to the agent.
+- `KEYORIX_MCP_MAX_READS` — a positive integer capping how many `keyorix_get_secret`
+  calls this server process will serve for its whole session. Once reached, every
+  further read is refused (a fresh MCP server process — e.g. the next agent session —
+  gets a fresh budget). See "Prompt injection" below for why this exists.
 
 ### Claude Desktop / Claude Code
 
@@ -69,6 +85,9 @@ docker run --rm -i \
 - **Least-privilege by construction.** The agent can only reach what its
   `KEYORIX_TOKEN`'s machine identity is allowed to read. Revoke the identity to cut the
   agent off immediately.
+- **HTTPS enforced.** `KEYORIX_URL` must be `https://` (loopback `http://` allowed for
+  local dev) — the bearer token and every returned value would otherwise be sent/received
+  in cleartext.
 - **Every read is audited.** Each `keyorix_get_secret` is an ordinary authorized Keyorix
   read — it appears in the audit log with the machine identity as actor, and counts
   against any `max_reads` cap.
@@ -77,16 +96,33 @@ docker run --rm -i \
 - **No inbound surface.** stdio only — the binary is launched by the agent client, not a
   network service.
 - **Read-only.** v1 exposes no mutating tools.
+- **Generic tool errors.** A failed read or list never echoes the underlying reason
+  (permission-denied vs. not-found, HTTP status, transport detail) into the tool result —
+  only a generic message. The real reason is logged to stderr for an operator. This closes
+  an existence/permission oracle: without it, an agent could learn *which* refs exist but
+  are merely out of scope versus which don't exist at all, from tool-result text alone.
+
+### Prompt injection
 
 > Treat a secret returned to an agent as disclosed to that agent (and any model context it
-> shares). Scope the token tightly and prefer secrets with a sensible `max_reads`.
+> shares). A secret's *value* is attacker-controllable content to anyone who can write it —
+> nothing stops it from containing text crafted to steer the agent (e.g. an instruction to
+> read every other ref it can see). Once returned, that text is in the agent's context like
+> any other tool result; this server cannot detect or block the agent *acting* on it.
+
+`KEYORIX_MCP_ALLOWED_REFS` and `KEYORIX_MCP_MAX_READS` (see Configure) are the available
+mitigations: an allowlist bounds *which* refs a manipulated agent could reach at all, and a
+read cap bounds *how many* it can sweep even within the allowlist, before this server
+process refuses further reads for the rest of its session. Neither replaces scoping the
+`KEYORIX_TOKEN` itself tightly and preferring secrets with a sensible `max_reads` — those
+remain the primary controls.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| Server exits immediately | `KEYORIX_URL` or `KEYORIX_TOKEN` unset (it logs which to stderr). |
-| `not authorized (HTTP 403)` from a tool | The token's identity lacks `secrets.read` for that secret. |
-| `not found` from `keyorix_get_secret` | No such `project/environment/name` (check `keyorix_list_secrets`). |
+| Server exits immediately | `KEYORIX_URL` or `KEYORIX_TOKEN` unset, `KEYORIX_URL` is not https (and not loopback), or `KEYORIX_MCP_MAX_READS` is not a positive integer — it logs which to stderr. |
+| `could not read the requested secret` from `keyorix_get_secret` | The token lacks `secrets.read` for that ref, the ref doesn't exist, the ref is outside `KEYORIX_MCP_ALLOWED_REFS`, or the per-process read cap is exhausted — check stderr for the specific reason. |
+| `could not list secrets` | The token's `ListSecrets` call failed — check stderr for the specific reason. |
 | `invalid request …` | `ref` is not a three-part `project/environment/name`. |
 | Agent client shows no tools | The client didn't complete `initialize`/`tools/list` — check its MCP logs and that `command` points at the binary. |

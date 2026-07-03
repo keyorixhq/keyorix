@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -41,6 +42,12 @@ func seedRoleForUser(t *testing.T, db *gorm.DB, userID, roleID uint, name string
 func seedGrant(t *testing.T, c *KeyorixCore, roleID uint, connector, prefix string) {
 	t.Helper()
 	_, err := c.storage.CreateConnectRefGrant(context.Background(), &models.ConnectRefGrant{RoleID: roleID, Connector: connector, RefPrefix: prefix})
+	require.NoError(t, err)
+}
+
+func seedGrantExpiring(t *testing.T, c *KeyorixCore, roleID uint, connector, prefix string, expiresAt time.Time) {
+	t.Helper()
+	_, err := c.storage.CreateConnectRefGrant(context.Background(), &models.ConnectRefGrant{RoleID: roleID, Connector: connector, RefPrefix: prefix, ExpiresAt: &expiresAt})
 	require.NoError(t, err)
 }
 
@@ -243,6 +250,52 @@ func TestConnectRefRBAC_CrossTenantTraversalDenied(t *testing.T) {
 	val, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "vault", "secret/data/myapp/config")
 	require.NoError(t, err)
 	assert.Equal(t, "myapp-secret", val)
+}
+
+// A Connect ref-grant is otherwise permanent (ADR-045); ExpiresAt makes it time-bound,
+// mirroring UserRole/ShareRecord — a grant that has already passed its expiry must stop
+// authorizing immediately, even though the row has not yet been swept.
+func TestConnectRefRBAC_ExpiredGrantDenied(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	seedRoleForUser(t, db, 1, 5, "temp-reader")
+	seedGrantExpiring(t, c, 5, "aws", "metrics/", time.Now().Add(-time.Minute)) // already expired
+	ctx := context.Background()
+
+	_, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "metrics/qps")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not permitted")
+
+	ok, err := c.connectRefAllowed(ctx, ActorTypeUser, 1, "aws", "metrics/qps")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// A grant with a future ExpiresAt still authorizes normally until it passes.
+func TestConnectRefRBAC_UnexpiredGrantAllowed(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	seedRoleForUser(t, db, 1, 5, "temp-reader")
+	seedGrantExpiring(t, c, 5, "aws", "metrics/", time.Now().Add(time.Hour))
+
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "metrics/qps")
+	require.NoError(t, err)
+	assert.Equal(t, "v", val)
+}
+
+// CreateConnectRefGrant plumbs an optional expiresAt through to the persisted grant.
+func TestCreateConnectRefGrant_PersistsExpiresAt(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	require.NoError(t, db.Create(&models.Role{ID: 5, Name: "temp-reader"}).Error)
+	exp := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	g, err := c.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "metrics/", &exp)
+	require.NoError(t, err)
+	require.NotNil(t, g.ExpiresAt)
+	assert.WithinDuration(t, exp, *g.ExpiresAt, time.Second)
+
+	// A nil expiresAt (the common case) still creates a permanent grant.
+	g2, err := c.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "db/", nil)
+	require.NoError(t, err)
+	assert.Nil(t, g2.ExpiresAt)
 }
 
 func TestConnectRefAllowed_Direct(t *testing.T) {

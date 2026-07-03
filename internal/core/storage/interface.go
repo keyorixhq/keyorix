@@ -81,6 +81,12 @@ type Storage interface {
 	// rows for a project access review. Global (project 0) grants are excluded:
 	// those are install-level, reviewed separately.
 	ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
+	// ListProjectMachineRoleAssignments returns every machine-identity role grant
+	// scoped to the project (project_id = projectID, any environment) — the machine
+	// counterpart to ListProjectRoleAssignments's user/group rows, kept separate so
+	// existing callers (compliance posture, RBAC/SCIM last-admin guards) are
+	// unaffected; only the access review enumerates it (#91).
+	ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
 	// ListGlobalAdminAssignmentsForUpdate returns every global-scope (project 0,
 	// environment 0) direct user and group role grant whose role is in
 	// adminRoleIDs, taking a row-level write lock on backends that support one
@@ -397,6 +403,12 @@ type Storage interface {
 	// RestoreGroup clears a soft-deleted group's deleted_at (with its grants/members).
 	RestoreGroup(ctx context.Context, id uint) error
 	ListGroups(ctx context.Context) ([]*models.Group, error)
+	// ListGroupsPage returns one name-ordered page of groups (offset is a 0-based
+	// row offset) and the total count, without loading the rest of the table — used
+	// by the SCIM Groups list so an unfiltered request can't drain the whole
+	// directory into memory (see ListGroups' full-scan callers for why that's fine
+	// there: they intentionally want every group, e.g. SSO group sync).
+	ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error)
 	AddUserToGroup(ctx context.Context, userID, groupID uint) error
 	RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error
 	ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error)
@@ -531,7 +543,10 @@ type Storage interface {
 	UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
-	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
+	// AcknowledgeAnomalyAlert marks an alert acknowledged and stamps who did it and
+	// when directly on the row (#217), alongside the separate audit event the core
+	// layer emits.
+	AcknowledgeAnomalyAlert(ctx context.Context, id, actorID uint, at time.Time) error
 	// ListUnalertedAnomalyAlerts returns alerts not yet pushed out (alerted=false),
 	// and MarkAnomalyAlertAlerted flags one as pushed — for proactive alerting.
 	ListUnalertedAnomalyAlerts(ctx context.Context) ([]models.AnomalyAlert, error)

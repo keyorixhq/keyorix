@@ -29,6 +29,7 @@ func newRestoreCeilingCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.AuditEvent{},
 		&models.SecretNode{}, &models.SecretVersion{},
+		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "viewer"}).Error)

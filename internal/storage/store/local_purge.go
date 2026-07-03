@@ -78,8 +78,43 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 	return purged, nil
 }
 
+// PurgeDeletedProjectsBefore hard-deletes soft-deleted projects past the retention
+// window, together with the project-scoped role grants (UserRole/GroupRole) that
+// reference them, in one transaction. UserRole/GroupRole are plain join rows keyed
+// by ProjectID with no FK/cascade of their own — a plain purge of just the projects
+// row left these grants behind, permanently orphaned (referencing a project ID that
+// no longer exists anywhere, since IDs are never reused): dead weight in every "who
+// has access" report and role/access-review listing forever after. Global-scope
+// grants (ProjectID 0) are untouched — they aren't project-scoped.
 func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
-	return ls.purgeDeletedBefore(ctx, &models.Project{}, before)
+	var purged int64
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ids []uint
+		if e := tx.Unscoped().Model(&models.Project{}).
+			Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+			Pluck("id", &ids).Error; e != nil {
+			return e
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if e := tx.Where("project_id IN ?", ids).Delete(&models.UserRole{}).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("project_id IN ?", ids).Delete(&models.GroupRole{}).Error; e != nil {
+			return e
+		}
+		rp := tx.Unscoped().Where("id IN ?", ids).Delete(&models.Project{})
+		if rp.Error != nil {
+			return rp.Error
+		}
+		purged = rp.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return purged, nil
 }
 
 func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {

@@ -316,6 +316,32 @@ func (h *DynamicSecretHandler) ClassifyConfig(w http.ResponseWriter, r *http.Req
 	sendSuccess(w, sanitizeConfig(updated), "Classification updated.")
 }
 
+// SetConfigEnabled handles PATCH /api/v1/dynamic-secrets/configs/{id}/enabled —
+// manually enables or disables a config (#369). DeleteProject's cascade disables
+// a project's configs automatically; this is how an admin re-enables one
+// afterward (project restore deliberately does not do so on its own), or
+// disables one directly outside of a project delete.
+func (h *DynamicSecretHandler) SetConfigEnabled(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	cfg, ok := h.loadAuthorizedConfig(w, r, "secrets.write")
+	if !ok {
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
+		return
+	}
+	updated, err := h.coreService.SetDynamicSecretConfigEnabled(r.Context(), userCtx.UserID, cfg.ID, body.Enabled)
+	if err != nil {
+		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
+		return
+	}
+	sendSuccess(w, sanitizeConfig(updated), "Config enabled state updated.")
+}
+
 // loadAuthorizedConfig loads the {id} config and authorizes the caller against
 // its scope. It writes the error response and returns ok=false on failure.
 func (h *DynamicSecretHandler) loadAuthorizedConfig(w http.ResponseWriter, r *http.Request, perm string) (*models.DynamicSecretConfig, bool) {
@@ -351,6 +377,7 @@ func sanitizeConfig(c *models.DynamicSecretConfig) map[string]interface{} {
 		"max_ttl_seconds":     c.MaxTTLSeconds,
 		"max_active_leases":   c.MaxActiveLeases,
 		"classification":      c.Classification,
+		"disabled":            c.Disabled,
 		"created_by":          c.CreatedBy,
 		"created_at":          c.CreatedAt,
 	}

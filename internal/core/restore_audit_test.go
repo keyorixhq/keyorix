@@ -26,6 +26,7 @@ func TestRestoreOperationsAudit(t *testing.T) {
 		// #370: DeleteSecret revokes ShareRecord rows in the same transaction as the
 		// secret's own soft-delete.
 		&models.ShareRecord{},
+		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
 	ctx := context.Background()

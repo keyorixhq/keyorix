@@ -3,11 +3,39 @@ package encryption
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"testing"
+
+	"golang.org/x/crypto/pbkdf2"
 )
 
 const testKeyVersion = "test-v1"
+
+// GenerateKEK's 0-iterations fallback must use a current-best-practice PBKDF2-SHA256
+// iteration count (OWASP's 2023+ minimum is 600,000), not the older, materially
+// weaker 100,000 default. This also pins that the fallback stays in sync with
+// KeyManager.deriveKEK's legacy passphrase path, which derives explicitly at
+// DefaultKEKIterations.
+func TestGenerateKEK_DefaultIterationsMeetsOWASPMinimum(t *testing.T) {
+	const owaspMinimum = 600000
+	if DefaultKEKIterations < owaspMinimum {
+		t.Fatalf("DefaultKEKIterations = %d, want >= %d (OWASP PBKDF2-HMAC-SHA256 minimum)", DefaultKEKIterations, owaspMinimum)
+	}
+
+	password, salt := "correct horse battery staple", []byte("0123456789abcdef")
+	got := GenerateKEK(password, salt, 0)
+	want := pbkdf2.Key([]byte(password), salt, DefaultKEKIterations, 32, sha256.New)
+	if !bytes.Equal(got, want) {
+		t.Error("iterations=0 must derive with DefaultKEKIterations, not a weaker fallback")
+	}
+
+	// A caller-specified iteration count is still honored (never silently overridden).
+	custom := GenerateKEK(password, salt, 1000)
+	if bytes.Equal(custom, got) {
+		t.Error("an explicit non-zero iteration count must not be replaced by the default")
+	}
+}
 
 func TestGenerateRandomKey(t *testing.T) {
 	key, err := GenerateRandomKey(32)

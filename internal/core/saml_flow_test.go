@@ -84,7 +84,7 @@ func TestCompleteSAML_ExistingUser(t *testing.T) {
 	c, store := samlTestCore(stub)
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-1").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ReturnTo: "/home", ExpiresAt: time.Now().Add(time.Minute)}, nil)
-	store.On("GetUserByExternalID", mock.Anything, "corp|123").Return(&models.User{ID: 7}, nil)
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return(&models.User{ID: 7}, nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 7, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(7), mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -129,7 +129,7 @@ func TestCompleteSAML_NoAccountNoProvision(t *testing.T) {
 	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-4").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
-	store.On("GetUserByExternalID", mock.Anything, "corp|999").Return((*models.User)(nil), userNotFound())
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|999").Return((*models.User)(nil), userNotFound())
 	store.On("GetUserByEmail", mock.Anything, "noone@x.io").Return((*models.User)(nil), userNotFound())
 
 	_, _, _, err := c.CompleteSAML(context.Background(), "corp",
@@ -153,7 +153,7 @@ func TestCompleteSAML_NativeAdminTakeoverRejectedByDefault(t *testing.T) {
 	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-5").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
-	store.On("GetUserByExternalID", mock.Anything, "corp|evil").Return((*models.User)(nil), userNotFound())
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|evil").Return((*models.User)(nil), userNotFound())
 
 	session, user, _, err := c.CompleteSAML(context.Background(), "corp",
 		httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil), "relay-5", "ua", "1.2.3.4")
@@ -163,6 +163,34 @@ func TestCompleteSAML_NativeAdminTakeoverRejectedByDefault(t *testing.T) {
 	assert.Nil(t, user)
 	// The native admin's email must never even be looked up.
 	store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// TestCompleteSAML_CrossProviderEmailTakeoverRejected pins the SAML provider-confusion
+// fix: a validly-signed assertion from provider "corp" must NOT be able to take over an
+// account already bound to a different SSO provider ("azure") merely by asserting its
+// email — even with auto-provisioning enabled and TrustAssertedEmail on. The login must
+// fail closed and mint no session.
+func TestCompleteSAML_CrossProviderEmailTakeoverRejected(t *testing.T) {
+	stub := &stubSAML{info: &samlpkg.AssertionInfo{Subject: "corp|evil", Email: "admin@x.io", Name: "Mallory"}}
+	store := new(MockStorage)
+	p := &SSOProvider{Name: "corp", Type: "saml", SAML: stub, AutoProvision: true, TrustAssertedEmail: true}
+	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
+	store.On("ConsumeSSOLoginState", mock.Anything, "relay-6").Return(
+		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
+	// No account under corp's scoped id...
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|evil").Return((*models.User)(nil), userNotFound())
+	// ...but the email belongs to an admin bound to provider "azure".
+	store.On("GetUserByEmail", mock.Anything, "admin@x.io").
+		Return(&models.User{ID: 1, Email: "admin@x.io", ExternalID: "sso:azure:admin-sub"}, nil)
+
+	session, user, _, err := c.CompleteSAML(context.Background(), "corp",
+		httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", nil), "relay-6", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "different SSO provider")
+	assert.Nil(t, session)
+	assert.Nil(t, user)
+	// The takeover must never reach session creation.
 	store.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 }
 
@@ -177,11 +205,11 @@ func TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount(t *testing.T) 
 	c := &KeyorixCore{storage: store, now: time.Now, ssoProviders: map[string]*SSOProvider{"corp": p}}
 	store.On("ConsumeSSOLoginState", mock.Anything, "relay-7").Return(
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
-	store.On("GetUserByExternalID", mock.Anything, "corp|123").Return((*models.User)(nil), userNotFound())
+	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return((*models.User)(nil), userNotFound())
 	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
 	store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
-		return u.ID == 9 && u.ExternalID == "corp|123"
-	})).Return(&models.User{ID: 9, ExternalID: "corp|123"}, nil)
+		return u.ID == 9 && u.ExternalID == "sso:corp:corp|123"
+	})).Return(&models.User{ID: 9, ExternalID: "sso:corp:corp|123"}, nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 9, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(9), mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)

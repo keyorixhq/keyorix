@@ -30,6 +30,37 @@ const (
 	EventSCIMUserDeprovisioned = "scim.user_deprovisioned"
 )
 
+// MinSCIMTokenLength is the minimum length required for the configured SCIM
+// bearer token (scim.token / KEYORIX_SCIM_TOKEN). Unlike a PAT or machine token
+// (always server-generated, 32 random bytes — see pat.go/machine_token.go), the
+// SCIM token is operator-supplied and had no strength floor at all: an operator
+// could configure a short, guessable string and the provisioning endpoint would
+// accept it, in constant time, forever. 20 chars from a typical token alphabet is
+// already >=119 bits of entropy, well above what's brute-forceable over the
+// network — the same bar DefaultPasswordPolicy sets for a human password (16
+// chars, but with mandatory character-class mixing this token doesn't have; the
+// higher floor compensates). Checked once at server startup (see
+// server/http/router.go), not per-request, so a misconfigured install fails fast
+// with a clear error instead of quietly running with a weak provisioning
+// credential.
+const MinSCIMTokenLength = 20
+
+// ValidateSCIMTokenStrength rejects a configured SCIM bearer token shorter than
+// MinSCIMTokenLength. An empty token is NOT an error here — SCIM being disabled or
+// not yet configured is legitimate; server/middleware/scim.go's SCIMToken already
+// fails every request closed on an empty token. This only guards against a
+// too-short but non-empty token, which the constant-time compare would otherwise
+// accept as configured.
+func ValidateSCIMTokenStrength(token string) error {
+	if token == "" {
+		return nil
+	}
+	if len(token) < MinSCIMTokenLength {
+		return fmt.Errorf("SCIM token is too short (%d chars, minimum %d) — configure a longer, high-entropy token via KEYORIX_SCIM_TOKEN", len(token), MinSCIMTokenLength)
+	}
+	return nil
+}
+
 var scimNonAlphanum = regexp.MustCompile(`[^a-z0-9]`)
 
 // deriveSCIMUsername builds a unique alphanumeric username from a SCIM userName
@@ -163,12 +194,29 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	return created, nil
 }
 
+// scimManaged reports whether user was provisioned/adopted via SCIM (carries a
+// stored externalId — only ProvisionSCIMUser sets one; a native/local account never
+// does). UpdateSCIMUser and DeprovisionSCIMUser refuse to operate on an id that
+// isn't: the SCIM PUT/PATCH/DELETE endpoints take an arbitrary numeric id straight
+// off the URL path with no check that it belongs to an account SCIM actually owns,
+// so a valid (e.g. provisioning-only) SCIM bearer token could otherwise rewrite a
+// NATIVE admin's email to a fresh attacker-controlled address (the existing
+// same-email-collision guard only blocks an address already in use) and then claim
+// the account via SSO/SAML email-fallback resolution — an account takeover reachable
+// with no admin-console access at all (#120).
+func scimManaged(user *models.User) bool {
+	return user.ExternalID != ""
+}
+
 // UpdateSCIMUser applies a SCIM Replace/PATCH to a user: displayName, email, and the
 // active flag. Deactivation marks the account deprovisioned (blocks login, terminates
 // sessions); activation clears only a prior SCIM deactivation. An admin security
 // suspension is sticky and survives IdP sync — only an admin can clear it
 // (ReactivateUser), so routine SCIM traffic can't undo an incident-response lockout.
-// nil fields are left unchanged.
+// nil fields are left unchanged. Refuses a target that isn't SCIM-managed
+// (scimManaged) — checked against the fresh, lock-guarded read inside the
+// transaction below, not a pre-fetch, so a TOCTOU can't let a target's SCIM
+// management status change between the check and the write (#120).
 //
 // #344: the account_state/is_active mutation below races with setAccountState's (the
 // admin SuspendUser/ReactivateUser/RequirePasswordReset actions) — a routine SCIM/IdP
@@ -228,6 +276,9 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		user, err := tx.LockUserForUpdate(ctx, id)
 		if err != nil {
 			return err
+		}
+		if !scimManaged(user) {
+			return storage.ErrUserNotFound
 		}
 		if displayName != nil {
 			user.DisplayName = *displayName
@@ -337,11 +388,16 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 
 // DeprovisionSCIMUser handles a SCIM DELETE: it deprovisions the user (blocks login,
 // terminates sessions) and soft-deletes the record, so the account is recoverable
-// within the retention window rather than hard-destroyed.
+// within the retention window rather than hard-destroyed. Refuses a target that
+// isn't SCIM-managed (scimManaged) — a valid SCIM token must not be able to
+// deprovision an arbitrary native account it never provisioned.
 func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint) error {
 	user, err := c.storage.GetUser(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	if !scimManaged(user) {
+		return fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
 	}
 	// Don't let a SCIM DELETE deprovision the only admin and lock the install out.
 	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {

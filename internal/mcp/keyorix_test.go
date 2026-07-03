@@ -10,6 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mustClient builds a KeyorixClient for baseURL (an httptest.Server URL — always
+// loopback, so requireHTTPSURL's http-allowed-for-localhost exception applies), failing
+// the test immediately on any construction error.
+func mustClient(t *testing.T, baseURL, token string) *KeyorixClient {
+	t.Helper()
+	c, err := NewKeyorixClient(baseURL, token)
+	require.NoError(t, err)
+	return c
+}
+
 func TestKeyorixClient_GetSecret(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/v1/secrets/value", r.URL.Path)
@@ -19,7 +29,7 @@ func TestKeyorixClient_GetSecret(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v, err := NewKeyorixClient(srv.URL, "tok").GetSecret(context.Background(), "app/prod/db")
+	v, err := mustClient(t, srv.URL, "tok").GetSecret(context.Background(), "app/prod/db")
 	require.NoError(t, err)
 	assert.Equal(t, "p4ss", v)
 }
@@ -38,7 +48,7 @@ func TestKeyorixClient_GetSecretErrors(t *testing.T) {
 				w.WriteHeader(status)
 			}))
 			defer srv.Close()
-			_, err := NewKeyorixClient(srv.URL, "tok").GetSecret(context.Background(), "a/b/c")
+			_, err := mustClient(t, srv.URL, "tok").GetSecret(context.Background(), "a/b/c")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), want)
 		})
@@ -59,7 +69,7 @@ func TestKeyorixClient_ListSecretsBuildsRefsAndFilters(t *testing.T) {
 
 	// No filter: the two complete entries map to refs; the entry missing an environment
 	// is dropped (can't form an unambiguous ref).
-	all, err := NewKeyorixClient(srv.URL, "tok").ListSecrets(context.Background(), "")
+	all, err := mustClient(t, srv.URL, "tok").ListSecrets(context.Background(), "")
 	require.NoError(t, err)
 	require.Len(t, all, 2)
 	assert.Equal(t, "app/production/db", all[0].Ref)
@@ -67,8 +77,22 @@ func TestKeyorixClient_ListSecretsBuildsRefsAndFilters(t *testing.T) {
 	assert.Equal(t, "app/staging/api", all[1].Ref)
 
 	// Environment filter (case-insensitive) narrows to one.
-	prod, err := NewKeyorixClient(srv.URL, "tok").ListSecrets(context.Background(), "Production")
+	prod, err := mustClient(t, srv.URL, "tok").ListSecrets(context.Background(), "Production")
 	require.NoError(t, err)
 	require.Len(t, prod, 1)
 	assert.Equal(t, "app/production/db", prod[0].Ref)
+}
+
+// #122: NewKeyorixClient must reject a non-https KEYORIX_URL (the bearer token and
+// every secret value it reads travel in cleartext otherwise) UNLESS the host is
+// loopback (local development against a Keyorix instance on the same machine).
+func TestNewKeyorixClient_RequiresHTTPS(t *testing.T) {
+	if _, err := NewKeyorixClient("http://keyorix.example.com", "tok"); err == nil {
+		t.Fatal("cleartext http KEYORIX_URL must be rejected")
+	}
+	for _, u := range []string{"https://keyorix.example.com", "http://localhost:8080", "http://127.0.0.1:9000", "http://[::1]:9000"} {
+		if _, err := NewKeyorixClient(u, "tok"); err != nil {
+			t.Fatalf("%s should be allowed: %v", u, err)
+		}
+	}
 }

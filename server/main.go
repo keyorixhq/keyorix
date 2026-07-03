@@ -217,6 +217,14 @@ func initializeEncryption(cfg *config.Config) (*encryption.Service, error) {
 	if err := svc.Initialize(passphrase); err != nil {
 		return nil, fmt.Errorf("failed to initialize encryption (KEK derivation): %w", err)
 	}
+	// Hold the exclusive DEK lock for the server's whole lifetime (released by
+	// Shutdown on graceful stop) so DEK rotation — a separate CLI process — can
+	// never promote a new DEK while this server still has the old one cached in
+	// memory (#92). Refuses to start if another live holder (another server
+	// instance, or an in-progress rotation) already has it.
+	if err := svc.AcquireExclusiveKeyLock(); err != nil {
+		return nil, fmt.Errorf("failed to acquire the encryption key lock: %w", err)
+	}
 
 	kekSource := providerType
 	if kekSource == "" {
@@ -817,7 +825,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 			if tzLabel == "" {
 				tzLabel = "UTC"
 			}
-			if err := detector.SetBusinessHours(bh.Timezone, bh.OffHoursStart, bh.OffHoursEnd); err != nil {
+			if err := detector.SetBusinessHours(ctx, bh.Timezone, bh.OffHoursStart, bh.OffHoursEnd); err != nil {
 				// Misconfigured timezone: keep the safe UTC default rather than fail startup.
 				log.Printf("Anomaly off-hours config ignored (%v); using UTC 22:00–06:00", err)
 			} else {

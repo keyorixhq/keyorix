@@ -13,6 +13,47 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 )
 
+// copyFile (and restoreBackup, which delegates to it) must refuse to write
+// THROUGH a symlink at the destination: an attacker with write access to the
+// backup's parent directory could otherwise pre-plant a symlink pointing at an
+// arbitrary file this process can write, and the "backup"/"restore" write would
+// silently clobber that file instead of the intended DEK/backup path.
+func TestCopyFile_RefusesSymlinkDestination(t *testing.T) {
+	dir := t.TempDir()
+
+	src := filepath.Join(dir, "source.key")
+	if err := os.WriteFile(src, []byte("wrapped-dek-bytes"), 0600); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	// A sentinel file OUTSIDE the intended destination that a symlink will point at.
+	sentinel := filepath.Join(dir, "sentinel.txt")
+	const sentinelContent = "do-not-touch"
+	if err := os.WriteFile(sentinel, []byte(sentinelContent), 0600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	// Plant a symlink at the destination path pointing at the sentinel.
+	dst := filepath.Join(dir, "dek.key.migrate-backup.evil")
+	if err := os.Symlink(sentinel, dst); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	err := copyFile(src, dst)
+	if err == nil {
+		t.Fatalf("expected copyFile to refuse writing through a symlink destination, got nil error")
+	}
+
+	// The sentinel file must be untouched — not overwritten with the source's content.
+	got, rerr := os.ReadFile(sentinel)
+	if rerr != nil {
+		t.Fatalf("read sentinel: %v", rerr)
+	}
+	if string(got) != sentinelContent {
+		t.Fatalf("sentinel file was clobbered through the symlink: got %q, want %q", got, sentinelContent)
+	}
+}
+
 func enabledLocalCfg() *config.Config {
 	return &config.Config{
 		Storage: config.StorageConfig{
@@ -207,6 +248,45 @@ func TestTargetEncryptionConfig(t *testing.T) {
 		}
 		if tgt.KeyProvider.Type != "azure-kms" || tgt.KeyProvider.WrappedKeyPath != "keys/kek.kms" {
 			t.Fatalf("unexpected target provider: %+v", tgt.KeyProvider)
+		}
+	})
+
+	t.Run("kms encryption context carries through to a new wrapped path", func(t *testing.T) {
+		tgt, err := targetEncryptionConfig(cur, migrateOpts{
+			toType: "aws-kms", toKMSKeyID: "k", toWrappedKeyPath: "keys/kek-v2.kms",
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tgt.KeyProvider.KMSEncryptionContext["keyorix-install"] != "prod-1" {
+			t.Fatalf("expected encryption context to carry through, got %+v", tgt.KeyProvider.KMSEncryptionContext)
+		}
+	})
+
+	t.Run("azure-kms rejects an encryption context (no AAD input)", func(t *testing.T) {
+		_, err := targetEncryptionConfig(cur, migrateOpts{
+			toType: "azure-kms", toKMSKeyID: "https://v.vault.azure.net/keys/k", toWrappedKeyPath: "keys/kek.kms",
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "not supported") {
+			t.Fatalf("expected azure-kms + context rejection, got: %v", err)
+		}
+	})
+
+	t.Run("kms encryption context requires a new wrapped path, not the current one", func(t *testing.T) {
+		curKMS := &config.EncryptionConfig{
+			DEKPath: "keys/dek.key",
+			KeyProvider: config.KeyProviderConfig{
+				Type: "aws-kms", KMSKeyID: "k", WrappedKeyPath: "keys/kek.kms",
+			},
+		}
+		_, err := targetEncryptionConfig(curKMS, migrateOpts{
+			toType: "aws-kms", toKMSKeyID: "k", toWrappedKeyPath: "keys/kek.kms", // same path, same type
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "NEW --to-wrapped-key-path") {
+			t.Fatalf("expected same-path context rejection, got: %v", err)
 		}
 	})
 

@@ -143,9 +143,22 @@ func (c *KeyorixCore) BeginWebAuthnRegistration(ctx context.Context, userID uint
 
 // FinishWebAuthnRegistration verifies the attestation, stores the credential, and
 // enables WebAuthn for the user. name is a user-supplied label for the passkey.
-func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uint, sessionToken, name string, parsed *protocol.ParsedCredentialCreationData) (*models.WebAuthnCredential, error) {
+// codeOrPassword re-authenticates the caller (#372): a current TOTP code (if MFA
+// is already enabled) or the account password, same re-auth as DisableMFA. This
+// is the step that actually adds a new, attacker-controllable trust factor to the
+// account, so — unlike BeginWebAuthnRegistration, which only opens a ceremony with
+// no effect on stored credentials — it must not be reachable by a bearer token
+// alone (a stolen session or a scoped, MFA-policy-exempt PAT per ADR-042).
+func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uint, sessionToken, name, codeOrPassword string, parsed *protocol.ParsedCredentialCreationData) (*models.WebAuthnCredential, error) {
 	if c.webauthnRP == nil {
 		return nil, ErrWebAuthnDisabled
+	}
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("user not found")
+	}
+	if err := c.requireReauth(ctx, user, codeOrPassword, "webauthn_register"); err != nil {
+		return nil, err
 	}
 	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(sessionToken), c.now())
 	if err != nil {
@@ -205,8 +218,19 @@ func (c *KeyorixCore) ListWebAuthnCredentials(ctx context.Context, userID uint) 
 }
 
 // DeleteWebAuthnCredential removes one of the caller's passkeys; if it was the
-// last one, WebAuthn is disabled for the account.
-func (c *KeyorixCore) DeleteWebAuthnCredential(ctx context.Context, userID, id uint) error {
+// last one, WebAuthn is disabled for the account. codeOrPassword re-authenticates
+// the caller (#372, same re-auth as DisableMFA): deleting every passkey silently
+// disables WebAuthn account-wide, a full second-factor downgrade that must not be
+// reachable by a bearer token alone (a stolen session or a scoped, MFA-policy-
+// exempt PAT per ADR-042).
+func (c *KeyorixCore) DeleteWebAuthnCredential(ctx context.Context, userID, id uint, codeOrPassword string) error {
+	user, err := c.storage.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+	if err := c.requireReauth(ctx, user, codeOrPassword, "webauthn_delete"); err != nil {
+		return err
+	}
 	if err := c.storage.DeleteWebAuthnCredential(ctx, userID, id); err != nil {
 		return err
 	}

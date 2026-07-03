@@ -172,6 +172,22 @@ func (c *HTTPClient) Request(ctx context.Context, method, path string, body inte
 
 		// Reset failure count on success
 		c.resetFailureCount()
+		// A successful mutation (anything but GET) invalidates the WHOLE GET cache,
+		// not just the entry for this path. Without this, a revoked/rotated secret
+		// (or any other resource) written through THIS client instance — e.g. a
+		// server running with storage.type: remote, proxying to another Keyorix
+		// server — could still be served stale from the 5-minute GET cache for up to
+		// 5 minutes after its own write, since GetSecret/UpdateSecret/DeleteSecret
+		// use different cache keys (id-based vs by-name) that a targeted single-key
+		// invalidation would miss. This does not help a write made through a
+		// DIFFERENT client/instance (out-of-band revoke) — only shortening the TTL
+		// or adding a push-invalidation channel would close that window, which is a
+		// larger change than this fixes; this closes the read-your-own-write case.
+		if method != http.MethodGet && resp.Success {
+			c.cacheMux.Lock()
+			c.cache = make(map[string]*cacheEntry)
+			c.cacheMux.Unlock()
+		}
 		return resp, nil
 	}
 

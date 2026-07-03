@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -109,6 +110,38 @@ func mkCertSecret(t *testing.T, db *gorm.DB, id uint, name, status string, value
 	t.Helper()
 	require.NoError(t, db.Create(&models.SecretNode{ID: id, Name: name, IsSecret: true, Status: status, Type: "certificate"}).Error)
 	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: id, VersionNumber: 1, EncryptedValue: value}).Error)
+}
+
+// TestParseLeafCertificate_AttemptBound pins that maxCertBlocks bounds the number
+// of pem.Decode ATTEMPTS, not the number of successfully-parsed CERTIFICATE
+// blocks: a value packed with maxCertBlocks non-CERTIFICATE blocks ahead of the
+// real leaf exhausts the budget before ever reaching it, so the leaf is not
+// found. One fewer padding block and it IS found — proving the bound is exact.
+func TestParseLeafCertificate_AttemptBound(t *testing.T) {
+	base := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	leafPEM, _ := selfSignedPEM(t, "leaf.example.com", base.Add(30*24*time.Hour))
+	padding := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("dummy-key-bytes-not-a-real-key")})
+
+	t.Run("real cert beyond the attempt budget is not found", func(t *testing.T) {
+		var buf bytes.Buffer
+		for i := 0; i < maxCertBlocks; i++ {
+			buf.Write(padding)
+		}
+		buf.Write(leafPEM)
+		_, err := parseLeafCertificate(buf.Bytes())
+		require.Error(t, err, "the real cert sits at attempt maxCertBlocks+1 and must not be reached")
+	})
+
+	t.Run("real cert within the attempt budget is found", func(t *testing.T) {
+		var buf bytes.Buffer
+		for i := 0; i < maxCertBlocks-1; i++ {
+			buf.Write(padding)
+		}
+		buf.Write(leafPEM)
+		cert, err := parseLeafCertificate(buf.Bytes())
+		require.NoError(t, err)
+		assert.Equal(t, "leaf.example.com", cert.Subject.CommonName)
+	})
 }
 
 func TestInspectCertificate(t *testing.T) {

@@ -34,12 +34,17 @@ func TestConcurrency_DecideAccessReviewItem_RejectsWhenRacingClose(t *testing.T)
 	dsn := "file:" + filepath.Join(t.TempDir(), "arc-close-race.db") + "?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.AuditEvent{}, &models.UserRole{}, &models.GroupRole{}))
 
 	const proj = uint(2)
 	campaign := &models.AccessReviewCampaign{ProjectID: proj, Name: "close-race", State: core.CampaignStateOpen}
 	require.NoError(t, db.Create(campaign).Error)
-	item := &models.AccessReviewItem{CampaignID: campaign.ID, PrincipalType: "role", Source: "role", Decision: core.ReviewItemPending}
+	// A real role assignment behind the item, so AttestAccessReviewGrant's live
+	// re-verification (#209) finds a genuine grant to certify — this test exercises
+	// the decide/close concurrency race, not attestation validity, so the grant just
+	// needs to actually exist.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 999, RoleID: 1, ProjectID: proj}).Error)
+	item := &models.AccessReviewItem{CampaignID: campaign.ID, PrincipalType: "role", PrincipalID: 999, RoleID: 1, Source: "role", Decision: core.ReviewItemPending}
 	require.NoError(t, db.Create(item).Error)
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))

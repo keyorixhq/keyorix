@@ -265,11 +265,12 @@ func (ls *LocalStorage) ListUsers(ctx context.Context, filter *storage.UserFilte
 		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
-	offset := (filter.Page - 1) * filter.PageSize
+	pageSize := clampPageSize(filter.PageSize)
+	offset := (filter.Page - 1) * pageSize
 	if filter.Offset > 0 {
 		offset = filter.Offset
 	}
-	query = query.Offset(offset).Limit(filter.PageSize)
+	query = query.Offset(offset).Limit(pageSize)
 
 	var users []*models.User
 	if err := query.Find(&users).Error; err != nil {
@@ -356,6 +357,21 @@ func (ls *LocalStorage) ListGroups(ctx context.Context) ([]*models.Group, error)
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return groups, nil
+}
+
+// ListGroupsPage returns one name-ordered page of groups and the total count,
+// bounding both the row scan and the result size for callers (SCIM) that must not
+// load the whole directory to serve a single page.
+func (ls *LocalStorage) ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error) {
+	var total int64
+	if err := ls.db.WithContext(ctx).Model(&models.Group{}).Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	var groups []*models.Group
+	if err := ls.db.WithContext(ctx).Order("name").Offset(offset).Limit(pageSize).Find(&groups).Error; err != nil {
+		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return groups, total, nil
 }
 
 // AddUserToGroup adds userID to groupID; idempotent (existing membership is a no-op).

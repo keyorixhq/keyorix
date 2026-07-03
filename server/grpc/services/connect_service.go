@@ -88,12 +88,15 @@ func (s *ConnectGRPCService) ListRefGrants(ctx context.Context, _ *emptypb.Empty
 			RoleId:    intToU32(int(g.RoleID)),
 			Connector: g.Connector,
 			RefPrefix: g.RefPrefix,
+			ExpiresAt: timePtrToTs(g.ExpiresAt),
 		})
 	}
 	return &pb.ConnectRefGrantList{Grants: out}, nil
 }
 
-// CreateRefGrant adds a per-reference grant. Gated by roles.write.
+// CreateRefGrant adds a per-reference grant. Gated by roles.write. ExpiresAt is
+// optional (ADR-045 follow-up): omitted/nil makes the grant permanent, mirroring
+// how share creation handles an optional expiry.
 func (s *ConnectGRPCService) CreateRefGrant(ctx context.Context, req *pb.CreateConnectRefGrantRequest) (*pb.ConnectRefGrant, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
@@ -102,7 +105,7 @@ func (s *ConnectGRPCService) CreateRefGrant(ctx context.Context, req *pb.CreateC
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
 		return nil, err
 	}
-	g, err := s.core.CreateConnectRefGrant(ctx, actor.PrincipalID(), uint(req.GetRoleId()), req.GetConnector(), req.GetRefPrefix())
+	g, err := s.core.CreateConnectRefGrant(ctx, actor.PrincipalID(), uint(req.GetRoleId()), req.GetConnector(), req.GetRefPrefix(), tsToTimePtr(req.GetExpiresAt()))
 	if err != nil {
 		msg := err.Error()
 		code := codes.InvalidArgument
@@ -118,6 +121,7 @@ func (s *ConnectGRPCService) CreateRefGrant(ctx context.Context, req *pb.CreateC
 		RoleId:    intToU32(int(g.RoleID)),
 		Connector: g.Connector,
 		RefPrefix: g.RefPrefix,
+		ExpiresAt: timePtrToTs(g.ExpiresAt),
 	}, nil
 }
 

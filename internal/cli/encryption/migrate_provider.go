@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -30,17 +31,18 @@ import (
 const newMasterPasswordEnv = "KEYORIX_NEW_MASTER_PASSWORD" // #nosec G101 -- env var name, not a credential
 
 var (
-	mpToType           string
-	mpToKMSKeyID       string
-	mpToWrappedKeyPath string
-	mpToFilePath       string
-	mpToEnvVar         string
-	mpToExecCommand    []string
-	mpToShareFiles     []string
-	mpToShareEnv       []string
-	mpToTPMDevice      string
-	mpToSaltPath       string
-	mpConfirm          bool
+	mpToType                 string
+	mpToKMSKeyID             string
+	mpToWrappedKeyPath       string
+	mpToKMSEncryptionContext map[string]string
+	mpToFilePath             string
+	mpToEnvVar               string
+	mpToExecCommand          []string
+	mpToShareFiles           []string
+	mpToShareEnv             []string
+	mpToTPMDevice            string
+	mpToSaltPath             string
+	mpConfirm                bool
 
 	mpCleanupConfirm bool
 	mpCleanupDryRun  bool
@@ -96,6 +98,9 @@ func init() {
 	f.StringVar(&mpToType, "to-type", "", "target provider: password|file|env|exec|shamir|tpm|aws-kms|gcp-kms|azure-kms (required)")
 	f.StringVar(&mpToKMSKeyID, "to-kms-key-id", "", "target KMS key id/ARN/resource-name/URL (kms types)")
 	f.StringVar(&mpToWrappedKeyPath, "to-wrapped-key-path", "", "where to store the KMS-wrapped KEK blob (kms types)")
+	f.StringToStringVar(&mpToKMSEncryptionContext, "to-kms-encryption-context", nil,
+		"encryption context/AAD binding the wrapped KEK to this install (aws-kms/gcp-kms only, e.g. keyorix-install=prod-1); "+
+			"pair with a NEW --to-wrapped-key-path to durably re-wrap under it — #123")
 	f.StringVar(&mpToFilePath, "to-file-path", "", "path to the raw KEK material (file type)")
 	f.StringVar(&mpToEnvVar, "to-env-var", "", "env var holding the raw KEK (env type)")
 	f.StringSliceVar(&mpToExecCommand, "to-exec-command", nil, "resolver argv whose stdout supplies the KEK (exec type), e.g. op,read,op://vault/kek/value")
@@ -189,16 +194,17 @@ func findMigrateBackups(baseDir, dekPath string) ([]string, error) {
 // migrateOpts is the target-provider description, mirroring the --to-* flags so the
 // core can be unit-tested without cobra.
 type migrateOpts struct {
-	toType           string
-	toKMSKeyID       string
-	toWrappedKeyPath string
-	toFilePath       string
-	toEnvVar         string
-	toExecCommand    []string
-	toShareFiles     []string
-	toShareEnv       []string
-	toTPMDevice      string
-	toSaltPath       string
+	toType                 string
+	toKMSKeyID             string
+	toWrappedKeyPath       string
+	toKMSEncryptionContext map[string]string
+	toFilePath             string
+	toEnvVar               string
+	toExecCommand          []string
+	toShareFiles           []string
+	toShareEnv             []string
+	toTPMDevice            string
+	toSaltPath             string
 }
 
 func runMigrateProvider(cmd *cobra.Command, args []string) error {
@@ -207,16 +213,17 @@ func runMigrateProvider(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	opts := migrateOpts{
-		toType:           mpToType,
-		toKMSKeyID:       mpToKMSKeyID,
-		toWrappedKeyPath: mpToWrappedKeyPath,
-		toFilePath:       mpToFilePath,
-		toEnvVar:         mpToEnvVar,
-		toExecCommand:    mpToExecCommand,
-		toShareFiles:     mpToShareFiles,
-		toShareEnv:       mpToShareEnv,
-		toTPMDevice:      mpToTPMDevice,
-		toSaltPath:       mpToSaltPath,
+		toType:                 mpToType,
+		toKMSKeyID:             mpToKMSKeyID,
+		toWrappedKeyPath:       mpToWrappedKeyPath,
+		toKMSEncryptionContext: mpToKMSEncryptionContext,
+		toFilePath:             mpToFilePath,
+		toEnvVar:               mpToEnvVar,
+		toExecCommand:          mpToExecCommand,
+		toShareFiles:           mpToShareFiles,
+		toShareEnv:             mpToShareEnv,
+		toTPMDevice:            mpToTPMDevice,
+		toSaltPath:             mpToSaltPath,
 	}
 	return migrateProviderWithConfig(cfg, opts, mpConfirm)
 }
@@ -273,8 +280,23 @@ func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (con
 		if opts.toWrappedKeyPath == tgt.DEKPath {
 			return tgt, fmt.Errorf("--to-wrapped-key-path must differ from the DEK path (%s)", tgt.DEKPath)
 		}
+		// #123: azure-kms (RSA-OAEP wrap) has no AAD input — matches
+		// NewKeyProviderFromConfig's hard rejection, checked here too so this fails
+		// before any DEK backup/re-wrap work rather than after.
+		if opts.toType == "azure-kms" && len(opts.toKMSEncryptionContext) > 0 {
+			return tgt, fmt.Errorf("--to-kms-encryption-context is not supported for --to-type azure-kms (RSA-OAEP key wrap has no AAD input)")
+		}
+		// KMSKeyProvider.KEK() only re-wraps (and so only applies a NEW encryption
+		// context) when generating a FRESH KEK at a wrapped_key_path that doesn't yet
+		// exist — pointing at an existing path takes the decrypt-the-existing-blob
+		// path instead, which does not rebind it. Requiring a genuinely new path when
+		// a context is supplied keeps this flag from silently no-op-ing.
+		if len(opts.toKMSEncryptionContext) > 0 && opts.toType == cur.KeyProvider.Type && opts.toWrappedKeyPath == cur.KeyProvider.WrappedKeyPath {
+			return tgt, fmt.Errorf("--to-kms-encryption-context requires a NEW --to-wrapped-key-path (got the current one, %q): re-wrapping under a context only takes effect when a fresh KEK is generated", opts.toWrappedKeyPath)
+		}
 		kp.KMSKeyID = opts.toKMSKeyID
 		kp.WrappedKeyPath = opts.toWrappedKeyPath
+		kp.KMSEncryptionContext = opts.toKMSEncryptionContext
 	default:
 		return tgt, fmt.Errorf("unknown --to-type %q (supported: password, file, env, exec, shamir, tpm, aws-kms, gcp-kms, azure-kms)", opts.toType)
 	}
@@ -386,12 +408,20 @@ func migrateProviderWithConfig(cfg *config.Config, opts migrateOpts, confirm boo
 // and its directory so the copy is durable. The backup this produces is the
 // rollback target if migration verification fails — a non-durable backup lost to a
 // crash could leave neither a valid old nor new wrapped DEK on disk.
+//
+// O_NOFOLLOW refuses to write THROUGH a final-component symlink at dst: without
+// it, an attacker with write access to dst's parent directory (the DEK's own
+// directory, or the migrate-backup path next to it) could pre-plant a symlink
+// there pointing at an arbitrary file this process can write, and the backup/
+// restore write would silently clobber that file instead of the intended DEK/
+// backup path. With O_NOFOLLOW the open fails (ELOOP) instead of following it —
+// the same protection securefiles.SecureWriteFile applies to its writes.
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src) // #nosec G304 -- operator-configured key path under baseDir
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) // #nosec G304 -- operator-configured key path under baseDir (local CLI tool, not network input)
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600) // #nosec G304 -- operator-configured key path under baseDir (local CLI tool, not network input)
 	if err != nil {
 		return err
 	}

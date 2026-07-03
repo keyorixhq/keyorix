@@ -281,6 +281,7 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			pageSize = filter.PageSize
 		}
 	}
+	pageSize = clampPageSize(pageSize)
 
 	var total int64
 	query.Count(&total)
@@ -363,8 +364,12 @@ func (ls *LocalStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *boo
 	return alerts, result.Error
 }
 
-func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
-	res := ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Update("acknowledged", true)
+func (ls *LocalStorage) AcknowledgeAnomalyAlert(ctx context.Context, id, actorID uint, at time.Time) error {
+	res := ls.db.WithContext(ctx).Model(&models.AnomalyAlert{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"acknowledged":    true,
+		"acknowledged_by": actorID,
+		"acknowledged_at": at,
+	})
 	if res.Error != nil {
 		return res.Error
 	}

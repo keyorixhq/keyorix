@@ -127,6 +127,14 @@ func (m *MockStorage) ListProjectRoleAssignments(ctx context.Context, projectID 
 	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
 }
 
+func (m *MockStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+}
+
 // ListGlobalAdminAssignmentsForUpdate is unused by the tests that construct a
 // MockStorage directly (they don't exercise RemoveUserRole's last-admin guard);
 // returns empty so the guard treats "no other admin" as the default in the rare
@@ -869,6 +877,14 @@ func (m *MockStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
 	return args.Get(0).([]*models.Group), args.Error(1)
 }
 
+func (m *MockStorage) ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error) {
+	args := m.Called(ctx, offset, pageSize)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*models.Group), args.Get(1).(int64), args.Error(2)
+}
+
 func (m *MockStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
 	args := m.Called(ctx, userID, groupID)
 	return args.Error(0)
@@ -1146,8 +1162,8 @@ func (m *MockStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *bool)
 	return args.Get(0).([]models.AnomalyAlert), args.Error(1)
 }
 
-func (m *MockStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
+func (m *MockStorage) AcknowledgeAnomalyAlert(ctx context.Context, id, actorID uint, at time.Time) error {
+	args := m.Called(ctx, id, actorID, at)
 	return args.Error(0)
 }
 
