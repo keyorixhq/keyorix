@@ -1275,12 +1275,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 		var serveErr error
 		if cfg.Server.HTTP.TLS.Enabled {
 			if cfg.Server.HTTP.TLS.AutoCert {
-				m := &autocert.Manager{
-					Cache:      autocert.DirCache("certs"),
-					Prompt:     autocert.AcceptTOS,
-					HostPolicy: autocert.HostWhitelist(cfg.Server.HTTP.TLS.Domains...),
-				}
-				server.TLSConfig = m.TLSConfig()
+				server.TLSConfig = buildAutoCertTLSConfig(cfg.Server.HTTP.TLS.Domains)
 				serveErr = server.ServeTLS(ln, "", "")
 			} else {
 				serveErr = server.ServeTLS(ln, cfg.Server.HTTP.TLS.CertFile, cfg.Server.HTTP.TLS.KeyFile)
@@ -1464,7 +1459,8 @@ func startGRPCServer(ctx context.Context, cfg *config.Config) error {
 
 func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 	if cfg.Server.HTTP.TLS.AutoCert {
-		// Autocert will handle TLS config
+		// AutoCert mode builds its tls.Config separately, from the autocert.Manager
+		// (see buildAutoCertTLSConfig) — it still gets the same hardening applied.
 		return nil, nil
 	}
 
@@ -1474,15 +1470,45 @@ func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
 	}
 
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		},
-	}, nil
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+	applyTLSHardening(tlsConfig)
+	return tlsConfig, nil
+}
+
+// hardenedCipherSuites is the explicit AEAD-only cipher suite allowlist applied to
+// every HTTP TLS listener, regardless of how its certificate is sourced.
+var hardenedCipherSuites = []uint16{
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+}
+
+// applyTLSHardening layers the deliberately hardened MinVersion/CipherSuites onto
+// tlsConfig in place. The protocol-version floor and cipher-suite allowlist are
+// independent of how the certificate itself is sourced, so this must be applied
+// uniformly whether tlsConfig came from a manually configured cert/key pair
+// (createTLSConfig) or from an autocert.Manager (buildAutoCertTLSConfig) — AutoCert
+// should only supply the certificate, not silently determine the rest of the TLS
+// posture too (#172).
+func applyTLSHardening(tlsConfig *tls.Config) {
+	tlsConfig.MinVersion = tls.VersionTLS12
+	tlsConfig.CipherSuites = hardenedCipherSuites
+}
+
+// buildAutoCertTLSConfig builds the tls.Config for HTTP AutoCert (Let's Encrypt-style
+// automatic certificate management) mode: the autocert.Manager supplies the
+// certificate (via GetCertificate/NextProtos), and the same hardened
+// MinVersion/CipherSuites as the non-AutoCert path (createTLSConfig) are layered on
+// top instead of being silently discarded (#172).
+func buildAutoCertTLSConfig(domains []string) *tls.Config {
+	m := &autocert.Manager{
+		Cache:      autocert.DirCache("certs"),
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(domains...),
+	}
+	tlsConfig := m.TLSConfig()
+	applyTLSHardening(tlsConfig)
+	return tlsConfig
 }
 
 // resolveOutboundIP returns the machine's preferred outbound IP address.
