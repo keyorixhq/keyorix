@@ -37,16 +37,16 @@ func (h *DashboardHandler) ExportComplianceControlsCSV(w http.ResponseWriter, r 
 	_ = cw.Write([]string{"id", "name", "area", "status", "detail", "iso_27001", "soc2", "nis2", "dora", "ens"})
 	for _, ctrl := range matrix.Controls {
 		_ = cw.Write([]string{
-			ctrl.ID,
-			ctrl.Name,
-			ctrl.Area,
-			string(ctrl.Status),
-			ctrl.Detail,
-			strings.Join(ctrl.Frameworks.ISO27001, "; "),
-			strings.Join(ctrl.Frameworks.SOC2, "; "),
-			strings.Join(ctrl.Frameworks.NIS2, "; "),
-			strings.Join(ctrl.Frameworks.DORA, "; "),
-			strings.Join(ctrl.Frameworks.ENS, "; "),
+			csvSafe(ctrl.ID),
+			csvSafe(ctrl.Name),
+			csvSafe(ctrl.Area),
+			csvSafe(string(ctrl.Status)),
+			csvSafe(ctrl.Detail),
+			csvSafe(strings.Join(ctrl.Frameworks.ISO27001, "; ")),
+			csvSafe(strings.Join(ctrl.Frameworks.SOC2, "; ")),
+			csvSafe(strings.Join(ctrl.Frameworks.NIS2, "; ")),
+			csvSafe(strings.Join(ctrl.Frameworks.DORA, "; ")),
+			csvSafe(strings.Join(ctrl.Frameworks.ENS, "; ")),
 		})
 	}
 }
