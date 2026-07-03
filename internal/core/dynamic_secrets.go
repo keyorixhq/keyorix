@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/dynamic"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -74,17 +75,17 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	if !IsValidClassification(req.Classification) {
 		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
 	}
-	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
-	}
+	// #94: the admin DSN is encrypted bound to DynamicSecretConfigAAD(cfg.ID, ...), so
+	// it must be encrypted AFTER the row exists (cfg.ID is an auto-increment PK, not
+	// known beforehand) — insert first with the DSN columns empty, then encrypt and
+	// persist them in a second write. The gap between the two writes is invisible to
+	// any other caller: cfg.ID isn't returned to the requester until this function
+	// returns, so nothing else can observe or race the momentarily-DSN-less row.
 	cfg, err := c.storage.CreateDynamicSecretConfig(ctx, &models.DynamicSecretConfig{
 		Name:              req.Name,
 		ProjectID:         req.ProjectID,
 		EnvironmentID:     req.EnvironmentID,
 		BackendType:       req.BackendType,
-		AdminDSNEnc:       dsnEnc,
-		AdminDSNMeta:      dsnMeta,
 		CreationTemplate:  req.CreationTemplate,
 		DefaultTTLSeconds: req.DefaultTTLSeconds,
 		MaxTTLSeconds:     req.MaxTTLSeconds,
@@ -96,6 +97,15 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 	})
 	if err != nil {
 		return nil, err
+	}
+	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt admin DSN: %w", err)
+	}
+	cfg.AdminDSNEnc = dsnEnc
+	cfg.AdminDSNMeta = dsnMeta
+	if err := c.storage.UpdateDynamicSecretConfig(ctx, cfg); err != nil {
+		return nil, fmt.Errorf("failed to persist encrypted admin DSN: %w", err)
 	}
 	pid := cfg.ProjectID
 	c.writeAuditEventFull(ctx, "dynamic_secret.config_created", nil, nil, &pid, "",
@@ -180,7 +190,7 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 			return nil, fmt.Errorf("active-lease limit reached for this config (%d); revoke a lease before issuing another", cfg.MaxActiveLeases)
 		}
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}
@@ -190,18 +200,21 @@ func (c *KeyorixCore) IssueLease(ctx context.Context, configID uint, ttlSeconds 
 	if err != nil {
 		return nil, fmt.Errorf("failed to issue credential: %w", err)
 	}
-	credJSON, _ := json.Marshal(cred) // #nosec G117 -- intentional: serialized only to be immediately encrypted at rest below, never persisted or logged in cleartext
-	credEnc, credMeta, err := c.encryptAuthSecret(string(credJSON))
-	if err != nil {
-		// The role exists on the target — revoke it so we don't leak it.
-		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
-		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
-	}
-
+	// leaseID is generated BEFORE encryption (not after, as in the pre-#94 order) so
+	// DynamicSecretLeaseAAD can bind the credential's ciphertext to it — leaseID is a
+	// random token assigned by us, not an auto-increment PK, so it's available without
+	// a two-phase insert-then-update (contrast CreateDynamicSecretConfig above).
 	leaseID, err := generateSecureToken()
 	if err != nil {
 		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
 		return nil, err
+	}
+	credJSON, _ := json.Marshal(cred) // #nosec G117 -- intentional: serialized only to be immediately encrypted at rest below, never persisted or logged in cleartext
+	credEnc, credMeta, err := c.encryptAuthSecret(string(credJSON), encryption.DynamicSecretLeaseAAD(leaseID, cfg.ID))
+	if err != nil {
+		// The role exists on the target — revoke it so we don't leak it.
+		c.cleanupOrphanedRole(ctx, cfg, engine, adminDSN, roleName, userID)
+		return nil, fmt.Errorf("failed to encrypt credential: %w", err)
 	}
 	expiresAt := c.now().Add(ttl)
 	lease, err := c.storage.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
@@ -291,7 +304,7 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if err != nil {
 		return err
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}
@@ -304,7 +317,11 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if rerr := engine.Revoke(ctx, adminDSN, lease.RoleName); rerr != nil {
 		lease.Status = "revoke_failed"
 		lease.RevokeError = rerr.Error()
-		lease.RevokedAt = &now
+		// Deliberately NOT stamping RevokedAt here: the target drop failed, so the
+		// credential is still live. Stamping it would make the audit trail / API
+		// falsely claim the role was dropped at this time, even though it wasn't —
+		// and it wasn't dropped at all yet, so there is no "revoked at" moment to
+		// record. RevokedAt is set only on the success path below.
 		_ = c.storage.UpdateDynamicSecretLease(ctx, lease)
 		c.writeAuditEventFull(ctx, "dynamic_lease.revoke_failed", uidPtr, nil, &pid, "",
 			fmt.Sprintf("FAILED to revoke dynamic lease %s (role %s): %v", lease.LeaseID, lease.RoleName, rerr))
@@ -449,7 +466,7 @@ func (c *KeyorixCore) RenewLease(ctx context.Context, leaseID string, ttlSeconds
 	if !engine.SupportsNativeExpiry() && !c.dynamicSweepEnabled {
 		return time.Time{}, fmt.Errorf("renewal is unavailable for the %s backend while the lease sweeper is disabled (its TTL would be unenforced)", cfg.BackendType)
 	}
-	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta)
+	adminDSN, err := c.decryptAuthSecret(cfg.AdminDSNEnc, cfg.AdminDSNMeta, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to decrypt admin DSN: %w", err)
 	}

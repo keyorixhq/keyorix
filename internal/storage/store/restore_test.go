@@ -16,7 +16,9 @@ func newRestoreTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}))
+	// #370: DeleteSecret revokes ShareRecord rows in the same transaction as the
+	// secret's own soft-delete.
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{}, &models.ShareRecord{}))
 	return NewLocalStorage(db)
 }
 
@@ -49,7 +51,12 @@ func TestRestoreProjectCascade(t *testing.T) {
 
 	// Restore brings back the project, its environments, AND its secrets —
 	// secrets now soft-delete with the project and restore with it (ADR-033).
-	require.NoError(t, ls.RestoreProject(ctx, proj.ID))
+	// RestoreProject also reports how many of each it actually resurrected (#311),
+	// so the caller can audit the cascade's true blast radius.
+	restoredEnvs, restoredSecrets, err := ls.RestoreProject(ctx, proj.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, restoredEnvs)
+	assert.Equal(t, 1, restoredSecrets)
 
 	restored, err := ls.ListProjectsWithCounts(ctx, false)
 	require.NoError(t, err)
@@ -87,7 +94,10 @@ func TestRestoreProject_DoesNotResurrectIndependentlyDeletedSecret(t *testing.T)
 
 	// Delete then restore the whole project.
 	require.NoError(t, ls.DeleteProject(ctx, proj.ID))
-	require.NoError(t, ls.RestoreProject(ctx, proj.ID))
+	restoredEnvs, restoredSecrets, err := ls.RestoreProject(ctx, proj.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, restoredEnvs)
+	assert.Equal(t, 1, restoredSecrets, "only the cascade-deleted secret is counted, not the independently-retired one")
 
 	// "kept" (cascade-deleted with the project) is restored.
 	_, err = ls.GetSecret(ctx, kept.ID)
@@ -134,7 +144,8 @@ func TestRestoreChild_RefusedWhileParentProjectDeleted(t *testing.T) {
 	require.Error(t, err)
 
 	// Restoring the project first (cascade) brings the children back — the supported path.
-	require.NoError(t, ls.RestoreProject(ctx, proj.ID))
+	_, _, err = ls.RestoreProject(ctx, proj.ID)
+	require.NoError(t, err)
 	_, err = ls.GetSecret(ctx, sec.ID)
 	require.NoError(t, err, "after the project is restored, its cascade-deleted secret is live again")
 }
@@ -174,7 +185,7 @@ func TestRestoreProjectNotDeleted(t *testing.T) {
 	require.NoError(t, err)
 
 	// Restoring a project that isn't deleted is a no-op error.
-	err = ls.RestoreProject(ctx, proj.ID)
+	_, _, err = ls.RestoreProject(ctx, proj.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not deleted")
 }

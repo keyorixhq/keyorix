@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -90,5 +93,26 @@ func TestCheckTransportTLSPosture(t *testing.T) {
 	// a disabled listener is ignored even under require.
 	if err := checkTransportTLSPosture(cfgWith(false, false, false, false, true)); err != nil {
 		t.Errorf("no enabled listeners must pass: %v", err)
+	}
+}
+
+// #333: TLSConfig.AllowedCiphers is parsed but never wired into the hardcoded
+// AEAD-only CipherSuites list (server/main.go, server/grpc/server.go). An operator who
+// sets it must get a clear warning, not silent no-op — never a hard failure, since the
+// hardcoded list it can't affect is already AEAD-only.
+func TestCheckTransportTLSPosture_WarnsOnDeadAllowedCiphers(t *testing.T) {
+	c := cfgWith(true, true, false, false, false)
+	c.Server.HTTP.TLS.AllowedCiphers = []string{"TLS_AES_128_GCM_SHA256"}
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(orig)
+
+	if err := checkTransportTLSPosture(c); err != nil {
+		t.Fatalf("a dead allowed_ciphers setting must warn, not fail: %v", err)
+	}
+	if !strings.Contains(buf.String(), "tls.allowed_ciphers") {
+		t.Errorf("expected a warning mentioning tls.allowed_ciphers, got log output: %q", buf.String())
 	}
 }

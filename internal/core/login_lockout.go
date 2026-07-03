@@ -11,6 +11,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -31,6 +32,19 @@ const (
 	EventAccountLocked   = "account.locked"
 	EventAccountUnlocked = "account.unlocked"
 )
+
+// loginFailureMuShards is the shard count for loginFailureMu (see service.go):
+// enough to make same-shard collisions between two unrelated accounts rare under
+// realistic concurrency, without the memory/complexity of a per-user sync.Map.
+const loginFailureMuShards = 64
+
+// loginFailureLock returns the shard of loginFailureMu serializing this user's
+// failed-login accounting. Sharding by userID means a flood against one (even
+// already-locked) account no longer blocks every other account's accounting
+// behind a single process-wide lock.
+func (c *KeyorixCore) loginFailureLock(userID uint) *sync.Mutex {
+	return &c.loginFailureMu[userID%loginFailureMuShards]
+}
 
 // loginLocked reports whether the user is currently within an active lockout window.
 func (c *KeyorixCore) loginLocked(user *models.User) bool {
@@ -56,12 +70,13 @@ func (p LoginLockoutPolicy) cooldownFor(lockoutCount int) time.Duration {
 // "invalid credentials" outcome the caller returns.
 //
 // The read-increment-write runs inside a transaction over a freshly LockUserForUpdate'd
-// row, under loginFailureMu, so concurrent failures for the same account cannot lose an
-// increment and let an attacker spend more than MaxAttempts guesses before the lock
-// trips: loginFailureMu serializes same-process callers (and so the whole single-process
-// SQLite case), and the FOR UPDATE row lock LockUserForUpdate takes on Postgres
-// serializes across HA replicas. The passed-in user struct was loaded before the lock,
-// so the authoritative current state is re-read inside the transaction.
+// row, under the user's loginFailureMu shard, so concurrent failures for the same
+// account cannot lose an increment and let an attacker spend more than MaxAttempts
+// guesses before the lock trips: the shard mutex serializes same-process callers for
+// that account (and so the whole single-process SQLite case), and the FOR UPDATE row
+// lock LockUserForUpdate takes on Postgres serializes across HA replicas. The
+// passed-in user struct was loaded before the lock, so the authoritative current
+// state is re-read inside the transaction.
 func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) {
 	if !c.loginLockout.Enabled {
 		return
@@ -69,8 +84,9 @@ func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) 
 	uid := user.ID
 	now := c.now()
 
-	c.loginFailureMu.Lock()
-	defer c.loginFailureMu.Unlock()
+	mu := c.loginFailureLock(uid)
+	mu.Lock()
+	defer mu.Unlock()
 
 	var locked bool
 	var lockedUntil time.Time
@@ -124,6 +140,79 @@ func (c *KeyorixCore) recordFailedLogin(ctx context.Context, user *models.User) 
 			fmt.Sprintf("account %d locked until %s after repeated failed logins (lockout #%d)",
 				uid, lockedUntil.UTC().Format(time.RFC3339), lockoutNum))
 	}
+}
+
+// checkLockAndClearLoginFailures re-checks the account's lock state and, if not
+// locked, clears any accumulated failure state — both under the SAME
+// serialization (the user's loginFailureMu shard, plus the Postgres FOR UPDATE
+// row lock LockUserForUpdate takes) that recordFailedLogin uses. This closes the
+// TOCTOU gap between a caller's pre-verification snapshot check (loginLocked,
+// evaluated against a user row read before the slow credential check — bcrypt, a
+// TOTP/recovery-code check, or a WebAuthn assertion) and minting a session:
+// without re-checking here, a concurrent burst of failed attempts against the
+// same account could trip the lock AFTER a request already passed the snapshot
+// check but BEFORE it mints a session, letting that request's otherwise-valid
+// credential succeed against an account that should already be locked.
+//
+// Returns an error (the same "account temporarily locked" message the snapshot
+// check uses) when the account is found to be locked; the caller MUST refuse the
+// login rather than mint a session. Also returns an error — failing closed — if
+// the lock state cannot be verified (a storage error), rather than falling back
+// to the caller's stale snapshot. When the lockout feature is disabled this is
+// equivalent to clearLoginFailures. Shared by every login path that reaches a
+// session mint after passing the lockout gate: password (Login), TOTP/recovery
+// (VerifyMFALogin), and WebAuthn (FinishWebAuthnLogin /
+// FinishWebAuthnPasswordlessLogin) — recordFailedLogin feeds the same counter
+// from all of them, so the recheck must cover all of them too.
+func (c *KeyorixCore) checkLockAndClearLoginFailures(ctx context.Context, user *models.User) error {
+	if !c.loginLockout.Enabled {
+		c.clearLoginFailures(ctx, user)
+		return nil
+	}
+	uid := user.ID
+
+	mu := c.loginFailureLock(uid)
+	mu.Lock()
+	defer mu.Unlock()
+
+	var lockErr error
+	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		u, err := tx.LockUserForUpdate(ctx, uid)
+		if err != nil {
+			return err
+		}
+		if u.LoginLockedUntil != nil && c.now().Before(*u.LoginLockedUntil) {
+			// A concurrent burst tripped the lock after our caller's pre-verification
+			// snapshot but before we reached here — reflect the authoritative state
+			// back onto the caller's struct and refuse.
+			user.LoginLockedUntil = u.LoginLockedUntil
+			user.LoginLockoutCount = u.LoginLockoutCount
+			lockErr = fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+			return nil
+		}
+		if u.FailedLoginAttempts == 0 && u.LoginLockedUntil == nil && u.LoginLockoutCount == 0 {
+			return nil // nothing to clear
+		}
+		u.FailedLoginAttempts = 0
+		u.LastFailedLoginAt = nil
+		u.LoginLockedUntil = nil
+		u.LoginLockoutCount = 0
+		if _, err := tx.UpdateUser(ctx, u); err != nil {
+			return err
+		}
+		user.FailedLoginAttempts = 0
+		user.LastFailedLoginAt = nil
+		user.LoginLockedUntil = nil
+		user.LoginLockoutCount = 0
+		return nil
+	})
+	if err != nil {
+		// Unable to verify the current lock state — fail closed. Silently falling
+		// back to "not locked" here would reopen exactly the snapshot-trust gap
+		// this function exists to close.
+		return fmt.Errorf("unable to verify account lock state, please try again")
+	}
+	return lockErr
 }
 
 // clearLoginFailures resets the lockout state after a successful authentication.

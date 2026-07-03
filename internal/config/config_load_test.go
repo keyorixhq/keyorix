@@ -109,3 +109,43 @@ func TestValidate_RejectsGRPCAutoCert(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "auto_cert")
 }
+
+// A bare "*" in allowed_origins would match every Origin header — Validate must
+// reject it at startup rather than let an operator silently defeat the CORS
+// allowlist (finding #113).
+func TestValidate_RejectsWildcardAllowedOrigin(t *testing.T) {
+	c := &Config{}
+	c.Server.HTTP.AllowedOrigins = []string{"https://app.example.com", "*"}
+	err := c.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "allowed_origins")
+	require.Contains(t, err.Error(), "\"*\"")
+}
+
+// Malformed entries (no scheme, a path/query/fragment tacked on, or a non-http(s)
+// scheme) are not valid Origin values and must be rejected rather than silently
+// never matching any real Origin header at request time.
+func TestValidate_RejectsMalformedAllowedOrigin(t *testing.T) {
+	cases := []string{
+		"example.com",                  // no scheme
+		"https://app.example.com/path", // has a path
+		"https://app.example.com?x=1",  // has a query
+		"ftp://app.example.com",        // non-http(s) scheme
+		"",                             // empty
+	}
+	for _, origin := range cases {
+		c := &Config{}
+		c.Server.HTTP.AllowedOrigins = []string{origin}
+		err := c.Validate()
+		require.Errorf(t, err, "expected %q to be rejected", origin)
+		require.Contains(t, err.Error(), "allowed_origins")
+	}
+}
+
+// A well-formed explicit allowlist (the common case) must still validate cleanly.
+func TestValidate_AcceptsExplicitAllowedOrigins(t *testing.T) {
+	c := &Config{}
+	c.Storage.Database.Path = "/tmp/keyorix.db"
+	c.Server.HTTP.AllowedOrigins = []string{"https://app.example.com", "http://localhost:3000"}
+	require.NoError(t, c.Validate())
+}

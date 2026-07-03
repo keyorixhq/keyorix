@@ -77,7 +77,7 @@ func TestClassificationPosture_CoversDynamicConfigs(t *testing.T) {
 	makeDynConfig(t, c, "c", ClassificationInternal)
 	makeDynConfig(t, c, "d", "") // unclassified
 
-	p := c.classificationPosture(context.Background())
+	p := c.classificationPosture(context.Background(), &CompliancePosture{})
 	assert.Equal(t, 4, p.DynamicConfigs.Total)
 	assert.Equal(t, 2, p.DynamicConfigs.Restricted)
 	assert.Equal(t, 1, p.DynamicConfigs.Internal)

@@ -60,6 +60,9 @@ func NewOIDCVerifier(issuers []OIDCTrustedIssuer, jwks JWKSResolver) (*OIDCVerif
 				auds[a] = struct{}{}
 			}
 		}
+		if len(auds) == 0 {
+			return nil, fmt.Errorf("oidc: issuer %q has no usable audiences after filtering empty values — configure at least one non-empty audience", iss.Issuer)
+		}
 		m[iss.Issuer] = auds
 	}
 	return &OIDCVerifier{issuers: m, jwks: jwks, leeway: oidcClockSkew}, nil

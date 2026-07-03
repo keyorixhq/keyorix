@@ -87,7 +87,11 @@ func (e *MySQLExecutor) Rotate(ctx context.Context, ref, newValue string) error 
 	q := fmt.Sprintf("ALTER USER %s@%s IDENTIFIED BY %s",
 		quoteMySQLString(user), quoteMySQLString(host), quoteMySQLString(newValue))
 	if err := c.Exec(ctx, q); err != nil {
-		return fmt.Errorf("mysql: rotate account %q: %w", ref, err)
+		// The new password is a quoted literal in q; a driver error can echo the
+		// failing statement verbatim. Redact before wrapping so the live credential
+		// never egresses via the rotation-failure SIEM audit / notification
+		// broadcast (#132).
+		return redactSQLError("mysql", ref, err)
 	}
 	return nil
 }

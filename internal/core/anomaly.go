@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -144,6 +145,12 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		// Build 30-day baseline
 		baselineLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, baselineWindow)
 		if err != nil {
+			// #365: the aggregate failure count below already surfaces a non-nil error to
+			// the scheduler (which logs it), but that only says "N secret(s) failed" — log
+			// which secret and which query so an operator can tell a transient DB hiccup
+			// from a genuine gap. Since the detection window is only the last hour, a
+			// skipped secret here is never retroactively re-evaluated.
+			log.Printf("anomaly detection: baseline access-log read for secret %d: %v — skipping detection for this secret this pass", secret.ID, err)
 			failures++
 			continue
 		}
@@ -155,6 +162,7 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 		// Get recent accesses over the lookback window.
 		recentLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, window)
 		if err != nil {
+			log.Printf("anomaly detection: detection-window access-log read for secret %d: %v — skipping detection for this secret this pass", secret.ID, err)
 			failures++
 			continue
 		}

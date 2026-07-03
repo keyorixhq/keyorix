@@ -2,10 +2,19 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// ErrLegalHoldAlreadyActive is returned by CreateLegalHold when a partial unique
+// index (or equivalent constraint) at the storage layer rejects a second concurrent
+// placement — the backstop for the TOCTOU race in core.PlaceLegalHold's
+// read-then-insert (#305): two concurrent placements can both observe "no active
+// hold" and both attempt to insert one, but only the first commits. Callers should
+// treat this as a client error ("already active"), not a storage failure.
+var ErrLegalHoldAlreadyActive = errors.New("a legal hold is already active")
 
 // Storage defines the unified interface for data persistence operations
 // This interface abstracts away the underlying storage implementation,
@@ -24,6 +33,17 @@ type Storage interface {
 	// when another replica holds the lock — the caller should simply skip this tick.
 	WithSchedulerLock(ctx context.Context, key int64, fn func() error) (ran bool, err error)
 
+	// WithAuditCheckpointLock serializes the audit-checkpoint chain-walk + decide +
+	// create-checkpoint sequence (ADR-029) across every trigger — the scheduler tick,
+	// the HTTP POST /api/v1/audit/checkpoint endpoint, and the gRPC
+	// WriteAuditCheckpoint RPC — even when they land on different replicas (ADR-039
+	// HA). Unlike WithSchedulerLock, this BLOCKS until the lock is free rather than
+	// skipping on contention: every caller must actually run its checkpoint decision
+	// against a consistent, serialized view, not silently no-op (#300). On PostgreSQL
+	// it holds a session advisory lock (pg_advisory_lock) for the duration of fn; on
+	// SQLite (single instance, no cross-process concern) a process mutex is enough.
+	WithAuditCheckpointLock(ctx context.Context, fn func() error) error
+
 	// WithTransaction runs fn inside a single storage transaction: every mutation fn
 	// performs through the provided Storage commits together, or rolls back together if
 	// fn returns an error. The backing store decides the semantics — the local (DB)
@@ -38,7 +58,12 @@ type Storage interface {
 	GetProject(ctx context.Context, id uint) (*models.Project, error)
 	UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error)
 	DeleteProject(ctx context.Context, id uint) error
-	RestoreProject(ctx context.Context, id uint) error
+	// RestoreProject reverses a project soft-delete and cascades to the environments/
+	// secrets that were removed WITH it (matched by deletion timestamp — independently
+	// retired children stay deleted, see LocalStorage.RestoreProject). It returns the
+	// count of environments and secrets the cascade actually restored, so the caller
+	// can audit what came back (#311), not just that "the project" was restored.
+	RestoreProject(ctx context.Context, id uint) (restoredEnvironments, restoredSecrets int, err error)
 	ListProjects(ctx context.Context) ([]*models.Project, error)
 	ListProjectsWithCounts(ctx context.Context, includeDeleted bool) ([]ProjectWithCounts, error)
 	CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error)
@@ -56,6 +81,17 @@ type Storage interface {
 	// rows for a project access review. Global (project 0) grants are excluded:
 	// those are install-level, reviewed separately.
 	ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
+	// ListGlobalAdminAssignmentsForUpdate returns every global-scope (project 0,
+	// environment 0) direct user and group role grant whose role is in
+	// adminRoleIDs, taking a row-level write lock on backends that support one
+	// (Postgres: SELECT ... FOR UPDATE) so a concurrent racing removal serializes
+	// against this read. This is the atomicity fix for #340: guardLastGlobalAdmin's
+	// prior read-then-conditional-write let two admins racing to remove each
+	// other's role assignment both observe "another admin still exists" before
+	// either write landed, stranding the install. On SQLite this is a plain read;
+	// the caller's own process-level mutex serializes same-process callers,
+	// mirroring LockUserForUpdate/LockWebAuthnCredentialForUpdate.
+	ListGlobalAdminAssignmentsForUpdate(ctx context.Context, adminRoleIDs []uint) ([]RoleAssignment, error)
 	// LastUserSecretActivity returns, per user, the most recent secret-access time
 	// in the project (from the audit trail). Backs dormant-access detection in the
 	// access review — a grant whose principal has no recent activity is stale
@@ -83,11 +119,22 @@ type Storage interface {
 	CreateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (*models.AccessReviewCampaign, error)
 	GetAccessReviewCampaign(ctx context.Context, id uint) (*models.AccessReviewCampaign, error)
 	ListAccessReviewCampaigns(ctx context.Context, projectID uint) ([]*models.AccessReviewCampaign, error)
-	UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) error
+	// UpdateAccessReviewCampaign persists a campaign state transition with a
+	// conditional UPDATE (only a campaign whose CURRENT stored state is still "open"
+	// may be transitioned). The bool reports whether the row matched and was updated;
+	// false means the campaign was already closed (by a prior or racing call) and
+	// this write was rejected, not silently applied.
+	UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error)
 	CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error
 	ListAccessReviewItems(ctx context.Context, campaignID uint) ([]*models.AccessReviewItem, error)
 	GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error)
-	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error
+	// UpdateAccessReviewItem persists a decision with a conditional UPDATE (only an
+	// item whose CURRENT stored decision is still "pending", in a campaign whose
+	// CURRENT stored state is still "open", may be transitioned). The bool reports
+	// whether the row matched and was updated; false means either the item was
+	// already decided or the parent campaign was closed (by a prior or racing call)
+	// and this write was rejected, not silently applied.
+	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error)
 
 	// Separation-of-duties policies (ISO 27001 A.5.3 / SOX) — toxic permission pairs.
 	CreateSoDPolicy(ctx context.Context, p *models.SoDPolicy) (*models.SoDPolicy, error)
@@ -100,6 +147,14 @@ type Storage interface {
 	GetSecretDependency(ctx context.Context, id uint) (*models.SecretDependency, error)
 	ListSecretDependenciesForProject(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 	DeleteSecretDependency(ctx context.Context, id uint) error
+	// ListSecretDependenciesForProjectForUpdate is ListSecretDependenciesForProject,
+	// taking a row-level write lock on every returned edge on backends that support
+	// one (Postgres FOR UPDATE), mirroring LockUserForUpdate/
+	// ListGlobalAdminAssignmentsForUpdate (#260). Used inside a WithTransaction so
+	// AddSecretDependency's cycle-check read and the edge it writes serialize
+	// against a concurrent racing edge addition for the same project on Postgres/HA;
+	// secretDependencyMu covers same-process callers (SQLite, single instance).
+	ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.
@@ -126,9 +181,24 @@ type Storage interface {
 	GetBreakGlassActivation(ctx context.Context, id uint) (*models.BreakGlassActivation, error)
 	ListBreakGlassActivations(ctx context.Context, projectID uint) ([]*models.BreakGlassActivation, error)
 	UpdateBreakGlassActivation(ctx context.Context, a *models.BreakGlassActivation) error
+	// RevokeBreakGlassActivation atomically transitions activation id from active to
+	// revoked, recording who revoked it and when, via a single conditional UPDATE
+	// (WHERE state = active) rather than a read-modify-write — so two concurrent
+	// revokes of the same activation cannot both "win": only the first transitions
+	// state, and the second gets ErrBreakGlassNotActive rather than silently
+	// overwriting the first revoker's attribution.
+	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy uint, revokedAt time.Time) error
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
+	// LockMachineIdentityForUpdate re-reads a machine identity by ID, taking a
+	// row-level write lock on backends that support one (Postgres: SELECT … FOR
+	// UPDATE) so a read-modify-write on the row serializes against a concurrent
+	// writer of the same row — mirroring LockUserForUpdate. Use this — not
+	// GetMachineIdentity — inside a WithTransaction whenever a caller conditionally
+	// mutates state (e.g. TransitionMachineIdentity's revoked-is-terminal invariant,
+	// #388) that must not lose an update under concurrency.
+	LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error)
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
 	// ListAllMachineIdentities returns every machine identity across all projects —
@@ -235,6 +305,14 @@ type Storage interface {
 	// already reached (or the version is gone). This is the race-free gate for
 	// max-reads enforcement: concurrent reads can never collectively exceed the cap.
 	TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error)
+	// TryIncrementSecretNodeReadCount is TryIncrementSecretReadCount's secret-level
+	// twin (#133): keyed on the SECRET, not a version, so the count carries forward
+	// across rotate/rollback creating a new version — a per-version counter resets
+	// to zero on every new version, letting a burn-after-N-reads secret become
+	// re-readable simply by rolling back. This is the authoritative max-reads gate;
+	// TryIncrementSecretReadCount remains for the per-version read_count DISPLAY
+	// field only.
+	TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error)
 
 	// Secret Sharing Management
 	CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)
@@ -347,6 +425,14 @@ type Storage interface {
 	// filter on it) and is later swept by DeleteExpiredRoleGrants.
 	AssignRoleWithExpiry(ctx context.Context, userID, roleID uint, scope Scope, expiresAt time.Time) error
 	RemoveRole(ctx context.Context, userID, roleID uint, scope Scope) error
+	// RemoveAllProjectRoleGrants deletes every user_roles row for (userID, projectID),
+	// across ALL environments — not just the project-level (environment_id = 0) grant
+	// RemoveRole's exact-scope match would touch. RemoveProjectMember uses it so that
+	// offboarding a project member also revokes any environment-scoped grant (e.g.
+	// "prod-only access", created via POST /user-roles) they separately hold in the
+	// same project; otherwise it silently survives project-level removal, invisible to
+	// the project admin who performed the offboarding (#232).
+	RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error
 	GetUserRoles(ctx context.Context, userID uint) ([]*models.Role, error)
 	GetUserRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
 	GetUserRoleIDsExact(ctx context.Context, userID uint, scope Scope) ([]uint, error)
@@ -355,15 +441,29 @@ type Storage interface {
 	// membership. A global/install-wide role (project_id = 0) does NOT count.
 	IsProjectMember(ctx context.Context, userID, projectID uint) (bool, error)
 	GetUserGroupRoleIDsAt(ctx context.Context, userID uint, scope Scope) ([]uint, error)
+	// GetUserRoleScopes returns the distinct (project, environment) scopes at which
+	// userID holds ANY role, directly or via a live (non-deleted) group. It is the
+	// scope-DISCOVERY step behind a scope-aware admin-rank-ceiling comparison
+	// (impersonation's #165 check): the caller doesn't know in advance which
+	// project a target might hold a project-scoped admin role in, so it must
+	// enumerate every scope the target actually has a grant at, then evaluate
+	// GetUserRoleIDsAt/GetUserGroupRoleIDsAt (via scopedRoleIDs) per scope.
+	GetUserRoleScopes(ctx context.Context, userID uint) ([]Scope, error)
 	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
+	// CheckPermission is a raw, scope-agnostic role/permission-grant existence
+	// check (direct OR group-inherited role), with NO admin-role bypass — it does
+	// not answer "would Authorize() grant this at scope X". Prefer
+	// core.HasPermissionByEmail (which resolves via Authorize/scopedRoleIDs per
+	// scope) for anything that needs the true live-authorization-equivalent
+	// answer (#376).
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 	// GetUserGroupPermissions returns the permissions a user holds via GROUP
 	// membership (group → group_roles → role_permissions), scope-agnostically and
 	// across all of the user's groups — the counterpart to GetUserPermissions, which
 	// covers only direct user_roles. Callers that need a user's full effective
-	// permission set (e.g. SoD conflict detection) must union both, mirroring how
-	// Authorize unions direct and group-inherited roles.
+	// permission set (e.g. SoD conflict detection, GetUserPermissionsByID) must
+	// union both, mirroring how Authorize unions direct and group-inherited roles.
 	GetUserGroupPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 
 	// Permission queries
@@ -524,7 +624,19 @@ type Storage interface {
 	// WebAuthn / passkeys (ADR-036).
 	CreateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
 	ListWebAuthnCredentials(ctx context.Context, userID uint) ([]*models.WebAuthnCredential, error)
-	GetWebAuthnCredentialByCredID(ctx context.Context, credentialID []byte) (*models.WebAuthnCredential, error)
+	// GetWebAuthnCredentialByCredID looks up a credential by its (unique) credential
+	// ID, scoped to the claimed owner: the query itself requires user_id = userID, so
+	// correctness does not depend on every caller re-checking ownership after the
+	// fetch (#307).
+	GetWebAuthnCredentialByCredID(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error)
+	// LockWebAuthnCredentialForUpdate re-reads a WebAuthn credential by (credential_id,
+	// user_id) inside a WithTransaction, taking a row-level write lock on backends that
+	// support one (Postgres: SELECT … FOR UPDATE), so a read-modify-write of the
+	// advanced signature counter serializes against a concurrent write for the same
+	// credential — closing the cloned-authenticator race where two concurrent
+	// authentications both read the stale counter and the last UPDATE silently wins,
+	// suppressing the clone-detection audit signal (#306).
+	LockWebAuthnCredentialForUpdate(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error)
 	UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
 	DeleteWebAuthnCredential(ctx context.Context, userID, id uint) error
 	CountWebAuthnCredentials(ctx context.Context, userID uint) (int64, error)
@@ -565,19 +677,6 @@ type Storage interface {
 	// CountSetupTokensSince counts tokens minted for (purpose, email) since a cutoff,
 	// backing resend throttling / daily caps.
 	CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error)
-
-	// API Client Management
-	CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
-	GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error)
-	RevokeAPIClient(ctx context.Context, clientID string) error
-	ListAPIClients(ctx context.Context) ([]*models.APIClient, error)
-	UpdateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
-
-	// API Token Management
-	CreateAPIToken(ctx context.Context, token *models.APIToken) (*models.APIToken, error)
-	GetAPIToken(ctx context.Context, id uint) (*models.APIToken, error)
-	ListAPITokens(ctx context.Context, clientID *uint) ([]*models.APIToken, error)
-	RevokeAPIToken(ctx context.Context, id uint) error
 
 	// Rotation Policy Management
 	CreateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
