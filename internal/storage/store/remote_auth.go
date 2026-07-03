@@ -91,6 +91,22 @@ func (rs *RemoteStorage) GetSessionByID(_ context.Context, _ uint) (*models.Sess
 	return nil, errUnsupportedRemote
 }
 
+func (rs *RemoteStorage) GetSessionAny(_ context.Context, _ string) (*models.Session, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) RotateSession(_ context.Context, _ uint, _ *models.Session, _ time.Time) (*models.Session, bool, error) {
+	return nil, false, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) ListSessionTokenHashesByFamily(_ context.Context, _ string) ([]string, error) {
+	return nil, errUnsupportedRemote
+}
+
+func (rs *RemoteStorage) DeleteSessionsByFamily(_ context.Context, _ string) error {
+	return errUnsupportedRemote
+}
+
 func (rs *RemoteStorage) ListSessionsByUser(_ context.Context, _ uint) ([]*models.Session, error) {
 	return nil, errUnsupportedRemote
 }

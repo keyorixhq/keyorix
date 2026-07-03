@@ -576,7 +576,15 @@ type Storage interface {
 
 	// Session Management
 	CreateSession(ctx context.Context, session *models.Session) (*models.Session, error)
+	// GetSession looks up a LIVE (not-yet-rotated) session by token. A token
+	// belonging to a session RefreshSession has since rotated away must behave
+	// exactly like a deleted one here (see RotatedAt on models.Session) — used on
+	// every authenticated request and on Logout.
 	GetSession(ctx context.Context, token string) (*models.Session, error)
+	// GetSessionAny looks up a session by token regardless of rotation state.
+	// Used only by RefreshSession's reuse-detection path (#211), which must tell an
+	// already-rotated token (a reuse signal) apart from one that never existed.
+	GetSessionAny(ctx context.Context, token string) (*models.Session, error)
 	GetSessionByID(ctx context.Context, id uint) (*models.Session, error)
 	ListSessionsByUser(ctx context.Context, userID uint) ([]*models.Session, error)
 	// EnforceSessionLimit deletes a user's oldest sessions beyond the `keep` most-recent
@@ -590,6 +598,17 @@ type Storage interface {
 	// hashes — equal to the auth-cache key) for every session owned by or impersonating
 	// userID, so a state change can evict them from the auth cache immediately.
 	ListSessionTokenHashesForUser(ctx context.Context, userID uint) ([]string, error)
+	// RotateSession atomically supersedes the session at oldID with newSession inside
+	// a single DB transaction (#211): the CAS guard (rotated_at IS NULL) makes
+	// rotation race-free under concurrent refreshes of the same token — at most one
+	// caller wins (won=true). The loser must treat the loss as a reuse signal exactly
+	// like an out-of-band replay of an already-rotated token.
+	RotateSession(ctx context.Context, oldID uint, newSession *models.Session, now time.Time) (created *models.Session, won bool, err error)
+	// ListSessionTokenHashesByFamily / DeleteSessionsByFamily revoke every session
+	// descended from the same login (see FamilyID on models.Session) — used to kill
+	// the whole lineage when a refresh-token reuse is detected (#211).
+	ListSessionTokenHashesByFamily(ctx context.Context, familyID string) ([]string, error)
+	DeleteSessionsByFamily(ctx context.Context, familyID string) error
 	// TouchSession bumps last_seen_at only when it is older than the given staleness
 	// window (no-op otherwise) so the auth hot path is not turned into a write per request.
 	TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error
