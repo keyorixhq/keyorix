@@ -45,14 +45,33 @@ func (c *KeyorixCore) GetRoleWithPermissions(ctx context.Context, roleID uint) (
 	return role, perms, nil
 }
 
-// AssignPermissionToRole verifies both exist, assigns the permission, and records
-// an RBAC audit event. actorID is the acting principal (0 = none).
+// AssignPermissionToRole verifies both exist, requires the actor already hold the
+// permission being bundled, assigns it, and records an RBAC audit event. actorID is
+// the acting principal (0 = none).
+//
+// #169: CreateRole/UpdateRole are gated only by the narrower "roles.write" — without
+// this check, a roles.write holder could bundle an arbitrary admin-tier permission
+// (system.write, roles.assign, users.impersonate, ...) into a role's DEFINITION with
+// zero check that they hold it themselves, then have that role granted to them
+// through any ordinary (non-admin) grant path — bypassing every admin-rank-ceiling
+// check on the GRANT step (#93/#107/#141/#147/#161/#165 and friends), since none of
+// those fixes touch role-definition time. Roles are global catalog objects (not
+// project/environment-scoped), so the actor must hold the permission at GLOBAL scope
+// — matching how roles.write itself is gated (RequirePermission always resolves to
+// ScopeGlobal). c.Authorize already includes the admin-role bypass, so a genuine
+// global admin is unaffected.
 func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleID, permissionID uint) error {
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
-	if _, err := c.storage.GetPermission(ctx, permissionID); err != nil {
+	perm, err := c.storage.GetPermission(ctx, permissionID)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	if ok, aerr := c.Authorize(ctx, actorID, perm.Name, Scope{}); aerr != nil {
+		return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+	} else if !ok {
+		return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)
 	}
 	if err := c.storage.AssignPermissionToRole(ctx, roleID, permissionID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
