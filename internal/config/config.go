@@ -1457,7 +1457,7 @@ func Save(path string, cfg *Config) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := securefiles.SecureWriteFile(appRootDir, path, data, 0600); err != nil {
+	if err := securefiles.SecureWriteFileSync(appRootDir, path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file %q: %w", path, err)
 	}
 

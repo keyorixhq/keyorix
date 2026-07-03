@@ -81,7 +81,7 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		if err := os.MkdirAll(outputDir, 0o700); err != nil {
 			return nil, fmt.Errorf("evidence export: create output dir: %w", err)
 		}
-		if err := securefiles.SecureWriteFile(outputDir, name, data, 0o600); err != nil {
+		if err := securefiles.SecureWriteFileSync(outputDir, name, data, 0o600); err != nil {
 			return nil, fmt.Errorf("evidence export: write: %w", err)
 		}
 		res.Path = filepath.Join(outputDir, name)
@@ -89,7 +89,7 @@ func (c *KeyorixCore) ExportComplianceEvidence(ctx context.Context, outputDir st
 		// Write the detached signature alongside the pack (verify with `keyorix
 		// compliance verify`). Best-effort: a sig-write failure must not lose the pack.
 		if signed {
-			_ = securefiles.SecureWriteFile(outputDir, name+".sig", []byte(signature), 0o600)
+			_ = securefiles.SecureWriteFileSync(outputDir, name+".sig", []byte(signature), 0o600)
 		}
 	}
 
