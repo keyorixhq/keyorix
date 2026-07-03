@@ -12,43 +12,72 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write # create the release and upload assets
-  packages: write # push the Helm chart to GHCR (OCI)
-
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload assets
+      # Keyless cosign signing of the release binaries' checksums.txt (#115) — no
+      # long-lived signing key; GitHub's OIDC token proves this exact workflow run
+      # produced the release, recorded in Sigstore's public Rekor transparency log.
+      id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: '1.26'
 
+      # VERSION is passed via env, not interpolated into the `run:` string (#115):
+      # a tag name can contain shell metacharacters ($, `, ;, |, &, ( ) are all
+      # valid in a git ref) that git's own naming rules don't reject, so a
+      # template-expression interpolation directly into a shell command line is a
+      # script-injection vector. GITHUB_REF_NAME is a runner-provided env var —
+      # substituted by the shell, never re-parsed as YAML/template syntax.
       - name: Cross-compile release binaries
-        run: make release VERSION=${{ github.ref_name }}
+        run: make release VERSION="$GITHUB_REF_NAME"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.0
+
+      # Signs checksums.txt (not each binary individually): it already contains a
+      # SHA-256 of every release binary, so one signature transitively covers all
+      # of them — verify checksums.txt's signature, then verify each downloaded
+      # binary against its listed checksum.
+      - name: Sign checksums.txt (keyless)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/checksums.txt.sig \
+            --output-certificate dist/checksums.txt.pem \
+            dist/checksums.txt
 
       - name: Publish to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-            gh release upload "${{ github.ref_name }}" dist/* --clobber
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
-            gh release create "${{ github.ref_name }}" dist/* \
-              --title "Keyorix ${{ github.ref_name }}" \
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "Keyorix $GITHUB_REF_NAME" \
               --generate-notes
           fi
 
   publish-chart:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push the Helm charts to GHCR (OCI)
+      id-token: write # keyless cosign signing of the pushed chart artifacts (#115)
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Set up Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.0
 
       - name: Package + push charts to GHCR (OCI)
         env:
@@ -64,3 +93,6 @@ jobs:
           helm push "keyorix-${version}.tgz"          oci://ghcr.io/keyorixhq/charts
           helm push "keyorix-k8s-sync-${version}.tgz" oci://ghcr.io/keyorixhq/charts
           helm push "keyorix-operator-${version}.tgz" oci://ghcr.io/keyorixhq/charts
+          cosign sign --yes "ghcr.io/keyorixhq/charts/keyorix:${version}"
+          cosign sign --yes "ghcr.io/keyorixhq/charts/keyorix-k8s-sync:${version}"
+          cosign sign --yes "ghcr.io/keyorixhq/charts/keyorix-operator:${version}"

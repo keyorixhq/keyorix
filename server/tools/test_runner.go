@@ -96,6 +96,17 @@ func (tr *TestRunner) RunAllTests() error {
 
 // runTestSuite runs tests for a specific package
 func (tr *TestRunner) runTestSuite(path, name string) error {
+	// #129: path is hardcoded in the testSuites table today (RunAllTests), not
+	// user-controlled — but this function's own exec.Command call had no
+	// validateTestPath gate at all, unlike RunBenchmarks below. Applying it here
+	// too closes the gap defense-in-depth, so a later refactor that parameterizes
+	// path (e.g. from a CLI flag) doesn't silently reopen a command-argument
+	// injection surface (a value containing another `go test` flag, or a package
+	// path outside this tree).
+	if err := validateTestPath(path); err != nil {
+		return fmt.Errorf("invalid test path %q: %w", path, err)
+	}
+
 	start := time.Now()
 
 	// Build the go test command
@@ -110,8 +121,8 @@ func (tr *TestRunner) runTestSuite(path, name string) error {
 	args = append(args, "-cover") // Enable coverage
 	args = append(args, path)
 
-	cmd := exec.Command("go", args...)
-	cmd.Dir = "." // Run from server directory
+	cmd := exec.Command("go", args...) // #nosec G204 -- path is validated by validateTestPath above
+	cmd.Dir = "."                      // Run from server directory
 
 	// Capture output
 	output, err := cmd.CombinedOutput()
@@ -132,33 +143,37 @@ func (tr *TestRunner) runTestSuite(path, name string) error {
 	return nil
 }
 
-// validateTestPath validates that a test path is safe to use
+// validateTestPath validates that a test path is safe to use.
+//
+// #129: this used to check the "./"-prefix requirement on the ALREADY-CLEANED path
+// (filepath.Clean("./http") == "http" — Clean always strips a leading "./"), so the
+// check rejected every legitimate input unconditionally. It failed CLOSED (every real
+// caller — RunBenchmarks — got "path must be relative", so nothing this guarded ever
+// actually ran), which is why it went unnoticed rather than surfacing as a visible
+// bug: the intended feature was silently broken, not exploitably open. Fixed by
+// checking the "./" prefix on the RAW input before cleaning, and matching the allowed
+// directories against the cleaned (dot-slash-stripped) form.
 func validateTestPath(path string) error {
-	// Clean the path to prevent directory traversal
-	cleanPath := filepath.Clean(path)
-
-	// Ensure the path starts with "./" (relative path within current directory)
-	if !strings.HasPrefix(cleanPath, "./") {
+	// The "./" prefix requirement is checked on the raw path — see above.
+	if !strings.HasPrefix(path, "./") {
 		return fmt.Errorf("path must be relative and start with './'")
 	}
 
-	// Prevent directory traversal attacks
-	if strings.Contains(cleanPath, "..") {
+	// Clean the path to prevent directory traversal (e.g. "./http/../../../etc").
+	cleanPath := filepath.Clean(path)
+
+	// Prevent directory traversal attacks: a cleaned path escaping the current
+	// directory begins with "..".
+	if cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
 		return fmt.Errorf("path cannot contain '..' (directory traversal)")
 	}
 
-	// Only allow specific safe directories
-	allowedPrefixes := []string{
-		"./http/",
-		"./grpc/",
-		"./middleware/",
-		"./validation/",
-		"./services/",
-	}
-
+	// Only allow specific safe directories — exact match or a subdirectory of one.
+	// cleanPath has no leading "./" (Clean strips it), so match without it too.
+	allowedDirs := []string{"http", "grpc", "middleware", "validation", "services"}
 	allowed := false
-	for _, prefix := range allowedPrefixes {
-		if strings.HasPrefix(cleanPath, prefix) {
+	for _, dir := range allowedDirs {
+		if cleanPath == dir || strings.HasPrefix(cleanPath, dir+"/") {
 			allowed = true
 			break
 		}

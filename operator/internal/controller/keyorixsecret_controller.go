@@ -5,6 +5,8 @@ package controller
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -28,7 +30,15 @@ import (
 
 const (
 	defaultRefreshInterval = 5 * time.Minute
-	conditionReady         = "Ready"
+	// minRefreshInterval floors spec.refreshInterval (#124): with no floor, a CR
+	// author (or a compromised CR-writer) could set an absurdly small value (e.g.
+	// "1ms") and every successful reconcile would immediately requeue itself —
+	// each pass reads the CR, reads the token Secret, calls out to the external
+	// Keyorix server, and writes .status — driving a reconcile/API/etcd storm that
+	// starves the single shared workqueue for every other KeyorixSecret in the
+	// cluster.
+	minRefreshInterval = 30 * time.Second
+	conditionReady     = "Ready"
 )
 
 // KeyorixSecretReconciler reconciles KeyorixSecret objects.
@@ -45,6 +55,39 @@ type KeyorixSecretReconciler struct {
 	// newClient builds a value fetcher for a server/token; nil uses the real HTTP client.
 	// Overridden in tests.
 	newClient func(server, token string) valueFetcher
+	// APIReader bypasses the manager's shared cache for reads that must not be
+	// cached/watched cluster-wide — the token Secret lookup (#124). It is set from
+	// mgr.GetAPIReader() at startup; nil falls back to the cached Client (tests
+	// construct a reconciler directly and don't need the distinction).
+	APIReader client.Reader
+	// hashKey is a random, per-process HMAC key generated once at construction
+	// (NewReconciler), used to fingerprint synced values into .status.syncedHash
+	// (#124). status is a subresource of the CR, which is very commonly readable
+	// by principals who hold no RBAC on the underlying Secret at all — an
+	// unsalted, unkeyed sha256 there let any CR-getter run an offline brute-force/
+	// dictionary attack against a low-entropy value with zero Secret-read access.
+	// The key lives only in memory for this process's lifetime: the hash is a
+	// point-in-time fingerprint for drift detection, not something requiring
+	// cross-restart stability, so a fresh key on every restart is correct.
+	hashKey []byte
+}
+
+// NewReconciler builds a KeyorixSecretReconciler with a fresh random HMAC key for
+// status.syncedHash (#124). Use this rather than constructing the struct literal
+// directly in production code; tests that don't exercise hashData may still build
+// the struct literal directly.
+func NewReconciler(c client.Client, scheme *runtime.Scheme, apiReader client.Reader, allowedServers []string) (*KeyorixSecretReconciler, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generate status-hash HMAC key: %w", err)
+	}
+	return &KeyorixSecretReconciler{
+		Client:         c,
+		Scheme:         scheme,
+		APIReader:      apiReader,
+		AllowedServers: allowedServers,
+		hashKey:        key,
+	}, nil
 }
 
 // validateServer rejects a CR-supplied server that is not https or not in the operator's
@@ -95,6 +138,9 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if ks.Spec.RefreshInterval != nil && ks.Spec.RefreshInterval.Duration > 0 {
 		interval = ks.Spec.RefreshInterval.Duration
 	}
+	if interval < minRefreshInterval {
+		interval = minRefreshInterval
+	}
 
 	desired, err := r.buildDesired(ctx, &ks)
 	if err != nil {
@@ -102,7 +148,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.fail(ctx, &ks, err)
 	}
 
-	hash := hashData(desired)
+	hash := hashData(r.hashKey, desired)
 	secretName := ks.Spec.Target.Name
 	if secretName == "" {
 		secretName = ks.Name
@@ -134,8 +180,34 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 	}
 	var tokenSecret corev1.Secret
 	ref := types.NamespacedName{Namespace: ks.Namespace, Name: ks.Spec.TokenSecretRef.Name}
-	if err := r.Get(ctx, ref, &tokenSecret); err != nil {
+	// A direct (uncached) read, not the manager's cached Client (#124): the shared
+	// informer cache is scoped to only Secrets this operator manages (see
+	// SetupWithManager) so it never pulls arbitrary namespace Secrets — including
+	// every token Secret CR authors reference — into the operator's memory. A
+	// token Secret is a one-off, per-reconcile lookup; it has no reason to be
+	// watched/cached at all.
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	if err := reader.Get(ctx, ref, &tokenSecret); err != nil {
 		return nil, fmt.Errorf("read token secret %s: %w", ref, err)
+	}
+	// A CRD-write-only principal (the CRD's own documented least-privilege deployment
+	// model has no direct core-Secret read/write RBAC) can name ANY pre-existing Secret
+	// in the namespace here — the operator resolves it with its own cluster-wide `get
+	// secrets` RBAC, not the requester's. validateServer above already stops the token
+	// from being shipped to an attacker-controlled destination, but without this gate
+	// the operator would still read an arbitrary Secret's bytes and send them as a
+	// bearer token to the (now-trusted) Keyorix server — a residual probe/abuse
+	// primitive, and exactly the "point at a Secret you don't have RBAC to read" attack
+	// the CRD's threat model is meant to exclude. Require the Secret to already carry a
+	// label only a principal with real Secret-write RBAC could have set (a CRD-write-only
+	// attacker cannot), so an unlabeled pre-existing Secret can never be used as a token
+	// source, however it got created.
+	if tokenSecret.Labels[tokenSecretLabel] != tokenSecretValue {
+		return nil, fmt.Errorf("token secret %s is missing the required label %s=%s (only a Secret explicitly marked as a Keyorix token source may be used as tokenSecretRef)",
+			ref, tokenSecretLabel, tokenSecretValue)
 	}
 	token := string(tokenSecret.Data[tokenKey])
 	if token == "" {
@@ -176,7 +248,7 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		// or by Helm) and replace its data — letting a CR author clobber another workload's
 		// same-named Secret. A Secret we created carries the managed-by label and is
 		// allowed through.
-		if secret.ResourceVersion != "" && secret.Labels[managedByLabel] != managedByValue {
+		if secret.ResourceVersion != "" && secret.Labels[ManagedByLabel] != ManagedByValue {
 			return fmt.Errorf("refusing to overwrite existing unmanaged Secret %s/%s", ks.Namespace, name)
 		}
 		if err := controllerutil.SetControllerReference(ks, secret, r.Scheme); err != nil {
@@ -185,7 +257,7 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		if secret.Labels == nil {
 			secret.Labels = map[string]string{}
 		}
-		secret.Labels[managedByLabel] = managedByValue
+		secret.Labels[ManagedByLabel] = ManagedByValue
 		secret.Type = secretType
 		secret.Data = data // operator owns the whole data set; removed keys are pruned
 		return nil
@@ -193,11 +265,25 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 	return err
 }
 
-// managedByLabel/managedByValue mark a Secret as owned by this operator, so it won't
-// adopt or overwrite a Secret it didn't create.
+// adopt or overwrite a Secret it didn't create. Exported so cmd/main.go can scope the
+// manager's Secret informer cache to only Secrets carrying this label (see #327): the
+// operator is deployed as a single cluster-wide instance, so its RBAC necessarily grants
+// Secret access in every namespace, but the informer backing Owns(&corev1.Secret{}) has no
+// reason to list/watch/cache Secrets it doesn't manage. Token Secrets and pre-existing
+// unmanaged target Secrets never carry this label, so reads of those are excluded from that
+// cache (they're read live instead) and remain unaffected.
 const (
-	managedByLabel = "app.kubernetes.io/managed-by"
-	managedByValue = "keyorix-operator"
+	ManagedByLabel = "app.kubernetes.io/managed-by"
+	ManagedByValue = "keyorix-operator"
+)
+
+// tokenSecretLabel/tokenSecretValue gate which Secrets buildDesired will resolve as a
+// TokenSecretRef. Must be set out-of-band (by whoever creates the token Secret — the
+// operator never sets it itself, unlike managedByLabel above) before the controller will
+// read that Secret's data and use it as a bearer token.
+const (
+	tokenSecretLabel = "secrets.keyorix.io/token-secret"
+	tokenSecretValue = "true"
 )
 
 // fail records a SyncError on the Ready condition and requeues with backoff.
@@ -233,6 +319,11 @@ func (r *KeyorixSecretReconciler) setReady(ks *secretsv1alpha1.KeyorixSecret, st
 }
 
 // SetupWithManager wires the reconciler to watch KeyorixSecrets and the Secrets it owns.
+// The manager's shared cache (wired in cmd/main.go) is label-scoped to only Secrets
+// carrying ManagedByLabel=ManagedByValue (#124) — this controller always stamps that
+// label on target Secrets it creates (applySecret), so Owns() still fires correctly
+// on changes to them, while arbitrary other namespace Secrets (including every token
+// Secret CR authors reference) are never pulled into the operator's memory.
 func (r *KeyorixSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&secretsv1alpha1.KeyorixSecret{}).
@@ -240,15 +331,19 @@ func (r *KeyorixSecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// hashData fingerprints the desired data deterministically (sorted keys) so an unchanged
-// reconcile produces the same hash.
-func hashData(data map[string][]byte) string {
+// hashData fingerprints the desired data deterministically (sorted keys) so an
+// unchanged reconcile produces the same hash. Keyed with an HMAC (#124): the
+// fingerprint is persisted into .status.syncedHash, a CR subresource commonly
+// readable without any RBAC on the underlying Secret — a plain sha256 there would
+// let a CR-getter brute-force a low-entropy value offline with zero Secret-read
+// access. key must be non-empty; see NewReconciler.
+func hashData(key []byte, data map[string][]byte) string {
 	keys := make([]string, 0, len(data))
 	for k := range data {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	h := sha256.New()
+	h := hmac.New(sha256.New, key)
 	for _, k := range keys {
 		h.Write([]byte(k))
 		h.Write([]byte{0})

@@ -2,11 +2,10 @@ package auth
 
 import (
 	"fmt"
-	"syscall"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 // AuthCmd represents the auth command
@@ -38,8 +37,10 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
-	// Add flags for login command
-	loginCmd.Flags().String("api-key", "", "API key for authentication (optional, will prompt if not provided)")
+	// Add flags for login command. --api-key is INSECURE on the command line (visible
+	// via ps/proc and saved in shell history); prefer the KEYORIX_API_KEY env var, or
+	// omit it to be prompted.
+	loginCmd.Flags().String("api-key", "", "API key for authentication (INSECURE on the command line — prefer KEYORIX_API_KEY env var, or omit to be prompted)")
 	loginCmd.Flags().String("server", "", "Server URL to authenticate with")
 
 	// Add subcommands
@@ -49,7 +50,6 @@ func init() {
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
-	apiKey, _ := cmd.Flags().GetString("api-key")
 	server, _ := cmd.Flags().GetString("server")
 
 	// Load current configuration
@@ -76,15 +76,12 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Get API key if not provided
-	if apiKey == "" {
-		fmt.Print("Enter API key: ")
-		bytePassword, err := term.ReadPassword(int(syscall.Stdin))
-		if err != nil {
-			return fmt.Errorf("failed to read API key: %w", err)
-		}
-		apiKey = string(bytePassword)
-		fmt.Println() // Add newline after password input
+	// Resolve the API key without ever requiring it on the command line: the
+	// (insecure, warned) --api-key flag if set, else KEYORIX_API_KEY, else an
+	// interactive no-echo prompt.
+	apiKey, err := common.ResolveAPIKey(cmd, true)
+	if err != nil {
+		return err
 	}
 
 	if apiKey == "" {

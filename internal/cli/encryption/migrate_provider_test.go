@@ -147,6 +147,73 @@ func TestMigrateProvider_EndToEnd_PasswordToEnv(t *testing.T) {
 	}
 }
 
+// TestMigrateProviderCleanup_EndToEnd runs a real migration (leaving a backup file
+// behind), then confirms cleanup finds it, dry-run leaves it in place, and a
+// confirmed run securely deletes it (#198).
+func TestMigrateProviderCleanup_EndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "Sup3r-Secret-Passphrase!")
+	raw := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
+		t.Fatalf("gen kek: %v", err)
+	}
+	t.Setenv("KEYORIX_TARGET_KEK", hex.EncodeToString(raw))
+
+	cfg := enabledLocalCfg()
+	cfg.Storage.Encryption.DEKPath = "dek.key"
+	cfg.Storage.Encryption.SaltPath = "kek.salt"
+
+	if err := migrateProviderWithConfig(cfg, migrateOpts{toType: "env", toEnvVar: "KEYORIX_TARGET_KEK"}, true); err != nil {
+		t.Fatalf("migrate password -> env: %v", err)
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(dir, "dek.key.migrate-backup.*"))
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly one migrate-backup file, got %v", matches)
+	}
+	backupPath := matches[0]
+
+	// Dry-run must list it but not delete it.
+	if err := migrateProviderCleanupWithConfig(cfg, dir, true, false); err != nil {
+		t.Fatalf("dry-run cleanup: %v", err)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("dry-run must not delete the backup file: %v", err)
+	}
+
+	// Without --confirm (and not --dry-run), it must refuse.
+	if err := migrateProviderCleanupWithConfig(cfg, dir, false, false); err == nil || !strings.Contains(err.Error(), "--confirm") {
+		t.Fatalf("expected --confirm gate, got: %v", err)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("unconfirmed cleanup must not delete the backup file: %v", err)
+	}
+
+	// Confirmed cleanup deletes it.
+	if err := migrateProviderCleanupWithConfig(cfg, dir, false, true); err != nil {
+		t.Fatalf("confirmed cleanup: %v", err)
+	}
+	if _, err := os.Stat(backupPath); !os.IsNotExist(err) {
+		t.Fatalf("expected backup file to be deleted, stat err = %v", err)
+	}
+
+	// A second run finds nothing left to clean up.
+	if err := migrateProviderCleanupWithConfig(cfg, dir, false, true); err != nil {
+		t.Fatalf("cleanup on empty state should be a no-op success: %v", err)
+	}
+}
+
+func TestMigrateProviderCleanup_RejectsDisabledEncryption(t *testing.T) {
+	cfg := enabledLocalCfg()
+	cfg.Storage.Encryption.Enabled = false
+	err := migrateProviderCleanupWithConfig(cfg, t.TempDir(), false, true)
+	if err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled-encryption rejection, got: %v", err)
+	}
+}
+
 func TestTargetEncryptionConfig(t *testing.T) {
 	cur := &config.EncryptionConfig{DEKPath: "keys/dek.key", SaltPath: "keys/kek.salt"}
 
@@ -181,6 +248,45 @@ func TestTargetEncryptionConfig(t *testing.T) {
 		}
 		if tgt.KeyProvider.Type != "azure-kms" || tgt.KeyProvider.WrappedKeyPath != "keys/kek.kms" {
 			t.Fatalf("unexpected target provider: %+v", tgt.KeyProvider)
+		}
+	})
+
+	t.Run("kms encryption context carries through to a new wrapped path", func(t *testing.T) {
+		tgt, err := targetEncryptionConfig(cur, migrateOpts{
+			toType: "aws-kms", toKMSKeyID: "k", toWrappedKeyPath: "keys/kek-v2.kms",
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tgt.KeyProvider.KMSEncryptionContext["keyorix-install"] != "prod-1" {
+			t.Fatalf("expected encryption context to carry through, got %+v", tgt.KeyProvider.KMSEncryptionContext)
+		}
+	})
+
+	t.Run("azure-kms rejects an encryption context (no AAD input)", func(t *testing.T) {
+		_, err := targetEncryptionConfig(cur, migrateOpts{
+			toType: "azure-kms", toKMSKeyID: "https://v.vault.azure.net/keys/k", toWrappedKeyPath: "keys/kek.kms",
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "not supported") {
+			t.Fatalf("expected azure-kms + context rejection, got: %v", err)
+		}
+	})
+
+	t.Run("kms encryption context requires a new wrapped path, not the current one", func(t *testing.T) {
+		curKMS := &config.EncryptionConfig{
+			DEKPath: "keys/dek.key",
+			KeyProvider: config.KeyProviderConfig{
+				Type: "aws-kms", KMSKeyID: "k", WrappedKeyPath: "keys/kek.kms",
+			},
+		}
+		_, err := targetEncryptionConfig(curKMS, migrateOpts{
+			toType: "aws-kms", toKMSKeyID: "k", toWrappedKeyPath: "keys/kek.kms", // same path, same type
+			toKMSEncryptionContext: map[string]string{"keyorix-install": "prod-1"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "NEW --to-wrapped-key-path") {
+			t.Fatalf("expected same-path context rejection, got: %v", err)
 		}
 	})
 

@@ -7,8 +7,14 @@ import (
 )
 
 type Project struct {
-	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"uniqueIndex;not null"`
+	ID uint `gorm:"primaryKey"`
+	// Name uniqueness is enforced by a case-insensitive PARTIAL unique index
+	// (LOWER(name) WHERE deleted_at IS NULL), created in migrateDatabase (#385) — not
+	// the plain `uniqueIndex` tag — so "Production"/"production" can't land as two
+	// distinct rows (closing a shadow-project confusion vector against the
+	// case-insensitive CLI project-name resolution), while a soft-deleted project's
+	// name is still freed for reuse.
+	Name        string `gorm:"not null"`
 	Description string
 	// RequireMFA, when true, denies interactive (session-authenticated) callers
 	// without a second factor access to this project's scoped resources, even when
@@ -112,13 +118,14 @@ func (SoDPolicy) TableName() string { return "sod_policies" }
 // hold is preserved. Placing/lifting is audited; the row history is the evidence
 // of when holds were in effect.
 type LegalHold struct {
-	ID         uint       `gorm:"primaryKey" json:"id"`
-	Reason     string     `json:"reason"`
-	PlacedBy   uint       `json:"placed_by"`
-	PlacedAt   time.Time  `json:"placed_at"`
-	Released   bool       `gorm:"index" json:"released"` // false = active
-	ReleasedBy uint       `json:"released_by,omitempty"`
-	ReleasedAt *time.Time `json:"released_at,omitempty"`
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Reason        string     `json:"reason"`
+	PlacedBy      uint       `json:"placed_by"`
+	PlacedAt      time.Time  `json:"placed_at"`
+	Released      bool       `gorm:"index" json:"released"` // false = active
+	ReleasedBy    uint       `json:"released_by,omitempty"`
+	ReleasedAt    *time.Time `json:"released_at,omitempty"`
+	ReleaseReason string     `json:"release_reason,omitempty"` // why the hold was lifted (#380)
 }
 
 // SSOLoginState is the short-lived CSRF/nonce state for an in-flight OIDC
@@ -154,6 +161,13 @@ type RiskException struct {
 	Revoked       bool       `gorm:"index" json:"revoked"`    // true = withdrawn before expiry
 	RevokedBy     uint       `json:"revoked_by,omitempty"`
 	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
+	// Approved/ApprovedBy/ApprovedAt implement dual control (#170): an exception
+	// only suppresses its matched violation once a DIFFERENT system.write holder
+	// than the creator approves it, so the same actor can't unilaterally create
+	// and self-approve a suppression of their own risk.
+	Approved   bool       `gorm:"default:false" json:"approved"`
+	ApprovedBy uint       `json:"approved_by,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 }
 
 // BreakGlassActivation records a self-service emergency-access elevation: a user
@@ -161,6 +175,11 @@ type RiskException struct {
 // written justification, for incident response (NIS2/DORA). The grant itself is a
 // JIT time-bound role assignment that auto-expires; this record is the queryable,
 // auditable evidence for post-hoc review. State: active → expired | revoked.
+//
+// A partial unique index on (project_id, user_id) WHERE state='active' (created by
+// the storage migration, not expressible via a plain gorm tag) enforces at most one
+// active activation per project+user even under a race — see
+// storage.ErrBreakGlassAlreadyActive.
 type BreakGlassActivation struct {
 	ID            uint       `gorm:"primaryKey" json:"id"`
 	ProjectID     uint       `gorm:"index" json:"project_id"`
@@ -226,7 +245,13 @@ type User struct {
 	// deleted_at IS NULL), created in migrateDatabase — not the plain `uniqueIndex`
 	// tag — so a soft-deleted (e.g. SCIM-deprovisioned) user's username is freed for
 	// reuse on re-provisioning while the old row stays restorable for audit.
-	Username     string `gorm:"not null"`
+	Username string `gorm:"not null"`
+	// Email uniqueness (among live, non-empty rows) is enforced by a PARTIAL
+	// unique index (email WHERE deleted_at IS NULL AND email != ''), created in
+	// migrateDatabase — mirrors the Username precedent. Without this, two
+	// concurrent CreateUser calls with the same address could both succeed,
+	// leaving duplicate-email accounts with ambiguous SSO/SCIM/password-reset
+	// targeting.
 	Email        string
 	DisplayName  string
 	PasswordHash string     `json:"-"`
@@ -246,8 +271,11 @@ type User struct {
 	// a WebAuthn assertion as the second factor (see WebAuthnCredential).
 	WebAuthnEnabled bool `gorm:"default:false"`
 	// ExternalID is the IdP's stable identifier for a SCIM-provisioned user (SCIM
-	// externalId, RFC 7644). Empty for locally-created users. Indexed for the SCIM
-	// reconciliation lookup; not unique (legacy/blank rows coexist).
+	// externalId, RFC 7644). Empty for locally-created users. Uniqueness (among
+	// live, non-empty rows) is enforced by a PARTIAL unique index, created in
+	// migrateDatabase — two different users sharing a non-empty external_id would
+	// make SSO/SCIM identity resolution (GetUserByExternalID) ambiguous. Blank
+	// rows (every local account) coexist freely.
 	ExternalID string `gorm:"index"`
 	// Per-account login lockout (brute-force protection). FailedLoginAttempts counts
 	// consecutive failed password logins within the configured window;
@@ -328,6 +356,16 @@ type WebAuthnCredential struct {
 	CredentialBlob []byte // JSON of webauthn.Credential
 	CreatedAt      time.Time
 	LastUsedAt     *time.Time
+
+	// Disabled is set when an authentication attempt against this credential showed
+	// a signature-counter regression (go-webauthn's CloneWarning — #212), the
+	// standard FIDO2 signal that its private key material may exist on more than one
+	// device. A disabled credential is excluded from every future ceremony (it can no
+	// longer authenticate, and won't be offered for exclusion on re-registration
+	// either); the owner must delete it and register a fresh passkey. Never
+	// auto-re-enabled — the stored counter can never again exceed a value a
+	// possibly-compromised clone already asserted.
+	Disabled bool `gorm:"default:false"`
 }
 
 // WebAuthnSession persists the in-flight ceremony state (the go-webauthn
@@ -410,6 +448,11 @@ type ConnectRefGrant struct {
 	RoleID    uint   `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:1"`
 	Connector string `gorm:"not null;index;uniqueIndex:uq_connect_ref_grant,priority:2"`
 	RefPrefix string `gorm:"not null;uniqueIndex:uq_connect_ref_grant,priority:3"`
+	// ExpiresAt makes a grant time-bound (just-in-time access): nil = permanent;
+	// otherwise the grant stops authorizing the moment it passes. Enforcement checks
+	// this directly so an expired grant is denied immediately, mirroring
+	// UserRole.ExpiresAt / ShareRecord.ExpiresAt.
+	ExpiresAt *time.Time `gorm:"index"`
 	CreatedAt time.Time
 }
 
@@ -453,11 +496,20 @@ type SecretNode struct {
 	// upstream it belongs to, who to contact. Metadata only; never the value.
 	Description string
 	MaxReads    *int
-	Expiration  *time.Time
-	Metadata    JSON
+	// ReadCount is the secret's LIFETIME read count against MaxReads — deliberately
+	// secret-level, not per-version (#133). A per-version counter resets to zero on
+	// every new version, so a burn-after-N-reads secret became re-readable simply
+	// by rotating or rolling back (which creates a fresh version); this counter
+	// carries forward across both.
+	ReadCount  int
+	Expiration *time.Time
+	Metadata   JSON
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives
 	// the classification posture and lets a review find high-sensitivity secrets.
+	// LABEL ONLY, NOT A CONTROL — see the KNOWN LIMITATION note on the package doc of
+	// internal/core/classification.go; a "restricted" secret is not currently treated
+	// any differently at read time than a "public" one.
 	Classification string `gorm:"index"`
 	Status         string `gorm:"default:'active'"`
 	CreatedBy      string
@@ -554,10 +606,20 @@ type DynamicSecretConfig struct {
 	// mints (ISO 27001 A.5.12/A.5.13): "" = unclassified, else one of
 	// public|internal|confidential|restricted. Folds into the classification posture
 	// so dynamic credentials are covered alongside static secrets.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
-	CreatedBy      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// Disabled refuses new IssueLease calls against this config (#369). Set
+	// automatically when the owning project is soft-deleted (DeleteProject's
+	// cascade), so a principal who still holds a role scoped to the "deleted"
+	// project cannot keep minting fresh database credentials against it. Not
+	// cleared automatically by RestoreProject — re-enabling a dynamic-secret
+	// config (which can mint live database credentials) is a higher-consequence
+	// action than restoring a static secret, so it requires an explicit,
+	// deliberate re-enable rather than silently resurrecting with the project.
+	Disabled  bool `gorm:"default:false"`
+	CreatedBy string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // DynamicSecretLease is one issued credential: a short-lived role on the target
@@ -624,6 +686,25 @@ type Session struct {
 	// frontend can swap back without re-authentication. nil = ordinary session.
 	ImpersonatedBy         *uint
 	ImpersonationStartedAt *time.Time
+
+	// FamilyID links every session descended from the same login through each
+	// refresh-token rotation (#211): stamped once at mintSession and carried
+	// unchanged onto every session RefreshSession rotates it into. Lets a detected
+	// refresh-token-reuse event revoke the WHOLE lineage in one shot (standard
+	// OAuth refresh-token-family revocation), not just the one row that was
+	// replayed. Empty on legacy rows minted before this field existed.
+	FamilyID string `gorm:"index"`
+
+	// RotatedAt marks this row superseded by RefreshSession — a soft, not hard,
+	// delete. Keeping the row instead of deleting it immediately lets a replay of
+	// this now-stale token be told apart from an ordinary "never existed" /
+	// already-swept-up-by-expiry lookup, which is the standard refresh-token-reuse
+	// detection signal. nil = still the live session for its token. GetSession
+	// excludes rotated rows (a rotated token must authenticate nothing); only the
+	// refresh path's reuse-detection lookup (GetSessionAny) sees them. Rotated rows
+	// are still swept up by CleanupExpiredSessions once their (unextended) ExpiresAt
+	// passes, so they don't accumulate indefinitely.
+	RotatedAt *time.Time
 }
 
 // PersonalAccessToken is a long-lived, user-owned bearer credential (ADR-027).
@@ -635,9 +716,9 @@ type Session struct {
 type PersonalAccessToken struct {
 	ID          uint   `gorm:"primaryKey"`
 	UserID      uint   `gorm:"index;not null"`
-	Name        string `gorm:"not null"`             // user-facing label
-	TokenHash   string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
-	TokenPrefix string `gorm:"index"`                // leading chars of the raw token, for display ("kx_pat_ab12…")
+	Name        string `gorm:"not null"`                      // user-facing label
+	TokenHash   string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenPrefix string `gorm:"index"`                         // leading chars of the raw token, for display ("kx_pat_ab12…")
 	// Scopes is a JSON-encoded []string permission allowlist (ADR-042). Empty/null =
 	// the token inherits the owner's full permission set (legacy v1 behaviour, the
 	// default for existing rows). When non-empty, the token may exercise ONLY the
@@ -671,7 +752,7 @@ type PersonalAccessToken struct {
 // stored, and lookup is by hash, mirroring PersonalAccessToken.
 type SetupToken struct {
 	ID        uint   `gorm:"primaryKey"`
-	TokenHash string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenHash string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex of the raw token (never the plaintext)
 
 	// Purpose scopes the token: invitation_accept | account_setup | password_reset_link.
 	// A token minted for one purpose can never drive another, even if the raw string
@@ -940,13 +1021,20 @@ type AnomalyAlert struct {
 	ID           uint `gorm:"primaryKey"`
 	SecretNodeID uint `gorm:"index"`
 	SecretName   string
-	AlertType    string // off_hours, new_ip, frequency_spike, new_user, ml_outlier
+	AlertType    string // off_hours, new_ip, frequency_spike, new_user, ml_outlier, principal_breadth
 	Severity     string // low, medium, high
 	Description  string
 	AccessedBy   string
 	IPAddress    string
 	DetectedAt   time.Time `gorm:"index"`
 	Acknowledged bool      `gorm:"default:false"`
+	// AcknowledgedBy/AcknowledgedAt attribute WHO dismissed this alert and WHEN
+	// (#217) — a privileged principal could otherwise suppress evidence of their
+	// own malicious access with the acknowledged flag alone leaving no forensic
+	// trail on the row itself (a separate audit event is also emitted, but the
+	// row-level attribution lets the posture/digest surface it directly).
+	AcknowledgedBy uint       `json:"acknowledged_by,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
 	// Alerted is set once the anomaly has been pushed out (admin notification +
 	// SIEM forward) so the alerter doesn't re-notify on every scan.
 	Alerted   bool `gorm:"default:false;index"`
@@ -972,6 +1060,7 @@ type MachineIdentity struct {
 	RevokedAt    *time.Time
 	// Classification is the data-sensitivity tier this machine identity handles
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
 }
 
@@ -992,6 +1081,7 @@ type MachineIdentityCredential struct {
 	CreatedAt         time.Time
 	// Classification is the data-sensitivity tier of what this credential can reach
 	// (ISO 27001 A.5.12): "" = unclassified, else public|internal|confidential|restricted.
+	// LABEL ONLY, NOT A CONTROL — see internal/core/classification.go.
 	Classification string `gorm:"index"`
 }
 

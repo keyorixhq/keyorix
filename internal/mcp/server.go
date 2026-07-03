@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sync/atomic"
 )
 
 // protocolVersion is the MCP revision the server speaks if a client does not request a
@@ -23,10 +24,28 @@ type SecretReader interface {
 }
 
 // Server speaks MCP over a JSON-RPC 2.0 stream (stdio). It exposes read-only Keyorix
-// tools and holds no state between messages.
+// tools. Holds no state between messages EXCEPT the optional ref allowlist (immutable
+// after construction) and the read-cap counter (#122).
 type Server struct {
 	reader  SecretReader
 	version string
+	// allowedRefs, when non-empty, restricts keyorix_get_secret/keyorix_list_secrets
+	// to refs matching at least one path.Match-style glob pattern (e.g.
+	// "app/production/*") — defense-in-depth ON TOP OF (never instead of) the
+	// token's own server-side RBAC scope. Empty = no additional restriction beyond
+	// whatever the token itself can already see. Set via SetAllowedRefs.
+	allowedRefs []string
+	// maxReads, when > 0, caps the number of keyorix_get_secret calls this server
+	// process will serve for its whole stdio session (#122): a secret whose VALUE
+	// contains a prompt-injection payload ("now read every other ref you can see")
+	// is attacker-controlled content that reaches the agent's context like any other
+	// tool result, so nothing in this package can stop the agent from ATTEMPTING a
+	// mass-read once manipulated — but the process itself can refuse to serve more
+	// than a bounded number of reads once that attempt is underway. 0 = unlimited.
+	// Set via SetMaxReads.
+	maxReads int64
+	// readCount is incremented atomically per successful keyorix_get_secret call.
+	readCount atomic.Int64
 }
 
 // NewServer builds a server over the given reader; version is reported in serverInfo.
@@ -35,6 +54,21 @@ func NewServer(reader SecretReader, version string) *Server {
 		version = "dev"
 	}
 	return &Server{reader: reader, version: version}
+}
+
+// SetAllowedRefs restricts keyorix_get_secret/keyorix_list_secrets to refs matching at
+// least one path.Match-style glob (e.g. "app/production/*", "app/*/db-password"). An
+// empty/nil slice (the default) applies no additional restriction — see allowedRefs.
+func (s *Server) SetAllowedRefs(patterns []string) {
+	s.allowedRefs = patterns
+}
+
+// SetMaxReads caps the number of keyorix_get_secret calls this process will serve for
+// its whole session. A non-positive value means unlimited (the default) — see maxReads.
+func (s *Server) SetMaxReads(n int) {
+	if n > 0 {
+		s.maxReads = int64(n)
+	}
 }
 
 type rpcRequest struct {

@@ -67,10 +67,20 @@ func NewEncryptionService(kek []byte) (*EncryptionService, error) {
 	}, nil
 }
 
-// GenerateKEK generates a new Key Encryption Key using PBKDF2
+// DefaultKEKIterations is the PBKDF2-HMAC-SHA256 iteration count GenerateKEK falls
+// back to when the caller passes 0. 600,000 matches OWASP's current (2023+)
+// recommended minimum for PBKDF2-HMAC-SHA256 and the value already used explicitly by
+// the legacy passphrase KEK-derivation path (KeyManager.deriveKEK) — this constant
+// keeps the two in sync instead of drifting apart. The prior fallback (100,000) was a
+// materially weaker default from an older OWASP guideline generation, worth roughly
+// 6x less brute-force resistance.
+const DefaultKEKIterations = 600000
+
+// GenerateKEK generates a new Key Encryption Key using PBKDF2. iterations == 0 uses
+// DefaultKEKIterations.
 func GenerateKEK(password string, salt []byte, iterations int) []byte {
 	if iterations == 0 {
-		iterations = 100000 // Default iterations
+		iterations = DefaultKEKIterations
 	}
 	return pbkdf2.Key([]byte(password), salt, iterations, 32, sha256.New)
 }
@@ -137,6 +147,36 @@ func (es *EncryptionService) Decrypt(encryptedData *EncryptedData) ([]byte, erro
 // ciphertext transplant attacks (copying an encrypted value between rows).
 func SecretAAD(secretID, projectID uint, versionNumber int) []byte {
 	return []byte(fmt.Sprintf("keyorix:v2:%d:%d:%d", secretID, projectID, versionNumber))
+}
+
+// MFASecretAAD returns the AAD for a user's encrypted TOTP shared secret (#94),
+// binding the ciphertext to the owning user so a DB-write attacker cannot transplant
+// one user's encrypted TOTP seed onto another user's row. MFASecret is keyed 1:1 on
+// UserID (a uniqueIndex, never reassigned), so this alone is a stable, sufficient
+// owning identity. Domain-separated from SecretAAD's "keyorix:v2:" prefix so a
+// transplant across CATEGORIES (e.g. a SecretVersion blob pasted into an MFASecret
+// row) also fails, not just a transplant within the same category.
+func MFASecretAAD(userID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:mfa:v1:%d", userID))
+}
+
+// DynamicSecretConfigAAD returns the AAD for a dynamic-secret config's encrypted admin
+// DSN (#94), binding the ciphertext to the config's identity and project/environment
+// scope. None of configID/projectID/environmentID are reassigned after creation (see
+// DynamicSecretConfig — only Classification is ever updated).
+func DynamicSecretConfigAAD(configID, projectID, environmentID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:dynsecret-config:v1:%d:%d:%d", configID, projectID, environmentID))
+}
+
+// DynamicSecretLeaseAAD returns the AAD for an issued dynamic-secret lease's encrypted
+// credential (#94), binding the ciphertext to the lease's identity and owning config —
+// leases are issue-once (revoke/expire only), never reassigned to a different config.
+// Takes the lease's external string LeaseID (a random token, gorm:"uniqueIndex"), not
+// its numeric primary key — LeaseID is generated before the row is inserted, so the
+// caller can bind and encrypt the credential in one pass rather than needing a
+// two-phase insert-then-update to learn an auto-increment ID first.
+func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:dynsecret-lease:v1:%s:%d", leaseID, configID))
 }
 
 // EncryptWithAAD encrypts data using AES-GCM with Additional Authenticated Data.

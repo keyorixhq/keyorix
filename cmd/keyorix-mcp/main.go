@@ -16,6 +16,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/mcp"
@@ -38,7 +39,37 @@ func main() {
 		log.Fatal("KEYORIX_TOKEN is required (a least-privilege Keyorix machine-identity token)")
 	}
 
-	server := mcp.NewServer(mcp.NewKeyorixClient(baseURL, token), version)
+	client, err := mcp.NewKeyorixClient(baseURL, token)
+	if err != nil {
+		log.Fatal(err)
+	}
+	server := mcp.NewServer(client, version)
+
+	// Optional, opt-in defense-in-depth (#122) — neither replaces the token's own
+	// server-side RBAC scope: KEYORIX_MCP_ALLOWED_REFS further restricts which refs
+	// this process will touch, and KEYORIX_MCP_MAX_READS bounds how many secret
+	// VALUES it will serve in its lifetime, so a manipulated agent (steered by an
+	// injected instruction inside some OTHER secret's returned value) has a hard
+	// ceiling on how much it can sweep even if it tries.
+	if raw := strings.TrimSpace(os.Getenv("KEYORIX_MCP_ALLOWED_REFS")); raw != "" {
+		var patterns []string
+		for _, p := range strings.Split(raw, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				patterns = append(patterns, p)
+			}
+		}
+		server.SetAllowedRefs(patterns)
+		log.Printf("ref allowlist active: %d pattern(s)", len(patterns))
+	}
+	if raw := strings.TrimSpace(os.Getenv("KEYORIX_MCP_MAX_READS")); raw != "" {
+		n, perr := strconv.Atoi(raw)
+		if perr != nil || n <= 0 {
+			log.Fatalf("KEYORIX_MCP_MAX_READS must be a positive integer, got %q", raw)
+		}
+		server.SetMaxReads(n)
+		log.Printf("per-process read cap active: %d", n)
+	}
+
 	log.Printf("ready (server %s) — read-only Keyorix tools over stdio", version)
 	if err := server.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
 		log.Fatalf("serve: %v", err)

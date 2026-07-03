@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -197,9 +198,38 @@ func TestNewWebhook_RejectsNonHTTPSEndpoint(t *testing.T) {
 	require.Error(t, err, "a non-loopback http endpoint must be rejected (cleartext token)")
 	assert.Contains(t, err.Error(), "https")
 
-	// Loopback http is allowed (local testing), and explicit insecure opt-in too.
+	// Loopback http is allowed (local testing).
 	_, err = NewWebhook(WebhookConfig{Endpoint: "http://127.0.0.1:9000/hook"})
 	require.NoError(t, err)
+
+	// #130: InsecureSkipVerify (a TLS-certificate-trust decision) must NOT also
+	// bypass the https/SSRF guard — that coupling was the bug. Only the dedicated
+	// AllowPrivateNetworkTarget opt-in does.
 	_, err = NewWebhook(WebhookConfig{Endpoint: "http://siem.example.com/hook", InsecureSkipVerify: true})
-	require.NoError(t, err)
+	require.Error(t, err, "InsecureSkipVerify alone must not bypass the https requirement")
+	_, err = NewWebhook(WebhookConfig{Endpoint: "http://siem.example.com/hook", AllowPrivateNetworkTarget: true})
+	require.NoError(t, err, "AllowPrivateNetworkTarget is the dedicated opt-in for a non-https/internal target")
+}
+
+// TestNewWebhook_RejectsHostnameResolvingToPrivateIP pins #130: the SSRF guard
+// previously only rejected a LITERAL private/link-local IP in the endpoint —
+// a hostname (e.g. attacker-controlled DNS) resolving to one, such as the cloud
+// metadata address, sailed straight through. The guard must resolve the
+// hostname and check every address it returns.
+func TestNewWebhook_RejectsHostnameResolvingToPrivateIP(t *testing.T) {
+	orig := lookupIPAddr
+	defer func() { lookupIPAddr = orig }()
+	lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+		if host == "metadata.attacker.example" {
+			return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+		}
+		return []net.IPAddr{{IP: net.ParseIP("203.0.113.5")}}, nil // a public TEST-NET-3 address
+	}
+
+	_, err := NewWebhook(WebhookConfig{Endpoint: "https://metadata.attacker.example/hook"})
+	require.Error(t, err, "a hostname resolving to a link-local address must be rejected")
+	assert.Contains(t, err.Error(), "private/link-local")
+
+	_, err = NewWebhook(WebhookConfig{Endpoint: "https://normal.example.com/hook"})
+	require.NoError(t, err, "a hostname resolving to a public address is unaffected")
 }

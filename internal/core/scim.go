@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -174,6 +175,14 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
+		// #117: the FindSCIMUser dedup check above races with a concurrent provision call
+		// for the identical email — both can pass it before either commits. The DB-level
+		// partial unique index catches the loser here and CreateUser wraps it in
+		// ErrDuplicateEmail; surface the same clean error the dedup check above already
+		// returns for the sequential case, instead of a raw constraint-violation message.
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("a user already exists for this externalId/email")
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	// Minimal install-wide baseline role (ADR-021), best-effort.
@@ -185,65 +194,147 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	return created, nil
 }
 
+// scimManaged reports whether user was provisioned/adopted via SCIM (carries a
+// stored externalId — only ProvisionSCIMUser sets one; a native/local account never
+// does). UpdateSCIMUser and DeprovisionSCIMUser refuse to operate on an id that
+// isn't: the SCIM PUT/PATCH/DELETE endpoints take an arbitrary numeric id straight
+// off the URL path with no check that it belongs to an account SCIM actually owns,
+// so a valid (e.g. provisioning-only) SCIM bearer token could otherwise rewrite a
+// NATIVE admin's email to a fresh attacker-controlled address (the existing
+// same-email-collision guard only blocks an address already in use) and then claim
+// the account via SSO/SAML email-fallback resolution — an account takeover reachable
+// with no admin-console access at all (#120).
+func scimManaged(user *models.User) bool {
+	return user.ExternalID != ""
+}
+
 // UpdateSCIMUser applies a SCIM Replace/PATCH to a user: displayName, email, and the
 // active flag. Deactivation marks the account deprovisioned (blocks login, terminates
 // sessions); activation clears only a prior SCIM deactivation. An admin security
 // suspension is sticky and survives IdP sync — only an admin can clear it
 // (ReactivateUser), so routine SCIM traffic can't undo an incident-response lockout.
-// nil fields are left unchanged.
+// nil fields are left unchanged. Refuses a target that isn't SCIM-managed
+// (scimManaged) — checked against the fresh, lock-guarded read inside the
+// transaction below, not a pre-fetch, so a TOCTOU can't let a target's SCIM
+// management status change between the check and the write (#120).
+//
+// #344: the account_state/is_active mutation below races with setAccountState's (the
+// admin SuspendUser/ReactivateUser/RequirePasswordReset actions) — a routine SCIM/IdP
+// resync's read of the row can land before an admin's incident-response suspend
+// commits, and this function's Save would otherwise silently overwrite it back with no
+// error to either caller. It is serialized against setAccountState the same way
+// setAccountState is: accountStateMu (whole read-modify-write, in-process) + a fresh
+// LockUserForUpdate row lock (across replicas, Postgres only). See accountStateMu's doc
+// comment in service.go and setAccountState in account_state.go.
 func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, displayName, email *string, active *bool) (*models.User, error) {
-	user, err := c.storage.GetUser(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
-	}
-	if displayName != nil {
-		user.DisplayName = *displayName
-	}
 	if email != nil && *email != "" {
 		// Refuse an email that collides with a DIFFERENT user. SCIM email is trusted by
 		// identity resolution (SSO matches by email), so silently overwriting a low-priv
 		// account's email to an admin's would corrupt the email→account mapping and
-		// enable account linking/takeover. The create path already guards this.
-		if existing, eerr := c.storage.GetUserByEmail(ctx, *email); eerr == nil && existing != nil && existing.ID != user.ID {
+		// enable account linking/takeover. The create path already guards this. Checked
+		// up front (against `id`, not a pre-fetched user struct) since it targets a
+		// DIFFERENT user's row and doesn't need the account-state lock below; the DB-level
+		// partial unique index (uniq_users_email_active, #117) remains the authoritative
+		// backstop against the residual check-then-act race on this specific check (see
+		// the ErrDuplicateEmail handling below).
+		//
+		// #336: GetUserByEmail returns a non-nil error BOTH when the email is genuinely
+		// unused AND on a real DB failure — treating any error as "no collision" (the
+		// previous `eerr == nil && ...` shape) silently skipped this guard on a transient
+		// error, reintroducing the exact vulnerability it exists to prevent. Distinguish
+		// the two cases the same way FindSCIMUser's create-path lookup does: match the
+		// not-found sentinel text explicitly, and fail CLOSED (refuse the update) on any
+		// other error instead of silently proceeding.
+		existing, eerr := c.storage.GetUserByEmail(ctx, *email)
+		switch {
+		case eerr == nil:
+			if existing != nil && existing.ID != id {
+				return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
+			}
+		case strings.Contains(eerr.Error(), i18n.T("ErrorUserNotFound", nil)):
+			// Genuinely unused — proceed.
+		default:
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), eerr)
+		}
+	}
+	if active != nil && !*active {
+		// Don't let a routine (or hostile) SCIM sync deactivate the only admin.
+		if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+
+	c.accountStateMu.Lock()
+	defer c.accountStateMu.Unlock()
+
+	deactivated := false
+	var updated *models.User
+	txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		// A fresh, lock-guarded read: never reuse a struct fetched before the lock above
+		// was taken, or a concurrent setAccountState commit made between that read and
+		// this write would be silently clobbered by this Save (the exact #344 race).
+		user, err := tx.LockUserForUpdate(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !scimManaged(user) {
+			return storage.ErrUserNotFound
+		}
+		if displayName != nil {
+			user.DisplayName = *displayName
+		}
+		if email != nil && *email != "" {
+			user.Email = *email
+		}
+		if active != nil {
+			user.IsActive = *active
+			if *active {
+				// Reactivation clears only a SCIM/IdP deactivation. An admin security
+				// suspension (AccountSuspended) is sticky: routine IdP sync, which
+				// re-sends active=true for every active user, must not undo an
+				// incident-response lockout — only an admin clears that, via
+				// ReactivateUser.
+				if NormalizeAccountState(user.AccountState) == AccountDeprovisioned {
+					user.AccountState = AccountActive
+				}
+			} else {
+				// Mark the SCIM/IdP deactivation distinctly so a later reactivation can
+				// tell it from an admin-set state. Only an 'active' account moves to
+				// deprovisioned: any admin-set state (suspended, AND the restricted
+				// password_reset_required / pending_first_login states) is preserved, so
+				// a routine IdP deactivate→reactivate cycle cannot silently clear a
+				// forced-credential-reset or a first-login requirement. Login is blocked
+				// meanwhile by IsActive=false (set above) regardless of which state is
+				// retained.
+				if NormalizeAccountState(user.AccountState) == AccountActive {
+					user.AccountState = AccountDeprovisioned
+				}
+				deactivated = true
+			}
+		}
+		user.UpdatedAt = c.now()
+		u, err := tx.UpdateUser(ctx, user)
+		if err != nil {
+			return err
+		}
+		updated = u
+		return nil
+	})
+	if txErr != nil {
+		if errors.Is(txErr, storage.ErrUserNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), txErr)
+		}
+		// #120/#218: the email-uniqueness check above is a plain check-then-act read that
+		// races with a concurrent UpdateSCIMUser (or any other create/update) targeting the
+		// identical email — both can pass it before either commits. The DB-level partial
+		// unique index (uniq_users_email_active, #117) catches the loser here and
+		// UpdateUser wraps it in ErrDuplicateEmail; surface the same clean error the check
+		// above already returns for the sequential case, instead of a raw
+		// constraint-violation message.
+		if errors.Is(txErr, storage.ErrDuplicateEmail) {
 			return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
 		}
-		user.Email = *email
-	}
-	deactivated := false
-	if active != nil {
-		if !*active {
-			// Don't let a routine (or hostile) SCIM sync deactivate the only admin.
-			if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
-				return nil, err
-			}
-		}
-		user.IsActive = *active
-		if *active {
-			// Reactivation clears only a SCIM/IdP deactivation. An admin security
-			// suspension (AccountSuspended) is sticky: routine IdP sync, which re-sends
-			// active=true for every active user, must not undo an incident-response
-			// lockout — only an admin clears that, via ReactivateUser.
-			if NormalizeAccountState(user.AccountState) == AccountDeprovisioned {
-				user.AccountState = AccountActive
-			}
-		} else {
-			// Mark the SCIM/IdP deactivation distinctly so a later reactivation can tell
-			// it from an admin-set state. Only an 'active' account moves to deprovisioned:
-			// any admin-set state (suspended, AND the restricted password_reset_required /
-			// pending_first_login states) is preserved, so a routine IdP deactivate→
-			// reactivate cycle cannot silently clear a forced-credential-reset or a
-			// first-login requirement. Login is blocked meanwhile by IsActive=false
-			// (set above) regardless of which state is retained.
-			if NormalizeAccountState(user.AccountState) == AccountActive {
-				user.AccountState = AccountDeprovisioned
-			}
-			deactivated = true
-		}
-	}
-	user.UpdatedAt = c.now()
-	updated, err := c.storage.UpdateUser(ctx, user)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), txErr)
 	}
 	if deactivated {
 		// Suspension must be effective immediately, not lingering until tokens expire —
@@ -257,12 +348,24 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 }
 
 // guardLastAdminDeactivation refuses an operation that would deactivate/deprovision the
-// only remaining install administrator, so a routine or hostile SCIM push can't lock
-// everyone out. Mirrors guardLastGlobalAdmin's assignment scan but keyed on the target.
+// only remaining install administrator, so a routine or hostile SCIM push — or an admin
+// DeleteUser call (core.DeleteUser shares this guard) — can't lock everyone out. Mirrors
+// guardLastGlobalAdmin's assignment scan but keyed on the target.
 func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
 	isAdmin, err := c.IsGlobalAdmin(ctx, targetID)
-	if err != nil || !isAdmin {
-		return nil // not an admin (or can't tell) — not the last-admin case
+	if err != nil {
+		// #337: "can't tell" is NOT the same as "confirmed not an admin". The previous
+		// code treated an IsGlobalAdmin lookup error identically to a confirmed non-admin
+		// (both fell through to `return nil`, permitting the deactivation/deprovision),
+		// silently disabling the last-admin lockout guard on exactly the failure mode (a
+		// DB hiccup, or connection-pool exhaustion an attacker could induce) it exists to
+		// protect against — the opposite of the fail-safe behaviour this guard is meant to
+		// provide. Fail CLOSED: refuse the operation rather than risk stranding the
+		// install with zero admins.
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	if !isAdmin {
+		return nil // confirmed not an admin — not the last-admin case
 	}
 	adminIDs := c.installAdminRoleIDSet(ctx)
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
@@ -280,16 +383,21 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 		}
 		return nil
 	}
-	return fmt.Errorf("refusing to deactivate the last install administrator via SCIM")
+	return fmt.Errorf("refusing to deactivate the last install administrator")
 }
 
 // DeprovisionSCIMUser handles a SCIM DELETE: it deprovisions the user (blocks login,
 // terminates sessions) and soft-deletes the record, so the account is recoverable
-// within the retention window rather than hard-destroyed.
+// within the retention window rather than hard-destroyed. Refuses a target that
+// isn't SCIM-managed (scimManaged) — a valid SCIM token must not be able to
+// deprovision an arbitrary native account it never provisioned.
 func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint) error {
 	user, err := c.storage.GetUser(ctx, id)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	if !scimManaged(user) {
+		return fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
 	}
 	// Don't let a SCIM DELETE deprovision the only admin and lock the install out.
 	if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
@@ -314,7 +422,9 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 		if _, err := tx.UpdateUser(ctx, user); err != nil {
 			return err
 		}
-		_ = tx.DeleteSessionsForUserExcept(ctx, id, 0)
+		if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
+			return err
+		}
 		return tx.DeleteUser(ctx, id)
 	}); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

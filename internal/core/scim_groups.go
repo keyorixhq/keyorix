@@ -54,10 +54,53 @@ func (c *KeyorixCore) ListSCIMGroupsPage(ctx context.Context, startIndex, count 
 	return groups, int(total), nil
 }
 
+// scimManagedMember reports whether uid identifies a SCIM-managed account (carries a
+// stored ExternalID — only SCIM user-provisioning sets one; a native/local account
+// never does). SCIM group membership mutations (Create/Replace/PATCH) must refuse any
+// target that isn't: those endpoints take arbitrary numeric member ids straight off
+// the SCIM payload with no check that the id belongs to an account SCIM actually owns,
+// so a valid (e.g. group-provisioning-only) SCIM bearer token could otherwise add ANY
+// native user — including one the attacker already controls — into a group. If that
+// group carries an admin-conferring role (a common "IdP group X = Keyorix admins"
+// integration pattern), membership alone grants the role immediately, with no SSO
+// step required (#167 — the group-membership sibling of #120's user-level guard).
+// Fails CLOSED (treats a lookup error as not-managed) so an inability to verify never
+// opens the add.
+func (c *KeyorixCore) scimManagedMember(ctx context.Context, uid uint) bool {
+	user, err := c.storage.GetUser(ctx, uid)
+	if err != nil {
+		return false
+	}
+	return user.ExternalID != ""
+}
+
+// filterSCIMManaged splits ids into (allowed, rejected) member ids based on
+// scimManagedMember, so callers can add only the SCIM-managed subset and report the
+// rest as refused rather than silently dropping them.
+func (c *KeyorixCore) filterSCIMManaged(ctx context.Context, ids []uint) (allowed, rejected []uint) {
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if c.scimManagedMember(ctx, id) {
+			allowed = append(allowed, id)
+		} else {
+			rejected = append(rejected, id)
+		}
+	}
+	return allowed, rejected
+}
+
 // ProvisionSCIMGroup creates a group from a SCIM Create and adds its initial members.
+// Only SCIM-managed members may be added (scimManagedMember, #167); a non-SCIM-managed
+// id in memberIDs is refused.
 func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, displayName string, memberIDs []uint) (*models.Group, error) {
 	if displayName == "" {
 		return nil, fmt.Errorf("displayName is required")
+	}
+	allowed, rejected := c.filterSCIMManaged(ctx, memberIDs)
+	if len(rejected) > 0 {
+		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
 	}
 	// Storage-direct: the SCIM path emits its own scim.group_provisioned event below,
 	// so it must not also fire the generic group.created from CreateGroup.
@@ -65,13 +108,11 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 	if err != nil {
 		return nil, err
 	}
-	for _, uid := range memberIDs {
-		if uid != 0 {
-			_ = c.storage.AddUserToGroup(ctx, uid, group.ID)
-		}
+	for _, uid := range allowed {
+		_ = c.storage.AddUserToGroup(ctx, uid, group.ID)
 	}
 	c.writeAuditEvent(ctx, EventSCIMGroupProvisioned, actorPtr(actorID), nil,
-		fmt.Sprintf("SCIM provisioned group %d (%q) with %d member(s)", group.ID, displayName, len(memberIDs)))
+		fmt.Sprintf("SCIM provisioned group %d (%q) with %d member(s)", group.ID, displayName, len(allowed)))
 	return group, nil
 }
 
@@ -113,6 +154,11 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 	if len(toAdd) > 0 && c.scimGroupConfersAdmin(ctx, groupID) {
 		return nil, fmt.Errorf("%s: SCIM cannot add members to a group that grants administrative roles", i18n.T("ErrorNotAuthorized", nil))
 	}
+	// Every add must target a SCIM-managed account (#167); a native/non-SCIM id in the
+	// requested member set is refused outright rather than silently skipped.
+	if _, rejected := c.filterSCIMManaged(ctx, toAdd); len(rejected) > 0 {
+		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
+	}
 	for _, u := range current {
 		if !want[u.ID] {
 			_ = c.storage.RemoveUserFromGroup(ctx, u.ID, groupID)
@@ -149,10 +195,14 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	if hasAdds && c.scimGroupConfersAdmin(ctx, groupID) {
 		return nil, fmt.Errorf("%s: SCIM cannot add members to a group that grants administrative roles", i18n.T("ErrorNotAuthorized", nil))
 	}
-	for _, id := range addIDs {
-		if id != 0 {
-			_ = c.storage.AddUserToGroup(ctx, id, groupID)
-		}
+	// Every add must target a SCIM-managed account (#167); a native/non-SCIM id in the
+	// requested add set is refused outright rather than silently skipped.
+	allowedAdds, rejected := c.filterSCIMManaged(ctx, addIDs)
+	if len(rejected) > 0 {
+		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
+	}
+	for _, id := range allowedAdds {
+		_ = c.storage.AddUserToGroup(ctx, id, groupID)
 	}
 	for _, id := range removeIDs {
 		if id != 0 {

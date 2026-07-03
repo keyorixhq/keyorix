@@ -2,6 +2,18 @@
 // of information / A.5.13 labelling). Each secret carries an optional sensitivity
 // label; the label drives the classification posture and lets a reviewer find the
 // high-sensitivity secrets. "" means unclassified.
+//
+// KNOWN LIMITATION — classification is a label, not a control: setting a secret (or
+// dynamic-secret config, or machine identity)'s Classification to "restricted" does
+// NOT currently change how it is treated at read time, in RBAC, in rate limiting, or
+// anywhere else in the request path — it is purely informational metadata surfaced in
+// the compliance posture / audit views. Do not assume a "restricted" secret gets any
+// additional gating a "public" one doesn't; if that's the requirement, it must be
+// implemented as an explicit policy check at the relevant enforcement point (there is
+// none today). This is a deliberate scope decision, not an oversight — enforcement is
+// a materially larger feature (would need a policy engine deciding what "restricted"
+// actually restricts: extra approval? MFA step-up? narrower RBAC? all of the above are
+// plausible and none is implemented).
 package core
 
 import (

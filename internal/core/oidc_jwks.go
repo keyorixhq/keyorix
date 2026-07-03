@@ -48,6 +48,27 @@ const maxJWKSBytes = 1 << 20 // 1 MiB
 // growth from a pathological key set.
 const maxJWKSKeys = 50
 
+// maxRSABits caps the modulus size of an RSA key accepted from a JWKS. Without
+// this, a compromised/malicious OIDC provider can serve an RSA key with an
+// absurdly large modulus (tens of thousands of bits); modular exponentiation
+// cost grows roughly cubically with modulus size, so a single oversized key
+// makes every signature verification against it expensive. Worse, the key is
+// cached for up to jwksCacheTTL and reused for every verification in that
+// window, so the cost is paid repeatedly per request, not just once at fetch —
+// a sustained DoS. 8192 bits comfortably exceeds any real-world RSA key size in
+// production use (2048/3072/4096 are standard; NIST's own long-term guidance
+// tops out at 15360) while still rejecting a maliciously oversized modulus.
+//
+// minRSABits (#100) is the missing lower bound: without it, a compromised or
+// MITM'd issuer could serve a trivially-weak key (e.g. 512 bits) that parses
+// and caches fine but offers no real cryptographic assurance — the check above
+// only ever guarded against a DoS-oversized key, never an undersized one. 2048
+// is the practical minimum still considered acceptable for a signing key today.
+const (
+	maxRSABits = 8192
+	minRSABits = 2048
+)
+
 // jwksStaleGrace bounds how far PAST the TTL a cached key set may still be served
 // as a fallback when a JWKS refetch fails transiently. Without a bound, a key the
 // issuer rotated out — e.g. because its private key was compromised — would keep
@@ -294,6 +315,9 @@ func parseJWK(k jwk) (interface{}, error) {
 		n, err := b64uBigInt(k.N)
 		if err != nil {
 			return nil, err
+		}
+		if bits := n.BitLen(); bits < minRSABits || bits > maxRSABits {
+			return nil, fmt.Errorf("rsa modulus size %d bits outside allowed range [%d,%d]", bits, minRSABits, maxRSABits)
 		}
 		eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
 		if err != nil {

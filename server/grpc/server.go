@@ -31,9 +31,17 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 
 	// Create server options
 	opts := []grpc.ServerOption{
+		// grpc.ChainUnaryInterceptor/ChainStreamInterceptor run interceptors in the
+		// order listed: the first is OUTERMOST (executes first on the way in, last on
+		// the way out), wrapping every interceptor listed after it. RecoveryInterceptor
+		// / StreamRecoveryInterceptor are listed FIRST so a panic in ANY later
+		// interceptor — logging, timeout, auth, metrics, or the handler itself — is
+		// caught, instead of only panics inside the handler. A panic that unwound past
+		// an inner (non-outermost) recovery interceptor would otherwise crash the
+		// request with none of Recovery's clean INTERNAL status + logged stack trace.
 		grpc.ChainUnaryInterceptor(
-			interceptors.LoggingInterceptor(),
 			interceptors.RecoveryInterceptor(),
+			interceptors.LoggingInterceptor(),
 			// Cap each unary RPC at the same 60s the HTTP API's Timeout middleware
 			// enforces, so a hung handler can't tie up resources over gRPC when it would
 			// be bounded over HTTP. Streams are intentionally exempt (StreamAuditLogs is
@@ -43,8 +51,8 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			interceptors.MetricsInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
-			interceptors.StreamLoggingInterceptor(),
 			interceptors.StreamRecoveryInterceptor(),
+			interceptors.StreamLoggingInterceptor(),
 			interceptors.StreamAuthInterceptor(coreService, cfg.Security.RequireMFA),
 		),
 	}
@@ -100,14 +108,34 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 	return server, nil
 }
 
+// hardenedCipherSuites is the explicit AEAD-only cipher suite allowlist applied to
+// every gRPC TLS listener, regardless of how its certificate is sourced.
+var hardenedCipherSuites = []uint16{
+	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+}
+
+// applyTLSHardening layers the deliberately hardened MinVersion/CipherSuites onto
+// tlsConfig in place. The protocol-version floor and cipher-suite allowlist are
+// independent of how the certificate itself is sourced, so this must be applied
+// uniformly on both the AutoCert and non-AutoCert paths below — AutoCert should only
+// supply the certificate, not silently determine the rest of the TLS posture too
+// (#172).
+func applyTLSHardening(tlsConfig *tls.Config) {
+	tlsConfig.MinVersion = tls.VersionTLS12
+	tlsConfig.CipherSuites = hardenedCipherSuites
+}
+
 // createGRPCTLSConfig creates TLS configuration for gRPC server
 func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 	if cfg.Server.GRPC.TLS.AutoCert {
-		// For gRPC, autocert is more complex and typically not used
-		// Return a basic TLS config for now
-		return &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		}, nil
+		// For gRPC, autocert (certificate acquisition) is more complex and typically
+		// not wired up here — but the hardened MinVersion/CipherSuites below must
+		// still apply, matching the non-AutoCert path's posture (#172).
+		tlsConfig := &tls.Config{}
+		applyTLSHardening(tlsConfig)
+		return tlsConfig, nil
 	}
 
 	// Load certificate and key
@@ -116,13 +144,7 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		return nil, fmt.Errorf("failed to load gRPC TLS certificate: %w", err)
 	}
 
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		},
-	}, nil
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+	applyTLSHardening(tlsConfig)
+	return tlsConfig, nil
 }

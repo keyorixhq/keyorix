@@ -64,7 +64,7 @@ func (c *KeyorixCore) SeedAuditWatermark(ctx context.Context) {
 	if !c.AuditCheckpointsAvailable() {
 		return
 	}
-	floor, _, _, _, err := c.auditHighWaterFloor(ctx)
+	floor, _, _, _, err := c.auditHighWaterFloor(ctx, false)
 	if err != nil {
 		log.Printf("audit high-water: failed to seed in-memory watermark at startup: %v", err)
 		return
@@ -143,18 +143,43 @@ func (c *KeyorixCore) VerifyCheckpointAnchor(cp *models.AuditCheckpoint) (anchor
 // error when the chain does not verify — refusing to notarise a tampered state,
 // and refusing to re-baseline over a truncation already flagged by an existing
 // checkpoint (VerifyAuditChain enforces prior checkpoints).
+//
+// The whole chain-walk + decide + create sequence runs under
+// storage.WithAuditCheckpointLock (#300): it is reachable from three
+// unsynchronized triggers — the scheduler tick, the HTTP
+// POST /api/v1/audit/checkpoint endpoint, and the gRPC WriteAuditCheckpoint RPC —
+// which can land on different replicas (ADR-039 HA). Without a lock, two
+// overlapping calls can interleave so the checkpoint that commits with the
+// higher DB id ends up certifying FEWER chained events than an earlier-committed
+// one, reopening the exact truncation-detection gap ADR-029 exists to close.
 func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, bool, error) {
 	if !c.AuditCheckpointsAvailable() {
 		return nil, false, nil
 	}
+	var newCP *models.AuditCheckpoint
+	err := c.storage.WithAuditCheckpointLock(ctx, func() error {
+		cp, werr := c.writeAuditCheckpointLocked(ctx)
+		newCP = cp
+		return werr
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return newCP, true, nil
+}
+
+// writeAuditCheckpointLocked performs the actual chain-walk + decide + create
+// sequence. The caller MUST hold storage.WithAuditCheckpointLock for the
+// duration of this call (see WriteAuditCheckpoint).
+func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.AuditCheckpoint, error) {
 	// Verify the raw chain (walk only, no checkpoint enforcement) so we never sign
 	// a head over a broken chain.
 	raw, err := c.storage.VerifyAuditChain(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to verify audit chain: %w", err)
+		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}
 	if !raw.Valid {
-		return nil, false, fmt.Errorf("refusing to checkpoint a chain that does not verify: %s", raw.Reason)
+		return nil, fmt.Errorf("refusing to checkpoint a chain that does not verify: %s", raw.Reason)
 	}
 	// Refuse to re-baseline over a truncation that an AUTHENTICATED prior checkpoint
 	// proves — otherwise a scheduled write would silently bless a shortened chain and
@@ -163,14 +188,14 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	// key rotation.
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if cp != nil {
 		if c.checkpointSignatureValid(cp) {
 			if reason, tampered, err := c.checkpointTruncation(ctx, raw.ChainedEvents, cp); err != nil {
-				return nil, false, err
+				return nil, err
 			} else if tampered {
-				return nil, false, fmt.Errorf("refusing to checkpoint: %s", reason)
+				return nil, fmt.Errorf("refusing to checkpoint: %s", reason)
 			}
 		} else if cp.KeyVersion == c.auditCkptKeyVersion {
 			// The prior checkpoint claims the CURRENT signing-key version yet fails its
@@ -180,7 +205,7 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 			// flags this as Valid=false, but a silent re-baseline would write a fresh,
 			// authentic checkpoint over the shortened chain and erase that signal. Fail
 			// closed and leave the tamper signal standing for an operator to investigate.
-			return nil, false, fmt.Errorf("refusing to checkpoint: latest checkpoint #%d fails its signature under the current key version %q — the checkpoint row was tampered with, not rotated", cp.ID, cp.KeyVersion)
+			return nil, fmt.Errorf("refusing to checkpoint: latest checkpoint #%d fails its signature under the current key version %q — the checkpoint row was tampered with, not rotated", cp.ID, cp.KeyVersion)
 		}
 		// else: signature fails AND key_version is superseded → consistent with a DEK
 		// rotation; fall through and re-baseline under the new key (recovery path).
@@ -188,15 +213,15 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	// Refuse to checkpoint a chain that sits below the certified high-water mark —
 	// otherwise a scheduled write would launder a truncation into a fresh, authentic
 	// checkpoint (and a fresh high-water), erasing the rollback evidence.
-	floor, _, hwTampered, hwReason, err := c.auditHighWaterFloor(ctx)
+	floor, _, hwTampered, hwReason, err := c.auditHighWaterFloor(ctx, false)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if hwTampered {
-		return nil, false, fmt.Errorf("refusing to checkpoint: %s", hwReason)
+		return nil, fmt.Errorf("refusing to checkpoint: %s", hwReason)
 	}
 	if raw.ChainedEvents < floor {
-		return nil, false, fmt.Errorf("refusing to checkpoint: the audit trail (%d events) is below the certified high-water mark (%d) — a truncation must be investigated, not re-baselined", raw.ChainedEvents, floor)
+		return nil, fmt.Errorf("refusing to checkpoint: the audit trail (%d events) is below the certified high-water mark (%d) — a truncation must be investigated, not re-baselined", raw.ChainedEvents, floor)
 	}
 	newCP := &models.AuditCheckpoint{
 		ChainedEvents: raw.ChainedEvents,
@@ -206,13 +231,13 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	}
 	newCP.Signature = c.signCheckpoint(newCP)
 	if err := c.storage.CreateAuditCheckpoint(ctx, newCP); err != nil {
-		return nil, false, fmt.Errorf("failed to write audit checkpoint: %w", err)
+		return nil, fmt.Errorf("failed to write audit checkpoint: %w", err)
 	}
 	// Best-effort external anchor (RFC 3161) — never fails the checkpoint write.
 	c.anchorCheckpoint(ctx, newCP)
 	// Advance the persistent + in-memory high-water mark to this certified length.
 	c.advanceAuditHighWater(ctx, newCP)
-	return newCP, true, nil
+	return newCP, nil
 }
 
 // enforceAuditCheckpoint augments a chain-walk verdict with on-box checkpoint
@@ -394,10 +419,28 @@ func parseAuditHighWater(val string) (cp *models.AuditCheckpoint, sig string, ok
 // auditHighWaterFloor returns the greatest chained-events count this server can prove
 // the trail previously reached: the max of the in-memory watermark and a signature-valid
 // persistent high-water under the current key. found reports whether a persistent mark
-// exists; tampered/reason flag a persistent mark that fails its signature under the
-// CURRENT key version (a superseded version is treated as a DEK rotation and ignored, so
-// the system can recover after a key rotation — symmetric with checkpoint enforcement).
-func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context) (floor int64, found, tampered bool, reason string, err error) {
+// exists; tampered/reason flag a persistent mark that fails its signature.
+//
+// strict controls how an unverifiable mark (signature fails) is treated when its
+// key_version does NOT match the current signing key:
+//   - strict=true (the READ path, enforceAuditHighWater): ALWAYS tamper once any
+//     checkpoint exists. The mark's key_version field is attacker-controlled and
+//     unauthenticated — a FAILED signature means it cannot be trusted either. #110:
+//     the prior version excused any sig failure whose key_version merely differed
+//     from the current one, so an attacker could forge the mark with a fabricated
+//     key_version + garbage signature and have it accepted as "just an old key" —
+//     bypassing the anti-rollback floor entirely (found=true routed around the
+//     missing-mark tamper check, and the floor silently stayed at 0 after a
+//     restart). This matches the checkpoint ROW's read-path behavior
+//     (enforceAuditCheckpoint), which has never had a superseded-key exception.
+//   - strict=false (the WRITE/recovery path, WriteAuditCheckpoint, and the
+//     non-enforcing SeedAuditWatermark/advanceAuditHighWater callers): a sig
+//     failure under a claimed-superseded key_version is treated as a genuine DEK
+//     rotation and ignored, so the system can still self-heal by writing a fresh,
+//     correctly-signed checkpoint under the new key. This does not reopen #110:
+//     the very next VerifyAuditChain call uses strict=true and will flag the
+//     stale/unverifiable mark until that fresh write actually happens.
+func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context, strict bool) (floor int64, found, tampered bool, reason string, err error) {
 	floor = c.watermark()
 	val, ok, err := c.storage.GetSystemMetadata(ctx, auditHighWaterKey)
 	if err != nil {
@@ -422,8 +465,17 @@ func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context) (floor int64, fou
 		return floor, true, true,
 			fmt.Sprintf("audit high-water mark fails its signature under the current key version %q — the high-water row was tampered with", cp.KeyVersion), nil
 	}
-	// Signature fails AND key_version is superseded → consistent with a DEK rotation;
-	// ignore the stale mark (the next checkpoint write re-establishes it under the new key).
+	if strict {
+		if exists, cerr := c.checkpointExists(ctx); cerr != nil {
+			return 0, false, false, "", cerr
+		} else if exists {
+			return floor, true, true,
+				fmt.Sprintf("audit high-water mark fails its signature (claiming key version %q) while signed checkpoints exist — an unverifiable key_version claim is not trusted as proof of a DEK rotation", cp.KeyVersion), nil
+		}
+	}
+	// Lenient path, or no checkpoint exists yet to protect: signature fails and
+	// key_version is (claimed) superseded → consistent with a DEK rotation; ignore
+	// the stale mark (the next checkpoint write re-establishes it under the new key).
 	return floor, true, false, "", nil
 }
 
@@ -432,7 +484,11 @@ func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context) (floor int64, fou
 // checkpoints + tail-truncation, which the latest-checkpoint comparison alone misses),
 // then raises the in-memory watermark to the just-verified length.
 func (c *KeyorixCore) enforceAuditHighWater(ctx context.Context, v *storage.AuditChainVerification) error {
-	floor, found, tampered, reason, err := c.auditHighWaterFloor(ctx)
+	// strict=true (#110): the read path must not excuse an unverifiable mark just
+	// because it CLAIMS a superseded key_version — that field is unauthenticated
+	// once the signature fails, so trusting it lets a forged mark bypass the
+	// anti-rollback floor entirely. See auditHighWaterFloor's doc comment.
+	floor, found, tampered, reason, err := c.auditHighWaterFloor(ctx, true)
 	if err != nil {
 		return err
 	}
@@ -466,7 +522,7 @@ func (c *KeyorixCore) enforceAuditHighWater(ctx context.Context, v *storage.Audi
 // advanceAuditHighWater persists (and bumps the in-memory) high-water mark to cp after a
 // checkpoint write. The mark only ever advances; it is signed with the current key.
 func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.AuditCheckpoint) {
-	floor, _, _, _, err := c.auditHighWaterFloor(ctx)
+	floor, _, _, _, err := c.auditHighWaterFloor(ctx, false)
 	if err == nil && cp.ChainedEvents < floor {
 		// Never lower the mark (a legitimate grow only raises it). Should not happen —
 		// WriteAuditCheckpoint refuses to checkpoint below the floor — but be defensive.

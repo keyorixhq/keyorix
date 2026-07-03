@@ -3,8 +3,10 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -267,6 +269,49 @@ func TestHTTPClient_CircuitBreaker(t *testing.T) {
 	assert.Contains(t, err.Error(), "circuit breaker is open")
 }
 
+// TestHTTPClient_MalformedSuccessResponse_NoPanic pins #314: an upstream that
+// returns a 2xx status with a technically-valid-but-incomplete JSON body (no
+// "error" field set, e.g. a proxy/WAF/CDN interstitial returning `{}`) must not
+// crash makeRequest's caller. Before the fix, this produced Success:false with
+// Error:nil, and every remote_*.go call site's resp.Error.Error() pattern
+// panicked on the nil *APIError receiver — reproduced and confirmed via an
+// earlier version of this test before the fix landed.
+func TestHTTPClient_MalformedSuccessResponse_NoPanic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	config := &Config{
+		BaseURL:        server.URL,
+		APIKey:         "test-key",
+		TimeoutSeconds: 30,
+		RetryAttempts:  0,
+		TLSVerify:      false,
+	}
+
+	client, err := NewHTTPClient(config)
+	require.NoError(t, err)
+
+	resp, err := client.Get(context.Background(), "/test")
+	require.NoError(t, err)
+	require.False(t, resp.Success)
+	require.NotNil(t, resp.Error, "makeRequest must synthesize a non-nil Error when Success is false")
+	assert.NotPanics(t, func() {
+		_ = resp.Error.Error() // the exact pattern every remote_*.go call site uses
+	})
+}
+
+// TestAPIError_ErrorMethod_NilSafe pins the nil-receiver guard directly: any
+// existing or future caller doing (*APIError)(nil).Error() must not panic.
+func TestAPIError_ErrorMethod_NilSafe(t *testing.T) {
+	var e *APIError
+	assert.NotPanics(t, func() {
+		assert.Equal(t, "unknown error", e.Error())
+	})
+}
+
 func TestHTTPClient_Timeout(t *testing.T) {
 	// Create a test server that delays response
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -293,4 +338,57 @@ func TestHTTPClient_Timeout(t *testing.T) {
 	_, err = client.Get(context.Background(), "/test")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context deadline exceeded")
+}
+
+// TestIsRetryableError pins #317: a non-retryable failure (marshal error, or a
+// 4xx client error other than 429) must not be retried — the old
+// implementation always returned true, burning the full retry budget with
+// quadratic backoff for failures that could never succeed on retry.
+func TestIsRetryableError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"5xx is retryable", &httpStatusError{StatusCode: http.StatusInternalServerError}, true},
+		{"429 is retryable", &httpStatusError{StatusCode: http.StatusTooManyRequests}, true},
+		{"401 is not retryable", &httpStatusError{StatusCode: http.StatusUnauthorized}, false},
+		{"403 is not retryable", &httpStatusError{StatusCode: http.StatusForbidden}, false},
+		{"404 is not retryable", &httpStatusError{StatusCode: http.StatusNotFound}, false},
+		{"marshal error is not retryable", fmt.Errorf("failed to marshal request body: boom"), false},
+		{"request-construction error is not retryable", fmt.Errorf("failed to create request: boom"), false},
+		{"generic network error is retryable", fmt.Errorf("request failed: connection refused"), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, isRetryableError(c.err))
+		})
+	}
+}
+
+// TestHTTPClient_CircuitBreakerFields_ConcurrentAccess pins #316: the circuit
+// breaker fields must be race-free under concurrent use, since *HTTPClient is
+// a long-lived singleton shared by every concurrent request-handling goroutine
+// when storage.type: remote. Run with -race.
+func TestHTTPClient_CircuitBreakerFields_ConcurrentAccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPClient(&Config{
+		BaseURL: server.URL, APIKey: "test-key", TimeoutSeconds: 5, RetryAttempts: 0, TLSVerify: false,
+	})
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = client.Get(context.Background(), "/test")
+		}()
+	}
+	wg.Wait()
 }

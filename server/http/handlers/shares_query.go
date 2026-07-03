@@ -32,15 +32,20 @@ func (h *ShareHandler) ListSecretShares(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// The route already enforces scoped secrets.read on this secret
-	// (RequireScopedPermission in the router), so listing its shares is already
-	// access-gated here.
-	shares, err := h.coreService.ListSecretShares(r.Context(), uint(id))
+	// The router's scoped secrets.read gate is coarse RBAC, independent of
+	// ownership. The share list (who has access, at what tier) is owner-only by
+	// design — go through the permission-checked variant, matching gRPC's
+	// ListSecretShares (share_service.go), so a caller with only project-scoped
+	// secrets.read can't enumerate another owner's share graph.
+	shares, err := h.coreService.ListSecretSharesWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error listing secret shares: %v", err)
-		if strings.Contains(err.Error(), "not found") {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else {
+		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
+			h.sendError(w, "Forbidden", "Not authorized to view this secret's shares", http.StatusForbidden, nil)
+		default:
 			h.sendError(w, "InternalError", "Failed to list secret shares", http.StatusInternalServerError, nil)
 		}
 		return

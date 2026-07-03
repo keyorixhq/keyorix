@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -23,6 +24,7 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 		&models.Role{}, &models.UserRole{}, &models.MachineIdentityRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.ConnectRefGrant{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	if len(conns) > 0 {
@@ -40,6 +42,12 @@ func seedRoleForUser(t *testing.T, db *gorm.DB, userID, roleID uint, name string
 func seedGrant(t *testing.T, c *KeyorixCore, roleID uint, connector, prefix string) {
 	t.Helper()
 	_, err := c.storage.CreateConnectRefGrant(context.Background(), &models.ConnectRefGrant{RoleID: roleID, Connector: connector, RefPrefix: prefix})
+	require.NoError(t, err)
+}
+
+func seedGrantExpiring(t *testing.T, c *KeyorixCore, roleID uint, connector, prefix string, expiresAt time.Time) {
+	t.Helper()
+	_, err := c.storage.CreateConnectRefGrant(context.Background(), &models.ConnectRefGrant{RoleID: roleID, Connector: connector, RefPrefix: prefix, ExpiresAt: &expiresAt})
 	require.NoError(t, err)
 }
 
@@ -210,10 +218,84 @@ func TestRefMatches(t *testing.T) {
 		{"db?", "db1", true}, // single-char wildcard
 		{"db?", "db", false},
 		{"[", "anything", false}, // malformed glob matches nothing
+		// #326: a traversal-shaped ref must never match, even though a raw
+		// strings.HasPrefix(ref, pattern) would report a literal match.
+		{"secret/data/myapp/", "secret/data/myapp/../otherapp/secret", false},
+		{"secret/data/myapp/", "secret/data/myapp/config", true}, // sibling non-traversal ref still matches
 	}
 	for _, tc := range cases {
 		assert.Equalf(t, tc.want, refMatches(tc.pattern, tc.ref), "refMatches(%q, %q)", tc.pattern, tc.ref)
 	}
+}
+
+// TestConnectRefRBAC_CrossTenantTraversalDenied proves the exact exploit trace from
+// finding #326 at the ADR-045 per-reference RBAC layer: a role granted only
+// "secret/data/myapp/" on the vault connector cannot read
+// "secret/data/otherapp/secret" by requesting the ref
+// "secret/data/myapp/../otherapp/secret". A raw strings.HasPrefix check would treat
+// that ref as matching the grant (the literal string starts with the granted
+// prefix); refMatches must reject it outright.
+func TestConnectRefRBAC_CrossTenantTraversalDenied(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "vault", val: "myapp-secret"})
+	seedRoleForUser(t, db, 1, 5, "myapp-reader")
+	seedGrant(t, c, 5, "vault", "secret/data/myapp/")
+	ctx := context.Background()
+
+	_, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "vault", "secret/data/myapp/../otherapp/secret")
+	require.Error(t, err, "the cross-tenant traversal ref must be denied by the per-reference grant")
+	assert.Contains(t, err.Error(), "not permitted")
+
+	// The legitimate ref within the granted prefix still works through the same
+	// code path (connectRefAllowed -> refMatches -> GetSecret).
+	val, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "vault", "secret/data/myapp/config")
+	require.NoError(t, err)
+	assert.Equal(t, "myapp-secret", val)
+}
+
+// A Connect ref-grant is otherwise permanent (ADR-045); ExpiresAt makes it time-bound,
+// mirroring UserRole/ShareRecord — a grant that has already passed its expiry must stop
+// authorizing immediately, even though the row has not yet been swept.
+func TestConnectRefRBAC_ExpiredGrantDenied(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	seedRoleForUser(t, db, 1, 5, "temp-reader")
+	seedGrantExpiring(t, c, 5, "aws", "metrics/", time.Now().Add(-time.Minute)) // already expired
+	ctx := context.Background()
+
+	_, err := c.ReadFederatedSecret(ctx, ActorTypeUser, 1, "aws", "metrics/qps")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not permitted")
+
+	ok, err := c.connectRefAllowed(ctx, ActorTypeUser, 1, "aws", "metrics/qps")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+// A grant with a future ExpiresAt still authorizes normally until it passes.
+func TestConnectRefRBAC_UnexpiredGrantAllowed(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	seedRoleForUser(t, db, 1, 5, "temp-reader")
+	seedGrantExpiring(t, c, 5, "aws", "metrics/", time.Now().Add(time.Hour))
+
+	val, err := c.ReadFederatedSecret(context.Background(), ActorTypeUser, 1, "aws", "metrics/qps")
+	require.NoError(t, err)
+	assert.Equal(t, "v", val)
+}
+
+// CreateConnectRefGrant plumbs an optional expiresAt through to the persisted grant.
+func TestCreateConnectRefGrant_PersistsExpiresAt(t *testing.T) {
+	c, db := connectRBACCore(t, fakeConnector{name: "aws", val: "v"})
+	require.NoError(t, db.Create(&models.Role{ID: 5, Name: "temp-reader"}).Error)
+	exp := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	g, err := c.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "metrics/", &exp)
+	require.NoError(t, err)
+	require.NotNil(t, g.ExpiresAt)
+	assert.WithinDuration(t, exp, *g.ExpiresAt, time.Second)
+
+	// A nil expiresAt (the common case) still creates a permanent grant.
+	g2, err := c.CreateConnectRefGrant(context.Background(), 1, 5, "aws", "db/", nil)
+	require.NoError(t, err)
+	assert.Nil(t, g2.ExpiresAt)
 }
 
 func TestConnectRefAllowed_Direct(t *testing.T) {

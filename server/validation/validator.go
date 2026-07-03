@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
@@ -155,16 +156,43 @@ func (v *Validator) applyRule(fieldName string, field reflect.Value, ruleName, p
 		return v.validateNumeric(field)
 	case "oneof":
 		return v.validateOneOf(field, param)
+	case "identifier":
+		return v.validateIdentifier(field)
 	}
 
 	return nil
 }
 
-// isEmpty checks if a field is empty
+// isBlank reports whether s has no visible content once ordinary whitespace and
+// Unicode zero-width/format (Cf) and control (Cc) characters (e.g. U+200B ZERO WIDTH
+// SPACE) are disregarded. Used by isEmpty so a whitespace-only or zero-width-only
+// string doesn't pass a `required` check.
+func isBlank(s string) bool {
+	for _, r := range s {
+		if unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Cc, r) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// isEmpty checks if a field is empty. A nil pointer/interface is empty (and
+// `omitempty` short-circuits the remaining rules for it). A NON-nil pointer
+// is deliberately NOT treated as empty even when it points at a zero value
+// (e.g. a non-nil *int pointing at 0, or a non-nil *string pointing at "").
+// Pointer-typed request fields exist precisely so a caller can distinguish
+// "not provided" (nil — skip validation, leave any existing value alone)
+// from "explicitly set to the zero value" (non-nil — must still satisfy
+// every other rule, e.g. reject a `max_reads: 0` that a `min=1` tag forbids,
+// rather than silently letting the zero value pass as if it were absent).
+// A string field is additionally treated as empty when it is blank per isBlank
+// (whitespace-only or composed solely of Unicode zero-width/format/control
+// characters), so such a value can't slip past a `required` check.
 func (v *Validator) isEmpty(field reflect.Value) bool {
 	switch field.Kind() {
 	case reflect.String:
-		return field.String() == ""
+		return isBlank(field.String())
 	case reflect.Slice, reflect.Map, reflect.Array:
 		return field.Len() == 0
 	case reflect.Pointer, reflect.Interface:
@@ -181,8 +209,31 @@ func (v *Validator) isEmpty(field reflect.Value) bool {
 	return false
 }
 
+// derefForRule resolves field to the value that the Kind()-based validation
+// rules (min/max/email/url/alpha/alphanum/numeric/oneof) should inspect: a
+// non-pointer field is returned unchanged; a non-nil pointer is dereferenced
+// so it's validated against the same rules as its non-pointer equivalent; a
+// nil pointer has nothing to validate (ok=false) — the rule should pass,
+// exactly as it does today for an absent value (omitempty, if present, has
+// already short-circuited via isEmpty; `required` is enforced separately).
+func derefForRule(field reflect.Value) (resolved reflect.Value, ok bool) {
+	if field.Kind() == reflect.Pointer {
+		if field.IsNil() {
+			return reflect.Value{}, false
+		}
+		return field.Elem(), true
+	}
+	return field, true
+}
+
 // validateMin validates minimum length/value
 func (v *Validator) validateMin(field reflect.Value, param string) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
+
 	var min int
 	_, _ = fmt.Sscanf(param, "%d", &min)
 
@@ -214,6 +265,12 @@ func (v *Validator) validateMin(field reflect.Value, param string) error {
 
 // validateMax validates maximum length/value
 func (v *Validator) validateMax(field reflect.Value, param string) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
+
 	var max int
 	_, _ = fmt.Sscanf(param, "%d", &max)
 
@@ -245,6 +302,11 @@ func (v *Validator) validateMax(field reflect.Value, param string) error {
 
 // validateEmail validates email format
 func (v *Validator) validateEmail(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -264,6 +326,11 @@ func (v *Validator) validateEmail(field reflect.Value) error {
 
 // validateURL validates URL format
 func (v *Validator) validateURL(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -283,6 +350,11 @@ func (v *Validator) validateURL(field reflect.Value) error {
 
 // validateAlpha validates alphabetic characters only
 func (v *Validator) validateAlpha(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -302,6 +374,11 @@ func (v *Validator) validateAlpha(field reflect.Value) error {
 
 // validateAlphaNum validates alphanumeric characters only
 func (v *Validator) validateAlphaNum(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -321,6 +398,11 @@ func (v *Validator) validateAlphaNum(field reflect.Value) error {
 
 // validateNumeric validates numeric characters only
 func (v *Validator) validateNumeric(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -338,8 +420,42 @@ func (v *Validator) validateNumeric(field reflect.Value) error {
 	return nil
 }
 
+// identifierRegex matches a safe resource-identifier charset: letters, digits,
+// spaces, `-`, and `_`. Deliberately excludes punctuation with special meaning
+// elsewhere (CSV-formula triggers, path separators, shell/URL metacharacters) and
+// any character outside this allowlist, so it also rejects zero-width/homograph
+// characters that could otherwise render a name blank or visually deceptive.
+var identifierRegex = regexp.MustCompile(`^[a-zA-Z0-9 _-]+$`)
+
+// validateIdentifier validates that a string is a safe resource identifier: letters,
+// digits, spaces, `-`, `_` only (see identifierRegex). Opt-in via `validate:"identifier"`
+// for Name-like fields that should be restricted to a safe, unambiguous charset — not
+// applied globally, since some fields (e.g. free-form secret names) intentionally allow
+// a broader charset.
+func (v *Validator) validateIdentifier(field reflect.Value) error {
+	if field.Kind() != reflect.String {
+		return nil
+	}
+
+	str := field.String()
+	if str == "" {
+		return nil
+	}
+
+	if !identifierRegex.MatchString(str) {
+		return fmt.Errorf("%s: must contain only letters, digits, spaces, - or _", i18n.T("ErrorValidation", nil))
+	}
+
+	return nil
+}
+
 // validateOneOf validates that value is one of allowed values
 func (v *Validator) validateOneOf(field reflect.Value, param string) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}

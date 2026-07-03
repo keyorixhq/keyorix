@@ -80,7 +80,7 @@ This guide covers comprehensive testing for the Keyorix HTTP and gRPC server imp
 cd server
 
 # Run all tests
-go run test_runner.go all
+go run tools/test_runner.go all
 
 # Run specific test suite
 go test ./http/handlers -v
@@ -97,16 +97,16 @@ The test runner provides a comprehensive testing interface:
 
 ```bash
 # Run all test suites
-go run test_runner.go all
+go run tools/test_runner.go all
 
 # Run performance benchmarks
-go run test_runner.go bench
+go run tools/test_runner.go bench
 
 # Generate coverage report
-go run test_runner.go coverage
+go run tools/test_runner.go coverage
 
 # Show help
-go run test_runner.go help
+go run tools/test_runner.go help
 ```
 
 ### Manual Test Commands
@@ -209,7 +209,8 @@ server/
 │       └── secret_service_test.go # gRPC service tests
 ├── middleware/
 │   └── auth_test.go             # Authentication middleware tests
-└── test_runner.go               # Comprehensive test runner
+└── tools/
+    └── test_runner.go           # Comprehensive test runner
 ```
 
 ### Test Naming Convention
@@ -338,7 +339,7 @@ go tool pprof mem.prof
 
 ```bash
 # Run all benchmarks
-go run test_runner.go bench
+go run tools/test_runner.go bench
 
 # Run specific benchmarks
 go test -bench=BenchmarkSecretHandler ./http/handlers
@@ -366,11 +367,11 @@ jobs:
       - name: Run Tests
         run: |
           cd server
-          go run test_runner.go all
+          go run tools/test_runner.go all
       - name: Generate Coverage
         run: |
           cd server  
-          go run test_runner.go coverage
+          go run tools/test_runner.go coverage
 ```
 
 ## 📝 Writing New Tests

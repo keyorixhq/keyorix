@@ -30,7 +30,7 @@ func setupSCIMTest(t *testing.T) (*SCIMHandler, *gorm.DB) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Session{}, &models.AuditEvent{},
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Role{Name: "system_viewer"}).Error)
 	return NewSCIMHandler(core.NewKeyorixCore(store.NewLocalStorage(db))), db
@@ -125,6 +125,84 @@ func TestSCIM_DuplicateConflict(t *testing.T) {
 	w = httptest.NewRecorder()
 	h.CreateUser(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", bytes.NewReader([]byte(body))))
 	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// TestSCIM_CannotRewriteNativeAdminEmail pins #120: a SCIM PUT (ReplaceUser) took an
+// arbitrary numeric id straight off the URL with no check that SCIM actually
+// provisioned it, so a valid (e.g. provisioning-only) SCIM bearer token could rewrite
+// a NATIVE admin's email to a fresh attacker-controlled address — the existing
+// same-email-collision guard only blocks an address already in use — and then claim
+// the account via SSO/SAML email-fallback resolution. The fix refuses ReplaceUser/
+// PatchUser/DeleteUser on any id that isn't SCIM-managed (no stored externalId).
+func TestSCIM_CannotRewriteNativeAdminEmail(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	// A native admin: created directly (no externalId), exactly like the classic
+	// bootstrap/admin-console account this attack targets.
+	require.NoError(t, db.Create(&models.User{
+		ID: 1, Username: "admin", Email: "admin@corp.com", DisplayName: "Admin",
+		IsActive: true, AccountState: core.AccountActive,
+	}).Error)
+
+	body := `{"userName":"attacker@evil.com","emails":[{"value":"attacker@evil.com","primary":true}]}`
+	w := httptest.NewRecorder()
+	h.ReplaceUser(w, withID(httptest.NewRequest(http.MethodPut, "/scim/v2/Users/1", bytes.NewReader([]byte(body))), "1"))
+	assert.Equal(t, http.StatusNotFound, w.Code, "PUT on a non-SCIM-managed id must be refused")
+
+	// The admin's email must be untouched.
+	var u models.User
+	require.NoError(t, db.First(&u, 1).Error)
+	assert.Equal(t, "admin@corp.com", u.Email, "a native account's email must survive an attempted SCIM rewrite")
+
+	// PATCH and DELETE on the same non-SCIM-managed id must likewise be refused.
+	w = httptest.NewRecorder()
+	h.PatchUser(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Users/1", bytes.NewReader([]byte(`{"Operations":[{"op":"replace","path":"active","value":false}]}`))), "1"))
+	assert.Equal(t, http.StatusNotFound, w.Code, "PATCH on a non-SCIM-managed id must be refused")
+
+	w = httptest.NewRecorder()
+	h.DeleteUser(w, withID(httptest.NewRequest(http.MethodDelete, "/scim/v2/Users/1", nil), "1"))
+	assert.Equal(t, http.StatusNotFound, w.Code, "DELETE on a non-SCIM-managed id must be refused")
+
+	require.NoError(t, db.First(&u, 1).Error)
+	assert.True(t, u.IsActive, "the native admin must remain untouched by every SCIM mutation attempt")
+}
+
+// TestSCIM_ReplaceUserAllowsGenuinelyManagedAccount is the positive control: the
+// normal SCIM lifecycle (an account SCIM itself provisioned) is unaffected.
+func TestSCIM_ReplaceUserAllowsGenuinelyManagedAccount(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	require.NoError(t, db.Create(&models.User{
+		ID: 1, Username: "bob", Email: "bob@corp.com", DisplayName: "Bob",
+		IsActive: true, AccountState: core.AccountActive, ExternalID: "okta|bob",
+	}).Error)
+
+	body := `{"userName":"bob@corp.com","displayName":"Bob Updated","emails":[{"value":"bob@corp.com","primary":true}]}`
+	w := httptest.NewRecorder()
+	h.ReplaceUser(w, withID(httptest.NewRequest(http.MethodPut, "/scim/v2/Users/1", bytes.NewReader([]byte(body))), "1"))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var u models.User
+	require.NoError(t, db.First(&u, 1).Error)
+	assert.Equal(t, "Bob Updated", u.DisplayName)
+}
+
+// TestSCIM_ListFilterDoesNotLeakNativeAccount pins the "List adoption" half of
+// #120: a userName-filter query (the IdP's reconciliation lookup) must not surface a
+// NATIVE account by email match — doing so would leak its numeric SCIM resource id
+// to any SCIM client, the ID a follow-up PUT/DELETE would otherwise need to target.
+func TestSCIM_ListFilterDoesNotLeakNativeAccount(t *testing.T) {
+	h, db := setupSCIMTest(t)
+	require.NoError(t, db.Create(&models.User{
+		ID: 1, Username: "admin", Email: "admin@corp.com", DisplayName: "Admin",
+		IsActive: true, AccountState: core.AccountActive,
+	}).Error)
+
+	req := httptest.NewRequest(http.MethodGet, `/scim/v2/Users?filter=userName+eq+"admin@corp.com"`, nil)
+	w := httptest.NewRecorder()
+	h.ListUsers(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	resp := decodeSCIM(t, w)
+	resources, _ := resp["Resources"].([]interface{})
+	assert.Empty(t, resources, "a filter match against a native (non-SCIM-managed) account must not be returned")
 }
 
 func TestSCIM_ServiceProviderConfig(t *testing.T) {
