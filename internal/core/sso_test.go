@@ -209,7 +209,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(42), uint(3), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada Lovelace")
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada Lovelace")
 		require.NoError(t, err)
 		assert.Equal(t, uint(42), u.ID)
 		// Active (not pending_first_login — an SSO user must not be trapped in a
@@ -224,14 +224,42 @@ func TestProvisionSSOUser(t *testing.T) {
 
 	t.Run("refuses when the IdP returned no email", func(t *testing.T) {
 		c, _, _, p := ssoTestCore(t)
-		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "", "Ada")
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "", true, "Ada")
 		require.Error(t, err)
+	})
+
+	// CRITICAL regression: the JIT path must NOT reuse an existing account matched by an
+	// UNVERIFIED email — that was an account-takeover (an IdP omitting email_verified could
+	// assert a victim's email and be logged in as the victim). With emailVerified=false the
+	// dedup goes through resolveSSOUser, which skips the email branch, so the existing
+	// victim account is NOT returned; a fresh account is created instead.
+	t.Run("does NOT reuse an existing account on an unverified email", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		// sub does not match; an existing victim account DOES match the email.
+		store.On("GetUserByExternalID", mock.Anything, "evil|999").Return((*models.User)(nil), notFound())
+		victim := &models.User{ID: 7, Username: "victim", Email: "victim@corp.com", ExternalID: "okta|legit"}
+		store.On("GetUserByEmail", mock.Anything, "victim@corp.com").Return(victim, nil)
+		// A fresh account is provisioned instead of reusing the victim.
+		store.On("GetUserByUsername", mock.Anything, "victim").Return((*models.User)(nil), notFound())
+		var created *models.User
+		store.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool { created = u; return true })).
+			Return(&models.User{ID: 99}, nil)
+		store.On("GetRoleByName", mock.Anything, mock.Anything).Return(&models.Role{ID: 3}, nil)
+		store.On("AssignRole", mock.Anything, uint(99), uint(3), mock.Anything).Return(nil)
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		u, err := c.provisionSSOUser(context.Background(), p, "evil|999", "victim@corp.com", false /* email NOT verified */, "Mallory")
+		require.NoError(t, err)
+		assert.Equal(t, uint(99), u.ID, "must be the fresh account, not the victim (id 7)")
+		require.NotNil(t, created)
+		assert.Equal(t, "evil|999", created.ExternalID, "fresh account bound to the asserting subject, not the victim")
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything) // victim not claimed/reused
 	})
 
 	t.Run("reuses an existing user instead of duplicating", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return(&models.User{ID: 5}, nil)
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
 		require.NoError(t, err)
 		assert.Equal(t, uint(5), u.ID)
 		store.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
@@ -248,7 +276,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(7), uint(9), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
 		require.NoError(t, err)
 		store.AssertCalled(t, "GetRoleByName", mock.Anything, "project_admin")
 	})
@@ -263,7 +291,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil), notFound())
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
 		require.NoError(t, err)
 		assert.Equal(t, uint(8), u.ID)
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)

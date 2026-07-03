@@ -354,6 +354,7 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLClampsIssue(t *testing.T) {
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		// No MaxTTLSeconds — the per-config ceiling is unset/unbounded.
+		ActorID: testAdminActorID,
 	})
 	require.NoError(t, err)
 
@@ -371,6 +372,7 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLDefaultsWhenUnset(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		ActorID: testAdminActorID,
 	})
 	require.NoError(t, err)
 
@@ -462,6 +464,7 @@ func TestDynamicSecrets_RenewRespectsInstallWideMaxLeaseTTL(t *testing.T) {
 	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
 		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		DefaultTTLSeconds: 300, // no MaxTTLSeconds — per-config ceiling unset
+		ActorID:           testAdminActorID,
 	})
 	require.NoError(t, err)
 
