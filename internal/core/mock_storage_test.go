@@ -1782,7 +1782,10 @@ func (m *MockStorage) CreateWebAuthnCredential(_ context.Context, _ *models.WebA
 func (m *MockStorage) ListWebAuthnCredentials(_ context.Context, _ uint) ([]*models.WebAuthnCredential, error) {
 	return nil, nil
 }
-func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte) (*models.WebAuthnCredential, error) {
+func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (m *MockStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
 	return nil, nil
 }
 func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {

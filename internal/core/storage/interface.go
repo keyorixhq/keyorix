@@ -537,7 +537,19 @@ type Storage interface {
 	// WebAuthn / passkeys (ADR-036).
 	CreateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
 	ListWebAuthnCredentials(ctx context.Context, userID uint) ([]*models.WebAuthnCredential, error)
-	GetWebAuthnCredentialByCredID(ctx context.Context, credentialID []byte) (*models.WebAuthnCredential, error)
+	// GetWebAuthnCredentialByCredID looks up a credential by its (unique) credential
+	// ID, scoped to the claimed owner: the query itself requires user_id = userID, so
+	// correctness does not depend on every caller re-checking ownership after the
+	// fetch (#307).
+	GetWebAuthnCredentialByCredID(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error)
+	// LockWebAuthnCredentialForUpdate re-reads a WebAuthn credential by (credential_id,
+	// user_id) inside a WithTransaction, taking a row-level write lock on backends that
+	// support one (Postgres: SELECT … FOR UPDATE), so a read-modify-write of the
+	// advanced signature counter serializes against a concurrent write for the same
+	// credential — closing the cloned-authenticator race where two concurrent
+	// authentications both read the stale counter and the last UPDATE silently wins,
+	// suppressing the clone-detection audit signal (#306).
+	LockWebAuthnCredentialForUpdate(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error)
 	UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error
 	DeleteWebAuthnCredential(ctx context.Context, userID, id uint) error
 	CountWebAuthnCredentials(ctx context.Context, userID uint) (int64, error)
