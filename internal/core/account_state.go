@@ -47,14 +47,54 @@ func NormalizeAccountState(state string) string {
 	return state
 }
 
+// validAccountStates is the canonical ADR-025 set a caller may explicitly write.
+// The empty string is separately accepted by IsValidAccountState — it is legacy
+// shorthand for "unset", normalized to active by NormalizeAccountState — but is
+// deliberately not in this map so callers that want the exact persisted set can
+// use it directly.
+var validAccountStates = map[string]bool{
+	AccountActive:                true,
+	AccountPendingFirstLogin:     true,
+	AccountPasswordResetRequired: true,
+	AccountSuspended:             true,
+	AccountDeprovisioned:         true,
+}
+
+// IsValidAccountState reports whether state is the empty string (legacy "unset",
+// normalized to active) or one of the ADR-025 canonical lifecycle values. Any other
+// string (a typo, wrong casing, or arbitrary garbage) is not a value any code path
+// in this codebase ever writes itself, and callers accepting a state as external
+// input (currently: gRPC CreateUser's account_state field) must reject it here
+// rather than persist it verbatim — see #334.
+func IsValidAccountState(state string) bool {
+	return state == "" || validAccountStates[state]
+}
+
 // AccountRestricted reports whether a state forces a password change before the
 // user may use any non-allowlisted endpoint.
+//
+// Fail-CLOSED default: an unrecognized state (default case below) is treated as
+// restricted, not as active/unrestricted. This is the defense-in-depth backstop
+// for #334 — IsValidAccountState now rejects a bad value at the one caller-
+// controlled write path, but this function must still cope with an unrecognized
+// value already sitting in the database (e.g. written before this fix shipped, or
+// by a future path that forgets to validate). Restricting is a safe default here
+// specifically because it is *not* a lockout: a restricted session still
+// authenticates (see AccountLoginBlocked) and self-heals the moment the user next
+// changes their password (clearRestrictionOnPasswordChange resets a restricted
+// state to active), so the failure mode of a garbage value is "forced through the
+// password-change flow", never "silently full access" and never "permanently
+// locked out with no recovery path".
 func AccountRestricted(state string) bool {
 	switch NormalizeAccountState(state) {
+	case AccountActive, AccountSuspended, AccountDeprovisioned:
+		// Suspended/deprovisioned are already refused outright by
+		// AccountLoginBlocked, so "restricted" is moot for them either way.
+		return false
 	case AccountPendingFirstLogin, AccountPasswordResetRequired:
 		return true
 	default:
-		return false
+		return true
 	}
 }
 
@@ -62,6 +102,16 @@ func AccountRestricted(state string) bool {
 // suspension and a SCIM/IdP deactivation block login; every login/session/token path
 // funnels through here, so a deprovisioned account is refused everywhere a suspended
 // one is, with no per-path change.
+//
+// Unlike AccountRestricted, this deliberately keeps a fail-OPEN default (false, not
+// blocked) for an unrecognized state. Blocking login outright has no self-healing
+// path — a fully blocked user can never reach the password-change flow to fix
+// anything — so failing closed here would risk permanently locking out an already-
+// legitimate user over a merely malformed value (e.g. a stale data migration, or a
+// value from a since-removed state) with no recovery short of direct DB/admin
+// intervention. AccountRestricted's fail-closed default already guarantees an
+// unrecognized value can never grant full unrestricted access; that is the correct
+// place for the defense-in-depth backstop, not here.
 func AccountLoginBlocked(state string) bool {
 	switch NormalizeAccountState(state) {
 	case AccountSuspended, AccountDeprovisioned:
