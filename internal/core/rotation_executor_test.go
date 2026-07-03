@@ -22,7 +22,7 @@ func rotationExecCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.RotationPolicy{}, &models.AuditEvent{},
-		&models.Project{}, &models.Environment{},
+		&models.Project{}, &models.Environment{}, &models.Role{}, &models.UserRole{},
 	))
 	// ListSecrets(ProjectID) JOINs environments, so the scope needs a real env row.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
@@ -285,13 +285,15 @@ func TestSetSecretAutoRotate_BackendRefBothOrNeither(t *testing.T) {
 	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
 	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
 	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "project_admin"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 9, RoleID: 1, ProjectID: 1}).Error)
 
 	// backend without ref → error
 	err := c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg"}, 9)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be set together")
 
-	// both set, backend exists → ok
+	// both set, backend exists, actor holds project_admin → ok
 	require.NoError(t, c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9))
 	var s models.SecretNode
 	require.NoError(t, db.First(&s, 1).Error)
@@ -314,6 +316,41 @@ func TestSetSecretAutoRotate_RejectsUnknownBackend(t *testing.T) {
 	err = c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown rotation backend")
+}
+
+// TestSetSecretAutoRotate_BindingBackendRequiresAdminAuthority pins #90: binding a
+// rotation backend to a secret is gated only by scoped secrets.write on the secret,
+// so any project editor could point an org-wide-credentialed backend (AWS/GCP/Azure
+// IAM, a shared DB superuser) at a ref they can influence and have the next
+// scheduler run mint that credential into their own readable secret. A non-admin
+// actor must be refused.
+func TestSetSecretAutoRotate_BindingBackendRequiresAdminAuthority(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+	c.SetRotationManager(rotation.NewManager([]rotation.Executor{&fakeExecutor{name: "pg"}}))
+	ctx := context.Background()
+	// actor 9 has secrets.write on the secret (enforced by the transport layer,
+	// out of scope here) but NO role at all — the realistic "project editor" persona.
+
+	err := c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true, Backend: "pg", Ref: "app_svc"}, 9)
+	require.Error(t, err, "a non-admin actor must not be able to bind a rotation backend")
+	assert.Contains(t, err.Error(), "admin authority")
+
+	var s models.SecretNode
+	require.NoError(t, db.First(&s, 1).Error)
+	assert.Empty(t, s.RotationBackend, "the secret must not end up bound to the backend")
+}
+
+// TestSetSecretAutoRotate_InKeyorixRotationNoAdminRequired is the positive control:
+// the common case (no external backend — Keyorix regenerates the value itself) has
+// no cross-scope credential-minting risk and is unaffected by the new ceiling.
+func TestSetSecretAutoRotate_InKeyorixRotationNoAdminRequired(t *testing.T) {
+	c, db, fixed := rotationExecCore(t)
+	seedRotatableSecret(t, db, 1, "key", false, fixed.Add(-24*time.Hour))
+	ctx := context.Background()
+
+	require.NoError(t, c.SetSecretAutoRotate(ctx, 1, AutoRotateSpec{Enabled: true}, 9),
+		"enabling in-Keyorix rotation (no backend) needs no elevated authority")
 }
 
 // fakeGenExecutor is a generate-upstream backend: GenerateUpstream mints the value.
