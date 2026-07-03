@@ -59,6 +59,8 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return errors.New("secret ID is required (use --id)")
 	}
 
+	common.WarnInsecureFlag(cmd, "value", "use --interactive or --from-file instead.")
+
 	if rc, ok := common.NewRemoteClient(); ok {
 		return runUpdateRemote(rc)
 	}

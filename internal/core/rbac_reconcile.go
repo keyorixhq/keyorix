@@ -75,7 +75,11 @@ func (c *KeyorixCore) ReconcileRBACPermissions(ctx context.Context) error {
 			if !isNew || held[permName] {
 				continue
 			}
-			if err := c.storage.AssignPermissionToRole(ctx, role.ID, id); err != nil {
+			// Routed through the audited core wrapper (actor 0 = system, the same
+			// convention every other system-initiated grant uses) so this startup
+			// top-up emits permission.assigned like every other permission grant
+			// path, instead of leaving the tamper-evident audit chain silent (#293).
+			if err := c.AssignPermissionToRole(ctx, 0, role.ID, id); err != nil {
 				log.Printf("rbac reconcile: grant %s to role %s: %v", permName, rdef.Name, err)
 			}
 		}

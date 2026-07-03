@@ -60,6 +60,11 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 
 	if result.Error == nil {
 		existing.Permission = share.Permission
+		// ExpiresAt reflects the caller's requested value verbatim (nil = permanent,
+		// non-nil = time-bound), mirroring UpdateShareRecord's behaviour — a re-share
+		// must be able to tighten (or clear) an existing grant's expiry, not just its
+		// permission. Save writes nil as NULL.
+		existing.ExpiresAt = share.ExpiresAt
 		existing.UpdatedAt = time.Now()
 		if err := ls.db.Save(&existing).Error; err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
@@ -70,6 +75,25 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 	}
 
 	if err := ls.db.Create(share).Error; err != nil {
+		// #136: the SELECT above and this INSERT are not atomic — a concurrent
+		// CreateShareRecord for the same (secret, recipient, is_group) can race between
+		// them, both miss the SELECT, and both attempt the INSERT. The partial unique
+		// index on share_records (see ensureShareRecordUniqueIndex) turns the loser's
+		// INSERT into a constraint violation instead of a second live duplicate row;
+		// treat that specific failure as "someone else just created it" and fall back to
+		// updating the row that won the race, preserving CreateShareRecord's upsert
+		// contract instead of surfacing a raw constraint error to the caller.
+		if isUniqueConstraintErr(err) {
+			if rerr := ls.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
+				share.SecretID, share.RecipientID, share.IsGroup).First(&existing).Error; rerr == nil {
+				existing.Permission = share.Permission
+				existing.UpdatedAt = time.Now()
+				if serr := ls.db.Save(&existing).Error; serr != nil {
+					return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), serr)
+				}
+				return &existing, nil
+			}
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return share, nil
@@ -108,13 +132,19 @@ func (ls *LocalStorage) UpdateShareRecord(ctx context.Context, share *models.Sha
 	return existing, nil
 }
 
-// DeleteShareRecord soft-deletes a share record.
+// DeleteShareRecord soft-deletes a share record. #136: a pre-existing duplicate row
+// for the same (secret, recipient, is_group) — from before the unique index in
+// ensureShareRecordUniqueIndex closed the create-race that produced them — would
+// otherwise survive a revoke by ID, leaving access live. Delete every active row for
+// that same tuple, not just shareID, so a revoke is complete regardless of how many
+// duplicates accumulated.
 func (ls *LocalStorage) DeleteShareRecord(ctx context.Context, shareID uint) error {
 	share, err := ls.GetShareRecord(ctx, shareID)
 	if err != nil {
 		return err
 	}
-	if err := ls.db.Delete(share).Error; err != nil {
+	if err := ls.db.Where("secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL",
+		share.SecretID, share.RecipientID, share.IsGroup).Delete(&models.ShareRecord{}).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return nil
@@ -229,7 +259,13 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 
-	if secret.OwnerID == userID {
+	// #136: OwnerID==0 means the secret has NO human owner (e.g. machine-created); a
+	// machine actor's userID is also 0, so an unguarded equality would match every
+	// ownerless secret via 0==0 and grant it owner-level "write". The core-layer
+	// secretOwnedBy helper (permissions.go) already carries this guard for its own
+	// callers, but this storage-layer check reimplemented the comparison independently
+	// — closing it here too rather than relying solely on callers validating userID != 0.
+	if secret.OwnerID != 0 && secret.OwnerID == userID {
 		return "write", nil
 	}
 

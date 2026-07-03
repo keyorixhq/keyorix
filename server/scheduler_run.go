@@ -27,6 +27,21 @@ func runScheduler(ctx context.Context, name string, interval time.Duration, tick
 		defer ticker.Stop()
 		run := func() {
 			start := time.Now()
+			// #314: a scheduler job must never be able to take down the whole
+			// process. This goroutine previously had no recover() at all — any
+			// panic inside tick() (e.g. the remote-storage client's now-fixed nil
+			// *APIError dereference, or a future bug) would crash the entire
+			// server, and would crash again on the next tick after restart if the
+			// underlying condition (a degraded upstream, ordinary operational
+			// noise like an LB/WAF/CDN interstitial) persisted — a repeated-crash
+			// DoS from conditions far short of a deliberate attack. Every other
+			// job on this same ticker keeps running regardless of one job's panic.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("scheduler %q: recovered from panic: %v", name, r)
+					middleware.RecordSchedulerRun(name, middleware.SchedulerFailure, time.Since(start))
+				}
+			}()
 			outcome := tick()
 			middleware.RecordSchedulerRun(name, outcome, time.Since(start))
 		}

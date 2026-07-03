@@ -47,6 +47,22 @@ func TestSecureWriteAndReadRoundTrip(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+func TestSecureWriteFileEnforcesPermsOnExistingFile(t *testing.T) {
+	base := t.TempDir()
+	// A pre-existing file with looser perms must be tightened to the requested mode
+	// (O_TRUNC alone keeps the old mode; the explicit Chmod fixes it) — same guarantee
+	// as SecureWriteFileSync, just without the fsync.
+	require.NoError(t, os.WriteFile(filepath.Join(base, "config.yaml"), []byte("old"), 0644))
+	require.NoError(t, SecureWriteFile(base, "config.yaml", []byte("new"), 0600))
+
+	info, err := os.Stat(filepath.Join(base, "config.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
+	got, err := SafeReadFile(base, "config.yaml")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("new"), got)
+}
+
 func TestSecureWriteFileSyncRoundTripAndPerms(t *testing.T) {
 	base := t.TempDir()
 	want := []byte("durable-key-bytes")
@@ -223,4 +239,20 @@ func TestContainmentRejectsSymlinkEscape(t *testing.T) {
 	// The outside directory must be untouched by the rejected write.
 	_, statErr := os.Stat(filepath.Join(outside, "planted.txt"))
 	assert.True(t, os.IsNotExist(statErr), "rejected write must not create a file outside base")
+}
+
+func TestSecureDeleteFile_OverwritesAndRemoves(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dek.key.migrate-backup.123")
+	original := []byte("sensitive-wrapped-dek-bytes-not-random")
+	require.NoError(t, os.WriteFile(path, original, 0600))
+
+	require.NoError(t, SecureDeleteFile(path))
+
+	_, err := os.Stat(path)
+	assert.True(t, os.IsNotExist(err), "file must be removed")
+}
+
+func TestSecureDeleteFile_MissingFileIsNotAnError(t *testing.T) {
+	require.NoError(t, SecureDeleteFile(filepath.Join(t.TempDir(), "does-not-exist")))
 }

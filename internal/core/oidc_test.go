@@ -56,6 +56,17 @@ func TestNewOIDCVerifier_RequiresAudience(t *testing.T) {
 	require.ErrorContains(t, err, "no audiences")
 }
 
+// TestNewOIDCVerifier_RejectsBlankOnlyAudiences guards #367: an operator
+// supplying only empty-string audience entries (e.g. Audiences: [""]) must be
+// rejected at startup with a clear error, not silently build an issuer entry
+// that can never satisfy its own audience check (permanent fail-closed lockout).
+func TestNewOIDCVerifier_RejectsBlankOnlyAudiences(t *testing.T) {
+	_, err := NewOIDCVerifier([]OIDCTrustedIssuer{{Issuer: "https://x", Audiences: []string{"", ""}}}, staticResolver{})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "https://x")
+	require.ErrorContains(t, err, "no usable audiences")
+}
+
 func TestOIDCVerify_Valid(t *testing.T) {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	v := newTestVerifier(t, key)

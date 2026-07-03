@@ -31,6 +31,9 @@ func newBootstrappedCore(t *testing.T) (*KeyorixCore, *store.LocalStorage) {
 		&models.Project{}, &models.Environment{}, &models.SystemMetadata{},
 		&models.MachineIdentity{}, &models.MachineIdentityRole{},
 		&models.PersonalAccessToken{}, &models.Session{}, &models.ShareRecord{},
+		&models.AuditEvent{},
+		&models.AccessRequest{}, &models.AccessRequestApproval{}, &models.ProjectMembership{},
+		&models.SecretNode{},
 	))
 
 	st := store.NewLocalStorage(db)

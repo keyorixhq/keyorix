@@ -6,6 +6,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -93,6 +94,16 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 
 	createdUser, err := c.storage.CreateUser(ctx, user)
 	if err != nil {
+		// #117: the pre-check above (GetUserByEmail) is a check-then-act read that races
+		// with a concurrent create for the identical email — both can pass it before
+		// either commits. The DB-level partial unique index (uniq_users_email_active)
+		// catches the loser here and CreateUser wraps it in ErrDuplicateEmail; surface the
+		// same clean "email already in use" error the winner's sequential check would have
+		// produced, instead of a raw constraint-violation message or an ambiguous
+		// duplicate-email row.
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
@@ -161,6 +172,10 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 
 	created, err := c.storage.CreateUserWithRoleGrants(ctx, user, grants)
 	if err != nil {
+		// #117: same race/translation as CreateUser above — see its comment.
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("%s: user with email already exists", i18n.T("ErrorValidation", nil))
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 
@@ -241,7 +256,9 @@ const (
 // revoked, indefinitely if the account was later restored (see RestoreUser).
 // Refuses to deprovision the install's last global administrator
 // (guardLastAdminDeactivation), same as SCIM DELETE. actorID is the acting admin
-// (for the audit trail).
+// (for the audit trail; 0 = no actor known, e.g. an unauthenticated internal caller
+// — the audit event's UserID is then left nil rather than pointing at a nonexistent
+// actor).
 func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 	if id == 0 {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required")

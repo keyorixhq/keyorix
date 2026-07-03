@@ -7,8 +7,14 @@ import (
 )
 
 type Project struct {
-	ID          uint   `gorm:"primaryKey"`
-	Name        string `gorm:"uniqueIndex;not null"`
+	ID uint `gorm:"primaryKey"`
+	// Name uniqueness is enforced by a case-insensitive PARTIAL unique index
+	// (LOWER(name) WHERE deleted_at IS NULL), created in migrateDatabase (#385) — not
+	// the plain `uniqueIndex` tag — so "Production"/"production" can't land as two
+	// distinct rows (closing a shadow-project confusion vector against the
+	// case-insensitive CLI project-name resolution), while a soft-deleted project's
+	// name is still freed for reuse.
+	Name        string `gorm:"not null"`
 	Description string
 	// RequireMFA, when true, denies interactive (session-authenticated) callers
 	// without a second factor access to this project's scoped resources, even when
@@ -112,13 +118,14 @@ func (SoDPolicy) TableName() string { return "sod_policies" }
 // hold is preserved. Placing/lifting is audited; the row history is the evidence
 // of when holds were in effect.
 type LegalHold struct {
-	ID         uint       `gorm:"primaryKey" json:"id"`
-	Reason     string     `json:"reason"`
-	PlacedBy   uint       `json:"placed_by"`
-	PlacedAt   time.Time  `json:"placed_at"`
-	Released   bool       `gorm:"index" json:"released"` // false = active
-	ReleasedBy uint       `json:"released_by,omitempty"`
-	ReleasedAt *time.Time `json:"released_at,omitempty"`
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Reason        string     `json:"reason"`
+	PlacedBy      uint       `json:"placed_by"`
+	PlacedAt      time.Time  `json:"placed_at"`
+	Released      bool       `gorm:"index" json:"released"` // false = active
+	ReleasedBy    uint       `json:"released_by,omitempty"`
+	ReleasedAt    *time.Time `json:"released_at,omitempty"`
+	ReleaseReason string     `json:"release_reason,omitempty"` // why the hold was lifted (#380)
 }
 
 // SSOLoginState is the short-lived CSRF/nonce state for an in-flight OIDC
@@ -453,7 +460,13 @@ type SecretNode struct {
 	// upstream it belongs to, who to contact. Metadata only; never the value.
 	Description string
 	MaxReads    *int
-	Expiration  *time.Time
+	// ReadCount is the secret's LIFETIME read count against MaxReads — deliberately
+	// secret-level, not per-version (#133). A per-version counter resets to zero on
+	// every new version, so a burn-after-N-reads secret became re-readable simply
+	// by rotating or rolling back (which creates a fresh version); this counter
+	// carries forward across both.
+	ReadCount  int
+	Expiration *time.Time
 	Metadata    JSON
 	// Classification is the data sensitivity label (ISO 27001 A.5.12/A.5.13):
 	// "" = unclassified, else one of public|internal|confidential|restricted. Drives
@@ -635,9 +648,9 @@ type Session struct {
 type PersonalAccessToken struct {
 	ID          uint   `gorm:"primaryKey"`
 	UserID      uint   `gorm:"index;not null"`
-	Name        string `gorm:"not null"`             // user-facing label
-	TokenHash   string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
-	TokenPrefix string `gorm:"index"`                // leading chars of the raw token, for display ("kx_pat_ab12…")
+	Name        string `gorm:"not null"`                      // user-facing label
+	TokenHash   string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenPrefix string `gorm:"index"`                         // leading chars of the raw token, for display ("kx_pat_ab12…")
 	// Scopes is a JSON-encoded []string permission allowlist (ADR-042). Empty/null =
 	// the token inherits the owner's full permission set (legacy v1 behaviour, the
 	// default for existing rows). When non-empty, the token may exercise ONLY the
@@ -671,7 +684,7 @@ type PersonalAccessToken struct {
 // stored, and lookup is by hash, mirroring PersonalAccessToken.
 type SetupToken struct {
 	ID        uint   `gorm:"primaryKey"`
-	TokenHash string `gorm:"uniqueIndex;not null"` // SHA-256 hex of the raw token (never the plaintext)
+	TokenHash string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex of the raw token (never the plaintext)
 
 	// Purpose scopes the token: invitation_accept | account_setup | password_reset_link.
 	// A token minted for one purpose can never drive another, even if the raw string

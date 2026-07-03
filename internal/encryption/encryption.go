@@ -139,6 +139,36 @@ func SecretAAD(secretID, projectID uint, versionNumber int) []byte {
 	return []byte(fmt.Sprintf("keyorix:v2:%d:%d:%d", secretID, projectID, versionNumber))
 }
 
+// MFASecretAAD returns the AAD for a user's encrypted TOTP shared secret (#94),
+// binding the ciphertext to the owning user so a DB-write attacker cannot transplant
+// one user's encrypted TOTP seed onto another user's row. MFASecret is keyed 1:1 on
+// UserID (a uniqueIndex, never reassigned), so this alone is a stable, sufficient
+// owning identity. Domain-separated from SecretAAD's "keyorix:v2:" prefix so a
+// transplant across CATEGORIES (e.g. a SecretVersion blob pasted into an MFASecret
+// row) also fails, not just a transplant within the same category.
+func MFASecretAAD(userID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:mfa:v1:%d", userID))
+}
+
+// DynamicSecretConfigAAD returns the AAD for a dynamic-secret config's encrypted admin
+// DSN (#94), binding the ciphertext to the config's identity and project/environment
+// scope. None of configID/projectID/environmentID are reassigned after creation (see
+// DynamicSecretConfig — only Classification is ever updated).
+func DynamicSecretConfigAAD(configID, projectID, environmentID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:dynsecret-config:v1:%d:%d:%d", configID, projectID, environmentID))
+}
+
+// DynamicSecretLeaseAAD returns the AAD for an issued dynamic-secret lease's encrypted
+// credential (#94), binding the ciphertext to the lease's identity and owning config —
+// leases are issue-once (revoke/expire only), never reassigned to a different config.
+// Takes the lease's external string LeaseID (a random token, gorm:"uniqueIndex"), not
+// its numeric primary key — LeaseID is generated before the row is inserted, so the
+// caller can bind and encrypt the credential in one pass rather than needing a
+// two-phase insert-then-update to learn an auto-increment ID first.
+func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:dynsecret-lease:v1:%s:%d", leaseID, configID))
+}
+
 // EncryptWithAAD encrypts data using AES-GCM with Additional Authenticated Data.
 // The AAD is mixed into the GCM authentication tag — it is not stored in the
 // ciphertext but must be supplied identically on decryption.

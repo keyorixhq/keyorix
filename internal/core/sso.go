@@ -18,8 +18,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +29,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -106,12 +109,26 @@ func (c *KeyorixCore) SSOCompleteURL(provider string) (string, bool) {
 	return "", false
 }
 
+// oidcProvider resolves a configured OIDC provider by name. buildSSOProviders
+// (server/main.go) never sets Type for an OIDC provider — it's left as the zero
+// value, "" — so "not saml" is treated as OIDC here, mirroring samlProvider's
+// reciprocal check. This guards the OIDC flow (which dereferences OAuth
+// unconditionally) against being invoked for a provider configured with
+// Type: "saml", whose OAuth field is always nil.
+func (c *KeyorixCore) oidcProvider(name string) (*SSOProvider, error) {
+	p, ok := c.ssoProviders[name]
+	if !ok || p.Type == "saml" || p.OAuth == nil {
+		return nil, fmt.Errorf("unknown SSO provider %q", name)
+	}
+	return p, nil
+}
+
 // BeginSSO creates and stores the CSRF state + nonce and returns the IdP
 // authorization URL to redirect the browser to.
 func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo string) (string, error) {
-	p, ok := c.ssoProviders[providerName]
-	if !ok {
-		return "", fmt.Errorf("unknown SSO provider %q", providerName)
+	p, err := c.oidcProvider(providerName)
+	if err != nil {
+		return "", err
 	}
 	state, err := randToken()
 	if err != nil {
@@ -138,8 +155,8 @@ func (c *KeyorixCore) BeginSSO(ctx context.Context, providerName, returnTo strin
 // to a user, and mints a session. Returns the session, the user, and the in-app path
 // to land on (ReturnTo, may be empty).
 func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state, userAgent, ip string) (*models.Session, *models.User, string, error) {
-	p, ok := c.ssoProviders[providerName]
-	if !ok {
+	p, err := c.oidcProvider(providerName)
+	if err != nil {
 		return nil, nil, "", fmt.Errorf("unknown SSO provider")
 	}
 	st, err := c.storage.ConsumeSSOLoginState(ctx, state)
@@ -409,6 +426,14 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
+		// #117: the FindSCIMUser reuse-check above races with a concurrent JIT-provision
+		// (or any other create) for the identical email — both can pass it before either
+		// commits. The DB-level partial unique index catches the loser here and CreateUser
+		// wraps it in ErrDuplicateEmail; surface a clean error instead of a raw
+		// constraint-violation message.
+		if errors.Is(err, storage.ErrDuplicateEmail) {
+			return nil, fmt.Errorf("a user with this email already exists")
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	role := strings.TrimSpace(p.DefaultRole)
@@ -571,6 +596,19 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 		currentSet[r.Name] = true
 	}
 
+	// Route through the audited RBAC choke point (assignUserRoleSystemGrant/
+	// RemoveUserRole) so each individual role change lands in the RBAC audit trail
+	// with a structured RoleID, not just the coarse aggregate-count event below
+	// (#297). The acting principal is the logging-in user themself — the same
+	// attribution the aggregate auth.sso_roles_synced event below already used —
+	// since the grant is driven by their own IdP-asserted groups against the
+	// admin-configured map. The grant deliberately uses assignUserRoleSystemGrant,
+	// not AssignUserRole: the #93/#107/#141 grant-ceiling check would require the
+	// logging-in user to already hold every permission of the role they're being
+	// auto-provisioned — impossible for their FIRST SSO-driven grant, and beside
+	// the point, since authorization here is rooted in the admin-configured
+	// GroupRoleMap and the verified IdP assertion, not in the user's own
+	// roles.assign-derived authority.
 	added, removed := 0, 0
 	for role := range managedRoles {
 		r, rerr := c.storage.GetRoleByName(ctx, role)
@@ -579,11 +617,11 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 		}
 		switch {
 		case desiredRoles[role] && !currentSet[role]:
-			if c.storage.AssignRole(ctx, userID, r.ID, Scope{}) == nil {
+			if c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}) == nil {
 				added++
 			}
 		case !desiredRoles[role] && currentSet[role]:
-			if c.storage.RemoveRole(ctx, userID, r.ID, Scope{}) == nil {
+			if c.RemoveUserRole(ctx, userID, userID, r.ID, Scope{}) == nil {
 				removed++
 			}
 		}
@@ -723,8 +761,26 @@ func randToken() (string, error) {
 // sanitizeReturnTo allows only a same-origin in-app path (leading single slash), so
 // the post-login redirect can't be turned into an open redirect.
 func sanitizeReturnTo(s string) string {
-	if strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "//") {
-		return s
+	if !strings.HasPrefix(s, "/") || strings.HasPrefix(s, "//") {
+		return ""
 	}
-	return ""
+	// A backslash right after the leading slash — e.g. "/\evil.com" — is rejected
+	// outright: several browsers normalize a leading "\" to "/", turning this into
+	// "//evil.com", the exact protocol-relative open-redirect the "//" check above
+	// is meant to block, just spelled with a backslash to slip past a naive
+	// HasPrefix(s, "//") check. Reject a backslash anywhere in the value, not just
+	// right after the leading slash — a normalized-later backslash deeper in the
+	// string (e.g. "/ok/\/evil.com") could still be re-interpreted as a host
+	// boundary by a permissive parser downstream.
+	if strings.ContainsRune(s, '\\') {
+		return ""
+	}
+	// Belt-and-suspenders: confirm this really parses as a schemeless, hostless
+	// relative reference. Guards against any other scheme/host-smuggling trick
+	// (e.g. an embedded "://") that the prefix checks above don't anticipate.
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return ""
+	}
+	return s
 }

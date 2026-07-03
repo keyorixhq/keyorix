@@ -9368,8 +9368,14 @@ type CompliancePosture struct {
 	LegalHold        *LegalHoldPosture        `protobuf:"bytes,9,opt,name=legal_hold,json=legalHold,proto3" json:"legal_hold,omitempty"`
 	Retention        *RetentionPosture        `protobuf:"bytes,10,opt,name=retention,proto3" json:"retention,omitempty"`
 	Risk             *RiskPosture             `protobuf:"bytes,11,opt,name=risk,proto3" json:"risk,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// degraded is true when one or more sub-rollups above could not be queried this
+	// run (#136) — the zero/clean values they carry are UNKNOWN, not verified-clean.
+	// A consumer must treat a degraded snapshot as incomplete, not passing.
+	Degraded bool `protobuf:"varint,12,opt,name=degraded,proto3" json:"degraded,omitempty"`
+	// degraded_reasons names each failed sub-rollup with its underlying error.
+	DegradedReasons []string `protobuf:"bytes,13,rep,name=degraded_reasons,json=degradedReasons,proto3" json:"degraded_reasons,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CompliancePosture) Reset() {
@@ -9475,6 +9481,20 @@ func (x *CompliancePosture) GetRetention() *RetentionPosture {
 func (x *CompliancePosture) GetRisk() *RiskPosture {
 	if x != nil {
 		return x.Risk
+	}
+	return nil
+}
+
+func (x *CompliancePosture) GetDegraded() bool {
+	if x != nil {
+		return x.Degraded
+	}
+	return false
+}
+
+func (x *CompliancePosture) GetDegradedReasons() []string {
+	if x != nil {
+		return x.DegradedReasons
 	}
 	return nil
 }
@@ -9646,6 +9666,9 @@ type ControlsSummary struct {
 	Pass          int32                  `protobuf:"varint,2,opt,name=pass,proto3" json:"pass,omitempty"`
 	Gap           int32                  `protobuf:"varint,3,opt,name=gap,proto3" json:"gap,omitempty"`
 	NotConfigured int32                  `protobuf:"varint,4,opt,name=not_configured,json=notConfigured,proto3" json:"not_configured,omitempty"`
+	// unknown (#136) counts controls whose signal could not be collected this run —
+	// a non-zero value means the matrix is incomplete, not fully passing.
+	Unknown       int32 `protobuf:"varint,5,opt,name=unknown,proto3" json:"unknown,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -9704,6 +9727,13 @@ func (x *ControlsSummary) GetGap() int32 {
 func (x *ControlsSummary) GetNotConfigured() int32 {
 	if x != nil {
 		return x.NotConfigured
+	}
+	return 0
+}
+
+func (x *ControlsSummary) GetUnknown() int32 {
+	if x != nil {
+		return x.Unknown
 	}
 	return 0
 }
@@ -11078,7 +11108,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x1dresolved_access_requests_days\x18\x05 \x01(\x05R\x1aresolvedAccessRequestsDays\"_\n" +
 	"\vRiskPosture\x12+\n" +
 	"\x11active_exceptions\x18\x01 \x01(\x05R\x10activeExceptions\x12#\n" +
-	"\rexpiring_soon\x18\x02 \x01(\x05R\fexpiringSoon\"\xde\x05\n" +
+	"\rexpiring_soon\x18\x02 \x01(\x05R\fexpiringSoon\"\xa5\x06\n" +
 	"\x11CompliancePosture\x12=\n" +
 	"\fgenerated_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\vgeneratedAt\x12J\n" +
 	"\x0faudit_integrity\x18\x02 \x01(\v2!.keyorix.v1.AuditIntegrityPostureR\x0eauditIntegrity\x12P\n" +
@@ -11092,7 +11122,9 @@ const file_keyorix_proto_rawDesc = "" +
 	"legal_hold\x18\t \x01(\v2\x1c.keyorix.v1.LegalHoldPostureR\tlegalHold\x12:\n" +
 	"\tretention\x18\n" +
 	" \x01(\v2\x1c.keyorix.v1.RetentionPostureR\tretention\x12+\n" +
-	"\x04risk\x18\v \x01(\v2\x17.keyorix.v1.RiskPostureR\x04risk\"z\n" +
+	"\x04risk\x18\v \x01(\v2\x17.keyorix.v1.RiskPostureR\x04risk\x12\x1a\n" +
+	"\bdegraded\x18\f \x01(\bR\bdegraded\x12)\n" +
+	"\x10degraded_reasons\x18\r \x03(\tR\x0fdegradedReasons\"z\n" +
 	"\rFrameworkRefs\x12\x1b\n" +
 	"\tiso_27001\x18\x01 \x03(\tR\biso27001\x12\x12\n" +
 	"\x04soc2\x18\x02 \x03(\tR\x04soc2\x12\x12\n" +
@@ -11107,12 +11139,13 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x06detail\x18\x05 \x01(\tR\x06detail\x129\n" +
 	"\n" +
 	"frameworks\x18\x06 \x01(\v2\x19.keyorix.v1.FrameworkRefsR\n" +
-	"frameworks\"t\n" +
+	"frameworks\"\x8e\x01\n" +
 	"\x0fControlsSummary\x12\x14\n" +
 	"\x05total\x18\x01 \x01(\x05R\x05total\x12\x12\n" +
 	"\x04pass\x18\x02 \x01(\x05R\x04pass\x12\x10\n" +
 	"\x03gap\x18\x03 \x01(\x05R\x03gap\x12%\n" +
-	"\x0enot_configured\x18\x04 \x01(\x05R\rnotConfigured\"\xc0\x01\n" +
+	"\x0enot_configured\x18\x04 \x01(\x05R\rnotConfigured\x12\x18\n" +
+	"\aunknown\x18\x05 \x01(\x05R\aunknown\"\xc0\x01\n" +
 	"\x12ComplianceControls\x12=\n" +
 	"\fgenerated_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\vgeneratedAt\x124\n" +
 	"\bcontrols\x18\x02 \x03(\v2\x18.keyorix.v1.ControlStateR\bcontrols\x125\n" +

@@ -2,9 +2,12 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -90,4 +93,49 @@ func TestBootstrapSystem_TokenGate(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, res.AlreadyInitialized)
 	})
+}
+
+// TestBootstrapSystem_ConcurrentCallsProduceExactlyOneAdmin pins the fix for #339: two
+// callers who both already hold the valid bootstrap token (not an unauthenticated
+// attacker — the token gate above already closes that race) but supply different
+// usernames must not both observe the "fresh install" (total==0) gate and each create a
+// "first admin". Only one concurrent call may actually create a user; every other
+// concurrent call must observe AlreadyInitialized instead.
+func TestBootstrapSystem_ConcurrentCallsProduceExactlyOneAdmin(t *testing.T) {
+	c := freshBootstrapCore(t)
+	c.SetBootstrapToken("correct-token")
+
+	const n = 8
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	created := 0
+	errs := 0
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := &BootstrapRequest{
+				Username: fmt.Sprintf("admin-%d", i), Email: fmt.Sprintf("admin-%d@example.com", i),
+				Password: "BootstrapPass123!", DisplayName: "Admin", Token: "correct-token",
+			}
+			res, err := c.BootstrapSystem(context.Background(), req)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs++
+				return
+			}
+			if !res.AlreadyInitialized {
+				created++
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	assert.Equal(t, 0, errs, "no concurrent bootstrap call holding the valid token should error")
+	assert.Equal(t, 1, created, "exactly one concurrent call may create the first admin")
+
+	_, total, err := c.storage.ListUsers(context.Background(), &storage.UserFilter{Page: 1, PageSize: 100})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total, "the store must end up with exactly one admin user, not one per racing caller")
 }

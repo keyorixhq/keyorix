@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -92,6 +93,24 @@ type secretEntry struct {
 	Value string
 }
 
+// sanitizeForTerminal strips control characters (CR/LF, ANSI/C1 escapes, NUL,
+// etc.) from untrusted import-file content before it's echoed to the operator's
+// terminal in progress/dry-run output. A crafted import file could otherwise
+// embed terminal escape sequences that overwrite or hide the CLI's own status
+// lines during the same run. This only affects what's printed — the value
+// actually stored in the vault is left untouched.
+func sanitizeForTerminal(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
+		if unicode.IsControl(r) {
+			return -1 // drop
+		}
+		return r
+	}, s)
+}
+
 func runImport(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 
@@ -112,7 +131,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			if len(preview) > 20 {
 				preview = preview[:20] + "..."
 			}
-			fmt.Printf("  %-30s = %s\n", e.Name, preview)
+			fmt.Printf("  %-30s = %s\n", sanitizeForTerminal(e.Name), sanitizeForTerminal(preview))
 		}
 		fmt.Printf("\nNo changes made (--dry-run).\n")
 		return nil
@@ -201,6 +220,7 @@ func doImport(ctx context.Context, rc *common.RemoteClient, entries []secretEntr
 	imported, skipped, failed := 0, 0, 0
 
 	for _, e := range entries {
+		displayName := sanitizeForTerminal(e.Name)
 		body := map[string]interface{}{
 			"name":           e.Name,
 			"value":          e.Value,
@@ -213,15 +233,15 @@ func doImport(ctx context.Context, rc *common.RemoteClient, entries []secretEntr
 		if err != nil {
 			errStr := err.Error()
 			if importSkipExisting && (strings.Contains(errStr, "409") || strings.Contains(errStr, "already exists")) {
-				fmt.Printf("  - Skipped  %-30s (already exists)\n", e.Name)
+				fmt.Printf("  - Skipped  %-30s (already exists)\n", displayName)
 				skipped++
 				continue
 			}
-			fmt.Printf("  x Failed   %-30s %v\n", e.Name, err)
+			fmt.Printf("  x Failed   %-30s %v\n", displayName, err)
 			failed++
 			continue
 		}
-		fmt.Printf("  + Imported %-30s (id=%d)\n", e.Name, created.ID)
+		fmt.Printf("  + Imported %-30s (id=%d)\n", displayName, created.ID)
 		imported++
 	}
 

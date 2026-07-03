@@ -246,7 +246,11 @@ func TestRotateDEKWithSweep_MultipleBatches(t *testing.T) {
 // DEK-encrypted auth-secret tables previously omitted from the sweep — TOTP
 // secrets, dynamic-secret admin DSNs, and lease credentials — are re-encrypted
 // under the new DEK. Before the fix a rotation orphaned them under the wiped old
-// key, breaking MFA login and dynamic-secret access irrecoverably.
+// key, breaking MFA login and dynamic-secret access irrecoverably. These three
+// tables are also AAD-bound as of #94, so the rows here are seeded legacy
+// (no-AAD, EncryptSecret) and the rotation's sweep must upgrade them to
+// AAD-bound in the same pass — proven via DecryptSecretWithAAD, not the plain
+// no-AAD DecryptSecret (which would now fail: AAD is baked into the GCM tag).
 func TestRotateDEKWithSweep_ReEncryptsAuthSecretTables(t *testing.T) {
 	db := newTestDB(t)
 	svc, _ := newTestService(t, "test-passphrase")
@@ -262,9 +266,9 @@ func TestRotateDEKWithSweep_ReEncryptsAuthSecretTables(t *testing.T) {
 	totpEnc, totpMeta := encSecret("TOTP-SEED-XYZ")
 	require.NoError(t, db.Create(&models.MFASecret{UserID: 1, SecretEnc: totpEnc, SecretMeta: totpMeta}).Error)
 	dsnEnc, dsnMeta := encSecret("postgres://admin:pw@db/app")
-	require.NoError(t, db.Create(&models.DynamicSecretConfig{Name: "pg", ProjectID: 1, AdminDSNEnc: dsnEnc, AdminDSNMeta: dsnMeta}).Error)
+	require.NoError(t, db.Create(&models.DynamicSecretConfig{Name: "pg", ProjectID: 1, EnvironmentID: 2, AdminDSNEnc: dsnEnc, AdminDSNMeta: dsnMeta}).Error)
 	credEnc, credMeta := encSecret(`{"user":"x","pass":"y"}`)
-	require.NoError(t, db.Create(&models.DynamicSecretLease{LeaseID: "l-1", CredentialEnc: credEnc, CredentialMeta: credMeta}).Error)
+	require.NoError(t, db.Create(&models.DynamicSecretLease{LeaseID: "l-1", ConfigID: 9, CredentialEnc: credEnc, CredentialMeta: credMeta}).Error)
 
 	oldDEK := captureCurrentDEK(t, svc)
 	if err := svc.RotateDEKWithSweep("test-passphrase", db); err != nil {
@@ -273,29 +277,29 @@ func TestRotateDEKWithSweep_ReEncryptsAuthSecretTables(t *testing.T) {
 	oldEncSvc, err := NewEncryptionService(oldDEK)
 	require.NoError(t, err)
 
-	check := func(name string, enc []byte, want string) {
-		// Decrypts under the new DEK (the current service)...
-		got, derr := svc.DecryptSecret(enc)
-		require.NoErrorf(t, derr, "%s: must decrypt under the new DEK after rotation", name)
+	check := func(name string, enc []byte, aad []byte, want string) {
+		// Decrypts under the new DEK, WITH the correct AAD, after rotation...
+		got, derr := svc.DecryptSecretWithAAD(enc, aad)
+		require.NoErrorf(t, derr, "%s: must decrypt under the new DEK+AAD after rotation", name)
 		require.Equal(t, want, string(got), name)
 		// ...and NOT under the old, rotated-out DEK.
 		parsed, perr := DeserializeEncryptedData(enc)
 		require.NoError(t, perr)
-		_, oerr := oldEncSvc.Decrypt(parsed)
+		_, oerr := oldEncSvc.DecryptWithAAD(parsed, aad)
 		require.Errorf(t, oerr, "%s: must NOT decrypt under the old DEK", name)
 	}
 
 	var mfa models.MFASecret
 	require.NoError(t, db.First(&mfa, "user_id = ?", 1).Error)
-	check("mfa_secret", mfa.SecretEnc, "TOTP-SEED-XYZ")
+	check("mfa_secret", mfa.SecretEnc, MFASecretAAD(1), "TOTP-SEED-XYZ")
 
 	var cfg models.DynamicSecretConfig
 	require.NoError(t, db.First(&cfg, "name = ?", "pg").Error)
-	check("dynamic_secret_config", cfg.AdminDSNEnc, "postgres://admin:pw@db/app")
+	check("dynamic_secret_config", cfg.AdminDSNEnc, DynamicSecretConfigAAD(cfg.ID, 1, 2), "postgres://admin:pw@db/app")
 
 	var lease models.DynamicSecretLease
 	require.NoError(t, db.First(&lease, "lease_id = ?", "l-1").Error)
-	check("dynamic_secret_lease", lease.CredentialEnc, `{"user":"x","pass":"y"}`)
+	check("dynamic_secret_lease", lease.CredentialEnc, DynamicSecretLeaseAAD("l-1", 9), `{"user":"x","pass":"y"}`)
 }
 
 // TestRotateDEKWithSweep_SoftDeletedSecretDoesNotBlock verifies a secret in the

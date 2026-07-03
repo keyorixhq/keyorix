@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -46,7 +47,7 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate TOTP secret: %w", err)
 	}
-	ct, meta, err := c.encryptAuthSecret(key.Secret())
+	ct, meta, err := c.encryptAuthSecret(key.Secret(), encryption.MFASecretAAD(userID))
 	if err != nil {
 		return "", "", fmt.Errorf("failed to encrypt TOTP secret: %w", err)
 	}
@@ -108,6 +109,15 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	if !user.MFAEnabled {
 		return fmt.Errorf("MFA is not enabled")
 	}
+	// Per-account lockout gates this self-service re-auth the same way it gates the
+	// second login factor (VerifyMFALogin): a stolen session lets an attacker submit
+	// TOTP guesses without ever having the password, so without this the code check
+	// above is the ONLY throttle on disabling MFA — and it had none. Keyed by user
+	// (not IP), since this is an authenticated-session endpoint, not the pre-auth
+	// login path.
+	if c.loginLocked(user) {
+		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
 	ok := false
 	if secret, err := c.loadTOTPSecret(ctx, userID); err == nil && c.validateTOTP(secret, codeOrPassword) {
 		ok = true
@@ -117,8 +127,10 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	}
 	if !ok {
 		c.auditMFAFailed(ctx, userID, "disable")
+		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout
 		return fmt.Errorf("invalid code or password")
 	}
+	c.clearLoginFailures(ctx, user)
 	if err := c.storage.SetUserMFAEnabled(ctx, userID, false); err != nil {
 		return err
 	}
@@ -143,6 +155,12 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 	if !user.MFAEnabled {
 		return nil, fmt.Errorf("MFA is not enabled")
 	}
+	// Same account-level lockout gate as DisableMFA (see comment there): a stolen
+	// session with no lockout gating here would let an attacker brute-force the TOTP
+	// code to regenerate (and so invalidate) the legitimate recovery codes.
+	if c.loginLocked(user) {
+		return nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
+	}
 	ok := false
 	if secret, err := c.loadTOTPSecret(ctx, userID); err == nil && c.validateTOTP(secret, codeOrPassword) {
 		ok = true
@@ -152,8 +170,10 @@ func (c *KeyorixCore) RegenerateMFARecoveryCodes(ctx context.Context, userID uin
 	}
 	if !ok {
 		c.auditMFAFailed(ctx, userID, "regenerate_recovery_codes")
+		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout
 		return nil, fmt.Errorf("invalid code or password")
 	}
+	c.clearLoginFailures(ctx, user)
 	codes, hashes, err := generateRecoveryCodes(mfaRecoveryCodeCount)
 	if err != nil {
 		return nil, err
@@ -252,8 +272,13 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 		c.recordFailedLogin(ctx, user) // count the failed second factor toward the lockout
 		return nil, nil, fmt.Errorf("invalid code")
 	}
-	// Cleared the second factor — reset any lockout state accrued from failed codes.
-	c.clearLoginFailures(ctx, user)
+	// Cleared the second factor — but a concurrent burst of failed second-factor
+	// attempts against this account may have tripped the lock since the
+	// pre-verification snapshot check above (TOCTOU). Re-check under the same
+	// serialization recordFailedLogin uses before minting a session.
+	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+		return nil, nil, err
+	}
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
 	if err != nil {
 		return nil, nil, err
@@ -273,7 +298,7 @@ func (c *KeyorixCore) loadTOTPSecret(ctx context.Context, userID uint) (string, 
 	if err != nil {
 		return "", err
 	}
-	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta)
+	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta, encryption.MFASecretAAD(userID))
 }
 
 func (c *KeyorixCore) validateTOTP(secret, code string) bool {

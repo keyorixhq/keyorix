@@ -1,4 +1,18 @@
 ---
+# NOTE (#327): this is a ClusterRole/ClusterRoleBinding, not a namespaced Role, because the
+# operator is deployed as a single cluster-wide instance that watches KeyorixSecret CRs (a
+# namespaced CRD) across every namespace -- there is no --watch-namespaces flag or other
+# dynamic-namespace-discovery mechanism (see operator/cmd/main.go), so it genuinely cannot
+# predict ahead of time which namespace the next CR (and its TokenSecretRef/target Secret)
+# will land in. Kubernetes RBAC also has no way to scope `list`/`watch` by resourceNames or
+# to a dynamically changing namespace set, so narrowing this to per-namespace RoleBindings
+# isn't possible without also adding namespace-scoping to the operator's deployment model.
+#
+# What operator/cmd/main.go DOES do to bound the blast radius of this necessarily cluster-
+# wide grant: it scopes the manager's Secret informer cache to only Secrets carrying the
+# operator's managed-by label (see secretCacheOptions in operator/cmd/main.go), so a
+# compromised operator process can't trivially dump every cluster Secret straight out of its
+# own in-memory cache -- only ones it already owns via this same RBAC.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

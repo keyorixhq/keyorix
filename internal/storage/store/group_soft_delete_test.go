@@ -22,6 +22,7 @@ func newGroupSoftDeleteStore(t *testing.T) *LocalStorage {
 	require.NoError(t, db.AutoMigrate(
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Role{},
 		&models.ShareRecord{}, &models.SecretNode{}, &models.User{},
+		&models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "u1", Email: "u1@x.io"}).Error)
 	return NewLocalStorage(db)
