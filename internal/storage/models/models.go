@@ -953,7 +953,7 @@ type AnomalyAlert struct {
 	ID           uint `gorm:"primaryKey"`
 	SecretNodeID uint `gorm:"index"`
 	SecretName   string
-	AlertType    string // off_hours, new_ip, frequency_spike, new_user, ml_outlier
+	AlertType    string // off_hours, new_ip, frequency_spike, new_user, ml_outlier, principal_breadth
 	Severity     string // low, medium, high
 	Description  string
 	AccessedBy   string

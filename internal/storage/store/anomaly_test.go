@@ -102,3 +102,72 @@ func TestListAnomalyAlerts_AcknowledgedFilter(t *testing.T) {
 	require.Len(t, unacked, 1)
 	assert.Equal(t, a2.ID, unacked[0].ID)
 }
+
+// PrincipalSecretFirstSeen must return the EARLIEST access time per (principal, secret)
+// pair, not the latest — repeat reads must not reset "first seen" forward, or a
+// principal's long-standing access to a secret would look newly-first-seen on every
+// pass (#101).
+func TestPrincipalSecretFirstSeen_ReturnsEarliestPerPair(t *testing.T) {
+	ctx := context.Background()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}))
+	ls := NewLocalStorage(db)
+
+	now := time.Now().UTC()
+	first := now.Add(-10 * 24 * time.Hour)
+	// Three reads of the same (alice, secret 1) pair; the middle two are later than
+	// `first` and must not overwrite it as the earliest.
+	for _, offset := range []time.Duration{0, 2 * time.Hour, 5 * 24 * time.Hour} {
+		require.NoError(t, db.Create(&models.SecretAccessLog{
+			SecretNodeID: 1, AccessedBy: "alice", Action: "read", IPAddress: "10.0.0.1",
+			AccessTime: first.Add(offset),
+		}).Error)
+	}
+	// A second, unrelated pair.
+	require.NoError(t, db.Create(&models.SecretAccessLog{
+		SecretNodeID: 2, AccessedBy: "bob", Action: "read", IPAddress: "10.0.0.2",
+		AccessTime: now.Add(-1 * time.Hour),
+	}).Error)
+
+	got, err := ls.PrincipalSecretFirstSeen(ctx, now.Add(-30*24*time.Hour))
+	require.NoError(t, err)
+	require.Contains(t, got, "alice")
+	require.Contains(t, got["alice"], uint(1))
+	assert.WithinDuration(t, first, got["alice"][1], time.Second, "must return the earliest access, not the latest")
+	require.Contains(t, got, "bob")
+	require.Contains(t, got["bob"], uint(2))
+
+	// The `since` bound excludes pairs whose only activity predates it entirely.
+	got, err = ls.PrincipalSecretFirstSeen(ctx, now.Add(-1*time.Minute))
+	require.NoError(t, err)
+	assert.NotContains(t, got, "alice", "alice's only reads are older than `since`")
+	assert.NotContains(t, got, "bob", "bob's only read is older than `since`")
+}
+
+// ListSecretAccessLogs must cap the number of rows returned (#101) — otherwise a
+// secret read continuously over the query window (a busy CI pipeline, or an attacker
+// deliberately hammering reads to bloat the log) makes the anomaly detector, which
+// calls this per secret per pass, load an unbounded result set into memory.
+func TestListSecretAccessLogs_CapsRowCount(t *testing.T) {
+	ctx := context.Background()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretAccessLog{}))
+	ls := NewLocalStorage(db)
+
+	now := time.Now().UTC()
+	const overCap = maxSecretAccessLogRows + 50
+	rows := make([]models.SecretAccessLog, overCap)
+	for i := range rows {
+		rows[i] = models.SecretAccessLog{
+			SecretNodeID: 1, AccessedBy: "svc", Action: "read", IPAddress: "10.0.0.1",
+			AccessTime: now.Add(-time.Duration(overCap-i) * time.Millisecond),
+		}
+	}
+	require.NoError(t, db.CreateInBatches(rows, 1000).Error)
+
+	got, err := ls.ListSecretAccessLogs(ctx, 1, now.Add(-time.Hour))
+	require.NoError(t, err)
+	assert.Len(t, got, maxSecretAccessLogRows, "result must be capped, not the full over-cap row count")
+}

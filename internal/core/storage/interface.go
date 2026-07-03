@@ -510,6 +510,17 @@ type Storage interface {
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
+	// PrincipalSecretFirstSeen returns, for every non-empty accessed_by with at least
+	// one access log row at or after `since`, the earliest access time per secret it
+	// touched in that range — aggregated in SQL (GROUP BY + MIN), not loaded as full
+	// log rows, so this stays cheap regardless of per-secret read volume. Backs the
+	// anomaly detector's per-principal breadth-exfiltration pass (#101): a principal
+	// reading many DIFFERENT secrets it has never touched before is invisible to the
+	// per-secret rules (each secret only sees one unremarkable access), so this
+	// aggregates across secrets by principal instead. See the LocalStorage
+	// implementation's doc comment for why `since` must stay a coarse (date-scale)
+	// bound rather than a narrow live-window one.
+	PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error)
 	// MostAccessedSecrets returns the most-read secrets (optionally scoped to a
 	// project) in the window since `since`, ordered by read count descending,
 	// capped at `limit`. Backs the usage-analytics dashboard.
