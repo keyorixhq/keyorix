@@ -250,8 +250,8 @@ func TestProvisionSSOUser(t *testing.T) {
 	t.Run("does NOT reuse an existing account on an unverified email", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		// sub does not match; an existing victim account DOES match the email.
-		store.On("GetUserByExternalID", mock.Anything, "evil|999").Return((*models.User)(nil), notFound())
-		victim := &models.User{ID: 7, Username: "victim", Email: "victim@corp.com", ExternalID: "okta|legit"}
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:evil|999").Return((*models.User)(nil), notFound())
+		victim := &models.User{ID: 7, Username: "victim", Email: "victim@corp.com", ExternalID: "sso:okta:legit"}
 		store.On("GetUserByEmail", mock.Anything, "victim@corp.com").Return(victim, nil)
 		// A fresh account is provisioned instead of reusing the victim.
 		store.On("GetUserByUsername", mock.Anything, "victim").Return((*models.User)(nil), notFound())
@@ -266,7 +266,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, uint(99), u.ID, "must be the fresh account, not the victim (id 7)")
 		require.NotNil(t, created)
-		assert.Equal(t, "evil|999", created.ExternalID, "fresh account bound to the asserting subject, not the victim")
+		assert.Equal(t, "sso:okta:evil|999", created.ExternalID, "fresh account bound to the asserting provider+subject, not the victim")
 		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything) // victim not claimed/reused
 	})
 
