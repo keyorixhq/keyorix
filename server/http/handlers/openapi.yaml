@@ -2671,6 +2671,14 @@ paths:
     get:
       tags: [Dashboard]
       summary: Dashboard summary statistics
+      description: >-
+        The caller's own home dashboard (secret/share counts, expiring secrets).
+        Requires the universal system.read baseline (every real principal holds it).
+        The deployment-wide aggregate fields (activeUsers, auditEvents30d,
+        auditLogins30d, auditSecretReads30d, failedAuthAttempts24h, inactiveUsers) and
+        the full recentActivity feed are additionally scoped to audit.read — a
+        baseline-only caller gets zeroed aggregates and an activity feed limited to
+        their own events.
       operationId: getDashboardStats
       security: [{bearerAuth: []}]
       responses:
@@ -2683,6 +2691,7 @@ paths:
             expiringSecrets[] (id, name, environment, expiresAt, daysLeft, expired), and
             recentActivity[] (id, type, secretName, timestamp, actor).
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/compliance/posture:
     get:
       tags: [Dashboard]
@@ -2700,7 +2709,8 @@ paths:
         counts per sensitivity level + unclassified), anomalies (open /
         high-severity access-anomaly alerts), legal hold (active + reason), and
         data retention (configured per-record-type windows in days; 0 = keep
-        forever — A.5.33 storage-limitation). Requires system.read.
+        forever — A.5.33 storage-limitation). Requires audit.read (not the universal
+        system_viewer baseline).
       operationId: getCompliancePosture
       security: [{bearerAuth: []}]
       responses:
@@ -2719,7 +2729,7 @@ paths:
         references across ISO 27001 Annex A, SOC 2 Trust Services Criteria, NIS2,
         and DORA, with a live status derived from the posture (pass | gap |
         not_configured) and a human-readable detail. Includes a summary tally.
-        Requires system.read.
+        Requires audit.read (not the universal system_viewer baseline).
       operationId: getComplianceControls
       security: [{bearerAuth: []}]
       responses:
@@ -2739,7 +2749,7 @@ paths:
         substantiate it — the audit-chain anchor {valid, chained_events, head_id,
         head_hash, checkpointed}, the access-review campaigns (per project, with
         tallies), the break-glass register, and the overdue rotations. Requires
-        system.read.
+        audit.read (not the universal system_viewer baseline).
       operationId: getComplianceEvidence
       security: [{bearerAuth: []}]
       responses:
@@ -2759,7 +2769,8 @@ paths:
         archived pack was produced by this deployment and is unmodified. The pack is
         base64-encoded in data_b64 so arbitrary JSON can ride in the envelope. A
         signature made under a superseded DEK version (post key-rotation) is reported
-        as unverifiable, distinct from a tamper mismatch. Requires system.read.
+        as unverifiable, distinct from a tamper mismatch. Requires audit.read (not the
+        universal system_viewer baseline).
       operationId: verifyComplianceEvidence
       security: [{bearerAuth: []}]
       requestBody:
@@ -2786,7 +2797,7 @@ paths:
       description: >-
         Whether a deployment-wide litigation/investigation hold is active. While
         active, the background purge jobs are blocked from hard-deleting records.
-        Requires system.read.
+        Requires audit.read (not the universal system_viewer baseline).
       operationId: getLegalHold
       security: [{bearerAuth: []}]
       responses:
@@ -2831,7 +2842,8 @@ paths:
         The risk register: governed acceptances of a known control gap, each with an
         owner, justification, and sunset date. Active only by default; ?all=true
         includes expired exceptions (history). Each carries a computed status
-        (active | expired | revoked). Requires system.read.
+        (active | expired | revoked). Requires audit.read (not the universal
+        system_viewer baseline).
       operationId: listRiskExceptions
       parameters:
         - {name: all, in: query, schema: {type: boolean}, description: "Include expired exceptions."}
@@ -2930,8 +2942,9 @@ paths:
       tags: [Dashboard]
       summary: List separation-of-duties violations
       description: >-
-        Principals whose effective permissions include both sides of a policy.
-        Requires system.read.
+        Principals whose effective permissions include both sides of a policy —
+        discloses violator names/emails deployment-wide. Requires audit.read (not the
+        universal system_viewer baseline).
       operationId: listSoDViolations
       security: [{bearerAuth: []}]
       responses:

@@ -71,6 +71,11 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqBody struct {
+		// The `validate:"required"` tag here is decorative: this handler never
+		// calls h.validator.Validate, relying instead on the manual == ""
+		// check below. Harmless today (the manual check covers the same
+		// case), but the tag would silently fail to protect a future rule
+		// added to the tag without a matching manual check (see #347).
 		NewValue string `json:"new_value" validate:"required"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -114,6 +119,9 @@ func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var reqBody struct {
+		// The `validate:"required"` tag here is decorative: this handler never
+		// calls h.validator.Validate, relying instead on the manual <= 0
+		// check below. See the same note on RotateSecret's NewValue above.
 		Version int `json:"version" validate:"required"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {

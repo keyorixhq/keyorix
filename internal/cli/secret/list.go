@@ -2,7 +2,9 @@ package secret
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -232,42 +234,68 @@ func displaySecretsTable(secrets []*models.SecretNode, total int64, filter *core
 	}
 }
 
+// jsonSecretEntry is the per-secret shape for `secret list --format json`.
+// Built and marshaled via encoding/json (not fmt.Printf string interpolation)
+// so a secret name (or any other string field) containing quotes/control
+// characters is correctly escaped rather than able to break out of the JSON
+// string and inject arbitrary keys (#354).
+type jsonSecretEntry struct {
+	ID            uint    `json:"id"`
+	Name          string  `json:"name"`
+	Type          string  `json:"type"`
+	Status        string  `json:"status"`
+	ProjectID     uint    `json:"project_id"`
+	EnvironmentID uint    `json:"environment_id"`
+	CreatedBy     string  `json:"created_by"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	MaxReads      *int    `json:"max_reads,omitempty"`
+	Expiration    *string `json:"expiration,omitempty"`
+}
+
+type jsonSecretsOutput struct {
+	Total   int64             `json:"total"`
+	Offset  int               `json:"offset"`
+	Limit   int               `json:"limit"`
+	Count   int               `json:"count"`
+	Secrets []jsonSecretEntry `json:"secrets"`
+}
+
 func displaySecretsJSON(secrets []*models.SecretNode, total int64, filter *coreStorage.SecretFilter) {
 	offset := (filter.Page - 1) * filter.PageSize
 
-	fmt.Printf("{\n")
-	fmt.Printf("  \"total\": %d,\n", total)
-	fmt.Printf("  \"offset\": %d,\n", offset)
-	fmt.Printf("  \"limit\": %d,\n", filter.PageSize)
-	fmt.Printf("  \"count\": %d,\n", len(secrets))
-	fmt.Printf("  \"secrets\": [\n")
-
-	for i, secret := range secrets {
-		fmt.Printf("    {\n")
-		fmt.Printf("      \"id\": %d,\n", secret.ID)
-		fmt.Printf("      \"name\": \"%s\",\n", secret.Name)
-		fmt.Printf("      \"type\": \"%s\",\n", secret.Type)
-		fmt.Printf("      \"status\": \"%s\",\n", secret.Status)
-		fmt.Printf("      \"project_id\": %d,\n", secret.ProjectID)
-		fmt.Printf("      \"environment_id\": %d,\n", secret.EnvironmentID)
-		fmt.Printf("      \"created_by\": \"%s\",\n", secret.CreatedBy)
-		fmt.Printf("      \"created_at\": \"%s\",\n", secret.CreatedAt.Format(time.RFC3339))
-		fmt.Printf("      \"updated_at\": \"%s\"", secret.UpdatedAt.Format(time.RFC3339))
-		if secret.MaxReads != nil {
-			fmt.Printf(",\n      \"max_reads\": %d", *secret.MaxReads)
+	out := jsonSecretsOutput{
+		Total:   total,
+		Offset:  offset,
+		Limit:   filter.PageSize,
+		Count:   len(secrets),
+		Secrets: make([]jsonSecretEntry, 0, len(secrets)),
+	}
+	for _, secret := range secrets {
+		entry := jsonSecretEntry{
+			ID:            secret.ID,
+			Name:          secret.Name,
+			Type:          secret.Type,
+			Status:        secret.Status,
+			ProjectID:     secret.ProjectID,
+			EnvironmentID: secret.EnvironmentID,
+			CreatedBy:     secret.CreatedBy,
+			CreatedAt:     secret.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:     secret.UpdatedAt.Format(time.RFC3339),
+			MaxReads:      secret.MaxReads,
 		}
 		if secret.Expiration != nil {
-			fmt.Printf(",\n      \"expiration\": \"%s\"", secret.Expiration.Format(time.RFC3339))
+			exp := secret.Expiration.Format(time.RFC3339)
+			entry.Expiration = &exp
 		}
-		fmt.Printf("\n    }")
-		if i < len(secrets)-1 {
-			fmt.Printf(",")
-		}
-		fmt.Printf("\n")
+		out.Secrets = append(out.Secrets, entry)
 	}
 
-	fmt.Printf("  ]\n")
-	fmt.Printf("}\n")
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(out); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode JSON output: %v\n", err)
+	}
 }
 
 func truncateString(s string, maxLen int) string {

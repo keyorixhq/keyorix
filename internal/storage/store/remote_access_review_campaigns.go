@@ -21,8 +21,8 @@ func (rs *RemoteStorage) ListAccessReviewCampaigns(_ context.Context, _ uint) ([
 	return nil, remoteUnsupported("ListAccessReviewCampaigns")
 }
 
-func (rs *RemoteStorage) UpdateAccessReviewCampaign(_ context.Context, _ *models.AccessReviewCampaign) error {
-	return remoteUnsupported("UpdateAccessReviewCampaign")
+func (rs *RemoteStorage) UpdateAccessReviewCampaign(_ context.Context, _ *models.AccessReviewCampaign) (bool, error) {
+	return false, remoteUnsupported("UpdateAccessReviewCampaign")
 }
 
 func (rs *RemoteStorage) CreateAccessReviewItems(_ context.Context, _ []*models.AccessReviewItem) error {
@@ -37,6 +37,6 @@ func (rs *RemoteStorage) GetAccessReviewItem(_ context.Context, _ uint) (*models
 	return nil, remoteUnsupported("GetAccessReviewItem")
 }
 
-func (rs *RemoteStorage) UpdateAccessReviewItem(_ context.Context, _ *models.AccessReviewItem) error {
-	return remoteUnsupported("UpdateAccessReviewItem")
+func (rs *RemoteStorage) UpdateAccessReviewItem(_ context.Context, _ *models.AccessReviewItem) (bool, error) {
+	return false, remoteUnsupported("UpdateAccessReviewItem")
 }

@@ -24,12 +24,18 @@ import (
 // EventAutoRotationFailures is audited once per run when one or more secrets failed.
 const EventAutoRotationFailures = "rotation.failures_alerted"
 
-// notifyRotationFailures broadcasts a single summary of the run's rotation failures to
-// the configured notification channel (Slack/Teams/webhook) — a silently-failed
-// credential rotation is a security event operators must see. No-op when no sink is
-// wired or nothing failed; the sink is non-blocking. Also audited.
-func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, failed map[uint]string) {
-	if len(failed) == 0 {
+// notifyRotationFailures broadcasts a single summary of ONE project's rotation
+// failures to the configured deployment-wide notification channel (Slack/Teams/
+// webhook/email) — a silently-failed credential rotation is a security event
+// operators must see. Scoped to a single project: the caller (RunAutoRotation) calls
+// this once per project rather than once per run, so a broadcast never bundles
+// unrelated projects' secret names/failure reasons into one message (#391) — a
+// deployment-wide channel is still an appropriate destination for this event (unlike
+// the per-user events in notifications.go), it just must not cross project
+// boundaries within a single message. No-op when nothing failed for this project;
+// the sink is non-blocking.
+func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, projectID uint, failed map[uint]string) {
+	if len(failed) == 0 || c.notificationSink == nil {
 		return
 	}
 	lines := make([]string, 0, len(failed))
@@ -37,17 +43,13 @@ func (c *KeyorixCore) notifyRotationFailures(ctx context.Context, failed map[uin
 		lines = append(lines, "• "+msg)
 	}
 	sort.Strings(lines) // stable, deterministic ordering
-	sysCtx := WithActorType(ctx, ActorTypeSystem)
-	c.writeAuditEvent(sysCtx, EventAutoRotationFailures, nil, nil,
-		fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate", len(failed)))
-	if c.notificationSink == nil {
-		return
-	}
+	pid := projectID
 	c.notificationSink.Deliver(NotificationEvent{
-		Type:    "rotation.failed",
-		Title:   fmt.Sprintf("Auto-rotation: %d secret(s) failed to rotate", len(failed)),
-		Message: "The following secrets could not be auto-rotated:\n" + strings.Join(lines, "\n"),
-		Link:    "/secrets",
+		Type:      "rotation.failed",
+		Title:     fmt.Sprintf("Auto-rotation: %d secret(s) failed to rotate in %s", len(failed), c.projectLabel(ctx, projectID)),
+		Message:   "The following secrets could not be auto-rotated:\n" + strings.Join(lines, "\n"),
+		ProjectID: &pid,
+		Link:      fmt.Sprintf("/projects/%d/secrets", projectID),
 	})
 }
 
@@ -176,6 +178,12 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 		}
 		secrets, err := c.scopedPolicySecrets(ctx, policy, nil)
 		if err != nil {
+			// #364: unlike the dependency-list error below (which degrades gracefully
+			// and logs), this was previously a silent skip — auto-rotate-enabled,
+			// possibly critically-overdue secrets under this policy's scope would not
+			// even be considered for rotation this run, with no trace anywhere that it
+			// happened. Log so an operator can see it, matching the sibling handling.
+			log.Printf("auto-rotation: list scoped secrets for policy %d (%q): %v — skipping this policy's secrets this run", policy.ID, policy.Name, err)
 			continue
 		}
 		for _, secret := range secrets {
@@ -214,9 +222,12 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 
 	// Phase 3 — rotate each project's due secrets in dependency-safe wave order.
 	rotated := 0
-	// failed records why each non-rotated secret did not rotate (a genuine failure or a
-	// dependency-driven deferral); surfaced to operators via notifyRotationFailures.
-	failed := map[uint]string{}
+	// totalFailed accumulates every project's failures for the run-level audit summary
+	// only (a bare count, no secret names/reasons — safe to bundle). The per-project
+	// broadcast notification below uses a fresh, project-scoped map instead, so a
+	// Slack/Teams/webhook message never bundles unrelated projects' secret names or
+	// failure reasons together (#391).
+	totalFailed := 0
 	for _, pid := range projectOrder {
 		ids := byProject[pid]
 		candidateSet := make(map[uint]bool, len(ids))
@@ -251,6 +262,11 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 			}
 		}
 
+		// failed records why each non-rotated secret in THIS project did not rotate (a
+		// genuine failure or a dependency-driven deferral). Scoped to this project only
+		// (see totalFailed above / #391) and broadcast right after this project finishes,
+		// before moving on to the next project's map.
+		failed := map[uint]string{}
 		blocked := map[uint]bool{} // due secrets that did not rotate this run (failed or deferred)
 		for _, wave := range waves {
 			for _, id := range wave {
@@ -276,9 +292,15 @@ func (c *KeyorixCore) RunAutoRotation(ctx context.Context) (int, error) {
 				}
 			}
 		}
+		totalFailed += len(failed)
+		c.notifyRotationFailures(ctx, pid, failed)
 	}
 
-	c.notifyRotationFailures(ctx, failed)
+	if totalFailed > 0 {
+		sysCtx := WithActorType(ctx, ActorTypeSystem)
+		c.writeAuditEvent(sysCtx, EventAutoRotationFailures, nil, nil,
+			fmt.Sprintf("auto-rotation: %d secret(s) failed to rotate", totalFailed))
+	}
 	return rotated, nil
 }
 

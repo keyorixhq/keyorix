@@ -109,15 +109,25 @@ func (c *KeyorixCore) InviteToProject(ctx context.Context, projectID uint, email
 // InviteToProjectWithLink creates an invitation and provisions its accept link
 // (ADR-028): an invitation_accept setup token bound to the invitation, delivered via
 // the configured channel. Returns the invitation and the delivery outcome. If
-// provisioning fails (e.g. base_url unset), the invitation still exists and is
-// returned with a nil result and the error, so the caller can resend rather than
-// losing the invite.
+// provisioning fails (e.g. base_url unset, or the resend throttle below), the
+// invitation still exists and is returned with a nil result and the error, so the
+// caller can resend rather than losing the invite.
+//
+// The link provisioning is throttled per (purpose, email) via
+// provisionSetupLinkThrottled — the same control ResendInvitationLink uses (#183) —
+// rather than the unthrottled provisionSetupLink an earlier version called directly.
+// Without this, a principal holding only project-scoped roles.assign could loop-call
+// this endpoint for the same target email to fire unbounded real SMTP sends from the
+// operator's mail relay (#345); reusing the existing (purpose, email) key rather than
+// adding an actor or per-invitation dimension keeps initial invites and resends of the
+// same target subject to one combined rate, matching how ResendInvitationLink already
+// treats every pending invite to the same email as one throttled subject.
 func (c *KeyorixCore) InviteToProjectWithLink(ctx context.Context, projectID uint, email, role string, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	inv, err := c.InviteToProject(ctx, projectID, email, role, invitedBy)
 	if err != nil {
 		return nil, nil, err
 	}
-	prov, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:      SetupPurposeInvitationAccept,
 		SubjectEmail: email,
 		InvitationID: &inv.ID,
@@ -201,13 +211,16 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 // InviteGlobalWithLink creates a global invitation and provisions its accept link
 // (ADR-028), mirroring InviteToProjectWithLink. A nil result with a non-nil error
 // and a non-nil invitation means the invite exists but the link couldn't be
-// delivered (e.g. base_url unset) — the caller can resend.
+// delivered (e.g. base_url unset, or the resend throttle) — the caller can resend.
+// Throttled per (purpose, email) via provisionSetupLinkThrottled for the same reason
+// as InviteToProjectWithLink (#345): the users.write-gated global-invite endpoint is
+// otherwise an equally loop-callable unbounded-SMTP vector.
 func (c *KeyorixCore) InviteGlobalWithLink(ctx context.Context, email, systemRole string, assignments []ProjectAssignment, invitedBy uint) (*models.ProjectInvitation, *ProvisionSetupResult, error) {
 	inv, err := c.InviteGlobal(ctx, email, systemRole, assignments, invitedBy)
 	if err != nil {
 		return nil, nil, err
 	}
-	prov, err := c.provisionSetupLink(ctx, IssueSetupTokenRequest{
+	prov, err := c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
 		Purpose:      SetupPurposeInvitationAccept,
 		SubjectEmail: email,
 		InvitationID: &inv.ID,
@@ -232,7 +245,11 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 			if err != nil {
 				return fmt.Errorf("unknown system role %q: %w", inv.SystemRole, err)
 			}
-			if err := c.storage.AssignRole(ctx, userID, role.ID, storage.Scope{ProjectID: 0}); err != nil {
+			// Routed through the audited wrapper — this is the moment of privilege
+			// grant for a global invitation (up to and including super_admin), which
+			// previously left zero trace of any kind (#299). Attributed to the inviter,
+			// consistent with the per-project assignment grants below.
+			if err := c.AssignUserRole(ctx, inv.InvitedBy, userID, role.ID, Scope{ProjectID: 0}); err != nil {
 				return fmt.Errorf("failed to grant system role: %w", err)
 			}
 		}
@@ -521,12 +538,15 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	grantDesc := role
 	if grantTTL > 0 {
 		expiresAt := now.Add(grantTTL)
-		if err := c.storage.AssignRoleWithExpiry(ctx, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
+		// Routed through the audited wrapper so this grant lands in the RBAC audit
+		// trail with a structured RoleID, alongside the generic access_request.approved
+		// event below (#298).
+		if err := c.AssignUserRoleWithExpiry(ctx, approverID, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", role, expiresAt.UTC().Format(time.RFC3339), grantTTL)
 	} else {
-		if err := c.storage.AssignRole(ctx, req.UserID, roleModel.ID, scope); err != nil {
+		if err := c.AssignUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); err != nil {
 			return nil, fmt.Errorf("failed to grant role: %w", err)
 		}
 	}

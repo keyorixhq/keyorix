@@ -52,6 +52,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/startup"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
@@ -65,6 +66,20 @@ func main() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Schema/sanity validation (ports, TLS cert/key presence, storage DSN/path) — always
+	// enforced, independent of any security flag: a malformed config should never boot.
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration is invalid: %v", err)
+	}
+
+	// Run the file-permission / encryption-key / database-reachability checks that were
+	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
+	// (#330), despite official docs and that command's own help text claiming they run
+	// automatically on every boot.
+	if err := runStartupValidation(cfg); err != nil {
+		log.Fatalf("startup validation: %v", err)
 	}
 
 	// Initialize i18n system
@@ -392,10 +407,23 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("SIEM audit forwarding enabled (provider=%s)", sc.Provider)
 	}
 
-	// Wire external notification channels if configured. Each in-app notification is
-	// fanned out to every enabled channel (best-effort, async); with none enabled it
-	// stays in-app only.
-	var notifySinks []core.NotificationSink
+	// Wire external notification channels if configured.
+	//
+	// #391: two distinct fan-out sets are built, not one. broadcastSinks (every
+	// enabled channel) backs the deployment-wide, aggregate notifications
+	// (compliance digest, auto-rotation-failure summary) — those are genuinely
+	// relevant to the whole deployment's ops audience. recipientSinks (only
+	// channels that can address a single user — currently email) backs every
+	// per-user/per-project notification (secret shared, share revoked, ownership
+	// transferred, access requested, anomaly alert, break-glass activation, …).
+	// Slack/Teams/webhook are deliberately excluded from recipientSinks: they are
+	// one fixed destination an operator configures, with no per-user chat-identity
+	// mapping in this codebase to target a specific recipient, so routing a
+	// per-user event there would broadcast it to everyone with channel visibility
+	// regardless of project membership or secret access. See
+	// internal/core/notifications.go and internal/core/service.go.
+	var broadcastSinks []core.NotificationSink
+	var recipientSinks []core.NotificationSink
 	if wc := cfg.Notifications.Webhook; wc.Enabled {
 		sink, werr := notifychan.NewWebhook(notifychan.WebhookConfig{
 			Endpoint:           wc.Endpoint,
@@ -406,7 +434,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if werr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification webhook channel: %w", werr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification webhook channel enabled (endpoint=%s)", wc.Endpoint)
 	}
 	if ec := cfg.Notifications.Email; ec.Enabled {
@@ -421,7 +449,8 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if eerr != nil {
 			return nil, nil, fmt.Errorf("failed to init notification email channel: %w", eerr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
+		recipientSinks = append(recipientSinks, sink)
 		log.Printf("Notification email channel enabled (host=%s)", ec.Host)
 	}
 	if cfg.Notifications.Slack.Enabled {
@@ -429,7 +458,7 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if serr != nil {
 			return nil, nil, fmt.Errorf("failed to init Slack notification channel: %w", serr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification Slack channel enabled")
 	}
 	if cfg.Notifications.Teams.Enabled {
@@ -437,11 +466,14 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		if terr != nil {
 			return nil, nil, fmt.Errorf("failed to init Teams notification channel: %w", terr)
 		}
-		notifySinks = append(notifySinks, sink)
+		broadcastSinks = append(broadcastSinks, sink)
 		log.Printf("Notification Teams channel enabled")
 	}
-	if sink := notifychan.NewMulti(notifySinks...); sink != nil {
+	if sink := notifychan.NewMulti(broadcastSinks...); sink != nil {
 		coreService.SetNotificationSink(sink)
+	}
+	if sink := notifychan.NewMulti(recipientSinks...); sink != nil {
+		coreService.SetRecipientNotificationSink(sink)
 	}
 
 	// Wire Keyorix Connect (ADR-043) read-through federation if enabled.
@@ -1079,7 +1111,15 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 						log.Printf("Evidence-delivery error: %v", err)
 						return err
 					}
-					log.Printf("Evidence pack exported: %d bytes → %v", res.Bytes, res.Targets)
+					if res.Degraded {
+						// #136: a degraded pack must be loud in the operator-facing log, not
+						// just embedded in the archived JSON — a collection failure means
+						// this export is incomplete, not a clean point-in-time snapshot.
+						log.Printf("Evidence pack exported DEGRADED (%d collection failure(s)): %d bytes -> %v; reasons: %s",
+							len(res.DegradedReasons), res.Bytes, res.Targets, strings.Join(res.DegradedReasons, "; "))
+					} else {
+						log.Printf("Evidence pack exported: %d bytes -> %v", res.Bytes, res.Targets)
+					}
 					return nil
 				})
 			})
@@ -1291,6 +1331,44 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 		return err
 	}
 	return check("gRPC", cfg.Server.GRPC)
+}
+
+// runStartupValidation runs internal/startup.ValidateStartup — the file-permission,
+// encryption-key (DEK/salt existence + size), and database-reachability checks that were
+// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand,
+// despite that command's own help text and SYSTEM_SETUP.md/docs/CONFIGURATION.md claiming
+// they run automatically on every boot (#330).
+//
+// Gated behind security.enable_file_permission_check — the flag these checks are
+// documented under and the one production.yaml/web-enabled.yaml explicitly turn on — so a
+// deployment that hasn't opted in (the default: the flag defaults to false) is completely
+// unaffected by wiring this in; enforceKeyFilePermissions below still runs unconditionally
+// as the lighter-weight, always-on permission check it always was. When the flag is set,
+// ValidateStartup itself decides warn-vs-fail-closed for a bad permission via
+// allow_unsafe_file_permissions, and auto-fixes bad permissions when
+// auto_fix_file_permissions is set (run first, before enforceKeyFilePermissions, so an
+// auto-fix takes effect before that check re-inspects the same files) — any other failure
+// (missing/undersized DEK or salt, unreachable local database) refuses to start, matching
+// this being "the sole automated backstop for a world-readable master-key-material file."
+func runStartupValidation(cfg *config.Config) error {
+	if !cfg.Security.EnableFilePermissionCheck {
+		return nil
+	}
+	configPath := config.ResolvedPath("")
+	result, err := startup.ValidateStartup(configPath)
+	if result != nil {
+		for _, w := range result.Warnings {
+			log.Printf("startup validation warning: %s", w)
+		}
+		for _, e := range result.Errors {
+			log.Printf("startup validation error: %s", e)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	log.Printf("Startup validation passed (config, file permissions, encryption keys, database).")
+	return nil
 }
 
 // enforceKeyFilePermissions refuses to start (or, by default, loudly warns) when sensitive

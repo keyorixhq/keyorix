@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -274,6 +275,27 @@ func TestSecretService_CreateSecret_Validation(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestSecretService_CreateSecret_NameLengthMatchesHTTP verifies gRPC rejects an
+// over-255-char secret Name with the same limit HTTP's `validate:"...,max=255"` tag
+// enforces (backlog #190) — internal/core.CreateSecret, which both transports call,
+// must reject it rather than only the (gRPC-bypassed) HTTP validator.
+func TestSecretService_CreateSecret_NameLengthMatchesHTTP(t *testing.T) {
+	r := newSecretTestRig(t)
+	ctx := authCtx(1, "writer", "secrets.write", "secrets.read")
+
+	_, err := r.svc.CreateSecret(ctx, &pb.CreateSecretRequest{
+		Name: strings.Repeat("a", 256), Value: "v", ProjectId: 1, EnvironmentId: 1, Type: "password",
+	})
+	require.Error(t, err, "a 256-char secret name must be rejected over gRPC, matching HTTP's 255-char cap")
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+
+	// A name at exactly the limit is still accepted.
+	_, err = r.svc.CreateSecret(ctx, &pb.CreateSecretRequest{
+		Name: strings.Repeat("a", 255), Value: "v", ProjectId: 1, EnvironmentId: 1, Type: "password",
+	})
+	require.NoError(t, err)
 }
 
 func TestSecretService_GetSecret(t *testing.T) {

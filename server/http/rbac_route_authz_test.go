@@ -31,7 +31,7 @@ func TestUpdateUserRolesRequiresRolesAssign(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.AuditEvent{}, &models.Session{},
+		&models.AuditEvent{}, &models.Session{}, &models.Project{}, &models.Environment{},
 	))
 	now := time.Now()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "a@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
