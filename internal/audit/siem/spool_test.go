@@ -166,3 +166,37 @@ func TestSpool_ConcurrentAddDuringReplayNotLost(t *testing.T) {
 	}
 	assert.True(t, deliveredLate || inSpool, "the concurrently-added event must be retained or delivered, never lost")
 }
+
+// replay() must serialize against itself: two overlapping callers (e.g. the background
+// loop's own initial replay racing a manually-triggered one, as happened intermittently
+// in CI for TestSpool_PersistsAndReplaysOnRecovery) must not each independently snapshot
+// and deliver the same undelivered lines, which would double-deliver every event.
+func TestSpool_ConcurrentReplayCallsDoNotDoubleDeliver(t *testing.T) {
+	dir := t.TempDir()
+	tr := true
+	d := &fakeDelivery{}
+	// Slow delivery widens the window in which a second, concurrent replay() could race
+	// the first if replay() weren't serialized against itself.
+	hook := func(ctx context.Context, e *models.AuditEvent) error {
+		time.Sleep(10 * time.Millisecond)
+		return d.deliver(ctx, e)
+	}
+	s, err := newSpool(dir, time.Hour, hook)
+	require.NoError(t, err)
+	s.close() // stop the background loop; drive replay() manually and concurrently below
+
+	s.add(&models.AuditEvent{ID: 1, EventType: "secret.read", Success: &tr})
+	s.add(&models.AuditEvent{ID: 2, EventType: "secret.updated", Success: &tr})
+
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.replay()
+		}()
+	}
+	wg.Wait()
+
+	assert.ElementsMatch(t, []uint{1, 2}, d.delivered, "each event must be delivered exactly once despite concurrent replay() callers")
+}
