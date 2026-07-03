@@ -75,21 +75,29 @@ func (c *KeyorixCore) ProjectRequiresMFA(ctx context.Context, projectID uint) (b
 // By default (force=false) it returns an error if the project still contains secrets (ADR-019).
 // Pass force=true to delete the project and all its secrets (cascade).
 func (c *KeyorixCore) DeleteProject(ctx context.Context, id uint, force bool) error {
-	if !force {
-		projectID := id
-		_, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
-			ProjectID: &projectID,
-			Page:      1,
-			PageSize:  1,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to check project secrets: %w", err)
+	// #313: the guard count and the cascade delete used to be two separate top-level
+	// storage calls, with core-layer control flow in between — a secret created in that
+	// window silently got swept into the cascade despite the caller expecting the delete
+	// to be rejected. Run the guard and the delete inside one transaction (a nested
+	// savepoint over LocalStorage.DeleteProject's own transaction) so the count that
+	// gates the reject is the same one the cascade acts on, not a stale read.
+	return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if !force {
+			projectID := id
+			_, total, err := tx.ListSecrets(ctx, &storage.SecretFilter{
+				ProjectID: &projectID,
+				Page:      1,
+				PageSize:  1,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to check project secrets: %w", err)
+			}
+			if total > 0 {
+				return fmt.Errorf("project has %d secret(s) — delete them first or use --force to cascade", total)
+			}
 		}
-		if total > 0 {
-			return fmt.Errorf("project has %d secret(s) — delete them first or use --force to cascade", total)
-		}
-	}
-	return c.storage.DeleteProject(ctx, id)
+		return tx.DeleteProject(ctx, id)
+	})
 }
 
 // RestoreProject reverses a soft-delete, bringing back the project and the

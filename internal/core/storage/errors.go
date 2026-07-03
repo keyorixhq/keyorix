@@ -21,3 +21,11 @@ var ErrRoleNotAssigned = errors.New("role not assigned")
 // from a genuine storage failure; callers should surface it as "already revoked"
 // rather than a generic error.
 var ErrBreakGlassNotActive = errors.New("break-glass activation is not active")
+
+// ErrDuplicateActiveMembership is returned (wrapped) by CreateProjectMembership when the
+// insert collides with the partial unique index on (project_id, user_id) scoped to
+// non-revoked rows. InviteMember's own "no active membership" check races with a
+// concurrent invite for the same pair (#309 TOCTOU); this lets the loser of that race
+// be told cleanly that the membership already exists, rather than surfacing a raw
+// constraint-violation error or silently leaving an orphaned row.
+var ErrDuplicateActiveMembership = errors.New("an active membership already exists for this project and user")
