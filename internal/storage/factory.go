@@ -507,6 +507,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 			return fmt.Errorf("failed to migrate legal_holds table: %w", err)
 		}
 	}
+	// At most one legal hold may be active (released = false) at a time — a plain
+	// check-then-insert in core.PlaceLegalHold has a TOCTOU window (#305): two
+	// concurrent placements can both observe "no active hold" and both insert one,
+	// orphaning a row that GetActiveLegalHold's highest-id lookup never surfaces
+	// again, so lifting the hold an operator sees leaves purges permanently blocked.
+	// Close the race at the DB layer regardless of whether the table pre-existed.
+	if err := ensureLegalHoldActiveIndex(db); err != nil {
+		return err
+	}
 
 	// Create the risk-exceptions table if missing (A.5.8 risk treatment, additive).
 	if !riskExceptionExists {
@@ -718,6 +727,20 @@ func ensureUserNameIndex(db *gorm.DB) error {
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_username_active ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial users username index: %w", err)
+	}
+	return nil
+}
+
+// ensureLegalHoldActiveIndex creates a partial unique index that permits at most one
+// un-released (released = false) row in legal_holds at a time, closing the
+// place-hold TOCTOU race (#305): since every row matching the predicate shares the
+// same released=false value, uniqueness on that column caps the table at one such
+// row, and a second concurrent INSERT is rejected by the DB instead of silently
+// creating an orphaned duplicate hold. Idempotent; works on both SQLite and Postgres
+// (both support partial indexes and IF NOT EXISTS).
+func ensureLegalHoldActiveIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active ON legal_holds (released) WHERE released = false").Error; err != nil {
+		return fmt.Errorf("failed to create partial legal_holds active index: %w", err)
 	}
 	return nil
 }
