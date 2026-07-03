@@ -36,11 +36,11 @@ func (ls *LocalStorage) CreateLegalHold(ctx context.Context, h *models.LegalHold
 // SQLite or Postgres driver. GORM only maps driver errors to gorm.ErrDuplicatedKey
 // when opened with TranslateError (this app does not set that), so the driver's raw
 // message is matched instead: mattn/go-sqlite3 says "UNIQUE constraint failed";
-// pgx/lib/pq say "duplicate key value violates unique constraint".
+// pgx/lib/pq say "duplicate key value violates unique constraint" (SQLSTATE 23505).
 func isUniqueConstraintErr(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "UNIQUE constraint failed") ||
-		strings.Contains(msg, "duplicate key value violates unique constraint")
+	return strings.Contains(msg, "UNIQUE constraint failed") || // SQLite
+		strings.Contains(msg, "23505") || strings.Contains(msg, "duplicate key value") // Postgres
 }
 
 // GetActiveLegalHold returns the current un-released hold, or (nil, nil) when none

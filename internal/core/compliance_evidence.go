@@ -81,13 +81,26 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 	}
 
 	// Active risk exceptions (the governed-acceptance register).
+	//
+	// #136: each evidence sub-query below is independently re-queried from the posture
+	// rollup (e.g. ListRiskExceptions here vs. CountActiveRiskExceptions in
+	// GetCompliancePosture) and previously had the same no-else fail-open shape: a
+	// query error silently left the evidence-pack slice empty, indistinguishable from
+	// "queried, found none" in the HMAC-signed pack an auditor trusts. Every failure
+	// here now flips the shared posture.Degraded signal via posture.degrade, so a
+	// consumer checking ev.Posture.Degraded catches evidence-pack-level failures too,
+	// not just posture-rollup ones.
 	if exceptions, err := c.ListRiskExceptions(ctx, true); err == nil {
 		ev.RiskExceptions = exceptions
+	} else {
+		posture.degrade("evidence:risk_exceptions", err)
 	}
 
 	// Separation-of-duties violations (the toxic-combination register).
 	if violations, err := c.DetectSoDViolations(ctx); err == nil {
 		ev.SoDViolations = violations
+	} else {
+		posture.degrade("evidence:sod_violations", err)
 	}
 
 	// Audit anchor.
@@ -96,6 +109,8 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 			Valid: v.Valid, ChainedEvents: v.ChainedEvents,
 			HeadID: v.HeadID, HeadHash: v.HeadHash, Checkpointed: v.Checkpointed,
 		}
+	} else if err != nil {
+		posture.degrade("evidence:audit_anchor", err)
 	}
 
 	// Overdue rotations (deployment-wide).
@@ -108,6 +123,8 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 				})
 			}
 		}
+	} else {
+		posture.degrade("evidence:rotation_overdue", err)
 	}
 
 	// Campaigns + break-glass register, per project.
@@ -126,9 +143,13 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 					Revoked: cw.Progress.Revoked, Pending: cw.Progress.Pending,
 				})
 			}
+		} else {
+			posture.degrade(fmt.Sprintf("evidence:campaigns:project=%d", pid), err)
 		}
 		if acts, err := c.ListBreakGlassActivations(ctx, pid); err == nil {
 			ev.BreakGlass = append(ev.BreakGlass, acts...)
+		} else {
+			posture.degrade(fmt.Sprintf("evidence:break_glass:project=%d", pid), err)
 		}
 	}
 	return ev, nil

@@ -1079,7 +1079,15 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 						log.Printf("Evidence-delivery error: %v", err)
 						return err
 					}
-					log.Printf("Evidence pack exported: %d bytes → %v", res.Bytes, res.Targets)
+					if res.Degraded {
+						// #136: a degraded pack must be loud in the operator-facing log, not
+						// just embedded in the archived JSON — a collection failure means
+						// this export is incomplete, not a clean point-in-time snapshot.
+						log.Printf("Evidence pack exported DEGRADED (%d collection failure(s)): %d bytes -> %v; reasons: %s",
+							len(res.DegradedReasons), res.Bytes, res.Targets, strings.Join(res.DegradedReasons, "; "))
+					} else {
+						log.Printf("Evidence pack exported: %d bytes -> %v", res.Bytes, res.Targets)
+					}
 					return nil
 				})
 			})

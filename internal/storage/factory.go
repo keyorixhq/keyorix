@@ -644,6 +644,16 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
+	// Close the share-create race (#136): a partial unique index on live rows so two
+	// concurrent CreateShareRecord calls for the same (secret, recipient, is_group)
+	// can no longer both succeed as separate rows. Additive + idempotent; the full
+	// AutoMigrate below covers fresh DBs (which get the index further down too).
+	if tableExists(db, "share_records") {
+		if err := ensureShareRecordUniqueIndex(db); err != nil {
+			return err
+		}
+	}
+
 	// Skip full AutoMigrate if already initialised (projects table present).
 	if projectsExists {
 		return nil
@@ -699,7 +709,24 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if err := ensureGroupNameIndex(db); err != nil {
 		return err
 	}
-	return ensureUserNameIndex(db)
+	if err := ensureUserNameIndex(db); err != nil {
+		return err
+	}
+	return ensureShareRecordUniqueIndex(db)
+}
+
+// ensureShareRecordUniqueIndex creates a partial unique index on share_records
+// (secret_id, recipient_id, is_group), scoped to live rows (#136). ShareRecord
+// carried no DB constraint preventing two active share rows for the same
+// (secret, recipient, is_group) tuple: CreateShareRecord's check-then-create is a
+// read-then-write race, and a revoke-by-ID only ever removed one of the resulting
+// duplicates, leaving access live after what looked like a successful single-share
+// revoke. Idempotent; works on SQLite and Postgres.
+func ensureShareRecordUniqueIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_share_records_active ON share_records (secret_id, recipient_id, is_group) WHERE deleted_at IS NULL").Error; err != nil {
+		return fmt.Errorf("failed to create partial share_records unique index: %w", err)
+	}
+	return nil
 }
 
 // ensureGroupNameIndex replaces any plain unique index on groups.name with a
