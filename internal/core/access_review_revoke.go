@@ -83,7 +83,7 @@ func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, proj
 		if d.PrincipalID == 0 || d.SecretID == 0 {
 			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "principal_id and secret_id are required to revoke a share")
 		}
-		if err := c.revokeReviewShare(ctx, d); err != nil {
+		if err := c.revokeReviewShare(ctx, projectID, d); err != nil {
 			return err
 		}
 	case "owner":
@@ -97,8 +97,19 @@ func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, proj
 
 // revokeReviewShare deletes the ShareRecord matching the decision's secret +
 // recipient. It deletes the record directly (not via RevokeShare, which is owner-
-// gated) because access recertification acts on the project scope's authority.
-func (c *KeyorixCore) revokeReviewShare(ctx context.Context, d AccessReviewDecision) error {
+// gated) because access recertification acts on the project scope's authority —
+// which is exactly why the target secret must be verified to belong to THAT
+// project first: without it, a reviewer authorized on project A could pass any
+// SecretID and delete a share belonging to a secret in a DIFFERENT project
+// (IDOR; #99).
+func (c *KeyorixCore) revokeReviewShare(ctx context.Context, projectID uint, d AccessReviewDecision) error {
+	secret, err := c.storage.GetSecret(ctx, d.SecretID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	if secret.ProjectID != projectID {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorNotFound", nil), "secret does not belong to this project")
+	}
 	isGroup := d.Source == "group_share"
 	shares, err := c.storage.ListSharesBySecret(ctx, d.SecretID)
 	if err != nil {
