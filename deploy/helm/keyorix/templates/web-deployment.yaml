@@ -24,10 +24,23 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      securityContext:
+        # A non-root nginx binding port 80 needs CAP_NET_BIND_SERVICE (below,
+        # container-level), not root — UID 101 is nginx's own non-root user in the
+        # standard/alpine nginx images this is built from.
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: web
-          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          image: {{ include "keyorix.web.image" . | quote }}
           imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              add: ["NET_BIND_SERVICE"]
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 80
