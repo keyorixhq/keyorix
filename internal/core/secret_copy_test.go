@@ -63,6 +63,26 @@ func TestCopySecret(t *testing.T) {
 		assert.Equal(t, int64(1), createCount, "the destination create must be audited")
 	})
 
+	// TestCopySecret/audits_both_the_source_read_and_the_destination_create pins
+	// #126: CopySecret decrypts the source and writes a new secret with no audit
+	// trail — a covert exfil channel invisible to the anomaly detector, which
+	// keys off SecretAccessLog rows. A copy must leave both a "read" row for the
+	// source and a "create" row for the destination.
+	t.Run("audits both the source read and the destination create", func(t *testing.T) {
+		copied, err := c.CopySecret(ctx, src.ID, prod.ID, "audit-check", "owner", 1, "", "")
+		require.NoError(t, err)
+
+		var readLog models.SecretAccessLog
+		require.NoError(t, db.Where("secret_node_id = ? AND action = ?", src.ID, "read").
+			Order("id DESC").First(&readLog).Error, "the source read must be audited")
+		assert.Equal(t, "owner", readLog.AccessedBy)
+
+		var createLog models.SecretAccessLog
+		require.NoError(t, db.Where("secret_node_id = ? AND action = ?", copied.ID, "create").
+			First(&createLog).Error, "the destination create must be audited")
+		assert.Equal(t, "owner", createLog.AccessedBy)
+	})
+
 	t.Run("a new name can be given", func(t *testing.T) {
 		copied, err := c.CopySecret(ctx, src.ID, prod.ID, "db-url-renamed", "owner", 1, "", "")
 		require.NoError(t, err)

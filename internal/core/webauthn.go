@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -282,7 +283,13 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 		c.recordFailedLogin(ctx, wu.user) // count the failed second factor toward the lockout
 		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
-	c.clearLoginFailures(ctx, wu.user)
+	// A concurrent burst of failed second-factor attempts against this account may
+	// have tripped the lock since the pre-verification snapshot check above
+	// (TOCTOU). Re-check under the same serialization recordFailedLogin uses
+	// before minting a session.
+	if err := c.checkLockAndClearLoginFailures(ctx, wu.user); err != nil {
+		return nil, nil, err
+	}
 	c.persistUpdatedCredential(ctx, ch.UserID, cred)
 
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
@@ -379,7 +386,14 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	if c.loginLocked(resolved) {
 		return nil, nil, fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
-	c.clearLoginFailures(ctx, resolved)
+	// Re-check the lock state under the same serialization recordFailedLogin uses
+	// before minting a session — the passwordless path does not feed failures into
+	// the lockout itself (see above), but the account could still have been locked
+	// concurrently via the password/2FA path between the snapshot check above and
+	// here (TOCTOU).
+	if err := c.checkLockAndClearLoginFailures(ctx, resolved); err != nil {
+		return nil, nil, err
+	}
 	c.persistUpdatedCredential(ctx, resolved.ID, cred)
 
 	session, err := c.mintSession(ctx, resolved.ID, userAgent, ip)
@@ -399,19 +413,56 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 // persistUpdatedCredential writes back the credential's advanced signature counter
 // (and clone-warning flag) plus a last-used timestamp. Best-effort: a write error
 // must not fail an otherwise-valid login.
+//
+// Both FinishWebAuthnLogin and FinishWebAuthnPasswordlessLogin call this
+// independently and unsynchronized, so a concurrent cloned-authenticator race can
+// have two requests both load the stored row before either writes back: without a
+// predicate, a blind Save would let the loser's stale (lower) counter overwrite the
+// winner's already-persisted higher one — last UPDATE wins — silently regressing the
+// on-disk counter and suppressing the clone-detection audit signal on subsequent
+// logins (#306). webauthnCredentialMu serializes same-process callers (and so the
+// whole single-process SQLite case); combined with the row lock
+// LockWebAuthnCredentialForUpdate takes on Postgres, the read-validate-write stays
+// correct across replicas too. Inside the transaction the counter check is re-done
+// against the row's CURRENT persisted value (re-read under the lock), not the value
+// `cred` was validated against at the top of Finish*Login, so only a genuinely higher
+// counter is ever persisted.
 func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint, cred *webauthn.Credential) {
-	row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, cred.ID)
-	if err != nil || row.UserID != userID {
-		return
-	}
 	blob, err := json.Marshal(cred)
 	if err != nil {
 		return
 	}
 	now := c.now()
-	row.CredentialBlob = blob
-	row.LastUsedAt = &now
-	_ = c.storage.UpdateWebAuthnCredential(ctx, row)
+
+	c.webauthnCredentialMu.Lock()
+	defer c.webauthnCredentialMu.Unlock()
+
+	_ = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		row, err := tx.LockWebAuthnCredentialForUpdate(ctx, cred.ID, userID)
+		if err != nil {
+			return err
+		}
+		var stored webauthn.Credential
+		if err := json.Unmarshal(row.CredentialBlob, &stored); err != nil {
+			return err
+		}
+		// Mirrors go-webauthn's own Authenticator.UpdateCounter gate: many platform
+		// authenticators (Touch ID, Windows Hello, and most passkeys) never implement a
+		// counter and always report 0, so a (0, 0) comparison must NOT be treated as
+		// stale — that would silently stop LastUsedAt/blob updates from ever persisting
+		// again for the common case. Only reject when at least one side is nonzero and
+		// the new value fails to advance past the row's CURRENT stored value.
+		newCount, storedCount := cred.Authenticator.SignCount, stored.Authenticator.SignCount
+		if newCount <= storedCount && (newCount != 0 || storedCount != 0) {
+			// A concurrent request already advanced the stored counter past (or to) this
+			// assertion's value: this write is stale, so skip it rather than regress the
+			// persisted counter.
+			return nil
+		}
+		row.CredentialBlob = blob
+		row.LastUsedAt = &now
+		return tx.UpdateWebAuthnCredential(ctx, row)
+	})
 }
 
 func (c *KeyorixCore) auditWebAuthnFailed(ctx context.Context, userID uint, phase string) {

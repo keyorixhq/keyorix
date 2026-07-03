@@ -1,0 +1,254 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+// compliancePostureCore builds a bare KeyorixCore against a real (empty) sqlite DB —
+// only models.Project is migrated, since accessGovernancePosture's ListProjects is the
+// one call GetCompliancePosture treats as fatal; every other sub-rollup query errors
+// (e.g. from a missing table) are expected to soft-fail into Degraded, not abort.
+func compliancePostureCore(t *testing.T) *KeyorixCore {
+	t.Helper()
+	c, _ := compliancePostureCoreDB(t)
+	return c
+}
+
+// compliancePostureCoreDB is compliancePostureCore but also returns the underlying
+// *gorm.DB, so a test can AutoMigrate additional tables to control precisely which
+// sub-rollup query fails (a not-migrated table) versus succeeds (migrated, empty).
+func compliancePostureCoreDB(t *testing.T) (*KeyorixCore, *gorm.DB) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}))
+	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c.now = func() time.Time { return time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC) }
+	return c, db
+}
+
+// failingLegalHoldStore wraps LocalStorage and fails GetActiveLegalHold, simulating a DB
+// error on that one sub-rollup while every other posture query still runs for real.
+type failingLegalHoldStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingLegalHoldStore) GetActiveLegalHold(_ context.Context) (*models.LegalHold, error) {
+	return nil, errors.New("simulated db failure")
+}
+
+// #136: before the fix, a failed legal-hold query left LegalHold.Active=false —
+// byte-identical to "queried, no hold in effect". That's the most dangerous instance of
+// the fail-open pattern: it's the signal purge jobs would otherwise trust to preserve
+// records under hold, and it feeds an HMAC-signed evidence pack an auditor trusts. A query
+// failure must surface as Degraded, not as a silently-clean zero value.
+func TestGetCompliancePosture_DegradedOnLegalHoldQueryError(t *testing.T) {
+	c := compliancePostureCore(t)
+	c.storage = &failingLegalHoldStore{LocalStorage: c.storage.(*store.LocalStorage)}
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err, "a single failed sub-rollup must not abort the whole snapshot")
+
+	assert.False(t, p.LegalHold.Active, "the field itself still reads as its zero value")
+	assert.True(t, p.Degraded, "a failed legal-hold query must flip Degraded — the zero value above is UNKNOWN, not verified-clean")
+	assert.True(t, containsSubstring(p.DegradedReasons, "legal_hold"), "expected a legal_hold entry in DegradedReasons, got %v", p.DegradedReasons)
+
+	controls, err := c.GetComplianceControls(context.Background())
+	require.NoError(t, err)
+	lh := findControl(t, controls.Controls, "legal-hold")
+	assert.Equal(t, ControlStatusUnknown, lh.Status, "the legal-hold CONTROL must surface as unknown, not silently pass, when its posture signal is degraded")
+}
+
+// failingRiskExceptionsStore wraps LocalStorage and fails ListRiskExceptions, simulating
+// a DB error on the risk-exception sub-rollup.
+type failingRiskExceptionsStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingRiskExceptionsStore) ListRiskExceptions(_ context.Context, _ bool) ([]*models.RiskException, error) {
+	return nil, errors.New("simulated db failure")
+}
+
+// #136: empirically, dropping the risk_exceptions table flipped a real active exception
+// from count=1 to count=0 — a query failure must surface as Degraded, not a silently-clean
+// zero count.
+func TestGetCompliancePosture_DegradedOnRiskExceptionQueryError(t *testing.T) {
+	c := compliancePostureCore(t)
+	c.storage = &failingRiskExceptionsStore{LocalStorage: c.storage.(*store.LocalStorage)}
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err, "a single failed sub-rollup must not abort the whole snapshot")
+
+	assert.Equal(t, 0, p.Risk.ActiveExceptions, "the field itself still reads as its zero value")
+	assert.True(t, p.Degraded, "a failed risk-exception query must flip Degraded")
+	assert.True(t, containsSubstring(p.DegradedReasons, "risk"), "expected a risk entry in DegradedReasons, got %v", p.DegradedReasons)
+}
+
+// failingSoDPoliciesStore wraps LocalStorage and fails ListSoDPolicies, simulating a DB
+// error on the SoD sub-rollup.
+type failingSoDPoliciesStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingSoDPoliciesStore) ListSoDPolicies(_ context.Context) ([]*models.SoDPolicy, error) {
+	return nil, errors.New("simulated db failure")
+}
+
+// #136: empirically, dropping the sod_policies table flipped a real toxic-combination
+// violation from count>=1 to count=0 — a query failure must surface as Degraded, not a
+// silently-clean zero count.
+func TestGetCompliancePosture_DegradedOnSoDPoliciesQueryError(t *testing.T) {
+	c := compliancePostureCore(t)
+	c.storage = &failingSoDPoliciesStore{LocalStorage: c.storage.(*store.LocalStorage)}
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err, "a single failed sub-rollup must not abort the whole snapshot")
+
+	assert.Equal(t, 0, p.AccessGovernance.SoDViolations, "the field itself still reads as its zero value")
+	assert.True(t, p.Degraded, "a failed SoD-policy query must flip Degraded")
+	assert.True(t, containsSubstring(p.DegradedReasons, "sod_violations"), "expected a sod_violations entry in DegradedReasons, got %v", p.DegradedReasons)
+
+	controls, err := c.GetComplianceControls(context.Background())
+	require.NoError(t, err)
+	sod := findControl(t, controls.Controls, "separation-of-duties")
+	assert.Equal(t, ControlStatusUnknown, sod.Status, "the SoD CONTROL must surface as unknown, not silently pass, when its posture signal is degraded")
+}
+
+func containsSubstring(ss []string, sub string) bool {
+	for _, s := range ss {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// compliancePostureCoreWithProject is compliancePostureCoreDB plus one real project
+// row, so accessGovernancePosture's per-project loop (campaigns / break-glass /
+// dormant grants) actually runs instead of a no-op over zero projects.
+func compliancePostureCoreWithProject(t *testing.T) (*KeyorixCore, *gorm.DB) {
+	t.Helper()
+	c, db := compliancePostureCoreDB(t)
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "proj"}).Error)
+	return c, db
+}
+
+// #358: GetRotationStatus's own error (e.g. a rotation-policy listing failure) must
+// flip the posture's Rotation sub-rollup to degraded instead of leaving
+// CoveredSecrets/Overdue/DueSoon at their zero-value "0 secrets overdue" reading.
+func TestGetCompliancePosture_DegradedOnRotationQueryError(t *testing.T) {
+	c := compliancePostureCore(t) // models.RotationPolicy deliberately NOT migrated
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err, "a single failed sub-rollup must not abort the whole snapshot")
+
+	assert.Equal(t, RotationPosture{}, p.Rotation, "the field itself still reads as its zero value")
+	assert.True(t, p.Degraded, "a failed rotation query must flip Degraded — 0 overdue is UNKNOWN, not verified-clean")
+	assert.True(t, containsSubstring(p.DegradedReasons, "rotation"), "expected a rotation entry in DegradedReasons, got %v", p.DegradedReasons)
+}
+
+// #359: a failed ListAnomalyAlerts query must not read as "no open alerts" — that masks
+// active, unreviewed high-severity access anomalies.
+func TestGetCompliancePosture_DegradedOnAnomalyQueryError(t *testing.T) {
+	c := compliancePostureCore(t) // models.AnomalyAlert deliberately NOT migrated
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, AnomaliesPosture{}, p.Anomalies)
+	assert.True(t, p.Degraded)
+	assert.True(t, containsSubstring(p.DegradedReasons, "anomalies"), "expected an anomalies entry in DegradedReasons, got %v", p.DegradedReasons)
+}
+
+// #360: classificationPosture has three separate Count...ByClassification calls
+// (dynamic configs, machine identities, machine credentials) that each independently
+// fail-opened to a zero (= "fully classified") count. Migrating SecretNode/Environment
+// but NOT the three classification tables isolates exactly those three calls as the
+// failure, demonstrating all three degrade independently in one pass.
+func TestGetCompliancePosture_DegradedOnClassificationCountQueryErrors(t *testing.T) {
+	c, db := compliancePostureCoreDB(t)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.Environment{}))
+	// models.DynamicSecretConfig / MachineIdentity / MachineIdentityCredential deliberately NOT migrated.
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, ClassificationCounts{}, p.Classification.DynamicConfigs)
+	assert.Equal(t, ClassificationCounts{}, p.Classification.MachineIdentities)
+	assert.Equal(t, ClassificationCounts{}, p.Classification.MachineCredentials)
+	assert.True(t, p.Degraded)
+	assert.True(t, containsSubstring(p.DegradedReasons, "classification:dynamic_configs"), "got %v", p.DegradedReasons)
+	assert.True(t, containsSubstring(p.DegradedReasons, "classification:machine_identities"), "got %v", p.DegradedReasons)
+	assert.True(t, containsSubstring(p.DegradedReasons, "classification:machine_credentials"), "got %v", p.DegradedReasons)
+}
+
+// #361(a): a project whose ListAccessReviewCampaigns query errors must not be silently
+// dropped from ProjectsNeverReviewed/ProjectsWithOpenCampaign/PendingItems/ProjectsOverdue.
+func TestGetCompliancePosture_DegradedOnAccessReviewCampaignsQueryError(t *testing.T) {
+	c, db := compliancePostureCoreWithProject(t)
+	require.NoError(t, db.AutoMigrate(&models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	// models.AccessReviewCampaign deliberately NOT migrated.
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err)
+
+	assert.True(t, p.Degraded)
+	assert.True(t, containsSubstring(p.DegradedReasons, "access_governance:campaigns:project=1"), "got %v", p.DegradedReasons)
+}
+
+// #361(b): a project's ListBreakGlassActivations error must not silently omit it from
+// EmergencyAccess — the most severe of the three, since it hides CURRENTLY-ACTIVE
+// emergency access from the report.
+func TestGetCompliancePosture_DegradedOnBreakGlassQueryError(t *testing.T) {
+	c, db := compliancePostureCoreWithProject(t)
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	// models.BreakGlassActivation deliberately NOT migrated.
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, EmergencyAccessPosture{}, p.EmergencyAccess, "the field itself still reads as its zero value — no visible active break-glass")
+	assert.True(t, p.Degraded, "an unqueryable break-glass register must flip Degraded rather than silently read as no emergency access")
+	assert.True(t, containsSubstring(p.DegradedReasons, "emergency_access:project=1"), "got %v", p.DegradedReasons)
+}
+
+// #361(c): countDormantRoleGrants's two internal queries (ListProjectRoleAssignments,
+// LastUserSecretActivity) must each independently degrade rather than silently return 0
+// (undercounting stale privileged access) on a storage error.
+func TestGetCompliancePosture_DegradedOnDormantRoleGrantsAssignmentsQueryError(t *testing.T) {
+	c, db := compliancePostureCoreWithProject(t)
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.AuditEvent{}))
+	// models.UserRole / GroupRole deliberately NOT migrated → ListProjectRoleAssignments fails.
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants)
+	assert.True(t, p.Degraded)
+	assert.True(t, containsSubstring(p.DegradedReasons, "dormant_role_grants:assignments:project=1"), "got %v", p.DegradedReasons)
+}
+
+func TestGetCompliancePosture_DegradedOnDormantRoleGrantsActivityQueryError(t *testing.T) {
+	c, db := compliancePostureCoreWithProject(t)
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}))
+	// models.AuditEvent deliberately NOT migrated → LastUserSecretActivity's raw
+	// "audit_events" table query fails.
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants)
+	assert.True(t, p.Degraded)
+	assert.True(t, containsSubstring(p.DegradedReasons, "dormant_role_grants:activity:project=1"), "got %v", p.DegradedReasons)
+}

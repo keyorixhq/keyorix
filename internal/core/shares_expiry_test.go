@@ -189,6 +189,87 @@ func TestUpdateShareExpiry(t *testing.T) {
 	})
 }
 
+// TestReShareTightensExpiry is the regression test for #282: re-sharing an
+// already-shared secret (the CreateShareRecord upsert path, reached from both
+// ShareSecret and ShareSecretWithGroup) must persist a newly-requested ExpiresAt
+// onto the existing row — not silently drop it — so an owner can time-bound or
+// shorten an existing indefinite grant. Uses the real sqlite-backed LocalStorage
+// fixture (no mocks) so the assertions exercise the actual upsert SQL, not a
+// hand-rolled double.
+func TestReShareTightensExpiry(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("direct share: re-sharing a permanent grant with an expiry persists it", func(t *testing.T) {
+		c, secretID, now, _ := newSharesExpiryFixture(t)
+		rec, err := c.ShareSecret(ctx, &ShareSecretRequest{
+			SecretID: secretID, RecipientID: 2, Permission: "read", SharedBy: 1,
+		})
+		require.NoError(t, err)
+		require.Nil(t, rec.ExpiresAt, "initial share must be permanent")
+
+		exp := now.Add(time.Hour)
+		reshared, err := c.ShareSecret(ctx, &ShareSecretRequest{
+			SecretID: secretID, RecipientID: 2, Permission: "read", SharedBy: 1, ExpiresAt: &exp,
+		})
+		require.NoError(t, err)
+		require.Equal(t, rec.ID, reshared.ID, "re-share must upsert onto the same row, not create a duplicate")
+		require.NotNil(t, reshared.ExpiresAt, "re-share must tighten the returned record's expiry")
+		assert.True(t, reshared.ExpiresAt.Equal(exp))
+
+		// Re-fetch independently from storage to prove the tightened expiry was
+		// actually persisted, not just reflected on the in-memory return value.
+		persisted, err := c.storage.GetShareRecord(ctx, rec.ID)
+		require.NoError(t, err)
+		require.NotNil(t, persisted.ExpiresAt, "persisted row must carry the tightened expiry")
+		assert.True(t, persisted.ExpiresAt.Equal(exp))
+	})
+
+	t.Run("direct share: re-sharing without an expiry clears a prior one back to permanent", func(t *testing.T) {
+		c, secretID, now, _ := newSharesExpiryFixture(t)
+		exp := now.Add(time.Hour)
+		rec, err := c.ShareSecret(ctx, &ShareSecretRequest{
+			SecretID: secretID, RecipientID: 2, Permission: "read", SharedBy: 1, ExpiresAt: &exp,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, rec.ExpiresAt)
+
+		reshared, err := c.ShareSecret(ctx, &ShareSecretRequest{
+			SecretID: secretID, RecipientID: 2, Permission: "read", SharedBy: 1,
+		})
+		require.NoError(t, err)
+		assert.Nil(t, reshared.ExpiresAt, "re-share with no ExpiresAt must clear it back to permanent")
+
+		persisted, err := c.storage.GetShareRecord(ctx, rec.ID)
+		require.NoError(t, err)
+		assert.Nil(t, persisted.ExpiresAt, "persisted row must reflect the cleared expiry")
+	})
+
+	t.Run("group share: re-sharing a permanent grant with an expiry persists it", func(t *testing.T) {
+		c, secretID, now, db := newSharesExpiryFixture(t)
+		require.NoError(t, db.Create(&models.Group{ID: 10, Name: "eng"}).Error)
+
+		rec, err := c.ShareSecretWithGroup(ctx, &GroupShareSecretRequest{
+			SecretID: secretID, GroupID: 10, Permission: "read", SharedBy: 1,
+		})
+		require.NoError(t, err)
+		require.Nil(t, rec.ExpiresAt, "initial group share must be permanent")
+
+		exp := now.Add(time.Hour)
+		reshared, err := c.ShareSecretWithGroup(ctx, &GroupShareSecretRequest{
+			SecretID: secretID, GroupID: 10, Permission: "read", SharedBy: 1, ExpiresAt: &exp,
+		})
+		require.NoError(t, err)
+		require.Equal(t, rec.ID, reshared.ID, "re-share must upsert onto the same row, not create a duplicate")
+		require.NotNil(t, reshared.ExpiresAt, "re-share must tighten the returned record's expiry")
+		assert.True(t, reshared.ExpiresAt.Equal(exp))
+
+		persisted, err := c.storage.GetShareRecord(ctx, rec.ID)
+		require.NoError(t, err)
+		require.NotNil(t, persisted.ExpiresAt, "persisted row must carry the tightened expiry")
+		assert.True(t, persisted.ExpiresAt.Equal(exp))
+	})
+}
+
 func TestListUserShareViews(t *testing.T) {
 	ctx := context.Background()
 	c, secretID, now, _ := newSharesExpiryFixture(t)

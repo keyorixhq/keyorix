@@ -304,3 +304,12 @@ func (rs *RemoteStorage) TryIncrementSecretReadCount(ctx context.Context, versio
 	}
 	return true, nil
 }
+
+// TryIncrementSecretNodeReadCount mirrors TryIncrementSecretReadCount: the
+// authoritative enforcement runs server-side against local storage, so a remote
+// client is never on the enforcement hot path. Not expected to be called from a
+// CLI/remote context (KeyorixCore always runs against LocalStorage server-side);
+// fails loud rather than silently reporting success if it ever is.
+func (rs *RemoteStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
+	return false, fmt.Errorf("remote storage: max-reads enforcement is server-side only")
+}

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/connect"
@@ -48,6 +49,11 @@ type KeyorixCore struct {
 	// enforce a lease's TTL, so IssueLease refuses to mint from them when it is off
 	// (the credential would otherwise never expire). Set via SetDynamicSweepEnabled.
 	dynamicSweepEnabled bool
+	// dynamicMaxLeaseTTL mirrors config dynamic_secrets.max_lease_ttl (#97): a hard,
+	// install-wide ceiling dynamicTTL enforces alongside (never instead of) each
+	// config's own MaxTTLSeconds, which has no ceiling of its own. Zero = the
+	// package default (90 days) applies. Set via SetDynamicMaxLeaseTTL.
+	dynamicMaxLeaseTTL time.Duration
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
 	// Set from config at startup via SetWebAuthn.
 	webauthnRP     *webauthn.WebAuthn
@@ -63,26 +69,89 @@ type KeyorixCore struct {
 	secretNamePolicy  SecretNamePolicy   // optional naming convention for secrets (off by default)
 	secretNameRe      *regexp.Regexp     // compiled secretNamePolicy.Pattern (nil = no regex check)
 	loginLockout      LoginLockoutPolicy // per-account login lockout (disabled by default)
-	// loginFailureMu serializes the per-account failed-login read-increment-write in
-	// recordFailedLogin so concurrent failures can't lose an increment. Combined with
-	// the row lock LockUserForUpdate takes on Postgres, the lockout counter stays
-	// correct across replicas. Zero value is ready to use. See login_lockout.go.
-	loginFailureMu sync.Mutex
+	// recordFailedLogin (and the pre-session-mint recheck in
+	// checkLockAndClearLoginFailures) so concurrent failures can't lose an increment.
+	// Combined with the row lock LockUserForUpdate takes on Postgres, the lockout
+	// counter stays correct across replicas. Sharded by userID (see
+	// loginFailureLock) so a flood against one account cannot serialize every OTHER
+	// account's failed-login accounting behind a single process-wide lock — a
+	// noisy-neighbour/availability concern distinct from the correctness the
+	// per-shard lock + row lock still provide. Zero value is ready to use (each
+	// shard is its own zero-value sync.Mutex). See login_lockout.go.
+	loginFailureMu [loginFailureMuShards]sync.Mutex
+	// globalAdminGuardMu serializes RemoveUserRole's last-global-admin check and the
+	// removal it guards (guardLastGlobalAdmin) into one atomic unit, so two admins
+	// concurrently removing each other's role assignment cannot both observe
+	// "another admin still exists" before either write lands (#340). Combined with
+	// the row lock ListGlobalAdminAssignmentsForUpdate takes on Postgres, the guard
+	// stays correct across HA replicas too. Zero value is ready to use. See
+	// rbac_management.go.
+	globalAdminGuardMu sync.Mutex
 	// setupResendMu serializes the count-then-issue window of the setup-link resend
 	// throttle (checkResendThrottle + IssueSetupToken) so two concurrent resends for
 	// the same (purpose, email) cannot both clear the per-day cap / min-interval
 	// before either token row exists. Held only across the throttle check and the
 	// token write — link delivery (SMTP) runs after release, so a slow send never
 	// serializes every other resend. Zero value is ready to use. See setup_delivery.go.
-	setupResendMu  sync.Mutex
+	setupResendMu sync.Mutex
+	// webauthnCredentialMu serializes persistUpdatedCredential's per-credential
+	// read-validate-write of the advanced WebAuthn signature counter, so two
+	// concurrent logins for the same (cloned) authenticator cannot race and let a
+	// stale, lower counter clobber an already-persisted higher one. Combined with the
+	// row lock LockWebAuthnCredentialForUpdate takes on Postgres, the counter stays
+	// monotonic across replicas too. Zero value is ready to use. See webauthn.go.
+	webauthnCredentialMu sync.Mutex
+	// bootstrapMu serializes BootstrapSystem's "is this a fresh install" (total==0)
+	// check through the admin CreateUser call, so two concurrent callers who both
+	// already hold the valid bootstrap token (#339) — e.g. different usernames —
+	// cannot both observe an empty user table and each create a "first admin". Zero
+	// value is ready to use. See auth_bootstrap.go.
+	bootstrapMu sync.Mutex
+	// secretDependencyMu serializes AddSecretDependency's cycle-check read through
+	// the edge it writes (#260), so two concurrent callers racing to add A→B and
+	// B→A in the same project cannot both pass the pre-write cycle check before
+	// either commits, persisting a cycle that later hard-errors rotation planning
+	// for that project. Combined with the row lock
+	// ListSecretDependenciesForProjectForUpdate takes on Postgres, this holds
+	// across replicas too. Zero value is ready to use. See secret_dependencies.go.
+	secretDependencyMu sync.Mutex
+	// accountStateMu serializes the account_state/is_active read-modify-write shared
+	// by setAccountState (SuspendUser/ReactivateUser/RequirePasswordReset) and
+	// UpdateSCIMUser (#344): without it, an admin's incident-response SuspendUser and a
+	// routine SCIM/IdP resync for the same user can each GetUser before the other's
+	// Save commits, and whichever full-row Save lands last silently clobbers the
+	// other's change — e.g. a suspend committed, then a SCIM sync's stale in-memory
+	// "active" copy overwrites it back to active with no error to either caller.
+	// Combined with the row lock LockUserForUpdate takes on Postgres, this holds
+	// across replicas too. Zero value is ready to use. See account_state.go / scim.go.
+	accountStateMu sync.Mutex
 	auditForwarder AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).
 	auditStream *auditBroker
-	// notificationSink fans each in-app notification out to an external channel
-	// (email/webhook). nil = in-app only. Set from config via SetNotificationSink.
+	// notificationSink broadcasts a deployment-wide, aggregate notification (the
+	// compliance digest, an auto-rotation-failure summary) to every enabled external
+	// channel, including Slack/Teams/webhook. nil = no channel configured. Set from
+	// config via SetNotificationSink. Deliberately NOT used for per-user/per-project
+	// events (see recipientNotificationSink) — see #391.
 	notificationSink NotificationSink
+	// recipientNotificationSink fans a per-user/per-project notification (secret
+	// shared, share revoked, ownership transferred, access requested, anomaly alert,
+	// break-glass activation, …) out to external channels that can actually address a
+	// single recipient — currently just email. nil = in-app only.
+	//
+	// #391: chat (Slack/Teams) and generic webhook channels are, by design, ONE fixed
+	// deployment-wide destination an operator configures (there is no per-user chat-
+	// identity mapping in this codebase to DM a specific Slack user). Handing a
+	// per-user event straight to those channels — as the old single notificationSink
+	// did — broadcasts it to every member of that channel regardless of project
+	// membership or secret access, defeating every recipient-scoping computation this
+	// package does for the in-app row. So per-user events are routed ONLY to
+	// recipient-addressable channels (email, which already drops any event with no
+	// resolved address) and never to chat/webhook. Set from config via
+	// SetRecipientNotificationSink.
+	recipientNotificationSink NotificationSink
 	// connectManager proxies read-through federation to external secret stores
 	// (ADR-043). nil = Keyorix Connect disabled. Set via SetConnectManager.
 	connectManager *connect.Manager
@@ -224,9 +293,48 @@ func (c *KeyorixCore) AuditLicenseState(ctx context.Context) {
 	})
 }
 
+// Audit field length caps (#381). Neither models.AuditEvent.Description nor .Diff
+// carries a DB-level size limit, and secret/project/role names feeding into a
+// Description have no length cap unless an operator opts into secret_name_policy
+// (off by default) — so an attacker-chosen name could otherwise blow up every
+// audit row that mentions it, and (since the audit-chain writer is a single
+// process-wide serialized writer) degrade audit throughput for every OTHER write
+// in the system. These ceilings comfortably fit any Description/Diff this
+// codebase's own call sites actually generate (short templated sentences and
+// small structured before/after JSON), so legitimate audit content is never
+// affected.
+const (
+	auditDescriptionMaxLen = 4096 // ~4 KiB
+	auditDiffMaxLen        = 8192 // ~8 KiB
+)
+
+// auditTruncatedMarker is appended to a field truncated by truncateAuditField.
+const auditTruncatedMarker = "...[truncated]"
+
+// truncateAuditField caps s at maxLen bytes, appending auditTruncatedMarker when
+// truncation occurs. Audit writes must never fail (or reject) the underlying
+// business operation just because a caller-supplied description/diff got too
+// long, so this truncates rather than erroring. The cut point is walked back to
+// a valid UTF-8 boundary so truncation never produces an invalid string.
+func truncateAuditField(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	cut := maxLen
+	for cut > 0 && !utf8.ValidString(s[:cut]) {
+		cut--
+	}
+	return s[:cut] + auditTruncatedMarker
+}
+
 // emitAudit persists an audit event and forwards it to the configured sink.
-// All core audit writers funnel through here so SIEM forwarding is uniform.
+// All core audit writers funnel through here so SIEM forwarding is uniform —
+// which also makes it the single choke point to cap Description/Diff length
+// (#381), independent of which helper (writeAuditEvent*, writeImpersonationEvent,
+// AuditLicenseState, ...) produced the event.
 func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
+	event.Description = truncateAuditField(event.Description, auditDescriptionMaxLen)
+	event.Diff = truncateAuditField(event.Diff, auditDiffMaxLen)
 	if err := c.storage.LogAuditEvent(ctx, event); err != nil {
 		// A failed chain-write is an audit gap that VerifyAuditChain cannot detect — a
 		// never-written event leaves no hole. Surface it loudly instead of swallowing,
@@ -266,10 +374,21 @@ type NotificationSink interface {
 	Deliver(ev NotificationEvent)
 }
 
-// SetNotificationSink wires an external notification sink. The server calls this at
-// startup when the install configures a notifications channel. nil = in-app only.
+// SetNotificationSink wires the broadcast (deployment-wide, aggregate) notification
+// sink used by SendComplianceDigest and notifyRotationFailures — typically every
+// enabled channel (email/Slack/Teams/webhook). The server calls this at startup when
+// the install configures a notifications channel. nil = no channel configured.
 func (c *KeyorixCore) SetNotificationSink(s NotificationSink) {
 	c.notificationSink = s
+}
+
+// SetRecipientNotificationSink wires the sink used for per-user/per-project
+// notifications (see recipientNotificationSink). The server calls this at startup
+// with ONLY the recipient-addressable channels it configured (currently email) —
+// never chat/webhook, which have no per-user identity mapping (#391). nil = in-app
+// only.
+func (c *KeyorixCore) SetRecipientNotificationSink(s NotificationSink) {
+	c.recipientNotificationSink = s
 }
 
 // NewKeyorixCore creates a new instance of the core business logic.
@@ -301,20 +420,28 @@ func (c *KeyorixCore) SetAuthEncryptor(s *encryption.Service) {
 	c.authEncryptor = s
 }
 
-// encryptAuthSecret reversibly encrypts plain; passthrough when encryption is off.
-func (c *KeyorixCore) encryptAuthSecret(plain string) (ct, meta []byte, err error) {
+// encryptAuthSecret reversibly encrypts plain, bound to aad (#94: MFASecretAAD /
+// DynamicSecretConfigAAD / DynamicSecretLeaseAAD — never nil for a live caller, so a
+// DB-write attacker cannot transplant one row's ciphertext onto another's identity and
+// have it decrypt). Passthrough when encryption is off.
+func (c *KeyorixCore) encryptAuthSecret(plain string, aad []byte) (ct, meta []byte, err error) {
 	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
 		return []byte(plain), nil, nil
 	}
-	return c.authEncryptor.EncryptSecret([]byte(plain))
+	return c.authEncryptor.EncryptSecretWithAAD([]byte(plain), aad)
 }
 
-// decryptAuthSecret reverses encryptAuthSecret; passthrough when encryption is off.
-func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte) (string, error) {
+// decryptAuthSecret reverses encryptAuthSecret. aad must be reconstructed from the
+// row's own identity, identically to how it was encrypted. Falls back to a legacy
+// nil-AAD decrypt for rows encrypted before #94 (Service.DecryptSecretWithAAD's own
+// AADVersion branch — see SecretEncryption for the same pattern on secret values);
+// the sweep upgrades those rows to AAD-bound in place. Passthrough when encryption is
+// off.
+func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte, aad []byte) (string, error) {
 	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
 		return string(ct), nil
 	}
-	plain, err := c.authEncryptor.DecryptSecret(ct)
+	plain, err := c.authEncryptor.DecryptSecretWithAAD(ct, aad)
 	if err != nil {
 		return "", err
 	}
@@ -332,6 +459,15 @@ func (c *KeyorixCore) SetDynamicEngineFactory(f func(string) (dynamic.Credential
 // to mint a credential from a backend whose TTL only the sweeper would enforce.
 func (c *KeyorixCore) SetDynamicSweepEnabled(enabled bool) {
 	c.dynamicSweepEnabled = enabled
+}
+
+// SetDynamicMaxLeaseTTL sets the install-wide dynamic-secret lease TTL ceiling
+// (config dynamic_secrets.max_lease_ttl, #97). A non-positive value is ignored — the
+// package default (90 days) applies instead of disabling the ceiling.
+func (c *KeyorixCore) SetDynamicMaxLeaseTTL(ttl time.Duration) {
+	if ttl > 0 {
+		c.dynamicMaxLeaseTTL = ttl
+	}
 }
 
 // dynamicEngine resolves an engine for a backend type via the factory (or the

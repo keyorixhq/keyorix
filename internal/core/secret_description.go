@@ -26,6 +26,24 @@ func validateDescription(description string) error {
 	return nil
 }
 
+// maxResourceNameLen bounds a resource Name (group, secret) at the core layer,
+// matching the HTTP-side `validate:"...,max=255"` cap (server/http/handlers/
+// groups_handler.go, secrets_crud.go). HTTP's byte-length semantics
+// (server/validation.Validator's `max` rule uses len(string), not rune count) are
+// mirrored here with len(name) so the two transports agree exactly. gRPC never runs
+// the HTTP validator, so without this the core layer was the only enforcement point
+// gRPC could inherit from — this closes that HTTP/gRPC parity gap (backlog #190).
+const maxResourceNameLen = 255
+
+// validateNameLength bounds a resource Name to maxResourceNameLen bytes, matching
+// HTTP's cap exactly. kind labels the error ("group name", "secret name", ...).
+func validateNameLength(kind, name string) error {
+	if len(name) > maxResourceNameLen {
+		return fmt.Errorf("%s exceeds %d characters", kind, maxResourceNameLen)
+	}
+	return nil
+}
+
 // SetSecretDescription sets (or clears, with "") the secret's description. The actor
 // must be able to write the secret. The note is trimmed and length-bounded. Audited.
 func (c *KeyorixCore) SetSecretDescription(ctx context.Context, actorID, secretID uint, description string) (*models.SecretNode, error) {

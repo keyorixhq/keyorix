@@ -5,8 +5,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -402,7 +404,14 @@ func (h *AuditHandler) WriteAuditCheckpoint(w http.ResponseWriter, r *http.Reque
 		// The chain did not verify (broken, or a prior signed checkpoint proves a
 		// truncation) — the server refuses to notarise it. Surface the reason so the
 		// operator can investigate; it is a precondition failure, not a server error.
-		sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
+		// core.WriteAuditCheckpoint also propagates raw storage-layer errors on this
+		// path (e.g. a lookup failure), which must not reach the client verbatim.
+		msg := err.Error()
+		if !strings.Contains(msg, "refusing to checkpoint") {
+			log.Printf("Error writing audit checkpoint: %v", err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "Conflict", msg, http.StatusConflict, nil)
 		return
 	}
 	if !written {

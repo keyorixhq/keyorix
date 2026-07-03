@@ -1,4 +1,10 @@
 -- Rollback RBAC Enhancements Migration
+--
+-- WARNING — IRREVERSIBLE DATA LOSS: `DROP TABLE IF EXISTS rbac_audit_log`
+-- below permanently destroys the RBAC audit trail — using this rollback to
+-- recover from a bad RBAC deploy also erases the evidence of what happened
+-- during it. BACK UP rbac_audit_log (or export it to a backup table) before
+-- running this rollback.
 
 -- Drop indexes
 DROP INDEX IF EXISTS idx_role_permissions_permission_id;

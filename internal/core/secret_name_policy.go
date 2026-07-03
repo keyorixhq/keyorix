@@ -43,11 +43,23 @@ func (c *KeyorixCore) validateSecretName(name string) error {
 
 // compileNamePattern compiles a name-policy pattern, used by SetSecretNamePolicy and
 // reusable for config validation. Returns nil regexp for an empty pattern.
+//
+// #389: the pattern is unconditionally wrapped in ^(?:…)$ rather than compiled as
+// given. validateSecretName calls MatchString, which succeeds on ANY matching
+// substring, not a whole-string match — an operator writing
+// "[A-Za-z][A-Za-z0-9_-]*" intending "identifier-like names only" would, unanchored,
+// accept virtually any string containing at least one such substring (e.g. a
+// CSV-injection-shaped `=cmd|' /C calc'!A1`, or a name embedding control
+// characters), silently defeating the exact protection several OTHER findings (the
+// #328 CSV/Slack-injection family) depend on this policy to provide once "properly
+// configured". Forcing the anchor here — instead of only advising it in a doc
+// comment — closes that gap unconditionally; wrapping an already-anchored pattern
+// (e.g. "^[A-Z_]+$") in an extra ^(?:...)$ is a no-op.
 func compileNamePattern(pattern string) (*regexp.Regexp, error) {
 	if pattern == "" {
 		return nil, nil
 	}
-	re, err := regexp.Compile(pattern)
+	re, err := regexp.Compile("^(?:" + pattern + ")$")
 	if err != nil {
 		return nil, fmt.Errorf("invalid secret name pattern: %w", err)
 	}

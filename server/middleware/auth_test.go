@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,8 +12,11 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 const (
@@ -567,6 +572,53 @@ func TestAuthentication_PATNetworkAllowlist(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, serve("203.0.113.9:5555"), "off-network source IP is forbidden")
 	// And an in-range request after the cached deny still passes (per-request evaluation).
 	assert.Equal(t, http.StatusOK, serve("10.9.9.9:443"), "in-range again after a deny")
+}
+
+// #146: a PAT's CIDR allowlist narrowed AFTER the first request (which cached the
+// identity) must be enforced on the very next request — a cache HIT must not keep
+// permitting a source IP the allowlist no longer allows, even within validTokenTTL.
+func TestAuthentication_PATNetworkAllowlist_RefreshesOnCacheHit(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.PersonalAccessToken{}))
+	require.NoError(t, db.Create(&models.User{ID: 3, Username: "patuser", Email: "pat@example.com", IsActive: true}).Error)
+
+	const raw = "kx_pat_cidrtoken"
+	sum := sha256.Sum256([]byte(raw))
+	hash := hex.EncodeToString(sum[:])
+	cidrsJSON := `["10.0.0.0/8"]`
+	pat := &models.PersonalAccessToken{ID: 1, UserID: 3, Name: "ci", TokenHash: hash, AllowedCIDRs: cidrsJSON}
+	require.NoError(t, db.Create(pat).Error)
+
+	coreService := core.NewKeyorixCore(store.NewLocalStorage(db))
+	mw := authenticationWithValidator(fakeValidator{}, coreService)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	serve := func(remoteAddr string) int {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		req.RemoteAddr = remoteAddr
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	// First request (slow path, via fakeValidator): in-range, cached.
+	require.Equal(t, http.StatusOK, serve("10.1.2.3:5555"))
+
+	// An admin narrows the allowlist directly in storage — simulating a live
+	// mid-incident restriction change on the SAME token the cache already holds.
+	pat.AllowedCIDRs = `["192.0.2.0/24"]`
+	require.NoError(t, db.Save(pat).Error)
+
+	// The SAME source IP that was allowed a moment ago must now be denied — on the
+	// cache-HIT path, not after the 30s TTL expires.
+	assert.Equal(t, http.StatusForbidden, serve("10.1.2.3:5555"),
+		"a narrowed allowlist must take effect on the very next request, not after the cache TTL")
+	// And the newly-allowed network is now honored, also on a cache hit.
+	assert.Equal(t, http.StatusOK, serve("192.0.2.7:5555"))
 }
 
 // A token revoked WHILE a slow-path validation was in flight must not be resurrected by

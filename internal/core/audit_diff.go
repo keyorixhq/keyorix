@@ -2,11 +2,13 @@
 //
 // SECURITY: a diff must never carry a plaintext secret value. For the value
 // field we record only {"changed": true}; all other fields are non-sensitive
-// metadata (name, type, max_reads, expiration) whose before/after is safe to log.
+// metadata (name, type, max_reads, expiration, metadata) whose before/after is
+// safe to log.
 package core
 
 import (
 	"encoding/json"
+	"reflect"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -38,8 +40,19 @@ func BuildSecretUpdateDiff(old *models.SecretNode, req *UpdateSecretRequest, val
 	if req.MaxReads != nil && !eqIntPtr(old.MaxReads, req.MaxReads) {
 		diff["max_reads"] = fieldChange{Before: intPtrVal(old.MaxReads), After: intPtrVal(req.MaxReads)}
 	}
-	if req.Expiration != nil && !eqTimePtr(old.Expiration, req.Expiration) {
+	switch {
+	case req.ClearExpiration:
+		// ClearExpiration explicitly transitions an expiring secret to non-expiring —
+		// record it even though the "after" side is nil, so the clear itself is
+		// visible in the trail (#285).
+		if old.Expiration != nil {
+			diff["expiration"] = fieldChange{Before: timePtrVal(old.Expiration), After: nil}
+		}
+	case req.Expiration != nil && !eqTimePtr(old.Expiration, req.Expiration):
 		diff["expiration"] = fieldChange{Before: timePtrVal(old.Expiration), After: timePtrVal(req.Expiration)}
+	}
+	if req.Metadata != nil && !eqMetadata(old.Metadata, req.Metadata) {
+		diff["metadata"] = fieldChange{Before: metadataVal(old.Metadata), After: req.Metadata}
 	}
 
 	if len(diff) == 0 {
@@ -78,4 +91,27 @@ func timePtrVal(p *time.Time) interface{} {
 		return nil
 	}
 	return p.UTC().Format(time.RFC3339)
+}
+
+// eqMetadata reports whether old (the persisted models.SecretNode.Metadata JSON
+// blob) is equivalent to new (the requested replacement map). An unparsable or
+// empty old value is treated as an empty map, so setting metadata on a secret
+// that previously had none still registers as a change.
+func eqMetadata(old models.JSON, new map[string]string) bool {
+	return reflect.DeepEqual(metadataMap(old), new)
+}
+
+// metadataMap decodes a models.SecretNode.Metadata JSON blob into a map,
+// treating anything unparsable/empty as an empty (non-nil) map.
+func metadataMap(old models.JSON) map[string]string {
+	m := map[string]string{}
+	if len(old) > 0 {
+		_ = json.Unmarshal(old, &m)
+	}
+	return m
+}
+
+// metadataVal returns the "before" side of a metadata diff entry.
+func metadataVal(old models.JSON) interface{} {
+	return metadataMap(old)
 }
