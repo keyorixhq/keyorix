@@ -193,6 +193,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Use(customMiddleware.NoStore)
 		// Authentication middleware for API routes
 		r.Use(customMiddleware.Authentication(coreService))
+		// General per-principal request budget (#163) — a backstop against one
+		// already-authorized principal hammering expensive endpoints (e.g. the
+		// deployment-wide compliance-posture/secrets-inventory-export handlers), not
+		// an authorization boundary. Runs right after Authentication so the
+		// principal is resolved. No-op unless server.http.ratelimit.enabled is set.
+		r.Use(customMiddleware.PrincipalRateLimit(cfg.Server.HTTP.RateLimit))
 		// Confine restricted (must-change-password) sessions to the password-change
 		// allowlist (ADR-025).
 		r.Use(customMiddleware.EnforceAccountRestriction)
@@ -723,6 +729,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// create/revoke stay system.write.
 		r.With(customMiddleware.RequirePermission("audit.read")).Get("/risk-exceptions", dashboardHandler.ListRiskExceptions)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskException)
+		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions/{id}/approve", dashboardHandler.ApproveRiskException)
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/risk-exceptions/{id}", dashboardHandler.RevokeRiskException)
 
 		// Separation of duties (ISO A.5.3): policy definitions (name/permission pair, no

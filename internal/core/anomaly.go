@@ -45,7 +45,9 @@ type StorageInterface = interface {
 	PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error)
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
-	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
+	// LogAuditEvent backs auditBusinessHoursConfig (#144) — a business-hours config
+	// change must be on the audit record even though it's applied in-memory here.
+	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 }
 
 // SetLookback sets how far back each detection pass scans, flooring it at one hour. The
@@ -119,14 +121,23 @@ func (p offHoursPolicy) isOffHours(t time.Time) bool {
 // validHour reports whether h is a valid clock hour [0,23].
 func validHour(h int) bool { return h >= 0 && h <= 23 }
 
+// EventAnomalyBusinessHoursConfigured audits a change to the off_hours rule's
+// timezone/band (#144). A degenerate (start == end) or otherwise narrowed band
+// silently blinds that rule with no other visible symptom, so the config CHANGE
+// itself — not just its effect — must be on the record.
+const EventAnomalyBusinessHoursConfigured = "anomaly.business_hours_configured" // #nosec G101 -- audit event type, not a credential
+
 // SetBusinessHours configures the off_hours rule's timezone and band. tz is an IANA
 // name ("" = UTC); the off-hours band is [startHour, endHour) wrapping midnight, in
 // that timezone. A blank tz keeps UTC, and the band defaults to 22:00–06:00 unless
 // overridden. Because 0 is the config zero value AND a valid hour, both hours being 0
 // is treated as "unset" (a 0–0 band would be empty) — set the timezone alone and the
-// default band is kept. Returns an error only for an unparseable timezone, leaving the
-// prior policy unchanged.
-func (d *AnomalyDetector) SetBusinessHours(tz string, startHour, endHour int) error {
+// default band is kept. Returns an error for an unparseable timezone OR a degenerate
+// band (startHour == endHour for any other, explicitly-supplied pair) — a start==end
+// band matches no hour in isOffHours, which would silently disable the rule with no
+// validation error and no audit trail if allowed through. Either error leaves the
+// prior policy unchanged. On success the new band is recorded as an audit event.
+func (d *AnomalyDetector) SetBusinessHours(ctx context.Context, tz string, startHour, endHour int) error {
 	p := defaultOffHoursPolicy()
 	if tz != "" {
 		loc, err := time.LoadLocation(tz)
@@ -136,6 +147,9 @@ func (d *AnomalyDetector) SetBusinessHours(tz string, startHour, endHour int) er
 		p.loc = loc
 	}
 	if startHour != 0 || endHour != 0 { // both zero = unset → keep the default band
+		if validHour(startHour) && validHour(endHour) && startHour == endHour {
+			return fmt.Errorf("anomaly business_hours: start_hour and end_hour must differ (an equal start/end band is empty and would silently disable the off_hours rule; pass 0,0 to explicitly keep the default band)")
+		}
 		if validHour(startHour) {
 			p.start = startHour
 		}
@@ -144,7 +158,34 @@ func (d *AnomalyDetector) SetBusinessHours(tz string, startHour, endHour int) er
 		}
 	}
 	d.offHours = p
+	d.auditBusinessHoursConfig(ctx, tz, p)
 	return nil
+}
+
+// auditBusinessHoursConfig records the newly-applied off-hours band/timezone as an
+// audit event. Best-effort: a storage failure here must not undo the in-memory
+// policy change SetBusinessHours already applied, but it is logged loudly (a missed
+// audit write for a detection-control config change is itself a small gap).
+func (d *AnomalyDetector) auditBusinessHoursConfig(ctx context.Context, tz string, p offHoursPolicy) {
+	if d.storage == nil {
+		return
+	}
+	tzLabel := tz
+	if tzLabel == "" {
+		tzLabel = "UTC"
+	}
+	ok := true
+	event := &models.AuditEvent{
+		EventType: EventAnomalyBusinessHoursConfigured,
+		Description: fmt.Sprintf("anomaly off-hours band configured: timezone=%s band=%02d:00-%02d:00",
+			tzLabel, p.start, p.end),
+		Success:   &ok,
+		ActorType: "system",
+		EventTime: time.Now(),
+	}
+	if err := d.storage.LogAuditEvent(ctx, event); err != nil {
+		log.Printf("SECURITY: anomaly business-hours config: failed to write audit event: %v", err)
+	}
 }
 
 // accessBaseline holds statistical baseline for a secret's access patterns.
@@ -499,9 +540,4 @@ func FilterAlerts(alerts []models.AnomalyAlert, severity, alertType string) []mo
 		out = append(out, a)
 	}
 	return out
-}
-
-// AcknowledgeAlert marks an alert as acknowledged.
-func (d *AnomalyDetector) AcknowledgeAlert(ctx context.Context, id uint) error {
-	return d.storage.AcknowledgeAnomalyAlert(ctx, id)
 }
