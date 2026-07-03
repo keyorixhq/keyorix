@@ -234,9 +234,9 @@ func (m *MockStorage) GetAccessReviewItem(ctx context.Context, id uint) (*models
 	return args.Get(0).(*models.AccessReviewItem), args.Error(1)
 }
 
-func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error {
+func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error) {
 	args := m.Called(ctx, item)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {

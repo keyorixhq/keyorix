@@ -101,7 +101,12 @@ type Storage interface {
 	CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error
 	ListAccessReviewItems(ctx context.Context, campaignID uint) ([]*models.AccessReviewItem, error)
 	GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error)
-	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) error
+	// UpdateAccessReviewItem persists a decision with a conditional UPDATE (only an
+	// item whose CURRENT stored decision is still "pending" may be transitioned). The
+	// bool reports whether the row matched and was updated; false means the item was
+	// already decided (by a prior or racing call) and this write was rejected, not
+	// silently applied.
+	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error)
 
 	// Separation-of-duties policies (ISO 27001 A.5.3 / SOX) — toxic permission pairs.
 	CreateSoDPolicy(ctx context.Context, p *models.SoDPolicy) (*models.SoDPolicy, error)
