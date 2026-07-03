@@ -302,6 +302,105 @@ func TestDynamicSecrets_MaxTTLClampsIssue(t *testing.T) {
 	assert.Equal(t, fixed.Add(30*time.Minute), issued.ExpiresAt, "issue TTL must be clamped to max_ttl_seconds")
 }
 
+// #97: an install-wide ceiling must clamp a lease's TTL even when the config's own
+// MaxTTLSeconds is left unset (unbounded) — otherwise a caller-supplied override
+// (or, on a misconfigured install, the config default) could mint an arbitrarily
+// long-lived credential.
+func TestDynamicSecrets_InstallWideMaxLeaseTTLClampsIssue(t *testing.T) {
+	c, _, _, fixed := newDynamicTestCore(t)
+	c.SetDynamicMaxLeaseTTL(2 * time.Hour)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		// No MaxTTLSeconds — the per-config ceiling is unset/unbounded.
+	})
+	require.NoError(t, err)
+
+	// A caller requests a 1000-hour (~41-day) lease; nothing in the config stops it.
+	issued, err := c.IssueLease(ctx, cfg.ID, 1000*3600, 7)
+	require.NoError(t, err)
+	assert.Equal(t, fixed.Add(2*time.Hour), issued.ExpiresAt, "the install-wide ceiling must clamp an otherwise-unbounded request")
+}
+
+// A zero/unset install-wide ceiling must fall back to the package default (90 days),
+// not disable the ceiling entirely.
+func TestDynamicSecrets_InstallWideMaxLeaseTTLDefaultsWhenUnset(t *testing.T) {
+	c, _, _, fixed := newDynamicTestCore(t)
+	// SetDynamicMaxLeaseTTL is never called — dynamicMaxLeaseTTL stays its zero value.
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+	})
+	require.NoError(t, err)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 1000*24*3600, 7) // ~1000 days requested
+	require.NoError(t, err)
+	assert.Equal(t, fixed.Add(defaultMaxLeaseTTL), issued.ExpiresAt, "an unset install ceiling must fall back to the 90-day default, not disable clamping")
+}
+
+// #97: when the engine surfaces the provider's actual granted expiry (Fields
+// ["expiration"], set by the AWS STS / Kubernetes engines after their own
+// 900s/600s duration floor), the persisted lease must use THAT value rather than
+// naively computing now+requestedTTL — otherwise Keyorix's own bookkeeping (and the
+// auto-revoke sweep, which acts on ExpiresAt) would understate the credential's true
+// lifetime.
+func TestDynamicSecrets_ExpiresAtUsesProviderActualExpiryWhenSurfaced(t *testing.T) {
+	c, _, fake, fixed := newDynamicTestCore(t)
+	fake.Ephemeral = true
+	// The engine floored a short requested TTL up to its own provider minimum — the
+	// actual granted expiry is well past what a naive now+requestedTTL would compute.
+	actualExpiry := fixed.Add(15 * time.Minute)
+	fake.IssueFields = map[string]string{"expiration": actualExpiry.UTC().Format(time.RFC3339)}
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	// Request only 60s — far below the provider's actual floor.
+	issued, err := c.IssueLease(ctx, cfg.ID, 60, 7)
+	require.NoError(t, err)
+	assert.Equal(t, actualExpiry, issued.ExpiresAt, "ExpiresAt must reflect the provider's actual granted expiry, not now+60s")
+
+	stored, err := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	require.NoError(t, err)
+	assert.Equal(t, actualExpiry, stored.ExpiresAt, "the persisted lease row must carry the corrected expiry too")
+}
+
+// Without a surfaced provider expiry (Fields["expiration"] absent, e.g. a DB backend),
+// ExpiresAt must still fall back to the requested-ttl computation — the correction is
+// additive, not a behavior change for backends that don't surface one.
+func TestDynamicSecrets_ExpiresAtFallsBackWithoutProviderExpiry(t *testing.T) {
+	c, _, _, fixed := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 1800, 7)
+	require.NoError(t, err)
+	assert.Equal(t, fixed.Add(30*time.Minute), issued.ExpiresAt)
+}
+
+// #97: RevokeLease's audit trail must not claim an ephemeral (no-op-Revoke) backend's
+// credential was actually killed — it remains live at the provider until its own
+// natural expiry. The lease is still marked "revoked" locally (so it drops out of
+// active-lease accounting / stops appearing as issuable-from-this-lease), but the
+// audit message must say so honestly.
+func TestDynamicSecrets_RevokeEphemeralBackendAuditsHonestly(t *testing.T) {
+	c, db, fake, _ := newDynamicTestCore(t)
+	fake.Ephemeral = true
+	ctx := context.Background()
+	cfg := mkConfig(t, c, ctx)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+	require.NoError(t, c.RevokeLease(ctx, issued.LeaseID, 7, "manual"))
+
+	lease, err := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	require.NoError(t, err)
+	assert.Equal(t, "revoked", lease.Status, "still marked revoked locally")
+
+	var ev models.AuditEvent
+	require.NoError(t, db.Where("event_type = ?", "dynamic_lease.revoked").Order("id DESC").First(&ev).Error)
+	assert.Contains(t, ev.Description, "cannot be invalidated early", "the audit trail must not claim a full provider-side revoke for an ephemeral backend")
+}
+
 func TestDynamicSecrets_CreateRejectsDefaultOverMax(t *testing.T) {
 	c, _, _, _ := newDynamicTestCore(t)
 	_, err := c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
@@ -309,6 +408,30 @@ func TestDynamicSecrets_CreateRejectsDefaultOverMax(t *testing.T) {
 		DefaultTTLSeconds: 3600, MaxTTLSeconds: 600,
 	})
 	require.Error(t, err)
+}
+
+// #97: renewal must respect the install-wide ceiling too, not just the (optional,
+// default-unbounded) per-config MaxTTLSeconds — otherwise a config left without its
+// own ceiling could have its lease's total lifetime stretched arbitrarily far by
+// repeated renewals.
+func TestDynamicSecrets_RenewRespectsInstallWideMaxLeaseTTL(t *testing.T) {
+	c, _, _, fixed := newDynamicTestCore(t)
+	c.SetDynamicMaxLeaseTTL(20 * time.Minute)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
+		DefaultTTLSeconds: 300, // no MaxTTLSeconds — per-config ceiling unset
+	})
+	require.NoError(t, err)
+
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7) // expiry = fixed+5m
+	require.NoError(t, err)
+	require.Equal(t, fixed.Add(5*time.Minute), issued.ExpiresAt)
+
+	// Ask to renew far past the 20m install ceiling (measured from IssuedAt).
+	exp, err := c.RenewLease(ctx, issued.LeaseID, 3600, 7)
+	require.NoError(t, err)
+	assert.Equal(t, fixed.Add(20*time.Minute), exp, "renewal must clamp to the install-wide ceiling from IssuedAt")
 }
 
 func TestDynamicSecrets_RenewExtendsAndRespectsMaxTTL(t *testing.T) {

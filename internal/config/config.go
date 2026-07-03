@@ -1309,6 +1309,13 @@ type DynamicSecretsConfig struct {
 	SweepEnabled bool `yaml:"sweep_enabled"`
 	// SweepInterval is the sweep cadence as a Go duration (e.g. "1m", "5m").
 	SweepInterval string `yaml:"sweep_interval"`
+	// MaxLeaseTTL is a hard, install-wide ceiling on any dynamic-secret lease's TTL —
+	// independent of (and always enforced alongside) each DynamicSecretConfig's own
+	// per-config MaxTTLSeconds, which has no ceiling of its own and defaults to
+	// "unset = unbounded" (#97: without this, an operator could set/leave a config's
+	// max_ttl_seconds unbounded and mint a credential valid for, say, 100 years). Go
+	// duration string (e.g. "720h"); defaults to 90 days when unset or unparseable.
+	MaxLeaseTTL string `yaml:"max_lease_ttl"`
 }
 
 // GetSweepInterval returns the auto-revoke sweep cadence, parsing SweepInterval
@@ -1320,6 +1327,17 @@ func (c DynamicSecretsConfig) GetSweepInterval() time.Duration {
 		}
 	}
 	return 1 * time.Minute
+}
+
+// GetMaxLeaseTTL returns the install-wide dynamic-secret lease TTL ceiling; defaults to
+// 90 days when unset or unparseable (#97).
+func (c DynamicSecretsConfig) GetMaxLeaseTTL() time.Duration {
+	if c.MaxLeaseTTL != "" {
+		if d, err := time.ParseDuration(c.MaxLeaseTTL); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 90 * 24 * time.Hour
 }
 
 // GetInterval returns the purge run interval, parsing Schedule as a Go duration

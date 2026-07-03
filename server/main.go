@@ -651,6 +651,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// refuses to mint from backends whose lease TTL only the sweeper enforces
 	// (MySQL/MongoDB) when it is disabled — otherwise the credential never expires.
 	coreService.SetDynamicSweepEnabled(cfg.DynamicSecrets.SweepEnabled)
+	// Install-wide hard ceiling on any dynamic-secret lease's TTL (#97); enforced on
+	// top of each config's own optional (default-unbounded) MaxTTLSeconds.
+	coreService.SetDynamicMaxLeaseTTL(cfg.DynamicSecrets.GetMaxLeaseTTL())
 
 	// Wire self-service emergency access (break-glass); zero value = disabled.
 	coreService.SetBreakGlassPolicy(core.BreakGlassPolicy{
