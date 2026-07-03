@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -46,7 +47,7 @@ func (c *KeyorixCore) BeginMFAEnrollment(ctx context.Context, userID uint) (otpa
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate TOTP secret: %w", err)
 	}
-	ct, meta, err := c.encryptAuthSecret(key.Secret())
+	ct, meta, err := c.encryptAuthSecret(key.Secret(), encryption.MFASecretAAD(userID))
 	if err != nil {
 		return "", "", fmt.Errorf("failed to encrypt TOTP secret: %w", err)
 	}
@@ -292,7 +293,7 @@ func (c *KeyorixCore) loadTOTPSecret(ctx context.Context, userID uint) (string, 
 	if err != nil {
 		return "", err
 	}
-	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta)
+	return c.decryptAuthSecret(row.SecretEnc, row.SecretMeta, encryption.MFASecretAAD(userID))
 }
 
 func (c *KeyorixCore) validateTOTP(secret, code string) bool {

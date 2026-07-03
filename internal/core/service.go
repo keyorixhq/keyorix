@@ -410,20 +410,28 @@ func (c *KeyorixCore) SetAuthEncryptor(s *encryption.Service) {
 	c.authEncryptor = s
 }
 
-// encryptAuthSecret reversibly encrypts plain; passthrough when encryption is off.
-func (c *KeyorixCore) encryptAuthSecret(plain string) (ct, meta []byte, err error) {
+// encryptAuthSecret reversibly encrypts plain, bound to aad (#94: MFASecretAAD /
+// DynamicSecretConfigAAD / DynamicSecretLeaseAAD — never nil for a live caller, so a
+// DB-write attacker cannot transplant one row's ciphertext onto another's identity and
+// have it decrypt). Passthrough when encryption is off.
+func (c *KeyorixCore) encryptAuthSecret(plain string, aad []byte) (ct, meta []byte, err error) {
 	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
 		return []byte(plain), nil, nil
 	}
-	return c.authEncryptor.EncryptSecret([]byte(plain))
+	return c.authEncryptor.EncryptSecretWithAAD([]byte(plain), aad)
 }
 
-// decryptAuthSecret reverses encryptAuthSecret; passthrough when encryption is off.
-func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte) (string, error) {
+// decryptAuthSecret reverses encryptAuthSecret. aad must be reconstructed from the
+// row's own identity, identically to how it was encrypted. Falls back to a legacy
+// nil-AAD decrypt for rows encrypted before #94 (Service.DecryptSecretWithAAD's own
+// AADVersion branch — see SecretEncryption for the same pattern on secret values);
+// the sweep upgrades those rows to AAD-bound in place. Passthrough when encryption is
+// off.
+func (c *KeyorixCore) decryptAuthSecret(ct, _ []byte, aad []byte) (string, error) {
 	if c.authEncryptor == nil || !c.authEncryptor.IsEnabled() {
 		return string(ct), nil
 	}
-	plain, err := c.authEncryptor.DecryptSecret(ct)
+	plain, err := c.authEncryptor.DecryptSecretWithAAD(ct, aad)
 	if err != nil {
 		return "", err
 	}
