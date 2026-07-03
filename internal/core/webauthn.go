@@ -454,7 +454,9 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 	if !cred.Authenticator.CloneWarning {
 		return nil
 	}
-	if row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, cred.ID); err == nil && row.UserID == userID {
+	// Scoped to userID (#307) — the lookup itself enforces ownership, so no separate
+	// row.UserID check is needed here.
+	if row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, cred.ID, userID); err == nil {
 		row.Disabled = true
 		_ = c.storage.UpdateWebAuthnCredential(ctx, row)
 	}
