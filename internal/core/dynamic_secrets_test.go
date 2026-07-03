@@ -362,7 +362,6 @@ func TestDynamicSecrets_InstallWideMaxLeaseTTLClampsIssue(t *testing.T) {
 		Name: "unbounded", ProjectID: 1, BackendType: "postgres", AdminDSN: adminDSNPlain,
 		ActorID: testAdminActorID,
 		// No MaxTTLSeconds — the per-config ceiling is unset/unbounded.
-		ActorID: testAdminActorID,
 	})
 	require.NoError(t, err)
 
