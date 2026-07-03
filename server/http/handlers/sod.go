@@ -1,6 +1,8 @@
 // sod.go — separation-of-duties endpoints (ISO 27001 A.5.3 / SOX). Deployment-wide:
-// listing policies + violations needs system.read; creating/deleting policies needs
-// system.write (wired in router.go).
+// listing policy DEFINITIONS (name/permission pair, no PII) needs only the universal
+// system_viewer baseline system.read; listing VIOLATIONS discloses violator
+// names/emails deployment-wide, so it needs audit.read; creating/deleting policies
+// needs system.write (wired in router.go).
 package handlers
 
 import (

@@ -3,9 +3,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"time"
-
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ShareAuditEvent represents different types of sharing audit events
@@ -54,16 +51,10 @@ func (c *KeyorixCore) LogShareCreated(ctx context.Context, auditCtx *ShareAuditC
 		recipientType = "group"
 	}
 
-	event := &models.AuditEvent{
-		EventType:    string(ShareAuditEventCreated),
-		UserID:       &auditCtx.ActorID,
-		SecretNodeID: &auditCtx.SecretID,
-		Description:  fmt.Sprintf("Shared with %s %d (permission: %s)", recipientType, auditCtx.RecipientID, auditCtx.Permission),
-		EventTime:    time.Now(),
-	}
-
-	// Log the event (ignore errors to not block the main operation)
-	c.emitAudit(ctx, event)
+	desc := fmt.Sprintf("Shared with %s %d (permission: %s)", recipientType, auditCtx.RecipientID, auditCtx.Permission)
+	// Route through the shared choke point so impersonation context
+	// (ActorType/ImpersonatedBy/ActingAs/Impersonation) gets stamped consistently (#284).
+	c.writeAuditEvent(ctx, string(ShareAuditEventCreated), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }
 
 // LogShareUpdated logs a share permission update event
@@ -73,17 +64,9 @@ func (c *KeyorixCore) LogShareUpdated(ctx context.Context, auditCtx *ShareAuditC
 		recipientType = "group"
 	}
 
-	event := &models.AuditEvent{
-		EventType:    string(ShareAuditEventUpdated),
-		UserID:       &auditCtx.ActorID,
-		SecretNodeID: &auditCtx.SecretID,
-		Description: fmt.Sprintf("Updated share permission for %s %d (from %s to %s)",
-			recipientType, auditCtx.RecipientID, auditCtx.OldPermission, auditCtx.Permission),
-		EventTime: time.Now(),
-	}
-
-	// Log the event (ignore errors to not block the main operation)
-	c.emitAudit(ctx, event)
+	desc := fmt.Sprintf("Updated share permission for %s %d (from %s to %s)",
+		recipientType, auditCtx.RecipientID, auditCtx.OldPermission, auditCtx.Permission)
+	c.writeAuditEvent(ctx, string(ShareAuditEventUpdated), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }
 
 // LogShareRevoked logs a share revocation event
@@ -93,85 +76,37 @@ func (c *KeyorixCore) LogShareRevoked(ctx context.Context, auditCtx *ShareAuditC
 		recipientType = "group"
 	}
 
-	event := &models.AuditEvent{
-		EventType:    string(ShareAuditEventRevoked),
-		UserID:       &auditCtx.ActorID,
-		SecretNodeID: &auditCtx.SecretID,
-		Description:  fmt.Sprintf("Revoked share for %s %d", recipientType, auditCtx.RecipientID),
-		EventTime:    time.Now(),
-	}
-
-	// Log the event (ignore errors to not block the main operation)
-	c.emitAudit(ctx, event)
+	desc := fmt.Sprintf("Revoked share for %s %d", recipientType, auditCtx.RecipientID)
+	c.writeAuditEvent(ctx, string(ShareAuditEventRevoked), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }
 
 // LogSharedSecretAccessed logs when a user accesses a shared secret
 func (c *KeyorixCore) LogSharedSecretAccessed(ctx context.Context, auditCtx *ShareAuditContext) {
-	event := &models.AuditEvent{
-		EventType:    string(ShareAuditEventAccessed),
-		UserID:       &auditCtx.ActorID,
-		SecretNodeID: &auditCtx.SecretID,
-		Description:  fmt.Sprintf("Accessed shared secret (permission: %s)", auditCtx.Permission),
-		EventTime:    time.Now(),
-	}
-
-	// Log the event (ignore errors to not block the main operation)
-	c.emitAudit(ctx, event)
+	desc := fmt.Sprintf("Accessed shared secret (permission: %s)", auditCtx.Permission)
+	c.writeAuditEvent(ctx, string(ShareAuditEventAccessed), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }
 
 // LogGroupShareCreated logs a group share creation event
 func (c *KeyorixCore) LogGroupShareCreated(ctx context.Context, auditCtx *ShareAuditContext) {
-	event := &models.AuditEvent{
-		EventType:    string(ShareAuditEventGroupCreated),
-		UserID:       &auditCtx.ActorID,
-		SecretNodeID: &auditCtx.SecretID,
-		Description:  fmt.Sprintf("Shared with group %d (permission: %s)", auditCtx.RecipientID, auditCtx.Permission),
-		EventTime:    time.Now(),
-	}
-
-	// Log the event (ignore errors to not block the main operation)
-	c.emitAudit(ctx, event)
+	desc := fmt.Sprintf("Shared with group %d (permission: %s)", auditCtx.RecipientID, auditCtx.Permission)
+	c.writeAuditEvent(ctx, string(ShareAuditEventGroupCreated), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }
 
 // LogGroupShareUpdated logs a group share permission update event
 func (c *KeyorixCore) LogGroupShareUpdated(ctx context.Context, auditCtx *ShareAuditContext) {
-	event := &models.AuditEvent{
-		EventType:    string(ShareAuditEventGroupUpdated),
-		UserID:       &auditCtx.ActorID,
-		SecretNodeID: &auditCtx.SecretID,
-		Description: fmt.Sprintf("Updated group share permission for group %d (from %s to %s)",
-			auditCtx.RecipientID, auditCtx.OldPermission, auditCtx.Permission),
-		EventTime: time.Now(),
-	}
-
-	// Log the event (ignore errors to not block the main operation)
-	c.emitAudit(ctx, event)
+	desc := fmt.Sprintf("Updated group share permission for group %d (from %s to %s)",
+		auditCtx.RecipientID, auditCtx.OldPermission, auditCtx.Permission)
+	c.writeAuditEvent(ctx, string(ShareAuditEventGroupUpdated), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }
 
 // LogGroupShareRevoked logs a group share revocation event
 func (c *KeyorixCore) LogGroupShareRevoked(ctx context.Context, auditCtx *ShareAuditContext) {
-	event := &models.AuditEvent{
-		EventType:    string(ShareAuditEventGroupRevoked),
-		UserID:       &auditCtx.ActorID,
-		SecretNodeID: &auditCtx.SecretID,
-		Description:  fmt.Sprintf("Revoked group share for group %d", auditCtx.RecipientID),
-		EventTime:    time.Now(),
-	}
-
-	// Log the event (ignore errors to not block the main operation)
-	c.emitAudit(ctx, event)
+	desc := fmt.Sprintf("Revoked group share for group %d", auditCtx.RecipientID)
+	c.writeAuditEvent(ctx, string(ShareAuditEventGroupRevoked), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }
 
 // LogSelfRemovalFromShare logs when a user removes themselves from a shared secret
 func (c *KeyorixCore) LogSelfRemovalFromShare(ctx context.Context, auditCtx *ShareAuditContext) {
-	event := &models.AuditEvent{
-		EventType:    string(ShareAuditEventSelfRemoved),
-		UserID:       &auditCtx.ActorID,
-		SecretNodeID: &auditCtx.SecretID,
-		Description:  fmt.Sprintf("User removed themselves from shared secret (permission: %s)", auditCtx.Permission),
-		EventTime:    time.Now(),
-	}
-
-	// Log the event (ignore errors to not block the main operation)
-	c.emitAudit(ctx, event)
+	desc := fmt.Sprintf("User removed themselves from shared secret (permission: %s)", auditCtx.Permission)
+	c.writeAuditEvent(ctx, string(ShareAuditEventSelfRemoved), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }

@@ -289,7 +289,11 @@ func (c *KeyorixCore) RevokeLease(ctx context.Context, leaseID string, userID ui
 	if rerr := engine.Revoke(ctx, adminDSN, lease.RoleName); rerr != nil {
 		lease.Status = "revoke_failed"
 		lease.RevokeError = rerr.Error()
-		lease.RevokedAt = &now
+		// Deliberately NOT stamping RevokedAt here: the target drop failed, so the
+		// credential is still live. Stamping it would make the audit trail / API
+		// falsely claim the role was dropped at this time, even though it wasn't —
+		// and it wasn't dropped at all yet, so there is no "revoked at" moment to
+		// record. RevokedAt is set only on the success path below.
 		_ = c.storage.UpdateDynamicSecretLease(ctx, lease)
 		c.writeAuditEventFull(ctx, "dynamic_lease.revoke_failed", uidPtr, nil, &pid, "",
 			fmt.Sprintf("FAILED to revoke dynamic lease %s (role %s): %v", lease.LeaseID, lease.RoleName, rerr))

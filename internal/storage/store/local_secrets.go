@@ -154,8 +154,13 @@ func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 // environments a user had retired independently earlier carry a different deleted_at
 // and are deliberately left in the recycle bin — restoring the project must not
 // silently resurrect a deliberately-deleted secret (and re-grant its retained shares).
-func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) error {
-	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+//
+// Returns the number of environments and secrets the cascade actually brought back, so
+// the caller can emit a per-type-count audit entry alongside the single project.restored
+// event (#311) — otherwise a DR-test or accidental delete-then-undo of a whole project
+// resurrects an unknown number of children with no forensic record of what came back.
+func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) (restoredEnvironments, restoredSecrets int, err error) {
+	txErr := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Read the cascade's deletion timestamp before clearing it.
 		var project models.Project
 		if err := tx.Unscoped().Where("id = ? AND deleted_at IS NOT NULL", id).First(&project).Error; err != nil {
@@ -166,14 +171,20 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) error {
 		// Restore only the children whose deleted_at is at or after the cascade timestamp
 		// (those removed by this DeleteProject); earlier, independently-retired rows are
 		// strictly before it and stay deleted.
-		if err := tx.Unscoped().Model(&models.Environment{}).
-			Where("project_id = ? AND deleted_at >= ?", id, cascadeTS).Update("deleted_at", nil).Error; err != nil {
-			return fmt.Errorf("failed to restore project environments: %w", err)
+		envResult := tx.Unscoped().Model(&models.Environment{}).
+			Where("project_id = ? AND deleted_at >= ?", id, cascadeTS).Update("deleted_at", nil)
+		if envResult.Error != nil {
+			return fmt.Errorf("failed to restore project environments: %w", envResult.Error)
 		}
-		if err := tx.Unscoped().Model(&models.SecretNode{}).
-			Where("project_id = ? AND deleted_at >= ?", id, cascadeTS).Update("deleted_at", nil).Error; err != nil {
-			return fmt.Errorf("failed to restore project secrets: %w", err)
+		restoredEnvironments = int(envResult.RowsAffected)
+
+		secResult := tx.Unscoped().Model(&models.SecretNode{}).
+			Where("project_id = ? AND deleted_at >= ?", id, cascadeTS).Update("deleted_at", nil)
+		if secResult.Error != nil {
+			return fmt.Errorf("failed to restore project secrets: %w", secResult.Error)
 		}
+		restoredSecrets = int(secResult.RowsAffected)
+
 		// Clear the project last.
 		if err := tx.Unscoped().Model(&models.Project{}).
 			Where("id = ?", id).Update("deleted_at", nil).Error; err != nil {
@@ -181,6 +192,10 @@ func (ls *LocalStorage) RestoreProject(ctx context.Context, id uint) error {
 		}
 		return nil
 	})
+	if txErr != nil {
+		return 0, 0, txErr
+	}
+	return restoredEnvironments, restoredSecrets, nil
 }
 
 func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environment, error) {
@@ -517,6 +532,13 @@ func (ls *LocalStorage) SetSecretTags(ctx context.Context, secretID uint, tagNam
 // CreateSecretVersion creates a new version of a secret.
 func (ls *LocalStorage) CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
 	if err := ls.db.WithContext(ctx).Create(version).Error; err != nil {
+		if isUniqueViolation(err) {
+			// The unique index on (secret_node_id, version_number) (#121) caught a
+			// concurrent rotation that already claimed this version number. Translate to
+			// the sentinel so RotateSecret can retry with a freshly re-read latest version
+			// instead of failing the rotation outright on ordinary contention.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateSecretVersion, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return version, nil

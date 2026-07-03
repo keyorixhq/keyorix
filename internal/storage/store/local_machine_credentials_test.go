@@ -19,6 +19,7 @@ func newMachineCredTestStore(t *testing.T) *LocalStorage {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.MachineIdentityCredential{}, &models.MachineIdentityRole{}, &models.Role{},
+		&models.Project{}, &models.Environment{},
 	))
 	return NewLocalStorage(db)
 }
@@ -140,4 +141,56 @@ func TestMachineRoleGrantScopeResolution_EnvCrossLeak(t *testing.T) {
 	ids, err = ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 2})
 	require.NoError(t, err)
 	assert.Empty(t, ids, "an env-scoped grant does not apply at project-level env 0")
+}
+
+// #312: a machine role bound directly to a project must stop authorizing the
+// moment the project is soft-deleted, and resume once the project is restored —
+// mirroring GetUserRoleIDsAt's #161 fix (PR #568), for the machine-principal
+// path. Before this fix, GetMachineRoleIDsAt had no join against the projects
+// table at all, so a project-scoped machine role kept authorizing regardless of
+// the project's own soft-delete state.
+func TestGetMachineRoleIDsAt_DeletedProjectStopsAuthorizing(t *testing.T) {
+	ls := newMachineCredTestStore(t)
+	ctx := context.Background()
+	const machineID = uint(1)
+	require.NoError(t, ls.db.Create(&models.Project{ID: 5, Name: "proj-5"}).Error)
+	require.NoError(t, ls.AssignMachineRole(ctx, machineID, 20, storage.Scope{ProjectID: 5}))
+
+	ids, err := ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 5})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{20}, ids, "live project: the project-scoped grant authorizes")
+
+	require.NoError(t, ls.db.Delete(&models.Project{}, 5).Error)
+	ids, err = ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 5})
+	require.NoError(t, err)
+	assert.Empty(t, ids, "soft-deleted project: the grant must stop authorizing")
+
+	require.NoError(t, ls.db.Model(&models.Project{}).Unscoped().Where("id = ?", 5).Update("deleted_at", nil).Error)
+	ids, err = ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 5})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{20}, ids, "restored project: the grant authorizes again")
+}
+
+// #312: the same deleted_at gate applies to an ENVIRONMENT-scoped machine grant.
+func TestGetMachineRoleIDsAt_DeletedEnvironmentStopsAuthorizing(t *testing.T) {
+	ls := newMachineCredTestStore(t)
+	ctx := context.Background()
+	const machineID = uint(1)
+	require.NoError(t, ls.db.Create(&models.Project{ID: 5, Name: "proj-5"}).Error)
+	require.NoError(t, ls.db.Create(&models.Environment{ID: 9, ProjectID: 5, Name: "prod"}).Error)
+	require.NoError(t, ls.AssignMachineRole(ctx, machineID, 30, storage.Scope{ProjectID: 5, EnvironmentID: 9}))
+
+	ids, err := ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 5, EnvironmentID: 9})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{30}, ids, "live environment: the env-scoped grant authorizes")
+
+	require.NoError(t, ls.db.Delete(&models.Environment{}, 9).Error)
+	ids, err = ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 5, EnvironmentID: 9})
+	require.NoError(t, err)
+	assert.Empty(t, ids, "soft-deleted environment: the grant must stop authorizing")
+
+	require.NoError(t, ls.db.Model(&models.Environment{}).Unscoped().Where("id = ?", 9).Update("deleted_at", nil).Error)
+	ids, err = ls.GetMachineRoleIDsAt(ctx, machineID, storage.Scope{ProjectID: 5, EnvironmentID: 9})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []uint{30}, ids, "restored environment: the grant authorizes again")
 }

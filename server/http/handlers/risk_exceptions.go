@@ -1,6 +1,7 @@
 // risk_exceptions.go — the risk register / exceptions endpoints (ISO 27001 A.5.8
-// risk treatment). Listing needs system.read; create/revoke need system.write
-// (wired in router.go).
+// risk treatment). Listing discloses free-text Reference/Justification (which may
+// itself name a secret) deployment-wide, so it needs audit.read, not the universal
+// system_viewer baseline; create/revoke need system.write (wired in router.go).
 package handlers
 
 import (

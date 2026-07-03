@@ -11,10 +11,11 @@ import (
 // WithTransaction runs fn inside a single GORM transaction. fn receives a
 // transaction-scoped LocalStorage: every mutation it makes is committed together when
 // fn returns nil, and rolled back together if fn returns an error (or panics). The
-// transaction-scoped store shares the parent's audit-chain mutex so an audit append
-// inside the transaction still serializes correctly (ADR-029).
+// transaction-scoped store shares the parent's audit-chain and audit-checkpoint mutexes
+// so an audit append or checkpoint write inside the transaction still serializes
+// correctly (ADR-029).
 func (ls *LocalStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
 	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return fn(&LocalStorage{db: tx, auditChainMu: ls.auditChainMu})
+		return fn(&LocalStorage{db: tx, auditChainMu: ls.auditChainMu, auditCheckpointMu: ls.auditCheckpointMu})
 	})
 }
