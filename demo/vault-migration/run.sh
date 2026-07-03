@@ -66,8 +66,8 @@ set +e
 for _ in $(seq 1 30); do curl -sf "${VAULT_ADDR}/v1/sys/health" >/dev/null 2>&1 && break; sleep 1; done
 set -e
 vault_put() { curl -s -H "X-Vault-Token: ${VAULT_TOKEN}" -X POST "${VAULT_ADDR}/v1/secret/data/$1" -d "$2" >/dev/null; }
-vault_put demo/prod/database '{"data":{"username":"app_user","password":"pg-prod-xK9mN2pQ"}}'
-vault_put demo/prod/stripe   '{"data":{"value":"sk_live_demo_51abcXYZ"}}'
+vault_put demo/prod/database '{"data":{"username":"app_user","password":"REPLACE_WITH_YOUR_DB_PASSWORD"}}'
+vault_put demo/prod/stripe   '{"data":{"value":"REPLACE_WITH_YOUR_STRIPE_KEY"}}'
 vault_put demo/prod/redis    '{"data":{"url":"redis://cache.prod.internal:6379"}}'
 ok "Seeded Vault with 3 paths under secret/demo/prod/ (4 secrets)"
 

@@ -9,6 +9,7 @@ package gcpkms
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -26,16 +27,20 @@ type gcpKMSAPI interface {
 }
 
 type client struct {
-	kms     gcpKMSAPI
-	keyName string // projects/P/locations/L/keyRings/R/cryptoKeys/K
-	aad     []byte // AdditionalAuthenticatedData binding the wrapped KEK (nil = none)
+	kms           gcpKMSAPI
+	keyName       string // projects/P/locations/L/keyRings/R/cryptoKeys/K
+	aad           []byte // AdditionalAuthenticatedData binding the wrapped KEK (nil = none)
+	allowFallback bool   // #123: opt-in, see KMSAllowContextFallback's doc comment
 }
 
 // New builds a GCP-KMS-backed crypto.KMSClient for the given crypto-key resource
 // name (projects/.../cryptoKeys/...). encContext, when non-empty, is bound to the
 // wrapped KEK as AdditionalAuthenticatedData so a different install sharing the same
-// key cannot unwrap it.
-func New(ctx context.Context, keyName string, encContext map[string]string) (keyorixcrypto.KMSClient, error) {
+// key cannot unwrap it — UNLESS allowFallback is also set, in which case an
+// AAD-bound Decrypt failure retries once without any AAD (see
+// config.KeyProviderConfig.KMSAllowContextFallback for the full rationale; default
+// false = the binding is strictly enforced).
+func New(ctx context.Context, keyName string, encContext map[string]string, allowFallback bool) (keyorixcrypto.KMSClient, error) {
 	if keyName == "" {
 		return nil, fmt.Errorf("gcp-kms: kms_key_id (crypto key resource name) is required")
 	}
@@ -43,7 +48,7 @@ func New(ctx context.Context, keyName string, encContext map[string]string) (key
 	if err != nil {
 		return nil, fmt.Errorf("gcp-kms: create client: %w", err)
 	}
-	return &client{kms: c, keyName: keyName, aad: encContextAAD(encContext)}, nil
+	return &client{kms: c, keyName: keyName, aad: encContextAAD(encContext), allowFallback: allowFallback}, nil
 }
 
 // encContextAAD canonicalises an encryption-context map into deterministic bytes
@@ -86,12 +91,15 @@ func (c *client) Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 		req.AdditionalAuthenticatedData = c.aad
 	}
 	resp, err := c.kms.Decrypt(ctx, req)
-	if err != nil && len(c.aad) > 0 {
-		// Legacy blob wrapped before the AAD was configured: retry once without it, so
-		// enabling the binding on a running install doesn't lock out the already-wrapped
-		// KEK (it rebinds on the next KEK re-wrap). A blob bound to a DIFFERENT install's
-		// AAD still fails both attempts — the security property holds.
+	// #123: the no-AAD retry is now OPT-IN (allowFallback) rather than automatic on any
+	// failure — see awskms.Decrypt's comment for the full rationale (identical here: an
+	// unconditional fallback makes the AAD binding advisory, since a blob an attacker
+	// planted with no AAD at all always succeeds on the fallback attempt).
+	if err != nil && len(c.aad) > 0 && c.allowFallback {
 		resp, err = c.kms.Decrypt(ctx, &kmspb.DecryptRequest{Name: c.keyName, Ciphertext: ciphertext})
+		if err == nil {
+			log.Printf("gcp-kms: decrypted a wrapped KEK WITHOUT its configured AAD (kms_allow_context_fallback is on) — this blob is not bound to this install; re-wrap it under the context via 'keyorix encryption migrate-provider --to-kms-encryption-context=...' and disable kms_allow_context_fallback")
+		}
 	}
 	if err != nil {
 		return nil, err

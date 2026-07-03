@@ -14,6 +14,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // RetentionPolicy is the resolved set of per-record-type retention windows, in
@@ -54,9 +56,25 @@ func (r RetentionResult) Total() int64 {
 
 // SetRetentionPolicy records the configured per-type retention windows so the
 // compliance posture can report them. The scheduler (main.go) drives the actual
-// purge from config; this setter exists for the read-only posture view.
-func (c *KeyorixCore) SetRetentionPolicy(p RetentionPolicy) {
+// purge from config; this setter exists for the read-only posture view. The
+// server calls it once at startup from keyorix.yaml (#160): an operator with
+// filesystem+restart access who shortens a retention window otherwise leaves no
+// audit trail of the CHANGE itself, only of the resulting purge counts — this
+// records the configured windows every time they're applied, mirroring
+// AuditLicenseState's startup-audit pattern.
+func (c *KeyorixCore) SetRetentionPolicy(ctx context.Context, p RetentionPolicy) {
 	c.retentionPolicy = p
+	ok := true
+	c.emitAudit(ctx, &models.AuditEvent{
+		EventType: "data_retention.policy_configured",
+		Description: fmt.Sprintf(
+			"Data retention policy applied: anomaly_alerts=%dd closed_access_reviews=%dd break_glass=%dd resolved_access_requests=%dd",
+			p.AnomalyAlertsDays, p.ClosedAccessReviewsDays, p.BreakGlassDays, p.ResolvedAccessRequestsDays,
+		),
+		Success:   &ok,
+		ActorType: ActorTypeSystem,
+		EventTime: time.Now(),
+	})
 }
 
 // RetentionPolicy returns the configured retention windows (zero value if unset).
@@ -70,8 +88,10 @@ func (c *KeyorixCore) RetentionPolicy() RetentionPolicy {
 // types. When anything was removed it emits one system-actored
 // `data.retention_purged` audit event with the per-type counts.
 //
-// CALLERS MUST gate this on legal-hold status (the scheduler does): an active hold
-// must preserve all records, so this is not invoked while a hold is in effect.
+// #378: the scheduler also gates its own call on legal-hold status, but this function
+// does not rely solely on that caller discipline (a doc-comment invariant checked only
+// upstream is not self-enforcing) — it re-checks the hold itself below, immediately
+// before any delete, so the invariant holds regardless of what future callers do.
 func (c *KeyorixCore) PurgeExpiredComplianceRecords(ctx context.Context, now time.Time, policy RetentionPolicy) (*RetentionResult, error) {
 	// Authoritative legal-hold re-check inside the locked purge (see PurgeExpiredSoftDeletes):
 	// closes the TOCTOU where a hold placed after the scheduler's pre-lock check would not

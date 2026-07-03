@@ -3,12 +3,22 @@ package k8ssync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
+
+// ErrUpstreamGone is a sentinel a Fetch error wraps when the failure is DEFINITIVE —
+// the secret no longer exists upstream (404, or absent from the environment listing)
+// or access to it has been revoked (401/403) — as opposed to a transient failure
+// (network error, timeout, 5xx) that might clear on the next reconcile pass. #140:
+// the sync loop uses this distinction to actively remove a de-authorized/deleted
+// secret's stale materialized value from the cluster, rather than leaving it as-is
+// indefinitely (which a plain, unclassified fetch error did).
+var ErrUpstreamGone = errors.New("k8ssync: secret not found or access revoked upstream")
 
 // KeyorixFetcher reads secret values from a Keyorix server over HTTP, resolving a
 // reference of the form "<environment>/<name>" (e.g. "production/db-password") to the
@@ -78,7 +88,7 @@ func (f *KeyorixFetcher) resolveID(ctx context.Context, env, name string) (uint,
 			return s.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("secret %q not found in environment %q", name, env)
+	return 0, fmt.Errorf("secret %q not found in environment %q: %w", name, env, ErrUpstreamGone)
 }
 
 // fetchValue returns the decrypted value of the secret with the given id.
@@ -108,7 +118,10 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out interface
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("not authorized (HTTP %d) — check the agent's token and its permissions", resp.StatusCode)
+		return fmt.Errorf("not authorized (HTTP %d) — check the agent's token and its permissions: %w", resp.StatusCode, ErrUpstreamGone)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("not found (HTTP 404): %w", ErrUpstreamGone)
 	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d", resp.StatusCode)

@@ -8,6 +8,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -141,7 +142,8 @@ func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		user, err := h.coreService.FindSCIMUser(r.Context(), "", m[1])
 		if err != nil {
-			scimError(w, http.StatusInternalServerError, err.Error())
+			log.Printf("Error finding SCIM user by filter: %v", err)
+			scimError(w, http.StatusInternalServerError, clientSafe(err))
 			return
 		}
 		resources := []map[string]interface{}{}
@@ -159,7 +161,8 @@ func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	startIndex, count := scimPaging(r)
 	users, total, err := h.coreService.ListSCIMUsersPage(r.Context(), startIndex, count)
 	if err != nil {
-		scimError(w, http.StatusInternalServerError, err.Error())
+		log.Printf("Error listing SCIM users: %v", err)
+		scimError(w, http.StatusInternalServerError, clientSafe(err))
 		return
 	}
 	resources := make([]map[string]interface{}, 0, len(users))

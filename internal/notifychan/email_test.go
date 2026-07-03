@@ -50,7 +50,19 @@ func TestNewEmail_Validation(t *testing.T) {
 	s.Close()
 }
 
+func TestNewEmail_TLSNoneRequiresExplicitOptIn(t *testing.T) {
+	t.Setenv(envAllowInsecureSMTP, "")
+	_, err := NewEmail(EmailConfig{Host: "smtp.x.io", From: "ops@x.io", TLS: "none"})
+	require.Error(t, err, "cleartext SMTP must fail closed by default")
+
+	t.Setenv(envAllowInsecureSMTP, "true")
+	s, err := NewEmail(EmailConfig{Host: "smtp.x.io", From: "ops@x.io", TLS: "none"})
+	require.NoError(t, err, "tls=none must succeed once the operator opts in")
+	s.Close()
+}
+
 func TestEmailSink_SkipsEventsWithoutRecipient(t *testing.T) {
+	t.Setenv(envAllowInsecureSMTP, "true")
 	before := emailOutcomeTotal(t)
 	sink, err := NewEmail(EmailConfig{Host: "smtp.invalid", From: "ops@x.io", TLS: "none"})
 	require.NoError(t, err)

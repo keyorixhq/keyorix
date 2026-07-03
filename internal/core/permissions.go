@@ -217,6 +217,12 @@ func (c *KeyorixCore) GetEffectivePermission(ctx context.Context, secretID, user
 	return permCtx.Permission, nil
 }
 
+// listUserPermissionsOwnedPageSize bounds each page of the owned-secrets walk in
+// ListUserPermissions. A single fixed-size page silently under-lists a user who owns
+// more than the page size; paginating through every page instead keeps this correct
+// at any scale.
+const listUserPermissionsOwnedPageSize = 500
+
 // ListUserPermissions returns all secrets a user has access to with their permission levels.
 func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*models.UserSecretPermission, error) {
 	if userID == 0 {
@@ -226,20 +232,26 @@ func (c *KeyorixCore) ListUserPermissions(ctx context.Context, userID uint) ([]*
 	var permissions []*models.UserSecretPermission
 
 	// Owned == owner_id (the canonical ownership), not created_by (a username
-	// string). Page 1 with an explicit size; a zero PageSize would emit LIMIT 0.
-	ownedSecrets, _, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
-		OwnerID: &userID, Page: 1, PageSize: 10000,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	for _, secret := range ownedSecrets {
-		permissions = append(permissions, &models.UserSecretPermission{
-			SecretID:   secret.ID,
-			UserID:     userID,
-			Permission: string(PermissionOwner),
-			Source:     "owner",
+	// string). Page through every owned secret so a user who owns more than
+	// listUserPermissionsOwnedPageSize secrets isn't silently truncated.
+	for page := 1; ; page++ {
+		ownedSecrets, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
+			OwnerID: &userID, Page: page, PageSize: listUserPermissionsOwnedPageSize,
 		})
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, secret := range ownedSecrets {
+			permissions = append(permissions, &models.UserSecretPermission{
+				SecretID:   secret.ID,
+				UserID:     userID,
+				Permission: string(PermissionOwner),
+				Source:     "owner",
+			})
+		}
+		if len(ownedSecrets) < listUserPermissionsOwnedPageSize || int64(page*listUserPermissionsOwnedPageSize) >= total {
+			break
+		}
 	}
 
 	// A time-bound share stops granting access the instant it expires, so it must

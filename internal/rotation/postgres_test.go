@@ -94,4 +94,16 @@ func TestPostgres_RotateErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "permission denied")
 	})
+	// #132: a driver error that echoes the failing statement (containing the new
+	// password as a quoted literal) must not leak that literal into the returned
+	// error — it flows unsanitized into the SIEM audit Description and the
+	// rotation-failure Slack/webhook broadcast.
+	t.Run("backend error echoing the statement is redacted", func(t *testing.T) {
+		fake := &fakePG{err: errors.New(`syntax error at or near "WITH" — statement: ALTER ROLE "app_svc" WITH PASSWORD 'S3cr3t-Live-Value!'`)}
+		err := pgWith(fake, "app_").Rotate(context.Background(), "app_svc", "S3cr3t-Live-Value!")
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "S3cr3t-Live-Value!", "the live credential must never appear in the returned error")
+		assert.Contains(t, err.Error(), "app_svc", "the ref is still useful diagnostic context")
+		assert.Contains(t, err.Error(), `'***'`, "the redacted literal is replaced with a placeholder, not silently dropped")
+	})
 }

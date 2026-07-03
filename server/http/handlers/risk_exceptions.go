@@ -1,10 +1,12 @@
 // risk_exceptions.go — the risk register / exceptions endpoints (ISO 27001 A.5.8
-// risk treatment). Listing needs system.read; create/revoke need system.write
-// (wired in router.go).
+// risk treatment). Listing discloses free-text Reference/Justification (which may
+// itself name a secret) deployment-wide, so it needs audit.read, not the universal
+// system_viewer baseline; create/revoke need system.write (wired in router.go).
 package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,7 +23,8 @@ func (h *DashboardHandler) ListRiskExceptions(w http.ResponseWriter, r *http.Req
 	activeOnly := r.URL.Query().Get("all") != "true"
 	exceptions, err := h.coreService.ListRiskExceptions(r.Context(), activeOnly)
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing risk exceptions: %v", err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"exceptions": exceptions}, "")
@@ -54,14 +57,51 @@ func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Re
 	exc, err := h.coreService.CreateRiskException(r.Context(), actor.UserID, body.Title, body.Category, body.Reference, body.Justification, expiresAt)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be") {
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "required") || strings.Contains(msg, "must be"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error creating risk exception: %v", err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
 	sendSuccess(w, map[string]interface{}{"exception": exc}, "Risk exception recorded")
+}
+
+// ApproveRiskException handles POST /api/v1/risk-exceptions/{id}/approve — dual
+// control (#170): the exception only suppresses its matched violation from the
+// compliance posture once a DIFFERENT system.write holder than the creator
+// approves it.
+func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.Request) {
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", "Invalid exception ID", http.StatusBadRequest, nil)
+		return
+	}
+	if err := h.coreService.ApproveRiskException(r.Context(), actor.UserID, uint(id)); err != nil {
+		status := http.StatusInternalServerError
+		msg := err.Error()
+		switch {
+		case strings.Contains(msg, "dual control"):
+			status = http.StatusForbidden
+		case strings.Contains(msg, "cannot approve") || strings.Contains(msg, "already approved"):
+			status = http.StatusBadRequest
+		case strings.Contains(msg, "not found"):
+			status = http.StatusNotFound
+		}
+		sendError(w, "Error", msg, status, nil)
+		return
+	}
+	sendSuccess(w, nil, "Risk exception approved")
 }
 
 // RevokeRiskException handles DELETE /api/v1/risk-exceptions/{id} — withdraw early.
@@ -84,6 +124,9 @@ func (h *DashboardHandler) RevokeRiskException(w http.ResponseWriter, r *http.Re
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
+		default:
+			log.Printf("Error revoking risk exception %d: %v", id, err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return

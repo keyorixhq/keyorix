@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"gopkg.in/yaml.v3"
 )
 
@@ -136,8 +137,11 @@ func SaveCLIConfig(config *CLIConfig, configPath string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	// Write file with secure permissions
-	if err := os.WriteFile(configPath, data, 0600); err != nil {
+	// Write with 0600 perms via the hardened writer (matches internal/config.Save):
+	// O_NOFOLLOW refuses to write through a symlink planted at configPath, so a local
+	// attacker who can plant a dangling symlink at the CLI config path cannot redirect
+	// this write (which may contain an API key) to an arbitrary file.
+	if err := securefiles.SecureWriteFile(dir, filepath.Base(configPath), data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

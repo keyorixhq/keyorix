@@ -45,9 +45,11 @@ var testConnectionCmd = &cobra.Command{
 }
 
 func init() {
-	// Add flags for set-remote command
+	// Add flags for set-remote command. --api-key is INSECURE on the command line
+	// (visible via ps/proc and saved in shell history); prefer the KEYORIX_API_KEY
+	// env var.
 	setRemoteCmd.Flags().String("url", "", "Remote server URL (required)")
-	setRemoteCmd.Flags().String("api-key", "", "API key for authentication (optional)")
+	setRemoteCmd.Flags().String("api-key", "", "API key for authentication (optional; INSECURE on the command line — prefer KEYORIX_API_KEY env var)")
 	setRemoteCmd.Flags().Int("timeout", 30, "Request timeout in seconds")
 	_ = setRemoteCmd.MarkFlagRequired("url") // #nosec G104
 
@@ -92,11 +94,15 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 func runSetRemote(cmd *cobra.Command, args []string) error {
 	url, _ := cmd.Flags().GetString("url")
-	apiKey, _ := cmd.Flags().GetString("api-key")
 	timeout, _ := cmd.Flags().GetInt("timeout")
 
-	cfg, err := config.Load("keyorix.yaml")
-	if err != nil {
+	// Resolve the API key without ever requiring it on the command line: the
+	// (insecure, warned) --api-key flag if set, else KEYORIX_API_KEY. The key is
+	// optional here, so an unset value is left empty rather than prompted for.
+	apiKey := resolveAPIKey(cmd)
+
+	cfg, cerr := config.Load("keyorix.yaml")
+	if cerr != nil {
 		// Create default config if it doesn't exist
 		cfg = &config.Config{}
 	}
@@ -118,7 +124,7 @@ func runSetRemote(cmd *cobra.Command, args []string) error {
 	fmt.Printf("✅ Configuration updated successfully!\n")
 	fmt.Printf("🌐 CLI now uses remote server: %s\n", url)
 	if apiKey == "" {
-		fmt.Printf("💡 Tip: Set API key with --api-key flag if server requires authentication\n")
+		fmt.Printf("💡 Tip: set the KEYORIX_API_KEY environment variable if the server requires authentication (preferred over --api-key, which leaks via ps/history)\n")
 	}
 
 	return nil
@@ -214,6 +220,17 @@ func testLocalConnection(cfg *config.Config) error {
 	}
 
 	return nil
+}
+
+// resolveAPIKey returns the API key from the (insecure, warned) --api-key flag if set,
+// else from the KEYORIX_API_KEY env var. A literal flag value is visible via ps and the
+// shell history, so its use is flagged — mirrors `keyorix connect`'s resolveAPIKey.
+func resolveAPIKey(cmd *cobra.Command) string {
+	if k, _ := cmd.Flags().GetString("api-key"); k != "" {
+		fmt.Fprintln(os.Stderr, "⚠️  Passing --api-key on the command line is insecure (visible via ps/proc and saved in shell history); prefer the KEYORIX_API_KEY environment variable.")
+		return k
+	}
+	return os.Getenv("KEYORIX_API_KEY")
 }
 
 func maskAPIKey(apiKey string) string {

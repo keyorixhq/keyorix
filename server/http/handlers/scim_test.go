@@ -30,7 +30,7 @@ func setupSCIMTest(t *testing.T) (*SCIMHandler, *gorm.DB) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Session{}, &models.AuditEvent{},
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Role{Name: "system_viewer"}).Error)
 	return NewSCIMHandler(core.NewKeyorixCore(store.NewLocalStorage(db))), db

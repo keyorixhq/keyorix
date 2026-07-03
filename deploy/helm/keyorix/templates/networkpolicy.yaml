@@ -1,0 +1,62 @@
+{{/*
+NetworkPolicies scoping the server API and the bundled Postgres to same-namespace
+traffic — without them both are reachable from ANY pod in the cluster that can
+route to their Service (#137). The web UI is deliberately left unrestricted here:
+it's the intended public entry point (often via an Ingress controller whose pod
+labels vary by installation), so locking it down risks breaking legitimate access
+in ways this chart can't predict across every ingress-controller setup.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "keyorix.server.fullname" . }}
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    # Same-namespace only: any pod that can route here is currently reachable
+    # cluster-wide (any namespace). This bounds it to the install's own namespace
+    # — typically a single security boundary — while imposing no new dependency
+    # on knowing which specific pods (web, CLI clients, other services) call in.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.server.service.port }}
+---
+{{- if .Values.postgresql.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "keyorix.postgresql.fullname" . }}
+  labels:
+    {{- include "keyorix.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: postgresql
+  policyTypes:
+    - Ingress
+  ingress:
+    # Only the server needs to reach the bundled Postgres — nothing else in the
+    # cluster (any other namespace, or another pod in this one) should be able to.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: server
+      ports:
+        - protocol: TCP
+          port: 5432
+{{- end }}
+{{- end }}

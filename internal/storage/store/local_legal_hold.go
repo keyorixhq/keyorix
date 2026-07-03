@@ -6,18 +6,41 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// CreateLegalHold inserts a hold row. A partial unique index on legal_holds
+// (released) WHERE released = false (see storage.ensureLegalHoldActiveIndex) allows
+// at most one un-released row at a time, so a second concurrent placement — which
+// core.PlaceLegalHold's own read-then-insert check cannot fully exclude (#305) —
+// fails here with a UNIQUE-constraint violation instead of creating a duplicate
+// active row. That violation is surfaced as storage.ErrLegalHoldAlreadyActive so
+// the caller can map it to a client error rather than a 500.
 func (ls *LocalStorage) CreateLegalHold(ctx context.Context, h *models.LegalHold) (*models.LegalHold, error) {
 	if err := ls.db.WithContext(ctx).Create(h).Error; err != nil {
+		if isUniqueConstraintErr(err) {
+			return nil, storage.ErrLegalHoldAlreadyActive
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return h, nil
+}
+
+// isUniqueConstraintErr reports whether err is a UNIQUE-constraint violation from the
+// SQLite or Postgres driver. GORM only maps driver errors to gorm.ErrDuplicatedKey
+// when opened with TranslateError (this app does not set that), so the driver's raw
+// message is matched instead: mattn/go-sqlite3 says "UNIQUE constraint failed";
+// pgx/lib/pq say "duplicate key value violates unique constraint" (SQLSTATE 23505).
+func isUniqueConstraintErr(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") || // SQLite
+		strings.Contains(msg, "23505") || strings.Contains(msg, "duplicate key value") // Postgres
 }
 
 // GetActiveLegalHold returns the current un-released hold, or (nil, nil) when none

@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 
+	"gorm.io/gorm/clause"
+
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -21,6 +23,24 @@ func (ls *LocalStorage) CreateMachineIdentity(ctx context.Context, m *models.Mac
 func (ls *LocalStorage) GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error) {
 	var m models.MachineIdentity
 	if err := ls.db.WithContext(ctx).First(&m, id).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+	}
+	return &m, nil
+}
+
+// LockMachineIdentityForUpdate re-reads a machine identity, adding SELECT … FOR
+// UPDATE on Postgres so a read-modify-write inside a transaction serializes against
+// concurrent writers of the same row (#388: TransitionMachineIdentity relies on this
+// to keep "revoked is terminal" atomic — see machine_identities.go). SQLite has no
+// row-level lock, so the clause is omitted there and the transaction alone
+// serializes it; SQLite is always single-process, so that suffices.
+func (ls *LocalStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
+	q := ls.db.WithContext(ctx)
+	if ls.db.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var m models.MachineIdentity
+	if err := q.First(&m, id).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
 	}
 	return &m, nil
