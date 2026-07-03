@@ -213,9 +213,9 @@ func (m *MockStorage) ListAccessReviewCampaigns(ctx context.Context, projectID u
 	return args.Get(0).([]*models.AccessReviewCampaign), args.Error(1)
 }
 
-func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) error {
+func (m *MockStorage) UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error) {
 	args := m.Called(ctx, c)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error {

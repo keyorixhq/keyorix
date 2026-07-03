@@ -108,15 +108,21 @@ type Storage interface {
 	CreateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (*models.AccessReviewCampaign, error)
 	GetAccessReviewCampaign(ctx context.Context, id uint) (*models.AccessReviewCampaign, error)
 	ListAccessReviewCampaigns(ctx context.Context, projectID uint) ([]*models.AccessReviewCampaign, error)
-	UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) error
+	// UpdateAccessReviewCampaign persists a campaign state transition with a
+	// conditional UPDATE (only a campaign whose CURRENT stored state is still "open"
+	// may be transitioned). The bool reports whether the row matched and was updated;
+	// false means the campaign was already closed (by a prior or racing call) and
+	// this write was rejected, not silently applied.
+	UpdateAccessReviewCampaign(ctx context.Context, c *models.AccessReviewCampaign) (bool, error)
 	CreateAccessReviewItems(ctx context.Context, items []*models.AccessReviewItem) error
 	ListAccessReviewItems(ctx context.Context, campaignID uint) ([]*models.AccessReviewItem, error)
 	GetAccessReviewItem(ctx context.Context, id uint) (*models.AccessReviewItem, error)
 	// UpdateAccessReviewItem persists a decision with a conditional UPDATE (only an
-	// item whose CURRENT stored decision is still "pending" may be transitioned). The
-	// bool reports whether the row matched and was updated; false means the item was
-	// already decided (by a prior or racing call) and this write was rejected, not
-	// silently applied.
+	// item whose CURRENT stored decision is still "pending", in a campaign whose
+	// CURRENT stored state is still "open", may be transitioned). The bool reports
+	// whether the row matched and was updated; false means either the item was
+	// already decided or the parent campaign was closed (by a prior or racing call)
+	// and this write was rejected, not silently applied.
 	UpdateAccessReviewItem(ctx context.Context, item *models.AccessReviewItem) (bool, error)
 
 	// Separation-of-duties policies (ISO 27001 A.5.3 / SOX) — toxic permission pairs.

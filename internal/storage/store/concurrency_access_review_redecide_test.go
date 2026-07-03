@@ -22,7 +22,9 @@ func TestUpdateAccessReviewItem_RejectsSecondDecision(t *testing.T) {
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 
-	item := &models.AccessReviewItem{CampaignID: 1, PrincipalType: "role", Source: "role", Decision: "pending"}
+	campaign := &models.AccessReviewCampaign{State: accessReviewCampaignOpen}
+	require.NoError(t, db.Create(campaign).Error)
+	item := &models.AccessReviewItem{CampaignID: campaign.ID, PrincipalType: "role", Source: "role", Decision: "pending"}
 	require.NoError(t, db.Create(item).Error)
 
 	// Call 1: revoke really "wins" the decision.
@@ -32,7 +34,7 @@ func TestUpdateAccessReviewItem_RejectsSecondDecision(t *testing.T) {
 	assert.True(t, ok, "the first decision on a pending item must succeed")
 
 	// Call 2: a later/racing attest must NOT silently overwrite the persisted revoke.
-	overwrite := &models.AccessReviewItem{ID: item.ID, CampaignID: 1, PrincipalType: "role", Source: "role", Decision: "attested"}
+	overwrite := &models.AccessReviewItem{ID: item.ID, CampaignID: campaign.ID, PrincipalType: "role", Source: "role", Decision: "attested"}
 	ok, err = ls.UpdateAccessReviewItem(ctx, overwrite)
 	require.NoError(t, err, "a lost race is reported via the bool, not an error")
 	assert.False(t, ok, "a second decision on an already-decided item must be rejected")
@@ -53,7 +55,9 @@ func TestConcurrency_AccessReviewItem_OnlyOneDecisionWins(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}))
 	ls := NewLocalStorage(db)
 
-	item := &models.AccessReviewItem{CampaignID: 1, PrincipalType: "role", Source: "role", Decision: "pending"}
+	campaign := &models.AccessReviewCampaign{State: accessReviewCampaignOpen}
+	require.NoError(t, db.Create(campaign).Error)
+	item := &models.AccessReviewItem{CampaignID: campaign.ID, PrincipalType: "role", Source: "role", Decision: "pending"}
 	require.NoError(t, db.Create(item).Error)
 
 	const racers = 32
@@ -70,7 +74,7 @@ func TestConcurrency_AccessReviewItem_OnlyOneDecisionWins(t *testing.T) {
 		go func(decision string) {
 			defer wg.Done()
 			<-start
-			candidate := &models.AccessReviewItem{ID: item.ID, CampaignID: 1, PrincipalType: "role", Source: "role", Decision: decision}
+			candidate := &models.AccessReviewItem{ID: item.ID, CampaignID: campaign.ID, PrincipalType: "role", Source: "role", Decision: decision}
 			ok, err := ls.UpdateAccessReviewItem(context.Background(), candidate)
 			if err != nil {
 				errs <- err
