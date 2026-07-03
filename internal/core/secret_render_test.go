@@ -28,6 +28,7 @@ func newRenderFixture(t *testing.T) (*KeyorixCore, *gorm.DB, uint, uint) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
 		&models.Project{}, &models.Environment{}, &models.SecretAccessLog{}, &models.AuditEvent{},
+		&models.ShareRecord{},
 	))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@test.com"}).Error)
 
@@ -144,7 +145,7 @@ func TestRenderSecretTemplate_RecordsReads(t *testing.T) {
 // exactly matching the fetch-N-individually-vs-render-once asymmetry #324 called out.
 func TestRenderSecretTemplate_RecordsReadPerSecret(t *testing.T) {
 	ctx := context.Background()
-	c, db, projectID := newRenderFixture(t)
+	c, db, projectID, _ := newRenderFixture(t)
 
 	// Add two more secrets to the same project/environment alongside db-password.
 	env, err := c.storage.ListEnvironmentsByProject(ctx, projectID)
