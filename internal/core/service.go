@@ -82,7 +82,13 @@ type KeyorixCore struct {
 	// row lock LockWebAuthnCredentialForUpdate takes on Postgres, the counter stays
 	// monotonic across replicas too. Zero value is ready to use. See webauthn.go.
 	webauthnCredentialMu sync.Mutex
-	auditForwarder       AuditForwarder
+	// bootstrapMu serializes BootstrapSystem's "is this a fresh install" (total==0)
+	// check through the admin CreateUser call, so two concurrent callers who both
+	// already hold the valid bootstrap token (#339) — e.g. different usernames —
+	// cannot both observe an empty user table and each create a "first admin". Zero
+	// value is ready to use. See auth_bootstrap.go.
+	bootstrapMu    sync.Mutex
+	auditForwarder AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).

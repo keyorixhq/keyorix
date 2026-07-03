@@ -160,6 +160,14 @@ var defaultEnvironmentNames = []string{"development", "staging", "production"}
 // Idempotent: if users already exist, returns the current state with
 // AlreadyInitialized=true and performs no writes.
 func (c *KeyorixCore) BootstrapSystem(ctx context.Context, req *BootstrapRequest) (*BootstrapResult, error) {
+	// Serialize the whole "is this a fresh install" check through admin creation
+	// (#339): without this, two concurrent callers who both already hold the valid
+	// bootstrap token (different usernames) could each observe total==0 before
+	// either CreateUser lands, producing two "first admins". The token check above
+	// already closes the unauthenticated race; this closes the authenticated one.
+	c.bootstrapMu.Lock()
+	defer c.bootstrapMu.Unlock()
+
 	_, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: 1, PageSize: 1})
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existing users: %w", err)

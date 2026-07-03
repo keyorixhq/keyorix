@@ -3,6 +3,7 @@ package siem
 import (
 	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -199,4 +200,37 @@ func TestSpool_ConcurrentReplayCallsDoNotDoubleDeliver(t *testing.T) {
 	wg.Wait()
 
 	assert.ElementsMatch(t, []uint{1, 2}, d.delivered, "each event must be delivered exactly once despite concurrent replay() callers")
+}
+
+// A line past the scanner's max token size (bufio.ErrTooLong) makes bufio.Scanner stop
+// silently — replay() must not swallow this: it has to log a clear warning rather than
+// pretending nothing happened, even though (by design, see #338) it doesn't attempt to
+// recover the oversized line itself.
+func TestSpool_ReplayLogsOnScanError(t *testing.T) {
+	dir := t.TempDir()
+	d := &fakeDelivery{}
+	s, err := newSpool(dir, time.Hour, d.deliver)
+	require.NoError(t, err)
+	s.close() // stop the background loop; drive replay() manually below
+
+	// A well-formed line, then one far larger than the 4 MiB scan buffer cap: the scanner
+	// hits bufio.ErrTooLong on the second line and stops, so neither it nor anything after
+	// it gets scanned.
+	tr := true
+	s.add(&models.AuditEvent{ID: 1, EventType: "secret.read", Success: &tr})
+	oversized := bytes.Repeat([]byte("x"), 5<<20) // 5 MiB > 4 MiB scanner cap
+	f, err := os.OpenFile(filepath.Join(dir, spoolFileName), os.O_APPEND|os.O_WRONLY, 0o600)
+	require.NoError(t, err)
+	_, err = f.Write(append(oversized, '\n'))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	var logBuf bytes.Buffer
+	prevOut := log.Writer()
+	log.SetOutput(&logBuf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	s.replay()
+
+	assert.Contains(t, logBuf.String(), "scan stopped early", "a scan error must be logged loudly, not silently swallowed")
 }
