@@ -31,8 +31,8 @@ func TestRunCreateRemote(t *testing.T) {
 	rc, ok := common.NewRemoteClient()
 	require.True(t, ok)
 
-	createUsername, createEmail, createPassword, createDisplayName = "bob", "bob@test.com", "s3cret-pass", ""
-	require.NoError(t, runCreateRemote(rc))
+	createUsername, createEmail, createDisplayName = "bob", "bob@test.com", ""
+	require.NoError(t, runCreateRemote(rc, "s3cret-pass"))
 
 	assert.Equal(t, "bob", gotBody["username"])
 	assert.Equal(t, "bob@test.com", gotBody["email"])
