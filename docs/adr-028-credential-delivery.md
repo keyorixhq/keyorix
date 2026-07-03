@@ -86,7 +86,7 @@ Three implementations:
 
 1. **`SMTPDelivery`** — sends a minimal email via a vetted SMTP library (**`wneessen/go-mail`**, chosen over stdlib `net/smtp` for correct implicit-TLS on 465, STARTTLS, and auth negotiation — TLS correctness is not something to hand-roll in a security product). Connection is operator-configured. Email content (Part D) is plaintext + minimal inline HTML, **no remote resources, no tracking pixels**.
 2. **`OutOfBandDelivery`** — sends nothing; returns the link in `DeliveryResult.LinkForAdmin` so the create-user / invite API response carries it back to the admin UI/CLI, which displays it once with a copy button. Also covers the "admin out-of-band display" of a one-time password (Part E).
-3. **`LogDelivery`** — dev/test only; writes the link to the server log with a loud warning. Never selected when `enabled` and `mode != log`.
+3. **`LogDelivery`** — dev/test only; writes the link to the server log with a loud warning. Never selected when `enabled` and `mode != log`. Because this puts a live, usable credential in the logs, `mode: log` additionally refuses to activate unless the operator explicitly opts in with `KEYORIX_ALLOW_INSECURE_LOG_DELIVERY=true` (the same explicit-opt-in convention as other insecure toggles, e.g. `insecure_skip_verify`). `smtp.tls: none` (cleartext SMTP) is gated the same way, behind `KEYORIX_ALLOW_INSECURE_SMTP=true`.
 
 Selection is by `credential_delivery.mode`:
 - `smtp` — use SMTP; error at send time if SMTP is unreachable (the admin sees "couldn't send; here's the link to relay manually" — i.e. graceful degradation to out-of-band).

@@ -13,6 +13,9 @@ func (c *KeyorixCore) validateCreateSecretRequest(req *CreateSecretRequest) erro
 	if req.Name == "" {
 		return fmt.Errorf("%s", i18n.T("LabelName", nil))
 	}
+	if err := validateNameLength("secret name", req.Name); err != nil {
+		return err
+	}
 	if len(req.Value) == 0 {
 		return fmt.Errorf("%s", i18n.T("LabelValue", nil))
 	}

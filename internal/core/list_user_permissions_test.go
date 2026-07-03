@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -86,6 +87,44 @@ func TestListUserPermissions_ExcludesExpiredShares(t *testing.T) {
 	assert.True(t, secrets[4], "non-expired group share should be listed")
 	assert.False(t, secrets[3], "expired direct share must NOT be listed")
 	assert.False(t, secrets[5], "expired group share must NOT be listed")
+}
+
+// TestListUserPermissions_PaginatesOwnedSecretsBeyondOnePage pins the fix for a user
+// who owns more secrets than a single storage page: ListUserPermissions must walk
+// every page of owned secrets rather than stopping after the first
+// listUserPermissionsOwnedPageSize-sized page, or ownership beyond that page would be
+// silently dropped from the listing.
+func TestListUserPermissions_PaginatesOwnedSecretsBeyondOnePage(t *testing.T) {
+	ctx := context.Background()
+	const userID = uint(11)
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+
+	// Page 1 is a full page (exactly the page size) with total > page size, so the
+	// loop must keep going; page 2 returns the remainder.
+	firstPage := make([]*models.SecretNode, listUserPermissionsOwnedPageSize)
+	for i := range firstPage {
+		firstPage[i] = &models.SecretNode{ID: uint(i + 1)}
+	}
+	total := int64(listUserPermissionsOwnedPageSize + 3)
+
+	ms.On("ListSecrets", ctx, mock.MatchedBy(func(f *storage.SecretFilter) bool {
+		return f.Page == 1 && f.PageSize == listUserPermissionsOwnedPageSize
+	})).Return(firstPage, total, nil)
+	ms.On("ListSecrets", ctx, mock.MatchedBy(func(f *storage.SecretFilter) bool {
+		return f.Page == 2 && f.PageSize == listUserPermissionsOwnedPageSize
+	})).Return([]*models.SecretNode{
+		{ID: uint(listUserPermissionsOwnedPageSize + 1)},
+		{ID: uint(listUserPermissionsOwnedPageSize + 2)},
+		{ID: uint(listUserPermissionsOwnedPageSize + 3)},
+	}, total, nil)
+	ms.On("ListSharesByUser", ctx, userID).Return([]*models.ShareRecord{}, nil)
+	ms.On("GetUserGroups", ctx, userID).Return([]*models.Group{}, nil)
+
+	perms, err := c.ListUserPermissions(ctx, userID)
+	require.NoError(t, err)
+	assert.Len(t, perms, int(total), "every owned secret across both pages must be listed")
+	ms.AssertNumberOfCalls(t, "ListSecrets", 2)
 }
 
 func TestListUserPermissions_NoGroups(t *testing.T) {

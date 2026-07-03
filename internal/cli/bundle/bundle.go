@@ -13,6 +13,7 @@ import (
 	"time"
 
 	ibundle "github.com/keyorixhq/keyorix/internal/bundle"
+	"github.com/keyorixhq/keyorix/internal/config"
 	ilicense "github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/spf13/cobra"
@@ -202,7 +203,7 @@ func requireAirgapUpdates(reg *trust.KeyRegistry) error {
 		}
 		token = strings.TrimSpace(string(b))
 	}
-	st := ilicense.Evaluate(token, reg, "", time.Now(), 14*24*time.Hour)
+	st := ilicense.Evaluate(token, reg, configuredDeploymentID(), time.Now(), 14*24*time.Hour)
 	if st.HasFeature(ilicense.FeatureAirgapUpdates) {
 		return nil
 	}
@@ -210,6 +211,21 @@ func requireAirgapUpdates(reg *trust.KeyRegistry) error {
 		"(current state: %s). Install one with `keyorix license install` and pass it via --license, "+
 		"or check `keyorix license status`. `bundle verify` remains available without a license",
 		ilicense.FeatureAirgapUpdates, st.State)
+}
+
+// configuredDeploymentID best-effort loads the local server config and returns the
+// operator's configured license.deployment_id, so `bundle import` honors an anti-copy
+// deployment binding the operator has already set — the same value the server itself
+// passes to license.NewGate (server/main.go) and that `keyorix license install/status`
+// accept via --deployment-id. If no config file is found (or it can't be read), this
+// returns "", matching the previous hardcoded default: an operator who has never
+// configured license.deployment_id sees no change in behavior.
+func configuredDeploymentID() string {
+	cfg, err := config.Load("")
+	if err != nil {
+		return ""
+	}
+	return cfg.License.DeploymentID
 }
 
 func init() {

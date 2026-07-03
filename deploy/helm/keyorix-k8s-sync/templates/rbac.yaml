@@ -13,9 +13,10 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    # list + delete are needed only for orphan cleanup (cleanup: true); they are
-    # harmless when cleanup is off, and keeping one role avoids a conditional rule.
-    verbs: ["get", "list", "create", "patch", "delete"]
+    # list + delete are needed only for orphan cleanup (cleanup: true) — granted only
+    # when that behavior is actually enabled, so RBAC matches the configured
+    # capability instead of granting secrets:delete cluster-wide by default (#186).
+    verbs: ["get", "create", "patch"{{ if .Values.cleanup }}, "list", "delete"{{ end }}]
 ---
 {{- $ns := .Values.targetNamespaces | default (list .Release.Namespace) }}
 {{- $root := . }}

@@ -47,6 +47,12 @@ func TestRESTSink_ApplyServerSideApply(t *testing.T) {
 	var gotMethod, gotCT, gotFM string
 	var gotBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// The pre-write ownership check (#139): no pre-existing Secret at this
+			// name, so Apply proceeds as a fresh create.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		gotMethod = r.Method
 		gotCT = r.Header.Get("Content-Type")
 		gotFM = r.URL.Query().Get("fieldManager")
@@ -139,6 +145,51 @@ func TestRESTSink_DeleteAbsentIsNotAnError(t *testing.T) {
 
 	err := testSink(srv).Delete(context.Background(), "app", "gone")
 	require.NoError(t, err, "deleting an already-absent Secret meets the goal state")
+}
+
+// TestRESTSink_ApplyRefusesUnownedPreExistingSecret pins #139: Apply used
+// force=true Server-Side Apply unconditionally, with no check for a pre-existing
+// Secret at the target name — silently overwriting (and, by always stamping the
+// managed-by label, "branding" as agent-owned) a Secret an operator or a
+// different tool created. The next orphan-cleanup pass would then DELETE that
+// foreign Secret outright. Apply must refuse to write when a pre-existing
+// Secret lacks the managed-by label, and must never even attempt the PATCH.
+func TestRESTSink_ApplyRefusesUnownedPreExistingSecret(t *testing.T) {
+	var sawPatch bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			sawPatch = true
+			_, _ = w.Write([]byte(`{"kind":"Secret"}`))
+			return
+		}
+		// A pre-existing Secret this agent did not create (an operator's own
+		// database credential, unrelated to Keyorix).
+		_, _ = w.Write([]byte(`{"metadata":{"uid":"u-1","resourceVersion":"rv-1","labels":{"app.kubernetes.io/managed-by":"some-operator"}}}`))
+	}))
+	defer srv.Close()
+
+	err := testSink(srv).Apply(context.Background(), "app", "db-credentials", map[string][]byte{"password": []byte("new")})
+	require.Error(t, err)
+	assert.True(t, ErrNotManaged(err), "the error must be identifiable as the not-managed refusal")
+	assert.False(t, sawPatch, "an unowned pre-existing Secret must never be written to, not even attempted")
+}
+
+// A Secret this agent already owns (from a prior apply) can still be updated.
+func TestRESTSink_ApplyUpdatesAlreadyOwnedSecret(t *testing.T) {
+	var sawPatch bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			sawPatch = true
+			_, _ = w.Write([]byte(`{"kind":"Secret"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"metadata":{"uid":"u-1","resourceVersion":"rv-1","labels":{"app.kubernetes.io/managed-by":"keyorix-sync"}}}`))
+	}))
+	defer srv.Close()
+
+	err := testSink(srv).Apply(context.Background(), "app", "creds", map[string][]byte{"DB": []byte("v2")})
+	require.NoError(t, err)
+	assert.True(t, sawPatch, "an already-owned Secret must still be updatable")
 }
 
 func TestRESTSink_ApplyError(t *testing.T) {

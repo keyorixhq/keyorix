@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -29,6 +30,10 @@ type WebhookConfig struct {
 	Endpoint           string // full destination URL (POST target)
 	Token              string // optional bearer token
 	InsecureSkipVerify bool   // skip TLS verification (self-signed only)
+	// AllowPrivateNetworkTarget opts the endpoint out of the SSRF guard — a
+	// SEPARATE decision from InsecureSkipVerify (#130); see notifychan's
+	// WebhookConfig.AllowPrivateNetworkTarget for the rationale.
+	AllowPrivateNetworkTarget bool
 }
 
 // Webhook POSTs the evidence pack JSON to an HTTP endpoint. Delivery is synchronous
@@ -55,22 +60,27 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 	// webhook, this path previously sent the bearer token + the FULL compliance evidence
 	// pack to whatever URL was configured — an http:// endpoint shipped both in cleartext
 	// on every POST, and refuseRedirect only guards bounces, not the initial request.
-	if err := validateEndpoint(cfg.Endpoint, cfg.InsecureSkipVerify); err != nil {
+	if err := validateEndpoint(cfg.Endpoint, cfg.AllowPrivateNetworkTarget); err != nil {
 		return nil, err
 	}
 	transport := &http.Transport{}
 	if cfg.InsecureSkipVerify {
+		log.Printf("WARNING: evidencesink webhook %q has TLS verification disabled (insecure_skip_verify); do not use in production", cfg.Endpoint)
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- opt-in for self-signed endpoints
 	}
 	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport, CheckRedirect: refuseRedirect}, baseBackoff: baseBackoff}, nil
 }
 
 // validateEndpoint rejects a non-https evidence endpoint (which would send the bearer
-// token and the full compliance pack in cleartext), allowing http only for an explicit
-// insecure opt-in or a loopback target. It also refuses a literal private/link-local IP
-// destination unless the insecure opt-in is set (SSRF/exfil hardening: an evidence pack
-// must not be POSTed to cloud metadata or an internal host).
-func validateEndpoint(raw string, allowInsecure bool) error {
+// token and the full compliance pack in cleartext), allowing http only for a loopback
+// target or the explicit allowPrivateNetwork opt-in. It also refuses a destination
+// whose hostname RESOLVES to a private/link-local IP unless allowPrivateNetwork is
+// set (SSRF/exfil hardening: an evidence pack must not be POSTed to cloud metadata or
+// an internal host).
+//
+// allowPrivateNetwork is INTENTIONALLY separate from TLS-certificate verification
+// (#130) — see notifychan's identically-named parameter for the rationale.
+func validateEndpoint(raw string, allowPrivateNetwork bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("evidencesink: invalid endpoint %q: %w", raw, err)
@@ -79,14 +89,16 @@ func validateEndpoint(raw string, allowInsecure bool) error {
 	case "https":
 		// scheme OK; fall through to the destination-IP check
 	case "http":
-		if !allowInsecure && !isLoopbackHost(u.Hostname()) {
-			return fmt.Errorf("evidencesink: endpoint %q must use https (set insecure_skip_verify only for a trusted self-signed or loopback target)", raw)
+		if !allowPrivateNetwork && !isLoopbackHost(u.Hostname()) {
+			return fmt.Errorf("evidencesink: endpoint %q must use https (set allow_private_network_target only for a trusted internal or loopback target)", raw)
 		}
 	default:
 		return fmt.Errorf("evidencesink: endpoint %q must use https", raw)
 	}
-	if !allowInsecure && isDisallowedIPHost(u.Hostname()) {
-		return fmt.Errorf("evidencesink: endpoint %q targets a private/link-local address; refusing to send evidence to an internal host", raw)
+	if !allowPrivateNetwork {
+		if err := refuseDisallowedHost(u.Hostname()); err != nil {
+			return fmt.Errorf("evidencesink: endpoint %q %w", raw, err)
+		}
 	}
 	return nil
 }
@@ -101,11 +113,39 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
-// isDisallowedIPHost reports whether host is a literal private or link-local IP (loopback
-// permitted). Hostnames are not resolved here, so this catches the literal-IP SSRF cases.
-func isDisallowedIPHost(host string) bool {
-	ip := net.ParseIP(host)
-	if ip == nil || ip.IsLoopback() {
+// lookupIPAddr resolves a hostname to its IP addresses — a var so tests can
+// substitute a fake resolver without a real DNS query.
+var lookupIPAddr = func(host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(context.Background(), host)
+}
+
+// refuseDisallowedHost rejects host when it — or any address it RESOLVES to — is a
+// private, link-local, or otherwise disallowed IP (loopback permitted). A literal-
+// IP-only check lets a hostname that resolves to an internal address straight
+// through; this resolves the hostname and checks every returned address.
+func refuseDisallowedHost(host string) error {
+	if ip := net.ParseIP(host); ip != nil {
+		if isDisallowedIP(ip) {
+			return fmt.Errorf("targets a private/link-local address; refusing to send evidence to an internal host")
+		}
+		return nil
+	}
+	addrs, err := lookupIPAddr(host)
+	if err != nil {
+		return fmt.Errorf("could not resolve hostname to verify it is not private/internal: %w", err)
+	}
+	for _, a := range addrs {
+		if isDisallowedIP(a.IP) {
+			return fmt.Errorf("resolves to a private/link-local address (%s); refusing to send evidence to an internal host", a.IP)
+		}
+	}
+	return nil
+}
+
+// isDisallowedIP reports whether ip is a private or link-local address (loopback
+// permitted).
+func isDisallowedIP(ip net.IP) bool {
+	if ip.IsLoopback() {
 		return false
 	}
 	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()

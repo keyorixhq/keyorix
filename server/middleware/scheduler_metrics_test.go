@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,5 +108,75 @@ func TestRecordSchedulerRunSkippedTouchesOnlyCounter(t *testing.T) {
 	}
 	if got := gauge(t, schedulerLastSuccess, name); got != 0 {
 		t.Errorf("last_success = %v, want 0 (a skip must not set it)", got)
+	}
+}
+
+// ── #287: timestamp gauges must not appear on the public /metrics registry ───
+
+func TestSchedulerTimestampGaugesAbsentFromDefaultRegistry(t *testing.T) {
+	const name = "test_public_metrics_split"
+	RecordSchedulerRun(name, SchedulerSuccess, time.Millisecond)
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather default registry: %v", err)
+	}
+	for _, mf := range families {
+		switch mf.GetName() {
+		case "keyorix_scheduler_last_run_timestamp_seconds", "keyorix_scheduler_last_success_timestamp_seconds":
+			t.Fatalf("timestamp gauge %q must not be registered on the default (public /metrics) registry", mf.GetName())
+		}
+	}
+}
+
+func TestSchedulerRunsTotalStillOnDefaultRegistry(t *testing.T) {
+	// The coarse run-count/duration series are intentionally still public — only the
+	// exact-timestamp gauges moved off the default registry.
+	const name = "test_public_metrics_present"
+	RecordSchedulerRun(name, SchedulerSuccess, time.Millisecond)
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather default registry: %v", err)
+	}
+	var sawRunsTotal, sawDuration bool
+	for _, mf := range families {
+		switch mf.GetName() {
+		case "keyorix_scheduler_runs_total":
+			sawRunsTotal = true
+		case "keyorix_scheduler_run_duration_seconds":
+			sawDuration = true
+		}
+	}
+	if !sawRunsTotal {
+		t.Error("keyorix_scheduler_runs_total should remain on the default registry")
+	}
+	if !sawDuration {
+		t.Error("keyorix_scheduler_run_duration_seconds should remain on the default registry")
+	}
+}
+
+func TestSchedulerMetricsHandlerServesTimestampGauges(t *testing.T) {
+	const name = "test_scheduler_metrics_handler"
+	nowUnix = func() int64 { return 4242 }
+	t.Cleanup(func() { nowUnix = func() int64 { return time.Now().Unix() } })
+	RecordSchedulerRun(name, SchedulerSuccess, time.Millisecond)
+
+	req := httptest.NewRequest("GET", "/api/v1/system/scheduler-metrics", nil)
+	rec := httptest.NewRecorder()
+	SchedulerMetricsHandler().ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"keyorix_scheduler_last_run_timestamp_seconds",
+		"keyorix_scheduler_last_success_timestamp_seconds",
+		name,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scheduler-metrics response missing %q: %s", want, body)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -20,17 +21,33 @@ type AnomalyDetector struct {
 	// — a coverage blind spot when the operator sets a scan cadence longer than the
 	// default. Defaults to 1h; SetLookback raises it to match the configured interval.
 	lookback time.Duration
+	// quarantine is how long an IP/user must have been observed before the live window
+	// before buildBaseline trusts it as "known" (#101). Without this, an attacker's IP
+	// ages into the baseline after just one lookback interval (as little as 1h) — the
+	// very next pass sees it as historical and the new_ip/new_user rules go silent.
+	// Requiring sustained presence for `quarantine` before promotion raises the cost of
+	// that evasion from one pass to a sustained, repeatedly-observed presence.
+	quarantine time.Duration
 }
 
 // minDetectionLookback is the floor for the per-pass scan window.
 const minDetectionLookback = time.Hour
 
+// defaultBaselineQuarantine is how long a newly observed IP/user must have been present
+// before buildBaseline promotes it to "known" — see AnomalyDetector.quarantine.
+const defaultBaselineQuarantine = 24 * time.Hour
+
 // StorageInterface is satisfied by *storage.LocalStorage and *storage.RemoteStorage.
 type StorageInterface = interface {
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
+	// PrincipalSecretFirstSeen backs the per-principal breadth-exfiltration pass
+	// (#101): see internal/core/storage.Storage's doc comment for the full rationale.
+	PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error)
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
-	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
+	// LogAuditEvent backs auditBusinessHoursConfig (#144) — a business-hours config
+	// change must be on the audit record even though it's applied in-memory here.
+	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 }
 
 // SetLookback sets how far back each detection pass scans, flooring it at one hour. The
@@ -44,10 +61,24 @@ func (d *AnomalyDetector) SetLookback(window time.Duration) {
 	d.lookback = window
 }
 
-// NewAnomalyDetector creates a new AnomalyDetector with the ML pass disabled and the
-// off-hours window at its UTC 22:00–06:00 default.
+// SetBaselineQuarantine overrides how long an IP/user must be observed before the live
+// window before it is trusted as "known" baseline (see AnomalyDetector.quarantine). A
+// non-positive value disables quarantine (only the live window itself is excluded,
+// the pre-#101 behaviour) — accepted as an explicit opt-out, not silently floored.
+func (d *AnomalyDetector) SetBaselineQuarantine(window time.Duration) {
+	d.quarantine = window
+}
+
+// NewAnomalyDetector creates a new AnomalyDetector with the ML pass disabled, the
+// off-hours window at its UTC 22:00–06:00 default, and the baseline quarantine at its
+// 24h default.
 func NewAnomalyDetector(storage StorageInterface) *AnomalyDetector {
-	return &AnomalyDetector{storage: storage, offHours: defaultOffHoursPolicy(), lookback: minDetectionLookback}
+	return &AnomalyDetector{
+		storage:    storage,
+		offHours:   defaultOffHoursPolicy(),
+		lookback:   minDetectionLookback,
+		quarantine: defaultBaselineQuarantine,
+	}
 }
 
 // SetMLConfig enables (or reconfigures) the Isolation Forest pass. Defaults are
@@ -90,14 +121,23 @@ func (p offHoursPolicy) isOffHours(t time.Time) bool {
 // validHour reports whether h is a valid clock hour [0,23].
 func validHour(h int) bool { return h >= 0 && h <= 23 }
 
+// EventAnomalyBusinessHoursConfigured audits a change to the off_hours rule's
+// timezone/band (#144). A degenerate (start == end) or otherwise narrowed band
+// silently blinds that rule with no other visible symptom, so the config CHANGE
+// itself — not just its effect — must be on the record.
+const EventAnomalyBusinessHoursConfigured = "anomaly.business_hours_configured" // #nosec G101 -- audit event type, not a credential
+
 // SetBusinessHours configures the off_hours rule's timezone and band. tz is an IANA
 // name ("" = UTC); the off-hours band is [startHour, endHour) wrapping midnight, in
 // that timezone. A blank tz keeps UTC, and the band defaults to 22:00–06:00 unless
 // overridden. Because 0 is the config zero value AND a valid hour, both hours being 0
 // is treated as "unset" (a 0–0 band would be empty) — set the timezone alone and the
-// default band is kept. Returns an error only for an unparseable timezone, leaving the
-// prior policy unchanged.
-func (d *AnomalyDetector) SetBusinessHours(tz string, startHour, endHour int) error {
+// default band is kept. Returns an error for an unparseable timezone OR a degenerate
+// band (startHour == endHour for any other, explicitly-supplied pair) — a start==end
+// band matches no hour in isOffHours, which would silently disable the rule with no
+// validation error and no audit trail if allowed through. Either error leaves the
+// prior policy unchanged. On success the new band is recorded as an audit event.
+func (d *AnomalyDetector) SetBusinessHours(ctx context.Context, tz string, startHour, endHour int) error {
 	p := defaultOffHoursPolicy()
 	if tz != "" {
 		loc, err := time.LoadLocation(tz)
@@ -107,6 +147,9 @@ func (d *AnomalyDetector) SetBusinessHours(tz string, startHour, endHour int) er
 		p.loc = loc
 	}
 	if startHour != 0 || endHour != 0 { // both zero = unset → keep the default band
+		if validHour(startHour) && validHour(endHour) && startHour == endHour {
+			return fmt.Errorf("anomaly business_hours: start_hour and end_hour must differ (an equal start/end band is empty and would silently disable the off_hours rule; pass 0,0 to explicitly keep the default band)")
+		}
 		if validHour(startHour) {
 			p.start = startHour
 		}
@@ -115,7 +158,34 @@ func (d *AnomalyDetector) SetBusinessHours(tz string, startHour, endHour int) er
 		}
 	}
 	d.offHours = p
+	d.auditBusinessHoursConfig(ctx, tz, p)
 	return nil
+}
+
+// auditBusinessHoursConfig records the newly-applied off-hours band/timezone as an
+// audit event. Best-effort: a storage failure here must not undo the in-memory
+// policy change SetBusinessHours already applied, but it is logged loudly (a missed
+// audit write for a detection-control config change is itself a small gap).
+func (d *AnomalyDetector) auditBusinessHoursConfig(ctx context.Context, tz string, p offHoursPolicy) {
+	if d.storage == nil {
+		return
+	}
+	tzLabel := tz
+	if tzLabel == "" {
+		tzLabel = "UTC"
+	}
+	ok := true
+	event := &models.AuditEvent{
+		EventType: EventAnomalyBusinessHoursConfigured,
+		Description: fmt.Sprintf("anomaly off-hours band configured: timezone=%s band=%02d:00-%02d:00",
+			tzLabel, p.start, p.end),
+		Success:   &ok,
+		ActorType: "system",
+		EventTime: time.Now(),
+	}
+	if err := d.storage.LogAuditEvent(ctx, event); err != nil {
+		log.Printf("SECURITY: anomaly business-hours config: failed to write audit event: %v", err)
+	}
 }
 
 // accessBaseline holds statistical baseline for a secret's access patterns.
@@ -141,20 +211,30 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 
 	var failures int
 	for _, secret := range secrets {
-		// Build 30-day baseline
+		// Build 30-day baseline. A secret with NO baseline history (brand new, or
+		// unread in 30 days) used to be skipped entirely here — off_hours and
+		// frequency_spike included — which is exactly the blind spot an attacker
+		// deliberately targeting a freshly-provisioned, never-accessed secret would
+		// exploit. Proceed with an empty baseline instead; detectAnomalies still
+		// flags off-hours access, and now also flags first-ever new_ip/new_user
+		// (see detectAnomalies for how severity is scaled down for that case).
 		baselineLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, baselineWindow)
 		if err != nil {
+			// #365: the aggregate failure count below already surfaces a non-nil error to
+			// the scheduler (which logs it), but that only says "N secret(s) failed" — log
+			// which secret and which query so an operator can tell a transient DB hiccup
+			// from a genuine gap. Since the detection window is only the last hour, a
+			// skipped secret here is never retroactively re-evaluated.
+			log.Printf("anomaly detection: baseline access-log read for secret %d: %v — skipping detection for this secret this pass", secret.ID, err)
 			failures++
 			continue
 		}
-		if len(baselineLogs) == 0 {
-			continue
-		}
-		baseline := buildBaseline(baselineLogs, now, window)
+		baseline := buildBaseline(baselineLogs, now, window, d.quarantine)
 
 		// Get recent accesses over the lookback window.
 		recentLogs, err := d.storage.ListSecretAccessLogs(ctx, secret.ID, window)
 		if err != nil {
+			log.Printf("anomaly detection: detection-window access-log read for secret %d: %v — skipping detection for this secret this pass", secret.ID, err)
 			failures++
 			continue
 		}
@@ -191,10 +271,78 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 			}
 		}
 	}
+
+	// Per-principal aggregate (#101): a principal reading many DIFFERENT secrets it has
+	// never touched before is invisible to every rule above — each is scoped to a single
+	// secret's own baseline, so the same breadth-exfiltrating principal looks merely
+	// "new" to N separate secrets rather than triggering one aggregate signal. Runs once
+	// per pass across all secrets, not per secret.
+	breadthAlerts, err := detectPrincipalBreadth(ctx, d.storage, now, window, baselineWindow)
+	if err != nil {
+		failures++
+	}
+	for _, alert := range breadthAlerts {
+		if err := d.storage.CreateAnomalyAlert(ctx, &alert); err != nil {
+			failures++
+		}
+	}
+
 	if failures > 0 {
 		return fmt.Errorf("anomaly detection completed with %d storage failure(s) — some alerts may not have been recorded", failures)
 	}
 	return nil
+}
+
+const (
+	// principalBreadthMinNewSecrets is the minimum count of distinct secrets a
+	// principal must access in the live window — NONE of which it touched during the
+	// 30-day baseline — before a principal_breadth alert fires. Catches breadth
+	// exfiltration (many different secrets each read once) that the per-secret rules
+	// structurally cannot see.
+	principalBreadthMinNewSecrets = 5
+	// principalBreadthHighMultiplier: at or above principalBreadthMinNewSecrets times
+	// this multiplier, the alert is "high" severity rather than "medium".
+	principalBreadthHighMultiplier = 2
+)
+
+// detectPrincipalBreadth aggregates access logs by principal (not by secret) over the
+// 30-day baseline and flags a principal whose EARLIEST-ever access to an unusually high
+// number of secrets falls inside the live scan window — the per-secret rules never see
+// this, since each secret only observes "one access from a possibly-new actor." The
+// live-window boundary is applied here in Go against a real time.Time, not pushed into
+// the storage query's SQL bound — see PrincipalSecretFirstSeen's doc comment for why.
+func detectPrincipalBreadth(ctx context.Context, s StorageInterface, now, windowStart, baselineWindow time.Time) ([]models.AnomalyAlert, error) {
+	firstSeen, err := s.PrincipalSecretFirstSeen(ctx, baselineWindow)
+	if err != nil {
+		return nil, err
+	}
+
+	var alerts []models.AnomalyAlert
+	for principal, secrets := range firstSeen {
+		newCount := 0
+		for _, t := range secrets {
+			if !t.Before(windowStart) { // first ever access to this secret falls in the live window
+				newCount++
+			}
+		}
+		if newCount < principalBreadthMinNewSecrets {
+			continue
+		}
+		severity := "medium"
+		if newCount >= principalBreadthMinNewSecrets*principalBreadthHighMultiplier {
+			severity = "high"
+		}
+		alerts = append(alerts, models.AnomalyAlert{
+			AlertType: "principal_breadth",
+			Severity:  severity,
+			Description: fmt.Sprintf(
+				"%s accessed %d distinct secrets with no prior access history in the last scan window — possible breadth exfiltration",
+				principal, newCount),
+			AccessedBy: principal,
+			DetectedAt: now,
+		})
+	}
+	return alerts, nil
 }
 
 // logsBefore returns the access logs that occurred strictly before t, preserving
@@ -217,12 +365,22 @@ func logsBefore(logs []models.SecretAccessLog, t time.Time) []models.SecretAcces
 // or user would already appear in knownIPs/knownUsers and the new_ip / new_user rules
 // could never fire. Excluding the window also keeps the volume baseline (dailyAvg)
 // from inflating itself with the very burst a spike check is meant to catch.
-func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time) accessBaseline {
+//
+// quarantine additionally withholds knownIPs/knownUsers promotion for accesses that,
+// while before the live window, are still more recent than `quarantine` (#101): without
+// this, an IP/user first observed in pass N is already "known" by pass N+1 — as little
+// as one lookback interval later — so an attacker's IP self-poisons the baseline and
+// stops triggering new_ip/new_user after a single successful access. Requiring an
+// access to predate `windowStart - quarantine`, not just `windowStart`, means an IP/user
+// must be observed continuously for the full quarantine period before it is trusted.
+// dailyAvg is unaffected by quarantine — it measures volume trend, not identity trust.
+func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time, quarantine time.Duration) accessBaseline {
 	b := accessBaseline{
 		knownIPs:   make(map[string]bool),
 		knownUsers: make(map[string]bool),
 	}
 	sevenDaysAgo := now.Add(-7 * 24 * time.Hour)
+	trustCutoff := windowStart.Add(-quarantine)
 	recentCount := 0
 
 	for _, log := range logs {
@@ -230,14 +388,17 @@ func buildBaseline(logs []models.SecretAccessLog, now, windowStart time.Time) ac
 		if !log.AccessTime.Before(windowStart) {
 			continue
 		}
+		if log.AccessTime.After(sevenDaysAgo) {
+			recentCount++
+		}
+		if !log.AccessTime.Before(trustCutoff) {
+			continue // observed too recently to be trusted yet — still in quarantine
+		}
 		if log.IPAddress != "" {
 			b.knownIPs[log.IPAddress] = true
 		}
 		if log.AccessedBy != "" {
 			b.knownUsers[log.AccessedBy] = true
-		}
-		if log.AccessTime.After(sevenDaysAgo) {
-			recentCount++
 		}
 	}
 	b.dailyAvg = float64(recentCount) / 7.0
@@ -263,28 +424,48 @@ func detectAnomalies(secret models.SecretNode, log models.SecretAccessLog, basel
 		})
 	}
 
-	// Rule 2: Access from unknown IP
-	if log.IPAddress != "" && !baseline.knownIPs[log.IPAddress] && len(baseline.knownIPs) > 0 {
+	// Rule 2: Access from unknown IP. An empty baseline (no prior history at all —
+	// bootstrap, or a brand-new secret) used to suppress this rule entirely (#101): a
+	// first-ever access from ANY IP was silently waved through with zero novelty
+	// signal, which is exactly what an attacker deliberately targeting a
+	// freshly-provisioned, never-accessed secret would rely on. It still fires, but at
+	// "low" severity when there is no established baseline to violate — an established
+	// pattern being violated (baseline non-empty) is a stronger signal than a secret's
+	// first-ever access being from some IP, which is unremarkable on its own but now at
+	// least visible and auditable rather than invisible.
+	if log.IPAddress != "" && !baseline.knownIPs[log.IPAddress] {
+		severity := "high"
+		desc := fmt.Sprintf("Secret accessed from unrecognised IP address: %s", log.IPAddress)
+		if len(baseline.knownIPs) == 0 {
+			severity = "low"
+			desc = fmt.Sprintf("Secret's first observed access is from IP address %s (no prior baseline to compare against)", log.IPAddress)
+		}
 		alerts = append(alerts, models.AnomalyAlert{
 			SecretNodeID: secret.ID,
 			SecretName:   secret.Name,
 			AlertType:    "new_ip",
-			Severity:     "high",
-			Description:  fmt.Sprintf("Secret accessed from unrecognised IP address: %s", log.IPAddress),
+			Severity:     severity,
+			Description:  desc,
 			AccessedBy:   log.AccessedBy,
 			IPAddress:    log.IPAddress,
 			DetectedAt:   now,
 		})
 	}
 
-	// Rule 3: Access by unknown user
-	if log.AccessedBy != "" && !baseline.knownUsers[log.AccessedBy] && len(baseline.knownUsers) > 0 {
+	// Rule 3: Access by unknown user — same empty-baseline reasoning as Rule 2.
+	if log.AccessedBy != "" && !baseline.knownUsers[log.AccessedBy] {
+		severity := "high"
+		desc := fmt.Sprintf("Secret accessed by user with no prior access history: %s", log.AccessedBy)
+		if len(baseline.knownUsers) == 0 {
+			severity = "low"
+			desc = fmt.Sprintf("Secret's first observed access is by user %s (no prior baseline to compare against)", log.AccessedBy)
+		}
 		alerts = append(alerts, models.AnomalyAlert{
 			SecretNodeID: secret.ID,
 			SecretName:   secret.Name,
 			AlertType:    "new_user",
-			Severity:     "high",
-			Description:  fmt.Sprintf("Secret accessed by user with no prior access history: %s", log.AccessedBy),
+			Severity:     severity,
+			Description:  desc,
 			AccessedBy:   log.AccessedBy,
 			IPAddress:    log.IPAddress,
 			DetectedAt:   now,
@@ -341,7 +522,8 @@ func (d *AnomalyDetector) ListAlerts(ctx context.Context, acknowledged *bool) ([
 }
 
 // FilterAlerts narrows a set of alerts to those matching the given severity
-// (low/medium/high) and/or alert type (off_hours/new_ip/new_user/frequency_spike).
+// (low/medium/high) and/or alert type (off_hours/new_ip/new_user/frequency_spike/
+// ml_outlier/principal_breadth).
 // An empty string for either is "no constraint", so FilterAlerts(a, "", "") == a.
 func FilterAlerts(alerts []models.AnomalyAlert, severity, alertType string) []models.AnomalyAlert {
 	if severity == "" && alertType == "" {
@@ -358,9 +540,4 @@ func FilterAlerts(alerts []models.AnomalyAlert, severity, alertType string) []mo
 		out = append(out, a)
 	}
 	return out
-}
-
-// AcknowledgeAlert marks an alert as acknowledged.
-func (d *AnomalyDetector) AcknowledgeAlert(ctx context.Context, id uint) error {
-	return d.storage.AcknowledgeAnomalyAlert(ctx, id)
 }

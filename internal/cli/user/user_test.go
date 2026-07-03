@@ -31,6 +31,7 @@ func TestLifecycleRequiredFlags(t *testing.T) {
 		"reactivate":           reactivateCmd,
 		"force-password-reset": forcePasswordResetCmd,
 		"revoke-sessions":      revokeSessionsCmd,
+		"delete":               deleteCmd,
 	}
 	for label, c := range cmds {
 		for _, name := range []string{"id", "by"} {

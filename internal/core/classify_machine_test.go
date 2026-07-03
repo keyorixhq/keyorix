@@ -90,7 +90,7 @@ func TestClassificationPosture_CoversMachineEntities(t *testing.T) {
 	store.On("CountMachineIdentitiesByClassification", mock.Anything).Return(map[string]int{"restricted": 2, "": 1}, nil)
 	store.On("CountMachineIdentityCredentialsByClassification", mock.Anything).Return(map[string]int{"confidential": 3}, nil)
 
-	p := c.classificationPosture(context.Background())
+	p := c.classificationPosture(context.Background(), &CompliancePosture{})
 	assert.Equal(t, 3, p.MachineIdentities.Total)
 	assert.Equal(t, 2, p.MachineIdentities.Restricted)
 	assert.Equal(t, 1, p.MachineIdentities.Unclassified)

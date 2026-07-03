@@ -43,7 +43,12 @@ type KeyorixSecretSpec struct {
 	Server string `json:"server"`
 	// TokenSecretRef sources the Keyorix machine-identity token (a least-privilege
 	// identity with secrets.read on the referenced secrets). The token is never
-	// inlined in the spec.
+	// inlined in the spec. The referenced Secret MUST carry the label
+	// secrets.keyorix.io/token-secret=true, set by whoever creates it (a principal
+	// with real Secret-write RBAC) — the operator refuses to resolve an unlabeled
+	// Secret, so a namespace-scoped KeyorixSecret author with no core-Secret RBAC of
+	// their own cannot point this at an arbitrary pre-existing Secret and have the
+	// operator ship its bytes to the Keyorix server as a bearer token.
 	TokenSecretRef SecretKeySelector `json:"tokenSecretRef"`
 	// RefreshInterval is how often to re-read values from Keyorix. Defaults to 5m.
 	// +optional

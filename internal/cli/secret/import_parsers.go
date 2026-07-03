@@ -14,6 +14,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// maxImportFileBytes caps how much of an untrusted --file import we'll read into
+// memory in one shot. parseVault and parseJSON both os.ReadFile the whole input
+// (the dotenv parser is already bounded via bufio.Scanner's 64KiB line limit), so
+// without a cap a booby-trapped multi-GB import file can OOM-kill the operator's
+// own CLI process. This only protects the local session; there is no cross-tenant
+// or server-side impact.
+const maxImportFileBytes = 100 << 20 // 100 MiB
+
+// checkImportFileSize stats path and rejects files over maxImportFileBytes before
+// any parser reads the full contents into memory.
+func checkImportFileSize(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Size() > maxImportFileBytes {
+		return fmt.Errorf("import file %q is %d bytes, which exceeds the %d byte limit", path, info.Size(), maxImportFileBytes)
+	}
+	return nil
+}
+
 // parseFile dispatches to the correct parser based on format string.
 func parseFile(path, format string) ([]secretEntry, error) {
 	switch strings.ToLower(format) {
@@ -87,6 +108,9 @@ func parseDotenv(path string) ([]secretEntry, error) {
 //
 // Detection: if the block has exactly one key named "value" → Format 1.
 func parseVault(path string) ([]secretEntry, error) {
+	if err := checkImportFileSize(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
 		return nil, err
@@ -132,6 +156,9 @@ func parseVault(path string) ([]secretEntry, error) {
 //
 //	{"DB_PASSWORD": "supersecret123", "API_KEY": "sk_live_abc123"}
 func parseJSON(path string) ([]secretEntry, error) {
+	if err := checkImportFileSize(path); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
 		return nil, err
