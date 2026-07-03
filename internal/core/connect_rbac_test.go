@@ -23,6 +23,7 @@ func connectRBACCore(t *testing.T, conns ...connect.Connector) (*KeyorixCore, *g
 		&models.Role{}, &models.UserRole{}, &models.MachineIdentityRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.ConnectRefGrant{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	if len(conns) > 0 {
