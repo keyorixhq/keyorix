@@ -483,7 +483,7 @@ func TestMFA_TOTPSecretTransplantBetweenUsersFailsToDecrypt(t *testing.T) {
 	require.NoError(t, err)
 	aliceCode, err := totp.GenerateCode(aliceSecret, fixed)
 	require.NoError(t, err)
-	_, err = c.ActivateMFA(ctx, 1, aliceCode)
+	_, err = c.ActivateMFA(ctx, 1, aliceCode, mfaTestPassword)
 	require.NoError(t, err)
 
 	_, _, err = c.BeginMFAEnrollment(ctx, 2)
