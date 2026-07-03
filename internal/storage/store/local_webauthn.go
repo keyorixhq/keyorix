@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (ls *LocalStorage) CreateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error {
@@ -23,9 +24,31 @@ func (ls *LocalStorage) ListWebAuthnCredentials(ctx context.Context, userID uint
 	return creds, nil
 }
 
-func (ls *LocalStorage) GetWebAuthnCredentialByCredID(ctx context.Context, credentialID []byte) (*models.WebAuthnCredential, error) {
+// GetWebAuthnCredentialByCredID looks up a credential by credential ID, scoped to
+// the claimed owner (user_id = userID) so a caller cannot fetch another user's
+// credential blob by omitting or forgetting an ownership check (#307).
+func (ls *LocalStorage) GetWebAuthnCredentialByCredID(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error) {
 	var c models.WebAuthnCredential
-	if err := ls.db.WithContext(ctx).Where("credential_id = ?", credentialID).First(&c).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Where("credential_id = ? AND user_id = ?", credentialID, userID).First(&c).Error; err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// LockWebAuthnCredentialForUpdate re-reads a credential by (credential_id, user_id),
+// taking a row-level write lock on backends that support one (Postgres: SELECT …
+// FOR UPDATE). Used inside WithTransaction so a read-modify-write of the advanced
+// signature counter serializes against a concurrent write for the same credential
+// (#306). On backends without row locks (SQLite) it is a plain scoped read, and the
+// caller is responsible for its own process-level serialization — mirrors
+// LockUserForUpdate.
+func (ls *LocalStorage) LockWebAuthnCredentialForUpdate(ctx context.Context, credentialID []byte, userID uint) (*models.WebAuthnCredential, error) {
+	q := ls.db.WithContext(ctx)
+	if ls.db.Dialector.Name() == "postgres" {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	var c models.WebAuthnCredential
+	if err := q.Where("credential_id = ? AND user_id = ?", credentialID, userID).First(&c).Error; err != nil {
 		return nil, err
 	}
 	return &c, nil

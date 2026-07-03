@@ -74,8 +74,15 @@ type KeyorixCore struct {
 	// before either token row exists. Held only across the throttle check and the
 	// token write — link delivery (SMTP) runs after release, so a slow send never
 	// serializes every other resend. Zero value is ready to use. See setup_delivery.go.
-	setupResendMu  sync.Mutex
-	auditForwarder AuditForwarder
+	setupResendMu sync.Mutex
+	// webauthnCredentialMu serializes persistUpdatedCredential's per-credential
+	// read-validate-write of the advanced WebAuthn signature counter, so two
+	// concurrent logins for the same (cloned) authenticator cannot race and let a
+	// stale, lower counter clobber an already-persisted higher one. Combined with the
+	// row lock LockWebAuthnCredentialForUpdate takes on Postgres, the counter stays
+	// monotonic across replicas too. Zero value is ready to use. See webauthn.go.
+	webauthnCredentialMu sync.Mutex
+	auditForwarder       AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
 	// DB polling. Always non-nil (set in the constructors).
