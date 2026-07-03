@@ -202,13 +202,33 @@ func (c *KeyorixCore) GetUserRolesByID(ctx context.Context, userID uint) ([]*mod
 }
 
 // GetUserPermissionsByID returns a user's effective permission set — the
-// de-duplicated union of permissions across every role assigned to the user. This
-// is the "what can this user do" view for dashboards and access reviews; the CLI's
-// list-permissions assembles the same set client-side. Empty for an unknown user.
+// de-duplicated union of permissions across every DIRECT role assigned to the
+// user AND every role inherited via group membership, mirroring how Authorize
+// resolves scopedRoleIDs (authz.go) before any live permission check. This is
+// the "what can this user do" view for dashboards and access reviews (#375); a
+// permission held only via a group role must be visible here — omitting it let
+// a malicious insider "hide" real, group-derived access from a recertification
+// reviewer even though Authorize() would grant it on every live request. Empty
+// for an unknown user.
 func (c *KeyorixCore) GetUserPermissionsByID(ctx context.Context, userID uint) ([]*storage.Permission, error) {
-	perms, err := c.storage.GetUserPermissions(ctx, userID)
+	direct, err := c.storage.GetUserPermissions(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	viaGroups, err := c.storage.GetUserGroupPermissions(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	seen := make(map[uint]struct{}, len(direct)+len(viaGroups))
+	perms := make([]*storage.Permission, 0, len(direct)+len(viaGroups))
+	for _, list := range [][]*storage.Permission{direct, viaGroups} {
+		for _, p := range list {
+			if _, ok := seen[p.ID]; ok {
+				continue
+			}
+			seen[p.ID] = struct{}{}
+			perms = append(perms, p)
+		}
 	}
 	return perms, nil
 }
