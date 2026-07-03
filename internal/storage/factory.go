@@ -588,6 +588,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 			return fmt.Errorf("failed to migrate project_memberships table: %w", err)
 		}
 	}
+	if tableExists(db, "project_memberships") {
+		if err := ensureProjectMembershipIndex(db); err != nil {
+			return err
+		}
+	}
 
 	// Create setup_tokens if missing (ADR-028 credential delivery, additive).
 	if !setupTokenExists {
@@ -708,6 +713,23 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_groups_name_active ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial groups name index: %w", err)
+	}
+	return nil
+}
+
+// ensureProjectMembershipIndex creates a partial unique index enforcing at most one
+// non-revoked ProjectMembership per (project, user) at the DB layer. InviteMember's
+// own check-then-create ("one active onboarding per (project, user)") is a TOCTOU:
+// two concurrent invites for the same pair can both pass the "no active membership"
+// read before either commits its Create, producing two non-revoked rows (#309). The
+// index makes the second concurrent Create fail with a constraint violation instead,
+// which CreateProjectMembership/InviteMember translate into the same clean
+// "already has a membership" error a sequential caller would get. Idempotent; mirrors
+// ensureGroupNameIndex/ensureUserNameIndex (partial unique index, live rows only).
+func ensureProjectMembershipIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active " +
+		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error; err != nil {
+		return fmt.Errorf("failed to create partial project_memberships index: %w", err)
 	}
 	return nil
 }
