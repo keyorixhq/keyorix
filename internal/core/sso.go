@@ -609,7 +609,7 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 	// the point, since authorization here is rooted in the admin-configured
 	// GroupRoleMap and the verified IdP assertion, not in the user's own
 	// roles.assign-derived authority.
-	added, removed := 0, 0
+	added, removed, blocked := 0, 0, 0
 	for role := range managedRoles {
 		r, rerr := c.storage.GetRoleByName(ctx, role)
 		if rerr != nil {
@@ -617,6 +617,16 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 		}
 		switch {
 		case desiredRoles[role] && !currentSet[role]:
+			// Refuse to grant an admin-tier role from an IdP group mapping (#96) —
+			// the same escalation-by-proxy guard reconcileSSOGroups already applies to
+			// admin-conferring GROUPS. GroupRoleMap is configured once by an admin, but
+			// IdP group membership is frequently self-service or governed by people
+			// who are not Keyorix admins, so a mapping intended for a routine role must
+			// not double as a path to global admin for anyone who can join the group.
+			if isAdminRoleName(role) {
+				blocked++
+				continue
+			}
 			if c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}) == nil {
 				added++
 			}
@@ -626,9 +636,12 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 			}
 		}
 	}
-	if added > 0 || removed > 0 {
-		c.writeAuditEvent(ctx, EventSSORolesSynced, actorPtr(userID), nil,
-			fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, added, removed))
+	if added > 0 || removed > 0 || blocked > 0 {
+		msg := fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, added, removed)
+		if blocked > 0 {
+			msg += fmt.Sprintf("; %d admin-tier role grant(s) refused (IdP group mapping cannot grant admin)", blocked)
+		}
+		c.writeAuditEvent(ctx, EventSSORolesSynced, actorPtr(userID), nil, msg)
 	}
 }
 

@@ -371,6 +371,11 @@ type OIDCIssuerConfig struct {
 	Issuer    string   `yaml:"issuer"`    // must equal the JWT `iss` exactly
 	JWKSURI   string   `yaml:"jwks_uri"`  // where the issuer's signing keys live
 	Audiences []string `yaml:"audiences"` // the JWT `aud` must contain one of these
+	// MaxTokenAgeSeconds bounds (now - iat) for a token from this issuer; unset/0
+	// uses a 24h default. exp alone doesn't bound how long ago a token was
+	// minted, so without this a far-future-exp token (misconfigured or
+	// malicious issuer) would verify indefinitely.
+	MaxTokenAgeSeconds int `yaml:"max_token_age_seconds"`
 }
 
 // GetAPIKey returns the resolved API key, preferring the environment variable.
