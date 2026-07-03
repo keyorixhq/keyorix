@@ -14,6 +14,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // RetentionPolicy is the resolved set of per-record-type retention windows, in
@@ -54,9 +56,25 @@ func (r RetentionResult) Total() int64 {
 
 // SetRetentionPolicy records the configured per-type retention windows so the
 // compliance posture can report them. The scheduler (main.go) drives the actual
-// purge from config; this setter exists for the read-only posture view.
-func (c *KeyorixCore) SetRetentionPolicy(p RetentionPolicy) {
+// purge from config; this setter exists for the read-only posture view. The
+// server calls it once at startup from keyorix.yaml (#160): an operator with
+// filesystem+restart access who shortens a retention window otherwise leaves no
+// audit trail of the CHANGE itself, only of the resulting purge counts — this
+// records the configured windows every time they're applied, mirroring
+// AuditLicenseState's startup-audit pattern.
+func (c *KeyorixCore) SetRetentionPolicy(ctx context.Context, p RetentionPolicy) {
 	c.retentionPolicy = p
+	ok := true
+	c.emitAudit(ctx, &models.AuditEvent{
+		EventType: "data_retention.policy_configured",
+		Description: fmt.Sprintf(
+			"Data retention policy applied: anomaly_alerts=%dd closed_access_reviews=%dd break_glass=%dd resolved_access_requests=%dd",
+			p.AnomalyAlertsDays, p.ClosedAccessReviewsDays, p.BreakGlassDays, p.ResolvedAccessRequestsDays,
+		),
+		Success:   &ok,
+		ActorType: ActorTypeSystem,
+		EventTime: time.Now(),
+	})
 }
 
 // RetentionPolicy returns the configured retention windows (zero value if unset).
