@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -112,6 +113,11 @@ func TestServe_GetSecretSuccess(t *testing.T) {
 	assert.Equal(t, "p4ss", content["text"])
 }
 
+// #122: a tool failure is in-band (not a JSON-RPC error), but the underlying error
+// (here, specifically a permission-denied vs. not-found distinction) must NOT be
+// echoed into the LLM-visible text — a 403-vs-404 oracle lets a prompt-injected agent
+// map which refs exist versus which are merely out of scope. Only the generic message
+// should appear; the real reason is logged to stderr, not returned in-band.
 func TestServe_GetSecretErrorIsInBand(t *testing.T) {
 	fr := &fakeReader{getErr: errors.New("not authorized (HTTP 403)")}
 	resps := run(t, NewServer(fr, ""),
@@ -121,7 +127,75 @@ func TestServe_GetSecretErrorIsInBand(t *testing.T) {
 	res := resultMap(t, resps[0])
 	assert.Equal(t, true, res["isError"])
 	text := res["content"].([]interface{})[0].(map[string]interface{})["text"].(string)
-	assert.Contains(t, text, "not authorized")
+	assert.Equal(t, genericReadError, text, "the underlying error detail must not leak into the tool result")
+	assert.NotContains(t, text, "403", "the HTTP status — an existence/permission oracle — must not leak")
+}
+
+// #122: an optional ref allowlist restricts BOTH tools to matching refs, even though
+// the underlying reader would have served the request — defense-in-depth on top of
+// (not instead of) the token's own server-side RBAC.
+func TestServe_AllowedRefsRestrictsGetAndList(t *testing.T) {
+	fr := &fakeReader{
+		value: "p4ss",
+		list:  []SecretInfo{{Ref: "app/prod/db"}, {Ref: "app/prod/other-secret"}},
+	}
+	s := NewServer(fr, "")
+	s.SetAllowedRefs([]string{"app/prod/db"})
+
+	resps := run(t, s,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"app/prod/db"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"app/prod/other-secret"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"keyorix_list_secrets","arguments":{}}}`,
+	)
+	require.Len(t, resps, 3)
+
+	allowed := resultMap(t, resps[0])
+	assert.NotEqual(t, true, allowed["isError"], "an allowlisted ref must still be servable")
+
+	denied := resultMap(t, resps[1])
+	assert.Equal(t, true, denied["isError"], "a ref outside the allowlist must be refused")
+	deniedText := denied["content"].([]interface{})[0].(map[string]interface{})["text"].(string)
+	assert.Equal(t, genericReadError, deniedText)
+
+	listed := resultMap(t, resps[2])["content"].([]interface{})[0].(map[string]interface{})["text"].(string)
+	assert.Contains(t, listed, "app/prod/db")
+	assert.NotContains(t, listed, "other-secret", "a ref outside the allowlist must not appear in list output either")
+}
+
+// #122: the per-process read cap refuses further keyorix_get_secret calls once
+// exhausted, for the rest of the session — even for a ref that would otherwise be
+// perfectly servable.
+func TestServe_MaxReadsCapsGetSecret(t *testing.T) {
+	fr := &fakeReader{value: "p4ss"}
+	s := NewServer(fr, "")
+	s.SetMaxReads(2)
+
+	resps := run(t, s,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"a/b/c"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"a/b/c"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"a/b/c"}}}`,
+	)
+	require.Len(t, resps, 3)
+	assert.NotEqual(t, true, resultMap(t, resps[0])["isError"], "read 1 of 2 must succeed")
+	assert.NotEqual(t, true, resultMap(t, resps[1])["isError"], "read 2 of 2 must succeed")
+	third := resultMap(t, resps[2])
+	assert.Equal(t, true, third["isError"], "read 3 must be refused — the cap is exhausted")
+	assert.Equal(t, genericReadError, third["content"].([]interface{})[0].(map[string]interface{})["text"].(string))
+}
+
+// A zero/unset max-reads cap means unlimited — the default, unchanged behavior.
+func TestServe_MaxReadsUnsetIsUnlimited(t *testing.T) {
+	fr := &fakeReader{value: "p4ss"}
+	s := NewServer(fr, "") // SetMaxReads never called
+	var msgs []string
+	for i := 0; i < 50; i++ {
+		msgs = append(msgs, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"keyorix_get_secret","arguments":{"ref":"a/b/c"}}}`, i+1))
+	}
+	resps := run(t, s, msgs...)
+	require.Len(t, resps, 50)
+	for _, r := range resps {
+		assert.NotEqual(t, true, resultMap(t, r)["isError"])
+	}
 }
 
 func TestServe_GetSecretRequiresRef(t *testing.T) {

@@ -39,7 +39,13 @@ type KeyManager struct {
 	saltPath   string
 	baseDir    string
 	currentDEK []byte
-	keyVersion string
+	// dekSnapshot is the raw wrapped-DEK bytes read from disk at the moment
+	// currentDEK was last set (Initialize/RotateDEKWithSweep/RotateDEK). It
+	// lets RewrapDEK detect — under the exclusive key lock — whether another
+	// process has changed dek.key since, so it never overwrites a
+	// concurrently-completed rotation with a stale value (#195).
+	dekSnapshot []byte
+	keyVersion  string
 	// keyProvider sources the KEK (ADR-038). nil = the legacy passphrase+salt
 	// derivation below; set to a crypto.KeyProvider (password/file/env) by the
 	// Service to obtain the KEK from elsewhere. Either way the KEK still wraps the
@@ -70,7 +76,7 @@ func (km *KeyManager) deriveKEK(passphrase string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to ensure salt exists: %w", err)
 	}
-	return GenerateKEK(passphrase, salt, 600000), nil
+	return GenerateKEK(passphrase, salt, DefaultKEKIterations), nil
 }
 
 // KeyInfo contains metadata about encryption keys.
@@ -181,6 +187,7 @@ func (km *KeyManager) unwrapDEK(kek []byte) ([]byte, error) {
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size after unwrap: expected 32 bytes, got %d", len(dek))
 	}
+	km.dekSnapshot = append([]byte(nil), wrapped...)
 	return dek, nil
 }
 

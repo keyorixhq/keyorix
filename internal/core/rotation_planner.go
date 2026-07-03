@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -141,12 +142,37 @@ type DeploymentRotationPlan struct {
 	OverdueCount     int            `json:"overdue_count"`
 	DueSoonCount     int            `json:"due_soon_count"`
 	Projects         []RotationPlan `json:"projects"` // most-overdue project first; only projects with work
+	// BrokenProjects flags every project whose plan could not be computed (in
+	// practice: a cyclic dependency graph — cycles are rejected at add, ADR-052,
+	// so this should not happen, but a persisted cycle should never take down the
+	// whole deployment-wide view, #260) rather than aborting the entire roll-up —
+	// mirroring CompliancePosture's Degraded/DegradedReasons pattern
+	// (compliance_posture.go): a per-project failure surfaces as an explicit,
+	// named gap in an otherwise-complete result, not a hard error for every other
+	// project's viewers.
+	BrokenProjects []BrokenRotationProject `json:"broken_projects,omitempty"`
+}
+
+// BrokenRotationProject names a project GenerateDeploymentRotationPlan could not
+// compute a plan for, with the underlying error, so an operator can find and fix
+// it (e.g. locate and delete a stuck cyclic edge) without every other project's
+// viewers losing the deployment-wide rotation plan in the meantime.
+type BrokenRotationProject struct {
+	ProjectID uint   `json:"project_id"`
+	Error     string `json:"error"`
 }
 
 // GenerateDeploymentRotationPlan builds the deployment-wide rotation plan by aggregating
 // every project's plan (ADR-053). Projects with nothing to rotate are omitted from the
 // list but still counted in ProjectsScanned. Projects are ordered most-overdue first so the
 // install's most pressing rotation work surfaces at the top.
+//
+// A project whose plan fails to compute (in practice, a cyclic dependency graph
+// slipping past AddSecretDependency's cycle check via a race, #260) is skipped and
+// flagged in BrokenProjects rather than aborting the whole call: without this, one
+// project's stuck cycle 500s the install-wide GET /rotation-plan endpoint for every
+// viewer across the entire deployment. Mirrors RunAutoRotation's graceful
+// degrade-and-log behaviour on the same condition (rotation_executor.go).
 func (c *KeyorixCore) GenerateDeploymentRotationPlan(ctx context.Context) (*DeploymentRotationPlan, error) {
 	projects, err := c.storage.ListProjects(ctx)
 	if err != nil {
@@ -158,7 +184,9 @@ func (c *KeyorixCore) GenerateDeploymentRotationPlan(ctx context.Context) (*Depl
 		dp.ProjectsScanned++
 		plan, err := c.GenerateRotationPlan(ctx, p.ID)
 		if err != nil {
-			return nil, fmt.Errorf("project %d: %w", p.ID, err)
+			log.Printf("deployment rotation plan: project %d: %v — skipping this project, continuing the deployment-wide roll-up", p.ID, err)
+			dp.BrokenProjects = append(dp.BrokenProjects, BrokenRotationProject{ProjectID: p.ID, Error: err.Error()})
+			continue
 		}
 		if plan.TotalSecrets == 0 {
 			continue // nothing to rotate here — keep the deployment view focused
@@ -176,6 +204,9 @@ func (c *KeyorixCore) GenerateDeploymentRotationPlan(ctx context.Context) (*Depl
 			return dp.Projects[i].OverdueCount > dp.Projects[j].OverdueCount
 		}
 		return dp.Projects[i].ProjectID < dp.Projects[j].ProjectID
+	})
+	sort.Slice(dp.BrokenProjects, func(i, j int) bool {
+		return dp.BrokenProjects[i].ProjectID < dp.BrokenProjects[j].ProjectID
 	})
 	return dp, nil
 }
@@ -265,6 +296,14 @@ func rotationUrgency(status string, daysOverdue, riskScore int) int {
 // candidates: wave 0 holds candidates with no in-plan dependency, and a candidate
 // appears one wave after the last candidate it depends on. ok is false if a cycle
 // prevents a complete ordering (not expected: the graph is acyclic by construction).
+//
+// Uses the same ready-queue approach as topologicalRotationOrder (#368): each wave's
+// members are exactly the nodes a PRIOR wave's processing just brought to indegree
+// zero, discovered by walking only THOSE nodes' outgoing edges — never a rescan of
+// every remaining candidate. Each node is placed into exactly one wave and each edge
+// is walked exactly once over the whole call, so the total work is O(V+E) rather
+// than the O(V) per-wave rescan (up to O(V) waves deep) the prior implementation
+// did, which made a long dependency chain O(V²).
 func rotationWaves(edges []*models.SecretDependency, candidates map[uint]bool) (waves [][]uint, ok bool) {
 	adj := map[uint][]uint{} // dependsOn -> dependents, among candidates
 	indeg := make(map[uint]int, len(candidates))
@@ -278,29 +317,31 @@ func rotationWaves(edges []*models.SecretDependency, candidates map[uint]bool) (
 		}
 	}
 
-	placed := make(map[uint]bool, len(candidates))
-	remaining := len(candidates)
-	for remaining > 0 {
-		level := []uint{}
-		for id := range candidates {
-			if !placed[id] && indeg[id] == 0 {
-				level = append(level, id)
-			}
+	// Seed wave 0 with every candidate that has no in-plan dependency, smallest id
+	// first for a deterministic, stable ordering.
+	current := make([]uint, 0, len(candidates))
+	for id := range candidates {
+		if indeg[id] == 0 {
+			current = append(current, id)
 		}
-		if len(level) == 0 {
-			return waves, false // cycle
-		}
-		sort.Slice(level, func(i, j int) bool { return level[i] < level[j] })
-		for _, id := range level {
-			placed[id] = true
-			remaining--
-		}
-		for _, id := range level {
+	}
+	sort.Slice(current, func(i, j int) bool { return current[i] < current[j] })
+
+	placed := 0
+	for len(current) > 0 {
+		waves = append(waves, current)
+		placed += len(current)
+		next := []uint{}
+		for _, id := range current {
 			for _, dep := range adj[id] {
 				indeg[dep]--
+				if indeg[dep] == 0 {
+					next = append(next, dep)
+				}
 			}
 		}
-		waves = append(waves, level)
+		sort.Slice(next, func(i, j int) bool { return next[i] < next[j] })
+		current = next
 	}
-	return waves, true
+	return waves, placed == len(candidates) // false = a cycle prevented a complete ordering
 }

@@ -27,6 +27,16 @@ func TestSecurityHeaders_AlwaysSet(t *testing.T) {
 	assert.Empty(t, hdr.Get("Strict-Transport-Security"))
 }
 
+// #112: CSP must be sent in the single-binary/embedded-SPA serving mode too — it
+// previously had none at all (only the separate Helm nginx frontend sent one).
+func TestSecurityHeaders_CSPAlwaysSet(t *testing.T) {
+	hdr := serve(t, false)
+	csp := hdr.Get("Content-Security-Policy")
+	assert.Contains(t, csp, "default-src 'self'")
+	assert.Contains(t, csp, "script-src 'self'", "no unsafe-inline/unsafe-eval on scripts — the primary XSS vector")
+	assert.NotContains(t, csp, "script-src 'self' 'unsafe-inline'")
+}
+
 func TestSecurityHeaders_HSTSOnlyWithTLS(t *testing.T) {
 	hdr := serve(t, true)
 	assert.Equal(t, "max-age=31536000; includeSubDomains", hdr.Get("Strict-Transport-Security"))

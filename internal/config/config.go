@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -370,6 +371,11 @@ type OIDCIssuerConfig struct {
 	Issuer    string   `yaml:"issuer"`    // must equal the JWT `iss` exactly
 	JWKSURI   string   `yaml:"jwks_uri"`  // where the issuer's signing keys live
 	Audiences []string `yaml:"audiences"` // the JWT `aud` must contain one of these
+	// MaxTokenAgeSeconds bounds (now - iat) for a token from this issuer; unset/0
+	// uses a 24h default. exp alone doesn't bound how long ago a token was
+	// minted, so without this a far-future-exp token (misconfigured or
+	// malicious issuer) would verify indefinitely.
+	MaxTokenAgeSeconds int `yaml:"max_token_age_seconds"`
 }
 
 // GetAPIKey returns the resolved API key, preferring the environment variable.
@@ -417,10 +423,29 @@ type KeyProviderConfig struct {
 	// it's passed as the AWS EncryptionContext / GCP AdditionalAuthenticatedData on
 	// wrap+unwrap, so a different install sharing the same CMK cannot unwrap this
 	// install's KEK. Set a value unique to the install, e.g. {keyorix-install: <id>}.
-	// Empty = no binding (the prior behaviour). Not supported by azure-kms (RSA wrap
-	// has no AAD). Existing wrapped blobs decrypt via a no-context fallback, so this
-	// can be enabled on a running install (it binds on the next KEK re-wrap).
+	// Empty = no binding (the prior behaviour). NOT supported by azure-kms (RSA wrap
+	// has no AAD) — setting it there is a hard startup error, not a silent downgrade.
+	//
+	// #123: on its own this is enforced (a mismatched or missing context on the
+	// wrapped blob fails decryption outright) UNLESS KMSAllowContextFallback is also
+	// set — see that field.
 	KMSEncryptionContext map[string]string `yaml:"kms_encryption_context"`
+	// KMSAllowContextFallback opts into a ONE-DIRECTION migration aid: when
+	// KMSEncryptionContext is set and a context-bound Decrypt fails, retry once
+	// without any context, so enabling the binding on an install with an existing
+	// (pre-binding) wrapped KEK doesn't lock it out. Off by default — with it off (the
+	// secure default), a KMS Decrypt failure is final: the whole point of
+	// KMSEncryptionContext is that an attacker with kms:Encrypt on the shared CMK (but
+	// not Keyorix's own data) cannot plant a wrapped-KEK blob that decrypts under this
+	// install's identity; a fallback that auto-retries without the context on ANY
+	// failure makes that binding purely advisory, since a blob encrypted with no
+	// context at all (the trivial attack) always succeeds on the fallback attempt.
+	// Enable this ONLY transiently while migrating an existing install onto a newly
+	// configured context (`keyorix encryption migrate-provider --to-kms-encryption-
+	// context=...` to durably re-wrap under the context), then disable it again —
+	// every fallback use is logged loudly specifically so that migration window is
+	// observable and finite, not a permanent standing weakening.
+	KMSAllowContextFallback bool `yaml:"kms_allow_context_fallback"`
 	// ExecCommand is the argv for type "exec": the resolver command (argv[0] is the
 	// binary, the rest are arguments) whose stdout supplies the KEK as raw 32 bytes
 	// or a hex/base64 encoding thereof. Run directly without a shell. Lets a
@@ -793,6 +818,9 @@ type EvidenceWebhookConfig struct {
 	Endpoint           string `yaml:"endpoint"`
 	Token              string `yaml:"token"` // use KEYORIX_EVIDENCE_WEBHOOK_TOKEN env var instead
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	// AllowPrivateNetworkTarget opts the endpoint out of the SSRF guard — a
+	// SEPARATE decision from InsecureSkipVerify; see evidencesink.WebhookConfig.
+	AllowPrivateNetworkTarget bool `yaml:"allow_private_network_target"`
 }
 
 // GetToken returns the resolved webhook token, preferring the environment variable.
@@ -917,6 +945,9 @@ type NotificationWebhookConfig struct {
 	Endpoint           string `yaml:"endpoint"`
 	Token              string `yaml:"token"` // use KEYORIX_NOTIFY_WEBHOOK_TOKEN env var instead
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	// AllowPrivateNetworkTarget opts the endpoint out of the SSRF guard — a
+	// SEPARATE decision from InsecureSkipVerify; see notifychan.WebhookConfig.
+	AllowPrivateNetworkTarget bool `yaml:"allow_private_network_target"`
 	// SigningSecret HMAC-signs each payload (X-Keyorix-Signature) so the receiver can
 	// verify authenticity. Use KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET instead of the file.
 	SigningSecret string `yaml:"signing_secret"`
@@ -978,6 +1009,14 @@ type SSOProviderConfig struct {
 	// (default "system_viewer"). A misconfigured/unknown role grants nothing —
 	// least-privilege on misconfiguration.
 	DefaultRole string `yaml:"default_role"`
+	// TrustAssertedEmail opts a SAML provider (type: saml) into treating its
+	// asserted email as verified for account-linking. SAML has no per-assertion
+	// verified-email signal — the assertion being IdP-signed proves the IdP sent
+	// it, not that the IdP verified the user owns it. Opt-in (default off):
+	// without it, a SAML login can still JIT-provision a NEW account but cannot
+	// claim an EXISTING one by asserting its email. Ignored for OIDC providers
+	// (whose email_verified claim is checked per-login instead).
+	TrustAssertedEmail bool `yaml:"trust_asserted_email"`
 
 	// GroupSync reconciles the user's NATIVE group memberships from the IdP's groups
 	// claim on each login (the IdP becomes the source of truth — membership is added
@@ -1233,6 +1272,24 @@ type AnomalyAlertsConfig struct {
 	// BusinessHours configures the timezone and band the off_hours rule uses. Unset =
 	// the legacy UTC 22:00–06:00 default.
 	BusinessHours AnomalyBusinessHoursConfig `yaml:"business_hours"`
+	// BaselineQuarantine is how long an IP/user must be observed before the live scan
+	// window before it is trusted as "known" baseline (#101) — see
+	// AnomalyDetector.SetBaselineQuarantine. Go duration string (e.g. "24h"); unset
+	// keeps the 24h default. An explicit "0" or "0s" disables quarantine.
+	BaselineQuarantine string `yaml:"baseline_quarantine"`
+}
+
+// GetBaselineQuarantine returns the parsed BaselineQuarantine duration; defaults to 24h.
+// A configured zero duration ("0", "0s") is honored as an explicit opt-out rather than
+// falling back to the default, since Go's ParseDuration("0") succeeds with d == 0.
+func (c AnomalyAlertsConfig) GetBaselineQuarantine() time.Duration {
+	if c.BaselineQuarantine == "" {
+		return 24 * time.Hour
+	}
+	if d, err := time.ParseDuration(c.BaselineQuarantine); err == nil && d >= 0 {
+		return d
+	}
+	return 24 * time.Hour
 }
 
 // AnomalyBusinessHoursConfig defines when secret access counts as "off hours" for the
@@ -1257,7 +1314,11 @@ type AnomalyMLConfig struct {
 	Threshold  float64 `yaml:"threshold"`   // anomaly-score cutoff (0.5,1.0); default 0.60
 	NumTrees   int     `yaml:"num_trees"`   // ensemble size; default 100
 	SampleSize int     `yaml:"sample_size"` // per-tree subsample (psi); default 256
-	Seed       int64   `yaml:"seed"`        // RNG seed for reproducible scoring; default 1
+	// Seed, if set, pins the Isolation Forest's RNG for reproducible scoring (e.g. to
+	// diff forest behavior across a config change). Unset (0) draws a fresh
+	// crypto/rand-sourced seed per process instead of a fixed constant, so the forest
+	// structure isn't predictable from source (#101).
+	Seed int64 `yaml:"seed"`
 }
 
 // GetInterval returns the anomaly scan/alert interval (Go duration); defaults to 1h.
@@ -1302,6 +1363,13 @@ type DynamicSecretsConfig struct {
 	SweepEnabled bool `yaml:"sweep_enabled"`
 	// SweepInterval is the sweep cadence as a Go duration (e.g. "1m", "5m").
 	SweepInterval string `yaml:"sweep_interval"`
+	// MaxLeaseTTL is a hard, install-wide ceiling on any dynamic-secret lease's TTL —
+	// independent of (and always enforced alongside) each DynamicSecretConfig's own
+	// per-config MaxTTLSeconds, which has no ceiling of its own and defaults to
+	// "unset = unbounded" (#97: without this, an operator could set/leave a config's
+	// max_ttl_seconds unbounded and mint a credential valid for, say, 100 years). Go
+	// duration string (e.g. "720h"); defaults to 90 days when unset or unparseable.
+	MaxLeaseTTL string `yaml:"max_lease_ttl"`
 }
 
 // GetSweepInterval returns the auto-revoke sweep cadence, parsing SweepInterval
@@ -1313,6 +1381,17 @@ func (c DynamicSecretsConfig) GetSweepInterval() time.Duration {
 		}
 	}
 	return 1 * time.Minute
+}
+
+// GetMaxLeaseTTL returns the install-wide dynamic-secret lease TTL ceiling; defaults to
+// 90 days when unset or unparseable (#97).
+func (c DynamicSecretsConfig) GetMaxLeaseTTL() time.Duration {
+	if c.MaxLeaseTTL != "" {
+		if d, err := time.ParseDuration(c.MaxLeaseTTL); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 90 * 24 * time.Hour
 }
 
 // GetInterval returns the purge run interval, parsing Schedule as a Go duration
@@ -1399,6 +1478,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gRPC server is enabled but no port is specified")
 	}
 
+	if err := validateAllowedOrigins(c.Server.HTTP.AllowedOrigins); err != nil {
+		return err
+	}
+
 	if c.Server.HTTP.TLS.Enabled {
 		if c.Server.HTTP.TLS.AutoCert {
 			if len(c.Server.HTTP.TLS.Domains) == 0 {
@@ -1454,6 +1537,29 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unsupported fallback language: %s. Supported languages: en, ru, es, fr, de", c.Locale.FallbackLanguage)
 	}
 
+	return nil
+}
+
+// validateAllowedOrigins rejects a misconfigured CORS allowlist (server.http.
+// allowed_origins) at startup rather than letting it sit silently until it's
+// proven wrong in the field. A bare "*" — which matches every origin — must not
+// be configurable here: the caller must list explicit origins. Every entry must
+// also be a well-formed origin: an http(s) scheme, a host, and nothing else (no
+// path, query, fragment, userinfo, or trailing slash) — the exact shape
+// Access-Control-Allow-Origin expects an Origin header to have.
+func validateAllowedOrigins(origins []string) error {
+	for _, o := range origins {
+		if o == "*" {
+			return fmt.Errorf("server.http.allowed_origins must not contain \"*\" — list explicit origins (e.g. https://app.example.com); a wildcard origin defeats the CORS allowlist")
+		}
+		u, err := url.Parse(o)
+		if err != nil || u.Scheme == "" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return fmt.Errorf("server.http.allowed_origins entry %q is not a valid origin (expected scheme://host[:port], e.g. https://app.example.com)", o)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("server.http.allowed_origins entry %q must use http or https", o)
+		}
+	}
 	return nil
 }
 

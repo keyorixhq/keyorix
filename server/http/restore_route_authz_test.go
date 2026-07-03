@@ -31,6 +31,14 @@ func TestRestoreGroupRouteRequiresRolesAssign(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// A plain ":memory:" DSN (no cache=shared) hands out a brand-new, empty database
+	// to every connection the pool opens — with the default pool size > 1, a second
+	// connection opened under concurrent test-suite load sees no tables at all,
+	// producing intermittent "record not found"/wrong-RBAC-decision flakes. Pin the
+	// pool to a single connection so every query in this test hits the same DB.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
@@ -89,11 +97,18 @@ func TestRestoreProjectAndEnvironmentRoutesRequireRolesAssign(t *testing.T) {
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// See the matching comment in TestRestoreGroupRouteRequiresRolesAssign above: a
+	// plain ":memory:" DSN needs a pinned single-connection pool or a second pool
+	// connection under concurrent test-suite load sees an empty database.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.AuditEvent{}, &models.Session{}, &models.Project{}, &models.Environment{},
 		&models.SecretNode{}, &models.SecretVersion{},
+		&models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
 	))
 	now := time.Now()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "a@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)

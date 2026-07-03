@@ -325,6 +325,13 @@ func (rs *RemoteStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mo
 	return result, nil
 }
 
+// ListGroupRoleAssignments is not supported in remote storage — the client reaches
+// group role state through GetGroupRoles/GetGroupRoleGrants (per-group, scope-less)
+// via their REST endpoints; there is no all-scope listing endpoint to proxy to.
+func (rs *RemoteStorage) ListGroupRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
+	return nil, remoteUnsupported("ListGroupRoleAssignments")
+}
+
 // AssignRoleToGroup assigns a role to a group at scope via remote API.
 func (rs *RemoteStorage) AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
 	path := fmt.Sprintf("/api/v1/groups/%d/roles", groupID)
@@ -438,6 +445,10 @@ func (rs *RemoteStorage) ListProjectMembers(_ context.Context, _ uint) ([]storag
 
 func (rs *RemoteStorage) ListProjectRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
 	return nil, remoteUnsupported("ListProjectRoleAssignments")
+}
+
+func (rs *RemoteStorage) ListProjectMachineRoleAssignments(_ context.Context, _ uint) ([]storage.RoleAssignment, error) {
+	return nil, remoteUnsupported("ListProjectMachineRoleAssignments")
 }
 
 // ListGlobalAdminAssignmentsForUpdate is a server-internal RBAC primitive backing

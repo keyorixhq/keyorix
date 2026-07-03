@@ -36,9 +36,18 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 	return nil
 }
 
-// AssignGroupRoleWithExpiry assigns a time-bound role to a group at scope; see
-// AssignUserRoleWithExpiry.
+// AssignGroupRoleWithExpiry assigns a time-bound role to a group at scope, gated by
+// the same escalation-by-proxy ceiling as the permanent grant (AssignRoleToGroup —
+// a JIT admin grant to a group is just as much a self-escalation vector as a
+// permanent one); see AssignUserRoleWithExpiry.
 func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt time.Time) error {
+	role, err := c.storage.GetRole(ctx, roleID)
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
+	}
+	if err := c.requireAuthorityForRole(ctx, actorID, scope.ProjectID, role.Name); err != nil {
+		return err
+	}
 	if err := c.storage.AssignRoleToGroupWithExpiry(ctx, groupID, roleID, scope, expiresAt); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

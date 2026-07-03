@@ -2,14 +2,66 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"log"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 )
+
+// writeSelfSignedCert generates a throwaway self-signed cert/key pair under dir and
+// returns their paths, for exercising the non-AutoCert TLS config-building path
+// without a real CA.
+func writeSelfSignedCert(t *testing.T, dir string) (certFile, keyFile string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+
+	certFile = filepath.Join(dir, "cert.pem")
+	keyFile = filepath.Join(dir, "key.pem")
+	certOut, err := os.Create(certFile) // #nosec G304 -- test-only temp dir
+	if err != nil {
+		t.Fatalf("create cert file: %v", err)
+	}
+	defer certOut.Close() //nolint:errcheck
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
+		t.Fatalf("encode cert: %v", err)
+	}
+
+	keyOut, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) // #nosec G304 -- test-only temp dir
+	if err != nil {
+		t.Fatalf("create key file: %v", err)
+	}
+	defer keyOut.Close() //nolint:errcheck
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}); err != nil {
+		t.Fatalf("encode key: %v", err)
+	}
+	return certFile, keyFile
+}
 
 // A group/world-readable key file must fail closed when the permission check is enabled,
 // warn (no error) by default, and be allowed when explicitly overridden. A 0600 file or a
@@ -114,5 +166,48 @@ func TestCheckTransportTLSPosture_WarnsOnDeadAllowedCiphers(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "tls.allowed_ciphers") {
 		t.Errorf("expected a warning mentioning tls.allowed_ciphers, got log output: %q", buf.String())
+	}
+}
+
+// #172: AutoCert mode must not silently discard the hardened MinVersion/CipherSuites
+// — buildAutoCertTLSConfig (the AutoCert-mode config builder) must apply the same
+// hardening as the non-AutoCert path (createTLSConfig).
+func TestBuildAutoCertTLSConfig_AppliesHardening(t *testing.T) {
+	tlsConfig := buildAutoCertTLSConfig([]string{"example.com"})
+	if tlsConfig == nil {
+		t.Fatal("buildAutoCertTLSConfig must not return nil")
+	}
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("MinVersion = %v, want tls.VersionTLS12", tlsConfig.MinVersion)
+	}
+	if len(tlsConfig.CipherSuites) == 0 {
+		t.Fatal("CipherSuites must not be empty on the AutoCert-derived config")
+	}
+	// The autocert.Manager must still be the certificate source (GetCertificate set).
+	if tlsConfig.GetCertificate == nil {
+		t.Error("GetCertificate must still be wired from the autocert.Manager")
+	}
+}
+
+// The non-AutoCert path (createTLSConfig) must apply the identical hardening, so both
+// modes converge on the same TLS posture.
+func TestCreateTLSConfig_NonAutoCertAppliesHardening(t *testing.T) {
+	dir := t.TempDir()
+	certFile, keyFile := writeSelfSignedCert(t, dir)
+
+	cfg := &config.Config{}
+	cfg.Server.HTTP.TLS.Enabled = true
+	cfg.Server.HTTP.TLS.CertFile = certFile
+	cfg.Server.HTTP.TLS.KeyFile = keyFile
+
+	tlsConfig, err := createTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("createTLSConfig: %v", err)
+	}
+	if tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("MinVersion = %v, want tls.VersionTLS12", tlsConfig.MinVersion)
+	}
+	if len(tlsConfig.CipherSuites) == 0 {
+		t.Fatal("CipherSuites must not be empty")
 	}
 }

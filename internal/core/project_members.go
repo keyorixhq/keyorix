@@ -22,7 +22,11 @@ func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([
 
 // AddProjectMember assigns roleName to userID at the project scope. actorID is the
 // acting principal (0 = no authenticated principal, e.g. a system-driven onboarding
-// transition); see AssignUserRole for actorID semantics.
+// transition); see AssignUserRole for actorID semantics — including the
+// requireGranterHoldsRolePermissions escalation-by-proxy ceiling (#93/#107/#141)
+// AssignUserRole applies to every grant, so a non-admin roles.assign holder cannot
+// mint a project_admin (or any role bundling permissions they don't hold) through
+// this direct entry point.
 func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, userID uint, roleName string) error {
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {

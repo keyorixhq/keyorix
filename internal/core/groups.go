@@ -142,9 +142,34 @@ func (c *KeyorixCore) ListGroups(ctx context.Context) ([]*models.Group, error) {
 // AddUserToGroup adds a user to a group. actorID is the admin performing it (0 = no
 // authenticated principal, e.g. a local CLI invocation). Membership confers every
 // role the group holds, so this is recorded in the RBAC audit trail (#233).
+//
+// Joining an admin-conferring group inherits that access just as directly as a
+// role grant, so every global-scope admin role the group already holds is gated
+// by the same escalation-by-proxy ceiling AssignRoleToGroup applies
+// (requireAuthorityForRole): a non-admin roles.assign holder must not be able to
+// self-escalate by joining a privileged group instead of being granted the role.
+// The local CLI (actorID 0) is exempt — it is already fully trusted (it can grant
+// any role directly via AssignRoleToUser, which bypasses this ceiling entirely) and
+// the exemption avoids forcing an existing admin group deployment through this new
+// check retroactively.
 func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID, userID, groupID uint) error {
 	if userID == 0 || groupID == 0 {
 		return fmt.Errorf("%s: user ID and group ID are required", i18n.T("ErrorValidation", nil))
+	}
+	if actorID != 0 {
+		grants, err := c.storage.ListGroupRoleAssignments(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		for _, g := range grants {
+			role, err := c.storage.GetRole(ctx, g.RoleID)
+			if err != nil {
+				continue
+			}
+			if err := c.requireAuthorityForRole(ctx, actorID, g.ProjectID, role.Name); err != nil {
+				return err
+			}
+		}
 	}
 	if err := c.storage.AddUserToGroup(ctx, userID, groupID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -189,12 +214,18 @@ func (c *KeyorixCore) validateCreateGroupRequest(req *CreateGroupRequest) error 
 	if req.Name == "" {
 		return fmt.Errorf("group name is required")
 	}
+	if err := validateNameLength("group name", req.Name); err != nil {
+		return err
+	}
 	return validateDescription(req.Description)
 }
 
 func (c *KeyorixCore) validateUpdateGroupRequest(req *UpdateGroupRequest) error {
 	if req.ID == 0 {
 		return fmt.Errorf("group ID is required")
+	}
+	if err := validateNameLength("group name", req.Name); err != nil {
+		return err
 	}
 	return validateDescription(req.Description)
 }

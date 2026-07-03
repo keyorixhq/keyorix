@@ -19,7 +19,13 @@ func newUserService(t *testing.T) *UserGRPCService {
 	h := testhelper.NewRBACTestHelper(t)
 	t.Cleanup(h.Cleanup)
 	// Grant the admin-context user (id 1) super_admin globally so core.Authorize
-	// admits the admin tests; denied tests use an ungranted user id.
+	// admits the admin tests; denied tests use an ungranted user id. A real row is
+	// created for id 1 (not just the role_users grant) so a subsequently
+	// CreateUser'd test user gets a distinct auto-increment id instead of
+	// colliding with the admin-context identity — DeleteUser's last-admin guard
+	// (#106) checks the target's OWN role set, so a collision would make it look
+	// like the last admin is being deleted.
+	h.CreateTestUser(t, "admin", 1)
 	h.AssignUserRole(t, 1, 1, nil)
 	return NewUserService(h.CoreService)
 }
@@ -64,6 +70,23 @@ func TestUserService_CreateUser_PermissionDenied(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// A client-supplied account_state must be ignored: it's a server-derived lifecycle
+// field (mirrors the HTTP CreateUser handler, whose request body has no
+// account_state field at all), not something a caller — however privileged —
+// should be able to self-set at creation. Requesting "password_reset_required" on
+// the plain admin-set-password path (which always normalizes to "active") pins
+// that the client's value never reaches the stored user.
+func TestUserService_CreateUser_AccountStateIgnored(t *testing.T) {
+	svc := newUserService(t)
+	resp, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
+		Username: "bob", Email: "bob@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
+		AccountState: strPtr("password_reset_required"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.GetUser())
+	assert.Equal(t, "active", resp.GetUser().GetAccountState(), "client-supplied account_state must not be honored")
 }
 
 func TestUserService_CreateUser_MissingFields(t *testing.T) {
@@ -159,50 +182,6 @@ func TestUserService_CreateUser_AdminCanGrantRole(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp.GetUser())
-}
-
-// TestUserService_CreateUser_RejectsInvalidAccountState proves #334: an
-// unrecognized account_state (typo, wrong casing, or garbage) is rejected with a
-// clear error rather than silently persisted, where it would otherwise be treated
-// as fully active/unrestricted by AccountRestricted/AccountLoginBlocked.
-func TestUserService_CreateUser_RejectsInvalidAccountState(t *testing.T) {
-	svc := newUserService(t)
-	cases := []string{
-		"SUSPENDED",       // wrong case
-		"suspend",         // typo
-		"not-a-real-state",
-		" ",
-	}
-	for _, as := range cases {
-		t.Run(as, func(t *testing.T) {
-			_, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
-				Username: "bad-" + as, Email: "bad-" + as + "@example.com",
-				Password: strPtr("Qr7#Kp2$Lm5@Vn9!"), AccountState: strPtr(as),
-			})
-			require.Error(t, err)
-			assert.Equal(t, codes.InvalidArgument, status.Code(err))
-		})
-	}
-}
-
-// TestUserService_CreateUser_AcceptsValidAccountStates proves the fix does not
-// regress any canonical ADR-025 value: each one is still accepted and persisted
-// as-is.
-func TestUserService_CreateUser_AcceptsValidAccountStates(t *testing.T) {
-	svc := newUserService(t)
-	cases := []string{"active", "pending_first_login", "password_reset_required", "suspended", "deprovisioned"}
-	for i, as := range cases {
-		t.Run(as, func(t *testing.T) {
-			username := "good" + string(rune('a'+i))
-			resp, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
-				Username: username, Email: username + "@example.com",
-				Password: strPtr("Qr7#Kp2$Lm5@Vn9!"), AccountState: strPtr(as),
-			})
-			require.NoError(t, err)
-			require.NotNil(t, resp.GetUser())
-			assert.Equal(t, as, resp.GetUser().GetAccountState())
-		})
-	}
 }
 
 func TestUserService_GetUser(t *testing.T) {

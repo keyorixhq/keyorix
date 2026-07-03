@@ -131,27 +131,86 @@ func TestHTTPJWKSResolver_UnknownKidRefetchRateLimited(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// The stale-cache refetch path (cache past jwksCacheTTL) is rate-limited the same
+// way the fresh-cache-unknown-kid path is: at most one refetch ATTEMPT per
+// jwksMinRefetchInterval per issuer. Before the fix this path had no gate at all —
+// every single Key() call on a stale/expired cache triggered a real outbound
+// fetch, so a caller (or an outage that keeps refetches failing) could force an
+// unbounded stream of them.
+func TestHTTPJWKSResolver_StaleRefetchRateLimited(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusInternalServerError) // keep failing so the cache stays stale
+	}))
+	defer srv.Close()
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
+
+	seedStaleCache := func() {
+		r.mu.Lock()
+		r.cache["https://iss"] = &jwksEntry{
+			keys:      map[string]interface{}{"k1": &key.PublicKey},
+			fetchedAt: time.Now().Add(-(jwksCacheTTL + time.Minute)), // stale, still within grace
+		}
+		r.mu.Unlock()
+	}
+
+	seedStaleCache()
+	// First call on the stale cache: not yet rate-limited, attempts a real refetch
+	// (which fails), then falls back to the stale-but-in-grace cached key.
+	got, err := r.Key(context.Background(), "https://iss", "k1")
+	require.NoError(t, err)
+	assert.Equal(t, &key.PublicKey, got)
+	require.Equal(t, 1, hits, "first stale-cache call attempts exactly one refetch")
+
+	// A flood of further calls immediately after: all within jwksMinRefetchInterval
+	// of the first attempt, so none should reach the server again.
+	for i := 0; i < 20; i++ {
+		_, _ = r.Key(context.Background(), "https://iss", "k1")
+	}
+	assert.Equal(t, 1, hits, "repeated calls on a still-rate-limited stale cache must not amplify into a fetch storm")
+
+	// Once the last-attempt timestamp is old enough, a call is allowed to attempt a
+	// refetch again.
+	r.mu.Lock()
+	r.lastFetchAttempt["https://iss"] = time.Now().Add(-(jwksMinRefetchInterval + time.Second))
+	r.mu.Unlock()
+	_, _ = r.Key(context.Background(), "https://iss", "k1")
+	assert.Equal(t, 2, hits, "after the rate-limit window elapses, a call may attempt a refetch again")
+}
+
 // A JWKS with more keys than maxJWKSKeys is capped so a pathological key set can't
 // bloat the cache.
 func TestHTTPJWKSResolver_CapsKeyCount(t *testing.T) {
+	// Generate all RSA-2048 keys UP FRONT, not inside the HTTP handler: generating
+	// 70 of them (maxJWKSKeys+20) takes long enough under load (heavy parallel test
+	// suite contention) that doing it per-request could exceed the resolver's 10s
+	// HTTP client timeout, making r.Key() below return an error the test didn't
+	// check — a nil-pointer panic on the next line (the cache entry was never
+	// populated), observed as an intermittent flake. Precomputing removes the
+	// timing dependency: the handler now does pure, fast JSON encoding.
+	keys := make([]map[string]string, 0, maxJWKSKeys+20)
+	for i := 0; i < maxJWKSKeys+20; i++ {
+		k, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+		pub := &k.PublicKey
+		keys = append(keys, map[string]string{
+			"kty": "RSA", "kid": "k" + strconv.Itoa(i), "use": "sig",
+			"n": base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+			"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
+		})
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		keys := make([]map[string]string, 0, maxJWKSKeys+20)
-		for i := 0; i < maxJWKSKeys+20; i++ {
-			k, _ := rsa.GenerateKey(rand.Reader, 2048)
-			pub := &k.PublicKey
-			keys = append(keys, map[string]string{
-				"kty": "RSA", "kid": "k" + strconv.Itoa(i), "use": "sig",
-				"n": base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
-				"e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
-			})
-		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"keys": keys})
 	}))
 	defer srv.Close()
 	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
 	require.NoError(t, err)
 
-	_, _ = r.Key(context.Background(), "https://iss", "k0")
+	_, err = r.Key(context.Background(), "https://iss", "k0")
+	require.NoError(t, err)
 	r.mu.Lock()
 	n := len(r.cache["https://iss"].keys)
 	r.mu.Unlock()
@@ -182,7 +241,7 @@ func TestParseJWK_RejectsOversizedRSAModulus(t *testing.T) {
 	got, err := parseJWK(k)
 	require.Error(t, err, "an oversized RSA modulus must be rejected")
 	assert.Nil(t, got)
-	assert.Contains(t, err.Error(), "too large")
+	assert.Contains(t, err.Error(), "outside allowed range")
 }
 
 // A JWKS response containing an oversized RSA key must not be cached or served: the
@@ -227,4 +286,57 @@ func TestNewHTTPJWKSResolver_RejectsInsecureScheme(t *testing.T) {
 		_, err = NewHTTPJWKSResolver(map[string]string{"https://iss": uri})
 		require.NoErrorf(t, err, "loopback %s should be allowed", uri)
 	}
+}
+
+// syntheticRSAModulus fabricates a big.Int of the given bit length (top bit set)
+// for boundary testing — parseJWK only inspects structural size, so this doesn't
+// need to be a real, factorable RSA modulus.
+func syntheticRSAModulus(bits int) *big.Int {
+	n := new(big.Int).Lsh(big.NewInt(1), uint(bits-1))
+	return n.SetBit(n, 0, 1) // odd, so it round-trips through byte encoding cleanly
+}
+
+// TestParseJWK_RejectsRSAModulusOutOfRange pins #100: an unbounded RSA modulus
+// lets a compromised/MITM'd issuer serve a pathological (e.g. ~8M-bit) signing
+// key — cached and reused for every subsequent token from that kid — turning
+// each signature verification into a multi-second modexp (CPU-DoS amplifier).
+func TestParseJWK_RejectsRSAModulusOutOfRange(t *testing.T) {
+	tooSmall := jwk{Kty: "RSA", Kid: "small", N: base64.RawURLEncoding.EncodeToString(syntheticRSAModulus(1024).Bytes()), E: "AQAB"}
+	_, err := parseJWK(tooSmall)
+	require.ErrorContains(t, err, "outside allowed range")
+
+	tooBig := jwk{Kty: "RSA", Kid: "big", N: base64.RawURLEncoding.EncodeToString(syntheticRSAModulus(1 << 20).Bytes()), E: "AQAB"}
+	_, err = parseJWK(tooBig)
+	require.ErrorContains(t, err, "outside allowed range")
+
+	// A real, in-range key still parses fine.
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	ok := jwk{Kty: "RSA", Kid: "ok",
+		N: base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+		E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.PublicKey.E)).Bytes())}
+	parsed, err := parseJWK(ok)
+	require.NoError(t, err)
+	require.IsType(t, &rsa.PublicKey{}, parsed)
+}
+
+// TestHTTPJWKSResolver_RejectsOversizedRSAKey confirms the size guard is wired
+// through the full fetch path: a JWKS whose only key has a pathological modulus
+// yields "no usable signing keys", not a cached, verifiable oversized key.
+func TestHTTPJWKSResolver_RejectsOversizedRSAKey(t *testing.T) {
+	huge := syntheticRSAModulus(1 << 20) // ~1M bits
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"keys": []map[string]string{{
+				"kty": "RSA", "kid": "huge", "use": "sig",
+				"n": base64.RawURLEncoding.EncodeToString(huge.Bytes()),
+				"e": "AQAB",
+			}},
+		})
+	}))
+	defer srv.Close()
+	r, err := NewHTTPJWKSResolver(map[string]string{"https://iss": srv.URL})
+	require.NoError(t, err)
+
+	_, err = r.Key(context.Background(), "https://iss", "huge")
+	require.ErrorContains(t, err, "no usable signing keys")
 }

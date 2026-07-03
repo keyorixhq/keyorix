@@ -71,6 +71,10 @@ func TestTPMKeyProvider_DifferentTPMCannotUnseal(t *testing.T) {
 	_, err = newTPMProvider(t, dir, 2).KEK()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unseal failed")
+	// No PCR policy is enforced (see the package doc), so the error must not suggest a
+	// PCR mismatch was the cause — that would misleadingly imply boot-state binding
+	// this provider does not actually do.
+	assert.NotContains(t, err.Error(), "PCR", "the error must not imply PCR-policy enforcement that doesn't exist")
 }
 
 func TestTPMKeyProvider_Errors(t *testing.T) {

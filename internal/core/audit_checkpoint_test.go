@@ -500,6 +500,51 @@ func TestAuditCheckpoint_TamperedHighWaterDetected(t *testing.T) {
 	assert.Contains(t, v.CheckpointReason, "high-water mark")
 }
 
+// TestAuditCheckpoint_ForgedKeyVersionHighWaterDetected pins #110 — the exact
+// exploit the prior fix missed: a forged high-water mark whose key_version is
+// simply set to something OTHER than the current one was excused as "consistent
+// with a DEK rotation" and its found=true routed around the missing-mark tamper
+// check entirely, silently resetting the anti-rollback floor. Combined with
+// deleting the newest checkpoint (keeping an older authentic one) and truncating
+// events between them, VerifyAuditChain reported Valid=true over a rolled-back
+// trail. The read path must not trust an unauthenticated key_version claim on a
+// signature that fails to verify.
+func TestAuditCheckpoint_ForgedKeyVersionHighWaterDetected(t *testing.T) {
+	ctx := context.Background()
+	c, db := newCheckpointCore(t)
+
+	// Establish an older, authentic checkpoint (the kept "#50" in the exploit
+	// narrative) and a newer one (the "#100" the attacker will delete).
+	logEvents(t, c, 5)
+	_, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+	logEvents(t, c, 5) // now 10 events total
+	_, written, err = c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	// Attacker: forge the high-water mark with a FABRICATED key_version (not the
+	// real current "v1", and not a genuinely-ever-used version either) and a
+	// garbage signature — this is the exact shape that was previously excused.
+	require.NoError(t, db.Exec("UPDATE system_metadata SET value = ? WHERE key = ?",
+		"v1\x001\x001\x00deadbeef\x00fabricated-v99\x00bogussig", auditHighWaterKey).Error)
+	// Attacker: delete the newer checkpoint, keeping the older authentic one.
+	require.NoError(t, db.Exec("DELETE FROM audit_checkpoints WHERE chained_events = 10").Error)
+	// Attacker: truncate events below what the deleted checkpoint certified, but
+	// still at/above what the surviving older checkpoint certified.
+	require.NoError(t, db.Exec("DELETE FROM audit_events WHERE id > 7").Error)
+
+	// Simulate a restart: fresh core, in-memory watermark reset.
+	fresh := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	fresh.SetAuditCheckpointKey(bytes.Repeat([]byte{0x7}, 32), "v1")
+
+	v, err := fresh.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.False(t, v.Valid, "a forged high-water mark claiming an arbitrary key_version must not bypass anti-rollback")
+	assert.Contains(t, v.CheckpointReason, "high-water mark")
+}
+
 // When an external-notary trust root is configured, the latest checkpoint's stored
 // anchor is re-verified on the read path: a token that doesn't verify against the
 // configured root is flagged (previously the anchor was written but never checked).
@@ -517,6 +562,52 @@ func TestAuditCheckpoint_VerifiesAnchorWhenRootsConfigured(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, v.Valid, "a checkpoint anchor that doesn't verify against the configured root is flagged")
 	assert.Contains(t, v.CheckpointReason, "external anchor failed verification")
+}
+
+// #182: VerifyCheckpointAnchor was cryptographically sound but unreachable in
+// production — nothing outside its own unit tests ever called it, and the raw
+// anchor token was never surfaced anywhere a verifier could reach it (only
+// anchored_at/anchor_provider strings were). VerifyAuditChain (already exposed via
+// GET /api/v1/audit/verify, the gRPC AuditService, and `keyorix audit verify`) now
+// surfaces the latest checkpoint's raw external-notary receipt on its result,
+// regardless of whether local trust roots are configured — so an operator can pull
+// it and verify it independently, out-of-band, without trusting this server's own
+// verification of it.
+func TestVerifyAuditChain_SurfacesRawAnchorToken(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 3)
+	fn := &fakeNotary{token: []byte("opaque-tsa-token"), at: time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC)}
+	c.SetCheckpointNotary(fn)
+	// Deliberately NO SetCheckpointAnchorRoots: the raw token must still be surfaced
+	// even when this server can't (or hasn't been configured to) verify it itself.
+	_, written, err := c.WriteAuditCheckpoint(ctx)
+	require.NoError(t, err)
+	require.True(t, written)
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	require.True(t, v.Valid)
+	assert.Equal(t, []byte("opaque-tsa-token"), v.AnchorToken, "the raw receipt must be reachable off the verify result")
+	assert.Equal(t, "fake", v.AnchorProvider)
+	require.NotNil(t, v.AnchoredAt)
+	assert.True(t, v.AnchoredAt.Equal(fn.at))
+}
+
+// A checkpoint with no anchor (no notary configured) must not fabricate one on the
+// verify result.
+func TestVerifyAuditChain_NoAnchorTokenWhenUnanchored(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newCheckpointCore(t)
+	logEvents(t, c, 3)
+	_, written, err := c.WriteAuditCheckpoint(ctx) // no notary set → unanchored
+	require.NoError(t, err)
+	require.True(t, written)
+
+	v, err := c.VerifyAuditChain(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, v.AnchorToken)
+	assert.Nil(t, v.AnchoredAt)
 }
 
 func TestAuditCheckpoint_SignDeterministicAndBinding(t *testing.T) {

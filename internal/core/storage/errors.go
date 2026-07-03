@@ -42,6 +42,16 @@ var ErrDuplicateActiveMembership = errors.New("an active membership already exis
 // constraint-violation message.
 var ErrDuplicateEmail = errors.New("a user with this email already exists")
 
+// ErrDuplicateProjectName is returned (wrapped) by CreateProject/UpdateProject when the
+// write collides with the partial, case-insensitive unique index on projects.name (live
+// rows only, #385). Without this, "Production"/"production" landed as two distinct,
+// both-succeeding rows — and the CLI's project name resolution (resolveProjectID)
+// resolves case-insensitively over an unordered project list, returning the FIRST match —
+// so a same-name-different-case shadow project could silently hijack a later `keyorix
+// secret import/export --project production`. Callers translate this into a clean
+// "project name already in use" error rather than a raw constraint-violation message.
+var ErrDuplicateProjectName = errors.New("a project with this name already exists")
+
 // ErrDuplicateSecretVersion is returned (wrapped) by CreateSecretVersion when the insert
 // collides with the unique index on (secret_node_id, version_number). RotateSecret's
 // GetLatestSecretVersion -> +1 -> storeSecretVersion sequence is a read-then-write race
@@ -51,3 +61,14 @@ var ErrDuplicateEmail = errors.New("a user with this email already exists")
 // version_number; callers retry with a freshly re-read latest version rather than failing
 // the rotation outright on ordinary concurrent contention.
 var ErrDuplicateSecretVersion = errors.New("a secret version with this version number already exists")
+
+// ErrBreakGlassAlreadyActive is returned (wrapped) by CreateBreakGlassActivation when
+// the partial unique index on (project_id, user_id) WHERE state='active' rejects the
+// insert: a concurrent activation for the same project+user already won the race and
+// is active. This closes the check-then-act gap between ActivateBreakGlass's
+// "no existing active activation" list-and-scan check and its own insert — under a
+// race, both callers could pass the check before either inserted; the DB constraint
+// is the actual source of truth. Callers should match it with errors.Is to surface
+// the same friendly "already active" message a losing racer gets from the earlier
+// application-level check.
+var ErrBreakGlassAlreadyActive = errors.New("an active break-glass grant already exists for this project and user")

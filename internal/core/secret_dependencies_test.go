@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -71,7 +73,10 @@ func newDepCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretDependency{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}))
+	// #370: DeleteSecret now revokes ShareRecord rows in the same transaction as the
+	// secret's own soft-delete, so ShareRecord must be migrated even though these
+	// tests never create a share directly.
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretDependency{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{}, &models.ShareRecord{}))
 	// Live parent projects (1, 2) + environment (1): RestoreSecret refuses to restore a
 	// secret into a soft-deleted parent, so the dependency-cascade tests need them present.
 	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p1"}).Error)
@@ -244,4 +249,59 @@ func TestSecretDependencyImpactAndOrderAndRemove(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, impact.Affected, 1)
 	assert.Equal(t, "intermediate", impact.Affected[0].SecretName)
+}
+
+// --- concurrency: #260 ---
+
+// TestAddSecretDependency_ConcurrentRaceCannotPersistACycle empirically reproduces
+// #260: two goroutines racing to add A→B and B→A in the same project must never
+// BOTH succeed — that would persist a 2-node cycle that GetProjectRotationOrder
+// (and, transitively, the deployment-wide rotation-plan roll-up) hard-errors on
+// forever, with nothing else able to detect or heal the stuck edge. Repeated across
+// many fresh secret pairs on a single-connection DB (forcing the two goroutines'
+// individual statements to interleave through the same connection, the same
+// technique that originally reproduced the race deterministically) so the narrow
+// pre-fix race window is reliably exercised, not just occasionally hit.
+func TestAddSecretDependency_ConcurrentRaceCannotPersistACycle(t *testing.T) {
+	ctx := context.Background()
+	c, db := newDepCore(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	const iterations = 50
+	for i := 0; i < iterations; i++ {
+		a := mkSecret(t, db, 1, fmt.Sprintf("a-%d", i))
+		b := mkSecret(t, db, 1, fmt.Sprintf("b-%d", i))
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		results := make([]error, 2)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, results[0] = c.AddSecretDependency(ctx, 1, a, b, "")
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, results[1] = c.AddSecretDependency(ctx, 1, b, a, "")
+		}()
+		close(start)
+		wg.Wait()
+
+		successes := 0
+		for _, e := range results {
+			if e == nil {
+				successes++
+			}
+		}
+		require.Equal(t, 1, successes,
+			"iteration %d: exactly one of A→B / B→A must win the race — both winning would persist a cycle, both losing would lose a legitimate edge", i)
+
+		// No cycle was persisted: rotation ordering for the project must still succeed.
+		_, err := c.GetProjectRotationOrder(ctx, 1)
+		require.NoError(t, err, "iteration %d: no lingering cycle in the persisted graph", i)
+	}
 }

@@ -1,4 +1,4 @@
--- Reverse migration 007: projects → namespaces, project_id → namespace_id.
+-- Reverse migration 006: projects → namespaces, project_id → namespace_id.
 
 ALTER TABLE projects        RENAME TO namespaces;
 

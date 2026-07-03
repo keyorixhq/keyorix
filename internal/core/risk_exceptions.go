@@ -21,8 +21,9 @@ const (
 	ExceptionStatusExpired = "expired"
 	ExceptionStatusRevoked = "revoked"
 
-	EventRiskExceptionCreated = "risk.exception_created"
-	EventRiskExceptionRevoked = "risk.exception_revoked"
+	EventRiskExceptionCreated  = "risk.exception_created"
+	EventRiskExceptionRevoked  = "risk.exception_revoked"
+	EventRiskExceptionApproved = "risk.exception_approved"
 )
 
 // validExceptionCategories are the risk areas an exception may cover (aligned with
@@ -53,7 +54,13 @@ func exceptionStatus(e *models.RiskException, now time.Time) string {
 const maxRiskExceptionDuration = 365 * 24 * time.Hour
 
 // CreateRiskException records a governed, time-bound acceptance of a control gap.
-// actorID is the accepting owner; expiresAt must be in the future.
+// actorID is the accepting owner; expiresAt must be in the future. The exception
+// does NOT suppress anything yet: it must be separately approved by a DIFFERENT
+// system.write holder (see ApproveRiskException) before it takes effect — dual
+// control (#170), so the creator can't unilaterally suppress a violation of their
+// own. For category "sod", reference should be the matching SoDViolation's
+// Reference field (as returned by GET /sod/violations) so the exception, once
+// approved, suppresses that one violation specifically.
 func (c *KeyorixCore) CreateRiskException(ctx context.Context, actorID uint, title, category, reference, justification string, expiresAt time.Time) (*models.RiskException, error) {
 	if title == "" || justification == "" {
 		return nil, fmt.Errorf("title and justification are required")
@@ -120,6 +127,42 @@ func (c *KeyorixCore) RevokeRiskException(ctx context.Context, actorID, id uint)
 	}
 	c.writeAuditEvent(ctx, EventRiskExceptionRevoked, actorPtr(actorID), nil,
 		fmt.Sprintf("risk exception %d revoked: %q", id, e.Title))
+	return nil
+}
+
+// ApproveRiskException dual-controls an exception (#170): actorID must be a
+// DIFFERENT principal than the one who created it. Only an approved, still-active
+// exception suppresses its matched violation from the compliance posture — before
+// approval the raw violation keeps counting, so a self-dealt exception has no
+// effect. A denied self-approval attempt is itself audited distinctly from a grant.
+func (c *KeyorixCore) ApproveRiskException(ctx context.Context, actorID, id uint) error {
+	e, err := c.storage.GetRiskException(ctx, id)
+	if err != nil {
+		return err
+	}
+	if e.Revoked {
+		return fmt.Errorf("cannot approve a revoked risk exception")
+	}
+	if exceptionStatus(e, c.now()) == ExceptionStatusExpired {
+		return fmt.Errorf("cannot approve an expired risk exception")
+	}
+	if e.Approved {
+		return fmt.Errorf("risk exception %d is already approved", id)
+	}
+	if actorID == e.CreatedBy {
+		c.writeAuditEventFailed(ctx, EventRiskExceptionApproved, actorPtr(actorID), "",
+			fmt.Sprintf("risk exception %d approval DENIED: creator %d cannot self-approve", id, actorID))
+		return fmt.Errorf("the exception's creator cannot approve it (dual control); a different system.write holder must approve")
+	}
+	now := c.now()
+	e.Approved = true
+	e.ApprovedBy = actorID
+	e.ApprovedAt = &now
+	if err := c.storage.UpdateRiskException(ctx, e); err != nil {
+		return err
+	}
+	c.writeAuditEvent(ctx, EventRiskExceptionApproved, actorPtr(actorID), nil,
+		fmt.Sprintf("risk exception %d approved by %d (created by %d): %q", id, actorID, e.CreatedBy, e.Title))
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,7 +24,16 @@ import (
 func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler, error) {
 	r := chi.NewRouter()
 
-	// Apply middleware
+	// Apply middleware. Recovery is registered FIRST so it is the OUTERMOST handler in
+	// the chain (chi wraps middleware in registration order: the first Use() call wraps
+	// everything registered after it). A panic in any later-registered middleware —
+	// RequestID, ClientIP, Logger, or anything below — must still be caught and turned
+	// into a clean 500 rather than propagating out to net/http's own bare panic
+	// recovery (which just logs and drops the connection, with none of Recovery's
+	// structured JSON response or panic-context logging). Recovery itself only reads
+	// the raw request (header, context — best-effort, nil-safe) so it has no ordering
+	// dependency on anything registered after it.
+	r.Use(customMiddleware.Recovery())
 	r.Use(middleware.RequestID)
 	// Trusted-proxy-aware client IP: honor X-Forwarded-For / X-Real-IP ONLY when the TCP
 	// peer is a configured trusted proxy, otherwise use the real peer. chi's RealIP trusts
@@ -31,20 +41,23 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// per-IP login/MFA brute-force rate limiter.
 	r.Use(customMiddleware.ClientIP(cfg.Server.HTTP.TrustedProxies))
 	r.Use(customMiddleware.Logger())
-	r.Use(customMiddleware.Recovery())
 	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
 	r.Use(customMiddleware.PrometheusMiddleware)
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
 
-	// CORS configuration - updated for web dashboard
+	// CORS configuration - updated for web dashboard. AllowCredentials is
+	// deliberately NOT set: this API is bearer-token-only (Authorization header),
+	// never cookie-based, so there is no credentialed cross-origin request to allow.
+	// Leaving it unset (defaults false) means a future cookie-based auth addition
+	// must explicitly opt back in here — and get re-reviewed — rather than silently
+	// inheriting a permissive flag that predates it.
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   getAllowedOrigins(cfg),
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
-		ExposedHeaders:   []string{"Link", "X-Total-Count", "X-Page-Count"},
-		AllowCredentials: true,
-		MaxAge:           300,
+		AllowedOrigins: getAllowedOrigins(cfg),
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With"},
+		ExposedHeaders: []string{"Link", "X-Total-Count", "X-Page-Count"},
+		MaxAge:         300,
 	}))
 
 	// Initialize handlers
@@ -79,41 +92,50 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	connectHandler := handlers.NewConnectHandler(coreService)
 	adminJobsHandler := handlers.NewAdminJobsHandler(coreService)
 
-	// Auth endpoints (no authentication middleware)
-	r.Post("/auth/login", authHandler.Login)
-	r.Post("/auth/logout", authHandler.Logout)
-	r.Post("/auth/refresh", authHandler.RefreshToken)
-	r.Post("/auth/password-reset", authHandler.PasswordReset)
-	// MFA second-step: unauthenticated — the bearer is the single-use challenge
-	// issued by /auth/login, not a session.
-	r.Post("/auth/mfa/verify", authHandler.VerifyMFA)
-	// WebAuthn second-step assertion — also unauthenticated; the bearer is the same
-	// single-use challenge from /auth/login plus the ceremony's webauthn_session.
-	r.Post("/auth/webauthn/login/begin", authHandler.BeginWebAuthnLogin)
-	r.Post("/auth/webauthn/login/finish", authHandler.FinishWebAuthnLogin)
-	// Passwordless (usernameless) passkey login — public; a single resident-passkey
-	// gesture with user verification mints a session, no password (ADR-036 addendum).
-	r.Post("/auth/webauthn/passwordless/begin", authHandler.BeginWebAuthnPasswordlessLogin)
-	r.Post("/auth/webauthn/passwordless/finish", authHandler.FinishWebAuthnPasswordlessLogin)
-	r.Post("/system/init", authHandler.InitSystem)
+	// Auth endpoints (no authentication middleware). Grouped under NoStore: several of
+	// these mint or hand back a session token (login, refresh, MFA/WebAuthn verify, the
+	// SSO/SAML callbacks) or bootstrap/setup credentials (system/init, setup consume) —
+	// a browser or intermediate cache must never be allowed to cache that response. The
+	// /api/v1 group below has its own NoStore for the same reason; these routes sit
+	// outside that group (no session yet to authenticate against) so they need their
+	// own coverage rather than inheriting it.
+	r.Group(func(r chi.Router) {
+		r.Use(customMiddleware.NoStore)
+		r.Post("/auth/login", authHandler.Login)
+		r.Post("/auth/logout", authHandler.Logout)
+		r.Post("/auth/refresh", authHandler.RefreshToken)
+		r.Post("/auth/password-reset", authHandler.PasswordReset)
+		// MFA second-step: unauthenticated — the bearer is the single-use challenge
+		// issued by /auth/login, not a session.
+		r.Post("/auth/mfa/verify", authHandler.VerifyMFA)
+		// WebAuthn second-step assertion — also unauthenticated; the bearer is the same
+		// single-use challenge from /auth/login plus the ceremony's webauthn_session.
+		r.Post("/auth/webauthn/login/begin", authHandler.BeginWebAuthnLogin)
+		r.Post("/auth/webauthn/login/finish", authHandler.FinishWebAuthnLogin)
+		// Passwordless (usernameless) passkey login — public; a single resident-passkey
+		// gesture with user verification mints a session, no password (ADR-036 addendum).
+		r.Post("/auth/webauthn/passwordless/begin", authHandler.BeginWebAuthnPasswordlessLogin)
+		r.Post("/auth/webauthn/passwordless/finish", authHandler.FinishWebAuthnPasswordlessLogin)
+		r.Post("/system/init", authHandler.InitSystem)
 
-	// Credential-delivery setup links (ADR-028) — unauthenticated: the bearer is the
-	// single-use setup token in the URL / request body, not a session.
-	r.Get("/auth/setup/{token}", authHandler.GetSetupToken)
-	r.Post("/auth/setup/consume", authHandler.ConsumeSetup)
+		// Credential-delivery setup links (ADR-028) — unauthenticated: the bearer is the
+		// single-use setup token in the URL / request body, not a session.
+		r.Get("/auth/setup/{token}", authHandler.GetSetupToken)
+		r.Post("/auth/setup/consume", authHandler.ConsumeSetup)
 
-	// Human SSO login (OIDC authorization-code flow) — unauthenticated: the IdP is
-	// the authenticator. The login redirect, the IdP callback, and the provider list
-	// the login page reads. With sso disabled the provider list is empty and BeginSSO
-	// 400s on any provider.
-	r.Get("/auth/sso/providers", authHandler.ListSSOProviders)
-	r.Get("/auth/sso/{provider}/login", authHandler.BeginSSO)
-	r.Get("/auth/sso/{provider}/callback", authHandler.CompleteSSO)
-	// SAML 2.0 SP endpoints (ADR-063): metadata for the IdP admin, the login redirect
-	// (AuthnRequest), and the Assertion Consumer Service. Unauthenticated, like OIDC.
-	r.Get("/auth/saml/{provider}/metadata", authHandler.SAMLMetadata)
-	r.Get("/auth/saml/{provider}/login", authHandler.BeginSAML)
-	r.Post("/auth/saml/{provider}/acs", authHandler.CompleteSAML)
+		// Human SSO login (OIDC authorization-code flow) — unauthenticated: the IdP is
+		// the authenticator. The login redirect, the IdP callback, and the provider list
+		// the login page reads. With sso disabled the provider list is empty and BeginSSO
+		// 400s on any provider.
+		r.Get("/auth/sso/providers", authHandler.ListSSOProviders)
+		r.Get("/auth/sso/{provider}/login", authHandler.BeginSSO)
+		r.Get("/auth/sso/{provider}/callback", authHandler.CompleteSSO)
+		// SAML 2.0 SP endpoints (ADR-063): metadata for the IdP admin, the login redirect
+		// (AuthnRequest), and the Assertion Consumer Service. Unauthenticated, like OIDC.
+		r.Get("/auth/saml/{provider}/metadata", authHandler.SAMLMetadata)
+		r.Get("/auth/saml/{provider}/login", authHandler.BeginSAML)
+		r.Post("/auth/saml/{provider}/acs", authHandler.CompleteSAML)
+	})
 
 	// Health check endpoint — lightweight liveness signal (does not touch the DB, so a
 	// transient DB outage won't get the pod restarted).
@@ -163,6 +185,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// SCIM 2.0 provisioning (RFC 7644) — opt-in, authenticated by a static bearer
 	// token (NOT the session/PAT auth) so an IdP can provision/deprovision users.
 	if cfg.SCIM.Enabled {
+		// Fail startup on a too-short SCIM bearer token rather than silently serving
+		// the provisioning endpoint behind a weak, brute-forceable credential (unlike
+		// a PAT/machine token, this one is operator-supplied, not server-generated).
+		if err := core.ValidateSCIMTokenStrength(cfg.SCIM.GetToken()); err != nil {
+			return nil, fmt.Errorf("scim: %w", err)
+		}
 		scimHandler := handlers.NewSCIMHandler(coreService)
 		r.Route("/scim/v2", func(r chi.Router) {
 			r.Use(customMiddleware.NoStore)
@@ -189,6 +217,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.Use(customMiddleware.NoStore)
 		// Authentication middleware for API routes
 		r.Use(customMiddleware.Authentication(coreService))
+		// General per-principal request budget (#163) — a backstop against one
+		// already-authorized principal hammering expensive endpoints (e.g. the
+		// deployment-wide compliance-posture/secrets-inventory-export handlers), not
+		// an authorization boundary. Runs right after Authentication so the
+		// principal is resolved. No-op unless server.http.ratelimit.enabled is set.
+		r.Use(customMiddleware.PrincipalRateLimit(cfg.Server.HTTP.RateLimit))
 		// Confine restricted (must-change-password) sessions to the password-change
 		// allowlist (ADR-025).
 		r.Use(customMiddleware.EnforceAccountRestriction)
@@ -378,7 +412,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/extend-expiring", secretHandler.ExtendExpiringSecrets)
 		// Bulk rename toward naming-policy conformance — remediation for name-conformance.
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/secrets/bulk-rename", secretHandler.BulkRenameSecrets)
-		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/environments/{envId}/copy-secrets", secretHandler.CopyEnvironmentSecrets)
+		// Bulk copy also requires secrets.read on the SOURCE environment (resolved from
+		// the envId path param, not attacker-supplied input) — mirroring the single-secret
+		// copy route below, which gates secrets.read on the source in addition to
+		// secrets.write on the target. Without this leg, a write-only-scoped principal
+		// could use the bulk copy to duplicate secret VALUES out of an environment they
+		// were deliberately denied read access to, defeating the write-only RBAC role
+		// this product's custom-role system is designed to support.
+		r.With(
+			customMiddleware.RequireScopedPermission("secrets.write", projectScope),
+			customMiddleware.RequireScopedPermission("secrets.read", customMiddleware.ScopeFromEnvParam("envId")),
+		).Post("/projects/{id}/environments/{envId}/copy-secrets", secretHandler.CopyEnvironmentSecrets)
 		r.With(customMiddleware.RequireScopedPermission("secrets.read", projectScope)).Get("/projects/{id}/environments", catalogHandler.ListProjectEnvironments)
 		r.With(customMiddleware.RequireScopedPermission("secrets.write", projectScope)).Post("/projects/{id}/environments", catalogHandler.CreateProjectEnvironment)
 		// Environment restore is nested under the project so the scope resolves
@@ -497,6 +541,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/configs", dynamicSecretHandler.ListConfigs)
 			r.Get("/configs/{id}", dynamicSecretHandler.GetConfig)
 			r.Patch("/configs/{id}/classification", dynamicSecretHandler.ClassifyConfig)
+			r.Patch("/configs/{id}/enabled", dynamicSecretHandler.SetConfigEnabled)
 			r.Post("/configs/{id}/issue", dynamicSecretHandler.IssueLease)
 			r.Get("/configs/{id}/leases", dynamicSecretHandler.ListLeases)
 			r.Post("/configs/{id}/revoke-all", dynamicSecretHandler.RevokeAllLeases)
@@ -521,7 +566,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// read-only system_auditor persona holds) — these were the missed
 			// siblings of the suspend/reactivate transitions gated below.
 			r.With(customMiddleware.RequirePermission("users.write")).Put("/{id}", handlers.UpdateUser)
-			r.With(customMiddleware.RequirePermission("users.write")).Delete("/{id}", handlers.DeleteUser)
+			// users.delete, not users.write — matches the gRPC UserService.DeleteUser
+			// gate (#141). A custom role granted users.write alone (update, not delete)
+			// could otherwise delete users via HTTP while gRPC correctly refused it.
+			r.With(customMiddleware.RequirePermission("users.delete")).Delete("/{id}", handlers.DeleteUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/restore", handlers.RestoreUser)
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/unlock", handlers.UnlockUser)
 			// Admin force-logout: revoke all of a user's sessions (no state change).
@@ -532,9 +580,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/require-password-reset", handlers.RequirePasswordReset)
 			// Credential-delivery resend (ADR-028): reissue + redeliver a setup link.
 			r.With(customMiddleware.RequirePermission("users.write")).Post("/{id}/resend-setup-link", handlers.ResendSetupLink)
-			r.Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
+			// roles.read, not the group-wide users.read (#141) — matches the gRPC
+			// RoleService.GetUserRoles gate for the same data. users.read is held by
+			// nearly every seeded role (project_viewer, editor, …), so gating a user's
+			// full role-assignment list on it let any low-privilege project member
+			// enumerate an arbitrary OTHER user's roles — reconnaissance for targeted
+			// privilege-escalation attempts. roles.read is held by system_admin/
+			// system_auditor/project_admin, the personas that actually manage access.
+			r.With(customMiddleware.RequirePermission("roles.read")).Get("/{id}/roles", usersRolesHandler.GetUserRolesForUser)
 			// Effective permission set (union across the user's roles) — a read, gated
-			// by the group-wide users.read like the roles view above.
+			// by the group-wide users.read like the roles view used to be. Not part of
+			// #141's scope; left as-is.
 			r.Get("/{id}/permissions", usersRolesHandler.GetUserPermissionsForUser)
 			// Replacing a user's roles is a privilege grant — gate on roles.assign,
 			// not the group-wide users.read (which many non-admin roles hold).
@@ -595,25 +651,16 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Get("/", rbacHandler.ListPermissions)
 		})
 
-		saHandler := handlers.NewServiceAccountHandler(coreService)
-		r.Route("/service-accounts", func(r chi.Router) {
-			r.Use(customMiddleware.RequirePermission("users.read"))
-			r.Get("/", saHandler.ListServiceAccounts)
-			r.With(customMiddleware.RequirePermission("users.write")).
-				Post("/", saHandler.CreateServiceAccount)
-			r.Get("/{clientId}", saHandler.GetServiceAccount)
-			r.With(customMiddleware.RequirePermission("users.write")).
-				Put("/{clientId}", saHandler.UpdateServiceAccount)
-			r.With(customMiddleware.RequirePermission("users.write")).
-				Delete("/{clientId}", saHandler.DeactivateServiceAccount)
-			r.Get("/{clientId}/tokens", saHandler.ListTokens)
-			// Blocked while impersonating: a service-account token is a durable credential
-			// that must not be mintable under a bounded impersonation session.
-			r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequirePermission("users.write")).
-				Post("/{clientId}/tokens", saHandler.CreateToken)
-			r.With(customMiddleware.RequirePermission("users.write")).
-				Delete("/{clientId}/tokens/{tokenId}", saHandler.RevokeToken)
-		})
+		// NOTE: the legacy admin-managed "service accounts" (APIClient/APIToken)
+		// issuance/management routes were removed here (finding #131): the tokens
+		// they minted were never accepted by any authentication path (validateToken
+		// in server/middleware/auth.go has no branch for them), making them a dead,
+		// unscannable credential type. Machine identities (ADR-030, kx_machine_
+		// tokens) are the actual wired, RBAC-integrated non-human-identity
+		// credential and are the intended replacement — see docs/adr-030 and
+		// docs/adr-027 (which documents this exact gap). The models/DB tables and
+		// KEK-rotation sweep code for APIClient/APIToken are left in place for any
+		// legacy rows in already-deployed databases.
 
 		// User roles endpoints
 		r.Route("/user-roles", func(r chi.Router) {
@@ -707,6 +754,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// create/revoke stay system.write.
 		r.With(customMiddleware.RequirePermission("audit.read")).Get("/risk-exceptions", dashboardHandler.ListRiskExceptions)
 		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions", dashboardHandler.CreateRiskException)
+		r.With(customMiddleware.RequirePermission("system.write")).Post("/risk-exceptions/{id}/approve", dashboardHandler.ApproveRiskException)
 		r.With(customMiddleware.RequirePermission("system.write")).Delete("/risk-exceptions/{id}", dashboardHandler.RevokeRiskException)
 
 		// Separation of duties (ISO A.5.3): policy definitions (name/permission pair, no
@@ -756,38 +804,86 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	return r, nil
 }
 
+// backendRoutePrefixes lists every non-SPA route family registered on the router
+// outside registerWebUI (see router.go's setup above /api/v1, plus /api/v1 itself).
+// #214: NotFound previously only special-cased /api/, so a typo'd path under any
+// other backend family (auth, health checks, SCIM, metrics, SAML/SSO endpoints
+// under /auth, the OpenAPI/swagger docs) silently fell through to the SPA shell
+// with a 200 instead of a 404 — not an auth bypass (same static public shell
+// everyone gets at /), but noisy/incorrect status codes confuse health-check
+// tooling and WAF rules that expect a clean 404 on an unknown path.
+var backendRoutePrefixes = []string{
+	"/api/", "/auth/", "/scim/", "/system/init", "/health", "/readyz", "/metrics", "/status", "/swagger/", "/openapi.yaml",
+}
+
+func isBackendRoute(p string) bool {
+	for _, prefix := range backendRoutePrefixes {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// noDirListing wraps a static file handler so a request that resolves to a
+// directory (no index file inside it) returns 404 instead of falling through to
+// Go's default http.FileServer directory listing (#213). dist/assets has no
+// index.html, so a bare GET /assets/ would otherwise list every bundled filename
+// including .js.map source-map names — low impact (already discoverable via the
+// built JS's own sourceMappingURL comments and index.html's hashed bundle
+// references) but unnecessary and inconsistent with serving no directory index.
+func noDirListing(fsys http.FileSystem, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		upath := req.URL.Path
+		if !strings.HasPrefix(upath, "/") {
+			upath = "/" + upath
+		}
+		if f, err := fsys.Open(path.Clean(upath)); err == nil {
+			fi, statErr := f.Stat()
+			_ = f.Close()
+			if statErr == nil && fi.IsDir() {
+				http.NotFound(w, req)
+				return
+			}
+		}
+		h.ServeHTTP(w, req)
+	})
+}
+
 // registerWebUI wires the SPA's static assets and the client-side-routing
 // fallback against fsys, which is rooted at the dist directory (so request paths
 // map directly: /assets/x -> dist/assets/x). fsys is either an on-disk build
 // (http.Dir) or the embedded build (webui.HTTPFS()).
 func registerWebUI(r chi.Router, fsys http.FileSystem) {
 	fileServer := http.FileServer(fsys)
+	assetServer := noDirListing(fsys, fileServer)
 
 	// Static assets are read-only: register GET+HEAD only, so a mutating method
 	// (DELETE/PUT/POST/PATCH) on an asset gets a 405 from chi rather than the file
 	// served with a 200 (http.FileServer ignores the method). Cleaner semantics and a
 	// smaller surface for a security product.
-	serveStatic := func(pattern string, mws ...func(http.Handler) http.Handler) {
+	serveStatic := func(pattern string, h http.Handler, mws ...func(http.Handler) http.Handler) {
 		rr := r.With(mws...)
-		rr.Method(http.MethodGet, pattern, fileServer)
-		rr.Method(http.MethodHead, pattern, fileServer)
+		rr.Method(http.MethodGet, pattern, h)
+		rr.Method(http.MethodHead, pattern, h)
 	}
-	serveStatic("/assets/*", setCacheHeaders)
-	serveStatic("/static/*", setCacheHeaders)
-	serveStatic("/sw.js")
-	serveStatic("/manifest.json")
-	serveStatic("/favicon.ico")
+	serveStatic("/assets/*", assetServer, setCacheHeaders)
+	serveStatic("/static/*", assetServer, setCacheHeaders)
+	serveStatic("/sw.js", fileServer)
+	serveStatic("/manifest.json", fileServer)
+	serveStatic("/favicon.ico", fileServer)
 
 	// SPA fallback: serve index.html for any non-API route that didn't match a
 	// registered handler, so client-side routes (e.g. /admin/users) resolve. Only for
 	// GET/HEAD — a mutating method to an unmatched path is not a page load.
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-		// An unmatched API path is a 404 regardless of method.
-		if strings.HasPrefix(req.URL.Path, "/api/") {
+		// An unmatched path under any known backend route family is a 404
+		// regardless of method — never the SPA shell.
+		if isBackendRoute(req.URL.Path) {
 			http.NotFound(w, req)
 			return
 		}
-		// A mutating method to a non-API, unmatched path is not a page load.
+		// A mutating method to a non-backend, unmatched path is not a page load.
 		if req.Method != http.MethodGet && req.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return

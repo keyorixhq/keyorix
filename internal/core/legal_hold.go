@@ -64,9 +64,24 @@ func (c *KeyorixCore) legalHoldGuard(ctx context.Context) error {
 // and the loser's CreateLegalHold returns storage.ErrLegalHoldAlreadyActive, which
 // is mapped to the same "already active" client error as the pre-check below rather
 // than a 500.
+//
+// #377: placement used to be gated on only the plain system.write permission — the
+// same tier LiftLegalHold used before #157 tightened it — letting any system.write
+// holder place a bogus/decoy hold that halts all four purge/prune schedulers
+// deployment-wide until someone lifts it (reversible griefing, not data loss, but
+// still an under-authorized compliance control). Placement has no prior actor to
+// compare against the way lift compares against the placer, so the direct mirror of
+// #157's "placer-or-admin-tier" rule is: only an admin-tier (permission-bypass)
+// principal may place a hold. A denied placement attempt is itself audited.
 func (c *KeyorixCore) PlaceLegalHold(ctx context.Context, actorID uint, reason string) (*models.LegalHold, error) {
 	if reason == "" {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a reason is required to place a legal hold")
+	}
+	if c.adminRoleName(ctx, actorID) == "" {
+		c.writeAuditEventFailed(ctx, EventLegalHoldPlaced, actorPtr(actorID), "",
+			fmt.Sprintf("legal hold placement DENIED: actor %d is not an admin-tier principal", actorID))
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"only an admin-tier principal may place a legal hold")
 	}
 	if active, err := c.storage.GetActiveLegalHold(ctx); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -89,7 +104,28 @@ func (c *KeyorixCore) PlaceLegalHold(ctx context.Context, actorID uint, reason s
 
 // LiftLegalHold releases the active hold so the purge jobs resume. Refuses if no
 // hold is active. actorID is the lifting admin.
-func (c *KeyorixCore) LiftLegalHold(ctx context.Context, actorID uint) error {
+//
+// #380: placement always records a Reason, but lift previously recorded none — the
+// audit trail showed WHO/WHEN a hold was lifted but never WHY. reason is required,
+// mirroring placement's own required-reason precedent, and is persisted on the row
+// (ReleaseReason) and in the audit description.
+//
+// Separation of duties (#157): both place and lift are gated on the same
+// system.write permission, so without an additional check whoever placed a hold
+// specifically to preserve evidence could have it lifted by any other system.write
+// holder — including, worst case, an insider under investigation lifting a hold a
+// colleague placed over that insider's own conduct. Rather than a full dual-control
+// workflow (which would need a new approval step this compliance control doesn't
+// otherwise have), the practical restriction is: only the placer OR a principal who
+// holds an admin-tier (permission-bypass) role may lift — mirroring the "different,
+// higher-tier principal" framing without inventing a new permission tier, and
+// without deadlocking release if the original placer is unavailable. A denied
+// attempt is itself audited (distinctly from a successful lift) so the asymmetry
+// between placer and lifter is visible either way.
+func (c *KeyorixCore) LiftLegalHold(ctx context.Context, actorID uint, reason string) error {
+	if reason == "" {
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a reason is required to lift a legal hold")
+	}
 	hold, err := c.storage.GetActiveLegalHold(ctx)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -97,14 +133,21 @@ func (c *KeyorixCore) LiftLegalHold(ctx context.Context, actorID uint) error {
 	if hold == nil {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "no legal hold is active")
 	}
+	if actorID != hold.PlacedBy && c.adminRoleName(ctx, actorID) == "" {
+		c.writeAuditEventFailed(ctx, EventLegalHoldLifted, actorPtr(actorID), "",
+			fmt.Sprintf("legal hold %d lift DENIED: actor %d is neither the placer (%d) nor an admin-tier principal", hold.ID, actorID, hold.PlacedBy))
+		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			"only the placing admin or an admin-tier principal may lift this legal hold")
+	}
 	now := c.now()
 	hold.Released = true
 	hold.ReleasedBy = actorID
 	hold.ReleasedAt = &now
+	hold.ReleaseReason = reason
 	if err := c.storage.UpdateLegalHold(ctx, hold); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	c.writeAuditEvent(ctx, EventLegalHoldLifted, actorPtr(actorID), nil,
-		fmt.Sprintf("legal hold %d lifted", hold.ID))
+		fmt.Sprintf("legal hold %d lifted by %d (originally placed by %d): %s", hold.ID, actorID, hold.PlacedBy, reason))
 	return nil
 }

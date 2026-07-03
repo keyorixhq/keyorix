@@ -34,7 +34,7 @@ func runRemoveMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize service: %w", err)
 	}
 	ctx := context.Background()
-	if err := service.RemoveUserFromGroup(ctx, 0, removeMemberUserID, removeMemberGroupID); err != nil {
+	if err := service.RemoveUserFromGroup(ctx, 0, removeMemberUserID, removeMemberGroupID); err != nil { // actorID 0: local/unauthenticated CLI
 		return fmt.Errorf("failed to remove member: %w", err)
 	}
 	fmt.Printf("User %d removed from group %d.\n", removeMemberUserID, removeMemberGroupID)

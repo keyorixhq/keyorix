@@ -96,8 +96,8 @@ func main() {
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "keyorix-operator.secrets.keyorix.io",
 		// Bound the blast radius of the cluster-wide Secret RBAC this operator must hold
-		// (see secretCacheOptions and #327): don't cache every Secret in the cluster, only
-		// ones this operator manages.
+		// (see secretCacheOptions and #327/#124): don't cache every Secret in the cluster,
+		// only ones this operator manages.
 		Cache:  secretCache,
 		Client: secretClient,
 	})
@@ -115,11 +115,12 @@ func main() {
 	if len(allowed) == 0 {
 		setupLog.Info("WARNING: --allowed-servers is not set; every KeyorixSecret will be REJECTED until you configure the trusted Keyorix server URL(s)")
 	}
-	if err := (&controller.KeyorixSecretReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		AllowedServers: allowed,
-	}).SetupWithManager(mgr); err != nil {
+	reconciler, err := controller.NewReconciler(mgr.GetClient(), mgr.GetScheme(), mgr.GetAPIReader(), allowed)
+	if err != nil {
+		setupLog.Error(err, "unable to initialize controller", "controller", "KeyorixSecret")
+		os.Exit(1)
+	}
+	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "KeyorixSecret")
 		os.Exit(1)
 	}

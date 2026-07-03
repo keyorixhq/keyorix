@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -105,10 +106,36 @@ func (s *RESTSink) Get(ctx context.Context, namespace, name string) (map[string]
 	return out, nil
 }
 
+// errNotManaged is returned by Apply when a pre-existing Secret at the target
+// name lacks this agent's managed-by label — the caller should skip/report it,
+// not overwrite it.
+var errNotManaged = fmt.Errorf("k8ssync: refusing to write: a pre-existing Secret is not managed by this agent")
+
+// ErrNotManaged reports whether err is the "pre-existing unmanaged Secret" refusal
+// Apply returns — exported so callers (the sync loop) can distinguish it from a
+// transient/network failure and report it distinctly rather than retrying forever.
+func ErrNotManaged(err error) bool { return errors.Is(err, errNotManaged) }
+
 // Apply create-or-updates the named Secret to hold exactly data, using Server-Side
 // Apply (idempotent, no resource-version handshake). The agent owns the data field
 // via its field manager, so keys it no longer maps are pruned on the next apply.
+//
+// Before writing, it checks whether a Secret ALREADY EXISTS at this name and, if so,
+// refuses unless it already carries this agent's managed-by label (#139). force=true
+// Server-Side Apply unconditionally takes ownership of every field it sets — including
+// on an object created and owned by something else entirely (an operator, a different
+// tool) — silently overwriting its data and, because Apply always stamps the
+// managed-by label, "branding" it as agent-owned; the next orphan-cleanup pass would
+// then DELETE that operator's Secret outright once Keyorix no longer wants it. Only a
+// Secret this agent already owns (or one that doesn't exist yet, a fresh create) is
+// ever written.
 func (s *RESTSink) Apply(ctx context.Context, namespace, name string, data map[string][]byte) error {
+	if _, _, exists, owned, err := s.getOwnedMeta(ctx, namespace, name); err != nil {
+		return err
+	} else if exists && !owned {
+		return fmt.Errorf("%s/%s: %w", namespace, name, errNotManaged)
+	}
+
 	encoded := make(map[string]string, len(data))
 	for k, v := range data {
 		encoded[k] = base64.StdEncoding.EncodeToString(v)
@@ -196,7 +223,7 @@ func (s *RESTSink) List(ctx context.Context, namespace string) ([]string, error)
 // success (already gone); a 409 means it changed under us (uid/resourceVersion no
 // longer match), so we skip rather than delete a different object.
 func (s *RESTSink) Delete(ctx context.Context, namespace, name string) error {
-	uid, rv, owned, err := s.getOwnedMeta(ctx, namespace, name)
+	uid, rv, _, owned, err := s.getOwnedMeta(ctx, namespace, name)
 	if err != nil {
 		return err
 	}
@@ -232,23 +259,25 @@ func (s *RESTSink) Delete(ctx context.Context, namespace, name string) error {
 	return nil
 }
 
-// getOwnedMeta fetches the Secret's uid + resourceVersion and reports whether it still
-// carries this agent's managed-by label. owned is false when the Secret is absent.
-func (s *RESTSink) getOwnedMeta(ctx context.Context, namespace, name string) (uid, resourceVersion string, owned bool, err error) {
+// getOwnedMeta fetches the Secret's uid + resourceVersion and reports whether it
+// exists at all, and — when it does — whether it still carries this agent's
+// managed-by label. exists=false (owned=false) means absent; exists=true,
+// owned=false means a pre-existing Secret this agent does not own.
+func (s *RESTSink) getOwnedMeta(ctx context.Context, namespace, name string) (uid, resourceVersion string, exists, owned bool, err error) {
 	req, err := s.newRequest(ctx, http.MethodGet, s.secretPath(namespace, name), "", nil)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, false, err
 	}
 	resp, err := s.hc.Do(req)
 	if err != nil {
-		return "", "", false, fmt.Errorf("request failed: %w", err)
+		return "", "", false, false, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode == http.StatusNotFound {
-		return "", "", false, nil
+		return "", "", false, false, nil
 	}
 	if resp.StatusCode >= 400 {
-		return "", "", false, fmt.Errorf("get secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
+		return "", "", false, false, fmt.Errorf("get secret %s/%s: HTTP %d", namespace, name, resp.StatusCode)
 	}
 	var body struct {
 		Metadata struct {
@@ -258,10 +287,10 @@ func (s *RESTSink) getOwnedMeta(ctx context.Context, namespace, name string) (ui
 		} `json:"metadata"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", "", false, fmt.Errorf("decode secret %s/%s: %w", namespace, name, err)
+		return "", "", false, false, fmt.Errorf("decode secret %s/%s: %w", namespace, name, err)
 	}
 	owned = body.Metadata.Labels[managedByLabel] == managedByValue
-	return body.Metadata.UID, body.Metadata.ResourceVersion, owned, nil
+	return body.Metadata.UID, body.Metadata.ResourceVersion, true, owned, nil
 }
 
 func (s *RESTSink) secretPath(namespace, name string) string {

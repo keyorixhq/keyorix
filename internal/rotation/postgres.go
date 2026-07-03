@@ -79,7 +79,11 @@ func (e *PostgresExecutor) Rotate(ctx context.Context, ref, newValue string) err
 	// can escape the statement.
 	sql := fmt.Sprintf("ALTER ROLE %s WITH PASSWORD %s", quoteIdentifier(ref), quoteLiteral(newValue))
 	if err := c.Exec(ctx, sql); err != nil {
-		return fmt.Errorf("postgresql: rotate role %q: %w", ref, err)
+		// The new password is a quoted literal in sql; a driver error can echo the
+		// failing statement (e.g. a syntax error near the literal) verbatim. Redact
+		// before wrapping so the live credential never egresses via the rotation-
+		// failure SIEM audit / notification broadcast (#132).
+		return redactSQLError("postgresql", ref, err)
 	}
 	return nil
 }

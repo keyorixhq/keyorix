@@ -64,9 +64,11 @@ var validAccountStates = map[string]bool{
 // IsValidAccountState reports whether state is the empty string (legacy "unset",
 // normalized to active) or one of the ADR-025 canonical lifecycle values. Any other
 // string (a typo, wrong casing, or arbitrary garbage) is not a value any code path
-// in this codebase ever writes itself, and callers accepting a state as external
-// input (currently: gRPC CreateUser's account_state field) must reject it here
-// rather than persist it verbatim — see #334.
+// in this codebase ever writes itself. #334 originally used this to validate gRPC
+// CreateUser's account_state field before persisting it; #135 replaced that with
+// ignoring the field entirely (mirroring the HTTP CreateUser handler, which never
+// exposed it), so this validator no longer has a caller-controlled write path — kept
+// for any future internal caller that needs to check a state before writing it.
 func IsValidAccountState(state string) bool {
 	return state == "" || validAccountStates[state]
 }

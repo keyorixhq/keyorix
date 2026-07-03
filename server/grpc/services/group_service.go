@@ -204,10 +204,12 @@ func groupError(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	case strings.Contains(msg, "already exists") || strings.Contains(msg, "duplicate") || strings.Contains(msg, "in use"):
 		return status.Error(codes.AlreadyExists, err.Error())
-	case strings.Contains(msg, "required") || strings.Contains(msg, "invalid"):
+	case strings.Contains(msg, "required") || strings.Contains(msg, "invalid") || strings.Contains(msg, "exceeds"):
 		return status.Error(codes.InvalidArgument, err.Error())
-	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied"):
+	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied") || strings.Contains(msg, "administrator can grant"):
 		return status.Error(codes.PermissionDenied, "access denied")
+	case strings.Contains(msg, "refusing to remove the last"):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Error(codes.Internal, "group operation failed")
 	}

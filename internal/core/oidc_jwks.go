@@ -58,7 +58,16 @@ const maxJWKSKeys = 50
 // a sustained DoS. 8192 bits comfortably exceeds any real-world RSA key size in
 // production use (2048/3072/4096 are standard; NIST's own long-term guidance
 // tops out at 15360) while still rejecting a maliciously oversized modulus.
-const maxRSABits = 8192
+//
+// minRSABits (#100) is the missing lower bound: without it, a compromised or
+// MITM'd issuer could serve a trivially-weak key (e.g. 512 bits) that parses
+// and caches fine but offers no real cryptographic assurance — the check above
+// only ever guarded against a DoS-oversized key, never an undersized one. 2048
+// is the practical minimum still considered acceptable for a signing key today.
+const (
+	maxRSABits = 8192
+	minRSABits = 2048
+)
 
 // jwksStaleGrace bounds how far PAST the TTL a cached key set may still be served
 // as a fallback when a JWKS refetch fails transiently. Without a bound, a key the
@@ -80,6 +89,10 @@ type HTTPJWKSResolver struct {
 
 	mu    sync.Mutex
 	cache map[string]*jwksEntry // issuer -> cached keys
+	// lastFetchAttempt records when a refetch was last ATTEMPTED for an issuer —
+	// success or failure — so jwksMinRefetchInterval can gate the stale-cache
+	// refetch path the same way it gates the fresh-cache-unknown-kid path (see Key).
+	lastFetchAttempt map[string]time.Time
 }
 
 type jwksEntry struct {
@@ -103,7 +116,8 @@ func NewHTTPJWKSResolver(jwksURIs map[string]string) (*HTTPJWKSResolver, error) 
 			Timeout:       10 * time.Second,
 			CheckRedirect: noCrossOriginRedirect,
 		},
-		cache: map[string]*jwksEntry{},
+		cache:            map[string]*jwksEntry{},
+		lastFetchAttempt: map[string]time.Time{},
 	}, nil
 }
 
@@ -166,21 +180,37 @@ func (r *HTTPJWKSResolver) Key(ctx context.Context, issuer, kid string) (interfa
 	r.mu.Lock()
 	entry := r.cache[issuer]
 	fresh := entry != nil && time.Since(entry.fetchedAt) < jwksCacheTTL
-	r.mu.Unlock()
-
 	if fresh {
 		if k, ok := entry.keys[kid]; ok {
+			r.mu.Unlock()
 			return k, nil
 		}
-		// Unknown kid on a fresh cache: the key may have just rotated. Refetch — but
-		// not more than once per jwksMinRefetchInterval per issuer, so a flood of
-		// tokens bearing a trusted iss and random kids can't amplify into a refetch
-		// storm against the IdP. (A legitimate rotation is picked up on the next
-		// refetch the interval allows; the cache TTL still bounds staleness.)
-		if time.Since(entry.fetchedAt) < jwksMinRefetchInterval {
-			return nil, fmt.Errorf("no signing key with kid %q at issuer %q", kid, issuer)
-		}
 	}
+	// Past this point a refetch is needed — either because the cache is
+	// stale/missing, or because it's fresh but doesn't have this kid (possible
+	// rotation). BOTH cases are rate-limited the same way: at most one refetch
+	// ATTEMPT per jwksMinRefetchInterval per issuer, tracked by lastFetchAttempt
+	// (set on every attempt, success or failure) rather than entry.fetchedAt (set
+	// only on success). Previously only the "fresh cache, unknown kid" case was
+	// gated; the stale-cache path — e.g. during an IdP outage, where every refetch
+	// fails and the cache never becomes fresh again — had NO gate at all, so it
+	// could be hit on every single request to force an unbounded stream of
+	// outbound JWKS fetches: a DoS amplifier against the IdP and against this
+	// server's own outbound budget/latency.
+	lastAttempt, attempted := r.lastFetchAttempt[issuer]
+	if entry != nil && attempted && time.Since(lastAttempt) < jwksMinRefetchInterval {
+		r.mu.Unlock()
+		// Still within the stale-grace window: serve the cached key if we have it
+		// rather than paying for (or waiting on) a refetch we've decided to skip.
+		if time.Since(entry.fetchedAt) < jwksCacheTTL+jwksStaleGrace {
+			if k, ok := entry.keys[kid]; ok {
+				return k, nil
+			}
+		}
+		return nil, fmt.Errorf("no signing key with kid %q at issuer %q (refetch rate-limited)", kid, issuer)
+	}
+	r.lastFetchAttempt[issuer] = time.Now()
+	r.mu.Unlock()
 
 	keys, err := r.fetchAndCache(ctx, issuer, jwksURI)
 	if err != nil {
@@ -286,8 +316,8 @@ func parseJWK(k jwk) (interface{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		if n.BitLen() > maxRSABits {
-			return nil, fmt.Errorf("rsa modulus too large: %d bits exceeds %d-bit limit", n.BitLen(), maxRSABits)
+		if bits := n.BitLen(); bits < minRSABits || bits > maxRSABits {
+			return nil, fmt.Errorf("rsa modulus size %d bits outside allowed range [%d,%d]", bits, minRSABits, maxRSABits)
 		}
 		eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
 		if err != nil {

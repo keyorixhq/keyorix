@@ -12,6 +12,18 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// Role Name/Description length bounds. gRPC has no shared internal/core
+// validation layer to inherit these from (unlike other resources), so they
+// are mirrored here exactly from the HTTP-side struct tags in
+// server/http/handlers/rbac.go (CreateRoleRequest/UpdateRoleRequest) to keep
+// the two transports' accepted input identical (#191).
+const (
+	roleNameMinLen        = 3
+	roleNameMaxLen        = 50
+	roleDescriptionMinLen = 1
+	roleDescriptionMaxLen = 200
+)
+
 // RoleGRPCService implements pb.RoleServiceServer, backing each RPC with the
 // shared core service (role CRUD + permission wiring via storage, reads via the
 // core RBAC helpers).
@@ -37,8 +49,14 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
 		return nil, err
 	}
-	if req.GetName() == "" || req.GetDescription() == "" || len(req.GetPermissions()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "name, description and at least one permission are required")
+	if len(req.GetPermissions()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one permission is required")
+	}
+	if err := validateRoleName(req.GetName()); err != nil {
+		return nil, err
+	}
+	if err := validateRoleDescription(req.GetDescription()); err != nil {
+		return nil, err
 	}
 	// #294: reserved role names must never be creatable — see the identical guard (with
 	// full rationale) in the HTTP RBACHandler.CreateRole. This closes the same gap over
@@ -91,6 +109,11 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	}
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+	if req.Description != nil {
+		if err := validateRoleDescription(req.GetDescription()); err != nil {
+			return nil, err
+		}
 	}
 
 	role, current, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
@@ -339,6 +362,25 @@ func permissionToProto(p *models.Permission) *pb.Permission {
 		Resource:    p.Resource,
 		Action:      p.Action,
 	}
+}
+
+// validateRoleName mirrors HTTP's CreateRoleRequest.Name `min=3,max=50` bound
+// (server/http/handlers/rbac.go) so a role name accepted over gRPC is never
+// shorter/longer than one accepted over HTTP (#191).
+func validateRoleName(name string) error {
+	if len(name) < roleNameMinLen || len(name) > roleNameMaxLen {
+		return status.Errorf(codes.InvalidArgument, "name must be between %d and %d characters", roleNameMinLen, roleNameMaxLen)
+	}
+	return nil
+}
+
+// validateRoleDescription mirrors HTTP's Role Description `min=1,max=200`
+// bound (server/http/handlers/rbac.go) for the same reason (#191).
+func validateRoleDescription(description string) error {
+	if len(description) < roleDescriptionMinLen || len(description) > roleDescriptionMaxLen {
+		return status.Errorf(codes.InvalidArgument, "description must be between %d and %d characters", roleDescriptionMinLen, roleDescriptionMaxLen)
+	}
+	return nil
 }
 
 // mapRoleError translates core/storage role errors into gRPC status codes.

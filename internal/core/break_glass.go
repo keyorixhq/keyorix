@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -139,11 +140,15 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	now := c.now()
 	expiresAt := now.Add(ttl)
 	scope := storage.Scope{ProjectID: projectID}
-	// Self-granted: actor == the activating user. Time-bound so it auto-expires.
-	if err := c.AssignUserRoleWithExpiry(ctx, userID, userID, role.ID, scope, expiresAt); err != nil {
-		return nil, fmt.Errorf("failed to grant emergency role: %w", err)
-	}
 
+	// Create the activation record FIRST, before granting anything. This is the
+	// actual race gate: a partial unique index on (project_id, user_id) WHERE
+	// state='active' (ensureBreakGlassActiveIndex) makes the insert itself the source
+	// of truth for "at most one active activation", closing the gap in the
+	// list-and-scan check above — under a race, two concurrent callers could both pass
+	// that check before either inserted. Creating the record before the role grant
+	// (rather than after, as before) also means a losing racer here never grants
+	// itself the emergency role at all.
 	activation, err := c.storage.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
 		ProjectID:     projectID,
 		UserID:        userID,
@@ -155,13 +160,37 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		CreatedAt:     now,
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrBreakGlassAlreadyActive) {
+			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you already have an active break-glass grant on this project; revoke it before activating again")
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+
+	// Self-granted: actor == the activating user. Time-bound so it auto-expires. If
+	// this fails, the activation record already claimed the race slot above but no
+	// access was actually granted — reconcile it to revoked rather than leaving a
+	// phantom "active" record with no corresponding role, and free the slot so the
+	// user can retry.
+	if err := c.AssignUserRoleWithExpiry(ctx, userID, userID, role.ID, scope, expiresAt); err != nil {
+		activation.State = BreakGlassRevoked
+		activation.RevokedAt = &now
+		_ = c.storage.UpdateBreakGlassActivation(ctx, activation)
+		return nil, fmt.Errorf("failed to grant emergency role: %w", err)
 	}
 
 	c.auditProjectScoped(ctx, EventBreakGlassActivated, userID, projectID,
 		fmt.Sprintf("break-glass: user %d self-granted %q until %s — %s",
 			userID, role.Name, expiresAt.UTC().Format(time.RFC3339), justification))
-	c.notifyBreakGlassAdmins(ctx, userID, projectID, role.Name, expiresAt)
+	// The grant is already committed and audited above, so a notification failure here
+	// is a DETECTION-LATENCY gap, not a control failure — don't fail the activation on
+	// it. But silently swallowing it would defeat break-glass's "loud by design" intent
+	// if the notification pipeline itself is down, so surface it loudly (#166): a
+	// SECURITY-prefixed log line, matching the convention emitAudit already uses for a
+	// failed audit write, so an operational alerting pipeline watching logs still pages.
+	if nerr := c.notifyBreakGlassAdmins(ctx, userID, projectID, role.Name, expiresAt); nerr != nil {
+		log.Printf("SECURITY: break-glass activation %d (project %d, user %d): admin notification failed: %v",
+			activation.ID, projectID, userID, nerr)
+	}
 	return activation, nil
 }
 
@@ -232,11 +261,15 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, projectID, 
 }
 
 // notifyBreakGlassAdmins alerts the project's approver-role members that emergency
-// access was activated (best-effort).
-func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, projectID uint, roleName string, expiresAt time.Time) {
+// access was activated. Individual notify() delivery is still best-effort (an
+// email/webhook sink hiccup for one admin shouldn't abort the fan-out to the
+// others), but a failure to even LIST the project's members is a distinct, louder
+// failure mode — it means NO admin was considered for the alert at all — so that
+// case is returned as an error (#166) rather than swallowed silently.
+func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, projectID uint, roleName string, expiresAt time.Time) error {
 	members, err := c.storage.ListProjectMembers(ctx, projectID)
 	if err != nil {
-		return
+		return fmt.Errorf("list project %d members: %w", projectID, err)
 	}
 	pid := projectID
 	title := "Break-glass emergency access activated"
@@ -249,4 +282,5 @@ func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, proje
 		}
 		c.notify(ctx, m.UserID, EventBreakGlassActivated, title, msg, &pid, link)
 	}
+	return nil
 }

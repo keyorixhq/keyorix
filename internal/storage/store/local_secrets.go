@@ -13,6 +13,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -23,8 +24,40 @@ import (
 
 // --- Project / Environment ---
 
+// maxEnvironmentListing caps how many environments a single ListEnvironmentsByProject
+// (or ...IncludingDeleted) call returns (#386). This is defense-in-depth behind the
+// creation-time cap on CreateProjectWithEnvs (#383, maxEnvNamesPerCreate in
+// internal/core/catalog.go): that cap bounds a single fan-out create, but a project
+// can still accrete environments one at a time via repeated single-environment-create
+// calls, and this backstop keeps the listing query/response bounded independent of
+// that limit — including for any pre-existing data created before #383 shipped. Set
+// well above the create-time cap so it never trips under normal use.
+const maxEnvironmentListing = 1000
+
+// isDuplicateProjectNameViolation reports whether err is a unique-constraint violation
+// on specifically the partial projects-name index (uniq_projects_name_active, #385), as
+// distinct from any other unique constraint. Both SQLite and Postgres include the
+// violated index name in the driver-native error text for an expression index like this
+// one, mirroring isDuplicateEmailViolation's treatment of users.email (#117).
+func isDuplicateProjectNameViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "uniq_projects_name_active")
+}
+
 func (ls *LocalStorage) CreateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	return project, ls.db.WithContext(ctx).Create(project).Error
+	if err := ls.db.WithContext(ctx).Create(project).Error; err != nil {
+		if isDuplicateProjectNameViolation(err) {
+			// The partial unique index uniq_projects_name_active (#385) caught a
+			// case-insensitive duplicate: another project already holds this name (in any
+			// case). Translate to the sentinel so callers can surface a clean "project name
+			// already in use" error instead of a raw constraint-violation message.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, err)
+		}
+		return nil, err
+	}
+	return project, nil
 }
 
 func (ls *LocalStorage) CreateEnvironment(ctx context.Context, env *models.Environment) (*models.Environment, error) {
@@ -111,6 +144,11 @@ func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Projec
 
 func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
 	if err := ls.db.WithContext(ctx).Save(project).Error; err != nil {
+		if isDuplicateProjectNameViolation(err) {
+			// See CreateProject's comment: a rename collided with the partial
+			// case-insensitive unique index (#385).
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, err)
+		}
 		return nil, fmt.Errorf("failed to update project: %w", err)
 	}
 	return project, nil
@@ -134,6 +172,19 @@ func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 		if err := tx.Model(&models.Environment{}).
 			Where("project_id = ?", id).Update("deleted_at", deletedAt).Error; err != nil {
 			return fmt.Errorf("failed to soft-delete project environments: %w", err)
+		}
+		// Disable every dynamic-secret config scoped to the project (#369): a
+		// disabled project must not go on minting live database credentials.
+		// IssueLease/RenewLease refuse against a Disabled config; the caller
+		// (core.DeleteProject) revokes the configs' outstanding active leases
+		// against their real targets AFTER this transaction commits — that's
+		// network I/O to arbitrary external systems and must not hold this DB
+		// transaction open. Unlike secrets/environments, Disabled is a plain
+		// boolean with no cascade timestamp: RestoreProject deliberately does
+		// NOT clear it (see the Disabled field doc on DynamicSecretConfig).
+		if err := tx.Model(&models.DynamicSecretConfig{}).
+			Where("project_id = ? AND disabled = ?", id, false).Update("disabled", true).Error; err != nil {
+			return fmt.Errorf("failed to disable project dynamic-secret configs: %w", err)
 		}
 		// Soft-delete the project itself with the same timestamp.
 		result := tx.Model(&models.Project{}).
@@ -205,14 +256,16 @@ func (ls *LocalStorage) ListEnvironments(ctx context.Context) ([]*models.Environ
 
 func (ls *LocalStorage) ListEnvironmentsByProject(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	var environments []*models.Environment
-	return environments, ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&environments).Error
+	return environments, ls.db.WithContext(ctx).Where("project_id = ?", projectID).
+		Limit(maxEnvironmentListing).Find(&environments).Error
 }
 
 // ListEnvironmentsByProjectIncludingDeleted is like ListEnvironmentsByProject but
 // also returns soft-deleted environments (DeletedAt populated), for the restore UI.
 func (ls *LocalStorage) ListEnvironmentsByProjectIncludingDeleted(ctx context.Context, projectID uint) ([]*models.Environment, error) {
 	var environments []*models.Environment
-	return environments, ls.db.WithContext(ctx).Unscoped().Where("project_id = ?", projectID).Find(&environments).Error
+	return environments, ls.db.WithContext(ctx).Unscoped().Where("project_id = ?", projectID).
+		Limit(maxEnvironmentListing).Find(&environments).Error
 }
 
 func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.Environment, error) {
@@ -324,16 +377,28 @@ func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint
 	return nil
 }
 
-// DeleteSecret deletes a secret by ID.
+// DeleteSecret deletes a secret by ID. #370: ShareRecord rows are a fully
+// independent lifecycle from SecretNode's — left untouched, a share grant would
+// silently reactivate (via CheckSharePermission) the instant the secret is later
+// restored from the recycle bin, with zero re-authorization step, even when the
+// secret was deleted specifically to sever a former grantee's access. "Delete
+// means gone" for sharing too, so revoke every active share for this secret in
+// the same transaction as the secret's own soft-delete.
 func (ls *LocalStorage) DeleteSecret(ctx context.Context, id uint) error {
-	result := ls.db.WithContext(ctx).Delete(&models.SecretNode{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
-	}
-	return nil
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Delete(&models.SecretNode{}, id)
+		if result.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		if err := tx.Where("secret_id = ? AND deleted_at IS NULL", id).
+			Delete(&models.ShareRecord{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	})
 }
 
 // GetSecretIncludingDeleted loads a secret even when soft-deleted (Unscoped).
@@ -461,8 +526,9 @@ func (ls *LocalStorage) ListSecrets(ctx context.Context, filter *storage.SecretF
 		return nil, 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
-	offset := (filter.Page - 1) * filter.PageSize
-	query = query.Offset(offset).Limit(filter.PageSize)
+	pageSize := clampPageSize(filter.PageSize)
+	offset := (filter.Page - 1) * pageSize
+	query = query.Offset(offset).Limit(pageSize)
 
 	var secrets []*models.SecretNode
 	if err := query.Find(&secrets).Error; err != nil {
@@ -582,6 +648,20 @@ func (ls *LocalStorage) IncrementSecretReadCount(ctx context.Context, versionID 
 func (ls *LocalStorage) TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.SecretVersion{}).
 		Where("id = ? AND read_count < ?", versionID, maxReads).
+		UpdateColumn("read_count", gorm.Expr("read_count + 1"))
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// TryIncrementSecretNodeReadCount is TryIncrementSecretReadCount's secret-level
+// twin (#133): the same atomic conditional-UPDATE pattern, keyed on the secret
+// (secret_nodes.read_count) instead of a version, so the cap survives rotate/
+// rollback creating a new version.
+func (ls *LocalStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("id = ? AND read_count < ?", secretID, maxReads).
 		UpdateColumn("read_count", gorm.Expr("read_count + 1"))
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)

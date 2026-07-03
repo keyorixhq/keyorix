@@ -5,6 +5,15 @@
 -- statement and has no IF EXISTS modifier, so each column drop is its own
 -- statement, run only against a database that actually has the up-migration's
 -- columns applied.
+--
+-- WARNING — IRREVERSIBLE DATA LOSS: this rollback DROPs the encrypted
+-- credential columns themselves (encrypted_client_secret / encrypted_token /
+-- encrypted_session_token and their metadata sidecars), not just schema. Once
+-- applied, the encrypted material for every api_client/session/api_token/
+-- password_reset row is gone — there is no way to re-derive it, and any
+-- forward migration back to 004 will find those rows credential-less.
+-- BACK UP the affected tables (or export the encrypted_* columns to a
+-- separate backup table) before running this rollback.
 
 -- Drop indexes
 DROP INDEX IF EXISTS idx_password_resets_encrypted_token;

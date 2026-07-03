@@ -138,8 +138,9 @@ func TestResolveSSOUser(t *testing.T) {
 
 	t.Run("externalId match wins", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return(&models.User{ID: 7}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
+		// The subject is looked up under this provider's scoped external_id.
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return(&models.User{ID: 7}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(7), u.ID)
 		store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
@@ -147,13 +148,14 @@ func TestResolveSSOUser(t *testing.T) {
 
 	t.Run("verified email links a never-federated account and claims it", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
-		// First link claims the account for this subject (so a later provider can't re-link it).
+		// First link claims the account for this provider+subject (so a later provider
+		// can't re-link it).
 		store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
-			return u.ID == 9 && u.ExternalID == "okta|123"
-		})).Return(&models.User{ID: 9, ExternalID: "okta|123"}, nil)
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
+			return u.ID == 9 && u.ExternalID == "sso:okta:okta|123"
+		})).Return(&models.User{ID: 9, ExternalID: "sso:okta:okta|123"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(9), u.ID)
 		store.AssertCalled(t, "UpdateUser", mock.Anything, mock.Anything)
@@ -161,31 +163,43 @@ func TestResolveSSOUser(t *testing.T) {
 
 	t.Run("unverified email does NOT match an existing account (no takeover)", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		// emailVerified=false: the email fallback is skipped entirely — an IdP that merely
 		// asserts (or omits email_verified for) an address can't claim an existing account.
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", false)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", false)
 		require.NoError(t, err)
 		assert.Nil(t, u)
 		store.AssertNotCalled(t, "GetUserByEmail", mock.Anything, mock.Anything)
 	})
 
-	t.Run("email match to an account bound to a DIFFERENT identity is refused", func(t *testing.T) {
+	t.Run("email fallback refuses an account bound to a different provider", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "partner|999").Return((*models.User)(nil), notFound())
-		// The corp account is already federated to a different subject — a second provider
-		// asserting the same email must not take it over.
-		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: "okta|123"}, nil)
-		_, err := c.resolveSSOUser(context.Background(), "partner|999", "ada@x.io", true)
-		require.ErrorContains(t, err, "already linked to a different SSO identity")
-		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
+		// This email belongs to an account already bound to IdP "azure". The "okta"
+		// assertion must NOT be able to claim it — that is the takeover this guards.
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").
+			Return(&models.User{ID: 99, ExternalID: "sso:azure:abc"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "different SSO provider")
+		assert.Nil(t, u)
+	})
+
+	t.Run("email fallback allows an account bound to the SAME provider", func(t *testing.T) {
+		c, store, _, _ := ssoTestCore(t)
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByEmail", mock.Anything, "ada@x.io").
+			Return(&models.User{ID: 11, ExternalID: "sso:okta:other-sub"}, nil)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
+		require.NoError(t, err)
+		assert.Equal(t, uint(11), u.ID)
 	})
 
 	t.Run("no match returns nil (caller decides)", func(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
-		u, err := c.resolveSSOUser(context.Background(), "okta|123", "ada@x.io", true)
+		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Nil(t, u)
 	})
@@ -196,8 +210,8 @@ func TestProvisionSSOUser(t *testing.T) {
 
 	t.Run("JIT-creates an active passwordless user with the default role", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
-		// No existing match (FindSCIMUser re-check), unique username derivation.
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		// No existing match (gated resolve re-check), unique username derivation.
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
 		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
 		var created *models.User
@@ -209,14 +223,14 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(42), uint(3), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada Lovelace")
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada Lovelace")
 		require.NoError(t, err)
 		assert.Equal(t, uint(42), u.ID)
 		// Active (not pending_first_login — an SSO user must not be trapped in a
 		// restricted password-change-only session), externalId pinned, real display name.
 		assert.Equal(t, AccountActive, created.AccountState)
 		assert.True(t, created.IsActive)
-		assert.Equal(t, "okta|123", created.ExternalID)
+		assert.Equal(t, "sso:okta:okta|123", created.ExternalID, "JIT account is bound to the asserting provider")
 		assert.Equal(t, "ada@x.io", created.Email)
 		assert.Equal(t, "Ada Lovelace", created.DisplayName)
 		assert.NotEmpty(t, created.PasswordHash) // unusable random hash, not blank
@@ -224,14 +238,42 @@ func TestProvisionSSOUser(t *testing.T) {
 
 	t.Run("refuses when the IdP returned no email", func(t *testing.T) {
 		c, _, _, p := ssoTestCore(t)
-		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "", "Ada")
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "", true, "Ada")
 		require.Error(t, err)
+	})
+
+	// CRITICAL regression: the JIT path must NOT reuse an existing account matched by an
+	// UNVERIFIED email — that was an account-takeover (an IdP omitting email_verified could
+	// assert a victim's email and be logged in as the victim). With emailVerified=false the
+	// dedup goes through resolveSSOUser, which skips the email branch, so the existing
+	// victim account is NOT returned; a fresh account is created instead.
+	t.Run("does NOT reuse an existing account on an unverified email", func(t *testing.T) {
+		c, store, _, p := ssoTestCore(t)
+		// sub does not match; an existing victim account DOES match the email.
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:evil|999").Return((*models.User)(nil), notFound())
+		victim := &models.User{ID: 7, Username: "victim", Email: "victim@corp.com", ExternalID: "sso:okta:legit"}
+		store.On("GetUserByEmail", mock.Anything, "victim@corp.com").Return(victim, nil)
+		// A fresh account is provisioned instead of reusing the victim.
+		store.On("GetUserByUsername", mock.Anything, "victim").Return((*models.User)(nil), notFound())
+		var created *models.User
+		store.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool { created = u; return true })).
+			Return(&models.User{ID: 99}, nil)
+		store.On("GetRoleByName", mock.Anything, mock.Anything).Return(&models.Role{ID: 3}, nil)
+		store.On("AssignRole", mock.Anything, uint(99), uint(3), mock.Anything).Return(nil)
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		u, err := c.provisionSSOUser(context.Background(), p, "evil|999", "victim@corp.com", false /* email NOT verified */, "Mallory")
+		require.NoError(t, err)
+		assert.Equal(t, uint(99), u.ID, "must be the fresh account, not the victim (id 7)")
+		require.NotNil(t, created)
+		assert.Equal(t, "sso:okta:evil|999", created.ExternalID, "fresh account bound to the asserting provider+subject, not the victim")
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything) // victim not claimed/reused
 	})
 
 	t.Run("reuses an existing user instead of duplicating", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return(&models.User{ID: 5}, nil)
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return(&models.User{ID: 5}, nil)
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
 		require.NoError(t, err)
 		assert.Equal(t, uint(5), u.ID)
 		store.AssertNotCalled(t, "CreateUser", mock.Anything, mock.Anything)
@@ -240,7 +282,7 @@ func TestProvisionSSOUser(t *testing.T) {
 	t.Run("honours a configured default_role", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		p.DefaultRole = "project_admin"
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
 		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
 		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 7}, nil)
@@ -248,7 +290,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("AssignRole", mock.Anything, uint(7), uint(9), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		_, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
 		require.NoError(t, err)
 		store.AssertCalled(t, "GetRoleByName", mock.Anything, "project_admin")
 	})
@@ -256,14 +298,14 @@ func TestProvisionSSOUser(t *testing.T) {
 	t.Run("an unknown default_role grants nothing but still provisions", func(t *testing.T) {
 		c, store, _, p := ssoTestCore(t)
 		p.DefaultRole = "does_not_exist"
-		store.On("GetUserByExternalID", mock.Anything, "okta|123").Return((*models.User)(nil), notFound())
+		store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), notFound())
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
 		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
 		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 8}, nil)
 		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil), notFound())
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", "Ada")
+		u, err := c.provisionSSOUser(context.Background(), p, "okta|123", "ada@x.io", true, "Ada")
 		require.NoError(t, err)
 		assert.Equal(t, uint(8), u.ID)
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -392,28 +434,50 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 func TestSyncSSORoles(t *testing.T) {
 	t.Run("authoritative over mapped roles only", func(t *testing.T) {
 		c, store, key, p := ssoTestCore(t)
-		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin", "keyorix-auditors": "system_auditor"}
-		// IdP asserts only keyorix-admins → system_admin desired; system_auditor (mapped,
-		// not asserted) must be removed; system_viewer (NOT mapped) left alone.
-		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
+		p.GroupRoleMap = map[string]string{"keyorix-secrets-rw": "secrets_writer", "keyorix-auditors": "system_auditor"}
+		// IdP asserts only keyorix-secrets-rw → secrets_writer desired; system_auditor
+		// (mapped, not asserted) must be removed; system_viewer (NOT mapped) left alone.
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-secrets-rw"}})
 		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{
 			{ID: 20, Name: "system_auditor"}, {ID: 30, Name: "system_viewer"},
 		}, nil)
-		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
+		store.On("GetRoleByName", mock.Anything, "secrets_writer").Return(&models.Role{ID: 10, Name: "secrets_writer"}, nil)
 		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 20, Name: "system_auditor"}, nil)
 		// RemoveUserRole's last-global-admin guard (unrelated to this test's role, but
-		// exercised on every removal) looks up the other install-admin role names too.
+		// exercised on every removal) looks up every install-admin role name
+		// (installAdminRoleNames: super_admin/admin/system_admin) to build the
+		// admin-role-ID set.
 		store.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, assert.AnError)
 		store.On("GetRoleByName", mock.Anything, "admin").Return(nil, assert.AnError)
+		store.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError)
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 		c.syncSSORoles(context.Background(), p, 7, raw)
 
-		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // system_admin granted
+		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // secrets_writer granted
 		store.AssertCalled(t, "RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything)    // system_auditor revoked
 		store.AssertNotCalled(t, "RemoveRole", mock.Anything, uint(7), uint(30), mock.Anything) // system_viewer (unmapped) untouched
+	})
+
+	// TestSyncSSORoles/refuses-to-grant-an-admin-tier-role pins #96: GroupRoleMap
+	// mapped a group directly to an admin-tier role with no guard (unlike
+	// reconcileSSOGroups's admin-conferring-GROUP check) — an IdP group that is
+	// frequently self-service or governed by non-Keyorix-admins could grant global
+	// admin to anyone who joins it. AssignRole must never be called for an
+	// admin-tier mapped role.
+	t.Run("refuses to grant an admin-tier role from a group mapping", func(t *testing.T) {
+		c, store, key, p := ssoTestCore(t)
+		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
+		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
+		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{}, nil)
+		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
+		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+		c.syncSSORoles(context.Background(), p, 7, raw)
+
+		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("absent groups claim → no-op (never touches roles)", func(t *testing.T) {
@@ -555,4 +619,16 @@ func TestSanitizeReturnTo(t *testing.T) {
 	assert.Equal(t, "", sanitizeReturnTo("//evil.com"))
 	assert.Equal(t, "", sanitizeReturnTo("https://evil.com"))
 	assert.Equal(t, "", sanitizeReturnTo("evil"))
+	// A backslash right after the leading slash is normalized to "/" by several
+	// browsers, so "/\evil.com" is effectively "//evil.com" — a protocol-relative
+	// open redirect to an external host. It must be rejected even though it starts
+	// with a single "/" and contains no literal "//".
+	assert.Equal(t, "", sanitizeReturnTo(`/\evil.com`))
+	assert.Equal(t, "", sanitizeReturnTo(`/\/evil.com`))
+	assert.Equal(t, "", sanitizeReturnTo(`/\\evil.com`))
+	// A backslash anywhere else in the value is rejected too, not just right after
+	// the leading slash.
+	assert.Equal(t, "", sanitizeReturnTo(`/ok/\evil.com`))
+	// A same-origin path with a subpath still passes.
+	assert.Equal(t, "/secrets/view", sanitizeReturnTo("/secrets/view"))
 }

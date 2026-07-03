@@ -307,6 +307,24 @@ func (ls *LocalStorage) ListProjectRoleAssignments(ctx context.Context, projectI
 	return out, nil
 }
 
+// ListProjectMachineRoleAssignments returns every machine-identity role grant
+// scoped to the project (project_id = projectID, any environment) — the machine
+// counterpart to ListProjectRoleAssignments's user/group rows.
+func (ls *LocalStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	var rows []models.MachineIdentityRole
+	if err := ls.db.WithContext(ctx).Where("project_id = ?", projectID).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	out := make([]storage.RoleAssignment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "machine", PrincipalID: r.MachineIdentityID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
+}
+
 // ListGlobalAdminAssignmentsForUpdate returns every global-scope (project 0,
 // environment 0) direct user and group role grant whose role is in adminRoleIDs,
 // taking a row-level write lock on backends that support one (Postgres FOR
@@ -472,20 +490,46 @@ func (ls *LocalStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint
 	return count > 0, nil
 }
 
-// CheckPermission returns true if userID has the given resource/action permission.
-// Resolved transitively: user → role → permission.
+// CheckPermission returns true if userID holds the given resource/action
+// permission via a DIRECT OR group-inherited role, resolved transitively: user
+// (or group membership) → role → permission (#376). It is intentionally
+// scope-blind (an assignment at ANY project/environment counts, matching its
+// pre-existing "any assignment anywhere" contract) and does not apply the
+// admin-role bypass Authorize() grants — this is a raw role/permission-grant
+// existence check, not a live authorization decision. The production diagnostic
+// that needs the FULL Authorize()-equivalent answer (group-inclusive,
+// scope-aware, admin-bypass-aware) is core.HasPermissionByEmail, which resolves
+// it via Authorize/scopedRoleIDs per scope rather than calling this method.
 func (ls *LocalStorage) CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error) {
+	now := time.Now()
 	var count int64
 	err := ls.db.WithContext(ctx).Table("permissions").
 		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
 		Joins("JOIN user_roles ON role_permissions.role_id = user_roles.role_id").
 		Where("user_roles.user_id = ? AND permissions.resource = ? AND permissions.action = ?", userID, resource, action).
-		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", time.Now()).
+		Where("user_roles.expires_at IS NULL OR user_roles.expires_at > ?", now).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
 	}
-	return count > 0, nil
+	if count > 0 {
+		return true, nil
+	}
+
+	var viaGroup int64
+	err = ls.db.WithContext(ctx).Table("permissions").
+		Joins("JOIN role_permissions ON permissions.id = role_permissions.permission_id").
+		Joins("JOIN group_roles ON role_permissions.role_id = group_roles.role_id").
+		Joins("JOIN user_groups ON user_groups.group_id = group_roles.group_id").
+		// A soft-deleted group confers no permissions (matches authz resolution).
+		Joins("JOIN groups ON groups.id = group_roles.group_id AND groups.deleted_at IS NULL").
+		Where("user_groups.user_id = ? AND permissions.resource = ? AND permissions.action = ?", userID, resource, action).
+		Where("group_roles.expires_at IS NULL OR group_roles.expires_at > ?", now).
+		Count(&viaGroup).Error
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorInternalServer", nil), err)
+	}
+	return viaGroup > 0, nil
 }
 
 // ListPermissions returns all permissions.
@@ -562,6 +606,24 @@ func (ls *LocalStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return grants, nil
+}
+
+// ListGroupRoleAssignments returns every role grant held by groupID across all
+// scopes, unlike GetGroupRoles/GetGroupRoleGrants which return the role but not
+// which scope it was granted at.
+func (ls *LocalStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
+	var rows []models.GroupRole
+	if err := ls.db.WithContext(ctx).Where("group_id = ?", groupID).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	out := make([]storage.RoleAssignment, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, storage.RoleAssignment{
+			PrincipalType: "group", PrincipalID: r.GroupID, RoleID: r.RoleID,
+			ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID,
+		})
+	}
+	return out, nil
 }
 
 // AssignRoleToGroup assigns a permanent role to a group at scope; errors if

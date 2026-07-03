@@ -404,6 +404,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if tableExists(db, "dynamic_secret_configs") && !columnExists(db, "dynamic_secret_configs", "classification") {
 			db.Exec("ALTER TABLE dynamic_secret_configs ADD COLUMN classification TEXT DEFAULT ''")
 		}
+		// Disabled (#369): refuses new leases once the owning project is soft-deleted.
+		// Additive (defaults false = every pre-existing config stays enabled).
+		if !m.HasColumn(&models.DynamicSecretConfig{}, "Disabled") {
+			if err := m.AddColumn(&models.DynamicSecretConfig{}, "Disabled"); err != nil {
+				return fmt.Errorf("failed to add dynamic_secret_configs.disabled column: %w", err)
+			}
+		}
 	}
 	if !dynLeaseExists {
 		if err := db.AutoMigrate(&models.DynamicSecretLease{}); err != nil {
@@ -499,6 +506,12 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := db.AutoMigrate(&models.BreakGlassActivation{}); err != nil {
 			return fmt.Errorf("failed to migrate break_glass_activations table: %w", err)
 		}
+	}
+	// Enforce at most one ACTIVE break-glass activation per (project, user), even
+	// under a race — see ensureBreakGlassActiveIndex. Runs whether the table was just
+	// created above or already existed on an older DB (additive, idempotent).
+	if err := ensureBreakGlassActiveIndex(db); err != nil {
+		return err
 	}
 
 	// Create the legal-holds table if missing (additive).
@@ -651,6 +664,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := ensureUserEmailIndex(db); err != nil {
 			return err
 		}
+		// Same DB-level protection for users.external_id (#117): the SCIM/IdP-asserted
+		// identifier was indexed but NOT unique, so two different users could share the
+		// same non-empty external_id — an ambiguity GetUserByExternalID (SSO/SCIM login
+		// resolution) must not tolerate. Additive + idempotent; the full AutoMigrate
+		// below covers fresh DBs.
+		if err := ensureUserExternalIDIndex(db); err != nil {
+			return err
+		}
 	}
 
 	// Close the share-create race (#136): a partial unique index on live rows so two
@@ -669,6 +690,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	// AutoMigrate below covers fresh DBs.
 	if tableExists(db, "secret_versions") {
 		if err := ensureSecretVersionIndex(db); err != nil {
+			return err
+		}
+	}
+
+	// Swap the plain unique index on projects.name for a case-insensitive, live-rows-
+	// only partial one (#385): "Production"/"production" previously landed as two
+	// distinct, all-succeeding rows, and the CLI's project name resolution
+	// (resolveProjectID) is case-insensitive and returns the first match — so a
+	// same-name-different-case shadow project the exact-match index didn't block could
+	// silently hijack a later `keyorix secret import/export --project production`.
+	// Additive + idempotent; the full AutoMigrate below covers fresh DBs.
+	if projectsExists {
+		if err := ensureProjectNameIndex(db); err != nil {
 			return err
 		}
 	}
@@ -722,9 +756,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	); err != nil {
 		return err
 	}
-	// The Group and User models carry no plain unique tag on name/username; enforce
-	// uniqueness only among live rows via partial indexes (so a soft-deleted name or
-	// username can be reused, e.g. on SCIM re-provisioning).
+	// The Group, User, and Project models carry no plain unique tag on
+	// name/username/name; enforce uniqueness only among live rows via partial indexes
+	// (so a soft-deleted name/username can be reused, e.g. on SCIM re-provisioning).
 	if err := ensureGroupNameIndex(db); err != nil {
 		return err
 	}
@@ -732,6 +766,12 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		return err
 	}
 	if err := ensureUserEmailIndex(db); err != nil {
+		return err
+	}
+	if err := ensureUserExternalIDIndex(db); err != nil {
+		return err
+	}
+	if err := ensureProjectNameIndex(db); err != nil {
 		return err
 	}
 	if err := ensureShareRecordUniqueIndex(db); err != nil {
@@ -799,6 +839,21 @@ func ensureProjectMembershipIndex(db *gorm.DB) error {
 	return nil
 }
 
+// ensureBreakGlassActiveIndex creates a partial unique index on
+// break_glass_activations (project_id, user_id) WHERE state='active', so at most one
+// ACTIVE break-glass activation can exist per project+user even under a race —
+// ActivateBreakGlass's own "no existing active activation" check is a list-and-scan
+// that two concurrent callers could both pass before either inserts; this index makes
+// the database the actual source of truth. Scoped to state='active' (not a plain
+// unique index) so a user can activate break-glass again after a prior activation
+// expires or is revoked. Idempotent; works on both SQLite and Postgres.
+func ensureBreakGlassActiveIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error; err != nil {
+		return fmt.Errorf("failed to create partial break_glass_activations active index: %w", err)
+	}
+	return nil
+}
+
 // ensureUserNameIndex replaces the plain unique index on users.username (from the old
 // `uniqueIndex` tag) with a partial unique index scoped to non-deleted rows. Without
 // this a SCIM-deprovisioned (soft-deleted) user keeps occupying the username in the
@@ -830,13 +885,57 @@ func ensureUserNameIndex(db *gorm.DB) error {
 // case-insensitive lookup (`LOWER(email) = LOWER(?)`) — an exact-match index would let
 // the race slip through on a case variant (Bob@x vs bob@x). Scoped to
 // `deleted_at IS NULL` so a soft-deleted (e.g. SCIM-deprovisioned) user's email is freed
-// for reuse on re-provisioning, mirroring ensureUserNameIndex; `email <> ''` so any
+// for reuse on re-provisioning, mirroring ensureUserNameIndex; `email <> ”` so any
 // legacy rows with no email recorded don't collide with each other. Idempotent; works on
 // both SQLite and Postgres (both support expression indexes, partial indexes, and
 // IF [NOT] EXISTS).
 func ensureUserEmailIndex(db *gorm.DB) error {
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial users email index: %w", err)
+	}
+	return nil
+}
+
+// ensureUserExternalIDIndex creates a partial unique index on users.external_id,
+// scoped to live rows with a non-empty external_id (#117). external_id (the
+// SCIM/IdP-asserted identifier) was indexed but NOT unique, explicitly
+// documented as allowing "legacy/blank rows [to] coexist" — but two DIFFERENT
+// users sharing the same non-empty external_id is exactly the ambiguity SSO/
+// SCIM identity resolution (GetUserByExternalID) must not tolerate: which one
+// does a federated login authenticate as? Empty external_id (every locally-
+// created account) is excluded so native users never collide with each other.
+// Idempotent; works on SQLite and Postgres.
+func ensureUserExternalIDIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_external_id_active ON users (external_id) WHERE deleted_at IS NULL AND external_id != ''").Error; err != nil {
+		return fmt.Errorf("failed to create partial users external_id index: %w", err)
+	}
+	return nil
+}
+
+// ensureProjectNameIndex creates a partial, case-insensitive unique index on
+// projects.name scoped to live (non-deleted) rows with a non-empty name (#385).
+// Project.Name previously carried only a plain, case-sensitive `uniqueIndex` tag, so
+// "Production"/"production" (and any other case variant) were distinct, both-succeeding
+// rows — and the CLI's project name resolution (resolveProjectID, import.go) resolves by
+// case-insensitive comparison over an unordered project list, returning the FIRST match.
+// A secrets.write holder could therefore plant a same-name-different-case shadow project
+// the old index didn't block, and a later `keyorix secret import/export --project
+// production` could silently resolve against the shadow project instead of the intended
+// one. The index is on LOWER(name) so it catches every case variant, mirroring
+// ensureUserEmailIndex's treatment of users.email (#117) for the identical
+// shadow-identity class of bug. Scoped to `deleted_at IS NULL` so a soft-deleted
+// project's name is freed for reuse on re-creation, mirroring ensureGroupNameIndex/
+// ensureUserNameIndex; `name <> ”` so any legacy rows with no name recorded don't
+// collide with each other. Idempotent; works on both SQLite and Postgres.
+//
+// Known residual limitation: this closes the case-folding gap but not the
+// Unicode-homoglyph one — "Prοduction" (Greek omicron, U+03BF) still normalizes to a
+// distinct LOWER() value from "production" and would still create a separate row. Full
+// NFKC normalization plus homoglyph/confusable detection is a materially harder problem
+// (Unicode Technical Standard #39) and is intentionally out of scope here.
+func ensureProjectNameIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_projects_name_active ON projects (LOWER(name)) WHERE deleted_at IS NULL AND name <> ''").Error; err != nil {
+		return fmt.Errorf("failed to create partial projects name index: %w", err)
 	}
 	return nil
 }

@@ -81,6 +81,12 @@ type Storage interface {
 	// rows for a project access review. Global (project 0) grants are excluded:
 	// those are install-level, reviewed separately.
 	ListProjectRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
+	// ListProjectMachineRoleAssignments returns every machine-identity role grant
+	// scoped to the project (project_id = projectID, any environment) — the machine
+	// counterpart to ListProjectRoleAssignments's user/group rows, kept separate so
+	// existing callers (compliance posture, RBAC/SCIM last-admin guards) are
+	// unaffected; only the access review enumerates it (#91).
+	ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]RoleAssignment, error)
 	// ListGlobalAdminAssignmentsForUpdate returns every global-scope (project 0,
 	// environment 0) direct user and group role grant whose role is in
 	// adminRoleIDs, taking a row-level write lock on backends that support one
@@ -147,6 +153,14 @@ type Storage interface {
 	GetSecretDependency(ctx context.Context, id uint) (*models.SecretDependency, error)
 	ListSecretDependenciesForProject(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 	DeleteSecretDependency(ctx context.Context, id uint) error
+	// ListSecretDependenciesForProjectForUpdate is ListSecretDependenciesForProject,
+	// taking a row-level write lock on every returned edge on backends that support
+	// one (Postgres FOR UPDATE), mirroring LockUserForUpdate/
+	// ListGlobalAdminAssignmentsForUpdate (#260). Used inside a WithTransaction so
+	// AddSecretDependency's cycle-check read and the edge it writes serialize
+	// against a concurrent racing edge addition for the same project on Postgres/HA;
+	// secretDependencyMu covers same-process callers (SQLite, single instance).
+	ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error)
 
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.
@@ -183,6 +197,14 @@ type Storage interface {
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
+	// LockMachineIdentityForUpdate re-reads a machine identity by ID, taking a
+	// row-level write lock on backends that support one (Postgres: SELECT … FOR
+	// UPDATE) so a read-modify-write on the row serializes against a concurrent
+	// writer of the same row — mirroring LockUserForUpdate. Use this — not
+	// GetMachineIdentity — inside a WithTransaction whenever a caller conditionally
+	// mutates state (e.g. TransitionMachineIdentity's revoked-is-terminal invariant,
+	// #388) that must not lose an update under concurrency.
+	LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error)
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
 	// ListAllMachineIdentities returns every machine identity across all projects —
@@ -289,6 +311,14 @@ type Storage interface {
 	// already reached (or the version is gone). This is the race-free gate for
 	// max-reads enforcement: concurrent reads can never collectively exceed the cap.
 	TryIncrementSecretReadCount(ctx context.Context, versionID uint, maxReads int) (bool, error)
+	// TryIncrementSecretNodeReadCount is TryIncrementSecretReadCount's secret-level
+	// twin (#133): keyed on the SECRET, not a version, so the count carries forward
+	// across rotate/rollback creating a new version — a per-version counter resets
+	// to zero on every new version, letting a burn-after-N-reads secret become
+	// re-readable simply by rolling back. This is the authoritative max-reads gate;
+	// TryIncrementSecretReadCount remains for the per-version read_count DISPLAY
+	// field only.
+	TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error)
 
 	// Secret Sharing Management
 	CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error)
@@ -373,6 +403,12 @@ type Storage interface {
 	// RestoreGroup clears a soft-deleted group's deleted_at (with its grants/members).
 	RestoreGroup(ctx context.Context, id uint) error
 	ListGroups(ctx context.Context) ([]*models.Group, error)
+	// ListGroupsPage returns one name-ordered page of groups (offset is a 0-based
+	// row offset) and the total count, without loading the rest of the table — used
+	// by the SCIM Groups list so an unfiltered request can't drain the whole
+	// directory into memory (see ListGroups' full-scan callers for why that's fine
+	// there: they intentionally want every group, e.g. SSO group sync).
+	ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error)
 	AddUserToGroup(ctx context.Context, userID, groupID uint) error
 	RemoveUserFromGroup(ctx context.Context, userID, groupID uint) error
 	ListGroupMembers(ctx context.Context, groupID uint) ([]*models.User, error)
@@ -426,14 +462,20 @@ type Storage interface {
 	// GetUserRoleIDsAt/GetUserGroupRoleIDsAt (via scopedRoleIDs) per scope.
 	GetUserRoleScopes(ctx context.Context, userID uint) ([]Scope, error)
 	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
+	// CheckPermission is a raw, scope-agnostic role/permission-grant existence
+	// check (direct OR group-inherited role), with NO admin-role bypass — it does
+	// not answer "would Authorize() grant this at scope X". Prefer
+	// core.HasPermissionByEmail (which resolves via Authorize/scopedRoleIDs per
+	// scope) for anything that needs the true live-authorization-equivalent
+	// answer (#376).
 	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 	// GetUserGroupPermissions returns the permissions a user holds via GROUP
 	// membership (group → group_roles → role_permissions), scope-agnostically and
 	// across all of the user's groups — the counterpart to GetUserPermissions, which
 	// covers only direct user_roles. Callers that need a user's full effective
-	// permission set (e.g. SoD conflict detection) must union both, mirroring how
-	// Authorize unions direct and group-inherited roles.
+	// permission set (e.g. SoD conflict detection, GetUserPermissionsByID) must
+	// union both, mirroring how Authorize unions direct and group-inherited roles.
 	GetUserGroupPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 
 	// Permission queries
@@ -456,6 +498,12 @@ type Storage interface {
 	// GetGroupRoleGrants is GetGroupRoles plus each grant's time-bound expiry
 	// (nil = permanent), so callers can surface remaining time on a JIT grant.
 	GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*GroupRoleGrant, error)
+	// ListGroupRoleAssignments returns every role grant held by a group across ALL
+	// scopes (unlike ListProjectRoleAssignments, which is scoped to one project) —
+	// used to evaluate the admin-rank ceiling before adding a member to the group,
+	// and the last-install-administrator invariant before removing one or deleting
+	// the group outright.
+	ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]RoleAssignment, error)
 	AssignRoleToGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
 	// AssignRoleToGroupWithExpiry binds a time-bound role to a group; see
 	// AssignRoleWithExpiry.
@@ -474,6 +522,17 @@ type Storage interface {
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
 	CreateSecretAccessLog(ctx context.Context, log *models.SecretAccessLog) error
 	ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error)
+	// PrincipalSecretFirstSeen returns, for every non-empty accessed_by with at least
+	// one access log row at or after `since`, the earliest access time per secret it
+	// touched in that range — aggregated in SQL (GROUP BY + MIN), not loaded as full
+	// log rows, so this stays cheap regardless of per-secret read volume. Backs the
+	// anomaly detector's per-principal breadth-exfiltration pass (#101): a principal
+	// reading many DIFFERENT secrets it has never touched before is invisible to the
+	// per-secret rules (each secret only sees one unremarkable access), so this
+	// aggregates across secrets by principal instead. See the LocalStorage
+	// implementation's doc comment for why `since` must stay a coarse (date-scale)
+	// bound rather than a narrow live-window one.
+	PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error)
 	// MostAccessedSecrets returns the most-read secrets (optionally scoped to a
 	// project) in the window since `since`, ordered by read count descending,
 	// capped at `limit`. Backs the usage-analytics dashboard.
@@ -484,7 +543,10 @@ type Storage interface {
 	UnusedSecrets(ctx context.Context, projectID *uint, notReadSince time.Time) ([]UnusedSecretStat, error)
 	CreateAnomalyAlert(ctx context.Context, alert *models.AnomalyAlert) error
 	ListAnomalyAlerts(ctx context.Context, acknowledged *bool) ([]models.AnomalyAlert, error)
-	AcknowledgeAnomalyAlert(ctx context.Context, id uint) error
+	// AcknowledgeAnomalyAlert marks an alert acknowledged and stamps who did it and
+	// when directly on the row (#217), alongside the separate audit event the core
+	// layer emits.
+	AcknowledgeAnomalyAlert(ctx context.Context, id, actorID uint, at time.Time) error
 	// ListUnalertedAnomalyAlerts returns alerts not yet pushed out (alerted=false),
 	// and MarkAnomalyAlertAlerted flags one as pushed — for proactive alerting.
 	ListUnalertedAnomalyAlerts(ctx context.Context) ([]models.AnomalyAlert, error)
@@ -529,7 +591,15 @@ type Storage interface {
 
 	// Session Management
 	CreateSession(ctx context.Context, session *models.Session) (*models.Session, error)
+	// GetSession looks up a LIVE (not-yet-rotated) session by token. A token
+	// belonging to a session RefreshSession has since rotated away must behave
+	// exactly like a deleted one here (see RotatedAt on models.Session) — used on
+	// every authenticated request and on Logout.
 	GetSession(ctx context.Context, token string) (*models.Session, error)
+	// GetSessionAny looks up a session by token regardless of rotation state.
+	// Used only by RefreshSession's reuse-detection path (#211), which must tell an
+	// already-rotated token (a reuse signal) apart from one that never existed.
+	GetSessionAny(ctx context.Context, token string) (*models.Session, error)
 	GetSessionByID(ctx context.Context, id uint) (*models.Session, error)
 	ListSessionsByUser(ctx context.Context, userID uint) ([]*models.Session, error)
 	// EnforceSessionLimit deletes a user's oldest sessions beyond the `keep` most-recent
@@ -543,6 +613,17 @@ type Storage interface {
 	// hashes — equal to the auth-cache key) for every session owned by or impersonating
 	// userID, so a state change can evict them from the auth cache immediately.
 	ListSessionTokenHashesForUser(ctx context.Context, userID uint) ([]string, error)
+	// RotateSession atomically supersedes the session at oldID with newSession inside
+	// a single DB transaction (#211): the CAS guard (rotated_at IS NULL) makes
+	// rotation race-free under concurrent refreshes of the same token — at most one
+	// caller wins (won=true). The loser must treat the loss as a reuse signal exactly
+	// like an out-of-band replay of an already-rotated token.
+	RotateSession(ctx context.Context, oldID uint, newSession *models.Session, now time.Time) (created *models.Session, won bool, err error)
+	// ListSessionTokenHashesByFamily / DeleteSessionsByFamily revoke every session
+	// descended from the same login (see FamilyID on models.Session) — used to kill
+	// the whole lineage when a refresh-token reuse is detected (#211).
+	ListSessionTokenHashesByFamily(ctx context.Context, familyID string) ([]string, error)
+	DeleteSessionsByFamily(ctx context.Context, familyID string) error
 	// TouchSession bumps last_seen_at only when it is older than the given staleness
 	// window (no-op otherwise) so the auth hot path is not turned into a write per request.
 	TouchSession(ctx context.Context, id uint, seenAt time.Time, staleness time.Duration) error
@@ -647,19 +728,6 @@ type Storage interface {
 	// CountSetupTokensSince counts tokens minted for (purpose, email) since a cutoff,
 	// backing resend throttling / daily caps.
 	CountSetupTokensSince(ctx context.Context, purpose, email string, since time.Time) (int64, error)
-
-	// API Client Management
-	CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
-	GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error)
-	RevokeAPIClient(ctx context.Context, clientID string) error
-	ListAPIClients(ctx context.Context) ([]*models.APIClient, error)
-	UpdateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error)
-
-	// API Token Management
-	CreateAPIToken(ctx context.Context, token *models.APIToken) (*models.APIToken, error)
-	GetAPIToken(ctx context.Context, id uint) (*models.APIToken, error)
-	ListAPITokens(ctx context.Context, clientID *uint) ([]*models.APIToken, error)
-	RevokeAPIToken(ctx context.Context, id uint) error
 
 	// Rotation Policy Management
 	CreateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error
@@ -903,6 +971,19 @@ type AuditChainVerification struct {
 	// under a superseded key version, which is recorded but not enforced).
 	Checkpointed     bool
 	CheckpointReason string
+
+	// AnchorToken/AnchoredAt/AnchorProvider surface the latest checkpoint's raw
+	// external-notary (RFC 3161) receipt (ADR-029), when one exists — regardless of
+	// whether this server was able to (re-)verify it locally (i.e. even without a
+	// configured trust root, or when local re-verification fails). Handing back the
+	// opaque token lets an operator or an independent monitor verify it themselves
+	// against the TSA out-of-band, without having to trust this server's own
+	// verification of it — the point of an external anchor in the first place.
+	// Empty when checkpoints are unavailable, no checkpoint exists yet, or the
+	// latest checkpoint was never anchored.
+	AnchorToken    []byte
+	AnchoredAt     *time.Time
+	AnchorProvider string
 }
 
 // UnusedSecretStat is one row of the unused-secrets report. LastRead is nil when

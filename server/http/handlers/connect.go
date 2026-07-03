@@ -6,13 +6,38 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// isSafeConnectError reports whether msg is one of the small set of
+// deliberately-crafted, safe messages core.ReadFederatedSecret /
+// CreateConnectRefGrant / DeleteConnectRefGrant themselves produce (an
+// unknown/disabled connector, a missing role, or a per-reference policy
+// denial). Anything else is assumed to originate from a lower layer —
+// the storage layer or an upstream connector (e.g. Vault) — whose raw
+// error text can leak internal detail and must be sanitized before it
+// reaches the client (backlog #116).
+func isSafeConnectError(msg string) bool {
+	for _, marker := range []string{
+		"keyorix connect is not enabled",
+		"unknown connector",
+		"a role is required for a connect ref-grant",
+		"is not permitted for your roles on connector",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
 
 // ConnectHandler serves the /connect federation endpoints.
 type ConnectHandler struct {
@@ -49,8 +74,17 @@ func (h *ConnectHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	value, err := h.coreService.ReadFederatedSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), name, ref)
 	if err != nil {
 		// Unknown connector / disabled is a client error; backend failures surface as
-		// a bad gateway since the upstream store is external.
-		sendError(w, "ConnectError", err.Error(), http.StatusBadGateway, nil)
+		// a bad gateway since the upstream store is external. Either way, the raw error
+		// text may embed the upstream connector's hostname or connection detail (e.g. a
+		// Vault error) — log it server-side and return a generic message to the client
+		// unless it's one of the deliberately-crafted, safe messages core.ReadFederatedSecret
+		// itself produces (backlog #116).
+		msg := err.Error()
+		if !isSafeConnectError(msg) {
+			log.Printf("Error reading federated secret via connector %q: %v", name, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "ConnectError", msg, http.StatusBadGateway, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -68,7 +102,8 @@ func (h *ConnectHandler) ListRefGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	grants, err := h.coreService.ListConnectRefGrants(r.Context())
 	if err != nil {
-		sendError(w, "ConnectError", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing connect ref-grants: %v", err)
+		sendError(w, "ConnectError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	out := make([]map[string]interface{}, 0, len(grants))
@@ -78,13 +113,17 @@ func (h *ConnectHandler) ListRefGrants(w http.ResponseWriter, r *http.Request) {
 			"role_id":    g.RoleID,
 			"connector":  g.Connector,
 			"ref_prefix": g.RefPrefix,
+			"expires_at": g.ExpiresAt,
 			"created_at": g.CreatedAt,
 		})
 	}
 	sendSuccess(w, map[string]interface{}{"grants": out}, "")
 }
 
-// CreateRefGrant adds a per-reference grant (ADR-045).
+// CreateRefGrant adds a per-reference grant (ADR-045). ExpiresAt is optional: omitted
+// or null makes the grant permanent (backward compatible); otherwise the grant stops
+// authorizing the moment it passes, mirroring how secret shares support a time-bound,
+// JIT expiry.
 func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -92,17 +131,25 @@ func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		RoleID    uint   `json:"role_id"`
-		Connector string `json:"connector"`
-		RefPrefix string `json:"ref_prefix"`
+		RoleID    uint       `json:"role_id"`
+		Connector string     `json:"connector"`
+		RefPrefix string     `json:"ref_prefix"`
+		ExpiresAt *time.Time `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "InvalidParameter", "invalid JSON body", http.StatusBadRequest, nil)
 		return
 	}
-	g, err := h.coreService.CreateConnectRefGrant(r.Context(), userCtx.UserID, body.RoleID, body.Connector, body.RefPrefix)
+	g, err := h.coreService.CreateConnectRefGrant(r.Context(), userCtx.UserID, body.RoleID, body.Connector, body.RefPrefix, body.ExpiresAt)
 	if err != nil {
-		sendError(w, "ConnectError", err.Error(), http.StatusBadRequest, nil)
+		msg := err.Error()
+		status := http.StatusBadRequest
+		if !isSafeConnectError(msg) {
+			log.Printf("Error creating connect ref-grant: %v", err)
+			msg = clientSafe(err)
+			status = http.StatusInternalServerError
+		}
+		sendError(w, "ConnectError", msg, status, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{
@@ -110,6 +157,7 @@ func (h *ConnectHandler) CreateRefGrant(w http.ResponseWriter, r *http.Request) 
 		"role_id":    g.RoleID,
 		"connector":  g.Connector,
 		"ref_prefix": g.RefPrefix,
+		"expires_at": g.ExpiresAt,
 	}, "Connect ref-grant created")
 }
 
@@ -126,7 +174,8 @@ func (h *ConnectHandler) DeleteRefGrant(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.coreService.DeleteConnectRefGrant(r.Context(), userCtx.UserID, uint(id)); err != nil {
-		sendError(w, "ConnectError", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error deleting connect ref-grant %d: %v", id, err)
+		sendError(w, "ConnectError", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"id": id}, "Connect ref-grant deleted")

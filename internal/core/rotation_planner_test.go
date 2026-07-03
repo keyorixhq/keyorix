@@ -213,6 +213,62 @@ func TestGenerateDeploymentRotationPlan(t *testing.T) {
 	assert.Equal(t, 1, dp.Projects[1].DueSoonCount)
 }
 
+// A cyclic dependency graph in ONE project (which the add path normally rejects,
+// ADR-052, but can slip past a racing AddSecretDependency call, #260) must not 500
+// the whole deployment-wide roll-up for every other project's viewers: it is
+// skipped and flagged in BrokenProjects, while every other project's plan still
+// comes back normally.
+func TestGenerateDeploymentRotationPlan_CyclicProjectIsSkippedNotFatal(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	c, db := newPlannerCore(t, now)
+	daysAgo := func(d int) *time.Time { tt := now.Add(-time.Duration(d) * 24 * time.Hour); return &tt }
+
+	mkProject := func(id uint, name string) {
+		require.NoError(t, db.Create(&models.Project{ID: id, Name: name}).Error)
+		require.NoError(t, db.Create(&models.Environment{ID: id, ProjectID: id, Name: name + "-env"}).Error)
+		pid := id
+		require.NoError(t, db.Create(&models.RotationPolicy{
+			Name: name + "-90d", Scope: "project", ProjectID: &pid, IntervalDays: 90, AlertDaysBefore: 14, IsActive: true,
+		}).Error)
+	}
+	mkSecret := func(id, projID, envID uint, name string, last *time.Time) {
+		require.NoError(t, db.Create(&models.SecretNode{
+			ID: id, Name: name, ProjectID: projID, EnvironmentID: envID, IsSecret: true, Status: "active",
+			OwnerID: 1, LastRotatedAt: last,
+		}).Error)
+	}
+
+	// Project 1 (broken): two overdue secrets with a cyclic edge inserted directly,
+	// bypassing AddSecretDependency's normal cycle guard — simulating #260's raced
+	// cycle.
+	mkProject(1, "broken")
+	mkSecret(1, 1, 1, "broken-a", daysAgo(120))
+	mkSecret(2, 1, 1, "broken-b", daysAgo(200))
+	require.NoError(t, db.Create(&models.SecretDependency{ProjectID: 1, DependentSecretID: 1, DependsOnSecretID: 2}).Error)
+	require.NoError(t, db.Create(&models.SecretDependency{ProjectID: 1, DependentSecretID: 2, DependsOnSecretID: 1}).Error)
+
+	// Project 2 (healthy): one overdue secret, no dependency graph issues.
+	mkProject(2, "healthy")
+	mkSecret(3, 2, 2, "healthy-overdue", daysAgo(150))
+
+	dp, err := c.GenerateDeploymentRotationPlan(ctx)
+	require.NoError(t, err, "one project's cycle must not fail the whole deployment-wide roll-up")
+
+	assert.Equal(t, 2, dp.ProjectsScanned)
+	require.Len(t, dp.BrokenProjects, 1, "the cyclic project is flagged, not silently dropped")
+	assert.Equal(t, uint(1), dp.BrokenProjects[0].ProjectID)
+	assert.Contains(t, dp.BrokenProjects[0].Error, "cycle")
+
+	// The healthy project's plan is still present and correct — the deployment view
+	// is not entirely blank just because one project is broken.
+	assert.Equal(t, 1, dp.ProjectsWithWork)
+	assert.Equal(t, 1, dp.TotalSecrets)
+	assert.Equal(t, 1, dp.OverdueCount)
+	require.Len(t, dp.Projects, 1)
+	assert.Equal(t, uint(2), dp.Projects[0].ProjectID)
+}
+
 func TestGenerateDeploymentRotationPlan_NothingDueAnywhere(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)

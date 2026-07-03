@@ -66,7 +66,16 @@ func (m *MockStorage) ListProjectsWithCounts(_ context.Context, _ bool) ([]stora
 	return nil, nil
 }
 
-func (m *MockStorage) GetProject(_ context.Context, id uint) (*models.Project, error) {
+func (m *MockStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "GetProject" {
+			args := m.Called(ctx, id)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).(*models.Project), args.Error(1)
+		}
+	}
 	return &models.Project{}, nil
 }
 
@@ -118,12 +127,28 @@ func (m *MockStorage) ListProjectRoleAssignments(ctx context.Context, projectID 
 	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
 }
 
+func (m *MockStorage) ListProjectMachineRoleAssignments(ctx context.Context, projectID uint) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
+}
+
 // ListGlobalAdminAssignmentsForUpdate is unused by the tests that construct a
 // MockStorage directly (they don't exercise RemoveUserRole's last-admin guard);
 // returns empty so the guard treats "no other admin" as the default in the rare
 // case something reaches it.
 func (m *MockStorage) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
 	return nil, nil
+}
+
+func (m *MockStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
+	args := m.Called(ctx, groupID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.RoleAssignment), args.Error(1)
 }
 
 func (m *MockStorage) CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error) {
@@ -311,6 +336,13 @@ func (m *MockStorage) ListSecretDependenciesForProject(ctx context.Context, proj
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*models.SecretDependency), args.Error(1)
+}
+
+// ListSecretDependenciesForProjectForUpdate has no row lock in the mock; it
+// reuses the ListSecretDependenciesForProject expectation, mirroring
+// LockUserForUpdate above.
+func (m *MockStorage) ListSecretDependenciesForProjectForUpdate(ctx context.Context, projectID uint) ([]*models.SecretDependency, error) {
+	return m.ListSecretDependenciesForProject(ctx, projectID)
 }
 
 func (m *MockStorage) DeleteSecretDependency(ctx context.Context, id uint) error {
@@ -579,6 +611,11 @@ func (m *MockStorage) TryIncrementSecretReadCount(ctx context.Context, versionID
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) TryIncrementSecretNodeReadCount(ctx context.Context, secretID uint, maxReads int) (bool, error) {
+	args := m.Called(ctx, secretID, maxReads)
+	return args.Bool(0), args.Error(1)
+}
+
 // Secret Sharing Management
 
 func (m *MockStorage) CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
@@ -840,6 +877,14 @@ func (m *MockStorage) ListGroups(ctx context.Context) ([]*models.Group, error) {
 	return args.Get(0).([]*models.Group), args.Error(1)
 }
 
+func (m *MockStorage) ListGroupsPage(ctx context.Context, offset, pageSize int) ([]*models.Group, int64, error) {
+	args := m.Called(ctx, offset, pageSize)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*models.Group), args.Get(1).(int64), args.Error(2)
+}
+
 func (m *MockStorage) AddUserToGroup(ctx context.Context, userID, groupID uint) error {
 	args := m.Called(ctx, userID, groupID)
 	return args.Error(0)
@@ -1031,6 +1076,14 @@ func (m *MockStorage) ListSecretAccessLogs(ctx context.Context, secretID uint, s
 	return args.Get(0).([]models.SecretAccessLog), args.Error(1)
 }
 
+func (m *MockStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error) {
+	args := m.Called(ctx, since)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]map[uint]time.Time), args.Error(1)
+}
+
 func (m *MockStorage) MostAccessedSecrets(ctx context.Context, projectID *uint, since time.Time, limit int) ([]storage.SecretUsageStat, error) {
 	args := m.Called(ctx, projectID, since, limit)
 	if args.Get(0) == nil {
@@ -1109,8 +1162,8 @@ func (m *MockStorage) ListAnomalyAlerts(ctx context.Context, acknowledged *bool)
 	return args.Get(0).([]models.AnomalyAlert), args.Error(1)
 }
 
-func (m *MockStorage) AcknowledgeAnomalyAlert(ctx context.Context, id uint) error {
-	args := m.Called(ctx, id)
+func (m *MockStorage) AcknowledgeAnomalyAlert(ctx context.Context, id, actorID uint, at time.Time) error {
+	args := m.Called(ctx, id, actorID, at)
 	return args.Error(0)
 }
 
@@ -1159,6 +1212,35 @@ func (m *MockStorage) GetSession(ctx context.Context, token string) (*models.Ses
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.Session), args.Error(1)
+}
+
+func (m *MockStorage) GetSessionAny(ctx context.Context, token string) (*models.Session, error) {
+	args := m.Called(ctx, token)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Session), args.Error(1)
+}
+
+func (m *MockStorage) RotateSession(ctx context.Context, oldID uint, newSession *models.Session, now time.Time) (*models.Session, bool, error) {
+	args := m.Called(ctx, oldID, newSession, now)
+	if args.Get(0) == nil {
+		return nil, args.Bool(1), args.Error(2)
+	}
+	return args.Get(0).(*models.Session), args.Bool(1), args.Error(2)
+}
+
+func (m *MockStorage) ListSessionTokenHashesByFamily(ctx context.Context, familyID string) ([]string, error) {
+	args := m.Called(ctx, familyID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
+func (m *MockStorage) DeleteSessionsByFamily(ctx context.Context, familyID string) error {
+	args := m.Called(ctx, familyID)
+	return args.Error(0)
 }
 
 func (m *MockStorage) DeleteSession(ctx context.Context, id uint) error {
@@ -1305,55 +1387,6 @@ func (m *MockStorage) CountSetupTokensSince(ctx context.Context, purpose, email 
 	return args.Get(0).(int64), args.Error(1)
 }
 
-// API Client Management
-
-func (m *MockStorage) CreateAPIClient(ctx context.Context, client *models.APIClient) (*models.APIClient, error) {
-	args := m.Called(ctx, client)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.APIClient), args.Error(1)
-}
-
-func (m *MockStorage) GetAPIClient(ctx context.Context, clientID string) (*models.APIClient, error) {
-	args := m.Called(ctx, clientID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.APIClient), args.Error(1)
-}
-
-func (m *MockStorage) RevokeAPIClient(ctx context.Context, clientID string) error {
-	args := m.Called(ctx, clientID)
-	return args.Error(0)
-}
-
-func (m *MockStorage) ListAPIClients(_ context.Context) ([]*models.APIClient, error) {
-	return nil, nil
-}
-
-func (m *MockStorage) UpdateAPIClient(_ context.Context, client *models.APIClient) (*models.APIClient, error) {
-	return client, nil
-}
-
-// API Token Management
-
-func (m *MockStorage) CreateAPIToken(_ context.Context, token *models.APIToken) (*models.APIToken, error) {
-	return token, nil
-}
-
-func (m *MockStorage) GetAPIToken(_ context.Context, id uint) (*models.APIToken, error) {
-	return &models.APIToken{ID: id}, nil
-}
-
-func (m *MockStorage) ListAPITokens(_ context.Context, _ *uint) ([]*models.APIToken, error) {
-	return nil, nil
-}
-
-func (m *MockStorage) RevokeAPIToken(_ context.Context, _ uint) error {
-	return nil
-}
-
 // Health and Maintenance
 
 func (m *MockStorage) HealthCheck(ctx context.Context) error {
@@ -1478,6 +1511,14 @@ func (m *MockStorage) CreateMachineIdentity(ctx context.Context, mi *models.Mach
 }
 
 func (m *MockStorage) GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentity), args.Error(1)
+}
+
+func (m *MockStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

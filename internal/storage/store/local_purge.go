@@ -27,12 +27,94 @@ func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model interface{
 	return result.RowsAffected, nil
 }
 
+// PurgeDeletedUsersBefore hard-deletes soft-deleted users past the retention window,
+// together with every row that references them as a principal — role/group
+// membership, shares they RECEIVED, personal access tokens, and sessions — in one
+// transaction. None of those tables carry their own deleted_at, so a plain purge of
+// only the users row (as every other purgeDeletedBefore call does) left them
+// orphaned indefinitely: a stale UserRole/GroupRole grant referencing a purged ID
+// that could collide with a future reused ID, a PAT/session row that (before the
+// core.DeleteUser fix) may still be live, and a share the user received sitting
+// unreachable but undestroyed. Returns the number of users purged.
 func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) {
-	return ls.purgeDeletedBefore(ctx, &models.User{}, before)
+	var purged int64
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ids []uint
+		if e := tx.Unscoped().Model(&models.User{}).
+			Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+			Pluck("id", &ids).Error; e != nil {
+			return e
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if e := tx.Where("user_id IN ?", ids).Delete(&models.UserRole{}).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("user_id IN ?", ids).Delete(&models.UserGroup{}).Error; e != nil {
+			return e
+		}
+		// ShareRecord carries its own DeletedAt (soft-delete) — Unscoped so this is a
+		// true hard delete, not another soft-deleted orphan nothing else purges.
+		if e := tx.Unscoped().Where("recipient_id IN ? AND is_group = ?", ids, false).Delete(&models.ShareRecord{}).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("user_id IN ?", ids).Delete(&models.PersonalAccessToken{}).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("user_id IN ? OR impersonated_by IN ?", ids, ids).Delete(&models.Session{}).Error; e != nil {
+			return e
+		}
+		ru := tx.Unscoped().Where("id IN ?", ids).Delete(&models.User{})
+		if ru.Error != nil {
+			return ru.Error
+		}
+		purged = ru.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return purged, nil
 }
 
+// PurgeDeletedProjectsBefore hard-deletes soft-deleted projects past the retention
+// window, together with the project-scoped role grants (UserRole/GroupRole) that
+// reference them, in one transaction. UserRole/GroupRole are plain join rows keyed
+// by ProjectID with no FK/cascade of their own — a plain purge of just the projects
+// row left these grants behind, permanently orphaned (referencing a project ID that
+// no longer exists anywhere, since IDs are never reused): dead weight in every "who
+// has access" report and role/access-review listing forever after. Global-scope
+// grants (ProjectID 0) are untouched — they aren't project-scoped.
 func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
-	return ls.purgeDeletedBefore(ctx, &models.Project{}, before)
+	var purged int64
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ids []uint
+		if e := tx.Unscoped().Model(&models.Project{}).
+			Where("deleted_at IS NOT NULL AND deleted_at < ?", before).
+			Pluck("id", &ids).Error; e != nil {
+			return e
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if e := tx.Where("project_id IN ?", ids).Delete(&models.UserRole{}).Error; e != nil {
+			return e
+		}
+		if e := tx.Where("project_id IN ?", ids).Delete(&models.GroupRole{}).Error; e != nil {
+			return e
+		}
+		rp := tx.Unscoped().Where("id IN ?", ids).Delete(&models.Project{})
+		if rp.Error != nil {
+			return rp.Error
+		}
+		purged = rp.RowsAffected
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return purged, nil
 }
 
 func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {

@@ -1,8 +1,9 @@
 // sso.go — human single-sign-on via OIDC (authorization-code flow). A user clicks
 // "Sign in with SSO", is redirected to their IdP, and on callback Keyorix verifies
 // the id_token (signature via the issuer's JWKS, issuer, audience=client_id, expiry,
-// and the nonce it issued), maps the identity to a Keyorix user (the SCIM externalId
-// first, then email), and mints the SAME session a password login would — so an
+// and the nonce it issued), maps the identity to a Keyorix user (this provider's
+// scoped externalId first, then a provider-gated email fallback), and mints the SAME
+// session a password login would — so an
 // IdP-provisioned (passwordless) user can actually sign in. SSO logins bypass
 // Keyorix-local MFA: the IdP is the trusted authenticator.
 //
@@ -21,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -69,6 +71,17 @@ type SSOProvider struct {
 
 	AutoProvision bool   // JIT-create an account on first login for an unknown identity
 	DefaultRole   string // baseline role for JIT-provisioned users ("" → system_viewer)
+
+	// TrustAssertedEmail opts a SAML provider into treating its asserted email as
+	// verified for resolveSSOUser's email-fallback account linking. SAML carries no
+	// per-assertion equivalent of OIDC's email_verified claim — the assertion being
+	// IdP-signed only proves the IdP sent it, not that the IdP itself verified
+	// ownership of that address (a self-service/low-trust IdP could let a user set
+	// any email). Off by default: without it, CompleteSAML's email fallback can
+	// still seed a brand-new JIT account (nothing to take over) but cannot claim an
+	// EXISTING one — closing a SAML-specific account-takeover path (#89) that
+	// OIDC's real email_verified claim already closes. Ignored for OIDC providers.
+	TrustAssertedEmail bool
 
 	GroupSync   bool   // reconcile native group memberships from the IdP groups claim on login
 	GroupsClaim string // id_token claim carrying group names ("" → "groups")
@@ -182,7 +195,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		return nil, nil, "", err
 	}
 
-	user, err := c.resolveSSOUser(ctx, sub, email, emailVerified)
+	user, err := c.resolveSSOUser(ctx, p.Name, sub, email, emailVerified)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -191,7 +204,7 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 		if !p.AutoProvision {
 			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
 		}
-		if user, err = c.provisionSSOUser(ctx, p, sub, email, name); err != nil {
+		if user, err = c.provisionSSOUser(ctx, p, sub, email, emailVerified, name); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -295,9 +308,13 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		return nil, nil, "", fmt.Errorf("the assertion carried no subject or email")
 	}
 
-	// A SAML assertion's attributes (incl. email) are carried inside the IdP-signed,
-	// library-verified assertion, so the email is treated as verified here.
-	user, err := c.resolveSSOUser(ctx, info.Subject, info.Email, true)
+	// The assertion being IdP-signed proves the IdP sent this email, not that the
+	// IdP verified the user OWNS it — SAML has no per-assertion equivalent of
+	// OIDC's email_verified claim. Trusting it unconditionally let a self-service/
+	// low-trust SAML IdP claim an EXISTING account (up to a native admin) merely
+	// by asserting its address (#89). Gate on the provider's explicit opt-in
+	// instead; see SSOProvider.TrustAssertedEmail.
+	user, err := c.resolveSSOUser(ctx, p.Name, info.Subject, info.Email, p.TrustAssertedEmail)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -305,7 +322,7 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		if !p.AutoProvision {
 			return nil, nil, "", fmt.Errorf("no Keyorix account matches this SSO identity")
 		}
-		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, info.Name); err != nil {
+		if user, err = c.provisionSSOUser(ctx, p, info.Subject, info.Email, true, info.Name); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -335,29 +352,48 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	return session, user, st.ReturnTo, nil
 }
 
-// resolveSSOUser maps the IdP identity to a Keyorix user: the SCIM externalId
-// (subject) first, then email. Returns (nil, nil) when neither matches — the caller
-// decides whether to refuse the login or JIT-provision the account.
+// ssoExternalIDScheme namespaces an SSO-provider-managed identity inside the shared
+// external_id column. A scoped value "sso:<provider>:<subject>" binds the account to
+// exactly ONE SSO provider, so a second IdP that asserts the same subject — or the same
+// email — cannot claim it (see resolveSSOUser). Bare external_ids (SCIM externalId,
+// RFC 7644) and empty values (local accounts) are deliberately left unscoped so they
+// stay interoperable; only JIT-provisioned SSO accounts carry the scheme.
+const ssoExternalIDScheme = "sso:"
+
+// ssoExternalID builds the provider-scoped external_id for an SSO identity. Provider
+// names are configuration keys (no ':'), so the scheme + provider form a stable prefix.
+func ssoExternalID(provider, subject string) string {
+	return ssoExternalIDScheme + provider + ":" + subject
+}
+
+// ssoBoundToOtherProvider reports whether externalID is an SSO-scoped identity owned by
+// a provider OTHER than `provider`. An account in that state must never be linked to
+// `provider`'s assertion — doing so is exactly the cross-provider account takeover this
+// guards against. Bare/empty external_ids are not provider-bound and return false.
+func ssoBoundToOtherProvider(externalID, provider string) bool {
+	return strings.HasPrefix(externalID, ssoExternalIDScheme) &&
+		!strings.HasPrefix(externalID, ssoExternalID(provider, ""))
+}
+
+// resolveSSOUser maps a verified IdP identity from `provider` to a Keyorix user: this
+// provider's own scoped external_id first, then email. Returns (nil, nil) when neither
+// matches — the caller decides whether to refuse the login or JIT-provision the account.
 //
 // The email fallback carries two guards that close a cross-provider account-takeover
 // vector when more than one SSO provider is trusted (e.g. a corporate IdP plus a
 // weaker/partner IdP). (1) The email must be EXPLICITLY verified: an IdP that lets a
 // user self-assert an address — or merely omits email_verified — cannot use it to
 // claim an EXISTING account (a brand-new JIT account is still provisionable, since
-// there is nothing to take over). (2) The matched account must not already be bound
-// to a DIFFERENT federated identity; otherwise a second IdP asserting the same email
-// could take over an account owned by the first. A never-federated (native or
-// SCIM-by-email) account is claimed by this subject on first link, so a later
-// provider can't re-link it by asserting the same address.
-//
-// Residual (documented): a malicious provider that can choose its subjects could still
-// forge a sub equal to a victim's externalId and match via the subject branch. Fully
-// closing that requires binding each federated identity to its issuer (as the machine
-// OIDC path does) — a schema change tracked separately.
-func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string, emailVerified bool) (*models.User, error) {
+// there is nothing to take over). (2) The matched account must not already be bound to
+// a scoped identity owned by a DIFFERENT provider (see ssoBoundToOtherProvider);
+// otherwise a second IdP asserting the same email could take over an account owned by
+// the first. A never-federated (native or SCIM-by-email) account is claimed for THIS
+// provider+subject on first link, so a later provider can't re-link it by asserting the
+// same address.
+func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email string, emailVerified bool) (*models.User, error) {
 	notFound := i18n.T("ErrorUserNotFound", nil)
 	if sub != "" {
-		if u, err := c.storage.GetUserByExternalID(ctx, sub); err == nil {
+		if u, err := c.storage.GetUserByExternalID(ctx, ssoExternalID(provider, sub)); err == nil {
 			return u, nil
 		} else if !strings.Contains(err.Error(), notFound) {
 			return nil, err
@@ -373,14 +409,14 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string, ema
 		}
 		return nil, err
 	}
-	if u.ExternalID != "" && u.ExternalID != sub {
-		return nil, fmt.Errorf("this email is already linked to a different SSO identity")
+	if ssoBoundToOtherProvider(u.ExternalID, provider) {
+		return nil, fmt.Errorf("the email %q is already linked to a different SSO provider", email)
 	}
 	if u.ExternalID == "" && sub != "" {
-		// Claim this never-federated account for the verifying subject so a later
-		// provider can't re-link it by asserting the same email. Best-effort: a failed
-		// update just means we re-link on the next login.
-		u.ExternalID = sub
+		// Claim this never-federated account for the verifying provider+subject so a
+		// later provider can't re-link it by asserting the same email. Best-effort: a
+		// failed update just means we re-link on the next login.
+		u.ExternalID = ssoExternalID(provider, sub)
 		if updated, uerr := c.storage.UpdateUser(ctx, u); uerr == nil {
 			u = updated
 		}
@@ -397,13 +433,19 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, sub, email string, ema
 // pending_first_login (which would trap an SSO user in a password-change-only
 // restricted session they can never clear). The baseline role is the provider's
 // default_role (system_viewer when unset); an unknown role grants nothing.
-func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub, email, name string) (*models.User, error) {
+func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub, email string, emailVerified bool, name string) (*models.User, error) {
 	if strings.TrimSpace(email) == "" {
 		return nil, fmt.Errorf("the IdP returned no email; cannot auto-provision an account")
 	}
-	// Guard against a race / case where a user materialised between the resolve and
-	// here: reuse it rather than create a duplicate.
-	if existing, ferr := c.FindSCIMUser(ctx, sub, email); ferr == nil && existing != nil {
+	// Guard against a race / case where a user materialised between the resolve and here:
+	// reuse it rather than create a duplicate. This MUST go through resolveSSOUser (not a
+	// raw email lookup), so the same guards apply — an EXISTING account is reused via an
+	// email match ONLY when the email is verified, and never when it is bound to a
+	// different provider's federated identity. Re-running the SAME gated resolution
+	// means the race path cannot bypass either check.
+	if existing, ferr := c.resolveSSOUser(ctx, p.Name, sub, email, emailVerified); ferr != nil {
+		return nil, ferr
+	} else if existing != nil {
 		return existing, nil
 	}
 	username, err := c.deriveSCIMUsername(ctx, email)
@@ -421,7 +463,7 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	now := c.now()
 	created, err := c.storage.CreateUser(ctx, &models.User{
 		Username: username, Email: email, DisplayName: displayName,
-		PasswordHash: hash, IsActive: true, AccountState: AccountActive, ExternalID: sub,
+		PasswordHash: hash, IsActive: true, AccountState: AccountActive, ExternalID: ssoExternalID(p.Name, sub),
 		PasswordChangedAt: &now, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
@@ -608,7 +650,7 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 	// the point, since authorization here is rooted in the admin-configured
 	// GroupRoleMap and the verified IdP assertion, not in the user's own
 	// roles.assign-derived authority.
-	added, removed := 0, 0
+	added, removed, blocked := 0, 0, 0
 	for role := range managedRoles {
 		r, rerr := c.storage.GetRoleByName(ctx, role)
 		if rerr != nil {
@@ -616,6 +658,16 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 		}
 		switch {
 		case desiredRoles[role] && !currentSet[role]:
+			// Refuse to grant an admin-tier role from an IdP group mapping (#96) —
+			// the same escalation-by-proxy guard reconcileSSOGroups already applies to
+			// admin-conferring GROUPS. GroupRoleMap is configured once by an admin, but
+			// IdP group membership is frequently self-service or governed by people
+			// who are not Keyorix admins, so a mapping intended for a routine role must
+			// not double as a path to global admin for anyone who can join the group.
+			if isAdminRoleName(role) {
+				blocked++
+				continue
+			}
 			if c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}) == nil {
 				added++
 			}
@@ -625,9 +677,12 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 			}
 		}
 	}
-	if added > 0 || removed > 0 {
-		c.writeAuditEvent(ctx, EventSSORolesSynced, actorPtr(userID), nil,
-			fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, added, removed))
+	if added > 0 || removed > 0 || blocked > 0 {
+		msg := fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, added, removed)
+		if blocked > 0 {
+			msg += fmt.Sprintf("; %d admin-tier role grant(s) refused (IdP group mapping cannot grant admin)", blocked)
+		}
+		c.writeAuditEvent(ctx, EventSSORolesSynced, actorPtr(userID), nil, msg)
 	}
 }
 
@@ -760,8 +815,26 @@ func randToken() (string, error) {
 // sanitizeReturnTo allows only a same-origin in-app path (leading single slash), so
 // the post-login redirect can't be turned into an open redirect.
 func sanitizeReturnTo(s string) string {
-	if strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "//") {
-		return s
+	if !strings.HasPrefix(s, "/") || strings.HasPrefix(s, "//") {
+		return ""
 	}
-	return ""
+	// A backslash right after the leading slash — e.g. "/\evil.com" — is rejected
+	// outright: several browsers normalize a leading "\" to "/", turning this into
+	// "//evil.com", the exact protocol-relative open-redirect the "//" check above
+	// is meant to block, just spelled with a backslash to slip past a naive
+	// HasPrefix(s, "//") check. Reject a backslash anywhere in the value, not just
+	// right after the leading slash — a normalized-later backslash deeper in the
+	// string (e.g. "/ok/\/evil.com") could still be re-interpreted as a host
+	// boundary by a permissive parser downstream.
+	if strings.ContainsRune(s, '\\') {
+		return ""
+	}
+	// Belt-and-suspenders: confirm this really parses as a schemeless, hostless
+	// relative reference. Guards against any other scheme/host-smuggling trick
+	// (e.g. an embedded "://") that the prefix checks above don't anticipate.
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return ""
+	}
+	return s
 }

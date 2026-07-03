@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
@@ -20,6 +21,18 @@ var (
 	exportEnv     string
 	exportProject string
 )
+
+// createExportFile opens path for a fresh plaintext-secrets export. O_EXCL
+// refuses to write through a pre-existing path — including a symlink an
+// attacker (with write access to a shared directory, e.g. /tmp) planted at the
+// target ahead of time, which os.Create's default O_TRUNC would silently
+// follow, writing plaintext secrets to wherever the symlink points. O_NOFOLLOW
+// is a second layer against a dangling symlink placed in the instant between
+// the check and the open. 0600 keeps the export from being world/group-
+// readable on disk (#114).
+func createExportFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_EXCL|syscall.O_NOFOLLOW, 0o600) // #nosec G304 -- operator-supplied CLI output path, not attacker input
+}
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
@@ -90,11 +103,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	var out io.Writer = os.Stdout
 	if exportOutput != "" {
-		// 0600: this file holds plaintext secret values — sibling writers
-		// (render.go, scan.go, fix.go) all use the same restrictive mode.
-		f, err := os.OpenFile(exportOutput, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304
+		f, err := createExportFile(exportOutput)
 		if err != nil {
-			return fmt.Errorf("cannot create output file %q: %w", exportOutput, err)
+			return fmt.Errorf("cannot create output file %q (it may already exist — remove it or choose a different path): %w", exportOutput, err)
 		}
 		defer f.Close() //nolint:errcheck
 		out = f
@@ -163,7 +174,18 @@ func fetchSecretValues(ctx context.Context, rc *common.RemoteClient, list []stru
 
 // ── Format writers ────────────────────────────────────────────────────────────
 
+// writeDotenv emits KEY=VALUE lines. The VALUE is quote-escaped above, but a KEY
+// containing an embedded newline (or carriage return) has no native escape in the
+// dotenv format — emitting it raw (#384) would let a secret named e.g.
+// "FOO\nINJECTED=evil" inject an extra, attacker-controlled KEY=VALUE line into an
+// artifact downstream tooling (docker run --env-file, CI --env-file) treats as fully
+// trusted. Refuse the export instead of silently producing an unsafe file.
 func writeDotenv(w io.Writer, secrets []exportedSecret) error {
+	for _, s := range secrets {
+		if strings.ContainsAny(s.Name, "\r\n") {
+			return fmt.Errorf("secret %q (id=%d) has a name containing a newline, which cannot be safely represented as a dotenv key — rename the secret before exporting to dotenv format", s.Name, s.ID)
+		}
+	}
 	fmt.Fprintf(w, "# Exported by Keyorix — %s\n", time.Now().Format("2006-01-02")) //nolint:errcheck
 	for _, s := range secrets {
 		val := s.Value

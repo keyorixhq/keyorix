@@ -6,12 +6,42 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 )
+
+// isSafeSSOError reports whether msg is one of the small set of deliberately-
+// crafted, safe messages core.CompleteSSO itself produces without wrapping a
+// lower-layer error. Everything else — an authorization-code exchange failure,
+// an id_token verification failure, or a storage-layer lookup error — wraps a
+// raw error via %w and can carry internal detail (a library's wording, an
+// upstream IdP response fragment, DB/ORM text). Reflecting that verbatim into
+// the redirect fragment the browser receives would leak it to the client
+// (backlog #116), so anything not on this allowlist is sanitized.
+func isSafeSSOError(msg string) bool {
+	for _, safe := range []string{
+		"unknown SSO provider",
+		"unknown SAML provider",
+		"invalid or expired login state",
+		"login state does not match the callback provider",
+		"login state expired",
+		"the token response carried no id_token",
+		"the assertion carried no subject or email",
+		"no Keyorix account matches this SSO identity",
+		"account suspended",
+		"the IdP returned no email; cannot auto-provision an account",
+	} {
+		if strings.Contains(msg, safe) {
+			return true
+		}
+	}
+	return false
+}
 
 // ListSSOProviders handles GET /auth/sso/providers — the enabled provider names, so
 // the login page can render the right "Sign in with …" buttons.
@@ -25,7 +55,12 @@ func (h *AuthHandler) BeginSSO(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	authURL, err := h.coreService.BeginSSO(r.Context(), provider, r.URL.Query().Get("return_to"))
 	if err != nil {
-		sendError(w, "SSOError", err.Error(), http.StatusBadRequest, nil)
+		msg := err.Error()
+		if !strings.Contains(msg, "unknown SSO provider") {
+			log.Printf("Error beginning SSO login via provider %q: %v", provider, err)
+			msg = clientSafe(err)
+		}
+		sendError(w, "SSOError", msg, http.StatusBadRequest, nil)
 		return
 	}
 	// authURL is built by core from the provider's operator-configured, discovery-
@@ -57,7 +92,12 @@ func (h *AuthHandler) CompleteSSO(w http.ResponseWriter, r *http.Request) {
 
 	session, _, returnTo, err := h.coreService.CompleteSSO(r.Context(), provider, code, state, r.Header.Get("User-Agent"), r.RemoteAddr)
 	if err != nil {
-		h.redirectFragment(w, r, completeURL, url.Values{"error": {err.Error()}})
+		msg := err.Error()
+		if !isSafeSSOError(msg) {
+			log.Printf("Error completing SSO login via provider %q: %v", provider, err)
+			msg = clientSafe(err)
+		}
+		h.redirectFragment(w, r, completeURL, url.Values{"error": {msg}})
 		return
 	}
 

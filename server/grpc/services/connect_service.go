@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -49,7 +50,14 @@ func (s *ConnectGRPCService) ReadSecret(ctx context.Context, req *pb.ReadFederat
 	}
 	value, err := s.core.ReadFederatedSecret(ctx, actor.ActorKind(), actor.PrincipalID(), req.GetConnector(), req.GetRef())
 	if err != nil {
-		return nil, err
+		msg := err.Error()
+		code := codes.FailedPrecondition
+		if !isSafeConnectError(msg) {
+			log.Printf("Error reading federated secret via connector %q: %v", req.GetConnector(), err)
+			msg = clientSafe(err)
+			code = codes.Internal
+		}
+		return nil, status.Error(code, msg)
 	}
 	return &pb.FederatedSecretValue{
 		Connector: req.GetConnector(),
@@ -70,7 +78,8 @@ func (s *ConnectGRPCService) ListRefGrants(ctx context.Context, _ *emptypb.Empty
 	}
 	grants, err := s.core.ListConnectRefGrants(ctx)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.Printf("Error listing connect ref-grants: %v", err)
+		return nil, status.Error(codes.Internal, clientSafe(err))
 	}
 	out := make([]*pb.ConnectRefGrant, 0, len(grants))
 	for _, g := range grants {
@@ -79,12 +88,15 @@ func (s *ConnectGRPCService) ListRefGrants(ctx context.Context, _ *emptypb.Empty
 			RoleId:    intToU32(int(g.RoleID)),
 			Connector: g.Connector,
 			RefPrefix: g.RefPrefix,
+			ExpiresAt: timePtrToTs(g.ExpiresAt),
 		})
 	}
 	return &pb.ConnectRefGrantList{Grants: out}, nil
 }
 
-// CreateRefGrant adds a per-reference grant. Gated by roles.write.
+// CreateRefGrant adds a per-reference grant. Gated by roles.write. ExpiresAt is
+// optional (ADR-045 follow-up): omitted/nil makes the grant permanent, mirroring
+// how share creation handles an optional expiry.
 func (s *ConnectGRPCService) CreateRefGrant(ctx context.Context, req *pb.CreateConnectRefGrantRequest) (*pb.ConnectRefGrant, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
@@ -93,15 +105,23 @@ func (s *ConnectGRPCService) CreateRefGrant(ctx context.Context, req *pb.CreateC
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
 		return nil, err
 	}
-	g, err := s.core.CreateConnectRefGrant(ctx, actor.PrincipalID(), uint(req.GetRoleId()), req.GetConnector(), req.GetRefPrefix())
+	g, err := s.core.CreateConnectRefGrant(ctx, actor.PrincipalID(), uint(req.GetRoleId()), req.GetConnector(), req.GetRefPrefix(), tsToTimePtr(req.GetExpiresAt()))
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		msg := err.Error()
+		code := codes.InvalidArgument
+		if !isSafeConnectError(msg) {
+			log.Printf("Error creating connect ref-grant: %v", err)
+			msg = clientSafe(err)
+			code = codes.Internal
+		}
+		return nil, status.Error(code, msg)
 	}
 	return &pb.ConnectRefGrant{
 		Id:        intToU32(int(g.ID)),
 		RoleId:    intToU32(int(g.RoleID)),
 		Connector: g.Connector,
 		RefPrefix: g.RefPrefix,
+		ExpiresAt: timePtrToTs(g.ExpiresAt),
 	}, nil
 }
 
@@ -115,7 +135,8 @@ func (s *ConnectGRPCService) DeleteRefGrant(ctx context.Context, req *pb.DeleteC
 		return nil, err
 	}
 	if err := s.core.DeleteConnectRefGrant(ctx, actor.PrincipalID(), uint(req.GetId())); err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.Printf("Error deleting connect ref-grant %d: %v", req.GetId(), err)
+		return nil, status.Error(codes.Internal, clientSafe(err))
 	}
 	return &emptypb.Empty{}, nil
 }
