@@ -195,8 +195,11 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 	}
 	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, uint(id), uint(userID), body.Role); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "unknown role") {
+		switch {
+		case strings.Contains(err.Error(), "unknown role"):
 			status = http.StatusBadRequest
+		case strings.Contains(err.Error(), "last administrator"):
+			status = http.StatusConflict
 		}
 		sendError(w, "Error", err.Error(), status, nil)
 		return
@@ -223,8 +226,11 @@ func (h *CatalogHandler) RemoveProjectMember(w http.ResponseWriter, r *http.Requ
 	}
 	if err := h.coreService.RemoveProjectMember(r.Context(), userCtx.UserID, uint(id), uint(userID)); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not a member") {
+		switch {
+		case strings.Contains(err.Error(), "not a member"):
 			status = http.StatusNotFound
+		case strings.Contains(err.Error(), "last administrator"):
+			status = http.StatusConflict
 		}
 		sendError(w, "Error", err.Error(), status, nil)
 		return

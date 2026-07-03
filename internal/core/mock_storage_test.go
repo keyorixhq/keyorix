@@ -73,8 +73,8 @@ func (m *MockStorage) DeleteProject(_ context.Context, _ uint) error {
 	return nil
 }
 
-func (m *MockStorage) RestoreProject(_ context.Context, _ uint) error {
-	return nil
+func (m *MockStorage) RestoreProject(_ context.Context, _ uint) (int, int, error) {
+	return 0, 0, nil
 }
 
 func (m *MockStorage) ListEnvironments(_ context.Context) ([]*models.Environment, error) {
@@ -901,6 +901,11 @@ func (m *MockStorage) AssignRoleWithExpiry(ctx context.Context, userID, roleID u
 
 func (m *MockStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
 	args := m.Called(ctx, userID, roleID, scope)
+	return args.Error(0)
+}
+
+func (m *MockStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID, projectID uint) error {
+	args := m.Called(ctx, userID, projectID)
 	return args.Error(0)
 }
 

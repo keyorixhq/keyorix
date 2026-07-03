@@ -162,15 +162,18 @@ func TestTransitionMembership_RevokeRemovesRole(t *testing.T) {
 	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
 		return x.State == MembershipRevoked && x.RevokedAt != nil
 	})).Return(nil)
-	// RemoveProjectMember resolves and drops the role grant (best-effort).
+	// RemoveProjectMember resolves and drops the role grant (best-effort). The
+	// role (5) doesn't carry roles.assign, so the last-admin guard (#236) is a
+	// fast no-op and doesn't need ListProjectRoleAssignments mocked.
 	store.On("GetUserRoleIDsExact", ctx, uint(2), storage.Scope{ProjectID: 1}).Return([]uint{5}, nil)
-	store.On("RemoveRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
+	store.On("RoleSetHasPermission", ctx, []uint{5}, "roles.assign").Return(false, nil)
+	store.On("RemoveAllProjectRoleGrants", ctx, uint(2), uint(1)).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
 	out, err := c.TransitionMembership(ctx, 1, 50, MembershipRevoked, 9)
 	require.NoError(t, err)
 	assert.Equal(t, MembershipRevoked, out.State)
-	store.AssertCalled(t, "RemoveRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1})
+	store.AssertCalled(t, "RemoveAllProjectRoleGrants", ctx, uint(2), uint(1))
 }
 
 func TestStaleInvites_PassesCutoff(t *testing.T) {
