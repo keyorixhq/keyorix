@@ -212,6 +212,38 @@ func TestRevokeAccessReviewGrant_ShareAndOwner(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestRevokeAccessReviewGrant_CrossProjectShareRevokeRefused pins #99: a reviewer
+// authorized on project A must not be able to revoke a share belonging to a
+// secret in project B by passing its SecretID — revokeReviewShare previously
+// looked up the share purely by SecretID with no check that the secret actually
+// belongs to the caller's project (IDOR).
+func TestRevokeAccessReviewGrant_CrossProjectShareRevokeRefused(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(&models.SecretNode{}, &models.Environment{}, &models.ShareRecord{}))
+
+	const projA, projB = uint(2), uint(3)
+	h.CreateTestUser(t, "alice", 10) // owner in project B
+	h.CreateTestUser(t, "bob", 11)   // direct-share recipient in project B
+	require.NoError(t, h.DB.Create(&models.Environment{ID: 30, ProjectID: projB, Name: "prod"}).Error)
+	require.NoError(t, h.DB.Create(&models.SecretNode{
+		ID: 600, ProjectID: projB, EnvironmentID: 30, OwnerID: 10, Name: "b-secret", Type: "password", Status: "active", IsSecret: true,
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 600, RecipientID: 11, IsGroup: false, Permission: "read"}).Error)
+
+	ctx := context.Background()
+	// A reviewer scoped to project A passes project B's SecretID.
+	err := h.CoreService.RevokeAccessReviewGrant(ctx, 1, projA, core.AccessReviewDecision{
+		Source: "direct_share", PrincipalID: 11, SecretID: 600,
+	})
+	require.Error(t, err, "a secret from a different project must not be revocable")
+
+	// The share still exists — untouched.
+	var count int64
+	require.NoError(t, h.DB.Model(&models.ShareRecord{}).Where("secret_id = ? AND recipient_id = ?", 600, 11).Count(&count).Error)
+	assert.Equal(t, int64(1), count, "the cross-project share must survive the refused revoke attempt")
+}
+
 // Attesting a grant changes no access but records an access_review.attested audit
 // event as the evidence of recertification.
 func TestAttestAccessReviewGrant_AuditsDecision(t *testing.T) {

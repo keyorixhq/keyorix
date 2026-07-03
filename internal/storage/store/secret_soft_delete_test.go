@@ -17,7 +17,9 @@ func newSoftDeleteTestStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.SecretNode{}, &models.SecretVersion{}, &models.Environment{}, &models.SecretDependency{}))
+	// #370: DeleteSecret revokes ShareRecord rows in the same transaction as the
+	// secret's own soft-delete.
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.SecretNode{}, &models.SecretVersion{}, &models.Environment{}, &models.SecretDependency{}, &models.ShareRecord{}))
 	return NewLocalStorage(db)
 }
 

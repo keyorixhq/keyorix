@@ -23,7 +23,7 @@ func newMaxReadsCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, err)
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1) // sqlite: serialize connections (statements stay atomic)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}))
 	return &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}, db
 }
 
@@ -104,5 +104,37 @@ func TestMaxReads_ByVersionStopsAtCap(t *testing.T) {
 	}
 	_, err := c.GetSecretValueByVersion(ctx, id, 1)
 	require.Error(t, err, "the 3rd by-version read must be denied")
+	assert.Contains(t, err.Error(), i18n.T("ErrorMaxReadsExceeded", nil))
+}
+
+// TestMaxReads_SurvivesRotateAndRollback pins #133: the max-reads counter used
+// to be keyed on the VERSION, which starts at zero for every new version — so a
+// burn-after-N-read secret became re-readable simply by rotating (or rolling
+// back, which also creates a new version) it, resetting the budget. The cap
+// must be enforced against the secret's lifetime read count, surviving both.
+func TestMaxReads_SurvivesRotateAndRollback(t *testing.T) {
+	c, _ := newMaxReadsCore(t)
+	id := seedMaxReadsSecret(t, c, 1)
+	ctx := context.Background()
+
+	// Burn the one allowed read.
+	_, err := c.GetSecretValue(ctx, id)
+	require.NoError(t, err)
+	_, err = c.GetSecretValue(ctx, id)
+	require.Error(t, err, "the budget is exhausted")
+
+	// Rotating creates a brand-new version (read_count reset to 0 on THAT row) —
+	// the secret-level counter must still refuse the next read.
+	_, err = c.RotateSecret(ctx, id, []byte("v2"), "actor")
+	require.NoError(t, err)
+	_, err = c.GetSecretValue(ctx, id)
+	require.Error(t, err, "rotating must not grant a fresh read budget")
+	assert.Contains(t, err.Error(), i18n.T("ErrorMaxReadsExceeded", nil))
+
+	// Rolling back to version 1 also creates a new version — same requirement.
+	_, err = c.RollbackSecret(ctx, id, 1, 1, "actor")
+	require.NoError(t, err)
+	_, err = c.GetSecretValue(ctx, id)
+	require.Error(t, err, "rolling back must not grant a fresh read budget either")
 	assert.Contains(t, err.Error(), i18n.T("ErrorMaxReadsExceeded", nil))
 }

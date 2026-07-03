@@ -65,8 +65,15 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 		c.recordFailedLogin(ctx, user) // increment + lock at the threshold
 		return nil, nil, fmt.Errorf("invalid credentials")
 	}
-	// Correct password — clear any accumulated lockout state.
-	c.clearLoginFailures(ctx, user)
+	// Correct password — but a concurrent burst of failed attempts against this
+	// account may have tripped the lock between the snapshot read at the top of
+	// this function and now (TOCTOU). Re-check the lock state under the same
+	// serialization recordFailedLogin uses (the account's mutex shard + a Postgres
+	// row lock) before minting a session, and only then clear any accumulated
+	// failure state — never trust the stale pre-bcrypt snapshot alone.
+	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+		return nil, nil, err
+	}
 	// A deactivated account (IsActive=false — e.g. admin deactivation via UpdateUser,
 	// or a SCIM/IdP deactivation) is refused login regardless of account_state. The
 	// state-based gate below does not cover this, so without it a deactivated user who
@@ -105,11 +112,19 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
+	// FamilyID starts a new lineage at login and is carried unchanged through every
+	// RefreshSession rotation, so a detected refresh-token reuse can revoke the whole
+	// chain in one shot (#211).
+	familyID, err := generateSecureToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate session family id: %w", err)
+	}
 	now := c.now()
 	expiresAt := now.Add(c.accessTTL())
 	session := &models.Session{
 		UserID:       userID,
 		SessionToken: token,
+		FamilyID:     familyID,
 		UserAgent:    userAgent,
 		IPAddress:    ip,
 		LastSeenAt:   &now,
@@ -154,18 +169,39 @@ func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 	return c.storage.DeleteSession(ctx, session.ID)
 }
 
+// EventSessionReuseDetected audits a refresh attempt against an already-rotated
+// session token (#211) — distinct from the generic "session not found" a caller
+// sees, since a rotated-away token is either a genuine refresh-token-reuse replay
+// (a standard OAuth compromise signal) or a benign concurrent-refresh race loser;
+// the DB alone cannot tell those apart, so both are treated as suspicious and the
+// whole session family is revoked.
+const EventSessionReuseDetected = "auth.session_reuse_detected" // #nosec G101 -- audit event type, not a credential
+
 // RefreshSession rotates an existing session to a new token with a fresh access
 // window. The access window may have lapsed — that is the normal silent-refresh
 // case — but refresh is refused once the session's absolute ceiling is reached, so
 // rotating the token can never extend a session indefinitely. The ceiling is
 // carried unchanged onto the new session, and the new access window is clamped so
 // it never overruns that ceiling.
+//
+// Rotation is atomic (RotateSession is a single DB transaction with a CAS guard —
+// #211): a replay of a token that has already been rotated away, or a race where
+// two concurrent refreshes target the same not-yet-rotated token, both surface here
+// as "lost the rotation" and are handled identically — audited distinctly from
+// ordinary expiry and the whole session family (every session descended from the
+// same login) is revoked, not just the one replayed row.
 func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models.Session, error) {
-	old, err := c.storage.GetSession(ctx, token)
+	old, err := c.storage.GetSessionAny(ctx, token)
 	if err != nil {
 		return nil, fmt.Errorf("session not found or expired")
 	}
 	now := c.now()
+	if old.RotatedAt != nil {
+		// The token maps to a session that was already rotated away by an earlier,
+		// successful refresh — a reuse of a stale refresh token.
+		c.handleSessionReuse(ctx, old)
+		return nil, fmt.Errorf("session not found or expired")
+	}
 	if old.AbsoluteExpiresAt != nil && !now.Before(*old.AbsoluteExpiresAt) {
 		// Past the hard ceiling — re-authentication required, not another refresh.
 		_ = c.storage.DeleteSession(ctx, old.ID)
@@ -201,21 +237,62 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	if old.AbsoluteExpiresAt != nil && expiresAt.After(*old.AbsoluteExpiresAt) {
 		expiresAt = *old.AbsoluteExpiresAt
 	}
+	familyID := old.FamilyID
+	if familyID == "" {
+		// Legacy row minted before FamilyID existed — start a fresh lineage from here
+		// rather than leaving it empty (an empty FamilyID would otherwise group every
+		// legacy session together under family-wide revocation).
+		familyID, err = generateSecureToken()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate token: %w", err)
+		}
+	}
 	session := &models.Session{
 		UserID:            old.UserID,
 		SessionToken:      newToken,
+		FamilyID:          familyID,
 		UserAgent:         old.UserAgent,
 		IPAddress:         old.IPAddress,
 		LastSeenAt:        &now,
 		ExpiresAt:         &expiresAt,
 		AbsoluteExpiresAt: old.AbsoluteExpiresAt,
 	}
-	created, err := c.storage.CreateSession(ctx, session)
+	created, won, err := c.storage.RotateSession(ctx, old.ID, session, now)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return nil, fmt.Errorf("failed to rotate session: %w", err)
 	}
-	_ = c.storage.DeleteSession(ctx, old.ID)
+	if !won {
+		// Lost the CAS: a concurrent refresh of this exact token won first between
+		// our read and our write. Same signal as an out-of-band replay.
+		c.handleSessionReuse(ctx, old)
+		return nil, fmt.Errorf("session not found or expired")
+	}
 	return created, nil
+}
+
+// handleSessionReuse responds to a refresh attempt that targeted an already-rotated
+// session token (#211): audits it distinctly from ordinary "not found"/expiry, and
+// revokes every session descended from the same login (FamilyID) — not just the one
+// replayed row — mirroring standard OAuth refresh-token-family revocation. Each
+// revoked session's token hash is evicted from the HTTP auth cache immediately, so
+// the attacker's already-rotated descendant session (if any) stops authenticating on
+// the very next request rather than lingering for the cache TTL.
+func (c *KeyorixCore) handleSessionReuse(ctx context.Context, old *models.Session) {
+	uid := old.UserID
+	c.writeAuditEventFull(ctx, EventSessionReuseDetected, &uid, nil, nil, old.IPAddress,
+		fmt.Sprintf("refresh attempted with an already-rotated session token for user %d — revoking the session family", old.UserID))
+	if old.FamilyID == "" {
+		// Legacy row predating FamilyID — fall back to revoking just this one row.
+		_ = c.storage.DeleteSession(ctx, old.ID)
+		return
+	}
+	hashes, _ := c.storage.ListSessionTokenHashesByFamily(ctx, old.FamilyID)
+	_ = c.storage.DeleteSessionsByFamily(ctx, old.FamilyID)
+	for _, h := range hashes {
+		if h != "" {
+			c.invalidateTokenCache(h)
+		}
+	}
 }
 
 // ValidateSessionToken looks up a session token, checks expiry, and returns the user and
@@ -288,6 +365,15 @@ func (c *KeyorixCore) ValidateSessionToken(ctx context.Context, token string) (*
 // account (enumeration-safe), so unknown addresses, suspended accounts, throttled
 // repeats, and delivery/config failures are all swallowed. The attempt itself is
 // audited inside provisionSetupLink.
+//
+// #117: the known-account path used to synchronously dial-and-send the email
+// (SMTP delivery blocks on the real network round-trip) before returning, while
+// an unknown/blocked/SSO-managed address returned after a single fast DB lookup
+// — a measurable timing side-channel an attacker can use to enumerate valid
+// accounts without ever seeing a different response body. The issue+deliver
+// step now runs detached in the background (DetachedAuditContext, the same
+// fire-and-forget pattern used elsewhere for post-response audit work) so this
+// function returns at the same speed regardless of whether the email exists.
 func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) error {
 	user, err := c.storage.GetUserByEmail(ctx, email)
 	if err != nil {
@@ -305,12 +391,18 @@ func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) er
 	}
 	// Throttle abusive repeats to a victim address (same control as resend). A
 	// throttled repeat returns an error here, swallowed below to stay enumeration-safe.
-	_, _ = c.provisionSetupLinkThrottled(ctx, IssueSetupTokenRequest{
-		Purpose:       SetupPurposePasswordResetLink,
-		SubjectEmail:  user.Email,
-		SubjectUserID: &user.ID,
-		CreatedBy:     0, // self-service (no issuing admin)
-	}, user.DisplayName, "")
+	// Detached from the request context: the HTTP handler returns immediately after
+	// this call, which would cancel a request-scoped ctx before the SMTP send (or
+	// even the throttle check) completes.
+	detached := DetachedAuditContext(ctx)
+	go func() {
+		_, _ = c.provisionSetupLinkThrottled(detached, IssueSetupTokenRequest{
+			Purpose:       SetupPurposePasswordResetLink,
+			SubjectEmail:  user.Email,
+			SubjectUserID: &user.ID,
+			CreatedBy:     0, // self-service (no issuing admin)
+		}, user.DisplayName, "")
+	}()
 	return nil
 }
 

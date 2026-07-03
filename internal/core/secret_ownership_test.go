@@ -43,7 +43,8 @@ func newOwnershipFixture(t *testing.T) (*KeyorixCore, uint) {
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.User{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}))
 	for _, u := range []models.User{
 		{ID: 1, Username: "owner", Email: "o@test.com"},
 		{ID: 2, Username: "alice", Email: "a@test.com"},

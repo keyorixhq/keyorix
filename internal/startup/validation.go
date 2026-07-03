@@ -41,6 +41,10 @@ func ValidateStartup(configPath string) (*ValidationResult, error) {
 		result.Errors = append(result.Errors, fmt.Sprintf("Failed to load config: %v", err))
 		return result, fmt.Errorf("configuration validation failed: %w", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("Config schema validation failed: %v", err))
+		return result, fmt.Errorf("configuration validation failed: %w", err)
+	}
 	result.ConfigValid = true
 
 	if cfg.Security.EnableFilePermissionCheck {
@@ -96,10 +100,22 @@ func validateFilePermissions(cfg *config.Config, configPath string, result *Vali
 		)
 	}
 
-	files = append(files, securefiles.FilePermSpec{
-		Path: filepath.Clean(cfg.Storage.Database.Path),
-		Mode: 0600,
-	})
+	// Mirror Config.Validate()'s switch on Storage.Type: only "local"/"" storage has a
+	// local database FILE to lock down. postgres/remote connect over the network (DSN or
+	// host/name/user, or the remote client's own auth) and legitimately have an empty
+	// Database.Path — appending it unconditionally would stat/chmod the current directory
+	// (filepath.Clean("") == ".") instead of skipping the check.
+	switch cfg.Storage.Type {
+	case "remote", "postgres", "postgresql":
+		// no local database file to check
+	default: // "local", ""
+		if cfg.Storage.Database.Path != "" {
+			files = append(files, securefiles.FilePermSpec{
+				Path: filepath.Clean(cfg.Storage.Database.Path),
+				Mode: 0600,
+			})
+		}
+	}
 
 	if cfg.Server.HTTP.TLS.Enabled {
 		files = append(files,
@@ -171,6 +187,18 @@ func resolveKeyPath(p string) string {
 }
 
 func validateDatabase(cfg *config.Config, result *ValidationResult) error {
+	// Mirror Config.Validate()'s switch on Storage.Type: only "local"/"" storage is a
+	// local SQLite file reachable by stat/open. postgres/remote reach their backing store
+	// over the network and are out of scope for a local-file reachability check here.
+	switch cfg.Storage.Type {
+	case "remote":
+		result.Warnings = append(result.Warnings, "Database reachability check skipped: storage.type is \"remote\" (network client, not a local file)")
+		return nil
+	case "postgres", "postgresql":
+		result.Warnings = append(result.Warnings, "Database reachability check skipped: storage.type is \"postgres\" (network connection, not a local file)")
+		return nil
+	}
+
 	dbPath := filepath.Clean(cfg.Storage.Database.Path)
 
 	if strings.Contains(dbPath, "..") || !filepath.IsAbs(dbPath) {

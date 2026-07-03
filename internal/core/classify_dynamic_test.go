@@ -18,6 +18,7 @@ func makeDynConfig(t *testing.T, c *KeyorixCore, name, classification string) ui
 		AdminDSN:       "postgres://admin:pw@localhost/db",
 		Classification: classification,
 		CreatedBy:      "admin",
+		ActorID:        testAdminActorID,
 	})
 	require.NoError(t, err)
 	return cfg.ID
@@ -35,6 +36,7 @@ func TestCreateDynamicSecretConfig_WithClassification(t *testing.T) {
 	_, err = c.CreateDynamicSecretConfig(context.Background(), &CreateDynamicSecretConfigRequest{
 		Name: "bad", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres",
 		AdminDSN: "postgres://x", Classification: "top-secret", CreatedBy: "admin",
+		ActorID: testAdminActorID,
 	})
 	require.Error(t, err)
 }
@@ -75,7 +77,7 @@ func TestClassificationPosture_CoversDynamicConfigs(t *testing.T) {
 	makeDynConfig(t, c, "c", ClassificationInternal)
 	makeDynConfig(t, c, "d", "") // unclassified
 
-	p := c.classificationPosture(context.Background())
+	p := c.classificationPosture(context.Background(), &CompliancePosture{})
 	assert.Equal(t, 4, p.DynamicConfigs.Total)
 	assert.Equal(t, 2, p.DynamicConfigs.Restricted)
 	assert.Equal(t, 1, p.DynamicConfigs.Internal)

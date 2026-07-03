@@ -1,3 +1,7 @@
+-- Requires 006_rename_namespace_to_project to have already run: `project_id`
+-- below references the `projects` table, which only exists after that rename
+-- (see #201 — this migration was previously numbered 006 and ran before the
+-- rename existed, which failed outright against a real migration runner).
 CREATE TABLE rotation_policies (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
