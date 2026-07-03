@@ -137,3 +137,41 @@ func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
 	require.NoError(t, err)
 	store.AssertExpectations(t)
 }
+
+// The system-role grant on global-invitation acceptance is the moment of privilege
+// (up to and including super_admin) — it must land in the RBAC audit trail like every
+// other grant path, not vanish with zero trace (#299). Uses real storage so
+// ListRBACAuditLogs is exercised end to end.
+func TestApplyInvitationGrants_SystemRoleIsRBACAudited(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	// #93/#107/#141: the inviter must themselves hold every permission of the
+	// role they're granting (system_auditor here) — give them "admin" so the
+	// ceiling check's admin bypass applies, same as a real install where only an
+	// admin can invite someone into a system_auditor-or-richer role.
+	inviterID := seedUserWithRole(t, st, "admin-inviter", "admin", storage.Scope{})
+	invitee, err := st.CreateUser(ctx, &models.User{Username: "carol", Email: "carol@example.com", IsActive: true})
+	require.NoError(t, err)
+
+	inv := &models.ProjectInvitation{
+		ID: 1, ProjectID: 0, Email: invitee.Email, InvitedBy: inviterID,
+		SystemRole: "system_auditor",
+	}
+
+	require.NoError(t, c.applyInvitationGrants(ctx, inv, invitee.ID))
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
+	require.NoError(t, err)
+	var assigned *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventRoleAssigned {
+			assigned = e
+		}
+	}
+	require.NotNil(t, assigned, "global-invitation system-role grant must appear in the RBAC audit trail")
+	require.NotNil(t, assigned.ActorUserID)
+	assert.Equal(t, inviterID, *assigned.ActorUserID)
+	require.NotNil(t, assigned.TargetUserID)
+	assert.Equal(t, invitee.ID, *assigned.TargetUserID)
+}

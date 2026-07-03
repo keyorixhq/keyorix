@@ -16,7 +16,9 @@ func newRBACReconcileCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.Permission{}, &models.RolePermission{}))
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.AuditEvent{},
+		&models.UserRole{}, &models.Project{}, &models.Environment{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
 }
 
@@ -122,4 +124,36 @@ func TestReconcileRBAC_Idempotent(t *testing.T) {
 	require.NoError(t, db.Model(&models.Permission{}).Select("id").Where("name = ?", "connect.read").First(&connectID).Error)
 	require.NoError(t, db.Model(&models.RolePermission{}).Where("role_id = ? AND permission_id = ?", r.ID, connectID).Count(&n).Error)
 	assert.Equal(t, int64(1), n, "no duplicate grant on a second reconcile")
+}
+
+// Startup reconciliation grants must land in the RBAC audit trail like every other
+// permission grant, attributed to the system actor (0), not vanish silently (#293).
+func TestReconcileRBAC_GrantsAreRBACAudited(t *testing.T) {
+	c, db := newRBACReconcileCore(t)
+	seedOldCatalog(t, c, db)
+	ctx := context.Background()
+
+	require.NoError(t, c.ReconcileRBACPermissions(ctx))
+
+	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 100)
+	require.NoError(t, err)
+
+	var found *RBACAuditEntry
+	for _, e := range entries {
+		if e.Action == EventPermissionAdded && e.ActorUserID == nil {
+			// Match the connect.read grant to the admin role specifically.
+			r, rerr := c.storage.GetRoleByName(ctx, "admin")
+			require.NoError(t, rerr)
+			if e.RoleID != nil && *e.RoleID == r.ID {
+				found = e
+			}
+		}
+	}
+	require.NotNil(t, found, "reconciliation's permission grant must appear in the RBAC audit trail")
+	assert.Nil(t, found.ActorUserID, "system-initiated reconciliation records no actor")
+	require.NotNil(t, found.PermissionID)
+
+	var connectID uint
+	require.NoError(t, db.Model(&models.Permission{}).Select("id").Where("name = ?", "connect.read").First(&connectID).Error)
+	assert.Equal(t, connectID, *found.PermissionID)
 }

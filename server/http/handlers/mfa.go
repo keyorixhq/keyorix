@@ -31,7 +31,10 @@ func (h *AuthHandler) EnrollMFA(w http.ResponseWriter, r *http.Request) {
 }
 
 // ActivateMFA confirms enrolment with a TOTP code and returns the one-time-shown
-// recovery codes.
+// recovery codes. Requires the account password to re-authenticate the caller
+// (#372): code alone proves control of the just-generated pending secret, which an
+// attacker with a stolen session or PAT could have generated themselves via
+// EnrollMFA, so it is not proof this is really the account holder.
 func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -39,13 +42,14 @@ func (h *AuthHandler) ActivateMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Code string `json:"code"`
+		Code     string `json:"code"`
+		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)
 		return
 	}
-	codes, err := h.coreService.ActivateMFA(r.Context(), userCtx.UserID, body.Code)
+	codes, err := h.coreService.ActivateMFA(r.Context(), userCtx.UserID, body.Code, body.Password)
 	if err != nil {
 		sendError(w, "Error", err.Error(), http.StatusBadRequest, nil)
 		return

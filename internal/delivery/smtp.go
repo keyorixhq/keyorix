@@ -37,6 +37,13 @@ const (
 	smtpTLSNone     = "none"
 )
 
+// EnvAllowInsecureSMTP gates credential_delivery.smtp.tls=none. Cleartext SMTP sends
+// the setup-link email (and, if the relay requires auth, the relay credentials) over
+// the wire unencrypted — mirroring the explicit-opt-in convention used for other
+// insecure toggles in this codebase (e.g. insecure_skip_verify), tls=none refuses to
+// activate unless this env var is set to a truthy value.
+const EnvAllowInsecureSMTP = "KEYORIX_ALLOW_INSECURE_SMTP"
+
 // SMTPDelivery sends setup links via the operator's configured SMTP relay.
 type SMTPDelivery struct {
 	cfg SMTPSettings
@@ -52,7 +59,12 @@ func newSMTPDelivery(cfg SMTPSettings) (*SMTPDelivery, error) {
 		return nil, fmt.Errorf("delivery: smtp from address is required")
 	}
 	switch strings.ToLower(cfg.TLS) {
-	case "", smtpTLSStartTLS, smtpTLSImplicit, smtpTLSNone:
+	case "", smtpTLSStartTLS, smtpTLSImplicit:
+	case smtpTLSNone:
+		if !envFlagEnabled(EnvAllowInsecureSMTP) {
+			return nil, fmt.Errorf("delivery: smtp.tls=none sends mail (and any relay credentials) in cleartext; refusing unless the operator explicitly opts in by setting %s=true", EnvAllowInsecureSMTP)
+		}
+		log.Printf("delivery: WARNING smtp.tls=none is ACTIVE — setup-link email will be sent over CLEARTEXT SMTP; dev/test only, never use in production")
 	default:
 		return nil, fmt.Errorf("delivery: unknown smtp tls mode %q (want starttls|implicit|none)", cfg.TLS)
 	}

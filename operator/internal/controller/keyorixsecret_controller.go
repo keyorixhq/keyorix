@@ -137,6 +137,22 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 	if err := r.Get(ctx, ref, &tokenSecret); err != nil {
 		return nil, fmt.Errorf("read token secret %s: %w", ref, err)
 	}
+	// A CRD-write-only principal (the CRD's own documented least-privilege deployment
+	// model has no direct core-Secret read/write RBAC) can name ANY pre-existing Secret
+	// in the namespace here — the operator resolves it with its own cluster-wide `get
+	// secrets` RBAC, not the requester's. validateServer above already stops the token
+	// from being shipped to an attacker-controlled destination, but without this gate
+	// the operator would still read an arbitrary Secret's bytes and send them as a
+	// bearer token to the (now-trusted) Keyorix server — a residual probe/abuse
+	// primitive, and exactly the "point at a Secret you don't have RBAC to read" attack
+	// the CRD's threat model is meant to exclude. Require the Secret to already carry a
+	// label only a principal with real Secret-write RBAC could have set (a CRD-write-only
+	// attacker cannot), so an unlabeled pre-existing Secret can never be used as a token
+	// source, however it got created.
+	if tokenSecret.Labels[tokenSecretLabel] != tokenSecretValue {
+		return nil, fmt.Errorf("token secret %s is missing the required label %s=%s (only a Secret explicitly marked as a Keyorix token source may be used as tokenSecretRef)",
+			ref, tokenSecretLabel, tokenSecretValue)
+	}
 	token := string(tokenSecret.Data[tokenKey])
 	if token == "" {
 		return nil, fmt.Errorf("token secret %s has no key %q", ref, tokenKey)
@@ -176,7 +192,7 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		// or by Helm) and replace its data — letting a CR author clobber another workload's
 		// same-named Secret. A Secret we created carries the managed-by label and is
 		// allowed through.
-		if secret.ResourceVersion != "" && secret.Labels[managedByLabel] != managedByValue {
+		if secret.ResourceVersion != "" && secret.Labels[ManagedByLabel] != ManagedByValue {
 			return fmt.Errorf("refusing to overwrite existing unmanaged Secret %s/%s", ks.Namespace, name)
 		}
 		if err := controllerutil.SetControllerReference(ks, secret, r.Scheme); err != nil {
@@ -185,7 +201,7 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		if secret.Labels == nil {
 			secret.Labels = map[string]string{}
 		}
-		secret.Labels[managedByLabel] = managedByValue
+		secret.Labels[ManagedByLabel] = ManagedByValue
 		secret.Type = secretType
 		secret.Data = data // operator owns the whole data set; removed keys are pruned
 		return nil
@@ -193,11 +209,26 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 	return err
 }
 
-// managedByLabel/managedByValue mark a Secret as owned by this operator, so it won't
-// adopt or overwrite a Secret it didn't create.
+// ManagedByLabel/ManagedByValue mark a Secret as owned by this operator, so it won't
+// adopt or overwrite a Secret it didn't create. Exported so cmd/main.go can scope the
+// manager's Secret informer cache to only Secrets carrying this label (see #327): the
+// operator is deployed as a single cluster-wide instance, so its RBAC necessarily grants
+// Secret access in every namespace, but the informer backing Owns(&corev1.Secret{}) has no
+// reason to list/watch/cache Secrets it doesn't manage. Token Secrets and pre-existing
+// unmanaged target Secrets never carry this label, so reads of those are excluded from that
+// cache (they're read live instead) and remain unaffected.
 const (
-	managedByLabel = "app.kubernetes.io/managed-by"
-	managedByValue = "keyorix-operator"
+	ManagedByLabel = "app.kubernetes.io/managed-by"
+	ManagedByValue = "keyorix-operator"
+)
+
+// tokenSecretLabel/tokenSecretValue gate which Secrets buildDesired will resolve as a
+// TokenSecretRef. Must be set out-of-band (by whoever creates the token Secret — the
+// operator never sets it itself, unlike managedByLabel above) before the controller will
+// read that Secret's data and use it as a bearer token.
+const (
+	tokenSecretLabel = "secrets.keyorix.io/token-secret"
+	tokenSecretValue = "true"
 )
 
 // fail records a SyncError on the Ready condition and requeues with backoff.

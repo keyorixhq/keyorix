@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -71,6 +72,18 @@ type RotationOrder struct {
 // AddSecretDependency declares that dependentID depends on dependsOnID. Both must be
 // real secrets in the same project; self-edges, duplicates, and edges that would
 // introduce a cycle are rejected. actorID is the acting principal.
+//
+// The cycle-check read and the edge write run inside a single storage transaction,
+// held under secretDependencyMu for its whole duration (#260): without this, two
+// concurrent calls adding A→B and B→A in the same project could each observe "no
+// cycle" from the pre-write graph before either write commits, both succeed, and
+// persist a 2-node cycle that GetProjectRotationOrder then hard-errors on forever
+// (nothing else detects or heals a stuck edge). The transaction's
+// ListSecretDependenciesForProjectForUpdate read takes a row-level lock on every
+// existing edge in the project on backends that support one (Postgres), serializing
+// HA replicas; secretDependencyMu serializes same-process callers — the same
+// two-layer pattern login_lockout.go's recordFailedLogin and RemoveUserRole's
+// guardLastGlobalAdmin use.
 func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorID, dependentID, dependsOnID uint, note string) (*models.SecretDependency, error) {
 	if dependentID == dependsOnID {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a secret cannot depend on itself")
@@ -91,31 +104,42 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorID, dependen
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the dependency target must be a secret in the same project and environment")
 	}
 
-	edges, err := c.storage.ListSecretDependenciesForProject(ctx, dependent.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range edges {
-		if e.DependentSecretID == dependentID && e.DependsOnSecretID == dependsOnID {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this dependency already exists")
-		}
-	}
-	// A cycle would form iff dependsOnID can already reach dependentID over existing
-	// edges (then dependent → dependsOn → … → dependent closes the loop).
-	if dependencyReachable(edges, dependsOnID, dependentID) {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this dependency would create a cycle")
-	}
+	c.secretDependencyMu.Lock()
+	defer c.secretDependencyMu.Unlock()
 
-	created, err := c.storage.CreateSecretDependency(ctx, &models.SecretDependency{
-		ProjectID:         dependent.ProjectID,
-		DependentSecretID: dependentID,
-		DependsOnSecretID: dependsOnID,
-		Note:              note,
-		CreatedBy:         actorID,
-		CreatedAt:         c.now(),
+	var created *models.SecretDependency
+	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		edges, lerr := tx.ListSecretDependenciesForProjectForUpdate(ctx, dependent.ProjectID)
+		if lerr != nil {
+			return lerr
+		}
+		for _, e := range edges {
+			if e.DependentSecretID == dependentID && e.DependsOnSecretID == dependsOnID {
+				return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this dependency already exists")
+			}
+		}
+		// A cycle would form iff dependsOnID can already reach dependentID over existing
+		// edges (then dependent → dependsOn → … → dependent closes the loop).
+		if dependencyReachable(edges, dependsOnID, dependentID) {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this dependency would create a cycle")
+		}
+
+		c1, cerr := tx.CreateSecretDependency(ctx, &models.SecretDependency{
+			ProjectID:         dependent.ProjectID,
+			DependentSecretID: dependentID,
+			DependsOnSecretID: dependsOnID,
+			Note:              note,
+			CreatedBy:         actorID,
+			CreatedAt:         c.now(),
+		})
+		if cerr != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), cerr)
+		}
+		created = c1
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return nil, err
 	}
 	c.writeAuditEvent(ctx, EventSecretDependencyAdded, actorPtr(actorID), &dependentID,
 		fmt.Sprintf("declared secret %q depends on %q", dependent.Name, dependsOn.Name))

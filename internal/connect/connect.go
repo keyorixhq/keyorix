@@ -14,10 +14,38 @@ import (
 	"strings"
 )
 
+// RefHasDotSegment reports whether ref contains a "." or ".." path segment, e.g.
+// "secret/data/myapp/../otherapp/secret". strings.HasPrefix (used by prefixAllowed
+// below and core.refMatches for ADR-045 ref-grants) is a purely literal, start-only
+// string comparison: "secret/data/myapp/../otherapp/secret" satisfies
+// HasPrefix(ref, "secret/data/myapp/") even though a downstream HTTP layer (Vault's
+// own API, an intermediating proxy, or any RFC 3986-conformant resolver) collapses
+// the ".." and climbs the request outside the allowed prefix entirely. Rejecting a
+// dot-segment ref here means neither the allowed_refs check nor the ADR-045
+// per-reference RBAC grant can be satisfied by a traversal-shaped ref in the first
+// place, independent of whatever additional defense-in-depth an individual
+// connector's GetSecret applies at its own URL-construction point (e.g. vault.go's
+// sanitizeVaultRef). Unlike azure.go's blanket `/?#%` rejection, this only rejects
+// the traversal segments themselves — a legitimate multi-segment ref (Vault paths,
+// GCP resource names, AWS Secrets Manager friendly names) still contains plain "/".
+func RefHasDotSegment(ref string) bool {
+	for _, seg := range strings.Split(ref, "/") {
+		if seg == "." || seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 // prefixAllowed reports whether ref is permitted by an allowlist of prefixes. An
 // empty allowlist permits everything (the backend identity's own scope is then the
-// only bound). Shared by the connectors as a defense-in-depth guardrail (ADR-043).
+// only bound). Shared by the connectors as a defense-in-depth guardrail (ADR-043). A
+// traversal-shaped ref is rejected outright, before the prefix comparison, so it can
+// never be considered "allowed" regardless of the configured allowlist.
 func prefixAllowed(allowed []string, ref string) bool {
+	if RefHasDotSegment(ref) {
+		return false
+	}
 	if len(allowed) == 0 {
 		return true
 	}

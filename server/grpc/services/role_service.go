@@ -12,6 +12,18 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
+// Role Name/Description length bounds. gRPC has no shared internal/core
+// validation layer to inherit these from (unlike other resources), so they
+// are mirrored here exactly from the HTTP-side struct tags in
+// server/http/handlers/rbac.go (CreateRoleRequest/UpdateRoleRequest) to keep
+// the two transports' accepted input identical (#191).
+const (
+	roleNameMinLen        = 3
+	roleNameMaxLen        = 50
+	roleDescriptionMinLen = 1
+	roleDescriptionMaxLen = 200
+)
+
 // RoleGRPCService implements pb.RoleServiceServer, backing each RPC with the
 // shared core service (role CRUD + permission wiring via storage, reads via the
 // core RBAC helpers).
@@ -37,11 +49,23 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	if err := authorizeGlobal(ctx, s.core, actor, "roles.write"); err != nil {
 		return nil, err
 	}
-	if req.GetName() == "" || req.GetDescription() == "" || len(req.GetPermissions()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "name, description and at least one permission are required")
+	if len(req.GetPermissions()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one permission is required")
+	}
+	if err := validateRoleName(req.GetName()); err != nil {
+		return nil, err
+	}
+	if err := validateRoleDescription(req.GetDescription()); err != nil {
+		return nil, err
+	}
+	// #294: reserved role names must never be creatable — see the identical guard (with
+	// full rationale) in the HTTP RBACHandler.CreateRole. This closes the same gap over
+	// gRPC, which has its own independent CreateRole path.
+	if core.IsBuiltinRole(req.GetName()) {
+		return nil, status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
 	}
 
-	permIDs, err := s.resolvePermissionIDs(ctx, req.GetPermissions())
+	permIDs, err := s.resolvePermissionIDs(ctx, actor.UserID, req.GetPermissions())
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +110,11 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "id is required")
 	}
+	if req.Description != nil {
+		if err := validateRoleDescription(req.GetDescription()); err != nil {
+			return nil, err
+		}
+	}
 
 	role, current, err := s.core.GetRoleWithPermissions(ctx, uint(req.GetId()))
 	if err != nil {
@@ -101,7 +130,7 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 
 	// A provided permission list replaces the entire set.
 	if len(req.GetPermissions()) > 0 {
-		permIDs, err := s.resolvePermissionIDs(ctx, req.GetPermissions())
+		permIDs, err := s.resolvePermissionIDs(ctx, actor.UserID, req.GetPermissions())
 		if err != nil {
 			return nil, err
 		}
@@ -278,8 +307,15 @@ func (s *RoleGRPCService) roleByID(ctx context.Context, id uint) (*pb.Role, erro
 	return roleToProto(role, perms), nil
 }
 
-// resolvePermissionIDs maps permission names to IDs, rejecting unknown names.
-func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, names []string) ([]uint, error) {
+// resolvePermissionIDs maps permission names to IDs, rejecting unknown names, and
+// requires actorID already hold every named permission (#169: CreateRole/UpdateRole
+// are gated only by the narrower "roles.write" — without this, a roles.write holder
+// could bundle an arbitrary admin-tier permission into a role's DEFINITION with no
+// check they hold it themselves, mirroring the same check the HTTP handler applies).
+// Checked at global scope, matching how roles.write itself is gated. Validating here
+// — before the caller creates/mutates anything — means a request naming even one
+// unauthorized permission is rejected atomically, not partially applied.
+func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, actorID uint, names []string) ([]uint, error) {
 	perms, err := s.core.Storage().ListPermissions(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to resolve permissions")
@@ -293,6 +329,13 @@ func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, names []stri
 		id, ok := byName[n]
 		if !ok {
 			return nil, status.Errorf(codes.InvalidArgument, "unknown permission %q", n)
+		}
+		authorized, aerr := s.core.Authorize(ctx, actorID, n, core.Scope{})
+		if aerr != nil {
+			return nil, status.Error(codes.Internal, "failed to resolve actor authority")
+		}
+		if !authorized {
+			return nil, status.Errorf(codes.PermissionDenied, "cannot bundle permission %q into a role: you do not hold it yourself", n)
 		}
 		ids = append(ids, id)
 	}
@@ -319,6 +362,25 @@ func permissionToProto(p *models.Permission) *pb.Permission {
 		Resource:    p.Resource,
 		Action:      p.Action,
 	}
+}
+
+// validateRoleName mirrors HTTP's CreateRoleRequest.Name `min=3,max=50` bound
+// (server/http/handlers/rbac.go) so a role name accepted over gRPC is never
+// shorter/longer than one accepted over HTTP (#191).
+func validateRoleName(name string) error {
+	if len(name) < roleNameMinLen || len(name) > roleNameMaxLen {
+		return status.Errorf(codes.InvalidArgument, "name must be between %d and %d characters", roleNameMinLen, roleNameMaxLen)
+	}
+	return nil
+}
+
+// validateRoleDescription mirrors HTTP's Role Description `min=1,max=200`
+// bound (server/http/handlers/rbac.go) for the same reason (#191).
+func validateRoleDescription(description string) error {
+	if len(description) < roleDescriptionMinLen || len(description) > roleDescriptionMaxLen {
+		return status.Errorf(codes.InvalidArgument, "description must be between %d and %d characters", roleDescriptionMinLen, roleDescriptionMaxLen)
+	}
+	return nil
 }
 
 // mapRoleError translates core/storage role errors into gRPC status codes.

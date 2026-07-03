@@ -20,6 +20,10 @@ func (rs *RemoteStorage) GetMachineIdentity(_ context.Context, _ uint) (*models.
 	return nil, remoteUnsupported("GetMachineIdentity")
 }
 
+func (rs *RemoteStorage) LockMachineIdentityForUpdate(_ context.Context, _ uint) (*models.MachineIdentity, error) {
+	return nil, remoteUnsupported("LockMachineIdentityForUpdate")
+}
+
 func (rs *RemoteStorage) UpdateMachineIdentity(_ context.Context, _ *models.MachineIdentity) error {
 	return remoteUnsupported("UpdateMachineIdentity")
 }

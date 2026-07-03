@@ -33,6 +33,21 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		return fmt.Errorf("key manager not initialized — cannot rotate")
 	}
 
+	// #195/baseline: acquire the same cross-process exclusive DEK lock as
+	// RewrapDEK. Prior to this fix RotateDEKWithSweep held no cross-process
+	// lock at all (the #92 fix that added one lives only on an unmerged
+	// branch) — a concurrent RewrapDEK/RewrapDEKWithProvider (`migrate-
+	// provider`) racing this rotation could read the DEK being replaced here
+	// and, if its rename landed after this one's, silently overwrite the
+	// freshly-rotated (and now fully re-encrypted-into) DEK with the
+	// superseded one. Both operations write to the same
+	// dek.key.pending → dek.key path, so they must be mutually exclusive.
+	lock, err := km.acquireExclusiveKeyLock()
+	if err != nil {
+		return fmt.Errorf("rotate DEK: %w", err)
+	}
+	defer lock.release()
+
 	kek, err := km.deriveKEK(passphrase)
 	if err != nil {
 		return fmt.Errorf("failed to derive KEK for DEK rotation: %w", err)
@@ -91,6 +106,7 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 
 	wipeBytes(km.currentDEK)
 	km.currentDEK = newDEK
+	km.dekSnapshot = append([]byte(nil), wrapped...)
 	km.keyVersion = newKeyVersion
 	km.deleteBackupFiles()
 
@@ -166,6 +182,7 @@ func (km *KeyManager) RotateDEK(passphrase string) error {
 
 	wipeBytes(km.currentDEK)
 	km.currentDEK = newDEK
+	km.dekSnapshot = append([]byte(nil), wrapped...)
 	km.keyVersion = fmt.Sprintf("v%d", time.Now().Unix())
 
 	fmt.Printf("✅ DEK rotated successfully. New version: %s\n", km.keyVersion)

@@ -74,3 +74,51 @@ func TestConcurrency_MaxReads_NeverExceedsCap(t *testing.T) {
 	require.NoError(t, db.First(&got, v.ID).Error)
 	assert.Equal(t, maxReads, got.ReadCount, "the stored read_count must settle exactly at the cap")
 }
+
+// TestConcurrency_MaxReadsSecretLevel_NeverExceedsCap mirrors the version-level
+// test above for TryIncrementSecretNodeReadCount (#133): the secret-level
+// counter that survives rotate/rollback must have the SAME race-free guarantee
+// as the version-level one it supersedes for enforcement.
+func TestConcurrency_MaxReadsSecretLevel_NeverExceedsCap(t *testing.T) {
+	db := concurrentDB(t)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
+	ls := NewLocalStorage(db)
+
+	s := &models.SecretNode{Name: "n", ProjectID: 1, EnvironmentID: 1, ReadCount: 0}
+	require.NoError(t, db.Create(s).Error)
+
+	const maxReads = 5
+	const readers = 64
+
+	var succeeded atomic.Int64
+	errs := make(chan error, readers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < readers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ok, err := ls.TryIncrementSecretNodeReadCount(context.Background(), s.ID, maxReads)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if ok {
+				succeeded.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, int64(maxReads), succeeded.Load(), "exactly maxReads reads may succeed, never more")
+
+	var got models.SecretNode
+	require.NoError(t, db.First(&got, s.ID).Error)
+	assert.Equal(t, maxReads, got.ReadCount, "the stored read_count must settle exactly at the cap")
+}

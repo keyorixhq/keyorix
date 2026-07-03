@@ -78,6 +78,73 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) error {
 	return nil
 }
 
+// UpgradeAuthAAD re-encrypts every legacy (pre-#94), no-AAD row in the AAD-bound auth
+// tables (mfa_secrets, dynamic_secret_configs, dynamic_secret_leases) UNDER THE
+// CURRENT DEK — no key rotation involved. Rows already AAD-bound are re-encrypted
+// too (a fresh nonce, same AAD), so the sweep is idempotent and safe to re-run.
+//
+// This exists so closing the #94 AAD-transplant exposure for these tables doesn't
+// require an operator to perform a full, write-locking DEK rotation (RotateDEKWithSweep)
+// — a live install can run this on its own schedule (or a one-off CLI invocation)
+// while the DEK stays exactly as it was. secret_versions rows are NOT touched here:
+// they've been AAD-bound since the M2 migration and are only ever upgraded as a
+// side effect of a real DEK rotation's sweep.
+//
+// The DB transaction is owned here, matching RotateDEKWithSweep: committed on
+// success, rolled back on any failure.
+func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return nil, fmt.Errorf("encryption service not initialized")
+	}
+	svc := s.encryptionService
+	keyVersion := s.keyManager.GetKeyVersion()
+	s.mu.RUnlock()
+
+	tx := db.Begin()
+	if tx.Error != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	result := &SweepResult{}
+	sweptMFA, legacyMFA, err := sweepMFASecrets(tx, svc, svc, keyVersion)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("mfa_secrets AAD upgrade failed: %w", err)
+	}
+	result.MFASecretsSwept = sweptMFA
+	result.LegacyAADUpgraded += legacyMFA
+
+	sweptDynConfigs, legacyDynConfigs, err := sweepDynamicSecretConfigs(tx, svc, svc, keyVersion)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("dynamic_secret_configs AAD upgrade failed: %w", err)
+	}
+	result.DynamicSecretConfigsSwept = sweptDynConfigs
+	result.LegacyAADUpgraded += legacyDynConfigs
+
+	sweptDynLeases, legacyDynLeases, err := sweepDynamicSecretLeases(tx, svc, svc, keyVersion)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("dynamic_secret_leases AAD upgrade failed: %w", err)
+	}
+	result.DynamicSecretLeasesSwept = sweptDynLeases
+	result.LegacyAADUpgraded += legacyDynLeases
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, fmt.Errorf("failed to commit AAD upgrade transaction: %w", err)
+	}
+	log.Printf("✅ AAD upgrade committed: %d mfa_secrets, %d dynamic_secret_configs, %d dynamic_secret_leases re-encrypted (%d legacy AAD upgraded)",
+		result.MFASecretsSwept, result.DynamicSecretConfigsSwept, result.DynamicSecretLeasesSwept, result.LegacyAADUpgraded)
+	return result, nil
+}
+
 // RotateDEK rotates the DEK without re-encrypting existing secrets.
 // DEPRECATED: Use RotateDEKWithSweep instead. See ADR-010.
 func (s *Service) RotateDEK(passphrase string) error {

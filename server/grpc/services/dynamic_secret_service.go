@@ -117,6 +117,7 @@ func (s *DynamicSecretGRPCService) CreateConfig(ctx context.Context, req *pb.Cre
 		MaxTTLSeconds:     int(req.GetMaxTtlSeconds()),
 		Classification:    req.GetClassification(),
 		CreatedBy:         user.Username,
+		ActorID:           user.PrincipalID(),
 	})
 	if err != nil {
 		return nil, mapDynamicError(err)

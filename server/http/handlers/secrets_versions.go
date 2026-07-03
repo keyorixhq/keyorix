@@ -71,6 +71,11 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var reqBody struct {
+		// The `validate:"required"` tag here is decorative: this handler never
+		// calls h.validator.Validate, relying instead on the manual == ""
+		// check below. Harmless today (the manual check covers the same
+		// case), but the tag would silently fail to protect a future rule
+		// added to the tag without a matching manual check (see #347).
 		NewValue string `json:"new_value" validate:"required"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -82,11 +87,22 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := h.coreService.RotateSecret(r.Context(), uint(id), []byte(reqBody.NewValue), userCtx.Username)
+	// RotateSecretOnDemand (#193): for a backend-bound secret this rotates the upstream
+	// credential too (the same machinery the auto-rotation scheduler uses) rather than
+	// just overwriting the stored value — never report success while the real,
+	// potentially compromised credential is still live untouched upstream.
+	secret, err := h.coreService.RotateSecretOnDemand(r.Context(), uint(id), []byte(reqBody.NewValue), userCtx.Username)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else {
+		case strings.Contains(err.Error(), "backend"):
+			// The upstream rotation failed or only partially completed — surfaced
+			// distinctly (502) so the caller never mistakes this for a clean success,
+			// even though a partial attempt may have stored a new value; see the audit
+			// trail (secret.rotate_failed / secret.rotate_incomplete) for the outcome.
+			h.sendError(w, "BackendRotationFailed", err.Error(), http.StatusBadGateway, nil)
+		default:
 			h.sendError(w, "InternalError", "Failed to rotate secret", http.StatusInternalServerError, nil)
 		}
 		return
@@ -114,6 +130,9 @@ func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var reqBody struct {
+		// The `validate:"required"` tag here is decorative: this handler never
+		// calls h.validator.Validate, relying instead on the manual <= 0
+		// check below. See the same note on RotateSecret's NewValue above.
 		Version int `json:"version" validate:"required"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {

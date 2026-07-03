@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"syscall"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -37,7 +40,7 @@ var createCmd = &cobra.Command{
 func init() {
 	createCmd.Flags().StringVar(&createUsername, "username", "", "Username (required)")
 	createCmd.Flags().StringVar(&createEmail, "email", "", "Email (required)")
-	createCmd.Flags().StringVar(&createPassword, "password", "", "Initial password (required unless --setup-link or --one-time-password)")
+	createCmd.Flags().StringVar(&createPassword, "password", "", "Initial password (INSECURE on the command line — prefer KEYORIX_INITIAL_PASSWORD or the interactive prompt; required in some form unless --setup-link or --one-time-password)")
 	createCmd.Flags().StringVar(&createDisplayName, "display-name", "", "Display name (defaults to username)")
 	createCmd.Flags().BoolVar(&createSetupLink, "setup-link", false, "Provision a setup link instead of an admin-set password (ADR-028)")
 	createCmd.Flags().BoolVar(&createOneTimePassword, "one-time-password", false, "Generate a one-time password instead of an admin-set password (ADR-028 Part E); must be changed on first login")
@@ -54,8 +57,22 @@ func runCreate(cmd *cobra.Command, args []string) error {
 	if createSetupLink && createOneTimePassword {
 		return errors.New("use either --setup-link or --one-time-password, not both")
 	}
-	if !createSetupLink && !createOneTimePassword && createPassword == "" {
-		return errors.New("password is required (use --password), or use --setup-link or --one-time-password")
+
+	// Resolve the initial password without ever requiring it on argv: the
+	// (insecure, warned) --password flag if set, else KEYORIX_INITIAL_PASSWORD, else
+	// an interactive no-echo prompt — mirroring `keyorix connect`'s resolveAPIKey /
+	// resolveConnectPassword pattern. Not needed at all for --setup-link /
+	// --one-time-password, which provision their own credential.
+	var password string
+	if !createSetupLink && !createOneTimePassword {
+		pw, err := resolveInitialPassword(cmd)
+		if err != nil {
+			return err
+		}
+		if pw == "" {
+			return errors.New("password is required (use --password, KEYORIX_INITIAL_PASSWORD, or the interactive prompt), or use --setup-link or --one-time-password")
+		}
+		password = pw
 	}
 
 	// Remote mode: go through the server so the user lands in the SAME store the
@@ -66,7 +83,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		if createSetupLink || createOneTimePassword {
 			return errors.New("--setup-link / --one-time-password are not yet supported in remote mode; use --password, or run this command on the server host")
 		}
-		return runCreateRemote(rc)
+		return runCreateRemote(rc, password)
 	}
 
 	service, err := common.InitializeCoreService()
@@ -84,7 +101,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		Username:    createUsername,
 		Email:       createEmail,
 		DisplayName: display,
-		Password:    createPassword,
+		Password:    password,
 	}
 
 	if createSetupLink {
@@ -129,7 +146,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 
 // runCreateRemote creates the user via POST /api/v1/users (password mode), so it
 // lands in the server's store rather than a local SQLite file.
-func runCreateRemote(rc *common.RemoteClient) error {
+func runCreateRemote(rc *common.RemoteClient, password string) error {
 	display := createDisplayName
 	if display == "" {
 		display = createUsername
@@ -138,7 +155,7 @@ func runCreateRemote(rc *common.RemoteClient) error {
 		"username":     createUsername,
 		"email":        createEmail,
 		"display_name": display,
-		"password":     createPassword,
+		"password":     password,
 	}
 	var u struct {
 		ID       uint   `json:"id"`
@@ -150,4 +167,26 @@ func runCreateRemote(rc *common.RemoteClient) error {
 	}
 	fmt.Printf("User created: id=%d username=%s email=%s\n", u.ID, u.Username, u.Email)
 	return nil
+}
+
+// resolveInitialPassword returns the new user's initial password without ever
+// requiring it on argv: the (insecure, warned) --password flag if set, else
+// KEYORIX_INITIAL_PASSWORD, else an interactive no-echo prompt. Mirrors
+// `keyorix connect`'s resolveAPIKey/resolveConnectPassword argv-hygiene pattern
+// (internal/cli/connect/connect.go) established earlier this campaign (#207/#208).
+func resolveInitialPassword(cmd *cobra.Command) (string, error) {
+	if createPassword != "" {
+		fmt.Fprintln(os.Stderr, "⚠️  Passing --password on the command line is insecure (visible via ps/proc and saved in shell history); prefer the KEYORIX_INITIAL_PASSWORD environment variable, or omit it to be prompted.")
+		return createPassword, nil
+	}
+	if pw := os.Getenv("KEYORIX_INITIAL_PASSWORD"); pw != "" {
+		return pw, nil
+	}
+	fmt.Fprint(os.Stderr, "Initial password: ")
+	b, err := term.ReadPassword(int(syscall.Stdin))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("failed to read password: %w", err)
+	}
+	return string(b), nil
 }

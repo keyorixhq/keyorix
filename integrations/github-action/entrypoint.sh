@@ -48,6 +48,20 @@ install_cli() {
   keyorix --version
 }
 
+# validate_secret_name checks that a Keyorix secret NAME is safe to write verbatim
+# into $GITHUB_ENV. Keyorix only validates secret name LENGTH server-side (min=1,
+# max=255) with no charset restriction, so a principal holding only project-scoped
+# secrets.write could name a secret e.g. "FOO\nGITHUB_TOKEN=<attacker-value>\nBAR".
+# $GITHUB_ENV is a plain line-based text format the runner parses after this action
+# exits; an embedded newline (or other metacharacter) in the "name" field lets that
+# single entry masquerade as an extra NAME=VALUE assignment line, overriding env vars
+# trusted by later, more-privileged steps in the same job (#174). Requiring a plain
+# identifier closes this off entirely: no newline, `=`, or other special character
+# can ever reach the file.
+validate_secret_name() {
+  [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
+}
+
 inject_env() {
   local json key val delim count
   json="$(keyorix secret export --project "$PROJECT" --env "$ENVIRONMENT" --format json)"
@@ -60,6 +74,12 @@ inject_env() {
   count=0
   while IFS= read -r key; do
     [ -n "$key" ] || continue
+    # Reject any secret name that isn't a safe identifier BEFORE it ever reaches
+    # $GITHUB_ENV — see validate_secret_name above (#174).
+    if ! validate_secret_name "$key"; then
+      echo "error: secret name '${key}' is not a valid identifier (must match ^[A-Za-z_][A-Za-z0-9_]*\$) — refusing to export it to \$GITHUB_ENV" >&2
+      exit 1
+    fi
     val="$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k]')"
     # Mask the value everywhere it might appear in the logs.
     echo "::add-mask::$val"
@@ -78,14 +98,19 @@ inject_env() {
   echo "Loaded ${count} secret(s) from project '${PROJECT}' environment '${ENVIRONMENT}'."
 }
 
-install_cli
+# Only run the action's main flow when this script is executed directly, not when
+# it's sourced (e.g. by a test harness that wants validate_secret_name/inject_env
+# without performing a real CLI install + secret export).
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
+  install_cli
 
-if [ "$EXPORT_TO_ENV" = "true" ]; then
-  inject_env
-fi
+  if [ "$EXPORT_TO_ENV" = "true" ]; then
+    inject_env
+  fi
 
-if [ -n "$OUTPUT_FILE" ]; then
-  # Reuse the CLI's dotenv writer (handles quoting) for the file form.
-  keyorix secret export --project "$PROJECT" --env "$ENVIRONMENT" --format dotenv --output "$OUTPUT_FILE"
-  echo "Wrote secrets to ${OUTPUT_FILE}"
+  if [ -n "$OUTPUT_FILE" ]; then
+    # Reuse the CLI's dotenv writer (handles quoting) for the file form.
+    keyorix secret export --project "$PROJECT" --env "$ENVIRONMENT" --format dotenv --output "$OUTPUT_FILE"
+    echo "Wrote secrets to ${OUTPUT_FILE}"
+  fi
 fi

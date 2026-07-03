@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	cliconfig "github.com/keyorixhq/keyorix/internal/cli/config"
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -110,9 +111,19 @@ func NewRemoteClient() (*RemoteClient, bool) {
 	return &RemoteClient{
 		Endpoint: endpoint,
 		Token:    token,
-		hc:       &http.Client{},
+		// #315: the zero-value http.Client has an infinite Timeout. Only 3 CLI
+		// commands (status/connect/offline) wrap their own calls in
+		// context.WithTimeout; the 100+ other call sites across secret/rbac/
+		// machine/rotation/project/dynamic etc. use undecorated contexts — a hung
+		// or misconfigured KEYORIX_SERVER would otherwise hang the CLI forever
+		// with no way out. Mirrors the storage-layer remote client's default.
+		hc: &http.Client{Timeout: defaultRemoteClientTimeout},
 	}, true
 }
+
+// defaultRemoteClientTimeout matches internal/storage/remote's default
+// (Config.GetTimeout's 30s fallback when TimeoutSeconds is unset).
+const defaultRemoteClientTimeout = 30 * time.Second
 
 // Get performs a GET to path, strips the {"data":…} envelope, and decodes into out.
 func (c *RemoteClient) Get(ctx context.Context, path string, out interface{}) error {
@@ -162,7 +173,9 @@ func (c *RemoteClient) GetRaw(ctx context.Context, path string) ([]byte, error) 
 	return body, nil
 }
 
-// Post serialises body as JSON, POSTs to path, strips the envelope, and decodes into out.
+// Post serialises body as JSON, POSTs to path, strips the envelope, and decodes
+// into out (out may be nil, matching Put/Patch, when the caller doesn't need the
+// response body).
 func (c *RemoteClient) Post(ctx context.Context, path string, body interface{}, out interface{}) error {
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -186,7 +199,10 @@ func (c *RemoteClient) Post(ctx context.Context, path string, body interface{}, 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, path)
 	}
-	return decodeEnvelope(resp, out, path)
+	if out != nil {
+		return decodeEnvelope(resp, out, path)
+	}
+	return nil
 }
 
 // decodeEnvelope strips {"data":…} and unmarshals the inner payload into out.

@@ -2,6 +2,7 @@ package validation
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -43,6 +44,47 @@ func TestValidate_Required(t *testing.T) {
 
 	err := v.Validate(payload{Name: ""})
 	require.Error(t, err)
+}
+
+func TestValidate_Required_RejectsWhitespaceAndZeroWidthOnly(t *testing.T) {
+	type payload struct {
+		Name string `json:"name" validate:"required"`
+	}
+	v := NewValidator()
+
+	// Positive case: real content still passes.
+	require.NoError(t, v.Validate(payload{Name: "Payments"}))
+
+	for name, bad := range map[string]string{
+		"pure whitespace":      "   \t\n  ",
+		"zero-width space":     "\u200b\u200b",
+		"zero-width + spaces":  "  \u200b \u200b  ",
+		"non-breaking + ZWNBS": "\u00a0\ufeff",
+	} {
+		err := v.Validate(payload{Name: bad})
+		require.Error(t, err, name)
+	}
+}
+
+func TestValidate_Identifier(t *testing.T) {
+	type payload struct {
+		Name string `json:"name" validate:"omitempty,identifier"`
+	}
+	v := NewValidator()
+
+	for _, good := range []string{"", "Payments", "prod-db_01", "team 42"} {
+		require.NoError(t, v.Validate(payload{Name: good}), good)
+	}
+	zwsp := string(rune(0x200B)) // ZERO WIDTH SPACE
+	for _, bad := range []string{
+		"=cmd|'/c calc'!A1",
+		"name" + zwsp + "with" + zwsp + "zero" + zwsp + "width",
+		"path/traversal",
+		"<script>",
+		"semicolon;here",
+	} {
+		require.Error(t, v.Validate(payload{Name: bad}), bad)
+	}
 }
 
 func TestValidate_Omitempty_SkipsRemainingRules(t *testing.T) {
@@ -177,6 +219,134 @@ func TestValidationErrors_ErrorString(t *testing.T) {
 	assert.Contains(t, got, "name: is required")
 	assert.Contains(t, got, "age: must be at least 18")
 	assert.Contains(t, got, "; ")
+}
+
+// --- Pointer-typed field regression tests (#347) ---
+//
+// Pointer-typed fields (*int, *string, *[]string) must be validated against
+// the SAME rules as their non-pointer equivalent once the pointer is known
+// to be non-nil. A nil pointer with `omitempty` must still pass, exactly as
+// before.
+
+func intPtr(i int) *int                { return &i }
+func strPtr(s string) *string          { return &s }
+func sliceStrPtr(s []string) *[]string { return &s }
+
+func TestValidate_PointerMin_NonNilBelowMin_Errors(t *testing.T) {
+	type payload struct {
+		MaxReads *int `json:"max_reads" validate:"omitempty,min=1"`
+	}
+	v := NewValidator()
+
+	// The primary #347 regression: max_reads=0 and max_reads=-100 must be
+	// rejected, not silently pass as "unlimited reads".
+	require.Error(t, v.Validate(payload{MaxReads: intPtr(0)}), "max_reads=0 must be rejected")
+	require.Error(t, v.Validate(payload{MaxReads: intPtr(-100)}), "max_reads=-100 must be rejected")
+}
+
+func TestValidate_PointerMin_NonNilAtOrAboveMin_Passes(t *testing.T) {
+	type payload struct {
+		MaxReads *int `json:"max_reads" validate:"omitempty,min=1"`
+	}
+	v := NewValidator()
+
+	require.NoError(t, v.Validate(payload{MaxReads: intPtr(1)}))
+	require.NoError(t, v.Validate(payload{MaxReads: intPtr(100)}))
+}
+
+func TestValidate_PointerOmitempty_NilPointerPasses(t *testing.T) {
+	type payload struct {
+		MaxReads *int `json:"max_reads" validate:"omitempty,min=1"`
+	}
+	v := NewValidator()
+
+	// A nil pointer must still be treated as "absent" and pass omitempty,
+	// exactly like before this fix.
+	require.NoError(t, v.Validate(payload{MaxReads: nil}))
+}
+
+func TestValidate_PointerString_MinMax(t *testing.T) {
+	type payload struct {
+		Username *string `json:"username" validate:"omitempty,min=3,max=50"`
+	}
+	v := NewValidator()
+
+	require.NoError(t, v.Validate(payload{Username: nil}), "nil pointer passes via omitempty")
+	require.NoError(t, v.Validate(payload{Username: strPtr("abc")}))
+	require.Error(t, v.Validate(payload{Username: strPtr("ab")}), "below min")
+	require.Error(t, v.Validate(payload{Username: strPtr(strings.Repeat("a", 51))}), "above max")
+}
+
+func TestValidate_PointerString_Email(t *testing.T) {
+	type payload struct {
+		Email *string `json:"email" validate:"omitempty,email"`
+	}
+	v := NewValidator()
+
+	require.NoError(t, v.Validate(payload{Email: nil}), "nil pointer passes via omitempty")
+	require.NoError(t, v.Validate(payload{Email: strPtr("a@b.co")}))
+	require.Error(t, v.Validate(payload{Email: strPtr("not-an-email <script>")}), "malformed email must be rejected")
+}
+
+func TestValidate_PointerString_NonNilZeroValueIsNotOmitted(t *testing.T) {
+	// A non-nil pointer to a zero value ("") must NOT be short-circuited by
+	// omitempty — only a nil pointer means "not provided". A caller who
+	// explicitly sends an empty string must still hit min=1 and be rejected;
+	// this is the whole reason MaxReads/DisplayName/etc. use pointer types
+	// instead of plain int/string (to distinguish "omitted" from "explicit
+	// zero value").
+	type payload struct {
+		DisplayName *string `json:"display_name" validate:"omitempty,min=1,max=100"`
+	}
+	v := NewValidator()
+
+	empty := ""
+	require.Error(t, v.Validate(payload{DisplayName: &empty}), "non-nil pointer to empty string must still be validated, not treated as absent")
+	require.NoError(t, v.Validate(payload{DisplayName: nil}), "nil pointer is absent, correctly skipped")
+}
+
+func TestValidate_PointerSlice_MinMax(t *testing.T) {
+	type payload struct {
+		Permissions *[]string `json:"permissions" validate:"omitempty,min=1"`
+	}
+	v := NewValidator()
+
+	require.NoError(t, v.Validate(payload{Permissions: nil}), "nil pointer passes via omitempty")
+	require.NoError(t, v.Validate(payload{Permissions: sliceStrPtr([]string{"secrets.read"})}))
+	require.Error(t, v.Validate(payload{Permissions: sliceStrPtr([]string{})}), "empty slice behind non-nil pointer must fail min=1")
+}
+
+func TestValidate_PointerAndNonPointer_IdenticalRuleOutcome(t *testing.T) {
+	// A *string field and its non-pointer equivalent must reach the same
+	// pass/fail verdict for the same underlying value and rule set.
+	type withPtr struct {
+		Value *string `json:"value" validate:"omitempty,min=3,max=5,alphanum"`
+	}
+	type withoutPtr struct {
+		Value string `json:"value" validate:"omitempty,min=3,max=5,alphanum"`
+	}
+	v := NewValidator()
+
+	cases := []struct {
+		val     string
+		wantErr bool
+	}{
+		{"ab", true},     // below min
+		{"abc12", false}, // ok
+		{"abcdef", true}, // above max
+		{"abc-1", true},  // alphanum rejects dash (within min/max range)
+	}
+	for _, c := range cases {
+		ptrErr := v.Validate(withPtr{Value: strPtr(c.val)})
+		plainErr := v.Validate(withoutPtr{Value: c.val})
+		if c.wantErr {
+			require.Error(t, ptrErr, "pointer case: %q", c.val)
+			require.Error(t, plainErr, "non-pointer case: %q", c.val)
+		} else {
+			require.NoError(t, ptrErr, "pointer case: %q", c.val)
+			require.NoError(t, plainErr, "non-pointer case: %q", c.val)
+		}
+	}
 }
 
 func TestValidate_UsesJSONNameForErrorField(t *testing.T) {

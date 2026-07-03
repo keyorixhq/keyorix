@@ -42,6 +42,31 @@ func TestSecretNamePolicy_Validate(t *testing.T) {
 		assert.NoError(t, c.validateSecretName("short"))
 		assert.Error(t, c.validateSecretName("toolong"))
 	})
+
+	// #389: an operator-supplied pattern that forgets to anchor (^…$) must still
+	// enforce a whole-string match — MatchString alone succeeds on any matching
+	// substring, so an unanchored "identifier-like" pattern would otherwise accept a
+	// name that merely CONTAINS a conforming substring, silently defeating the
+	// protection other findings (the #328 CSV/Slack-injection family) rely on this
+	// policy to provide.
+	t.Run("an unanchored pattern is enforced as a whole-string match", func(t *testing.T) {
+		c := &KeyorixCore{}
+		require.NoError(t, c.SetSecretNamePolicy(SecretNamePolicy{Enabled: true, Pattern: "[A-Za-z][A-Za-z0-9_-]*"}))
+		assert.NoError(t, c.validateSecretName("DB_PASSWORD"), "a fully-conforming name still passes")
+		assert.Error(t, c.validateSecretName("=cmd|' /C calc'!A1"),
+			"a CSV-injection-shaped name containing a conforming substring must be rejected, not merely matched-somewhere")
+		assert.Error(t, c.validateSecretName("FOO\nINJECTED=evil"),
+			"a name embedding a conforming substring plus a newline must be rejected")
+	})
+
+	// An already-anchored pattern must behave exactly as before — the added
+	// ^(?:...)$ wrap is a no-op on a pattern that already anchors itself.
+	t.Run("an already-anchored pattern is unaffected", func(t *testing.T) {
+		c := &KeyorixCore{}
+		require.NoError(t, c.SetSecretNamePolicy(SecretNamePolicy{Enabled: true, Pattern: "^[A-Z][A-Z0-9_]*$"}))
+		assert.NoError(t, c.validateSecretName("DB_PASSWORD"))
+		assert.Error(t, c.validateSecretName("db-password"))
+	})
 }
 
 func TestCreateSecret_NamePolicy(t *testing.T) {

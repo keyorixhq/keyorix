@@ -8,6 +8,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestKeyorixCore_LogShareCreated(t *testing.T) {
@@ -251,6 +252,82 @@ func TestKeyorixCore_LogGroupShareRevoked(t *testing.T) {
 
 	// Assert
 	mockStorage.AssertExpectations(t)
+}
+
+// TestShareAudit_StampsImpersonationContext locks in #284: every sharing-related
+// audit writer must route through the shared writeAuditEvent choke point so an
+// action taken during an impersonation session is stamped with
+// ImpersonatedBy/ActingAs/Impersonation=true — mirroring how secret CRUD and RBAC
+// writers (audit.go) already behave. Exploit trace from the finding: an admin (id
+// 99) impersonates target user T (id 2) and shares a secret as T; the resulting
+// audit row must NOT be indistinguishable from T's own genuine action.
+func TestShareAudit_StampsImpersonationContext(t *testing.T) {
+	mockStorage := new(MockStorage)
+	core := &KeyorixCore{
+		storage: mockStorage,
+		now:     time.Now,
+	}
+	ctx := WithImpersonation(context.Background(), 99) // admin 99 impersonating target 2
+
+	writers := map[string]func(){
+		string(ShareAuditEventCreated):      func() { core.LogShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "read"}) },
+		string(ShareAuditEventUpdated):      func() { core.LogShareUpdated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "write", OldPermission: "read"}) },
+		string(ShareAuditEventRevoked):      func() { core.LogShareRevoked(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3}) },
+		string(ShareAuditEventAccessed):     func() { core.LogSharedSecretAccessed(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, Permission: "read"}) },
+		string(ShareAuditEventGroupCreated): func() { core.LogGroupShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true, Permission: "read"}) },
+		string(ShareAuditEventGroupUpdated): func() {
+			core.LogGroupShareUpdated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true, Permission: "write", OldPermission: "read"})
+		},
+		string(ShareAuditEventGroupRevoked): func() { core.LogGroupShareRevoked(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true}) },
+		string(ShareAuditEventSelfRemoved):  func() { core.LogSelfRemovalFromShare(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 2}) },
+	}
+
+	for eventType, write := range writers {
+		t.Run(eventType, func(t *testing.T) {
+			mockStorage.ExpectedCalls = nil
+			mockStorage.Calls = nil
+			var captured *models.AuditEvent
+			mockStorage.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+				captured = e
+				return e.EventType == eventType
+			})).Return(nil)
+
+			write()
+
+			require.NotNil(t, captured, "expected an audit event to be written")
+			assert.True(t, captured.Impersonation, "Impersonation must be true")
+			require.NotNil(t, captured.ImpersonatedBy, "ImpersonatedBy must be stamped")
+			assert.Equal(t, uint(99), *captured.ImpersonatedBy)
+			require.NotNil(t, captured.ActingAs, "ActingAs must be stamped")
+			assert.Equal(t, uint(2), *captured.ActingAs)
+			assert.Equal(t, ActorTypeUser, captured.ActorType)
+		})
+	}
+}
+
+// TestShareAudit_NoImpersonationOutsideSession confirms a non-impersonation
+// context leaves Impersonation/ImpersonatedBy/ActingAs unset, so the fix does not
+// spuriously tag ordinary sharing actions.
+func TestShareAudit_NoImpersonationOutsideSession(t *testing.T) {
+	mockStorage := new(MockStorage)
+	core := &KeyorixCore{
+		storage: mockStorage,
+		now:     time.Now,
+	}
+	ctx := context.Background()
+
+	var captured *models.AuditEvent
+	mockStorage.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
+		captured = e
+		return true
+	})).Return(nil)
+
+	core.LogShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "read"})
+
+	require.NotNil(t, captured)
+	assert.False(t, captured.Impersonation)
+	assert.Nil(t, captured.ImpersonatedBy)
+	assert.Nil(t, captured.ActingAs)
 }
 
 func TestShareAuditContext_Validation(t *testing.T) {
