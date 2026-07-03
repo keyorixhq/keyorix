@@ -90,7 +90,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	var out io.Writer = os.Stdout
 	if exportOutput != "" {
-		f, err := os.Create(exportOutput) // #nosec G304
+		// 0600: this file holds plaintext secret values — sibling writers
+		// (render.go, scan.go, fix.go) all use the same restrictive mode.
+		f, err := os.OpenFile(exportOutput, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600) // #nosec G304
 		if err != nil {
 			return fmt.Errorf("cannot create output file %q: %w", exportOutput, err)
 		}

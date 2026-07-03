@@ -64,6 +64,33 @@ func TestExportComplianceEvidence_WritesFileAndAudits(t *testing.T) {
 	assert.Equal(t, int64(1), n)
 }
 
+// TestExportComplianceEvidence_EnforcesPermsOnExistingFile pins the #296 fix: a
+// pre-existing evidence pack (and its detached signature) at the export's target
+// path must have its mode tightened to 0600, not left at whatever looser mode a
+// prior file happened to have.
+func TestExportComplianceEvidence_EnforcesPermsOnExistingFile(t *testing.T) {
+	ctx := context.Background()
+	c, _, now := newEvidenceExportCore(t)
+	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")
+	dir := t.TempDir()
+
+	wantName := "keyorix-evidence-" + now.UTC().Format(evidenceFileTimeLayout) + ".json"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, wantName), []byte("stale"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, wantName+".sig"), []byte("stale-sig"), 0644))
+
+	res, err := c.ExportComplianceEvidence(ctx, dir)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dir, wantName), res.Path)
+
+	info, err := os.Stat(res.Path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "the evidence pack's mode must be tightened even though a looser-mode file pre-existed")
+
+	sigInfo, err := os.Stat(res.Path + ".sig")
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0600), sigInfo.Mode().Perm(), "the detached signature's mode must be tightened too")
+}
+
 func TestExportComplianceEvidence_SignsAndVerifies(t *testing.T) {
 	c, _, _ := newEvidenceExportCore(t)
 	c.SetEvidenceSignKey([]byte("0123456789abcdef0123456789abcdef"), "v1")

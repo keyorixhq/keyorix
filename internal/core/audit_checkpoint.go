@@ -143,18 +143,43 @@ func (c *KeyorixCore) VerifyCheckpointAnchor(cp *models.AuditCheckpoint) (anchor
 // error when the chain does not verify — refusing to notarise a tampered state,
 // and refusing to re-baseline over a truncation already flagged by an existing
 // checkpoint (VerifyAuditChain enforces prior checkpoints).
+//
+// The whole chain-walk + decide + create sequence runs under
+// storage.WithAuditCheckpointLock (#300): it is reachable from three
+// unsynchronized triggers — the scheduler tick, the HTTP
+// POST /api/v1/audit/checkpoint endpoint, and the gRPC WriteAuditCheckpoint RPC —
+// which can land on different replicas (ADR-039 HA). Without a lock, two
+// overlapping calls can interleave so the checkpoint that commits with the
+// higher DB id ends up certifying FEWER chained events than an earlier-committed
+// one, reopening the exact truncation-detection gap ADR-029 exists to close.
 func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, bool, error) {
 	if !c.AuditCheckpointsAvailable() {
 		return nil, false, nil
 	}
+	var newCP *models.AuditCheckpoint
+	err := c.storage.WithAuditCheckpointLock(ctx, func() error {
+		cp, werr := c.writeAuditCheckpointLocked(ctx)
+		newCP = cp
+		return werr
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return newCP, true, nil
+}
+
+// writeAuditCheckpointLocked performs the actual chain-walk + decide + create
+// sequence. The caller MUST hold storage.WithAuditCheckpointLock for the
+// duration of this call (see WriteAuditCheckpoint).
+func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.AuditCheckpoint, error) {
 	// Verify the raw chain (walk only, no checkpoint enforcement) so we never sign
 	// a head over a broken chain.
 	raw, err := c.storage.VerifyAuditChain(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to verify audit chain: %w", err)
+		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}
 	if !raw.Valid {
-		return nil, false, fmt.Errorf("refusing to checkpoint a chain that does not verify: %s", raw.Reason)
+		return nil, fmt.Errorf("refusing to checkpoint a chain that does not verify: %s", raw.Reason)
 	}
 	// Refuse to re-baseline over a truncation that an AUTHENTICATED prior checkpoint
 	// proves — otherwise a scheduled write would silently bless a shortened chain and
@@ -163,14 +188,14 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	// key rotation.
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if cp != nil {
 		if c.checkpointSignatureValid(cp) {
 			if reason, tampered, err := c.checkpointTruncation(ctx, raw.ChainedEvents, cp); err != nil {
-				return nil, false, err
+				return nil, err
 			} else if tampered {
-				return nil, false, fmt.Errorf("refusing to checkpoint: %s", reason)
+				return nil, fmt.Errorf("refusing to checkpoint: %s", reason)
 			}
 		} else if cp.KeyVersion == c.auditCkptKeyVersion {
 			// The prior checkpoint claims the CURRENT signing-key version yet fails its
@@ -180,7 +205,7 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 			// flags this as Valid=false, but a silent re-baseline would write a fresh,
 			// authentic checkpoint over the shortened chain and erase that signal. Fail
 			// closed and leave the tamper signal standing for an operator to investigate.
-			return nil, false, fmt.Errorf("refusing to checkpoint: latest checkpoint #%d fails its signature under the current key version %q — the checkpoint row was tampered with, not rotated", cp.ID, cp.KeyVersion)
+			return nil, fmt.Errorf("refusing to checkpoint: latest checkpoint #%d fails its signature under the current key version %q — the checkpoint row was tampered with, not rotated", cp.ID, cp.KeyVersion)
 		}
 		// else: signature fails AND key_version is superseded → consistent with a DEK
 		// rotation; fall through and re-baseline under the new key (recovery path).
@@ -190,13 +215,13 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	// checkpoint (and a fresh high-water), erasing the rollback evidence.
 	floor, _, hwTampered, hwReason, err := c.auditHighWaterFloor(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if hwTampered {
-		return nil, false, fmt.Errorf("refusing to checkpoint: %s", hwReason)
+		return nil, fmt.Errorf("refusing to checkpoint: %s", hwReason)
 	}
 	if raw.ChainedEvents < floor {
-		return nil, false, fmt.Errorf("refusing to checkpoint: the audit trail (%d events) is below the certified high-water mark (%d) — a truncation must be investigated, not re-baselined", raw.ChainedEvents, floor)
+		return nil, fmt.Errorf("refusing to checkpoint: the audit trail (%d events) is below the certified high-water mark (%d) — a truncation must be investigated, not re-baselined", raw.ChainedEvents, floor)
 	}
 	newCP := &models.AuditCheckpoint{
 		ChainedEvents: raw.ChainedEvents,
@@ -206,13 +231,13 @@ func (c *KeyorixCore) WriteAuditCheckpoint(ctx context.Context) (*models.AuditCh
 	}
 	newCP.Signature = c.signCheckpoint(newCP)
 	if err := c.storage.CreateAuditCheckpoint(ctx, newCP); err != nil {
-		return nil, false, fmt.Errorf("failed to write audit checkpoint: %w", err)
+		return nil, fmt.Errorf("failed to write audit checkpoint: %w", err)
 	}
 	// Best-effort external anchor (RFC 3161) — never fails the checkpoint write.
 	c.anchorCheckpoint(ctx, newCP)
 	// Advance the persistent + in-memory high-water mark to this certified length.
 	c.advanceAuditHighWater(ctx, newCP)
-	return newCP, true, nil
+	return newCP, nil
 }
 
 // enforceAuditCheckpoint augments a chain-walk verdict with on-box checkpoint

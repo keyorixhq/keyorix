@@ -79,11 +79,22 @@ var placeCmd = &cobra.Command{
 	},
 }
 
+var liftYes bool
+
 var liftCmd = &cobra.Command{
 	Use:          "lift",
 	Short:        "Lift the active legal hold (resume purges)",
 	SilenceUsage: true,
-	RunE: func(_ *cobra.Command, _ []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		if !liftYes {
+			fmt.Print("Lift the active legal hold? This immediately re-arms purge/retention/JIT-expiry\njobs and cannot be undone from here. Type 'yes' to confirm: ")
+			var answer string
+			_, _ = fmt.Fscanln(cmd.InOrStdin(), &answer)
+			if answer != "yes" {
+				fmt.Println("Aborted.")
+				return nil
+			}
+		}
 		c, ok := common.NewRemoteClient()
 		if !ok {
 			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
@@ -98,5 +109,6 @@ var liftCmd = &cobra.Command{
 
 func init() {
 	placeCmd.Flags().StringVar(&placeReason, "reason", "", "Why the hold is placed (required, recorded for audit)")
+	liftCmd.Flags().BoolVar(&liftYes, "yes", false, "Skip the confirmation prompt")
 	LegalHoldCmd.AddCommand(statusCmd, placeCmd, liftCmd)
 }

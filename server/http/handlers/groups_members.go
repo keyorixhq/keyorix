@@ -70,7 +70,7 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "ValidationError", "user_id is required", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.AddUserToGroup(r.Context(), body.UserID, uint(groupID)); err != nil {
+	if err := h.coreService.AddUserToGroup(r.Context(), userCtx.UserID, body.UserID, uint(groupID)); err != nil {
 		log.Printf("Error adding group member: %v", err)
 		if strings.Contains(err.Error(), "not found") {
 			sendError(w, "NotFound", "User or group not found", http.StatusNotFound, nil)
@@ -99,7 +99,7 @@ func (h *GroupHandler) RemoveGroupMember(w http.ResponseWriter, r *http.Request)
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
-	if err := h.coreService.RemoveUserFromGroup(r.Context(), uint(userID), uint(groupID)); err != nil {
+	if err := h.coreService.RemoveUserFromGroup(r.Context(), userCtx.UserID, uint(userID), uint(groupID)); err != nil {
 		log.Printf("Error removing group member: %v", err)
 		sendError(w, "InternalError", "Failed to remove group member", http.StatusInternalServerError, nil)
 		return

@@ -160,7 +160,15 @@ func (v *Validator) applyRule(fieldName string, field reflect.Value, ruleName, p
 	return nil
 }
 
-// isEmpty checks if a field is empty
+// isEmpty checks if a field is empty. A nil pointer/interface is empty (and
+// `omitempty` short-circuits the remaining rules for it). A NON-nil pointer
+// is deliberately NOT treated as empty even when it points at a zero value
+// (e.g. a non-nil *int pointing at 0, or a non-nil *string pointing at "").
+// Pointer-typed request fields exist precisely so a caller can distinguish
+// "not provided" (nil — skip validation, leave any existing value alone)
+// from "explicitly set to the zero value" (non-nil — must still satisfy
+// every other rule, e.g. reject a `max_reads: 0` that a `min=1` tag forbids,
+// rather than silently letting the zero value pass as if it were absent).
 func (v *Validator) isEmpty(field reflect.Value) bool {
 	switch field.Kind() {
 	case reflect.String:
@@ -181,8 +189,31 @@ func (v *Validator) isEmpty(field reflect.Value) bool {
 	return false
 }
 
+// derefForRule resolves field to the value that the Kind()-based validation
+// rules (min/max/email/url/alpha/alphanum/numeric/oneof) should inspect: a
+// non-pointer field is returned unchanged; a non-nil pointer is dereferenced
+// so it's validated against the same rules as its non-pointer equivalent; a
+// nil pointer has nothing to validate (ok=false) — the rule should pass,
+// exactly as it does today for an absent value (omitempty, if present, has
+// already short-circuited via isEmpty; `required` is enforced separately).
+func derefForRule(field reflect.Value) (resolved reflect.Value, ok bool) {
+	if field.Kind() == reflect.Pointer {
+		if field.IsNil() {
+			return reflect.Value{}, false
+		}
+		return field.Elem(), true
+	}
+	return field, true
+}
+
 // validateMin validates minimum length/value
 func (v *Validator) validateMin(field reflect.Value, param string) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
+
 	var min int
 	_, _ = fmt.Sscanf(param, "%d", &min)
 
@@ -214,6 +245,12 @@ func (v *Validator) validateMin(field reflect.Value, param string) error {
 
 // validateMax validates maximum length/value
 func (v *Validator) validateMax(field reflect.Value, param string) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
+
 	var max int
 	_, _ = fmt.Sscanf(param, "%d", &max)
 
@@ -245,6 +282,11 @@ func (v *Validator) validateMax(field reflect.Value, param string) error {
 
 // validateEmail validates email format
 func (v *Validator) validateEmail(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -264,6 +306,11 @@ func (v *Validator) validateEmail(field reflect.Value) error {
 
 // validateURL validates URL format
 func (v *Validator) validateURL(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -283,6 +330,11 @@ func (v *Validator) validateURL(field reflect.Value) error {
 
 // validateAlpha validates alphabetic characters only
 func (v *Validator) validateAlpha(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -302,6 +354,11 @@ func (v *Validator) validateAlpha(field reflect.Value) error {
 
 // validateAlphaNum validates alphanumeric characters only
 func (v *Validator) validateAlphaNum(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -321,6 +378,11 @@ func (v *Validator) validateAlphaNum(field reflect.Value) error {
 
 // validateNumeric validates numeric characters only
 func (v *Validator) validateNumeric(field reflect.Value) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
@@ -340,6 +402,11 @@ func (v *Validator) validateNumeric(field reflect.Value) error {
 
 // validateOneOf validates that value is one of allowed values
 func (v *Validator) validateOneOf(field reflect.Value, param string) error {
+	resolved, ok := derefForRule(field)
+	if !ok {
+		return nil
+	}
+	field = resolved
 	if field.Kind() != reflect.String {
 		return nil
 	}
