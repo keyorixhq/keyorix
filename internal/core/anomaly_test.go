@@ -81,6 +81,45 @@ type detectionTestErr struct{}
 
 func (*detectionTestErr) Error() string { return "boom" }
 
+// perSecretFailStore fails ListSecretAccessLogs only for a chosen secret ID (on
+// whichever call — baseline or recent-window — comes first for that secret), letting
+// other secrets in the same RunDetection pass succeed normally. Lets a test tell "one
+// secret's read failed" apart from "every read failed".
+type perSecretFailStore struct {
+	*captureStore
+	failSecretID uint
+}
+
+func (s *perSecretFailStore) ListSecretAccessLogs(ctx context.Context, secretID uint, since time.Time) ([]models.SecretAccessLog, error) {
+	if secretID == s.failSecretID {
+		return nil, assertAnErr
+	}
+	return s.captureStore.ListSecretAccessLogs(ctx, secretID, since)
+}
+
+// #365: a ListSecretAccessLogs failure for one secret must (a) be logged with the
+// specific secret ID so an operator can tell a transient hiccup from a genuine gap
+// (the detection window is only the last hour and is never retroactively
+// re-evaluated), and (b) not block detection for a sibling secret in the same pass.
+func TestRunDetection_LogsAndContinuesOnAccessLogReadError(t *testing.T) {
+	store := &perSecretFailStore{captureStore: &captureStore{}, failSecretID: 1}
+	d := NewAnomalyDetector(store)
+
+	buf, restore := captureLog(t)
+	defer restore()
+
+	err := d.RunDetection(context.Background(), []models.SecretNode{{ID: 1, Name: "broken"}, {ID: 2, Name: "healthy"}})
+	require.Error(t, err, "a per-secret read failure must surface as a non-nil pass error, not a silent success")
+	assert.Contains(t, err.Error(), "1 storage failure")
+
+	// The healthy secret's baseline+recent calls both went through despite secret 1's
+	// failure — RunDetection didn't abort the whole pass.
+	assert.GreaterOrEqual(t, len(store.sinces), 2, "the healthy secret's reads still ran")
+
+	logged := buf.String()
+	assert.Contains(t, logged, "secret 1", "the failing secret's ID must appear in the operator-visible log line")
+}
+
 func TestBuildBaseline(t *testing.T) {
 	now := time.Date(2026, 6, 17, 12, 0, 0, 0, time.UTC)
 	windowStart := now.Add(-1 * time.Hour) // the live detection window — excluded from the baseline
