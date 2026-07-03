@@ -33,7 +33,7 @@ func TestUpdateSCIMUser_RejectsEmailCollision(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "admin", Email: "admin@x.io", IsActive: true, AccountState: AccountActive}).Error)
-	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "bob@x.io", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "bob@x.io", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}).Error)
 
 	adminEmail := "admin@x.io"
 	_, err := c.UpdateSCIMUser(ctx, 9, 2, nil, &adminEmail, nil)
@@ -44,7 +44,7 @@ func TestUpdateSCIMUser_RejectsEmailCollision(t *testing.T) {
 func TestUpdateSCIMUser_RefusesLastAdminDeactivation(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error) // global admin
 
@@ -57,7 +57,7 @@ func TestUpdateSCIMUser_RefusesLastAdminDeactivation(t *testing.T) {
 func TestUpdateSCIMUser_AllowsAdminDeactivationWhenAnotherExists(t *testing.T) {
 	c, db := newSCIMGuardCore(t)
 	ctx := context.Background()
-	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "root", IsActive: true, AccountState: AccountActive, ExternalID: "okta|root"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "root2", IsActive: true, AccountState: AccountActive}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error)
