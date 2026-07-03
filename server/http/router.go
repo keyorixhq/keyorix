@@ -622,6 +622,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission("system.read"))
 			r.Get("/info", handlers.MakeSystemInfoHandler(cfg))
 			r.Get("/metrics", handlers.GetMetrics)
+			// Per-scheduler last-run/last-success timestamps (Prometheus exposition
+			// format), deliberately kept off the public, unauthenticated /metrics
+			// endpoint — see server/middleware/scheduler_metrics.go — since an exact
+			// tick timestamp would let an anonymous caller predict a security-relevant
+			// job's next execution to sub-second precision. Gated behind system.read
+			// like the rest of this group.
+			r.Get("/scheduler-metrics", customMiddleware.SchedulerMetricsHandler().ServeHTTP)
 		})
 
 		// Offline-license status (ADR-065) — the locally-evaluated commercial entitlement.
