@@ -1336,6 +1336,22 @@ func resolveSecret(envVar string, fallback string) string {
 
 const appRootDir = "."
 
+// ResolvedPath returns the config file path Load(path) would read, without
+// actually reading it: an explicit non-empty path wins, otherwise
+// KEYORIX_CONFIG_PATH, otherwise "keyorix.yaml" in the application root.
+// Callers that need to know exactly which file was (or will be) loaded — e.g.
+// startup validation checking that file's permissions — should resolve
+// through this helper rather than re-deriving the fallback chain themselves.
+func ResolvedPath(path string) string {
+	if path == "" {
+		path = resolveSecret("KEYORIX_CONFIG_PATH", "")
+	}
+	if path == "" {
+		path = filepath.Join(appRootDir, "keyorix.yaml")
+	}
+	return path
+}
+
 // Load loads the YAML configuration file.
 //
 // Path resolution when path is empty (the default / LoadConfig case):
@@ -1347,12 +1363,7 @@ const appRootDir = "."
 // with the safe-read rooted at the file's own directory, so the traversal guard
 // still applies; relative paths remain rooted at the application directory.
 func Load(path string) (*Config, error) {
-	if path == "" {
-		path = resolveSecret("KEYORIX_CONFIG_PATH", "")
-	}
-	if path == "" {
-		path = filepath.Join(appRootDir, "keyorix.yaml")
-	}
+	path = ResolvedPath(path)
 
 	baseDir, readPath := appRootDir, path
 	if filepath.IsAbs(path) {

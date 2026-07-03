@@ -52,6 +52,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
+	"github.com/keyorixhq/keyorix/internal/startup"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
@@ -65,6 +66,20 @@ func main() {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Schema/sanity validation (ports, TLS cert/key presence, storage DSN/path) — always
+	// enforced, independent of any security flag: a malformed config should never boot.
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration is invalid: %v", err)
+	}
+
+	// Run the file-permission / encryption-key / database-reachability checks that were
+	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
+	// (#330), despite official docs and that command's own help text claiming they run
+	// automatically on every boot.
+	if err := runStartupValidation(cfg); err != nil {
+		log.Fatalf("startup validation: %v", err)
 	}
 
 	// Initialize i18n system
@@ -1285,6 +1300,44 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 		return err
 	}
 	return check("gRPC", cfg.Server.GRPC)
+}
+
+// runStartupValidation runs internal/startup.ValidateStartup — the file-permission,
+// encryption-key (DEK/salt existence + size), and database-reachability checks that were
+// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand,
+// despite that command's own help text and SYSTEM_SETUP.md/docs/CONFIGURATION.md claiming
+// they run automatically on every boot (#330).
+//
+// Gated behind security.enable_file_permission_check — the flag these checks are
+// documented under and the one production.yaml/web-enabled.yaml explicitly turn on — so a
+// deployment that hasn't opted in (the default: the flag defaults to false) is completely
+// unaffected by wiring this in; enforceKeyFilePermissions below still runs unconditionally
+// as the lighter-weight, always-on permission check it always was. When the flag is set,
+// ValidateStartup itself decides warn-vs-fail-closed for a bad permission via
+// allow_unsafe_file_permissions, and auto-fixes bad permissions when
+// auto_fix_file_permissions is set (run first, before enforceKeyFilePermissions, so an
+// auto-fix takes effect before that check re-inspects the same files) — any other failure
+// (missing/undersized DEK or salt, unreachable local database) refuses to start, matching
+// this being "the sole automated backstop for a world-readable master-key-material file."
+func runStartupValidation(cfg *config.Config) error {
+	if !cfg.Security.EnableFilePermissionCheck {
+		return nil
+	}
+	configPath := config.ResolvedPath("")
+	result, err := startup.ValidateStartup(configPath)
+	if result != nil {
+		for _, w := range result.Warnings {
+			log.Printf("startup validation warning: %s", w)
+		}
+		for _, e := range result.Errors {
+			log.Printf("startup validation error: %s", e)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	log.Printf("Startup validation passed (config, file permissions, encryption keys, database).")
+	return nil
 }
 
 // enforceKeyFilePermissions refuses to start (or, by default, loudly warns) when sensitive
