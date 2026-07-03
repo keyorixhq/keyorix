@@ -1,6 +1,7 @@
 package secret
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -65,4 +66,47 @@ func TestRunExport_OutputFilePermissions(t *testing.T) {
 	data, err := os.ReadFile(outPath) // #nosec G304 -- test-controlled path
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "DB_PASSWORD=s3cr3t")
+}
+
+// #384: writeDotenv quote-escapes the VALUE but historically emitted the NAME raw —
+// a secret named "FOO\nINJECTED=evil" would inject an extra, attacker-controlled
+// KEY=VALUE line into dotenv export output (a documented workflow feeding
+// `docker run --env-file`/CI `--env-file`, both of which treat the file as fully
+// trusted). Since dotenv has no native way to escape a newline inside a key, the
+// export must refuse rather than silently emit an unsafe file.
+func TestWriteDotenv_RejectsNewlineInSecretName(t *testing.T) {
+	var buf bytes.Buffer
+	secrets := []exportedSecret{
+		{ID: 1, Name: "SAFE_KEY", Value: "safe-value"},
+		{ID: 2, Name: "FOO\nINJECTED=evil", Value: "x"},
+	}
+	err := writeDotenv(&buf, secrets)
+	require.Error(t, err, "a secret name containing a newline must be refused")
+	assert.Contains(t, err.Error(), "newline")
+	// Nothing must have been written to the output on the failure path — a partial
+	// dotenv file is itself a hazard if a caller doesn't check the error.
+	assert.Empty(t, buf.String(), "no output should be written when the export is refused")
+}
+
+// A secret name containing a carriage return is equally dangerous (CRLF injection)
+// and must be refused the same way.
+func TestWriteDotenv_RejectsCarriageReturnInSecretName(t *testing.T) {
+	var buf bytes.Buffer
+	secrets := []exportedSecret{{ID: 1, Name: "FOO\rINJECTED=evil", Value: "x"}}
+	err := writeDotenv(&buf, secrets)
+	require.Error(t, err, "a secret name containing a carriage return must be refused")
+}
+
+// The ordinary case — no newline in any name — must still produce the expected
+// KEY=VALUE lines, with the value quote-escaped exactly as before.
+func TestWriteDotenv_NormalNamesUnaffected(t *testing.T) {
+	var buf bytes.Buffer
+	secrets := []exportedSecret{
+		{ID: 1, Name: "DB_PASSWORD", Value: "hello world"},
+		{ID: 2, Name: "API_KEY", Value: "plain"},
+	}
+	require.NoError(t, writeDotenv(&buf, secrets))
+	out := buf.String()
+	assert.Contains(t, out, `DB_PASSWORD="hello world"`)
+	assert.Contains(t, out, "API_KEY=plain")
 }

@@ -66,7 +66,16 @@ func (m *MockStorage) ListProjectsWithCounts(_ context.Context, _ bool) ([]stora
 	return nil, nil
 }
 
-func (m *MockStorage) GetProject(_ context.Context, id uint) (*models.Project, error) {
+func (m *MockStorage) GetProject(ctx context.Context, id uint) (*models.Project, error) {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == "GetProject" {
+			args := m.Called(ctx, id)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).(*models.Project), args.Error(1)
+		}
+	}
 	return &models.Project{}, nil
 }
 
@@ -1478,6 +1487,14 @@ func (m *MockStorage) CreateMachineIdentity(ctx context.Context, mi *models.Mach
 }
 
 func (m *MockStorage) GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MachineIdentity), args.Error(1)
+}
+
+func (m *MockStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

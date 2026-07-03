@@ -183,6 +183,14 @@ type Storage interface {
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
+	// LockMachineIdentityForUpdate re-reads a machine identity by ID, taking a
+	// row-level write lock on backends that support one (Postgres: SELECT … FOR
+	// UPDATE) so a read-modify-write on the row serializes against a concurrent
+	// writer of the same row — mirroring LockUserForUpdate. Use this — not
+	// GetMachineIdentity — inside a WithTransaction whenever a caller conditionally
+	// mutates state (e.g. TransitionMachineIdentity's revoked-is-terminal invariant,
+	// #388) that must not lose an update under concurrency.
+	LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error)
 	UpdateMachineIdentity(ctx context.Context, m *models.MachineIdentity) error
 	ListMachineIdentities(ctx context.Context, projectID uint) ([]*models.MachineIdentity, error)
 	// ListAllMachineIdentities returns every machine identity across all projects —

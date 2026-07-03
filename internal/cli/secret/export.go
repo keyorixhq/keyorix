@@ -163,7 +163,18 @@ func fetchSecretValues(ctx context.Context, rc *common.RemoteClient, list []stru
 
 // ── Format writers ────────────────────────────────────────────────────────────
 
+// writeDotenv emits KEY=VALUE lines. The VALUE is quote-escaped above, but a KEY
+// containing an embedded newline (or carriage return) has no native escape in the
+// dotenv format — emitting it raw (#384) would let a secret named e.g.
+// "FOO\nINJECTED=evil" inject an extra, attacker-controlled KEY=VALUE line into an
+// artifact downstream tooling (docker run --env-file, CI --env-file) treats as fully
+// trusted. Refuse the export instead of silently producing an unsafe file.
 func writeDotenv(w io.Writer, secrets []exportedSecret) error {
+	for _, s := range secrets {
+		if strings.ContainsAny(s.Name, "\r\n") {
+			return fmt.Errorf("secret %q (id=%d) has a name containing a newline, which cannot be safely represented as a dotenv key — rename the secret before exporting to dotenv format", s.Name, s.ID)
+		}
+	}
 	fmt.Fprintf(w, "# Exported by Keyorix — %s\n", time.Now().Format("2006-01-02")) //nolint:errcheck
 	for _, s := range secrets {
 		val := s.Value

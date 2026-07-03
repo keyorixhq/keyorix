@@ -364,16 +364,28 @@ func (ls *LocalStorage) SetSecretCertNotAfter(ctx context.Context, secretID uint
 	return nil
 }
 
-// DeleteSecret deletes a secret by ID.
+// DeleteSecret deletes a secret by ID. #370: ShareRecord rows are a fully
+// independent lifecycle from SecretNode's — left untouched, a share grant would
+// silently reactivate (via CheckSharePermission) the instant the secret is later
+// restored from the recycle bin, with zero re-authorization step, even when the
+// secret was deleted specifically to sever a former grantee's access. "Delete
+// means gone" for sharing too, so revoke every active share for this secret in
+// the same transaction as the secret's own soft-delete.
 func (ls *LocalStorage) DeleteSecret(ctx context.Context, id uint) error {
-	result := ls.db.WithContext(ctx).Delete(&models.SecretNode{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
-	}
-	return nil
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Delete(&models.SecretNode{}, id)
+		if result.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		if err := tx.Where("secret_id = ? AND deleted_at IS NULL", id).
+			Delete(&models.ShareRecord{}).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return nil
+	})
 }
 
 // GetSecretIncludingDeleted loads a secret even when soft-deleted (Unscoped).
