@@ -347,6 +347,51 @@ func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// #263: a second, real-incident break-glass activation for the same user/role/project
+// must succeed once the FIRST activation's grant has naturally EXPIRED — not fail with
+// "already assigned" against a stale, un-reaped user_roles row. The existing
+// revoke-then-reactivate coverage above (TestActivateBreakGlass_RejectsConcurrentReactivation)
+// doesn't exercise this: an explicit revoke deletes the row outright, but a natural
+// expiry leaves it in place with expires_at in the past, which the assignment's
+// existence check must treat as absent.
+func TestActivateBreakGlass_ReactivatesAfterNaturalExpiry(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour) // editor = role 3
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	first, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "first incident", "")
+	require.NoError(t, err)
+
+	// Simulate the first grant's TTL naturally elapsing: push both the underlying
+	// user_roles row's expiry AND the activation record's expiry into the past — the
+	// same effect a real elapsed TTL has, without waiting hours in the test. Critically,
+	// unlike RevokeBreakGlass, this does NOT delete the user_roles row.
+	past := time.Now().Add(-time.Minute)
+	require.NoError(t, h.DB.Model(&models.UserRole{}).
+		Where("user_id = ? AND role_id = ?", 10, 3).
+		Update("expires_at", past).Error)
+	require.NoError(t, h.DB.Model(&models.BreakGlassActivation{}).
+		Where("id = ?", first.ID).
+		Update("expires_at", past).Error)
+
+	// A second, real-incident activation for the same user/role/project must now
+	// succeed — the first grant is expired, not live.
+	second, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "second incident", "")
+	require.NoError(t, err, "reactivation after natural expiry must succeed, not fail with 'already assigned'")
+	assert.Equal(t, core.BreakGlassActive, second.State)
+
+	// The fresh grant is live and authorizing.
+	ids, err := h.Storage.GetUserRoleIDsAt(ctx, 10, storage.Scope{ProjectID: proj})
+	require.NoError(t, err)
+	assert.Contains(t, ids, uint(3), "the fresh reactivation grant is live")
+}
+
 // A user affiliated with the project ONLY via a global/install-wide role (e.g. the
 // system_viewer baseline every SSO user receives) is NOT a project member and must be
 // refused — otherwise any authenticated user could break-glass any project.

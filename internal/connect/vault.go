@@ -40,7 +40,19 @@ func NewVaultConnector(name, address, token string, allowedRefs []string) *Vault
 		address:     strings.TrimRight(address, "/"),
 		token:       token,
 		allowedRefs: allowedRefs,
-		client:      &http.Client{Timeout: 15 * time.Second},
+		client: &http.Client{
+			Timeout: 15 * time.Second,
+			// Refuse to follow any redirect. Go's default redirect policy strips
+			// Authorization/Cookie/WWW-Authenticate on a cross-host hop, but
+			// X-Vault-Token is a custom header it does NOT know to strip — so a
+			// compromised or MITM'd Vault endpoint that answers with a 3xx to an
+			// attacker-controlled host would otherwise receive the live Vault
+			// token (#98). Vault's real KV-read API has no legitimate reason to
+			// redirect a GET, so refusing outright is correct, not merely safe.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 

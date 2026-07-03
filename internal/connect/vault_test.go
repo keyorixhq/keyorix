@@ -174,3 +174,63 @@ func TestVault_GetSecret_LegitimateScopedRefStillWorks(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"password":"p@ss"}`, val)
 }
+
+// TestVault_GetSecret_RefusesCrossHostRedirect proves #98: a compromised/MITM'd Vault
+// endpoint that answers a GET with a 3xx to a different host must NOT cause the live
+// X-Vault-Token to be forwarded there. Go's default redirect policy strips
+// Authorization/Cookie/WWW-Authenticate on a cross-host hop, but NOT the custom
+// X-Vault-Token header — so without an explicit CheckRedirect override, the token
+// would leak to the attacker-controlled host. The connector refuses to follow the
+// redirect at all, so the attacker host must never even receive a request.
+func TestVault_GetSecret_RefusesCrossHostRedirect(t *testing.T) {
+	var attackerHits int
+	var attackerSawToken bool
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits++
+		if r.Header.Get("X-Vault-Token") != "" {
+			attackerSawToken = true
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(attacker.Close)
+
+	vault := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A "compromised" Vault endpoint redirecting the client to an
+		// attacker-controlled host, on a different origin than vault's own.
+		http.Redirect(w, r, attacker.URL+"/steal", http.StatusFound)
+	}))
+	t.Cleanup(vault.Close)
+
+	c := NewVaultConnector("v", vault.URL, "supersecret-token", nil)
+	_, err := c.GetSecret(context.Background(), "secret/data/myapp")
+
+	require.Error(t, err, "a redirect response must not be treated as a successful read")
+	assert.Contains(t, err.Error(), "HTTP 302", "the redirect status itself surfaces as the (non-200) response")
+	assert.Zero(t, attackerHits, "the connector must never follow the redirect to the attacker-controlled host")
+	assert.False(t, attackerSawToken, "the live Vault token must never reach the attacker-controlled host")
+}
+
+// TestVault_GetSecret_RefusesSameHostRedirect proves the refusal is unconditional
+// (not merely cross-host-aware): even a same-host redirect (e.g. to a path an
+// operator didn't intend to be reachable) is refused rather than followed, since
+// Vault's real KV-read API has no legitimate reason to redirect a GET at all.
+func TestVault_GetSecret_RefusesSameHostRedirect(t *testing.T) {
+	var redirectTargetHits int
+	var mux http.ServeMux
+	srv := httptest.NewServer(&mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/v1/secret/data/myapp", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/v1/secret/data/other", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/v1/secret/data/other", func(w http.ResponseWriter, r *http.Request) {
+		redirectTargetHits++
+		_, _ = w.Write([]byte(`{"data":{"data":{"x":"y"},"metadata":{}}}`))
+	})
+
+	c := NewVaultConnector("v", srv.URL, "tok", nil)
+	_, err := c.GetSecret(context.Background(), "secret/data/myapp")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 301")
+	assert.Zero(t, redirectTargetHits, "even a same-host redirect target must never be requested")
+}
