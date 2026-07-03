@@ -516,6 +516,40 @@ func TestBeginSSO_UnknownProvider(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestBeginSSO_RejectsSAMLTypedProvider is the #320 regression: a provider configured
+// with Type: "saml" has OAuth == nil (server/main.go only ever sets OAuth for OIDC
+// providers), so the old code — which dereferenced p.OAuth.AuthCodeURL unconditionally
+// — panicked on any GET /auth/sso/{name}/login for a SAML provider name, an
+// unauthenticated, unlimited, automatable crash-and-recover reachable by anyone who'd
+// enumerated the name via GET /auth/sso/providers. BeginSSO must instead return a
+// clean error, and — since the old panic happened AFTER CreateSSOLoginState — must not
+// leave an orphaned SSOLoginState row behind (asserted by AssertNotCalled).
+func TestBeginSSO_RejectsSAMLTypedProvider(t *testing.T) {
+	stub := &stubSAML{redirect: "https://idp.example/sso", requestID: "req-1"}
+	c, store := samlTestCore(stub)
+
+	_, err := c.BeginSSO(context.Background(), "corp", "/secrets")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "nil pointer", "must be a clean error, not a recovered panic")
+	store.AssertNotCalled(t, "CreateSSOLoginState", mock.Anything, mock.Anything)
+}
+
+// TestCompleteSSO_RejectsSAMLTypedProvider mirrors TestBeginSSO_RejectsSAMLTypedProvider
+// for the callback side (#320): CompleteSSO dereferences p.OAuth.Exchange unconditionally
+// too. Even though a real attacker can't reach this without first obtaining a valid,
+// unexpired SSOLoginState row (the state token is never returned before BeginSSO's old
+// panic), the guard must hold defensively — and must fire BEFORE touching storage, so a
+// type-mismatched callback never even attempts to consume a login state.
+func TestCompleteSSO_RejectsSAMLTypedProvider(t *testing.T) {
+	stub := &stubSAML{redirect: "https://idp.example/sso", requestID: "req-1"}
+	c, store := samlTestCore(stub)
+
+	_, _, _, err := c.CompleteSSO(context.Background(), "corp", "code", "some-state", "ua", "1.2.3.4")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "nil pointer", "must be a clean error, not a recovered panic")
+	store.AssertNotCalled(t, "ConsumeSSOLoginState", mock.Anything, mock.Anything)
+}
+
 func TestSanitizeReturnTo(t *testing.T) {
 	assert.Equal(t, "/secrets", sanitizeReturnTo("/secrets"))
 	assert.Equal(t, "", sanitizeReturnTo("//evil.com"))
