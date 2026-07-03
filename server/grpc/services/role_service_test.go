@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -76,10 +77,57 @@ func TestRoleService_CreateRole_MissingFields(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
+// TestRoleService_CreateRole_NameTooShort mirrors HTTP's CreateRoleRequest.Name
+// `min=3` bound (server/http/handlers/rbac.go) — gRPC must reject the same
+// input HTTP would (#191).
+func TestRoleService_CreateRole_NameTooShort(t *testing.T) {
+	svc, h := newRoleService(t)
+	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: "ab", Description: "a valid description", Permissions: []string{somePermission(t, h)},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestRoleService_CreateRole_NameTooLong mirrors HTTP's `max=50` bound (#191).
+func TestRoleService_CreateRole_NameTooLong(t *testing.T) {
+	svc, h := newRoleService(t)
+	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: strings.Repeat("a", 51), Description: "a valid description", Permissions: []string{somePermission(t, h)},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+// TestRoleService_CreateRole_DescriptionTooLong mirrors HTTP's
+// `max=200` bound on Description (#191).
+func TestRoleService_CreateRole_DescriptionTooLong(t *testing.T) {
+	svc, h := newRoleService(t)
+	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: "valid-role-name", Description: strings.Repeat("d", 201), Permissions: []string{somePermission(t, h)},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestRoleService_UpdateRole_DescriptionTooLong(t *testing.T) {
+	svc, h := newRoleService(t)
+	created, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: "u-role-len", Description: "old", Permissions: []string{somePermission(t, h)},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpdateRole(roleAdminCtx(), &pb.UpdateRoleRequest{
+		Id: created.GetId(), Description: strPtr(strings.Repeat("d", 201)),
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
 func TestRoleService_CreateRole_UnknownPermission(t *testing.T) {
 	svc, _ := newRoleService(t)
 	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
-		Name: "x", Description: "y", Permissions: []string{"does.not.exist"},
+		Name: "unknown-perm-role", Description: "y", Permissions: []string{"does.not.exist"},
 	})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
