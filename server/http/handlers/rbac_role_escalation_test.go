@@ -35,6 +35,7 @@ func TestCreateRole_RolesWriteHolderCannotBundleSystemWrite(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
 	))
 
 	rolesWritePerm := &models.Permission{Name: "roles.write", Resource: "roles", Action: "write"}
@@ -91,6 +92,7 @@ func TestUpdateRole_RolesWriteHolderCannotAddSystemWrite(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
 	))
 
 	rolesWritePerm := &models.Permission{Name: "roles.write", Resource: "roles", Action: "write"}
@@ -154,6 +156,7 @@ func TestCreateRole_CannotClaimReservedAdminBypassName(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{},
+		&models.Project{}, &models.Environment{},
 	))
 
 	rolesWritePerm := &models.Permission{Name: "roles.write", Resource: "roles", Action: "write"}

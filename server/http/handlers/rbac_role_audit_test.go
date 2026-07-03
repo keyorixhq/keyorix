@@ -29,6 +29,7 @@ func TestRBACRoleDefinitionAudit(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.AuditEvent{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{},
 	))
 	handler := NewRBACHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 	// CreateRole requires at least one (resolvable) permission name.

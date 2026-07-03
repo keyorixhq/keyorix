@@ -105,7 +105,7 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 8, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)

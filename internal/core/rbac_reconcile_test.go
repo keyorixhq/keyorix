@@ -16,7 +16,9 @@ func newRBACReconcileCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.AuditEvent{}))
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.AuditEvent{},
+		&models.UserRole{}, &models.Project{}, &models.Environment{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
 }
 
