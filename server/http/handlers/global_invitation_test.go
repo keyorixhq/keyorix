@@ -28,7 +28,7 @@ func setupGlobalInvitationTest(t *testing.T) (*CatalogHandler, *gorm.DB) {
 		&models.User{}, &models.UserRole{}, &models.Role{}, &models.Project{},
 		&models.ProjectInvitation{}, &models.SetupToken{}, &models.AuditEvent{},
 		// AuthorizePrincipal (the invite ceiling) resolves group-inherited roles too.
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Role{Name: "system_viewer"}).Error)
 	require.NoError(t, db.Create(&models.Role{Name: "system_auditor"}).Error)

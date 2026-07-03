@@ -8,6 +8,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,7 +30,8 @@ func (h *CatalogHandler) ListInvitations(w http.ResponseWriter, r *http.Request)
 	}
 	invitations, err := h.coreService.ListProjectInvitations(r.Context(), uint(id))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing invitations for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"invitations": invitations}, "")
@@ -66,10 +68,14 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		// base_url unset) — surface that so the admin can fix config and resend.
 		if inv == nil {
 			status := http.StatusInternalServerError
-			if strings.Contains(err.Error(), "unknown role") || strings.Contains(err.Error(), "required") {
+			msg := err.Error()
+			if strings.Contains(msg, "unknown role") || strings.Contains(msg, "required") {
 				status = http.StatusBadRequest
+			} else {
+				log.Printf("Error inviting %q to project %d: %v", body.Email, id, err)
+				msg = clientSafe(err)
 			}
-			sendError(w, "Error", err.Error(), status, nil)
+			sendError(w, "Error", msg, status, nil)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
@@ -135,10 +141,14 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 		// base_url unset) — surface that so the admin can fix config and resend.
 		if inv == nil {
 			status := http.StatusInternalServerError
-			if strings.Contains(err.Error(), "unknown") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "needs a") {
+			msg := err.Error()
+			if strings.Contains(msg, "unknown") || strings.Contains(msg, "required") || strings.Contains(msg, "needs a") {
 				status = http.StatusBadRequest
+			} else {
+				log.Printf("Error creating global invitation for %q: %v", body.Email, err)
+				msg = clientSafe(err)
 			}
-			sendError(w, "Error", err.Error(), status, nil)
+			sendError(w, "Error", msg, status, nil)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
@@ -181,6 +191,9 @@ func (h *CatalogHandler) ResendInvitation(w http.ResponseWriter, r *http.Request
 			status = http.StatusTooManyRequests
 		case strings.Contains(msg, "base_url"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error resending invitation %d for project %d: %v", invID, projectID, err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return
@@ -207,13 +220,17 @@ func (h *CatalogHandler) RevokeInvitation(w http.ResponseWriter, r *http.Request
 	}
 	if err := h.coreService.RevokeInvitation(r.Context(), uint(projectID), uint(invID), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "only a pending"):
+		case strings.Contains(msg, "only a pending"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error revoking invitation %d for project %d: %v", invID, projectID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Invitation revoked")
@@ -230,7 +247,8 @@ func (h *CatalogHandler) ListAccessRequests(w http.ResponseWriter, r *http.Reque
 	}
 	requests, err := h.coreService.ListAccessRequests(r.Context(), uint(id))
 	if err != nil {
-		sendError(w, "Error", err.Error(), http.StatusInternalServerError, nil)
+		log.Printf("Error listing access requests for project %d: %v", id, err)
+		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
 	sendSuccess(w, map[string]interface{}{"access_requests": requests}, "")
@@ -259,10 +277,14 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 	req, err := h.coreService.RequestProjectAccess(r.Context(), uint(id), actor.UserID, body.SuggestedRole, body.Reason)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "unknown role") || strings.Contains(err.Error(), "required") {
+		msg := err.Error()
+		if strings.Contains(msg, "unknown role") || strings.Contains(msg, "required") {
 			status = http.StatusBadRequest
+		} else {
+			log.Printf("Error creating access request for project %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
@@ -319,13 +341,17 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 	}
 	if resolveErr != nil {
 		status := http.StatusInternalServerError
+		msg := resolveErr.Error()
 		switch {
-		case strings.Contains(resolveErr.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(resolveErr.Error(), "only a pending"), strings.Contains(resolveErr.Error(), "unknown role"), strings.Contains(resolveErr.Error(), "required"):
+		case strings.Contains(msg, "only a pending"), strings.Contains(msg, "unknown role"), strings.Contains(msg, "required"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error resolving access request %d for project %d: %v", reqID, projectID, resolveErr)
+			msg = clientSafe(resolveErr)
 		}
-		sendError(w, "Error", resolveErr.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Access request "+body.Action+"d")
@@ -345,15 +371,19 @@ func (h *CatalogHandler) WithdrawAccessRequest(w http.ResponseWriter, r *http.Re
 	}
 	if err := h.coreService.WithdrawAccessRequest(r.Context(), uint(reqID), actor.UserID); err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "not your"):
+		case strings.Contains(msg, "not your"):
 			status = http.StatusForbidden
-		case strings.Contains(err.Error(), "only a pending"):
+		case strings.Contains(msg, "only a pending"):
 			status = http.StatusConflict
+		default:
+			log.Printf("Error withdrawing access request %d: %v", reqID, err)
+			msg = clientSafe(err)
 		}
-		sendError(w, "Error", err.Error(), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, "Access request withdrawn")

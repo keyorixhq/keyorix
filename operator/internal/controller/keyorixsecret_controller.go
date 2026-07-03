@@ -176,7 +176,7 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		// or by Helm) and replace its data — letting a CR author clobber another workload's
 		// same-named Secret. A Secret we created carries the managed-by label and is
 		// allowed through.
-		if secret.ResourceVersion != "" && secret.Labels[managedByLabel] != managedByValue {
+		if secret.ResourceVersion != "" && secret.Labels[ManagedByLabel] != ManagedByValue {
 			return fmt.Errorf("refusing to overwrite existing unmanaged Secret %s/%s", ks.Namespace, name)
 		}
 		if err := controllerutil.SetControllerReference(ks, secret, r.Scheme); err != nil {
@@ -185,7 +185,7 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		if secret.Labels == nil {
 			secret.Labels = map[string]string{}
 		}
-		secret.Labels[managedByLabel] = managedByValue
+		secret.Labels[ManagedByLabel] = ManagedByValue
 		secret.Type = secretType
 		secret.Data = data // operator owns the whole data set; removed keys are pruned
 		return nil
@@ -193,11 +193,17 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 	return err
 }
 
-// managedByLabel/managedByValue mark a Secret as owned by this operator, so it won't
-// adopt or overwrite a Secret it didn't create.
+// ManagedByLabel/ManagedByValue mark a Secret as owned by this operator, so it won't
+// adopt or overwrite a Secret it didn't create. Exported so cmd/main.go can scope the
+// manager's Secret informer cache to only Secrets carrying this label (see #327): the
+// operator is deployed as a single cluster-wide instance, so its RBAC necessarily grants
+// Secret access in every namespace, but the informer backing Owns(&corev1.Secret{}) has no
+// reason to list/watch/cache Secrets it doesn't manage. Token Secrets and pre-existing
+// unmanaged target Secrets never carry this label, so reads of those are excluded from that
+// cache (they're read live instead) and remain unaffected.
 const (
-	managedByLabel = "app.kubernetes.io/managed-by"
-	managedByValue = "keyorix-operator"
+	ManagedByLabel = "app.kubernetes.io/managed-by"
+	ManagedByValue = "keyorix-operator"
 )
 
 // fail records a SyncError on the Ready condition and requeues with backoff.

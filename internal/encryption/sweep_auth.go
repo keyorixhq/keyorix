@@ -1,8 +1,16 @@
-// sweep_auth.go — Re-encryption sweep for auth tables (sessions, API tokens, clients, password resets).
+// sweep_auth.go — Re-encryption sweep for auth tables (sessions, API tokens, clients,
+// password resets, MFA secrets, dynamic-secret configs/leases).
 //
-// These four sweepers follow an identical pattern: fetch all rows, decrypt with
-// oldSvc, re-encrypt with newSvc, write back. No AAD required (auth tokens are
-// not AAD-bound). See sweep.go for the AAD-aware secret_versions sweep.
+// sweepSessions/sweepAPITokens/sweepAPIClients/sweepPasswordResets follow an identical
+// pattern: fetch all rows, decrypt with oldSvc, re-encrypt with newSvc, write back. No
+// AAD (these 4 tables' encrypted columns are unpopulated by any live write path today
+// — see #129 — so they carry no AAD-transplant exposure to close).
+//
+// sweepMFASecrets/sweepDynamicSecretConfigs/sweepDynamicSecretLeases (#94) ARE
+// live-path AAD-bound categories: they reconstruct each row's AAD from its own
+// identity (mirroring sweepSecretVersions in sweep.go) and, like it, decrypt via
+// either the legacy no-AAD path or the AAD-aware path depending on the row's stored
+// AADVersion, then ALWAYS re-encrypt with AAD — upgrading legacy rows in place.
 package encryption
 
 import (
@@ -139,141 +147,180 @@ func sweepAPIClients(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionS
 	return swept, nil
 }
 
-// sweepMFASecrets re-encrypts TOTP secrets (mfa_secrets.secret_enc). These are
-// written via Service.EncryptSecret (no AAD), the same serialization as the auth
-// tokens above. Missing this sweeper meant a DEK rotation left every enrolled TOTP
-// secret encrypted under the wiped old DEK — permanently breaking MFA login.
-func sweepMFASecrets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+// sweepMFASecrets re-encrypts TOTP secrets (mfa_secrets.secret_enc), bound to
+// MFASecretAAD(UserID) (#94). Legacy (pre-#94) rows are decrypted via the no-AAD
+// path and always re-encrypted WITH AAD, upgrading them in place — mirrors
+// sweepSecretVersions's legacy-branch pattern. Missing this sweeper's re-encryption
+// step entirely (the original gap, ADR-010) meant a DEK rotation left every enrolled
+// TOTP secret encrypted under the wiped old DEK — permanently breaking MFA login.
+// Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepMFASecrets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, int, error) {
 	var rows []models.MFASecret
 	if err := tx.Find(&rows).Error; err != nil {
-		return 0, fmt.Errorf("failed to fetch mfa_secrets: %w", err)
+		return 0, 0, fmt.Errorf("failed to fetch mfa_secrets: %w", err)
 	}
-	swept := 0
+	swept, legacyUpgraded := 0, 0
 	for _, row := range rows {
 		if len(row.SecretEnc) == 0 {
 			continue
 		}
 		encrypted, err := DeserializeEncryptedData(row.SecretEnc)
 		if err != nil {
-			return swept, fmt.Errorf("failed to deserialize mfa_secret id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to deserialize mfa_secret id=%d: %w", row.ID, err)
 		}
-		plaintext, err := oldSvc.Decrypt(encrypted)
+		aad := MFASecretAAD(row.UserID)
+		isLegacy := encrypted.Metadata.AADVersion == ""
+		var plaintext []byte
+		if isLegacy {
+			plaintext, err = oldSvc.Decrypt(encrypted)
+		} else {
+			plaintext, err = oldSvc.DecryptWithAAD(encrypted, aad)
+		}
 		if err != nil {
-			return swept, fmt.Errorf("failed to decrypt mfa_secret id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to decrypt mfa_secret id=%d: %w", row.ID, err)
 		}
-		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
 		wipeBytes(plaintext)
 		if err != nil {
-			return swept, fmt.Errorf("failed to re-encrypt mfa_secret id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to re-encrypt mfa_secret id=%d: %w", row.ID, err)
 		}
 		newBytes, err := SerializeEncryptedData(newEncrypted)
 		if err != nil {
-			return swept, fmt.Errorf("failed to serialize mfa_secret id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to serialize mfa_secret id=%d: %w", row.ID, err)
 		}
 		metaBytes, err := json.Marshal(newEncrypted.Metadata)
 		if err != nil {
-			return swept, fmt.Errorf("failed to marshal mfa_secret metadata id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to marshal mfa_secret metadata id=%d: %w", row.ID, err)
 		}
 		if err := tx.Model(&models.MFASecret{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
 			"secret_enc":  newBytes,
 			"secret_meta": metaBytes,
 		}).Error; err != nil {
-			return swept, fmt.Errorf("failed to update mfa_secret id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to update mfa_secret id=%d: %w", row.ID, err)
 		}
 		swept++
+		if isLegacy {
+			legacyUpgraded++
+		}
 	}
-	return swept, nil
+	return swept, legacyUpgraded, nil
 }
 
 // sweepDynamicSecretConfigs re-encrypts dynamic-secret admin DSNs
-// (dynamic_secret_configs.admin_dsn_enc). Missing this left the admin connection
-// string undecryptable after rotation — the backend could no longer be reached or
-// its leases revoked.
-func sweepDynamicSecretConfigs(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+// (dynamic_secret_configs.admin_dsn_enc), bound to
+// DynamicSecretConfigAAD(ID, ProjectID, EnvironmentID) (#94). Legacy rows are
+// upgraded to AAD in place — see sweepMFASecrets. Missing this sweeper's
+// re-encryption step entirely (the original gap, ADR-010) left the admin connection
+// string undecryptable after a DEK rotation — the backend could no longer be reached
+// or its leases revoked. Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepDynamicSecretConfigs(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, int, error) {
 	var rows []models.DynamicSecretConfig
 	if err := tx.Find(&rows).Error; err != nil {
-		return 0, fmt.Errorf("failed to fetch dynamic_secret_configs: %w", err)
+		return 0, 0, fmt.Errorf("failed to fetch dynamic_secret_configs: %w", err)
 	}
-	swept := 0
+	swept, legacyUpgraded := 0, 0
 	for _, row := range rows {
 		if len(row.AdminDSNEnc) == 0 {
 			continue
 		}
 		encrypted, err := DeserializeEncryptedData(row.AdminDSNEnc)
 		if err != nil {
-			return swept, fmt.Errorf("failed to deserialize dynamic_secret_config id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to deserialize dynamic_secret_config id=%d: %w", row.ID, err)
 		}
-		plaintext, err := oldSvc.Decrypt(encrypted)
+		aad := DynamicSecretConfigAAD(row.ID, row.ProjectID, row.EnvironmentID)
+		isLegacy := encrypted.Metadata.AADVersion == ""
+		var plaintext []byte
+		if isLegacy {
+			plaintext, err = oldSvc.Decrypt(encrypted)
+		} else {
+			plaintext, err = oldSvc.DecryptWithAAD(encrypted, aad)
+		}
 		if err != nil {
-			return swept, fmt.Errorf("failed to decrypt dynamic_secret_config id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to decrypt dynamic_secret_config id=%d: %w", row.ID, err)
 		}
-		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
 		wipeBytes(plaintext)
 		if err != nil {
-			return swept, fmt.Errorf("failed to re-encrypt dynamic_secret_config id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to re-encrypt dynamic_secret_config id=%d: %w", row.ID, err)
 		}
 		newBytes, err := SerializeEncryptedData(newEncrypted)
 		if err != nil {
-			return swept, fmt.Errorf("failed to serialize dynamic_secret_config id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to serialize dynamic_secret_config id=%d: %w", row.ID, err)
 		}
 		metaBytes, err := json.Marshal(newEncrypted.Metadata)
 		if err != nil {
-			return swept, fmt.Errorf("failed to marshal dynamic_secret_config metadata id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to marshal dynamic_secret_config metadata id=%d: %w", row.ID, err)
 		}
 		if err := tx.Model(&models.DynamicSecretConfig{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
 			"admin_dsn_enc":  newBytes,
 			"admin_dsn_meta": metaBytes,
 		}).Error; err != nil {
-			return swept, fmt.Errorf("failed to update dynamic_secret_config id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to update dynamic_secret_config id=%d: %w", row.ID, err)
 		}
 		swept++
+		if isLegacy {
+			legacyUpgraded++
+		}
 	}
-	return swept, nil
+	return swept, legacyUpgraded, nil
 }
 
 // sweepDynamicSecretLeases re-encrypts issued dynamic-secret credentials
-// (dynamic_secret_leases.credential_enc). Missing this left active lease
-// credentials undecryptable after rotation.
-func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {
+// (dynamic_secret_leases.credential_enc), bound to
+// DynamicSecretLeaseAAD(LeaseID, ConfigID) (#94). Legacy rows are upgraded to AAD in
+// place — see sweepMFASecrets. Missing this sweeper's re-encryption step entirely
+// (the original gap, ADR-010) left active lease credentials undecryptable after a DEK
+// rotation. Returns (rowsSwept, legacyRowsUpgraded, error).
+func sweepDynamicSecretLeases(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, int, error) {
 	var rows []models.DynamicSecretLease
 	if err := tx.Find(&rows).Error; err != nil {
-		return 0, fmt.Errorf("failed to fetch dynamic_secret_leases: %w", err)
+		return 0, 0, fmt.Errorf("failed to fetch dynamic_secret_leases: %w", err)
 	}
-	swept := 0
+	swept, legacyUpgraded := 0, 0
 	for _, row := range rows {
 		if len(row.CredentialEnc) == 0 {
 			continue
 		}
 		encrypted, err := DeserializeEncryptedData(row.CredentialEnc)
 		if err != nil {
-			return swept, fmt.Errorf("failed to deserialize dynamic_secret_lease id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to deserialize dynamic_secret_lease id=%d: %w", row.ID, err)
 		}
-		plaintext, err := oldSvc.Decrypt(encrypted)
+		aad := DynamicSecretLeaseAAD(row.LeaseID, row.ConfigID)
+		isLegacy := encrypted.Metadata.AADVersion == ""
+		var plaintext []byte
+		if isLegacy {
+			plaintext, err = oldSvc.Decrypt(encrypted)
+		} else {
+			plaintext, err = oldSvc.DecryptWithAAD(encrypted, aad)
+		}
 		if err != nil {
-			return swept, fmt.Errorf("failed to decrypt dynamic_secret_lease id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to decrypt dynamic_secret_lease id=%d: %w", row.ID, err)
 		}
-		newEncrypted, err := newSvc.Encrypt(plaintext, newKeyVersion)
+		newEncrypted, err := newSvc.EncryptWithAAD(plaintext, newKeyVersion, aad)
 		wipeBytes(plaintext)
 		if err != nil {
-			return swept, fmt.Errorf("failed to re-encrypt dynamic_secret_lease id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to re-encrypt dynamic_secret_lease id=%d: %w", row.ID, err)
 		}
 		newBytes, err := SerializeEncryptedData(newEncrypted)
 		if err != nil {
-			return swept, fmt.Errorf("failed to serialize dynamic_secret_lease id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to serialize dynamic_secret_lease id=%d: %w", row.ID, err)
 		}
 		metaBytes, err := json.Marshal(newEncrypted.Metadata)
 		if err != nil {
-			return swept, fmt.Errorf("failed to marshal dynamic_secret_lease metadata id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to marshal dynamic_secret_lease metadata id=%d: %w", row.ID, err)
 		}
 		if err := tx.Model(&models.DynamicSecretLease{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
 			"credential_enc":  newBytes,
 			"credential_meta": metaBytes,
 		}).Error; err != nil {
-			return swept, fmt.Errorf("failed to update dynamic_secret_lease id=%d: %w", row.ID, err)
+			return swept, legacyUpgraded, fmt.Errorf("failed to update dynamic_secret_lease id=%d: %w", row.ID, err)
 		}
 		swept++
+		if isLegacy {
+			legacyUpgraded++
+		}
 	}
-	return swept, nil
+	return swept, legacyUpgraded, nil
 }
 
 func sweepPasswordResets(tx *gorm.DB, oldSvc *EncryptionService, newSvc *EncryptionService, newKeyVersion string) (int, error) {

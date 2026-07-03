@@ -291,11 +291,27 @@ func TestAuthEncryption_DisabledEncryption(t *testing.T) {
 	assert.Equal(t, clientSecret, decryptedSecret)
 }
 
+// TestAuthEncryption_KeyRotation exercises the REAL rotation path (#197): unlike the rest of
+// this file, encryption must be enabled with real on-disk key material, since a true DEK
+// rotation (new key generated, old key wiped) is meaningless against the pass-through
+// no-op encryption setupAuthEncryptionTest otherwise uses.
 func TestAuthEncryption_KeyRotation(t *testing.T) {
-	authEnc, _, cleanup := setupAuthEncryptionTest(t)
-	defer cleanup()
+	dir := t.TempDir()
+	db, err := gorm.Open(sqlite.Open(filepath.Join(dir, "test.db")), &gorm.Config{})
+	require.NoError(t, err)
+	// RotateAuthEncryption delegates to RotateDEKWithSweep, which sweeps every
+	// DEK-encrypted table (see SweepAllTables), not just the auth-specific ones.
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{},
+		&models.APIClient{}, &models.Session{}, &models.APIToken{}, &models.PasswordReset{},
+		&models.MFASecret{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
+	))
 
-	// Create test data
+	const passphrase = "test-passphrase-for-key-rotation"
+	cfg := &config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}
+	authEnc := NewAuthEncryption(cfg, dir, db)
+	require.NoError(t, authEnc.Initialize(passphrase))
+
 	client := &models.APIClient{
 		Name:      "Test Client",
 		ClientID:  "test-client-rotation",
@@ -303,27 +319,21 @@ func TestAuthEncryption_KeyRotation(t *testing.T) {
 		IsActive:  true,
 		CreatedAt: time.Now(),
 	}
-
 	clientSecret := "secret-for-rotation"
-	err := authEnc.StoreEncryptedAPIClient(client, clientSecret)
-	require.NoError(t, err)
+	require.NoError(t, authEnc.StoreEncryptedAPIClient(client, clientSecret))
 
-	// Verify original secret works
 	retrievedSecret, err := authEnc.RetrieveAPIClientSecret("test-client-rotation")
 	require.NoError(t, err)
 	assert.Equal(t, clientSecret, retrievedSecret)
 
-	// Skip key rotation test when encryption is disabled
-	if !authEnc.service.IsEnabled() {
-		t.Skip("Skipping key rotation test when encryption is disabled")
-	}
+	keyVersionBefore := authEnc.service.GetKeyVersion()
 
-	// Rotate keys (this would normally involve key manager rotation)
-	// For this test, we'll simulate by re-encrypting with the same key
-	err = authEnc.RotateAuthEncryption()
-	require.NoError(t, err)
+	require.NoError(t, authEnc.RotateAuthEncryption(passphrase))
 
-	// Verify secret still works after rotation
+	// A real rotation must produce a NEW key version, not silently keep the old one.
+	assert.NotEqual(t, keyVersionBefore, authEnc.service.GetKeyVersion(), "RotateAuthEncryption must generate new key material, not just re-encrypt under the same key")
+
+	// The secret, re-encrypted under the new DEK by the sweep, must still decrypt correctly.
 	retrievedSecret, err = authEnc.RetrieveAPIClientSecret("test-client-rotation")
 	require.NoError(t, err)
 	assert.Equal(t, clientSecret, retrievedSecret)

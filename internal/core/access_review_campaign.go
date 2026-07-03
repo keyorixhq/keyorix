@@ -240,8 +240,28 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 	item.Reason = reason
 	item.DecidedBy = actorID
 	item.DecidedAt = &now
-	if err := c.storage.UpdateAccessReviewItem(ctx, item); err != nil {
+	// Both pre-checks above (item still pending, campaign still open) are plain reads,
+	// so a concurrent/replayed second decision (#319) or a concurrent force-close
+	// (#343) can reach here too, having read the same "pending"/"open" state before
+	// either write lands. UpdateAccessReviewItem's single conditional UPDATE — WHERE
+	// decision='pending' AND the parent campaign's state='open', both checked
+	// atomically in the same statement — is the actual race-closing guard: ok==false
+	// means this call lost the race, either to another decision or to a concurrent
+	// close, so don't silently let this decision overwrite the winner or land into a
+	// campaign whose evidence snapshot was supposed to be frozen at close time.
+	ok, err := c.storage.UpdateAccessReviewItem(ctx, item)
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if !ok {
+		// The conditional UPDATE doesn't say WHICH precondition failed, so re-read the
+		// item to shape an accurate error. This re-read is purely cosmetic — the
+		// security decision was already made atomically by the UPDATE above, win or
+		// lose; nothing here re-opens the race.
+		if reloaded, rerr := c.storage.GetAccessReviewItem(ctx, itemID); rerr == nil && reloaded.Decision != ReviewItemPending {
+			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this item has already been decided")
+		}
+		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is closed; decisions can only be made on an open campaign")
 	}
 	return nil
 }
@@ -296,8 +316,19 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, pr
 	campaign.State = CampaignStateClosed
 	campaign.ClosedBy = actorID
 	campaign.ClosedAt = &now
-	if err := c.storage.UpdateAccessReviewCampaign(ctx, campaign); err != nil {
+	// The "already closed" check above is a plain read, so two concurrent close calls
+	// (or a close racing another close) can both observe "open" before either write
+	// lands. UpdateAccessReviewCampaign's WHERE-state='open' conditional UPDATE is the
+	// actual race-closing guard: ok==false means this call lost the race (the
+	// campaign was closed out from under it), so surface the same "already closed"
+	// error rather than silently re-closing (and re-stamping ClosedBy/ClosedAt on) an
+	// already-frozen evidence record.
+	ok, err := c.storage.UpdateAccessReviewCampaign(ctx, campaign)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "campaign is already closed")
 	}
 	c.auditProjectScoped(ctx, EventCampaignClosed, actorID, projectID,
 		fmt.Sprintf("closed access-review campaign %d: %d attested, %d revoked, %d pending of %d",

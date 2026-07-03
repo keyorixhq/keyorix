@@ -3,8 +3,20 @@
 // Notifications are addressed to a single user and surfaced via the header bell.
 // Emission is best-effort: a delivery failure never blocks the action that
 // triggered it (same contract as audit emission). In addition to the in-app row,
-// notify() fans each event out to a configured external channel (email/webhook)
-// when a NotificationSink is wired.
+// notify() fans each event out to a configured external channel when a
+// recipientNotificationSink is wired.
+//
+// #391: every event this file emits (secret shared, share revoked, ownership
+// transferred, access requested, anomaly alert, break-glass activation, …) is
+// addressed to exactly one user — the recipient this file already computed. It is
+// dispatched to recipientNotificationSink, NOT the deployment-wide broadcast
+// notificationSink (used elsewhere for the compliance digest / rotation-failure
+// summaries): chat (Slack/Teams) and generic webhook channels are one fixed
+// destination an operator configures, with no per-user identity mapping to target a
+// specific recipient, so handing them a per-user event would broadcast it to
+// everyone with channel visibility regardless of project membership or secret
+// access. Only recipient-addressable channels (email) are wired into
+// recipientNotificationSink; see SetRecipientNotificationSink and server/main.go.
 package core
 
 import (
@@ -55,11 +67,15 @@ func (c *KeyorixCore) notify(ctx context.Context, userID uint, nType, title, mes
 	c.dispatchNotification(ctx, userID, nType, title, message, projectID, link)
 }
 
-// dispatchNotification fans a notification out to the configured external channel
-// (email/webhook), resolving the recipient's email best-effort. A no-op when no
-// sink is wired; the sink itself is non-blocking, so this never delays the caller.
+// dispatchNotification fans a per-user notification out to the recipient-addressable
+// external channel (email), resolving the recipient's email best-effort. A no-op
+// when no such sink is wired; the sink itself is non-blocking, so this never delays
+// the caller.
+//
+// This deliberately uses recipientNotificationSink, not the deployment-wide
+// notificationSink — see the package comment and #391.
 func (c *KeyorixCore) dispatchNotification(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string) {
-	if c.notificationSink == nil {
+	if c.recipientNotificationSink == nil {
 		return
 	}
 	ev := NotificationEvent{
@@ -73,7 +89,7 @@ func (c *KeyorixCore) dispatchNotification(ctx context.Context, userID uint, nTy
 	if u, err := c.storage.GetUser(ctx, userID); err == nil && u != nil {
 		ev.Email = u.Email
 	}
-	c.notificationSink.Deliver(ev)
+	c.recipientNotificationSink.Deliver(ev)
 }
 
 // projectLabel returns a human label for a project ("Payments" or "#3").

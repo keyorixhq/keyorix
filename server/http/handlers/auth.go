@@ -503,7 +503,28 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 
 // PasswordReset handles POST /auth/password-reset.
 // Always returns success to prevent email enumeration.
+//
+// This route is intentionally unauthenticated (anyone must be able to request a
+// reset for their own account), which also makes it reachable by anyone for ANY
+// target email — with no compensating auth barrier the way the admin-triggered
+// resend flows have (users.write / roles.assign). checkResendThrottle
+// (ADR-028, per-email 10/day + 60s min-interval, already serialized per-process
+// via setupResendMu) is the primary abuse control, but as a defense-in-depth
+// backstop specific to this unauthenticated entry point, an IP-based budget
+// (ADR-040's existing cluster-wide, DB-backed limiter, reused here) caps how
+// many reset requests — and therefore how many outbound emails — a single
+// source can trigger, independent of which email(s) it targets (#249).
 func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
+	ip := r.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	if h.coreService.IsPasswordResetRateLimited(r.Context(), ip) {
+		sendError(w, "TooManyRequests", "Too many password reset requests. Try again later.", http.StatusTooManyRequests, nil)
+		return
+	}
+	h.coreService.RecordPasswordResetAttempt(r.Context(), ip)
+
 	var body passwordResetRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sendError(w, "BadRequest", "Invalid request body", http.StatusBadRequest, nil)

@@ -5,8 +5,8 @@
 // previously opaque: a tick that errored only left a log line, so there was no way to
 // alert on "scheduler X has not succeeded in an hour" or "tick failure rate is rising".
 //
-// RecordSchedulerRun folds each tick into the default Prometheus registry, which the
-// server already exposes via MetricsHandler. Three outcomes are tracked per scheduler:
+// RecordSchedulerRun folds each tick into Prometheus. Three outcomes are tracked per
+// scheduler:
 //
 //   - success — the tick ran and completed without error.
 //   - failure — the tick ran and returned an error (or the advisory-lock acquisition
@@ -16,7 +16,14 @@
 //     active legal hold) deliberately stood the job down. A skipped tick is NOT a
 //     failure — a follower replica skips most ticks by design and must not page.
 //
-// Suggested alerts: page when a scheduler stops succeeding —
+// The run-count and duration series live on the default Prometheus registry, which the
+// server exposes unauthenticated via MetricsHandler at GET /metrics — standard for
+// scraping. The two last-run/last-success timestamp gauges are deliberately kept off
+// that public registry (see schedulerTimingRegistry below) and are instead served via
+// SchedulerMetricsHandler, which the router mounts behind an authenticated route.
+//
+// Suggested alerts (against the authenticated scheduler-metrics endpoint): page when a
+// scheduler stops succeeding —
 //
 //	time() - keyorix_scheduler_last_success_timestamp_seconds{scheduler="auto_rotation"} > 3600
 //
@@ -26,10 +33,12 @@
 package middleware
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // SchedulerOutcome is the result of a single scheduler tick. Its string value is used
@@ -54,12 +63,23 @@ var (
 		Buckets: prometheus.DefBuckets,
 	}, []string{"scheduler"})
 
-	schedulerLastRun = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	// schedulerTimingRegistry is a separate, non-default Prometheus registry for the
+	// two gauges below. GET /metrics is unauthenticated by design (standard for
+	// scraping), and an exact "last run"/"last success" Unix timestamp per scheduler
+	// lets any anonymous caller predict a security-relevant job's next tick to
+	// sub-second precision. schedulerRunsTotal and schedulerRunDuration (coarse
+	// counters/durations, not exact timestamps) stay on the default registry and
+	// remain visible at /metrics; these two gauges are served only via
+	// SchedulerMetricsHandler, which server/http/router.go wires behind an
+	// authenticated, permissioned route instead.
+	schedulerTimingRegistry = prometheus.NewRegistry()
+
+	schedulerLastRun = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "keyorix_scheduler_last_run_timestamp_seconds",
 		Help: "Unix time of the last tick that actually ran (success or failure; not a skip), by scheduler name.",
 	}, []string{"scheduler"})
 
-	schedulerLastSuccess = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	schedulerLastSuccess = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "keyorix_scheduler_last_success_timestamp_seconds",
 		Help: "Unix time of the last successful tick, by scheduler name.",
 	}, []string{"scheduler"})
@@ -67,6 +87,10 @@ var (
 	// nowUnix is overridable in tests; production uses the wall clock.
 	nowUnix = func() int64 { return time.Now().Unix() }
 )
+
+func init() {
+	schedulerTimingRegistry.MustRegister(schedulerLastRun, schedulerLastSuccess)
+}
 
 // RegisterScheduler initialises a scheduler's counter series to zero so dashboards and
 // `rate()` queries see an explicit 0 rather than "no data" before the first tick. Call
@@ -77,6 +101,14 @@ func RegisterScheduler(name string) {
 	for _, outcome := range []SchedulerOutcome{SchedulerSuccess, SchedulerFailure, SchedulerSkipped} {
 		schedulerRunsTotal.WithLabelValues(name, string(outcome))
 	}
+}
+
+// SchedulerMetricsHandler serves the per-scheduler last-run/last-success timestamp
+// gauges from schedulerTimingRegistry — kept off the public, unauthenticated /metrics
+// endpoint (see the doc comment on schedulerTimingRegistry) and wired instead behind
+// an authenticated route for operators who legitimately need this visibility.
+func SchedulerMetricsHandler() http.Handler {
+	return promhttp.HandlerFor(schedulerTimingRegistry, promhttp.HandlerOpts{})
 }
 
 // RecordSchedulerRun records the outcome and (for ticks that ran) the duration of a

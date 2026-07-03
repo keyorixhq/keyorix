@@ -62,6 +62,13 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		&models.Environment{},
 		&models.Permission{},
 		&models.RolePermission{},
+		&models.LoginAttempt{},
+		&models.PasswordHistory{},
+		&models.PersonalAccessToken{},
+		// #390: CreateSecret now applies req.Tags via storage.SetSecretTags, which
+		// needs both the global Tag table and the per-secret SecretTag join table.
+		&models.Tag{},
+		&models.SecretTag{},
 	)
 	require.NoError(t, err)
 	return core.NewKeyorixCore(store.NewLocalStorage(db))

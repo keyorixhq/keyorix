@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -56,6 +57,50 @@ func TestRemoveSelfFromShare_Success(t *testing.T) {
 
 	// Assert
 	assert.NoError(t, err)
+	mockStorage.AssertExpectations(t)
+}
+
+// TestRemoveSelfFromShare_NoPhantomAuditOnDeleteFailure locks in #283: when the
+// storage delete fails, RemoveSelfFromShare must NOT have already logged a
+// "share_self_removed" audit event — otherwise the trail would permanently assert
+// a removal happened even though the share is still live.
+func TestRemoveSelfFromShare_NoPhantomAuditOnDeleteFailure(t *testing.T) {
+	err := i18n.InitializeForTesting()
+	require.NoError(t, err)
+
+	mockStorage := new(MockStorage)
+	core := &KeyorixCore{
+		storage: mockStorage,
+	}
+
+	ctx := context.Background()
+	secretID := uint(1)
+	userID := uint(2)
+
+	shares := []*models.ShareRecord{
+		{
+			ID:          1,
+			SecretID:    1,
+			RecipientID: 2,
+			IsGroup:     false,
+			Permission:  "read",
+			CreatedAt:   time.Now(),
+		},
+	}
+	secret := &models.SecretNode{
+		ID:      1,
+		Name:    "test-secret",
+		OwnerID: 3,
+	}
+
+	mockStorage.On("ListSharesBySecret", ctx, secretID).Return(shares, nil)
+	mockStorage.On("GetSecret", ctx, secretID).Return(secret, nil)
+	mockStorage.On("DeleteShareRecord", ctx, uint(1)).Return(errors.New("storage unavailable"))
+
+	err = core.RemoveSelfFromShare(ctx, secretID, userID)
+
+	require.Error(t, err)
+	mockStorage.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
 	mockStorage.AssertExpectations(t)
 }
 

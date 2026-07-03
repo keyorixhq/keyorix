@@ -22,6 +22,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -139,12 +140,21 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	}
 	created, err := c.storage.CreateProjectMembership(ctx, m)
 	if err != nil {
+		// #309: the "no active membership" read above races with a concurrent invite for
+		// the same (project, user) — both can pass it before either commits. The DB-level
+		// partial unique index (uniq_project_memberships_active) catches the loser's Create
+		// and CreateProjectMembership wraps it in ErrDuplicateActiveMembership; surface the
+		// same clean "already has a membership" error the winner's sequential check would
+		// have produced, instead of a raw constraint-violation message or an orphaned row.
+		if errors.Is(err, storage.ErrDuplicateActiveMembership) {
+			return nil, fmt.Errorf("user already has a membership in this project")
+		}
 		return nil, fmt.Errorf("failed to create membership: %w", err)
 	}
 
 	// If the mode put us straight into active, grant the role now.
 	if created.State == MembershipActive {
-		if err := c.AddProjectMember(ctx, projectID, userID, role); err != nil {
+		if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role); err != nil {
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
 	}
@@ -213,12 +223,12 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	// Side effects on the role grant.
 	switch to {
 	case MembershipActive:
-		if err := c.AddProjectMember(ctx, m.ProjectID, m.UserID, m.Role); err != nil {
+		if err := c.AddProjectMember(ctx, actorID, m.ProjectID, m.UserID, m.Role); err != nil {
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
 	case MembershipRevoked:
 		// Best-effort: the membership is already revoked; a missing grant is fine.
-		_ = c.RemoveProjectMember(ctx, m.ProjectID, m.UserID)
+		_ = c.RemoveProjectMember(ctx, actorID, m.ProjectID, m.UserID)
 	}
 
 	c.logMembershipEvent(ctx, "membership."+transitionVerb(to), m, actorID)

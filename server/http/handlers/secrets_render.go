@@ -43,7 +43,8 @@ func (h *SecretHandler) RenderTemplate(w http.ResponseWriter, r *http.Request) {
 		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
 			h.sendError(w, "Forbidden", "Not authorized to read a referenced secret", http.StatusForbidden, nil)
 		case strings.Contains(err.Error(), "invalid reference"), strings.Contains(err.Error(), "unterminated"),
-			strings.Contains(err.Error(), "empty secret reference"):
+			strings.Contains(err.Error(), "empty secret reference"),
+			strings.Contains(err.Error(), "cannot be safely substituted"):
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to render template", http.StatusInternalServerError, nil)

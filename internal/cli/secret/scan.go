@@ -125,6 +125,18 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	if scanCommit != "" {
+		// scanCommit is a user-controlled --commit value passed straight to git as a
+		// revision argument. A value starting with "-" (e.g. "--upload-pack=...")
+		// would otherwise be parsed as a git flag rather than a revision — arg
+		// injection, not full shell injection (no shell is involved), but still lets a
+		// crafted value smuggle extra git arguments. A literal "--" separator does NOT
+		// fix this for diff-tree: git treats everything after "--" as a pathspec, not a
+		// revision, so it would just break every legitimate --commit value. Reject a
+		// leading "-" instead — no genuine git revision (branch, tag, SHA, HEAD~N, …)
+		// ever starts with one.
+		if strings.HasPrefix(scanCommit, "-") {
+			return fmt.Errorf("invalid --commit value %q: must not start with '-'", scanCommit)
+		}
 		out, err := exec.Command("git", "-C", absPath, "diff-tree", "--no-commit-id", "-r", "--name-only", scanCommit).Output() // #nosec G204
 		if err == nil && len(out) > 0 {
 			stagedFiles = map[string]bool{}

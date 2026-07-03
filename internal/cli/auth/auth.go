@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"syscall"
 
+	"github.com/keyorixhq/keyorix/internal/cli/common"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -51,6 +52,8 @@ func init() {
 func runLogin(cmd *cobra.Command, args []string) error {
 	apiKey, _ := cmd.Flags().GetString("api-key")
 	server, _ := cmd.Flags().GetString("server")
+
+	common.WarnInsecureFlag(cmd, "api-key", "omit the flag to be prompted instead, or set KEYORIX_REMOTE_API_KEY.")
 
 	// Load current configuration
 	cfg, err := config.Load("keyorix.yaml")
