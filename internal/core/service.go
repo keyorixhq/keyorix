@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/connect"
@@ -255,9 +256,48 @@ func (c *KeyorixCore) AuditLicenseState(ctx context.Context) {
 	})
 }
 
+// Audit field length caps (#381). Neither models.AuditEvent.Description nor .Diff
+// carries a DB-level size limit, and secret/project/role names feeding into a
+// Description have no length cap unless an operator opts into secret_name_policy
+// (off by default) — so an attacker-chosen name could otherwise blow up every
+// audit row that mentions it, and (since the audit-chain writer is a single
+// process-wide serialized writer) degrade audit throughput for every OTHER write
+// in the system. These ceilings comfortably fit any Description/Diff this
+// codebase's own call sites actually generate (short templated sentences and
+// small structured before/after JSON), so legitimate audit content is never
+// affected.
+const (
+	auditDescriptionMaxLen = 4096 // ~4 KiB
+	auditDiffMaxLen        = 8192 // ~8 KiB
+)
+
+// auditTruncatedMarker is appended to a field truncated by truncateAuditField.
+const auditTruncatedMarker = "...[truncated]"
+
+// truncateAuditField caps s at maxLen bytes, appending auditTruncatedMarker when
+// truncation occurs. Audit writes must never fail (or reject) the underlying
+// business operation just because a caller-supplied description/diff got too
+// long, so this truncates rather than erroring. The cut point is walked back to
+// a valid UTF-8 boundary so truncation never produces an invalid string.
+func truncateAuditField(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	cut := maxLen
+	for cut > 0 && !utf8.ValidString(s[:cut]) {
+		cut--
+	}
+	return s[:cut] + auditTruncatedMarker
+}
+
 // emitAudit persists an audit event and forwards it to the configured sink.
-// All core audit writers funnel through here so SIEM forwarding is uniform.
+// All core audit writers funnel through here so SIEM forwarding is uniform —
+// which also makes it the single choke point to cap Description/Diff length
+// (#381), independent of which helper (writeAuditEvent*, writeImpersonationEvent,
+// AuditLicenseState, ...) produced the event.
 func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) {
+	event.Description = truncateAuditField(event.Description, auditDescriptionMaxLen)
+	event.Diff = truncateAuditField(event.Diff, auditDiffMaxLen)
 	if err := c.storage.LogAuditEvent(ctx, event); err != nil {
 		// A failed chain-write is an audit gap that VerifyAuditChain cannot detect — a
 		// never-written event leaves no hole. Surface it loudly instead of swallowing,
