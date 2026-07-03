@@ -663,6 +663,16 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	}
 
+	// Close the secret-version TOCTOU (#121): a unique index on (secret_node_id,
+	// version_number) so two concurrent RotateSecret calls for the same secret can no
+	// longer both write the same next version number. Additive + idempotent; the full
+	// AutoMigrate below covers fresh DBs.
+	if tableExists(db, "secret_versions") {
+		if err := ensureSecretVersionIndex(db); err != nil {
+			return err
+		}
+	}
+
 	// Skip full AutoMigrate if already initialised (projects table present).
 	if projectsExists {
 		return nil
@@ -724,7 +734,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if err := ensureUserEmailIndex(db); err != nil {
 		return err
 	}
-	return ensureShareRecordUniqueIndex(db)
+	if err := ensureShareRecordUniqueIndex(db); err != nil {
+		return err
+	}
+	return ensureSecretVersionIndex(db)
 }
 
 // ensureShareRecordUniqueIndex creates a partial unique index on share_records
@@ -737,6 +750,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 func ensureShareRecordUniqueIndex(db *gorm.DB) error {
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_share_records_active ON share_records (secret_id, recipient_id, is_group) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial share_records unique index: %w", err)
+	}
+	return nil
+}
+
+// ensureSecretVersionIndex creates a unique index on secret_versions
+// (secret_node_id, version_number) closing the #121 TOCTOU: RotateSecret's
+// GetLatestSecretVersion -> +1 -> storeSecretVersion sequence is a read-then-write
+// race, empirically reproduced (100% of runs, 15 concurrent rotations) producing
+// multiple rows sharing one version_number under the same secret_id. Idempotent;
+// works on SQLite and Postgres.
+func ensureSecretVersionIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_secret_versions_node_version ON secret_versions (secret_node_id, version_number)").Error; err != nil {
+		return fmt.Errorf("failed to create secret_versions unique index: %w", err)
 	}
 	return nil
 }

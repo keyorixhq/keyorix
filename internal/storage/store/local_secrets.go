@@ -532,6 +532,13 @@ func (ls *LocalStorage) SetSecretTags(ctx context.Context, secretID uint, tagNam
 // CreateSecretVersion creates a new version of a secret.
 func (ls *LocalStorage) CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
 	if err := ls.db.WithContext(ctx).Create(version).Error; err != nil {
+		if isUniqueViolation(err) {
+			// The unique index on (secret_node_id, version_number) (#121) caught a
+			// concurrent rotation that already claimed this version number. Translate to
+			// the sentinel so RotateSecret can retry with a freshly re-read latest version
+			// instead of failing the rotation outright on ordinary contention.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateSecretVersion, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return version, nil

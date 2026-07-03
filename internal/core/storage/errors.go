@@ -41,3 +41,13 @@ var ErrDuplicateActiveMembership = errors.New("an active membership already exis
 // callers translate this into a clean "email already in use" error rather than a raw
 // constraint-violation message.
 var ErrDuplicateEmail = errors.New("a user with this email already exists")
+
+// ErrDuplicateSecretVersion is returned (wrapped) by CreateSecretVersion when the insert
+// collides with the unique index on (secret_node_id, version_number). RotateSecret's
+// GetLatestSecretVersion -> +1 -> storeSecretVersion sequence is a read-then-write race
+// (#121): two concurrent rotations of the same secret can both read the same "latest"
+// version and both attempt to write the same next version_number. The unique index makes
+// the loser's write fail here instead of silently producing two rows sharing one
+// version_number; callers retry with a freshly re-read latest version rather than failing
+// the rotation outright on ordinary concurrent contention.
+var ErrDuplicateSecretVersion = errors.New("a secret version with this version number already exists")
