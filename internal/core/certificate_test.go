@@ -105,10 +105,13 @@ func newCertCore(t *testing.T, now time.Time) (*KeyorixCore, *gorm.DB) {
 	return &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}, db
 }
 
-// mkCertSecret stores a secret (no encryption → value lives in the version row).
+// mkCertSecret stores a secret (no encryption → value lives in the version row), owned
+// by user 9 — the actor ID every InspectCertificate call in this file uses — so the
+// EnforceSecretReadPermission check InspectCertificate now performs is satisfied via
+// ownership without needing the shares/groups tables migrated.
 func mkCertSecret(t *testing.T, db *gorm.DB, id uint, name, status string, value []byte) {
 	t.Helper()
-	require.NoError(t, db.Create(&models.SecretNode{ID: id, Name: name, IsSecret: true, Status: status, Type: "certificate"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: id, Name: name, IsSecret: true, Status: status, Type: "certificate", OwnerID: 9}).Error)
 	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: id, VersionNumber: 1, EncryptedValue: value}).Error)
 }
 
@@ -213,4 +216,39 @@ func TestInspectCertificateSuspended(t *testing.T) {
 	_, err := c.InspectCertificate(ctx, 9, 1)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "suspended")
+}
+
+// TestInspectCertificateEnforcesPerSecretPermission guards #239: InspectCertificate
+// used to call storage.GetSecret directly and rely solely on the caller's HTTP route
+// being gated by scoped secrets.read, skipping the ownership/share-aware permission
+// check every other per-secret value-derived read goes through (GetSecretWithPermissionCheck,
+// GetSecretTags, GetSecretAccessStats, …). That let any actor holding project-wide
+// secrets.read see a certificate's Subject/Issuer/SANs/serial number, even for a
+// certificate they neither own nor were shared — a real information disclosure. This
+// proves both directions: a non-owner/non-shared actor is now refused, and a share
+// recipient still succeeds — no regression for the legitimate path.
+func TestInspectCertificateEnforcesPerSecretPermission(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretVersion{}, &models.AuditEvent{}, &models.ShareRecord{}, &models.Group{}, &models.UserGroup{}))
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+
+	certPEM, _ := selfSignedPEM(t, "restricted.example.com", now.Add(30*24*time.Hour))
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "restricted-cert", IsSecret: true, Status: "active", Type: "certificate", OwnerID: 9}).Error)
+	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: 1, VersionNumber: 1, EncryptedValue: certPEM}).Error)
+
+	t.Run("actor with no ownership/share is refused, despite the HTTP route already gating project-scoped secrets.read", func(t *testing.T) {
+		_, err := c.InspectCertificate(ctx, 42, 1) // actor 42: no owner/share grant on secret 1
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "insufficient permissions")
+	})
+
+	t.Run("actor with an active share on the secret still succeeds — no regression", func(t *testing.T) {
+		require.NoError(t, db.Create(&models.ShareRecord{ID: 1, SecretID: 1, OwnerID: 9, RecipientID: 7, IsGroup: false, Permission: "read"}).Error)
+		info, err := c.InspectCertificate(ctx, 7, 1)
+		require.NoError(t, err)
+		assert.Contains(t, info.Subject, "restricted.example.com")
+	})
 }
