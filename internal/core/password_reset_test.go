@@ -140,3 +140,60 @@ func (s *slowFakeDeliverer) DeliverSetupLink(_ context.Context, _ delivery.Setup
 }
 
 func (s *slowFakeDeliverer) Name() string { return "slow-fake" }
+
+// panicDeliverer panics inside DeliverSetupLink to simulate a bug surfacing
+// in the detached goroutine RequestPasswordReset spawns to issue+deliver the
+// reset link.
+type panicDeliverer struct {
+	done chan struct{}
+}
+
+func (p *panicDeliverer) DeliverSetupLink(_ context.Context, _ delivery.SetupLinkRequest) (delivery.DeliveryResult, error) {
+	defer close(p.done)
+	panic("simulated panic in credential delivery")
+}
+
+func (p *panicDeliverer) Name() string { return "panic-fake" }
+
+// TestRequestPasswordReset_PanicInDetachedGoroutineDoesNotCrash proves backlog
+// #481: RequestPasswordReset issues+delivers the reset link from a detached
+// goroutine (#117, closing a timing side-channel), reachable by a completely
+// unauthenticated caller via POST /auth/password-reset. Before this fix, that
+// goroutine was a bare `go func(){...}()` with no panic recovery — a panic
+// there is NOT caught by the HTTP server's per-request recovery middleware
+// (which only guards the goroutine serving the request) and crashes the
+// entire process for every connected tenant. If goSafe's recover() didn't
+// wrap this call site, this test binary itself would crash before reaching
+// the assertions below.
+func TestRequestPasswordReset_PanicInDetachedGoroutineDoesNotCrash(t *testing.T) {
+	ctx := context.Background()
+	const email = "reset-panic@acme.io"
+	fixed := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	done := make(chan struct{})
+	panicker := &panicDeliverer{done: done}
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	c.now = func() time.Time { return fixed }
+	c.SetCredentialDelivery(panicker, testBaseURL)
+	anyAudit(ms)
+
+	activeUser := &models.User{ID: 11, Email: email, DisplayName: "Panicker", AccountState: AccountActive}
+	ms.On("GetUserByEmail", ctx, email).Return(activeUser, nil)
+	ms.On("CountSetupTokensSince", ctx, SetupPurposePasswordResetLink, email, fixed.Add(-24*time.Hour)).Return(int64(0), nil)
+	ms.On("CountSetupTokensSince", ctx, SetupPurposePasswordResetLink, email, fixed.Add(-resendMinInterval)).Return(int64(0), nil)
+	ms.On("SupersedeActiveSetupTokens", ctx, SetupPurposePasswordResetLink, email).Return(nil)
+	ms.On("CreateSetupToken", ctx, mock.AnythingOfType("*models.SetupToken")).Return(&models.SetupToken{ID: 1}, nil)
+
+	// The enumeration-safe contract holds regardless: RequestPasswordReset
+	// always returns nil.
+	require.NoError(t, c.RequestPasswordReset(ctx, email))
+
+	select {
+	case <-done:
+		// The detached goroutine panicked and goSafe's recover() caught it —
+		// the process (and this test binary) is still alive to reach here.
+	case <-time.After(2 * time.Second):
+		t.Fatal("detached delivery goroutine never ran")
+	}
+}

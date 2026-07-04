@@ -70,7 +70,11 @@ func (s *SecretGRPCService) CreateSecret(ctx context.Context, req *pb.CreateSecr
 	// Audit the create the same way the HTTP handler does — the core method does not
 	// audit internally, so without this a secret created over gRPC left no audit
 	// trail. Detached + async (see GetSecretValue).
-	go s.core.LogSecretCreatedWithProject(core.DetachedAuditContext(ctx), user.UserID, secret.ID, secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
+	auditCtx := core.DetachedAuditContext(ctx)
+	ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
+	goSafe(func() {
+		s.core.LogSecretCreatedWithProject(auditCtx, user.UserID, secret.ID, secret.ProjectID, user.Username, secret.Name, ip, ua)
+	}) // #nosec G118
 	return secretNodeToProto(secret), nil
 }
 
@@ -151,7 +155,11 @@ func (s *SecretGRPCService) GetSecretValue(ctx context.Context, req *pb.GetSecre
 	// anomaly detection. Detached + async like HTTP, so it neither blocks the RPC nor
 	// dies on its cancellation; DetachedAuditContext preserves the actor-type and
 	// impersonation tags the interceptor set.
-	go s.core.LogSecretReadWithProject(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
+	auditCtx := core.DetachedAuditContext(ctx)
+	ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
+	goSafe(func() {
+		s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua)
+	}) // #nosec G118
 	return &pb.SecretValue{
 		Id:    req.GetId(),
 		Name:  secret.Name,
@@ -196,7 +204,11 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	// Audit the update with a before/after diff, mirroring the HTTP handler — the
 	// core method does not audit internally. Detached + async (see GetSecretValue).
 	diff := core.BuildSecretUpdateDiff(oldSecret, updateReq, req.GetValue() != "")
-	go s.core.LogSecretUpdatedWithDiff(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx), diff) // #nosec G118
+	auditCtx := core.DetachedAuditContext(ctx)
+	ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
+	goSafe(func() {
+		s.core.LogSecretUpdatedWithDiff(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua, diff)
+	}) // #nosec G118
 	return secretNodeToProto(secret), nil
 }
 
@@ -225,7 +237,11 @@ func (s *SecretGRPCService) DeleteSecret(ctx context.Context, req *pb.DeleteSecr
 	}
 	// Audit the delete the same way the HTTP handler does — the core method does not
 	// audit internally. Detached + async (see GetSecretValue).
-	go s.core.LogSecretDeletedWithProject(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secretProjectID, user.Username, secretName, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
+	auditCtx := core.DetachedAuditContext(ctx)
+	ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
+	goSafe(func() {
+		s.core.LogSecretDeletedWithProject(auditCtx, user.UserID, uint(req.GetId()), secretProjectID, user.Username, secretName, ip, ua)
+	}) // #nosec G118
 	return &emptypb.Empty{}, nil
 }
 
@@ -327,7 +343,11 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	// an HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168).
 	// Best-effort metadata fetch, same as HTTP: a miss just skips the audit call.
 	if secret, sErr := s.core.GetSecretWithPermissionCheck(ctx, uint(req.GetId()), user.UserID); sErr == nil && secret != nil {
-		go s.core.LogSecretReadWithProject(core.DetachedAuditContext(ctx), user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)) // #nosec G118
+		auditCtx := core.DetachedAuditContext(ctx)
+		ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
+		goSafe(func() {
+			s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua)
+		}) // #nosec G118
 	}
 	out := make([]*pb.SecretVersion, 0, len(versions))
 	for _, v := range versions {

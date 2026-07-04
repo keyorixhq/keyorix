@@ -395,14 +395,14 @@ func (c *KeyorixCore) RequestPasswordReset(ctx context.Context, email string) er
 	// this call, which would cancel a request-scoped ctx before the SMTP send (or
 	// even the throttle check) completes.
 	detached := DetachedAuditContext(ctx)
-	go func() {
+	goSafe(func() {
 		_, _ = c.provisionSetupLinkThrottled(detached, IssueSetupTokenRequest{
 			Purpose:       SetupPurposePasswordResetLink,
 			SubjectEmail:  user.Email,
 			SubjectUserID: &user.ID,
 			CreatedBy:     0, // self-service (no issuing admin)
 		}, user.DisplayName, "")
-	}()
+	})
 	return nil
 }
 
