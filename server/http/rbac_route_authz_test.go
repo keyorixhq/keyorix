@@ -125,3 +125,65 @@ func TestGetUserRolesRequiresRolesRead(t *testing.T) {
 	assert.NotEqual(t, http.StatusForbidden, get("auditor-tok"),
 		"a roles.read holder should be allowed past the gate")
 }
+
+// Regression (#262): GET /api/v1/groups/{id}/roles must require roles.read, not
+// the group-wide users.read that the baseline viewer role (and nearly every
+// other seeded role) holds — otherwise any low-privilege, globally-assigned
+// viewer could enumerate an arbitrary group's full role-grant list across the
+// entire deployment, discovering exactly which roles (and therefore which
+// permissions) cascade to every member of that group. This mirrors the
+// GetUserRolesForUser fix (#141) for the same class of disclosure at group
+// granularity, and matches the roles.assign gate already required by this
+// route's mutating siblings (AssignRoleToGroup/RemoveRoleFromGroup).
+func TestGetGroupRolesRequiresRolesRead(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
+		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.AuditEvent{}, &models.Session{}, &models.Project{}, &models.Environment{},
+	))
+	now := time.Now()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "auditor", Email: "a@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "viewer", Email: "v@t.com", IsActive: true, CreatedAt: now, UpdatedAt: now}).Error)
+	// "auditor" holds roles.read; "viewer" holds only the baseline users.read.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "auditor"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "viewer"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "users.read", Resource: "users", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.Permission{ID: 2, Name: "roles.read", Resource: "roles", Action: "read"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: 2}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 2}).Error)
+	// The group whose role grants are being probed — membership is irrelevant to
+	// this gate; neither caller belongs to it.
+	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "finance-admins"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)
+	seedSession(t, db, 1, "auditor-tok")
+	seedSession(t, db, 2, "viewer-tok")
+
+	router, err := NewRouter(&config.Config{}, core.NewKeyorixCore(store.NewLocalStorage(db)))
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	get := func(token string) int {
+		req, err := http.NewRequest("GET", server.URL+"/api/v1/groups/1/roles", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+
+	assert.Equal(t, http.StatusForbidden, get("viewer-tok"),
+		"users.read holder without roles.read must NOT enumerate a group's role grants")
+	assert.NotEqual(t, http.StatusForbidden, get("auditor-tok"),
+		"a roles.read holder should be allowed past the gate")
+}
