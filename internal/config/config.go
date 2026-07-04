@@ -1233,7 +1233,7 @@ func (c JITAccessExpiryConfig) GetInterval() time.Duration {
 // (default off — disabled means the endpoint refuses).
 type BreakGlassConfig struct {
 	Enabled       bool   `yaml:"enabled"`
-	EmergencyRole string `yaml:"emergency_role"` // role granted on activation (e.g. "project_admin")
+	EmergencyRole string `yaml:"emergency_role"` // role granted on activation (e.g. "project_developer" — must be contained: no roles.assign, so use a role like project_developer, NOT project_admin)
 	DefaultTTL    string `yaml:"default_ttl"`    // grant lifetime when none requested (e.g. "4h")
 	MaxTTL        string `yaml:"max_ttl"`        // ceiling on a requested TTL (e.g. "24h")
 }
