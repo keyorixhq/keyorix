@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/cli/common"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/spf13/cobra"
 )
 
@@ -65,6 +66,10 @@ func runReview(cmd *cobra.Command, args []string) error {
 	}
 	projectID := existing.ProjectID
 
+	if err := requireReviewAuthority(ctx, service, approverID, projectID); err != nil {
+		return err
+	}
+
 	switch reviewAction {
 	case "approve":
 		var ttl time.Duration
@@ -96,6 +101,28 @@ func runReview(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to reject access request: %w", err)
 		}
 		fmt.Printf("Access request %d rejected.\n", req.ID)
+	}
+	return nil
+}
+
+// requireReviewAuthority verifies that actorID — the user resolved from --by —
+// actually holds the authority the equivalent HTTP route requires for this
+// exact operation: PUT .../projects/{id}/access-requests/{requestId} is gated
+// on roles.assign scoped to the project (see router.go). The local CLI has no
+// session/middleware to enforce this, so --by resolving ANY email — with zero
+// authority check — would let an operator attribute an approval/rejection to
+// an arbitrary or unprivileged account purely for what appears in the audit
+// trail (#264/#491). ApproveAccessRequestWithExpiry/RejectAccessRequest
+// themselves do not check permissions (the HTTP handler's job is done by
+// router middleware), so this must be verified here, at the CLI entrypoint,
+// before the resolved actor is credited with the action.
+func requireReviewAuthority(ctx context.Context, svc *core.KeyorixCore, actorID, projectID uint) error {
+	ok, err := svc.Authorize(ctx, actorID, "roles.assign", core.Scope{ProjectID: projectID})
+	if err != nil {
+		return fmt.Errorf("failed to verify --by authority: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("--by actor does not hold roles.assign at project %d; refusing to attribute this review to them", projectID)
 	}
 	return nil
 }
