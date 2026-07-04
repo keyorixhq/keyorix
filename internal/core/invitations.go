@@ -4,8 +4,9 @@
 //
 //   - Invitations: an admin invites an email to a project with an intended role.
 //     State: pending → accepted / revoked / expired. The email/setup-link
-//     consumption (accept) is a follow-up; this tracks the pending invite so it
-//     can be listed, revoked, and aged out.
+//     consumption (accept) is implemented in setup_consume.go
+//     (completeInvitationAccept); this tracks the pending invite so it can be
+//     listed, revoked, and aged out.
 //   - Access requests: a user asks for a role in a project. State: pending →
 //     approved / rejected / withdrawn / expired. Approval grants the (possibly
 //     adjusted) role at the project scope. No auto-approval.

@@ -7,9 +7,11 @@
 //	pending → active → suspended ⇄ active        (revoked is terminal, reachable
 //	                                              from any non-revoked state)
 //
-// `pending` is the credential-awaiting state for the (future) machine-token
-// issuance flow; identities created today start `active`. Every transition is
-// audited. Machine-token authentication itself is a deliberate follow-up.
+// `pending` is the credential-awaiting state for the machine-token issuance
+// flow (ADR-030, see machine_token.go); identities created today start
+// `active`. Every transition is audited. Machine-token issuance, hashing,
+// revocation, and validation are fully implemented and wired into both the
+// HTTP and gRPC auth middleware.
 package core
 
 import (

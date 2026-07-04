@@ -89,7 +89,8 @@ type CredentialDelivery interface {
 
 // SMTPSettings configures the operator's own mail relay. The password is resolved
 // from KEYORIX_SMTP_PASSWORD by the config layer and passed in here; it is never
-// written to the config file. SMTP transport itself lands in a follow-up — see New.
+// written to the config file. SMTP transport is implemented in smtp.go
+// (newSMTPDelivery) and selected by New below.
 type SMTPSettings struct {
 	Host     string
 	Port     int
