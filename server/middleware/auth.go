@@ -217,21 +217,9 @@ func Authentication(coreService *core.KeyorixCore) func(next http.Handler) http.
 func authenticationWithValidator(validator sessionValidator, coreService *core.KeyorixCore) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				unauthorizedResponse(w, "Missing authorization header")
-				return
-			}
-
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				unauthorizedResponse(w, "Invalid authorization header format")
-				return
-			}
-
-			token := parts[1]
-			if token == "" {
-				unauthorizedResponse(w, "Missing token")
+			token, err := extractRequestToken(r)
+			if err != nil {
+				unauthorizedResponse(w, err.Error())
 				return
 			}
 
@@ -294,6 +282,35 @@ func authenticationWithValidator(validator sessionValidator, coreService *core.K
 			next.ServeHTTP(w, r.WithContext(buildRequestContext(r.Context(), userCtx, coreService)))
 		})
 	}
+}
+
+// extractRequestToken returns the token to validate for this request, preferring
+// the httpOnly session cookie over the legacy Authorization: Bearer header when
+// both are present — this makes the cookie authoritative once a client has one,
+// so a stale/leaked Bearer header value can't override it. PAT (kx_pat_)/machine
+// (kx_machine_) tokens and OIDC JWTs are never delivered via cookie — only
+// session tokens are, from Login/RefreshToken/SSO — so this doesn't change how
+// those are validated once extracted; it only changes where a session token can
+// come from.
+func extractRequestToken(r *http.Request) (string, error) {
+	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
+		return cookie.Value, nil
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", errors.New("missing authorization header")
+	}
+
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return "", errors.New("invalid authorization header format")
+	}
+
+	if parts[1] == "" {
+		return "", errors.New("missing token")
+	}
+	return parts[1], nil
 }
 
 // errInvalidTarget / errTargetNotFound let scope resolvers signal whether a bad

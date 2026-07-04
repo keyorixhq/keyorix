@@ -60,7 +60,7 @@ func setupMFAReauthTest(t *testing.T) (*AuthHandler, *core.KeyorixCore, *gorm.DB
 	require.NoError(t, err)
 	coreService.SetWebAuthn(rp)
 
-	return NewAuthHandler(coreService), coreService, db
+	return NewAuthHandler(coreService, false), coreService, db
 }
 
 func withUserContext(r *http.Request, userID uint) *http.Request {

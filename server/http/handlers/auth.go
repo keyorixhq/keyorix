@@ -32,11 +32,28 @@ func (h *AuthHandler) recordLoginAttempt(ctx context.Context, ip string) {
 // AuthHandler handles authentication HTTP requests.
 type AuthHandler struct {
 	coreService *core.KeyorixCore
+	// tlsEnabled gates the Secure attribute on the session/CSRF cookies, same
+	// signal SecurityHeaders uses for HSTS — set only when this process itself
+	// terminates TLS (a proxy-terminated deployment sets it there instead).
+	tlsEnabled bool
 }
 
 // NewAuthHandler constructs an AuthHandler.
-func NewAuthHandler(coreService *core.KeyorixCore) *AuthHandler {
-	return &AuthHandler{coreService: coreService}
+func NewAuthHandler(coreService *core.KeyorixCore, tlsEnabled bool) *AuthHandler {
+	return &AuthHandler{coreService: coreService, tlsEnabled: tlsEnabled}
+}
+
+// setSessionCookies issues the session + CSRF cookies for a freshly
+// created/rotated session. Best-effort on CSRF token generation failure: log
+// and continue without one rather than fail the whole login/refresh — the
+// session cookie is what actually matters for authentication; a missing CSRF
+// cookie only blocks this browser's own subsequent state-changing requests
+// until it retries, it doesn't grant an attacker anything.
+func (h *AuthHandler) setSessionCookies(w http.ResponseWriter, session *models.Session) {
+	middleware.SetSessionCookie(w, session.SessionToken, session.ExpiresAt, h.tlsEnabled)
+	if csrfToken, err := middleware.GenerateCSRFToken(); err == nil {
+		middleware.SetCSRFCookie(w, csrfToken, h.tlsEnabled)
+	}
 }
 
 // ── Request / response shapes ─────────────────────────────────────────────────
@@ -132,6 +149,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := h.buildLoginResponse(r.Context(), session, user)
+	h.setSessionCookies(w, session)
 
 	// Audit log + last-login stamp (both non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
@@ -259,6 +277,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := h.buildLoginResponse(r.Context(), result.Session, result.User)
+	h.setSessionCookies(w, result.Session)
 	go h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get("User-Agent")) // #nosec G118
 	go func() { _ = h.coreService.RecordLogin(context.Background(), result.User.ID) }()                                       // #nosec G118
 
@@ -284,6 +303,8 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	// Evict from auth cache immediately so the token is rejected without a DB hit.
 	middleware.InvalidateTokenCache(token)
+	middleware.ClearSessionCookie(w, h.tlsEnabled)
+	middleware.ClearCSRFCookie(w, h.tlsEnabled)
 
 	// Audit log (non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
@@ -313,6 +334,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	// session row was deleted — so it stays usable for up to validTokenTTL after being
 	// rotated away.
 	middleware.InvalidateTokenCache(token)
+	h.setSessionCookies(w, session)
 
 	resp := map[string]interface{}{
 		"token": session.SessionToken,
@@ -342,7 +364,22 @@ func (h *AuthHandler) Profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sendSuccess(w, userProfileMap(user, h.userIdentity(r, userCtx.UserID)), "")
+	profile := userProfileMap(user, h.userIdentity(r, userCtx.UserID))
+	// Surface impersonation state from the server-validated session (UserContext.
+	// ImpersonatedBy, resolved by the auth middleware) rather than requiring the
+	// client to track it itself — under cookie auth the client has no token to
+	// inspect, so this is now the only source of truth for "am I impersonating,
+	// and who is the real admin" (used to render the impersonation banner).
+	if userCtx.ImpersonatedBy != nil {
+		if admin, aerr := h.coreService.GetUser(r.Context(), *userCtx.ImpersonatedBy); aerr == nil {
+			profile["impersonation"] = map[string]interface{}{
+				"admin_id":           admin.ID,
+				"admin_username":     admin.Username,
+				"admin_display_name": admin.DisplayName,
+			}
+		}
+	}
+	sendSuccess(w, profile, "")
 }
 
 // userIdentity returns the user's role/permission summary for the profile DTO.
@@ -629,8 +666,17 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// extractBearerToken pulls the token from an "Authorization: Bearer <token>" header.
+// extractBearerToken returns the session token for this request, preferring the
+// httpOnly session cookie over the legacy "Authorization: Bearer <token>" header
+// if both are present — mirrors middleware.extractRequestToken's precedence
+// exactly, so a request authenticated via cookie by the Authentication
+// middleware resolves to the same token here (needed for cache invalidation,
+// "current session" detection, etc., all of which act on the actual token, not
+// on how it arrived).
 func extractBearerToken(r *http.Request) string {
+	if cookie, err := r.Cookie(middleware.SessionCookieName); err == nil && cookie.Value != "" {
+		return cookie.Value
+	}
 	parts := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
 	if len(parts) == 2 && parts[0] == "Bearer" {
 		return parts[1]

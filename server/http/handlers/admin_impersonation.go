@@ -2,12 +2,14 @@
 //
 // Start (POST /api/v1/admin/impersonate) is gated by the users.impersonate
 // permission, which only global admins hold (admin-bypass). It issues a separate
-// short-lived session for the target user and returns its token; the admin's own
-// session is untouched so the client can swap back without re-authentication.
+// short-lived session for the target user and sets its cookie; the admin's own
+// session token is stashed in a second cookie (see AdminSessionCookieName) so
+// the client can swap back without re-authentication.
 //
 // End (POST /api/v1/auth/end-impersonation) is self-scoped: it terminates the
-// impersonation session presented in the Authorization header and logs the
-// bracketing impersonation.end event. See internal/core/impersonation.go.
+// impersonation session, then restores the admin's stashed session if it's
+// still live, or clears everything and routes to a fresh login if it's not.
+// See internal/core/impersonation.go for the core-layer session lifecycle.
 package handlers
 
 import (
@@ -23,19 +25,25 @@ import (
 // ImpersonationHandler handles admin impersonation requests.
 type ImpersonationHandler struct {
 	coreService *core.KeyorixCore
+	// tlsEnabled gates the Secure attribute on the session/CSRF cookies — see
+	// AuthHandler's field of the same name.
+	tlsEnabled bool
 }
 
 // NewImpersonationHandler constructs an ImpersonationHandler.
-func NewImpersonationHandler(coreService *core.KeyorixCore) *ImpersonationHandler {
-	return &ImpersonationHandler{coreService: coreService}
+func NewImpersonationHandler(coreService *core.KeyorixCore, tlsEnabled bool) *ImpersonationHandler {
+	return &ImpersonationHandler{coreService: coreService, tlsEnabled: tlsEnabled}
 }
 
 type startImpersonationBody struct {
 	UserID uint `json:"user_id"`
 }
 
+// impersonationResponse no longer carries Token — the impersonation session's
+// cookie is set directly on the response (see Start); the client never holds
+// the token value at all now, matching the same shape change Login/RefreshToken
+// went through.
 type impersonationResponse struct {
-	Token          string `json:"token"`
 	ExpiresAt      string `json:"expires_at,omitempty"`
 	UserID         uint   `json:"user_id"`
 	Username       string `json:"username"`
@@ -66,6 +74,13 @@ func (h *ImpersonationHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture the admin's own current token BEFORE it's superseded by the
+	// impersonation session's cookie below — this is the plaintext value the
+	// browser just sent us on this very request. Stashing it in a second cookie
+	// is how End restores it later without the server ever needing to recall a
+	// plaintext token from storage (see AdminSessionCookieName's doc comment).
+	adminToken := extractBearerToken(r)
+
 	session, target, err := h.coreService.StartImpersonation(r.Context(), admin.UserID, body.UserID, clientIP(r))
 	if err != nil {
 		switch {
@@ -79,8 +94,15 @@ func (h *ImpersonationHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	middleware.SetSessionCookie(w, session.SessionToken, session.ExpiresAt, h.tlsEnabled)
+	if adminToken != "" {
+		middleware.SetAdminSessionCookie(w, adminToken, session.ExpiresAt, h.tlsEnabled)
+	}
+	if csrfToken, cerr := middleware.GenerateCSRFToken(); cerr == nil {
+		middleware.SetCSRFCookie(w, csrfToken, h.tlsEnabled)
+	}
+
 	resp := impersonationResponse{
-		Token:          session.SessionToken,
 		UserID:         target.ID,
 		Username:       target.Username,
 		DisplayName:    target.DisplayName,
@@ -92,7 +114,10 @@ func (h *ImpersonationHandler) Start(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, resp, "Impersonation started")
 }
 
-// End handles POST /api/v1/auth/end-impersonation.
+// End handles POST /api/v1/auth/end-impersonation. On success it restores the
+// admin's stashed session cookie when it's still live, or clears everything
+// (routing to a fresh login) when it's not — e.g. the admin's own session
+// expired, or was revoked, while they were impersonating.
 func (h *ImpersonationHandler) End(w http.ResponseWriter, r *http.Request) {
 	token := extractBearerToken(r)
 	if token == "" {
@@ -109,7 +134,34 @@ func (h *ImpersonationHandler) End(w http.ResponseWriter, r *http.Request) {
 	}
 	// Evict the impersonation token from the auth cache immediately.
 	middleware.InvalidateTokenCache(token)
-	sendSuccess(w, nil, "Impersonation ended")
+
+	// Ending impersonation always succeeds once we get here (the impersonation
+	// session is deleted either way) — admin_session_restored tells the client
+	// which of the two outcomes happened, since only one of them leaves the
+	// browser still logged in.
+	restored := false
+	if adminCookie, cerr := r.Cookie(middleware.AdminSessionCookieName); cerr == nil && adminCookie.Value != "" {
+		// Validate before trusting it back as the active session — it may have
+		// expired, or the admin's account may have been suspended, while they
+		// were impersonating. This is the same check every other request goes
+		// through, not a new trust boundary.
+		if _, _, verr := h.coreService.ValidateSessionToken(r.Context(), adminCookie.Value); verr == nil {
+			middleware.SetSessionCookie(w, adminCookie.Value, nil, h.tlsEnabled)
+			if csrfToken, cerr2 := middleware.GenerateCSRFToken(); cerr2 == nil {
+				middleware.SetCSRFCookie(w, csrfToken, h.tlsEnabled)
+			}
+			restored = true
+		}
+	}
+	middleware.ClearAdminSessionCookie(w, h.tlsEnabled)
+
+	message := "Impersonation ended"
+	if !restored {
+		middleware.ClearSessionCookie(w, h.tlsEnabled)
+		middleware.ClearCSRFCookie(w, h.tlsEnabled)
+		message = "Impersonation ended, but your admin session had expired — please sign in again"
+	}
+	sendSuccess(w, map[string]interface{}{"admin_session_restored": restored}, message)
 }
 
 // clientIP strips the port from RemoteAddr for audit attribution.
