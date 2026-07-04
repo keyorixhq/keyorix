@@ -270,8 +270,18 @@ func (ls *LocalStorage) ListSharedSecrets(ctx context.Context, userID uint) ([]*
 	return append(secrets, groupSecrets...), nil
 }
 
+// permissionRank mirrors the rank convention established in
+// internal/core/secret_access_list.go (read < write < owner) so that
+// direct-vs-group conflict resolution here stays consistent with the "strongest
+// grant wins" rule used across the codebase. Kept as a local copy — store must
+// not import core (core already imports store).
+var permissionRank = map[string]int{"read": 1, "write": 2, "owner": 3}
+
 // CheckSharePermission returns the effective permission level for userID on secretID.
 // Owner → "write". Direct share → share.Permission. Group share → share.Permission.
+// #252: when a user has BOTH a direct share and a group share on the same secret,
+// the STRONGER of the two wins — a weaker direct grant must never silently
+// override a stronger group grant (or vice versa).
 func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, userID uint) (string, error) {
 	var secret models.SecretNode
 	if err := ls.db.First(&secret, secretID).Error; err != nil {
@@ -294,12 +304,13 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 	// Skip expired (time-bound) shares — an expired share grants no permission.
 	now := time.Now()
 	var directShare models.ShareRecord
+	haveDirect := false
 	err := ls.db.Where(
 		"secret_id = ? AND recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
 		secretID, userID, false, now,
 	).First(&directShare).Error
 	if err == nil {
-		return directShare.Permission, nil
+		haveDirect = true
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -315,10 +326,21 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 		LIMIT 1
 	`
 	res := ls.db.Raw(groupQuery, secretID, userID, true, now).Scan(&groupShare)
-	if res.Error == nil && groupShare.ID != 0 {
-		return groupShare.Permission, nil
-	} else if res.Error != nil && !errors.Is(res.Error, gorm.ErrRecordNotFound) {
+	haveGroup := res.Error == nil && groupShare.ID != 0
+	if res.Error != nil && !errors.Is(res.Error, gorm.ErrRecordNotFound) {
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), res.Error)
+	}
+
+	switch {
+	case haveDirect && haveGroup:
+		if permissionRank[groupShare.Permission] > permissionRank[directShare.Permission] {
+			return groupShare.Permission, nil
+		}
+		return directShare.Permission, nil
+	case haveDirect:
+		return directShare.Permission, nil
+	case haveGroup:
+		return groupShare.Permission, nil
 	}
 
 	return "", fmt.Errorf("%s", i18n.T("ErrorNotAuthorized", nil))

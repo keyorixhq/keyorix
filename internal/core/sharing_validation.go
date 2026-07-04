@@ -19,6 +19,14 @@ func (c *KeyorixCore) validateShareSecretRequest(req *ShareSecretRequest) error 
 	if req.SharedBy == 0 {
 		return fmt.Errorf("sharedBy is required")
 	}
+	// #252: a self-share (sharing a secret with yourself) is meaningless at best and
+	// a landmine at worst — it inflates share/audit counts and confuses risk-scoring
+	// with no real access-boundary crossed. Only applies to direct (non-group) shares:
+	// for group shares RecipientID is a group ID, not a user ID, so it can coincide
+	// with SharedBy's numeric value without meaning anything.
+	if !req.IsGroup && req.RecipientID == req.SharedBy {
+		return fmt.Errorf("cannot share a secret with yourself")
+	}
 	return nil
 }
 
