@@ -33,15 +33,18 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 		return fmt.Errorf("key manager not initialized — cannot rotate")
 	}
 
-	// #195/baseline: acquire the same cross-process exclusive DEK lock as
-	// RewrapDEK. Prior to this fix RotateDEKWithSweep held no cross-process
-	// lock at all (the #92 fix that added one lives only on an unmerged
-	// branch) — a concurrent RewrapDEK/RewrapDEKWithProvider (`migrate-
-	// provider`) racing this rotation could read the DEK being replaced here
-	// and, if its rename landed after this one's, silently overwrite the
+	// #195: acquire the same cross-process exclusive DEK lock as RewrapDEK.
+	// Prior to this fix RotateDEKWithSweep held no cross-process lock here at
+	// all — a concurrent RewrapDEK/RewrapDEKWithProvider (`migrate-provider`)
+	// racing this rotation could read the DEK being replaced here and, if its
+	// rename landed after this one's, silently overwrite the
 	// freshly-rotated (and now fully re-encrypted-into) DEK with the
 	// superseded one. Both operations write to the same
 	// dek.key.pending → dek.key path, so they must be mutually exclusive.
+	// (Distinct from #92's server-vs-rotation lock in service.go's
+	// AcquireExclusiveKeyLock/`dek.lock`, which guards a live server process
+	// against rotation — that fix is merged; this one guards two
+	// rotation-family CLI ops against each other.)
 	lock, err := km.acquireExclusiveKeyLock()
 	if err != nil {
 		return fmt.Errorf("rotate DEK: %w", err)
