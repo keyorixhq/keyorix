@@ -24,8 +24,8 @@ func main() {
 		return
 	}
 
-	// Perform validation
-	result, err := startup.ValidateStartup(configPath)
+	// Perform validation (no --fix equivalent in this example, so no forced autofix)
+	result, err := startup.ValidateStartup(configPath, false)
 	if err != nil {
 		fmt.Printf("❌ Validation failed: %v\n", err)
 		if result != nil {
