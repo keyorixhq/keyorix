@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -142,17 +143,31 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		interval = minRefreshInterval
 	}
 
-	desired, err := r.buildDesired(ctx, &ks)
-	if err != nil {
-		logger.Error(err, "failed to assemble secret data")
-		return r.fail(ctx, &ks, err)
-	}
-
-	hash := hashData(r.hashKey, desired)
 	secretName := ks.Spec.Target.Name
 	if secretName == "" {
 		secretName = ks.Name
 	}
+
+	desired, err := r.buildDesired(ctx, &ks)
+	if err != nil {
+		logger.Error(err, "failed to assemble secret data")
+		if errors.Is(err, keyorix.ErrSecretGone) {
+			// The upstream Keyorix server AFFIRMATIVELY reported (404/403) that a
+			// referenced secret no longer exists or is no longer accessible — as
+			// opposed to a transient failure (network error, timeout, 5xx, or a bad
+			// token) where the target Secret must be left untouched. Without this,
+			// a revoked/deleted upstream secret leaves the previously synced target
+			// Secret sitting in the cluster indefinitely, fully readable by every
+			// workload that mounts it, with no indication anything is wrong (#428).
+			if wipeErr := r.wipeTargetSecret(ctx, &ks, secretName); wipeErr != nil {
+				logger.Error(wipeErr, "failed to wipe target Secret after upstream secret became inaccessible")
+			}
+			return r.failGone(ctx, &ks, err)
+		}
+		return r.fail(ctx, &ks, err)
+	}
+
+	hash := hashData(r.hashKey, desired)
 
 	if err := r.applySecret(ctx, &ks, secretName, desired); err != nil {
 		logger.Error(err, "failed to apply target Secret")
@@ -294,6 +309,39 @@ func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.
 	}
 	// Return the cause so the controller's rate-limited workqueue backs off.
 	return ctrl.Result{}, cause
+}
+
+// failGone is fail's counterpart for a confirmed-gone upstream secret (#428): it
+// records a distinct reason ("UpstreamSecretGone" rather than the generic
+// "SyncError") so the CR's status makes the wipe visible and explicable, rather than
+// looking like an ordinary transient sync failure. The target Secret has already been
+// wiped by wipeTargetSecret before this is called.
+func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
+	r.setReady(ks, metav1.ConditionFalse, "UpstreamSecretGone", cause.Error())
+	if err := r.Status().Update(ctx, ks); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Still return the cause so the workqueue keeps retrying (with backoff): if the
+	// secret or access is restored upstream, the next successful reconcile re-syncs it.
+	return ctrl.Result{}, cause
+}
+
+// wipeTargetSecret deletes the target Secret when the upstream Keyorix reference has
+// been confirmed gone (404/403 — see the ErrSecretGone handling in Reconcile). Only a
+// Secret this operator actually manages (carries ManagedByLabel) is ever touched:
+// applySecret already refuses to adopt a pre-existing unmanaged Secret sharing the
+// target name, so wiping it here too would risk deleting an unrelated workload's own
+// Secret that merely happens to collide on name. A missing target Secret is a no-op.
+func (r *KeyorixSecretReconciler) wipeTargetSecret(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, name string) error {
+	var secret corev1.Secret
+	key := types.NamespacedName{Namespace: ks.Namespace, Name: name}
+	if err := r.Get(ctx, key, &secret); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if secret.Labels[ManagedByLabel] != ManagedByValue {
+		return nil
+	}
+	return client.IgnoreNotFound(r.Delete(ctx, &secret))
 }
 
 // succeed records Ready=True and the synced fingerprint.
