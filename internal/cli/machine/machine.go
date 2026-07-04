@@ -7,9 +7,11 @@
 // Each command works in both remote mode (against the server API) and local
 // mode (directly against the core service), mirroring the project CLI. Machine
 // identities are project-scoped, so every command resolves a project from
-// --project / KEYORIX_PROJECT / the active project. Machine-token issuance and
-// authentication are a separate follow-up (they need the machine-principal
-// model); this CLI manages the identity lifecycle.
+// --project / KEYORIX_PROJECT / the active project. Machine-token issuance,
+// authentication, and revocation (ADR-030) are fully implemented and reachable
+// via the HTTP/gRPC APIs (see internal/core/machine_token.go); this package
+// manages the identity lifecycle plus token-hygiene reporting
+// (token_hygiene.go) — it does not yet expose its own issue/revoke subcommand.
 package machine
 
 import (

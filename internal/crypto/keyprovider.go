@@ -3,8 +3,9 @@
 // data-encryption key (DEK). Abstracting the KEK source lets a deployment choose
 // how the KEK is obtained: derived from a passphrase (the default, unchanged), or
 // supplied as raw key material from a file or environment variable (e.g. injected
-// by a KMS, a sealed/SOPS secret, or a CSI driver). KMS/TPM-backed providers are a
-// future Tier-2 follow-up that implement this same interface.
+// by a KMS, a sealed/SOPS secret, or a CSI driver). KMS-backed (AWS/Azure/GCP,
+// see kms_provider.go) and TPM-backed (see tpm_provider.go) providers already
+// implement this same interface.
 //
 // A KeyProvider only SOURCES the KEK; wrapping/unwrapping the DEK with it stays in
 // the encryption package, so providers carry no dependency on the cipher code.

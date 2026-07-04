@@ -37,7 +37,8 @@ type Environment struct {
 
 // ProjectInvitation tracks an admin's intent to grant an email address a role in
 // a project (ADR-024). State machine: pending → accepted / revoked / expired.
-// The email/setup-link consumption (accept) is a follow-up; this record tracks
+// The email/setup-link consumption (accept) is implemented in
+// internal/core/setup_consume.go (completeInvitationAccept); this record tracks
 // the pending invite so it can be listed, revoked, and aged out.
 type ProjectInvitation struct {
 	ID                     uint   `gorm:"primaryKey"`
@@ -872,7 +873,7 @@ type AuditEvent struct {
 
 	// ActorType records whether the acting principal is a human user or a
 	// non-human machine identity (ADR-023). It is "user" on every ordinary
-	// event; the (future) machine-token auth path tags the request context so
+	// event; the machine-token auth path (ADR-030) tags the request context so
 	// every event under a machine session is stamped "machine_identity".
 	// "system" marks events with no authenticated principal. Defaults to "user"
 	// so legacy rows and back-compat writers read as human-actored.
@@ -1072,8 +1073,8 @@ type AnomalyAlert struct {
 // MachineIdentity is a non-human project member (ADR-023): a CI runner, a
 // Kubernetes workload, a service, or other automation. It carries its own
 // lifecycle, separate from human users, so the Members view can segment the two.
-// Authentication for a machine identity (its own token) is a follow-up; this is
-// the identity record + lifecycle.
+// This is the identity record + lifecycle; its own token-based authentication
+// (ADR-030) is MachineIdentityCredential below.
 type MachineIdentity struct {
 	ID           uint   `gorm:"primaryKey"`
 	ProjectID    uint   `gorm:"index"`

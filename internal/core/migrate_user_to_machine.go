@@ -3,8 +3,8 @@
 //
 // Early deployments often model CI runners, automation, and service accounts as
 // ordinary user records. ADR-023 keeps machine identities separate from humans so
-// the Members view can segment the two and a future machine-token auth path can
-// target them. This helper performs the one-way conversion: it materialises a
+// the Members view can segment the two and the machine-token auth path (ADR-030)
+// can target them. This helper performs the one-way conversion: it materialises a
 // machine identity for the user and (by default) suspends the source account so
 // the human-login path is closed. The user is never deleted — suspension is
 // reversible and preserves audit/ownership history that may still reference it.
