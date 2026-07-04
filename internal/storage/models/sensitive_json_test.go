@@ -71,6 +71,21 @@ func TestSensitiveFieldsAreNotJSONSerialized(t *testing.T) {
 			v:       &SetupToken{Purpose: "account_setup", TokenHash: "sha256hash"},
 			secrets: []string{"sha256hash", "TokenHash"},
 		},
+		{
+			name:    "MFAChallenge.TokenHash",
+			v:       &MFAChallenge{UserID: 1, TokenHash: "sha256hash"},
+			secrets: []string{"sha256hash", "TokenHash"},
+		},
+		{
+			name:    "WebAuthnSession.TokenHash",
+			v:       &WebAuthnSession{UserID: 1, TokenHash: "sha256hash", Purpose: "login"},
+			secrets: []string{"sha256hash", "TokenHash"},
+		},
+		{
+			name:    "MachineIdentityCredential.TokenHash",
+			v:       &MachineIdentityCredential{MachineIdentityID: 1, Name: "ci", TokenHash: "sha256hash"},
+			secrets: []string{"sha256hash", "TokenHash"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
