@@ -114,9 +114,14 @@ func (rs *RemoteStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*
 	return result, nil
 }
 
-// ListSharesByOwner lists share records by owner. Not yet implemented; returns empty slice.
+// ListSharesByOwner is not implemented for remote storage: there is no server REST
+// endpoint to proxy this to. Returning an empty slice here would make a caller (and
+// any authz/audit logic downstream) see "user has zero shares" when the truth is
+// "we don't know" — potentially masking access it should have surfaced (#455).
+// Surface the unsupported-operation error instead, matching every sibling stub in
+// this file.
 func (rs *RemoteStorage) ListSharesByOwner(_ context.Context, _ uint) ([]*models.ShareRecord, error) {
-	return []*models.ShareRecord{}, nil
+	return nil, remoteUnsupported("ListSharesByOwner")
 }
 
 // ListSharesByGroup lists all share records where groupID is the recipient via remote API.
