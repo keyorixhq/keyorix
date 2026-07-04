@@ -52,14 +52,17 @@ log_info "Creating bin directory..."
 mkdir -p bin
 
 # Build flags based on mode
+# Use an array (not a string re-parsed via `eval`) so that values such as
+# $VERSION are passed to `go build` as literal argv entries, never as shell
+# syntax to be re-interpreted (see #467/#468).
+BUILD_FLAGS=()
 if [ "$BUILD_MODE" = "debug" ]; then
-    BUILD_FLAGS="-gcflags='all=-N -l'"
+    BUILD_FLAGS+=(-gcflags="all=-N -l")
     log_info "Debug mode: Including debug symbols"
 elif [ "$BUILD_MODE" = "release" ]; then
-    BUILD_FLAGS="-ldflags='-s -w -X main.Version=$VERSION -X main.BuildTime=$BUILD_TIME -X main.GitCommit=$GIT_COMMIT'"
+    BUILD_FLAGS+=(-ldflags="-s -w -X main.Version=$VERSION -X main.BuildTime=$BUILD_TIME -X main.GitCommit=$GIT_COMMIT")
     log_info "Release mode: Optimized build with version info"
 else
-    BUILD_FLAGS=""
     log_info "Standard build mode"
 fi
 
@@ -69,7 +72,7 @@ export GOARCH="$TARGET_ARCH"
 
 # Build main CLI
 log_info "Building CLI binary (keyorix)..."
-if eval "go build $BUILD_FLAGS -o bin/keyorix ./cmd/keyorix"; then
+if go build "${BUILD_FLAGS[@]}" -o bin/keyorix ./cmd/keyorix; then
     log_success "CLI binary built successfully"
 else
     log_error "Failed to build CLI binary"
@@ -78,7 +81,7 @@ fi
 
 # Build server
 log_info "Building server binary (keyorix-server)..."
-if eval "go build $BUILD_FLAGS -o bin/keyorix-server ./server"; then
+if go build "${BUILD_FLAGS[@]}" -o bin/keyorix-server ./server; then
     log_success "Server binary built successfully"
 else
     log_error "Failed to build server binary"
@@ -88,7 +91,7 @@ fi
 # Build additional tools if they exist
 if [ -d "examples/secret_crud" ]; then
     log_info "Building secret_crud example..."
-    if eval "go build $BUILD_FLAGS -o bin/secret_crud ./examples/secret_crud"; then
+    if go build "${BUILD_FLAGS[@]}" -o bin/secret_crud ./examples/secret_crud; then
         log_success "secret_crud built successfully"
     else
         log_warning "Failed to build secret_crud"
@@ -97,7 +100,7 @@ fi
 
 if [ -d "examples/new-architecture" ]; then
     log_info "Building new-architecture example..."
-    if eval "go build $BUILD_FLAGS -o bin/new-architecture ./examples/new-architecture"; then
+    if go build "${BUILD_FLAGS[@]}" -o bin/new-architecture ./examples/new-architecture; then
         log_success "new-architecture built successfully"
     else
         log_warning "Failed to build new-architecture"
@@ -107,7 +110,7 @@ fi
 # Build validation tools if they exist
 if [ -f "cmd/validate-translations/main.go" ]; then
     log_info "Building translation validator..."
-    if eval "go build $BUILD_FLAGS -o bin/validate-translations ./cmd/validate-translations"; then
+    if go build "${BUILD_FLAGS[@]}" -o bin/validate-translations ./cmd/validate-translations; then
         log_success "validate-translations built successfully"
     else
         log_warning "Failed to build validate-translations"
