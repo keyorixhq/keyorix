@@ -12,10 +12,10 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/spf13/cobra"
 )
 
@@ -70,8 +70,15 @@ unrecoverable. Store shares separately and back them up.`,
 				fmt.Printf("  share %d: %s\n", i+1, enc)
 				continue
 			}
-			path := filepath.Join(ssOutDir, fmt.Sprintf("share-%d.hex", i+1))
-			if err := os.WriteFile(path, []byte(enc+"\n"), 0600); err != nil {
+			fileName := fmt.Sprintf("share-%d.hex", i+1)
+			path := filepath.Join(ssOutDir, fileName)
+			// SecureWriteFileSync (#269) refuses to write through a pre-planted symlink
+			// (O_NOFOLLOW) and enforces the mode even if a file already existed with a
+			// looser one — a plain os.WriteFile silently follows a symlink and never
+			// chmods an existing file, so a Shamir key-share could land world-readable
+			// or redirected to an attacker-controlled path with no error. Sync'd since
+			// this is unrecoverable key material (losing shares is permanent data loss).
+			if err := securefiles.SecureWriteFileSync(ssOutDir, fileName, []byte(enc+"\n"), 0o600); err != nil {
 				return fmt.Errorf("write %s: %w", path, err)
 			}
 			fmt.Printf("  share %d -> %s\n", i+1, path)

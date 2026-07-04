@@ -729,7 +729,9 @@ alerted, the grant expires, and an admin can revoke it early.
 ```yaml
 break_glass:
   enabled: true
-  emergency_role: "project_admin"   # role granted on activation
+  emergency_role: "project_developer" # role granted on activation — must be
+                                       # contained (no roles.assign); "project_admin"
+                                       # is REJECTED at activation time
   default_ttl: "4h"                 # grant lifetime when none is requested
   max_ttl: "24h"                    # ceiling on a requested TTL
 ```

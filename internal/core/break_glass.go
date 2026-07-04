@@ -16,12 +16,20 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
+
+// minBreakGlassJustificationLen is the minimum length, after trimming
+// surrounding whitespace, a break-glass justification must have. This becomes
+// a PERMANENT audit-trail record of why a real security incident required
+// emergency access, so a bare non-empty check (a single space would pass)
+// isn't enough — require something that at least resembles a genuine reason.
+const minBreakGlassJustificationLen = 10
 
 // Break-glass states and audit events.
 const (
@@ -58,8 +66,10 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	if projectID == 0 || userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and user are required")
 	}
-	if justification == "" {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a justification is required for emergency access")
+	justification = strings.TrimSpace(justification)
+	if len(justification) < minBreakGlassJustificationLen {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
+			fmt.Sprintf("a justification of at least %d characters is required for emergency access", minBreakGlassJustificationLen))
 	}
 	// Only a user already affiliated with the project may break-glass it. Eligibility
 	// must require a role scoped to THIS project (project_id = P), directly or via a

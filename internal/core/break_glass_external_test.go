@@ -73,7 +73,7 @@ func TestActivateBreakGlass_CapsTTL(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	makeProjectMember(t, h, 10, 2)
-	act, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "10h")
+	act, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "prod incident", "10h")
 	require.NoError(t, err)
 	require.NotNil(t, act.ExpiresAt)
 	assert.WithinDuration(t, time.Now().Add(1*time.Hour), *act.ExpiresAt, 2*time.Minute, "10h request capped at the 1h max")
@@ -91,7 +91,7 @@ func TestActivateBreakGlass_UnsetMaxTTLFloorsToDefault(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "alice", 10)
 	makeProjectMember(t, h, 10, 2)
-	act, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "720h") // 30-day override
+	act, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "prod incident", "720h") // 30-day override
 	require.NoError(t, err)
 	require.NotNil(t, act.ExpiresAt)
 	assert.WithinDuration(t, time.Now().Add(4*time.Hour), *act.ExpiresAt, 2*time.Minute,
@@ -108,13 +108,52 @@ func TestActivateBreakGlass_DisabledAndJustificationRequired(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 
 	// Disabled (default policy) → refused.
-	_, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "")
+	_, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "prod incident", "")
 	require.Error(t, err)
 
 	// Enabled but no justification → refused.
 	enableBreakGlass(h, "editor", time.Hour, time.Hour)
 	_, err = h.CoreService.ActivateBreakGlass(ctx, 2, 10, "", "")
 	require.Error(t, err)
+}
+
+// #413: the justification becomes a PERMANENT audit-trail record of why a real
+// security incident required emergency access. A bare non-empty check lets a
+// single whitespace character (or any string under a reasonable minimum length)
+// satisfy it, producing a useless audit record. Whitespace-only and too-short
+// justifications must be refused; a genuine one, including one with leading/
+// trailing whitespace that trims down to a valid length, must be accepted.
+func TestActivateBreakGlass_RejectsWhitespaceOnlyAndTooShortJustification(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateBreakGlass(t, h)
+	enableBreakGlass(h, "editor", time.Hour, time.Hour)
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	makeProjectMember(t, h, 10, proj)
+
+	// A single space (or any whitespace-only string) must not satisfy the check.
+	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, " ", "")
+	require.Error(t, err, "a whitespace-only justification must be refused")
+	assert.Contains(t, err.Error(), "justification")
+
+	// Too short even after trimming (below the minimum length) must be refused.
+	_, err = h.CoreService.ActivateBreakGlass(ctx, proj, 10, "  bad  ", "")
+	require.Error(t, err, "a too-short justification must be refused even with padding whitespace")
+	assert.Contains(t, err.Error(), "justification")
+
+	// No activation was recorded for either rejected attempt.
+	list, err := h.CoreService.ListBreakGlassActivations(ctx, proj)
+	require.NoError(t, err)
+	assert.Empty(t, list)
+
+	// A genuine justification — including one with surrounding whitespace that
+	// trims down to a valid length — is accepted, and the stored value is trimmed.
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "  prod database incident  ", "")
+	require.NoError(t, err, "a genuine justification must be accepted")
+	assert.Equal(t, "prod database incident", act.Justification, "the stored justification must be trimmed")
 }
 
 // Revoking an activation removes the grant early and marks it revoked.
@@ -129,7 +168,7 @@ func TestRevokeBreakGlass_RemovesGrant(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	makeProjectMember(t, h, 10, proj)
 
-	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.NoError(t, err)
 
 	require.NoError(t, h.CoreService.RevokeBreakGlass(ctx, 1, proj, act.ID))
@@ -164,7 +203,7 @@ func TestRevokeBreakGlassActivation_ConditionalUpdateOnlyFirstAttemptWins(t *tes
 	h.CreateTestUser(t, "alice", 10)
 	makeProjectMember(t, h, 10, proj)
 
-	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.NoError(t, err)
 
 	firstRevokeAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
@@ -201,7 +240,7 @@ func TestRevokeBreakGlass_ConcurrentRevokesOnlyOneWins(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	makeProjectMember(t, h, 10, proj)
 
-	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.NoError(t, err)
 
 	admins := []uint{100, 200}
@@ -305,7 +344,7 @@ func TestActivateBreakGlass_RejectsNonMember(t *testing.T) {
 	ctx := context.Background()
 	h.CreateTestUser(t, "outsider", 10) // created, but NOT a member of project 2
 
-	_, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "")
+	_, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "prod incident", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "members of the project")
 
@@ -332,7 +371,7 @@ func TestActivateBreakGlass_RejectsConcurrentReactivation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Second activation while the first is still active → refused.
-	_, err = h.CoreService.ActivateBreakGlass(ctx, proj, 10, "again", "")
+	_, err = h.CoreService.ActivateBreakGlass(ctx, proj, 10, "still ongoing", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "already have an active break-glass grant")
 
@@ -405,7 +444,7 @@ func TestActivateBreakGlass_RejectsGlobalOnlyAffiliation(t *testing.T) {
 	h.CreateTestUser(t, "ssouser", 10)
 	h.AssignUserRole(t, 10, 4, nil) // viewer at GLOBAL scope (project_id = 0), not project-scoped
 
-	_, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "incident", "")
+	_, err := h.CoreService.ActivateBreakGlass(ctx, 2, 10, "prod incident", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "members of the project")
 }
@@ -430,13 +469,13 @@ func TestActivateBreakGlass_RejectsRoleAssignEmergencyRole(t *testing.T) {
 	h.ExecuteRawSQL(t, "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)", 50, 13)
 
 	enableBreakGlass(h, "delegated_approver", 4*time.Hour, 24*time.Hour)
-	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "assign roles")
 
 	// editor is contained (no roles.assign) → allowed.
 	enableBreakGlass(h, "editor", 4*time.Hour, 24*time.Hour)
-	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	act, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.NoError(t, err)
 	assert.Equal(t, core.BreakGlassActive, act.State)
 }
@@ -455,7 +494,7 @@ func TestActivateBreakGlass_RejectsInstallAdminEmergencyRole(t *testing.T) {
 	h.CreateTestUser(t, "alice", 10)
 	makeProjectMember(t, h, 10, proj)
 
-	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "incident", "")
+	_, err := h.CoreService.ActivateBreakGlass(ctx, proj, 10, "prod incident", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "install-wide administration")
 }
