@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -266,6 +267,111 @@ func tableExists(db *gorm.DB, table string) bool {
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", table).Scan(&count)
 	return count > 0
+}
+
+// indexExists reports whether a database index with the given name already
+// exists. The ensure*Index helpers below gate their one-time, pre-existing-
+// duplicate-row scan (#490) on this: once the target unique index is in place,
+// duplicates can no longer accumulate under it, so re-scanning the whole table
+// for duplicates on every subsequent boot (once the index already exists) would
+// be pure wasted work. There is no single portable information_schema view for
+// indexes the way tableExists/columnExists have for tables/columns, so this
+// branches on the dialect explicitly: pg_indexes on Postgres, sqlite_master on
+// SQLite.
+func indexExists(db *gorm.DB, indexName string) bool {
+	var count int64
+	if db.Dialector.Name() == "postgres" {
+		db.Raw("SELECT COUNT(*) FROM pg_indexes WHERE indexname = ?", indexName).Scan(&count)
+	} else {
+		db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?", indexName).Scan(&count)
+	}
+	return count > 0
+}
+
+// dedupeBeforeUniqueIndex removes all but one row per group of pre-existing rows
+// in table that share keyExpr (a column list or SQL expression, e.g.
+// "project_id, environment_id, name" or "LOWER(email)"), optionally restricted
+// to rows matching whereClause (mirroring a partial index's own predicate, e.g.
+// "deleted_at IS NULL" — pass "" for a plain, non-partial index).
+//
+// This closes #490: the ensure*Index helpers below create a brand-new unique
+// (or partial-unique) index with a bare `CREATE UNIQUE INDEX IF NOT EXISTS`,
+// which has no "drop the extras" mode. Any install that already accumulated
+// duplicate rows before the index existed — via the exact same check-then-
+// create race the index is meant to close, a bulk import, or a restore — makes
+// that CREATE UNIQUE INDEX fail outright, and the error propagates out of
+// migrateDatabase and blocks the server from starting at all on upgrade. This
+// dedup pass runs first so the index can always be created successfully.
+//
+// The survivor of each duplicate group is the lowest-id row (== earliest
+// created, since ids are assigned by an ever-increasing primary key sequence on
+// both SQLite and Postgres) — a deterministic, storage-agnostic tie-break that
+// doesn't require guessing which duplicate an operator considers authoritative.
+// Every row removed is named in a single WARNING log line (table, key
+// expression, and the exact ids deleted) so an operator has an audit trail of
+// what an unattended migration deleted — this touches live data and must never
+// happen with zero signal.
+//
+// Callers gate this on !indexExists(db, indexName) so the scan runs at most
+// once per deployment's lifetime, never on repeat boots once the index exists.
+func dedupeBeforeUniqueIndex(db *gorm.DB, table, keyExpr, whereClause string) error {
+	groupFilter := ""
+	if whereClause != "" {
+		groupFilter = " WHERE " + whereClause
+	}
+	survivors := fmt.Sprintf("SELECT MIN(id) FROM %s%s GROUP BY %s", table, groupFilter, keyExpr)
+
+	dupFilter := fmt.Sprintf("id NOT IN (%s)", survivors)
+	if whereClause != "" {
+		dupFilter = whereClause + " AND " + dupFilter
+	}
+
+	var dupIDs []int64
+	if err := db.Raw(fmt.Sprintf("SELECT id FROM %s WHERE %s", table, dupFilter)).Scan(&dupIDs).Error; err != nil {
+		return fmt.Errorf("failed to scan %s for pre-existing duplicate rows: %w", table, err)
+	}
+	if len(dupIDs) == 0 {
+		return nil
+	}
+
+	if err := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE id IN ?", table), dupIDs).Error; err != nil {
+		return fmt.Errorf("failed to remove pre-existing duplicate rows from %s: %w", table, err)
+	}
+
+	log.Printf("WARNING: migration removed %d pre-existing duplicate row(s) from %s (ids=%v) that shared a value of (%s) which a new unique index now enforces; the surviving row in each duplicate group is the lowest-id (earliest-created) one (#490)",
+		len(dupIDs), table, dupIDs, keyExpr)
+	return nil
+}
+
+// warnIfDuplicatesExist checks whether pre-existing rows already violate the
+// unique constraint about to be created and, if so, returns a clear, actionable
+// error instead of letting the bare CREATE UNIQUE INDEX fail later with an
+// opaque driver-level "duplicate key"/"UNIQUE constraint failed" message
+// (#490). Unlike dedupeBeforeUniqueIndex, this never deletes or modifies any
+// row: it is used only for tables where a "duplicate" under the predicate is
+// not an incidental clash of the same event but a distinct, compliance-
+// relevant record in its own right (break_glass_activations,
+// legal_holds) — silently deleting one, or flipping its status, at boot is
+// itself a consequential action that deserves a deliberate operator decision
+// via the application's own APIs (which record a proper audit entry), not an
+// unattended migration script. This still fails the boot on a genuine
+// conflict (same outcome as before this fix), but with a message that tells
+// the operator exactly what to do, instead of an opaque constraint-violation
+// error surfacing from deep inside a later CREATE INDEX statement.
+func warnIfDuplicatesExist(db *gorm.DB, table, keyExpr, whereClause, remediation string) error {
+	var dupGroups int64
+	query := fmt.Sprintf(
+		"SELECT COUNT(*) FROM (SELECT %s FROM %s WHERE %s GROUP BY %s HAVING COUNT(*) > 1) dupes",
+		keyExpr, table, whereClause, keyExpr,
+	)
+	if err := db.Raw(query).Scan(&dupGroups).Error; err != nil {
+		return fmt.Errorf("failed to check %s for pre-existing duplicates: %w", table, err)
+	}
+	if dupGroups > 0 {
+		return fmt.Errorf("cannot create unique index on %s (%s): %d pre-existing group(s) of rows already share a value under %q — %s",
+			table, keyExpr, dupGroups, whereClause, remediation)
+	}
+	return nil
 }
 
 // migrateDatabase performs database migrations via GORM AutoMigrate.
@@ -936,7 +1042,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 // duplicates, leaving access live after what looked like a successful single-share
 // revoke. Idempotent; works on SQLite and Postgres.
 func ensureShareRecordUniqueIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_share_records_active ON share_records (secret_id, recipient_id, is_group) WHERE deleted_at IS NULL").Error; err != nil {
+	const idxName = "uniq_share_records_active"
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "share_records", "secret_id, recipient_id, is_group", "deleted_at IS NULL"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON share_records (secret_id, recipient_id, is_group) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial share_records unique index: %w", err)
 	}
 	return nil
@@ -949,7 +1061,13 @@ func ensureShareRecordUniqueIndex(db *gorm.DB) error {
 // multiple rows sharing one version_number under the same secret_id. Idempotent;
 // works on SQLite and Postgres.
 func ensureSecretVersionIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_secret_versions_node_version ON secret_versions (secret_node_id, version_number)").Error; err != nil {
+	const idxName = "uniq_secret_versions_node_version"
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "secret_versions", "secret_node_id, version_number", ""); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON secret_versions (secret_node_id, version_number)").Error; err != nil {
 		return fmt.Errorf("failed to create secret_versions unique index: %w", err)
 	}
 	return nil
@@ -962,7 +1080,18 @@ func ensureSecretVersionIndex(db *gorm.DB) error {
 // above — this is a plain (non-partial) unique index. Idempotent; works on SQLite
 // and Postgres.
 func ensureDynamicSecretConfigNameIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_dynamic_secret_configs_project_env_name ON dynamic_secret_configs (project_id, environment_id, name)").Error; err != nil {
+	const idxName = "uniq_dynamic_secret_configs_project_env_name"
+	// #490: a pre-existing install that accumulated duplicate (project, env,
+	// name) rows before this index shipped — via the same check-then-create
+	// race the index closes, a bulk import, or a restore — would otherwise
+	// hit a bare CREATE UNIQUE INDEX failure here, propagating out of
+	// migrateDatabase and blocking the server from starting at all on upgrade.
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "dynamic_secret_configs", "project_id, environment_id, name", ""); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON dynamic_secret_configs (project_id, environment_id, name)").Error; err != nil {
 		return fmt.Errorf("failed to create dynamic_secret_configs unique index: %w", err)
 	}
 	return nil
@@ -977,7 +1106,13 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 	if err := db.Exec("DROP INDEX IF EXISTS uni_groups_name").Error; err != nil {
 		return fmt.Errorf("failed to drop legacy groups name index: %w", err)
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_groups_name_active ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
+	const idxName = "uniq_groups_name_active"
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "groups", "name", "deleted_at IS NULL"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON groups (name) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial groups name index: %w", err)
 	}
 	return nil
@@ -993,8 +1128,14 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 // "already has a membership" error a sequential caller would get. Idempotent; mirrors
 // ensureGroupNameIndex/ensureUserNameIndex (partial unique index, live rows only).
 func ensureProjectMembershipIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active " +
-		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error; err != nil {
+	const idxName = "uniq_project_memberships_active"
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "project_memberships", "project_id, user_id", "state <> 'revoked'"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName +
+		" ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error; err != nil {
 		return fmt.Errorf("failed to create partial project_memberships index: %w", err)
 	}
 	return nil
@@ -1009,7 +1150,22 @@ func ensureProjectMembershipIndex(db *gorm.DB) error {
 // unique index) so a user can activate break-glass again after a prior activation
 // expires or is revoked. Idempotent; works on both SQLite and Postgres.
 func ensureBreakGlassActiveIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error; err != nil {
+	const idxName = "uniq_break_glass_active_project_user"
+	// #490: unlike the identity/dedup tables above, an "extra" active
+	// break-glass row here is not an incidental duplicate of the same event —
+	// it is a distinct, audit-relevant activation record. Silently deleting or
+	// re-statusing one at boot would itself be a consequential, compliance-
+	// sensitive action, so this deliberately does NOT auto-remediate; it just
+	// fails with an actionable message (instead of an opaque DB constraint
+	// error) telling the operator to resolve the conflict via the
+	// application's own revoke API first, which records a proper audit entry.
+	if !indexExists(db, idxName) {
+		if err := warnIfDuplicatesExist(db, "break_glass_activations", "project_id, user_id", "state = 'active'",
+			"revoke the extra active break-glass activation(s) for the affected project+user via the application's break-glass revoke API before upgrading"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error; err != nil {
 		return fmt.Errorf("failed to create partial break_glass_activations active index: %w", err)
 	}
 	return nil
@@ -1028,7 +1184,13 @@ func ensureUserNameIndex(db *gorm.DB) error {
 			return fmt.Errorf("failed to drop legacy users username index %q: %w", idx, err)
 		}
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_username_active ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
+	const idxName = "uniq_users_username_active"
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "users", "username", "deleted_at IS NULL"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON users (username) WHERE deleted_at IS NULL").Error; err != nil {
 		return fmt.Errorf("failed to create partial users username index: %w", err)
 	}
 	return nil
@@ -1051,7 +1213,13 @@ func ensureUserNameIndex(db *gorm.DB) error {
 // both SQLite and Postgres (both support expression indexes, partial indexes, and
 // IF [NOT] EXISTS).
 func ensureUserEmailIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
+	const idxName = "uniq_users_email_active"
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "users", "LOWER(email)", "deleted_at IS NULL AND email <> ''"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial users email index: %w", err)
 	}
 	return nil
@@ -1067,7 +1235,13 @@ func ensureUserEmailIndex(db *gorm.DB) error {
 // created account) is excluded so native users never collide with each other.
 // Idempotent; works on SQLite and Postgres.
 func ensureUserExternalIDIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_external_id_active ON users (external_id) WHERE deleted_at IS NULL AND external_id != ''").Error; err != nil {
+	const idxName = "uniq_users_external_id_active"
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "users", "external_id", "deleted_at IS NULL AND external_id != ''"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON users (external_id) WHERE deleted_at IS NULL AND external_id != ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial users external_id index: %w", err)
 	}
 	return nil
@@ -1095,7 +1269,13 @@ func ensureUserExternalIDIndex(db *gorm.DB) error {
 // NFKC normalization plus homoglyph/confusable detection is a materially harder problem
 // (Unicode Technical Standard #39) and is intentionally out of scope here.
 func ensureProjectNameIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_projects_name_active ON projects (LOWER(name)) WHERE deleted_at IS NULL AND name <> ''").Error; err != nil {
+	const idxName = "uniq_projects_name_active"
+	if !indexExists(db, idxName) {
+		if err := dedupeBeforeUniqueIndex(db, "projects", "LOWER(name)", "deleted_at IS NULL AND name <> ''"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON projects (LOWER(name)) WHERE deleted_at IS NULL AND name <> ''").Error; err != nil {
 		return fmt.Errorf("failed to create partial projects name index: %w", err)
 	}
 	return nil
@@ -1109,7 +1289,21 @@ func ensureProjectNameIndex(db *gorm.DB) error {
 // creating an orphaned duplicate hold. Idempotent; works on both SQLite and Postgres
 // (both support partial indexes and IF NOT EXISTS).
 func ensureLegalHoldActiveIndex(db *gorm.DB) error {
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active ON legal_holds (released) WHERE released = false").Error; err != nil {
+	const idxName = "uniq_legal_holds_active"
+	// #490: same reasoning as ensureBreakGlassActiveIndex — an un-released legal
+	// hold is a compliance-relevant record, not an incidental duplicate. Auto-
+	// deleting or auto-releasing one at boot would itself be a consequential,
+	// audit-relevant action, so this deliberately does not auto-remediate; it
+	// fails with an actionable message pointing at the application's own
+	// release-hold API (which records a proper audit entry) instead of an
+	// opaque DB constraint-violation error.
+	if !indexExists(db, idxName) {
+		if err := warnIfDuplicatesExist(db, "legal_holds", "released", "released = false",
+			"release the extra active legal hold(s) via the application's legal-hold release API before upgrading"); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + idxName + " ON legal_holds (released) WHERE released = false").Error; err != nil {
 		return fmt.Errorf("failed to create partial legal_holds active index: %w", err)
 	}
 	return nil
