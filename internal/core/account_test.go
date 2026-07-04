@@ -17,16 +17,17 @@ const acctTestUser = "alice"
 func TestUpdateOwnProfile(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("updates display name and email", func(t *testing.T) {
+	t.Run("updates display name and email with the correct current password", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", DisplayName: "Alice"}
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", DisplayName: "Alice", PasswordHash: string(hash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
 		ms.On("GetUserByEmail", ctx, "alice@new.com").Return(nil, nil)
 		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(existing, nil)
 
-		_, err := c.UpdateOwnProfile(ctx, 1, "Alice New", "alice@new.com")
+		_, err := c.UpdateOwnProfile(ctx, 1, "Alice New", "alice@new.com", "Current#Passw0rd!")
 		require.NoError(t, err)
 		assert.Equal(t, "alice@new.com", existing.Email)
 		assert.Equal(t, "Alice New", existing.DisplayName)
@@ -34,16 +35,75 @@ func TestUpdateOwnProfile(t *testing.T) {
 		assert.Equal(t, "alice", existing.Username)
 	})
 
+	t.Run("rejects an email change without the current password", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
+
+		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
+
+		_, err := c.UpdateOwnProfile(ctx, 1, "", "alice@new.com", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "incorrect")
+		assert.Equal(t, "alice@old.com", existing.Email, "email must not change on a rejected request")
+		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	})
+
+	t.Run("rejects an email change with an incorrect current password", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
+
+		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
+
+		_, err := c.UpdateOwnProfile(ctx, 1, "", "alice@new.com", "wrong-password")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "incorrect")
+		assert.Equal(t, "alice@old.com", existing.Email)
+		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+	})
+
+	t.Run("display-name-only change needs no password", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", DisplayName: "Alice", PasswordHash: string(hash)}
+
+		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
+		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(existing, nil)
+
+		_, err := c.UpdateOwnProfile(ctx, 1, "Alice New", "", "")
+		require.NoError(t, err)
+		assert.Equal(t, "Alice New", existing.DisplayName)
+		assert.Equal(t, "alice@old.com", existing.Email)
+	})
+
+	t.Run("re-submitting the same email needs no password", func(t *testing.T) {
+		ms := new(MockStorage)
+		c := NewKeyorixCore(ms)
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
+
+		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
+		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(existing, nil)
+
+		_, err := c.UpdateOwnProfile(ctx, 1, "", "alice@old.com", "")
+		require.NoError(t, err)
+	})
+
 	t.Run("rejects an email already used by another user", func(t *testing.T) {
 		ms := new(MockStorage)
 		c := NewKeyorixCore(ms)
-		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com"}
+		hash, _ := bcrypt.GenerateFromPassword([]byte("Current#Passw0rd!"), bcrypt.DefaultCost)
+		existing := &models.User{ID: 1, Username: acctTestUser, Email: "alice@old.com", PasswordHash: string(hash)}
 		other := &models.User{ID: 2, Email: "taken@x.com"}
 
 		ms.On("GetUser", ctx, uint(1)).Return(existing, nil)
 		ms.On("GetUserByEmail", ctx, "taken@x.com").Return(other, nil)
 
-		_, err := c.UpdateOwnProfile(ctx, 1, "", "taken@x.com")
+		_, err := c.UpdateOwnProfile(ctx, 1, "", "taken@x.com", "Current#Passw0rd!")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
 	})

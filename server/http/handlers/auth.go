@@ -384,12 +384,18 @@ func userProfileMap(user *models.User, id core.UserIdentity) map[string]interfac
 
 // updateProfileRequestBody is the self-service profile update — only the fields a
 // user may change about themselves. Username/role/active are intentionally absent.
+// CurrentPassword is required only when Email changes (mirrors changePasswordRequestBody's
+// re-authentication check); a display-name-only update needs no password.
 type updateProfileRequestBody struct {
-	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
+	DisplayName     string `json:"display_name"`
+	Email           string `json:"email"`
+	CurrentPassword string `json:"current_password,omitempty"`
 }
 
 // UpdateProfile handles PUT /auth/profile — self-scoped display name + email update.
+// Changing the email additionally requires the caller's current password: the email is
+// the anchor for password-reset delivery and SSO account linking, so a hijacked session
+// must not be able to silently repoint it to an attacker-controlled address.
 func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())
 	if userCtx == nil {
@@ -402,8 +408,12 @@ func (h *AuthHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.coreService.UpdateOwnProfile(r.Context(), userCtx.UserID, body.DisplayName, body.Email)
+	user, err := h.coreService.UpdateOwnProfile(r.Context(), userCtx.UserID, body.DisplayName, body.Email, body.CurrentPassword)
 	if err != nil {
+		if strings.Contains(err.Error(), "incorrect") {
+			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
+			return
+		}
 		if strings.Contains(err.Error(), "already exists") {
 			sendError(w, "Conflict", "That email is already in use", http.StatusConflict, nil)
 			return
