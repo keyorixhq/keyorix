@@ -79,6 +79,19 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.0
 
+      # `helm registry login` below only populates Helm's own credential store
+      # (~/.config/helm/registry/config.json) — cosign resolves registry auth via
+      # the standard Docker config (~/.docker/config.json), which stays empty
+      # without this, so `cosign sign` fails with UNAUTHORIZED even though the
+      # preceding `helm push` calls succeed. docker-publish.yml already does this
+      # correctly for the image cosign-signing steps; mirrors that here.
+      - name: Log in to GHCR (for cosign)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Package + push charts to GHCR (OCI)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
