@@ -28,7 +28,7 @@ spec:
       serviceAccountName: {{ include "kxsync.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001
+        runAsUser: 65532  # matches the distroless:nonroot image user
         seccompProfile:
           type: RuntimeDefault
       containers:

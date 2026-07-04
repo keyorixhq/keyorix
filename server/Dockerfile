@@ -14,8 +14,20 @@ RUN go build -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=${VE
     -o bin/keyorix-server ./server
 
 # Runtime stage
+#
+# NOTE on distroless (backlog #242): entrypoint.sh needs a real shell plus `wget`,
+# `mktemp`, `trap`, and `seq` for its first-boot admin-bootstrap logic (waiting for
+# /health, then POSTing the initial admin via wget --post-file). distroless/static
+# and distroless/base have no shell or busybox utilities at all, so a direct swap
+# would break that bootstrap flow. Moving the bootstrap into the Go binary itself
+# (invoked via a flag) would remove the need for the shell script entirely and let
+# this image go fully distroless, but that's a larger refactor than this hardening
+# round should attempt — tracked as a follow-up. In the meantime we keep Alpine but
+# strip the `apk` package manager (binary + package db) once the packages we need
+# are installed, so RCE inside this container can no longer `apk add` extra tooling.
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata && \
+    rm -rf /sbin/apk /etc/apk /lib/apk /usr/share/apk /var/cache/apk
 RUN addgroup -g 1001 keyorix && \
     adduser -D -s /bin/sh -u 1001 -G keyorix keyorix
 WORKDIR /app
