@@ -82,7 +82,8 @@ func TestCompleteSetup(t *testing.T) {
 		ms.On("GetUser", ctx, uid).Return(user, nil)
 		ms.On("RecentPasswordHashes", ctx, uid, 5).Return([]string{}, nil)
 		ms.On("MarkSetupTokenConsumed", ctx, uint(2), mock.AnythingOfType("time.Time")).Return(true, nil)
-		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
+		ms.On("SetPasswordHash", ctx, uid, mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("SetAccountState", ctx, uid, AccountActive, mock.Anything).Return(nil)
 		ms.On("AddPasswordHistory", ctx, uid, mock.AnythingOfType("string"), mock.Anything).Return(nil)
 		ms.On("PrunePasswordHistory", ctx, uid, 5).Return(nil)
 		ms.On("CreateSession", ctx, mock.AnythingOfType("*models.Session")).
@@ -112,7 +113,8 @@ func TestCompleteSetup(t *testing.T) {
 		ms.On("GetUser", ctx, uid).Return(user, nil)
 		ms.On("RecentPasswordHashes", ctx, uid, 5).Return([]string{}, nil)
 		ms.On("MarkSetupTokenConsumed", ctx, uint(2), mock.AnythingOfType("time.Time")).Return(true, nil)
-		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
+		ms.On("SetPasswordHash", ctx, uid, mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("SetAccountState", ctx, uid, AccountActive, mock.Anything).Return(nil)
 		ms.On("AddPasswordHistory", ctx, uid, mock.AnythingOfType("string"), mock.Anything).Return(nil)
 		ms.On("PrunePasswordHistory", ctx, uid, 5).Return(nil)
 		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
@@ -143,7 +145,8 @@ func TestCompleteSetup(t *testing.T) {
 		ms.On("GetUser", ctx, uid).Return(user, nil)
 		ms.On("RecentPasswordHashes", ctx, uid, 5).Return([]string{}, nil)
 		ms.On("MarkSetupTokenConsumed", ctx, uint(2), mock.AnythingOfType("time.Time")).Return(true, nil)
-		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
+		ms.On("SetPasswordHash", ctx, uid, mock.AnythingOfType("string"), mock.Anything).Return(nil)
+		ms.On("SetAccountState", ctx, uid, AccountActive, mock.Anything).Return(nil)
 		ms.On("AddPasswordHistory", ctx, uid, mock.AnythingOfType("string"), mock.Anything).Return(nil)
 		ms.On("PrunePasswordHistory", ctx, uid, 5).Return(nil)
 		ms.On("RevokeAllPersonalAccessTokensForUser", mock.Anything, mock.Anything).Return(nil, nil)
@@ -186,7 +189,7 @@ func TestCompleteSetup(t *testing.T) {
 		// The link must remain usable: the token was never consumed, no session minted.
 		ms.AssertNotCalled(t, "MarkSetupTokenConsumed", mock.Anything, mock.Anything, mock.Anything)
 		ms.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "SetPasswordHash", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("rejects an invitation_accept token (handled by the invitation producer)", func(t *testing.T) {

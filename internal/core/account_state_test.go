@@ -224,9 +224,8 @@ func TestChangePassword_ClearsRestriction(t *testing.T) {
 
 	store.On("GetUser", ctx, uint(1)).Return(user, nil)
 	store.On("RecentPasswordHashes", ctx, uint(1), 5).Return([]string{}, nil)
-	store.On("UpdateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
-		return u.AccountState == AccountActive // restriction cleared
-	})).Return(user, nil)
+	store.On("SetPasswordHash", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
+	store.On("SetAccountState", ctx, uint(1), AccountActive, mock.Anything).Return(nil) // restriction cleared
 	store.On("AddPasswordHistory", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 	store.On("PrunePasswordHistory", ctx, uint(1), 5).Return(nil)
 	store.On("GetSession", ctx, "tok").Return(&models.Session{ID: 7, UserID: 1}, nil)

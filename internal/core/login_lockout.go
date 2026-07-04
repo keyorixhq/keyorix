@@ -281,6 +281,18 @@ func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User)
 
 // UnlockUser clears a user's login-lockout state (admin action; audited). It does
 // not change the account_state — a suspended account stays suspended.
+//
+// #484: persists via the same narrow UpdateLoginLockoutState primitive #454 already
+// established for the automatic clear paths (clearLoginFailures /
+// checkLockAndClearLoginFailures) — not the generic UpdateUser, which silently no-ops
+// every one of these columns under storage.type: remote (they have no field in the
+// wire format at all). UnlockUser clears the exact same four columns those callers
+// do, just admin-triggered instead of triggered by a successful login, so it gets the
+// identical treatment: lockout accounting is a passive backstop, not an explicit
+// security directive (unlike account_state), so a backend that can never persist the
+// clear fails OPEN (logged once via warnLockoutUnsupportedOnce) rather than erroring
+// the admin — the worst case is the lock merely expires on its own cooldown instead of
+// being cleared early.
 func (c *KeyorixCore) UnlockUser(ctx context.Context, adminID, userID uint) error {
 	if userID == 0 {
 		return fmt.Errorf("user ID is required")
@@ -289,13 +301,16 @@ func (c *KeyorixCore) UnlockUser(ctx context.Context, adminID, userID uint) erro
 	if err != nil {
 		return fmt.Errorf("user not found: %w", err)
 	}
-	user.FailedLoginAttempts = 0
-	user.LastFailedLoginAt = nil
-	user.LoginLockedUntil = nil
-	user.LoginLockoutCount = 0
-	user.UpdatedAt = c.now()
-	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
-		return fmt.Errorf("failed to unlock user: %w", err)
+	if err := c.storage.UpdateLoginLockoutState(ctx, userID, 0, nil, nil, 0); err != nil {
+		if !isUnsupportedByBackend(err) {
+			return fmt.Errorf("failed to unlock user: %w", err)
+		}
+		c.warnLockoutUnsupportedOnce()
+	} else {
+		user.FailedLoginAttempts = 0
+		user.LastFailedLoginAt = nil
+		user.LoginLockedUntil = nil
+		user.LoginLockoutCount = 0
 	}
 	aid := adminID
 	c.writeAuditEventFull(ctx, EventAccountUnlocked, &aid, nil, nil, "",

@@ -119,7 +119,7 @@ func TestChangePassword(t *testing.T) {
 		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(oldHash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
-		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
+		ms.On("SetPasswordHash", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
 		ms.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
 		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
@@ -146,7 +146,7 @@ func TestChangePassword(t *testing.T) {
 		user := &models.User{ID: 1, Username: acctTestUser, PasswordHash: string(oldHash)}
 
 		ms.On("GetUser", ctx, uint(1)).Return(user, nil)
-		ms.On("UpdateUser", ctx, mock.AnythingOfType("*models.User")).Return(user, nil)
+		ms.On("SetPasswordHash", ctx, uint(1), mock.AnythingOfType("string"), mock.Anything).Return(nil)
 		ms.On("GetSession", ctx, "current-token").Return(&models.Session{ID: 7, UserID: 1}, nil)
 		ms.On("ListSessionTokenHashesForUser", ctx, uint(1)).Return([]string{}, nil)
 		ms.On("DeleteSessionsForUserExcept", ctx, uint(1), uint(7)).Return(nil)
@@ -174,7 +174,7 @@ func TestChangePassword(t *testing.T) {
 		err := c.ChangePassword(ctx, 1, "oldpassword", reused, "current-token")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "reuse a recent password")
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "SetPasswordHash", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("rejects reuse of the current password", func(t *testing.T) {
@@ -189,7 +189,7 @@ func TestChangePassword(t *testing.T) {
 		err := c.ChangePassword(ctx, 1, cur, cur, "current-token")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "reuse a recent password")
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "SetPasswordHash", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("rejects an incorrect current password without writing", func(t *testing.T) {
@@ -201,7 +201,7 @@ func TestChangePassword(t *testing.T) {
 		err := c.ChangePassword(ctx, 1, "wrongpassword", "Brandnew#Passw0rd!", "current-token")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "incorrect")
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "SetPasswordHash", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("rejects a new password that violates the policy", func(t *testing.T) {
@@ -216,7 +216,7 @@ func TestChangePassword(t *testing.T) {
 		err := c.ChangePassword(ctx, 1, "oldpassword", "short", "current-token")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "password must")
-		ms.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		ms.AssertNotCalled(t, "SetPasswordHash", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 }
 

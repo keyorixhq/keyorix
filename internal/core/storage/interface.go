@@ -412,6 +412,20 @@ type Storage interface {
 	// unchanged. LocalStorage performs the real column update; RemoteStorage always
 	// returns storage.ErrUnsupportedByBackend (wrapped) so the caller fails closed.
 	SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error
+	// SetPasswordHash persists ONLY the password_hash and password_changed_at columns
+	// (plus updated_at) — narrower than the generic UpdateUser, and deliberately so
+	// (#484, the same rationale as SetAccountState above): models.User.PasswordHash is
+	// tagged json:"-", so it never even reaches the JSON body a RemoteStorage UpdateUser
+	// call sends — there is no way to persist a password change through the remote wire
+	// protocol at all. A password change (applyNewPassword, shared by self-service
+	// ChangePassword and the setup-token consume flow) is exactly the kind of explicit
+	// security directive #454 already treats as needing fail-closed semantics for
+	// account_state: a user must never be told their password changed when it silently
+	// didn't. LocalStorage performs the real column update; RemoteStorage always returns
+	// storage.ErrUnsupportedByBackend (wrapped) so the caller fails closed. Any
+	// accompanying account_state clear (a restricted state resetting to active) is
+	// persisted separately via SetAccountState, not folded into this primitive.
+	SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error
 	// UpdateLoginLockoutState persists ONLY the four login-lockout accounting columns
 	// (failed_login_attempts, last_failed_login_at, login_locked_until,
 	// login_lockout_count) — the same #454 rationale as SetAccountState above, since none
