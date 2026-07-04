@@ -165,7 +165,7 @@ func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) (*SoDViolationsRe
 		}
 	}
 
-	report.Violations = append(report.Violations, c.machineSoDViolations(ctx, policies)...)
+	c.machineSoDViolations(ctx, report, policies)
 	return report, nil
 }
 
@@ -226,24 +226,35 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 	return out, nil
 }
 
-// machineSoDViolations scans active machine identities. Machines resolve permissions
-// from machine_identity_roles and receive NO admin-role bypass (a leaked machine token
-// is bounded to its explicit grants), so the held-set is just the union of its roles'
-// permissions. Best-effort: if machine identities can't be listed (e.g. the table
-// isn't provisioned in this deployment), machine scanning is skipped rather than
-// failing the whole detection.
-func (c *KeyorixCore) machineSoDViolations(ctx context.Context, policies []*models.SoDPolicy) []SoDViolation {
+// machineSoDViolations scans active machine identities, appending any violations
+// found directly onto report.Violations. Machines resolve permissions from
+// machine_identity_roles and receive NO admin-role bypass (a leaked machine token
+// is bounded to its explicit grants), so the held-set is just the union of its
+// roles' permissions.
+//
+// #492: sibling of userSoDViolations/#420 — every sub-check error here was
+// previously silently discarded (ListAllMachineIdentities returning nil,
+// GetMachineRoles/RoleSetHasPermission folded into a bare `continue`), so a
+// machine identity that actually held a toxic combination could be dropped from
+// the scan while the report still looked clean. Each failure now flips
+// report.Degraded via report.degrade, named for the machine (and policy, for the
+// permission checks) that couldn't be evaluated, instead of looking clean.
+func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViolationsReport, policies []*models.SoDPolicy) {
 	machines, err := c.storage.ListAllMachineIdentities(ctx)
 	if err != nil {
-		return nil
+		report.degrade("machine_identities", err)
+		return
 	}
-	var out []SoDViolation
 	for _, m := range machines {
 		if m.State != "active" {
 			continue
 		}
 		roles, err := c.storage.GetMachineRoles(ctx, m.ID)
-		if err != nil || len(roles) == 0 {
+		if err != nil {
+			report.degrade(fmt.Sprintf("machine_roles:machine=%d", m.ID), err)
+			continue
+		}
+		if len(roles) == 0 {
 			continue
 		}
 		roleIDs := make([]uint, 0, len(roles))
@@ -252,14 +263,22 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, policies []*mode
 		}
 		for _, pol := range policies {
 			hasA, err := c.storage.RoleSetHasPermission(ctx, roleIDs, pol.PermissionA)
-			if err != nil || !hasA {
+			if err != nil {
+				report.degrade(fmt.Sprintf("machine_permission:machine=%d:policy=%d", m.ID, pol.ID), err)
+				continue
+			}
+			if !hasA {
 				continue
 			}
 			hasB, err := c.storage.RoleSetHasPermission(ctx, roleIDs, pol.PermissionB)
-			if err != nil || !hasB {
+			if err != nil {
+				report.degrade(fmt.Sprintf("machine_permission:machine=%d:policy=%d", m.ID, pol.ID), err)
 				continue
 			}
-			out = append(out, SoDViolation{
+			if !hasB {
+				continue
+			}
+			report.Violations = append(report.Violations, SoDViolation{
 				PolicyID: pol.ID, PolicyName: pol.Name,
 				PrincipalType: "machine", UserID: m.ID, Username: m.Name,
 				PermissionA: pol.PermissionA, PermissionB: pol.PermissionB,
@@ -267,7 +286,6 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, policies []*mode
 			})
 		}
 	}
-	return out
 }
 
 // adminRoleName returns the name of an admin (permission-bypass) role the user holds
