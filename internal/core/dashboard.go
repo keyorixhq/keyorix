@@ -91,6 +91,8 @@ type ActivityFeed struct {
 
 // GetDashboardStats returns summary counts and recent activity for the authenticated user.
 func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, username string) (*DashboardStats, error) {
+	stats := &DashboardStats{}
+
 	_, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
 		CreatedBy: &username,
 		Page:      1,
@@ -98,18 +100,23 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	})
 	if err != nil {
 		total = 0
+		stats.degrade("total_secrets", err)
 	}
 
 	outgoing, err := c.storage.ListSharesByOwner(ctx, userID)
 	sharedSecrets := 0
 	if err == nil {
 		sharedSecrets = len(outgoing)
+	} else {
+		stats.degrade("shared_secrets", err)
 	}
 
 	incoming, err := c.storage.ListSharesByUser(ctx, userID)
 	sharedWithMe := 0
 	if err == nil {
 		sharedWithMe = len(incoming)
+	} else {
+		stats.degrade("shared_with_me", err)
 	}
 
 	// GetDashboardStats is reachable by any caller holding at least the universal
@@ -128,17 +135,18 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	if !hasAuditRead {
 		auditActor = &userID
 	}
-	events, _, _ := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+	events, _, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
 		UserID:   auditActor,
 		Page:     1,
 		PageSize: 5,
 	})
+	if err != nil {
+		stats.degrade("recent_activity", err)
+	}
 	recent := make([]ActivityItem, 0, len(events))
 	for _, e := range events {
 		recent = append(recent, mapAuditEventToActivity(e, username))
 	}
-
-	stats := &DashboardStats{}
 
 	expiringSecrets, err := c.getExpiringSecrets(ctx, username)
 	if err != nil {
