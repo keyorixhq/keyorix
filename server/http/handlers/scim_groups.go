@@ -255,10 +255,23 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 	for _, op := range patch.Operations {
 		path := strings.TrimSpace(op.Path)
 		lower := strings.ToLower(path)
-		// Filtered remove path: members[value eq "X"].
+		// Filtered single-member path: members[value eq "X"]. The member id comes
+		// from the filter expression itself, not from op.Value — but which side
+		// (add vs. remove) it lands on MUST still be driven by op.Op (RFC 7644
+		// §3.5.2): "remove" deletes that member, while "add"/"replace" ensure that
+		// member is present, mirroring the non-filtered `members` handling below.
+		// Ignoring op.Op here previously treated every filtered-path operation as a
+		// removal regardless of what the client actually requested (#226).
 		if m := scimMemberFilterPath.FindStringSubmatch(path); m != nil {
-			if v, err := strconv.ParseUint(m[1], 10, 32); err == nil {
+			v, err := strconv.ParseUint(m[1], 10, 32)
+			if err != nil {
+				continue
+			}
+			switch {
+			case strings.EqualFold(op.Op, "remove"):
 				removeIDs = append(removeIDs, uint(v))
+			case strings.EqualFold(op.Op, "add"), strings.EqualFold(op.Op, "replace"):
+				addIDs = append(addIDs, uint(v))
 			}
 			continue
 		}
