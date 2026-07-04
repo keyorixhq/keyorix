@@ -4,7 +4,6 @@ import { adminApi } from '../../services/admin';
 import { usersApi, type ProjectAssignment } from '../../services/users';
 import { queryKeys } from '../../lib/queryClient';
 import { useAuthStore } from '../../store/authStore';
-import type { User } from '../../types';
 
 // ── Admin stats / roles / audit (admin-specific endpoints) ─────────────────
 
@@ -359,32 +358,15 @@ export const useUpdateUserRoles = () => {
 
 // ── Impersonation ─────────────────────────────────────────────────────────────
 
-// useImpersonateUser starts impersonating a user: it requests an impersonation
-// token, swaps the active session to it (stashing the admin's), and refreshes
-// the impersonated user's full profile. The caller navigates on success.
+// useImpersonateUser starts impersonating a user: the backend sets the
+// impersonation session cookie directly on the response (no token for the
+// client to hold), so all this does is call the endpoint and re-sync via
+// checkAuth() to load the impersonated user's full profile. The caller
+// navigates on success.
 export const useImpersonateUser = () =>
     useMutation({
         mutationFn: async (target: { id: number; username: string; display_name?: string }) => {
-            const resp = await adminApi.impersonate(target.id);
-            const store = useAuthStore.getState();
-            const impersonatedUser: User = {
-                id: resp.user_id,
-                username: resp.username,
-                displayName: resp.display_name || resp.username,
-                email: '',
-                role: 'user',
-                roles: [],
-                permissions: [],
-                preferences: {
-                    language: 'en',
-                    timezone: 'UTC',
-                    theme: 'system',
-                    notifications: { email: true, browser: true, sharing: true, security: true },
-                },
-                lastLogin: new Date().toISOString(),
-            };
-            store.startImpersonation(resp.token, impersonatedUser);
-            // Refresh roles/permissions/email for the impersonated identity.
-            await store.checkAuth();
+            await adminApi.impersonate(target.id);
+            await useAuthStore.getState().checkAuth();
         },
     });

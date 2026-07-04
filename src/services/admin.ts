@@ -104,8 +104,10 @@ export const adminApi = {
         return response.data.data;
     },
 
-    // Start impersonating a user. Returns a session token for the target user;
-    // the caller swaps the active session to it (authStore.startImpersonation).
+    // Start impersonating a user. The backend sets the impersonation session
+    // cookie directly on this response — there is no token for the client to
+    // hold; the caller re-syncs via authStore.checkAuth() to load the
+    // impersonated user's full profile.
     async impersonate(userId: number): Promise<ImpersonationResponse> {
         const response = await apiClient.post<ApiResponse<ImpersonationResponse>>(
             '/api/v1/admin/impersonate',
@@ -116,7 +118,6 @@ export const adminApi = {
 };
 
 export interface ImpersonationResponse {
-    token: string;
     expires_at?: string;
     user_id: number;
     username: string;

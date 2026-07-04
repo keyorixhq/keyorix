@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AuthState, User, LoginFormData, LoginResponse } from '../types';
+import { AuthState, User, LoginFormData, LoginResponse, ImpersonatedBy } from '../types';
 import { authService } from '../services/auth';
 import {
     persistAuthData,
@@ -13,21 +13,23 @@ import {
 } from '../utils/auth';
 
 interface AuthStore extends AuthState {
-    // Impersonation (ADR audit-design): while impersonating, `token`/`user` are
-    // the target's and the admin's own session is stashed here so the client can
-    // swap back without re-authenticating.
-    adminToken: string | null;
-    adminUser: User | null;
-    isImpersonating: boolean;
+    // Impersonation state is now derived entirely from the server (GET
+    // /auth/profile's `impersonation` field, populated from the session — see
+    // checkAuth) rather than tracked client-side. Under cookie auth there is no
+    // client-readable token to stash/swap, so "return to admin" is resolved
+    // server-side by the backend's OriginalSessionID linkage; the client's job
+    // is just to call the endpoints and re-sync via checkAuth().
+    impersonatedBy: ImpersonatedBy | null;
 
     // Actions
     login: (credentials: LoginFormData) => Promise<void>;
     // ADR-028: land the user logged in from a setup-link consume response (which is
     // login-shaped) without re-authenticating with a password.
     completeSetup: (response: LoginResponse) => void;
-    // Land the user logged in from an SSO callback, which delivers only a session
-    // token (the user profile is then loaded via checkAuth).
-    completeSSOLogin: (token: string, expiresAt?: string, absoluteExpiresAt?: string) => Promise<void>;
+    // Land the user logged in from an SSO callback: the backend has already set
+    // the session cookie on its redirect response, so this just loads the
+    // profile and persists the expiry bookkeeping.
+    completeSSOLogin: (expiresAt?: string, absoluteExpiresAt?: string) => Promise<void>;
     logout: () => Promise<void>;
     refreshToken: () => Promise<void>;
     checkAuth: () => Promise<void>;
@@ -37,9 +39,8 @@ interface AuthStore extends AuthState {
     setError: (error: string | null) => void;
     // ADR-025: lift the password-change gate once the user has changed it.
     clearPasswordChangeRequired: () => void;
-    // Swap the active session to an impersonation token, stashing the admin's.
-    startImpersonation: (token: string, impersonatedUser: User) => void;
-    // End impersonation: tell the server, then restore the admin's session.
+    // End impersonation: tell the server (which restores the admin's original
+    // session cookie, or clears it if that session is gone), then re-sync.
     endImpersonation: () => Promise<void>;
 }
 
@@ -52,11 +53,8 @@ export const useAuthStore = create<AuthStore>()(
         (set, get) => ({
             // Initial state
             user: null,
-            token: null,
             isAuthenticated: false,
-            adminToken: null,
-            adminUser: null,
-            isImpersonating: false,
+            impersonatedBy: null,
             isLoading: false,
             error: null,
 
@@ -88,25 +86,22 @@ export const useAuthStore = create<AuthStore>()(
 
                     set({
                         user,
-                        token: response.token,
                         isAuthenticated: true,
                         isLoading: false,
                         error: null,
                     });
 
-                    // Persist authentication data
+                    // Persist non-credential bookkeeping (the session itself is now an
+                    // httpOnly cookie — there is no token for the client to hold).
                     persistAuthData({
                         user,
-                        token: response.token,
                         expiresAt: response.expires_at,
                         absoluteExpiresAt: response.absolute_expires_at,
-                        rememberMe: credentials.rememberMe,
                     });
                 } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : 'Login failed';
                     set({
                         user: null,
-                        token: null,
                         isAuthenticated: false,
                         isLoading: false,
                         error: errorMessage,
@@ -137,7 +132,6 @@ export const useAuthStore = create<AuthStore>()(
 
                 set({
                     user,
-                    token: response.token,
                     isAuthenticated: true,
                     isLoading: false,
                     error: null,
@@ -145,26 +139,22 @@ export const useAuthStore = create<AuthStore>()(
 
                 persistAuthData({
                     user,
-                    token: response.token,
                     expiresAt: response.expires_at,
                     absoluteExpiresAt: response.absolute_expires_at,
-                    rememberMe: false,
                 });
             },
 
-            completeSSOLogin: async (token: string, expiresAt?: string, absoluteExpiresAt?: string) => {
-                // Stash the token so the API client (which reads it from the persisted
-                // store) can authenticate the profile fetch, then load the user.
-                set({ token, isAuthenticated: true, isLoading: true, error: null });
+            completeSSOLogin: async (expiresAt?: string, absoluteExpiresAt?: string) => {
+                // The backend already set the session cookie on its redirect response
+                // (see sso.go/saml.go) — nothing to stash here, just load the profile.
+                set({ isLoading: true, error: null });
                 await get().checkAuth(); // populates user, or clears + redirects on failure
                 const user = get().user;
                 if (user) {
                     persistAuthData({
                         user,
-                        token,
                         expiresAt: expiresAt ?? '',
                         absoluteExpiresAt,
-                        rememberMe: false,
                     });
                 }
             },
@@ -180,8 +170,8 @@ export const useAuthStore = create<AuthStore>()(
                     // Always clear local state regardless of server response
                     set({
                         user: null,
-                        token: null,
                         isAuthenticated: false,
+                        impersonatedBy: null,
                         isLoading: false,
                         error: null,
                     });
@@ -194,11 +184,11 @@ export const useAuthStore = create<AuthStore>()(
             },
 
             refreshToken: async () => {
-                // Single-flight: short-lived tokens make it likely that several
-                // in-flight requests hit expiry at once. Without dedup each would
-                // POST /auth/refresh and rotate the token out from under the others
-                // (every rotation deletes the prior session → cascading 401s). Share
-                // one refresh across concurrent callers instead.
+                // Single-flight: several in-flight requests can hit expiry at once.
+                // Without dedup each would POST /auth/refresh and rotate the session
+                // cookie out from under the others (every rotation deletes the prior
+                // session → cascading 401s). Share one refresh across concurrent
+                // callers instead.
                 if (inFlightRefresh) {
                     return inFlightRefresh;
                 }
@@ -212,11 +202,7 @@ export const useAuthStore = create<AuthStore>()(
                         }
 
                         const response = await authService.refreshToken();
-
-                        set({
-                            token: response.token,
-                            error: null,
-                        });
+                        set({ error: null });
 
                         // Advance the access window and carry the (possibly absent)
                         // ceiling. Note: the field is expires_at to match the backend
@@ -236,11 +222,9 @@ export const useAuthStore = create<AuthStore>()(
             },
 
             checkAuth: async () => {
-                const state = get();
-                if (!state.token) {
-                    set({ isLoading: false, isAuthenticated: false, user: null });
-                    return;
-                }
+                // Always attempt the profile fetch — under cookie auth there is no
+                // client-visible token to gate on; a 401 from the request itself is
+                // the only way to know the session is gone.
                 set({ isLoading: true });
                 try {
                     const profile = await authService.getProfile();
@@ -259,9 +243,19 @@ export const useAuthStore = create<AuthStore>()(
                         },
                         lastLogin: profile.lastLogin || new Date().toISOString(),
                     };
-                    set({ user, isAuthenticated: true, isLoading: false, error: null });
+                    // impersonation is present only while the session is actively
+                    // impersonating — server-validated, not a client claim (see
+                    // services/auth.ts's getProfile doc comment).
+                    const impersonatedBy = profile.impersonation
+                        ? {
+                            adminId: profile.impersonation.admin_id,
+                            adminUsername: profile.impersonation.admin_username,
+                            adminDisplayName: profile.impersonation.admin_display_name,
+                        }
+                        : null;
+                    set({ user, isAuthenticated: true, isLoading: false, error: null, impersonatedBy });
                 } catch {
-                    set({ user: null, token: null, isAuthenticated: false, isLoading: false });
+                    set({ user: null, isAuthenticated: false, isLoading: false, impersonatedBy: null });
                     clearPersistedAuthData();
                     window.location.href = '/login';
                 }
@@ -290,58 +284,45 @@ export const useAuthStore = create<AuthStore>()(
                 }
             },
 
-            startImpersonation: (token: string, impersonatedUser: User) => {
-                const { token: currentToken, user: currentUser, isImpersonating } = get();
-                // Refuse to nest impersonation — stash only the real admin session.
-                if (isImpersonating) {
-                    return;
-                }
-                set({
-                    adminToken: currentToken,
-                    adminUser: currentUser,
-                    isImpersonating: true,
-                    token,
-                    user: impersonatedUser,
-                    isAuthenticated: true,
-                    error: null,
-                });
-            },
-
             endImpersonation: async () => {
-                const { adminToken, adminUser, isImpersonating } = get();
-                if (!isImpersonating) {
-                    return;
-                }
-                // Best-effort server notify (logs the end event + drops the session).
-                try {
-                    await authService.endImpersonation();
-                } catch (error) {
-                    console.warn('End-impersonation request failed:', error);
-                }
-                set({
-                    token: adminToken,
-                    user: adminUser,
-                    isAuthenticated: !!adminToken,
-                    adminToken: null,
-                    adminUser: null,
-                    isImpersonating: false,
-                    error: null,
-                });
+                // The server restores the admin's original session cookie (or clears
+                // it if that session is gone) as part of this call — see
+                // internal/core/impersonation.go's EndImpersonation and the
+                // OriginalSessionID linkage. The client never holds a second
+                // credential to swap back to; checkAuth() re-syncs to whichever
+                // session is now active. If the request itself fails (network blip,
+                // backend hiccup), this rejects without touching local state, so the
+                // caller (ImpersonationBanner) can offer a retry instead of a false
+                // "you're back to normal" UI.
+                await authService.endImpersonation();
+                await get().checkAuth();
             },
         }),
         {
             name: 'auth-storage',
             partialize: (state) => ({
                 user: state.user,
-                token: state.token,
                 isAuthenticated: state.isAuthenticated,
-                adminToken: state.adminToken,
-                adminUser: state.adminUser,
-                isImpersonating: state.isImpersonating,
             }),
         }
     )
 );
+
+// Multi-tab session sync: zustand's persist writes every state change to the
+// 'auth-storage' localStorage key, but only OTHER tabs get a native `storage`
+// event for it (the tab that made the change doesn't). Without this, a logout
+// or token refresh in one tab left every other open tab holding a stale,
+// possibly-revoked token in memory until it happened to make its own request
+// and get a 401. Re-hydrating here on every cross-tab change (including a
+// storage.clear(), signaled by event.key === null) keeps all tabs in sync with
+// whichever tab last wrote the session state.
+if (typeof window !== 'undefined') {
+    window.addEventListener('storage', (event) => {
+        if (event.key === 'auth-storage' || event.key === null) {
+            useAuthStore.persist.rehydrate();
+        }
+    });
+}
 
 // Helper function to check if token needs refresh
 export const shouldRefreshToken = (): boolean => {

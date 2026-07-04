@@ -6,10 +6,12 @@ import {
     PasswordResetRequest,
     PasswordResetConfirm,
     User,
-    ApiResponse
+    ApiResponse,
+    ProfileImpersonation
 } from '../types';
 import { API_ENDPOINTS } from '../constants';
 import { getEnvConfig } from '../utils';
+import { getCsrfToken, CSRF_HEADER_NAME, CSRF_PROTECTED_METHODS } from '../utils/auth';
 
 const config = getEnvConfig();
 
@@ -17,22 +19,22 @@ const config = getEnvConfig();
 const authApi = axios.create({
     baseURL: config.API_BASE_URL,
     timeout: config.API_TIMEOUT,
-    withCredentials: true, // Important for HTTP-only cookies
+    withCredentials: true, // sends/receives the httpOnly session cookie
 });
 
-// Add Bearer token from persisted auth state for endpoints that require it (e.g. /auth/refresh)
+// The session cookie rides automatically — this interceptor's only remaining
+// job is the CSRF double-submit header on state-changing requests (e.g.
+// end-impersonation, which is under /api/v1 and CSRF-protected; login/logout/
+// refresh live outside /api/v1 and aren't, but attaching a harmless header
+// there too is fine — the backend only checks it when a session cookie is
+// actually present).
 authApi.interceptors.request.use((requestConfig) => {
-    try {
-        const raw = localStorage.getItem('auth-storage');
-        if (raw) {
-            const parsed = JSON.parse(raw);
-            const token: string | null = parsed?.state?.token ?? null;
-            if (token) {
-                requestConfig.headers.Authorization = `Bearer ${token}`;
-            }
+    const method = requestConfig.method?.toLowerCase();
+    if (method && CSRF_PROTECTED_METHODS.has(method)) {
+        const csrfToken = getCsrfToken();
+        if (csrfToken) {
+            requestConfig.headers[CSRF_HEADER_NAME] = csrfToken;
         }
-    } catch {
-        // Silently ignore — request proceeds without the header
     }
     return requestConfig;
 });
@@ -112,11 +114,14 @@ export const authService = {
     },
 
     /**
-     * Get current user profile
+     * Get current user profile. `impersonation` is present only while the
+     * current session is impersonating another user — server-validated (from
+     * the session, not a client-supplied claim), since the client has no
+     * token to inspect anymore under cookie auth.
      */
-    async getProfile(): Promise<User> {
+    async getProfile(): Promise<User & { impersonation?: ProfileImpersonation }> {
         try {
-            const response: AxiosResponse<ApiResponse<User>> = await authApi.get(
+            const response: AxiosResponse<ApiResponse<User & { impersonation?: ProfileImpersonation }>> = await authApi.get(
                 API_ENDPOINTS.AUTH.PROFILE
             );
 

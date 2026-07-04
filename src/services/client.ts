@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import { useAuthStore, shouldRefreshToken, isTokenExpired } from '../store/authStore';
 import { getEnvConfig } from '../utils';
+import { getCsrfToken, CSRF_HEADER_NAME, CSRF_PROTECTED_METHODS } from '../utils/auth';
 
 const config = getEnvConfig();
 
@@ -31,6 +32,11 @@ apiClient.interceptors.request.use(
         const isAuthEndpoint = interceptorConfig.url?.includes('/auth/login') ||
             interceptorConfig.url?.includes('/auth/refresh');
 
+        // The session itself now rides an httpOnly cookie the browser attaches
+        // automatically (withCredentials: true, below) — this interceptor no
+        // longer reads or attaches a token. It still owns proactive refresh
+        // scheduling: expiry bookkeeping lives in separate localStorage keys
+        // (utils/auth.ts), not the token itself, so this needs no other change.
         if (!isAuthEndpoint && authStore.isAuthenticated) {
             if (isTokenExpired()) {
                 await authStore.logout();
@@ -40,9 +46,13 @@ apiClient.interceptors.request.use(
             if (shouldRefreshToken()) {
                 await authStore.refreshToken();
             }
+        }
 
-            if (authStore.token) {
-                interceptorConfig.headers.Authorization = `Bearer ${authStore.token}`;
+        const method = interceptorConfig.method?.toLowerCase();
+        if (method && CSRF_PROTECTED_METHODS.has(method)) {
+            const csrfToken = getCsrfToken();
+            if (csrfToken) {
+                interceptorConfig.headers[CSRF_HEADER_NAME] = csrfToken;
             }
         }
 
@@ -70,13 +80,10 @@ apiClient.interceptors.response.use(
                 if (!error.config?.url?.includes('/auth/refresh')) {
                     try {
                         await authStore.refreshToken();
-
+                        // The retry rides the rotated session cookie automatically —
+                        // no header to reattach, unlike the old Bearer-token flow.
                         if (error.config) {
-                            const newToken = useAuthStore.getState().token;
-                            if (newToken) {
-                                error.config.headers.Authorization = `Bearer ${newToken}`;
-                                return apiClient.request(error.config);
-                            }
+                            return apiClient.request(error.config);
                         }
                     } catch {
                         await authStore.logout();

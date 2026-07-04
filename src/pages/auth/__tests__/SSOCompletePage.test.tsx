@@ -20,10 +20,10 @@ describe('SSOCompletePage', () => {
         window.location.hash = '';
     });
 
-    it('completes login with the token from the fragment and navigates to return_to', async () => {
-        window.location.hash = '#token=abc123&expires_at=2026-12-31T00:00:00Z&return_to=/secrets';
+    it('completes login and navigates to return_to (the session cookie is already set by the backend redirect)', async () => {
+        window.location.hash = '#expires_at=2026-12-31T00:00:00Z&return_to=/secrets';
         render(<SSOCompletePage />);
-        await waitFor(() => expect(mockComplete).toHaveBeenCalledWith('abc123', '2026-12-31T00:00:00Z', undefined));
+        await waitFor(() => expect(mockComplete).toHaveBeenCalledWith('2026-12-31T00:00:00Z', undefined));
         await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/secrets', { replace: true }));
     });
 
@@ -39,15 +39,10 @@ describe('SSOCompletePage', () => {
         expect(mockComplete).not.toHaveBeenCalled();
     });
 
-    it('redirects to /login when the fragment has no token', async () => {
-        window.location.hash = '#foo=bar';
+    it('defaults to / when the fragment has no return_to', async () => {
+        window.location.hash = '#expires_at=2026-12-31T00:00:00Z';
         render(<SSOCompletePage />);
-        await waitFor(() =>
-            expect(mockNavigate).toHaveBeenCalledWith(
-                expect.stringContaining('/login?sso_error='),
-                { replace: true },
-            ),
-        );
-        expect(mockComplete).not.toHaveBeenCalled();
+        await waitFor(() => expect(mockComplete).toHaveBeenCalledWith('2026-12-31T00:00:00Z', undefined));
+        await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true }));
     });
 });

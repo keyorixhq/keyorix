@@ -4,7 +4,6 @@ import { storage } from './index';
 
 export interface AuthPersistenceData {
     user: any;
-    token: string;
     expiresAt: string;
     // Hard ceiling on total session lifetime (backend absolute_expires_at). When
     // set, refresh is refused past it and the user must re-authenticate. Omitted
@@ -12,13 +11,27 @@ export interface AuthPersistenceData {
     // Explicit `| undefined` so callers may pass the (often-absent) backend field
     // directly under exactOptionalPropertyTypes.
     absoluteExpiresAt?: string | undefined;
-    rememberMe: boolean;
 }
 
 const AUTH_STORAGE_KEY = 'auth-storage';
 const TOKEN_EXPIRY_KEY = 'tokenExpiresAt';
 const ABSOLUTE_EXPIRY_KEY = 'absoluteExpiresAt';
-const REMEMBER_ME_KEY = 'rememberMe';
+
+// CSRF double-submit cookie (Phase 1 auth-cookie migration): the backend sets a
+// JS-readable csrf_token cookie alongside the HttpOnly session cookie; both
+// axios instances (services/client.ts, services/auth.ts) echo it back as
+// X-CSRF-Token on state-changing requests. Shared here rather than duplicated
+// in each — this has no dependency on authStore, so no circular-import
+// constraint applies (unlike the token-read logic those two files used to
+// duplicate for that reason).
+const CSRF_COOKIE_NAME = 'csrf_token';
+export const CSRF_HEADER_NAME = 'X-CSRF-Token';
+export const CSRF_PROTECTED_METHODS = new Set(['post', 'put', 'patch', 'delete']);
+
+export function getCsrfToken(): string | undefined {
+    const match = document.cookie.match(new RegExp(`(?:^|; )${CSRF_COOKIE_NAME}=([^;]*)`));
+    return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
 
 /**
  * Persists authentication data to storage
@@ -26,13 +39,13 @@ const REMEMBER_ME_KEY = 'rememberMe';
 export const persistAuthData = (data: AuthPersistenceData): void => {
     try {
         // IMPORTANT: the `auth-storage` key is owned exclusively by the Zustand
-        // `persist` middleware, which serialises a `{state, version}` wrapper
-        // (and is read back as `parsed.state.token` in services/auth.ts). Writing
-        // a flat `{user, token, isAuthenticated}` object here clobbers that
+        // `persist` middleware, which serialises a `{state, version}` wrapper.
+        // Writing a flat `{user, isAuthenticated}` object here clobbers that
         // wrapper, so on the next reload Zustand can't rehydrate — the session is
         // lost and a deep route (e.g. /admin/users) bounces to /login. Zustand
-        // already persists user/token/isAuthenticated via its `partialize`, so we
-        // only own the token-expiry and remember-me keys here.
+        // already persists user/isAuthenticated via its `partialize`, so we only
+        // own the token-expiry key here (the session credential itself is an
+        // httpOnly cookie — this repo never sees or stores its value).
         storage.set(TOKEN_EXPIRY_KEY, data.expiresAt);
 
         // Absolute ceiling (optional). Remove a stale value when this login has
@@ -41,13 +54,6 @@ export const persistAuthData = (data: AuthPersistenceData): void => {
             storage.set(ABSOLUTE_EXPIRY_KEY, data.absoluteExpiresAt);
         } else {
             storage.remove(ABSOLUTE_EXPIRY_KEY);
-        }
-
-        // Store remember me preference
-        if (data.rememberMe) {
-            storage.set(REMEMBER_ME_KEY, true);
-        } else {
-            storage.remove(REMEMBER_ME_KEY);
         }
     } catch (error) {
         console.error('Failed to persist auth data:', error);
@@ -62,7 +68,6 @@ export const clearPersistedAuthData = (): void => {
         storage.remove(AUTH_STORAGE_KEY);
         storage.remove(TOKEN_EXPIRY_KEY);
         storage.remove(ABSOLUTE_EXPIRY_KEY);
-        storage.remove(REMEMBER_ME_KEY);
     } catch (error) {
         console.error('Failed to clear persisted auth data:', error);
     }

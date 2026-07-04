@@ -257,10 +257,28 @@ export interface LoginFormData {
 
 export interface AuthState {
     user: User | null;
-    token: string | null;
     isAuthenticated: boolean;
     isLoading: boolean;
     error: string | null;
+}
+
+// ImpersonatedBy describes the real admin behind an active impersonation
+// session, as reported by GET /auth/profile's `impersonation` field — the
+// server-validated source of truth for the impersonation banner now that the
+// session token itself is an httpOnly cookie the client can't stash a second
+// copy of.
+export interface ImpersonatedBy {
+    adminId: number;
+    adminUsername: string;
+    adminDisplayName?: string | undefined;
+}
+
+// ProfileImpersonation mirrors the backend's snake_case `impersonation` field
+// on the profile response, before authStore translates it into ImpersonatedBy.
+export interface ProfileImpersonation {
+    admin_id: number;
+    admin_username: string;
+    admin_display_name?: string;
 }
 
 export interface LoginResponse {

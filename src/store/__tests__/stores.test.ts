@@ -71,7 +71,7 @@ describe('authStore', () => {
         expect(useAuthStore.getState().isLoading).toBe(false);
     });
 
-    it('login success authenticates and stores the token', async () => {
+    it('login success authenticates the user (session lives in an httpOnly cookie, not client state)', async () => {
         const response: LoginResponse = {
             token: 'tok-123',
             expires_at: '2030-01-01T00:00:00Z',
@@ -86,7 +86,6 @@ describe('authStore', () => {
 
         const state = useAuthStore.getState();
         expect(state.isAuthenticated).toBe(true);
-        expect(state.token).toBe('tok-123');
         expect(state.user?.username).toBe('testuser');
         expect(state.isLoading).toBe(false);
         expect(state.error).toBeNull();
