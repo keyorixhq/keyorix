@@ -61,6 +61,64 @@ func TestAssetDirListing_Returns404NotListing(t *testing.T) {
 	assert.Equal(t, "console.log(1)", body)
 }
 
+// TestOpenAPISpec_GatedBySwaggerEnabled pins #224: /openapi.yaml was previously
+// registered unconditionally, so disabling swagger_enabled still left the
+// machine-readable OpenAPI spec (internal API surface, parameter names,
+// structure) exposed even though the human-facing /swagger/ UI was correctly
+// gated behind the same toggle. Both routes must share identical on/off
+// behavior.
+func TestOpenAPISpec_GatedBySwaggerEnabled(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+
+	newRouterWithSwagger := func(t *testing.T, enabled bool) *httptest.Server {
+		t.Helper()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>Keyorix</html>"), 0644))
+
+		cfg := &config.Config{}
+		cfg.Server.HTTP.WebAssetsPath = dir
+		cfg.Server.HTTP.SwaggerEnabled = enabled
+		router, err := NewRouter(cfg, newTestCore(t))
+		require.NoError(t, err)
+		srv := httptest.NewServer(router)
+		t.Cleanup(srv.Close)
+		return srv
+	}
+
+	t.Run("disabled: both swagger UI and openapi.yaml 404", func(t *testing.T) {
+		srv := newRouterWithSwagger(t, false)
+		client := &http.Client{}
+
+		resp, err := client.Get(srv.URL + "/openapi.yaml")
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "GET /openapi.yaml must 404 when swagger_enabled is false")
+
+		resp, err = client.Get(srv.URL + "/swagger/")
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "GET /swagger/ must 404 when swagger_enabled is false")
+	})
+
+	t.Run("enabled: both swagger UI and openapi.yaml serve", func(t *testing.T) {
+		srv := newRouterWithSwagger(t, true)
+		client := &http.Client{}
+
+		resp, err := client.Get(srv.URL + "/openapi.yaml")
+		require.NoError(t, err)
+		body := readAll(t, resp.Body)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "GET /openapi.yaml must serve when swagger_enabled is true")
+		assert.NotEmpty(t, body)
+
+		resp, err = client.Get(srv.URL + "/swagger/")
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "GET /swagger/ must serve when swagger_enabled is true")
+	})
+}
+
 // TestNotFound_BackendRoutePrefixesReturn404 pins #214: an unmatched path under a
 // KNOWN backend route family (not just /api/) must 404, not silently fall through
 // to the SPA shell with a 200.
