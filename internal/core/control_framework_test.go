@@ -118,3 +118,49 @@ func TestEvaluateControls_SupplyChainIntegrity(t *testing.T) {
 	assert.Equal(t, ControlStatusNotConfigured, scu.Status)
 	assert.NotEqual(t, ControlStatusGap, scu.Status)
 }
+
+// #397: certificate-expiry scanning (ADR-055) is opt-in/off by default. With it
+// disabled, not a single certificate has ever been evaluated, so the control must read
+// as not-configured — never a permanent, unearned "pass" just because Expired stayed 0.
+func TestEvaluateControls_CertificateHygiene_ScanningNeverEnabled(t *testing.T) {
+	// No certificate secrets at all: trivially nothing to evaluate.
+	none := EvaluateControls(&CompliancePosture{})
+	cn := findControl(t, none, "certificate-hygiene")
+	assert.Equal(t, ControlStatusNotConfigured, cn.Status)
+	assert.NotEqual(t, ControlStatusPass, cn.Status)
+
+	// Certificate-typed secrets exist, but the scan has never parsed one of them
+	// (CertNotAfter cache is empty for every one) — still not-configured, not pass.
+	unscanned := EvaluateControls(&CompliancePosture{
+		Certificates: CertificatePosture{TotalCertificates: 3, NotEvaluated: 3},
+	})
+	cu := findControl(t, unscanned, "certificate-hygiene")
+	assert.Equal(t, ControlStatusNotConfigured, cu.Status)
+	assert.NotEqual(t, ControlStatusPass, cu.Status)
+	assert.Contains(t, cu.Detail, "not enabled")
+}
+
+// Once the scan has evaluated at least one certificate, the control reflects the real
+// data: pass when none are expired, gap when at least one is.
+func TestEvaluateControls_CertificateHygiene_ScanningEnabled(t *testing.T) {
+	healthy := EvaluateControls(&CompliancePosture{
+		Certificates: CertificatePosture{TotalCertificates: 2, ExpiringSoon: 0, Expired: 0, NotEvaluated: 0},
+	})
+	ch := findControl(t, healthy, "certificate-hygiene")
+	assert.Equal(t, ControlStatusPass, ch.Status)
+
+	expired := EvaluateControls(&CompliancePosture{
+		Certificates: CertificatePosture{TotalCertificates: 2, Expired: 1, NotEvaluated: 0},
+	})
+	ce := findControl(t, expired, "certificate-hygiene")
+	assert.Equal(t, ControlStatusGap, ce.Status)
+
+	// Partially scanned (some evaluated, some not) still uses real data rather than
+	// falling back to not-configured, since the scan clearly IS enabled here.
+	partial := EvaluateControls(&CompliancePosture{
+		Certificates: CertificatePosture{TotalCertificates: 3, Expired: 0, NotEvaluated: 1},
+	})
+	cp := findControl(t, partial, "certificate-hygiene")
+	assert.Equal(t, ControlStatusPass, cp.Status)
+	assert.Contains(t, cp.Detail, "1 not yet evaluated")
+}
