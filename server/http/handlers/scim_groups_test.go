@@ -94,6 +94,46 @@ func TestSCIM_GroupsCreateReplacePatchDelete(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, w.Code)
 }
 
+// TestSCIM_PatchGroupFilteredPathHonorsOp is a regression test for #226: the
+// members[value eq "X"] filtered path previously ignored op.Op and always
+// removed the matched member, even for "add"/"replace" operations.
+func TestSCIM_PatchGroupFilteredPathHonorsOp(t *testing.T) {
+	h, _ := setupSCIMTest(t)
+	u1 := provisionUser(t, h, "carol@corp.com")
+	u2 := provisionUser(t, h, "dave@corp.com")
+
+	// Create a group with only carol as a member.
+	body := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Filtered","members":[{"value":"` + u1 + `"}]}`
+	w := httptest.NewRecorder()
+	h.CreateGroup(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Groups", bytes.NewReader([]byte(body))))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	gid, _ := decodeSCIM(t, w)["id"].(string)
+	require.NotEmpty(t, gid)
+
+	// PATCH add via the filtered path syntax must ADD dave, not remove carol.
+	addPatch := `{"Operations":[{"op":"add","path":"members[value eq \"` + u2 + `\"]"}]}`
+	w = httptest.NewRecorder()
+	h.PatchGroup(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Groups/"+gid, bytes.NewReader([]byte(addPatch))), gid))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.ElementsMatch(t, []string{u1, u2}, groupMemberValues(decodeSCIM(t, w)))
+
+	// PATCH replace via the filtered path syntax must also ensure the member is
+	// present (not remove it): re-"replace" dave, who is already a member.
+	replacePatch := `{"Operations":[{"op":"replace","path":"members[value eq \"` + u2 + `\"]"}]}`
+	w = httptest.NewRecorder()
+	h.PatchGroup(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Groups/"+gid, bytes.NewReader([]byte(replacePatch))), gid))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.ElementsMatch(t, []string{u1, u2}, groupMemberValues(decodeSCIM(t, w)))
+
+	// PATCH remove via the filtered path syntax must still remove the matched
+	// member (the pre-existing, correct behavior).
+	rmPatch := `{"Operations":[{"op":"remove","path":"members[value eq \"` + u2 + `\"]"}]}`
+	w = httptest.NewRecorder()
+	h.PatchGroup(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Groups/"+gid, bytes.NewReader([]byte(rmPatch))), gid))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.ElementsMatch(t, []string{u1}, groupMemberValues(decodeSCIM(t, w)))
+}
+
 func TestSCIM_CreateGroupRequiresDisplayName(t *testing.T) {
 	h, _ := setupSCIMTest(t)
 	w := httptest.NewRecorder()
