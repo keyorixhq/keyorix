@@ -251,3 +251,40 @@ func TestExport_CSV(t *testing.T) {
 	assert.Contains(t, lines[1], "created db")
 	assert.Contains(t, lines[1], "1,2026-06-19T10:00:00Z")
 }
+
+// TestExport_CSV_NeutralizesFormulaInjection is the regression test for #261: an
+// actor name or event description beginning with =, +, -, or @ (the classic
+// CSV-formula-injection trigger, e.g. =cmd|'/c calc'!A1) must be defanged with a
+// leading single quote before it reaches the CSV a compliance reviewer opens in
+// Excel/Sheets/LibreOffice — the same csvSafe convention already applied to the
+// server's own CSV export handlers (#148/#239), reused here via
+// internal/cli/common.CSVSafe. Ordinary text must pass through byte-for-byte
+// unchanged.
+func TestExport_CSV_NeutralizesFormulaInjection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"events":[
+			{"id":1,"event_type":"secret.created","timestamp":"2026-06-19T10:00:00Z","actor":"=cmd|'/c calc'!A1","actor_type":"user","ip_address":"10.0.0.1","success":true,"description":"+1+1 formula attempt"},
+			{"id":2,"event_type":"secret.deleted","timestamp":"2026-06-19T10:05:00Z","actor":"-2+3 attacker","actor_type":"user","ip_address":"10.0.0.2","success":true,"description":"@SUM(A1) formula attempt"},
+			{"id":3,"event_type":"secret.read","timestamp":"2026-06-19T10:06:00Z","actor":"ordinary-user","actor_type":"user","ip_address":"10.0.0.3","success":true,"description":"nothing suspicious here"}
+		],"count":3,"next_cursor":null}}`))
+	}))
+	defer srv.Close()
+	setRemote(t, srv.URL)
+
+	var out, errOut bytes.Buffer
+	exportCmd.SetOut(&out)
+	exportCmd.SetErr(&errOut)
+	flagSince, flagAfterID, flagLimit, flagAll, flagCSV = "", 0, 100, false, true
+	defer func() { flagCSV = false }()
+	require.NoError(t, exportCmd.RunE(exportCmd, nil))
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 4, "header + 3 event rows")
+	assert.Contains(t, lines[1], "'=cmd|'/c calc'!A1", "leading = actor is defanged with a single quote")
+	assert.Contains(t, lines[1], "'+1+1 formula attempt", "leading + description is defanged with a single quote")
+	assert.Contains(t, lines[2], "'-2+3 attacker", "leading - actor is defanged with a single quote")
+	assert.Contains(t, lines[2], "'@SUM(A1) formula attempt", "leading @ description is defanged with a single quote")
+	assert.Contains(t, lines[3], "ordinary-user", "ordinary text passes through unchanged")
+	assert.Contains(t, lines[3], "nothing suspicious here", "ordinary text passes through unchanged")
+	assert.NotContains(t, lines[3], "'ordinary-user", "no spurious quote is added to non-formula text")
+}
