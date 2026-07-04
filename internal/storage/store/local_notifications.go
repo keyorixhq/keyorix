@@ -11,14 +11,28 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 const defaultNotificationLimit = 50
 
+// CreateNotification inserts a notification row. A partial unique index on
+// notifications (user_id, type, project_id) scoped to unread rotation/expiry
+// reminders (see storage.ensureReminderNotificationDedupIndex) allows at most one
+// standing unread reminder per (user, type, project) — closing the #488 TOCTOU:
+// SendRotationReminders/SendExpiryReminders's own "does a reminder already exist"
+// check-then-act read cannot fully exclude a concurrent duplicate (most reliably a
+// second on-demand admin-jobs HTTP trigger racing itself or the scheduler tick), so
+// the losing insert fails here with storage.ErrDuplicateReminderNotification
+// instead of creating a second unread reminder row. Callers treat that as a benign
+// duplicate-skip, not a failure.
 func (ls *LocalStorage) CreateNotification(ctx context.Context, n *models.Notification) (*models.Notification, error) {
 	if err := ls.db.WithContext(ctx).Create(n).Error; err != nil {
+		if isUniqueConstraintErr(err) {
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateReminderNotification, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return n, nil

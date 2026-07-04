@@ -92,3 +92,18 @@ var ErrBreakGlassAlreadyActive = errors.New("an active break-glass grant already
 // Callers translate this into a clean validation error instead of a raw
 // constraint-violation message.
 var ErrDuplicateDynamicSecretConfig = errors.New("a dynamic-secret config with this name already exists in this project and environment")
+
+// ErrDuplicateReminderNotification is returned (wrapped) by CreateNotification when
+// the insert collides with the partial unique index on notifications (user_id, type,
+// project_id) scoped to unread rotation/expiry reminders (#488). Both
+// SendRotationReminders and SendExpiryReminders dedupe with a check-then-act read
+// (GetUnreadNotification) followed by a separate CreateNotification call, which is a
+// TOCTOU race: unlike the scheduled path (single-replica-gated via WithSchedulerLock,
+// ADR-039), the on-demand admin-jobs HTTP trigger
+// (POST /api/v1/admin/jobs/rotation-reminders or .../expiry-reminders) has no lock at
+// all, so two concurrent runs (or one racing the scheduler's own tick) against a
+// project with no existing reminder can both pass the "does a reminder already exist"
+// check before either commits, producing duplicate reminder rows. The index makes the
+// loser's insert fail here instead of silently duplicating; callers treat this as a
+// benign no-op skip, not a failure.
+var ErrDuplicateReminderNotification = errors.New("an unread reminder notification already exists for this user, type, and project")
