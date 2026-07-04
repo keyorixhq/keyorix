@@ -244,9 +244,20 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 // so an in-flight record is never destroyed by a too-short window.
 
 // DeleteAnomalyAlertsBefore hard-deletes anomaly alerts detected before the cutoff.
+// Unlike a plain age purge, this only removes ALREADY-ACKNOWLEDGED alerts
+// (Acknowledged = true) — matching every sibling purge in this section, which
+// excludes in-flight rows (open campaigns, active break-glass, pending access
+// requests) from age-based deletion. An old alert nobody has ever acknowledged is
+// exactly the in-flight case here: it is still a live, unreviewed security signal,
+// not a resolved record, so it stays until a human acknowledges it (or is handled
+// by some separate abandoned-alert mechanism, if one is ever added). Without this
+// gate, a retention window shorter than the real review cadence would silently
+// hard-delete a genuine, never-reviewed high-severity alert — and the compliance
+// dashboard would then report FEWER unacknowledged anomalies, masking the fact
+// that a real signal was destroyed rather than resolved.
 func (ls *LocalStorage) DeleteAnomalyAlertsBefore(ctx context.Context, before time.Time) (int64, error) {
 	result := ls.db.WithContext(ctx).
-		Where("detected_at < ?", before).
+		Where("acknowledged = ? AND detected_at < ?", true, before).
 		Delete(&models.AnomalyAlert{})
 	if result.Error != nil {
 		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
