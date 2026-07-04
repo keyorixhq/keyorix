@@ -6,6 +6,7 @@ package core
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -233,7 +234,31 @@ func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *
 	return c.UpdateSecret(ctx, req)
 }
 
+// EventSecretRotateNoop is audited when RotateSecret is invoked with a value that is
+// byte-identical to the secret's current version (#408). Left unaddressed, resubmitting
+// an unchanged credential (a stale automation script, or an operator running `rotate`
+// without actually changing anything) resets LastRotatedAt to "just now" with zero
+// actual credential change, so risk-scoring/dashboards see "recently rotated, low risk"
+// while the underlying secret has genuinely never changed. A new version row is still
+// stored for audit-trail completeness, but LastRotatedAt is deliberately withheld.
+const EventSecretRotateNoop = "secret.rotate_noop"
+
 // RotateSecret creates a new version with a new value and updates LastRotatedAt.
+//
+// #408: if newValue is byte-identical to the CURRENT version's decrypted value, the
+// rotation is treated as a no-op FOR TIMESTAMP PURPOSES ONLY: a new version row is
+// still written (so the attempt is visible in version history / for audit trail
+// completeness — someone did call rotate), but LastRotatedAt is deliberately left
+// untouched so a false "recently rotated, low risk" signal never reaches
+// dashboards/auditors/risk-scoring for material that hasn't actually changed. This
+// silently-skip-the-timestamp behavior (rather than refusing/erroring outright) is
+// deliberate: RotateSecret is also invoked by the auto-rotation scheduler
+// (rotateOneSecret, "system:auto-rotation") and by RollbackSecret, neither of which
+// expects — or gracefully handles — a hard error for what they consider a successful
+// rotation call; erroring here would turn an edge case (a misbehaving rotation
+// backend, or a rollback landing on a value the current version already holds) into an
+// automation-breaking failure. The event is still recorded via EventSecretRotateNoop
+// so the no-op is auditable rather than fully silent.
 func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte, rotatedBy string) (*models.SecretNode, error) {
 	if err := c.secretValuePolicy.Validate(newValue); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
@@ -242,11 +267,41 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 	if err != nil {
 		return nil, fmt.Errorf("secret not found: %w", err)
 	}
+
+	// Compare against the CURRENT version's decrypted value, mirroring the existing
+	// decrypt-on-read path used by RollbackSecret (direct c.encryption.RetrieveSecret /
+	// raw EncryptedValue) rather than routing through readVersionValue — that helper
+	// also enforces max-reads by incrementing the read counter, which this internal
+	// comparison must NOT do (it would silently burn from a burn-after-N-reads
+	// secret's budget on every rotation attempt). subtle.ConstantTimeCompare matches
+	// this codebase's convention for comparing genuine secret material (see mfa.go,
+	// auth_bootstrap.go, encryption/auth_encryption.go).
+	valueUnchanged := false
+	if latestVersion, verr := c.storage.GetLatestSecretVersion(ctx, id); verr == nil && latestVersion != nil {
+		var currentValue []byte
+		var rerr error
+		if c.encryption != nil {
+			currentValue, rerr = c.encryption.RetrieveSecret(latestVersion.ID)
+		} else {
+			currentValue = latestVersion.EncryptedValue
+		}
+		if rerr == nil && subtle.ConstantTimeCompare(currentValue, newValue) == 1 {
+			valueUnchanged = true
+		}
+	}
+
 	if err := c.storeNextSecretVersion(ctx, secret, newValue); err != nil {
 		return nil, fmt.Errorf("failed to store rotated secret: %w", err)
 	}
 	now := time.Now()
-	secret.LastRotatedAt = &now
+	if valueUnchanged {
+		log.Printf("rotate secret %d: new value identical to the current version; version stored but last_rotated_at was NOT updated", id)
+		sid := id
+		c.writeAuditEvent(ctx, EventSecretRotateNoop, nil, &sid,
+			fmt.Sprintf("rotation of secret %q by %s submitted a value identical to the current version: a new version was stored for audit-trail completeness, but last_rotated_at was not updated", secret.Name, rotatedBy))
+	} else {
+		secret.LastRotatedAt = &now
+	}
 	secret.UpdatedAt = now
 	updatedSecret, err := c.storage.UpdateSecret(ctx, secret)
 	if err != nil {
