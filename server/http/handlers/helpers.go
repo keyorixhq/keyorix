@@ -41,6 +41,29 @@ func clientSafe(err error) string {
 	return "an internal error occurred; please try again or contact support if the problem persists"
 }
 
+// goSafe runs fn in a detached goroutine with panic recovery. Auth handlers
+// spawn "fire and forget" goroutines for side effects (audit logging,
+// last-login stamps) so the HTTP response isn't blocked on that I/O — but
+// those goroutines run on the hottest, lowest-privilege request path (every
+// login attempt), and are NOT covered by the HTTP server's per-request
+// recovery middleware, which only guards the goroutine actually serving the
+// request. A panic in a bare `go func(){...}()` here (nil pointer, index
+// out of range, etc., even in "just logging" code) would crash the entire
+// process for every in-flight user — a low-privilege DoS lever (backlog
+// #243). goSafe closes that gap: any panic in fn is recovered and logged
+// instead of taking the server down. Use it in place of a bare `go` for any
+// detached side-effect goroutine spawned from a request handler.
+func goSafe(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("recovered from panic in background goroutine: %v", r)
+			}
+		}()
+		fn()
+	}()
+}
+
 // sendError sends an error JSON response
 func sendError(w http.ResponseWriter, errorType, message string, statusCode int, details interface{}) {
 	w.Header().Set("Content-Type", "application/json")

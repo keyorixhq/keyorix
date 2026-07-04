@@ -143,7 +143,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.recordLoginAttempt(r.Context(), ip)
-		go h.coreService.LogAuthFailure(context.Background(), body.Username, ip) // #nosec G118
+		goSafe(func() { h.coreService.LogAuthFailure(context.Background(), body.Username, ip) }) // #nosec G118
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
@@ -153,8 +153,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Audit log + last-login stamp (both non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua) // #nosec G118
-	go func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }()        // #nosec G118
+	goSafe(func() { h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, ua) }) // #nosec G118
+	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) })                     // #nosec G118
 
 	sendSuccess(w, resp, "Login successful")
 }
@@ -278,8 +278,10 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 
 	resp := h.buildLoginResponse(r.Context(), result.Session, result.User)
 	h.setSessionCookies(w, result.Session)
-	go h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get("User-Agent")) // #nosec G118
-	go func() { _ = h.coreService.RecordLogin(context.Background(), result.User.ID) }()                                       // #nosec G118
+	goSafe(func() {
+		h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get("User-Agent"))
+	}) // #nosec G118
+	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), result.User.ID) }) // #nosec G118
 
 	sendSuccess(w, resp, "Account setup complete")
 }
@@ -308,7 +310,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	// Audit log (non-blocking)
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogAuthLogout(context.Background(), logoutUserID, logoutUsername, ip, ua) // #nosec G118
+	goSafe(func() { h.coreService.LogAuthLogout(context.Background(), logoutUserID, logoutUsername, ip, ua) }) // #nosec G118
 
 	sendSuccess(w, nil, "Logged out successfully")
 }
