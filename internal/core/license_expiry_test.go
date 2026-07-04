@@ -79,14 +79,43 @@ func TestScanLicenseExpiry_Dedup_NoResend(t *testing.T) {
 	admin := &models.User{ID: 2, Email: "admin@acme.test"}
 	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
 	ms.On("GetUserRoles", ctx, uint(2)).Return([]*models.Role{{Name: "admin"}}, nil)
-	// Already an unread license-expiry reminder → must not re-create.
+	// Already an unread license-expiry reminder, already at the severity this
+	// (not-yet-expired) gate warrants → must not re-create or escalate.
 	ms.On("ListNotifications", ctx, uint(2), true, 100).
-		Return([]*models.Notification{{ID: 9, Type: NotificationLicenseExpiry}}, nil)
+		Return([]*models.Notification{{ID: 9, Type: NotificationLicenseExpiry, Severity: models.NotificationSeverityWarning}}, nil)
 
 	n, err := c.ScanLicenseExpiry(ctx, 30)
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
 	ms.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+	ms.AssertNotCalled(t, "UpdateNotification", mock.Anything, mock.Anything)
+}
+
+// TestScanLicenseExpiry_EscalatesOnExpiry is a regression test for #250: an
+// unread license-expiry reminder recorded at Warning (expiring soon) must be
+// escalated in place — not silently suppressed — once the license has
+// genuinely expired (Critical) while that reminder is still unread.
+func TestScanLicenseExpiry_EscalatesOnExpiry(t *testing.T) {
+	ctx := context.Background()
+	ms := new(MockStorage)
+	c := NewKeyorixCore(ms)
+	c.SetLicenseGate(gateWithExpiry(t, time.Now().Add(-3*time.Hour))) // well past NotAfter + grace
+
+	admin := &models.User{ID: 2, Email: "admin@acme.test"}
+	ms.On("ListUsers", ctx, mock.Anything).Return([]*models.User{admin}, int64(1), nil)
+	ms.On("GetUserRoles", ctx, uint(2)).Return([]*models.Role{{Name: "admin"}}, nil)
+	// Standing reminder was created back when the license was merely expiring soon.
+	existing := &models.Notification{ID: 9, UserID: 2, Type: NotificationLicenseExpiry, Severity: models.NotificationSeverityWarning}
+	ms.On("ListNotifications", ctx, uint(2), true, 100).Return([]*models.Notification{existing}, nil)
+	ms.On("UpdateNotification", ctx, mock.MatchedBy(func(n *models.Notification) bool {
+		return n.ID == 9 && n.Severity == models.NotificationSeverityCritical
+	})).Return(nil)
+
+	n, err := c.ScanLicenseExpiry(ctx, 30)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "the escalation to expired must reach the admin")
+	ms.AssertNotCalled(t, "CreateNotification", mock.Anything, mock.Anything)
+	ms.AssertExpectations(t)
 }
 
 // TestGlobalAdminIDs_PaginatesActiveUsersBeyondOnePage pins the fix for an install

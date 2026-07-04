@@ -52,6 +52,16 @@ func isApproverRole(roleName string) bool {
 // notify creates one in-app notification, best-effort (errors are swallowed so a
 // failed insert can't roll back the triggering action).
 func (c *KeyorixCore) notify(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string) {
+	c.notifyWithSeverity(ctx, userID, nType, title, message, projectID, link, models.NotificationSeverityNone)
+}
+
+// notifyWithSeverity is notify plus a recorded NotificationSeverity (#250):
+// reminder schedulers (expiry/rotation/license) use this so a later recheck can
+// compare a newly computed severity against what's recorded here on the
+// standing unread reminder — see upgradeReminder. Notification types that don't
+// participate in escalation-aware dedup should keep using plain notify(), which
+// records NotificationSeverityNone.
+func (c *KeyorixCore) notifyWithSeverity(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string, severity models.NotificationSeverity) {
 	if userID == 0 {
 		return
 	}
@@ -62,9 +72,22 @@ func (c *KeyorixCore) notify(ctx context.Context, userID uint, nType, title, mes
 		Title:     title,
 		Message:   message,
 		Link:      link,
+		Severity:  severity,
 		CreatedAt: c.now(),
 	})
 	c.dispatchNotification(ctx, userID, nType, title, message, projectID, link)
+}
+
+// upgradeReminder overwrites Title/Message/Severity on an existing unread
+// standing reminder notification in place and persists it (#250). Used when a
+// recheck finds a strictly more severe state than what the notification was
+// last created/updated with, so the escalation reaches the user without
+// piling up a second unread notification of the same (user, type, project).
+// Returns whether the update succeeded (best-effort — a storage failure here
+// just means the stale reminder stands until the next tick).
+func (c *KeyorixCore) upgradeReminder(ctx context.Context, n *models.Notification, title, message string, severity models.NotificationSeverity) bool {
+	n.Title, n.Message, n.Severity = title, message, severity
+	return c.storage.UpdateNotification(ctx, n) == nil
 }
 
 // dispatchNotification fans a per-user notification out to the recipient-addressable

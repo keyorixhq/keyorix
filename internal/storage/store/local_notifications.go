@@ -45,18 +45,51 @@ func (ls *LocalStorage) ListNotifications(ctx context.Context, userID uint, unre
 // match, so it can't be defeated by a pile-up of newer, unrelated unread
 // notifications pushing the target one outside a "top N" window (#399).
 func (ls *LocalStorage) HasUnreadNotification(ctx context.Context, userID uint, nType string, projectID uint) (bool, error) {
+	n, err := ls.GetUnreadNotification(ctx, userID, nType, projectID)
+	if err != nil {
+		return false, err
+	}
+	return n != nil, nil
+}
+
+// GetUnreadNotification returns userID's unread notification of nType scoped to
+// projectID, or nil if none exists. Same DB-level filter as HasUnreadNotification
+// (#399), but returns the full row so a dedup check can also compare (and, on
+// escalation, update) its recorded Severity instead of only checking existence
+// (#250).
+func (ls *LocalStorage) GetUnreadNotification(ctx context.Context, userID uint, nType string, projectID uint) (*models.Notification, error) {
 	var row models.Notification
 	err := ls.db.WithContext(ctx).
-		Select("id").
 		Where("user_id = ? AND is_read = ? AND type = ? AND project_id = ?", userID, false, nType, projectID).
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	return true, nil
+	return &row, nil
+}
+
+// UpdateNotification updates title/message/severity on an existing notification
+// in place, scoped to its owner (#250). Used to escalate a standing reminder
+// instead of creating a second unread notification and piling up.
+func (ls *LocalStorage) UpdateNotification(ctx context.Context, n *models.Notification) error {
+	res := ls.db.WithContext(ctx).Model(&models.Notification{}).
+		Where("id = ? AND user_id = ?", n.ID, n.UserID).
+		Updates(map[string]interface{}{
+			"title":    n.Title,
+			"message":  n.Message,
+			"severity": n.Severity,
+		})
+	if res.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	if res.RowsAffected == 0 {
+		// No row for this (id, user) — not found or not the caller's.
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	return nil
 }
 
 func (ls *LocalStorage) CountUnreadNotifications(ctx context.Context, userID uint) (int64, error) {

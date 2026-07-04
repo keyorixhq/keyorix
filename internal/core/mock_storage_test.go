@@ -1792,6 +1792,18 @@ func (m *MockStorage) HasUnreadNotification(ctx context.Context, userID uint, nT
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) GetUnreadNotification(ctx context.Context, userID uint, nType string, projectID uint) (*models.Notification, error) {
+	args := m.Called(ctx, userID, nType, projectID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Notification), args.Error(1)
+}
+
+func (m *MockStorage) UpdateNotification(ctx context.Context, n *models.Notification) error {
+	return m.Called(ctx, n).Error(0)
+}
+
 func (m *MockStorage) MarkNotificationRead(ctx context.Context, id, userID uint) error {
 	return m.Called(ctx, id, userID).Error(0)
 }
