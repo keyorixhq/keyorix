@@ -75,6 +75,90 @@ func TestAssignRole_SucceedsAfterPriorTimeBoundGrantExpired(t *testing.T) {
 	assert.Contains(t, ids, uint(10))
 }
 
+// #471: assignGroupRole had the identical bug already fixed for assignUserRole in
+// #263 — the existence check matched on (group_id, role_id, project_id,
+// environment_id) with no expires_at filter, so a stale, un-reaped group_roles row
+// from a naturally-expired grant permanently blocked a second real-incident
+// break-glass activation for the same group with "already assigned". The check now
+// treats an expired grant as absent (deleting the stale row before the fresh
+// insert), while a genuinely still-live grant continues to correctly block a
+// duplicate.
+
+// A permanent (non-expiring) group grant still blocks a duplicate AssignRoleToGroup.
+func TestAssignRoleToGroup_BlocksDuplicateOfLiveGrant(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Create(&models.Group{ID: 200, Name: "g200"}).Error)
+
+	require.NoError(t, ls.AssignRoleToGroup(ctx, 200, 10, sc(5, 0)))
+	err := ls.AssignRoleToGroup(ctx, 200, 10, sc(5, 0))
+	require.Error(t, err, "a duplicate assignment of a permanent, still-live group grant must be refused")
+}
+
+// A group grant that has not yet expired still blocks a duplicate
+// AssignRoleToGroupWithExpiry.
+func TestAssignRoleToGroupWithExpiry_BlocksDuplicateOfLiveGrant(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Create(&models.Group{ID: 201, Name: "g201"}).Error)
+
+	future := time.Now().Add(time.Hour)
+	require.NoError(t, ls.AssignRoleToGroupWithExpiry(ctx, 201, 10, sc(5, 0), future))
+
+	err := ls.AssignRoleToGroupWithExpiry(ctx, 201, 10, sc(5, 0), time.Now().Add(2*time.Hour))
+	require.Error(t, err, "a duplicate assignment while the first group grant is still live must be refused")
+}
+
+// The core of #471: once the FIRST group grant's expires_at has naturally passed
+// (reproduced here with a real short-lived expiry, per the reproduction recipe in
+// the backlog item), a SECOND activation for the exact same (group, role, project,
+// environment) key must succeed — not fail with "already assigned" against the
+// stale, un-reaped row.
+func TestAssignRoleToGroupWithExpiry_ReactivatesAfterNaturalExpiry(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Create(&models.Group{ID: 202, Name: "g202"}).Error)
+	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 1, GroupID: 202}).Error)
+
+	shortLived := time.Now().Add(50 * time.Millisecond)
+	require.NoError(t, ls.AssignRoleToGroupWithExpiry(ctx, 202, 10, sc(5, 0), shortLived),
+		"seed a group grant that will naturally expire almost immediately")
+
+	time.Sleep(150 * time.Millisecond)
+
+	var stale models.GroupRole
+	require.NoError(t, ls.db.Where("group_id = ? AND role_id = ?", 202, 10).First(&stale).Error,
+		"the expired grant's row must still be present (un-reaped) for this to be a real reproduction")
+
+	newExpiry := time.Now().Add(time.Hour)
+	err := ls.AssignRoleToGroupWithExpiry(ctx, 202, 10, sc(5, 0), newExpiry)
+	require.NoError(t, err, "a second activation after the first group grant naturally expired must succeed")
+
+	ids, err := ls.GetUserGroupRoleIDsAt(ctx, 1, sc(5, 0))
+	require.NoError(t, err)
+	assert.Contains(t, ids, uint(10), "the fresh group grant must be live and authorizing")
+}
+
+// Same as above but via the permanent AssignRoleToGroup path re-granting after a
+// PRIOR time-bound group grant (e.g. AssignRoleToGroupWithExpiry) at the same key
+// expired.
+func TestAssignRoleToGroup_SucceedsAfterPriorTimeBoundGrantExpired(t *testing.T) {
+	ls := newRBACScopeTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Create(&models.Group{ID: 203, Name: "g203"}).Error)
+	require.NoError(t, ls.db.Create(&models.UserGroup{UserID: 1, GroupID: 203}).Error)
+
+	past := time.Now().Add(-time.Hour)
+	require.NoError(t, ls.AssignRoleToGroupWithExpiry(ctx, 203, 10, sc(5, 0), past))
+
+	err := ls.AssignRoleToGroup(ctx, 203, 10, sc(5, 0))
+	require.NoError(t, err, "a permanent re-grant after the prior time-bound group grant expired must succeed")
+
+	ids, err := ls.GetUserGroupRoleIDsAt(ctx, 1, sc(5, 0))
+	require.NoError(t, err)
+	assert.Contains(t, ids, uint(10))
+}
+
 // #374/#375/#376: GetUserPermissions and CheckPermission previously joined ONLY
 // user_roles (direct assignments), leaving them blind to a permission granted
 // purely via a group role — unlike the live authorization path (scopedRoleIDs,
