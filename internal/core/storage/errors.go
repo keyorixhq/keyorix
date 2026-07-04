@@ -62,6 +62,18 @@ var ErrDuplicateProjectName = errors.New("a project with this name already exist
 // the rotation outright on ordinary concurrent contention.
 var ErrDuplicateSecretVersion = errors.New("a secret version with this version number already exists")
 
+// ErrUnsupportedByBackend is returned (wrapped) by a storage.Storage implementation
+// when an operation has no meaningful implementation under the ACTIVE backend —
+// distinct from a transient failure of that backend. The motivating case (#452) is
+// RemoteStorage's login-attempt methods: a server proxying storage.type: remote has
+// no server-side counter to proxy the call to (ADR-040: login rate limiting is
+// server-side only, against LocalStorage), so it can never satisfy
+// CountRecentLoginAttempts/RecordLoginAttempt/PruneLoginAttempts. Callers that treat
+// "storage error" as "fail open" (rate_limit.go) should errors.Is against this to
+// distinguish a permanent architectural gap — worth a loud, one-time operator
+// warning — from an ordinary transient DB/network error that doesn't warrant one.
+var ErrUnsupportedByBackend = errors.New("operation not supported by the active storage backend")
+
 // ErrBreakGlassAlreadyActive is returned (wrapped) by CreateBreakGlassActivation when
 // the partial unique index on (project_id, user_id) WHERE state='active' rejects the
 // insert: a concurrent activation for the same project+user already won the race and

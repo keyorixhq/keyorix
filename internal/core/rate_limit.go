@@ -3,11 +3,26 @@
 // across HA replicas (the old limiter was a per-process in-memory map). Rate
 // limiting is a backstop on top of the real password/passkey checks, so a storage
 // error fails OPEN (allow) rather than locking everyone out on a DB hiccup.
+//
+// #452: a plain transient storage error (DB hiccup, network blip) fails open
+// silently by design — that's an acceptable, temporary degradation. But when the
+// active storage.Storage backend can NEVER satisfy CountRecentLoginAttempts (the
+// storage.ErrUnsupportedByBackend sentinel — today only RemoteStorage, when the
+// server itself runs storage.type: remote in a chained deployment; see
+// internal/storage/store/remote_login_attempts.go), the fail-open isn't temporary —
+// it's permanent and total for the life of the process, with no other brute-force
+// throttle unless per-account lockout (ADR-025) is separately enabled. That gap is
+// worth a loud, ONE-TIME operator-visible warning (not per-request log spam, and
+// not blocking login — this is still a backstop, not the auth boundary).
 package core
 
 import (
 	"context"
+	"errors"
+	"log"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 const (
@@ -17,6 +32,30 @@ const (
 	LoginWindow = 15 * time.Minute
 )
 
+// warnRateLimitUnsupportedOnce logs a loud, ONE-TIME operator warning the first
+// time the active storage backend proves it can never satisfy
+// CountRecentLoginAttempts (#452) — as opposed to an ordinary transient error,
+// which stays silent (that's the existing, intentional fail-open backstop
+// behaviour). Safe for concurrent use; only the first call's message is emitted.
+func (c *KeyorixCore) warnRateLimitUnsupportedOnce() {
+	c.rateLimitUnsupportedWarnOnce.Do(func() {
+		log.Printf("WARNING: login/password-reset rate limiting is INERT under the " +
+			"active storage backend (storage.type: remote) — CountRecentLoginAttempts " +
+			"has no implementation to proxy to (ADR-040: login rate limiting is " +
+			"server-side only), so every call fails open. There is NO cluster-wide " +
+			"brute-force login throttle for this deployment unless per-account lockout " +
+			"is separately enabled (see docs on login lockout / ADR-025). This warning " +
+			"is logged once per process; the underlying gap persists for its lifetime.")
+	})
+}
+
+// isUnsupportedByBackend reports whether err indicates the active storage
+// backend has no implementation for the operation at all (permanent, not a
+// transient failure worth staying silent about).
+func isUnsupportedByBackend(err error) bool {
+	return errors.Is(err, storage.ErrUnsupportedByBackend)
+}
+
 // IsLoginRateLimited reports whether an IP has reached the failed-login budget
 // within the window. Fails open (false) on an empty IP or a storage error.
 func (c *KeyorixCore) IsLoginRateLimited(ctx context.Context, ip string) bool {
@@ -25,6 +64,9 @@ func (c *KeyorixCore) IsLoginRateLimited(ctx context.Context, ip string) bool {
 	}
 	n, err := c.storage.CountRecentLoginAttempts(ctx, ip, c.now().Add(-LoginWindow))
 	if err != nil {
+		if isUnsupportedByBackend(err) {
+			c.warnRateLimitUnsupportedOnce()
+		}
 		return false
 	}
 	return n >= LoginMaxAttempts
@@ -75,6 +117,9 @@ func (c *KeyorixCore) IsPasswordResetRateLimited(ctx context.Context, ip string)
 	}
 	n, err := c.storage.CountRecentLoginAttempts(ctx, passwordResetRateLimitPrefix+ip, c.now().Add(-PasswordResetWindow))
 	if err != nil {
+		if isUnsupportedByBackend(err) {
+			c.warnRateLimitUnsupportedOnce()
+		}
 		return false
 	}
 	return n >= PasswordResetMaxAttempts

@@ -1,8 +1,9 @@
 package store
 
 import (
-	"errors"
 	"fmt"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 // ErrRemoteUnsupported is returned by RemoteStorage methods whose operation has
@@ -16,7 +17,12 @@ import (
 // The live data path for these features runs on the server (LocalStorage); the
 // remote client reaches them through higher-level REST endpoints, not raw storage
 // primitives, so faithful one-to-one proxying isn't possible.
-var ErrRemoteUnsupported = errors.New("operation not supported in remote (client) mode")
+//
+// Also wraps the backend-agnostic storage.ErrUnsupportedByBackend, so callers that
+// only know about the storage.Storage interface (e.g. internal/core) can detect
+// "this backend can never do this" without importing this concrete implementation
+// package.
+var ErrRemoteUnsupported = fmt.Errorf("operation not supported in remote (client) mode: %w", storage.ErrUnsupportedByBackend)
 
 // remoteUnsupported wraps ErrRemoteUnsupported with the calling operation's name.
 func remoteUnsupported(op string) error {
