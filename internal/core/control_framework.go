@@ -155,8 +155,8 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 		},
 		{
 			ID: "certificate-hygiene", Name: "Certificate expiry hygiene", Area: "Cryptography",
-			Status:     controlStatus(p.DegradedArea("certificates"), p.Certificates.Expired > 0),
-			Detail:     fmt.Sprintf("%d expired, %d expiring soon of %d certificate(s) (%d not yet evaluated)", p.Certificates.Expired, p.Certificates.ExpiringSoon, p.Certificates.TotalCertificates, p.Certificates.NotEvaluated),
+			Status:     certificateHygieneStatus(p),
+			Detail:     certificateHygieneDetail(p),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.15", "A.8.24"}, SOC2: []string{"CC6.1"}, NIS2: []string{"Art.21(2)(h)"}, ENS: []string{"op.exp.11"}},
 		},
 		{
@@ -226,6 +226,38 @@ func supplyChainDetail(p *CompliancePosture) string {
 	}
 	return fmt.Sprintf("update bundles verified offline against %d pinned signing key(s); license: %s",
 		s.TrustedUpdateKeys, s.LicenseState)
+}
+
+// certificateHygieneStatus is Pass/Gap once certificate-expiry scanning (ADR-055) has
+// actually evaluated at least one certificate. That scan is opt-in/off by default, and
+// CertificatePosture.Expired only ever increments for a certificate the scan has parsed
+// — so with the scan disabled, Expired stays permanently 0 and the control would read as
+// a false "pass" even though not a single certificate was ever checked (#397). Mirror the
+// supply-chain-integrity escape hatch above: "never enabled" is not-configured, distinct
+// from "enabled but this run's collection failed", which is Unknown (#136).
+func certificateHygieneStatus(p *CompliancePosture) ControlStatus {
+	if p.DegradedArea("certificates") {
+		return ControlStatusUnknown
+	}
+	c := p.Certificates
+	if c.NotEvaluated == c.TotalCertificates {
+		return ControlStatusNotConfigured
+	}
+	return gapIf(c.Expired > 0)
+}
+
+func certificateHygieneDetail(p *CompliancePosture) string {
+	c := p.Certificates
+	if p.DegradedArea("certificates") {
+		return "UNKNOWN — certificate posture could not be collected this run"
+	}
+	if c.NotEvaluated == c.TotalCertificates {
+		if c.TotalCertificates == 0 {
+			return "no certificate-typed secrets to evaluate"
+		}
+		return fmt.Sprintf("certificate-expiry scanning not enabled — %d certificate(s) never evaluated", c.TotalCertificates)
+	}
+	return fmt.Sprintf("%d expired, %d expiring soon of %d certificate(s) (%d not yet evaluated)", c.Expired, c.ExpiringSoon, c.TotalCertificates, c.NotEvaluated)
 }
 
 // statusFromBool maps an enabled flag to pass / not-configured (an unset optional
