@@ -1009,6 +1009,8 @@ connect:
         - keyorix/              # (defense-in-depth on top of the backend's IAM scope)
     - name: prod-gcp
       type: gcp-secret-manager  # ref is the version resource name (creds from ADC)
+      project_id: my-proj       # recommended: pins the connector to one GCP project (#431);
+                                 # a ref naming a different project is rejected before the backend call
       allowed_refs:
         - projects/my-proj/secrets/keyorix-
     - name: prod-azure
@@ -1040,6 +1042,14 @@ connect:
 - Backend credentials come from the **ambient identity chain** (AWS: env /
   instance-profile / IRSA; GCP: ADC; Azure: `DefaultAzureCredential`; Vault:
   `token_env`), never from this config. A backend failure surfaces as `502 Bad Gateway`.
+- Unlike Vault (pinned to one `address`) and Azure Key Vault (pinned to one `address`
+  vault URL), a GCP Secret Manager ref carries **its own project ID**, so a
+  `gcp-secret-manager` connector with no **`project_id`** can address secrets in
+  **any** GCP project the ambient ADC identity can reach — `allowed_refs` is then the
+  only guardrail. Setting `project_id` (#431) pins the connector to one project: any
+  ref naming a different project is rejected before the backend call. It is optional
+  (existing configs keep today's cross-project behavior for compatibility) but
+  strongly recommended; an unset `project_id` logs a startup warning.
 - A federated read is bounded by up to **three** controls: the backend identity's IAM
   policy (the load-bearing one — scope the connector's credentials to exactly the
   intended secrets); optionally the per-connector **`allowed_refs`** prefix allowlist

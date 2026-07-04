@@ -493,7 +493,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 			case "aws-secrets-manager":
 				connectors = append(connectors, connect.NewAWSSecretsManagerConnector(cn.Name, cn.Region, cn.AllowedRefs))
 			case "gcp-secret-manager":
-				connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.AllowedRefs))
+				if cn.ProjectID == "" {
+					log.Printf("Keyorix Connect: gcp-secret-manager connector %q has no project_id configured — reads can reach ANY GCP project the ambient identity can access, relying solely on allowed_refs to scope reach; set project_id to pin the connector to one project (#431)", cn.Name)
+				}
+				connectors = append(connectors, connect.NewGCPSecretManagerConnector(cn.Name, cn.ProjectID, cn.AllowedRefs))
 			case "azure-key-vault":
 				connectors = append(connectors, connect.NewAzureKeyVaultConnector(cn.Name, cn.Address, cn.AllowedRefs))
 			case "vault":
