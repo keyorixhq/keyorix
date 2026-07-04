@@ -86,3 +86,48 @@ func TestRunScheduledRecertification_AutoOpensOverdueNotRecent(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, hasOpenCampaign(camps3), "recently-reviewed project 3 is left alone")
 }
+
+// #237: a campaign that was force-closed with pending items (ForcedIncomplete) must
+// not let a recent ClosedAt hide how stale the review actually is — the cadence
+// anchors to when the campaign was OPENED, not when it was hastily closed. A
+// genuinely completed close (ForcedIncomplete=false) with the same old open time but
+// a recent close is, by contrast, a real completed review and must NOT be due.
+func TestRunScheduledRecertification_ForcedIncompleteAnchorsToOpenTime(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	migrateCampaignTables(t, h)
+	require.NoError(t, h.DB.AutoMigrate(&models.Notification{}))
+
+	ctx := context.Background()
+	now := time.Now()
+	openedLongAgo := now.AddDate(0, 0, -200) // opened well outside a 90-day cadence
+	closedRecently := now.AddDate(0, 0, -5)  // but closed just now
+
+	// Project 2: opened long ago, force-closed recently while items were still
+	// pending — an abandoned/rushed cycle. Despite the recent ClosedAt, it must
+	// still be treated as overdue.
+	require.NoError(t, h.DB.Create(&models.AccessReviewCampaign{
+		ProjectID: 2, Name: "abandoned", State: core.CampaignStateClosed,
+		CreatedAt: openedLongAgo, ClosedAt: &closedRecently, ForcedIncomplete: true,
+	}).Error)
+
+	// Project 3: same open/close timestamps, but every item was actually decided
+	// (ForcedIncomplete=false) — a genuine, if belated, completed review. The
+	// recent ClosedAt legitimately resets the cadence clock.
+	require.NoError(t, h.DB.Create(&models.AccessReviewCampaign{
+		ProjectID: 3, Name: "completed", State: core.CampaignStateClosed,
+		CreatedAt: openedLongAgo, ClosedAt: &closedRecently, ForcedIncomplete: false,
+	}).Error)
+
+	res, err := h.CoreService.RunScheduledRecertification(ctx, 90, true)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, res.Opened, 1)
+
+	camps2, err := h.CoreService.ListAccessReviewCampaigns(ctx, 2)
+	require.NoError(t, err)
+	assert.True(t, hasOpenCampaign(camps2), "an abandoned force-close doesn't hide behind a recent ClosedAt")
+
+	camps3, err := h.CoreService.ListAccessReviewCampaigns(ctx, 3)
+	require.NoError(t, err)
+	assert.False(t, hasOpenCampaign(camps3), "a genuinely completed close resets the cadence clock at ClosedAt")
+}

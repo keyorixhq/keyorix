@@ -324,6 +324,14 @@ func (c *KeyorixCore) CloseAccessReviewCampaign(ctx context.Context, actorID, pr
 	campaign.State = CampaignStateClosed
 	campaign.ClosedBy = actorID
 	campaign.ClosedAt = &now
+	// #237: a forced close with items still pending freezes the campaign as
+	// evidence, but it is NOT a genuine, fully-decided recertification cycle —
+	// some access was never reviewed. Without this signal, ClosedAt alone makes
+	// this close indistinguishable from an on-time, fully-completed one, and
+	// RunScheduledRecertification's cadence check (recertification.go) would
+	// silently treat it as satisfying the FULL cadence window, resetting the
+	// clock as if every grant had just been recertified.
+	campaign.ForcedIncomplete = force && progress.Pending > 0
 	// The "already closed" check above is a plain read, so two concurrent close calls
 	// (or a close racing another close) can both observe "open" before either write
 	// lands. UpdateAccessReviewCampaign's WHERE-state='open' conditional UPDATE is the

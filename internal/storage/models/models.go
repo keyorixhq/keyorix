@@ -221,6 +221,14 @@ type AccessReviewCampaign struct {
 	// DegradedReasons is JSON-serialized (gorm serializer) so it round-trips as a
 	// native []string, mirroring AccessReviewReport.DegradedReasons.
 	DegradedReasons []string `gorm:"serializer:json" json:"degraded_reasons,omitempty"`
+	// ForcedIncomplete marks a close performed with `force` while items were still
+	// pending (#237): the campaign was frozen as evidence, but it is NOT a genuine
+	// completed recertification — some access was never reviewed. Mirrors the
+	// Degraded pattern above: without a durable signal, this close is otherwise
+	// indistinguishable from a fully-decided one, so the recertification cadence
+	// (recertification.go) would silently treat a rushed, incomplete force-close as
+	// satisfying a full review cycle and push the next-due date out just as far.
+	ForcedIncomplete bool `gorm:"default:false" json:"forced_incomplete"`
 }
 
 // AccessReviewItem is one access grant captured in a campaign at open time, plus
