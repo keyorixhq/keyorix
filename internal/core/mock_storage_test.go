@@ -1053,11 +1053,6 @@ func (m *MockStorage) RoleSetHasPermission(ctx context.Context, roleIDs []uint, 
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockStorage) CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error) {
-	args := m.Called(ctx, userID, resource, action)
-	return args.Bool(0), args.Error(1)
-}
-
 func (m *MockStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {

@@ -2,7 +2,7 @@
 //
 // Covers: CreateRole, GetRole, GetRoleByName, UpdateRole, DeleteRole, ListRoles,
 //
-//	AssignRole, RemoveRole, GetUserRoles, CheckPermission, GetUserPermissions,
+//	AssignRole, RemoveRole, GetUserRoles, GetUserPermissions,
 //	CreatePermission, AssignPermissionToRole,
 //	Project/Environment stubs.
 //
@@ -199,25 +199,6 @@ func (rs *RemoteStorage) GetUserRoles(ctx context.Context, userID uint) ([]*mode
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 	return result, nil
-}
-
-// CheckPermission checks if a user has a specific resource/action permission via remote API.
-func (rs *RemoteStorage) CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error) {
-	path := fmt.Sprintf("/api/v1/rbac/check-permission?user_id=%d&resource=%s&action=%s", userID, url.QueryEscape(resource), url.QueryEscape(action))
-	resp, err := rs.client.Get(ctx, path)
-	if err != nil {
-		return false, fmt.Errorf("failed to check permission: %w", err)
-	}
-	if !resp.Success {
-		return false, fmt.Errorf("check permission failed: %s", resp.Error.Error())
-	}
-	var result struct {
-		HasPermission bool `json:"has_permission"`
-	}
-	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return false, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result.HasPermission, nil
 }
 
 // GetUserPermissions retrieves all permissions for a user via remote API.

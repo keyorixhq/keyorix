@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/stretchr/testify/assert"
@@ -149,4 +150,78 @@ func TestHasPermissionByEmail_NoGrantsAtAll(t *testing.T) {
 	ok, err := h.CoreService.HasPermissionByEmail(ctx, "liam@test.com", "secrets", "read")
 	require.NoError(t, err)
 	assert.False(t, ok)
+}
+
+// #376: a project-scoped grant must correctly authorize AT its own scope — the
+// old storage-layer CheckPermission was reachable from HasPermissionByEmail
+// pre-#630 and was scope-blind by construction (it never looked at
+// project_id/environment_id at all), so it could not distinguish "granted at
+// project X" from "granted globally". HasPermissionByEmail now discovers the
+// user's real scopes (GetUserRoleScopes) and re-validates each one through
+// Authorize, so a grant scoped to a single project is still found.
+func TestHasPermissionByEmail_ProjectScopedGrant_HasAccessAtGrantedScope(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	ctx := context.Background()
+	projStaging := uint(3) // "staging", seeded by the helper
+
+	h.CreateTestUser(t, "mona", 26)
+	h.AssignUserRole(t, 26, 3, &projStaging) // editor, scoped to project 3 only → secrets.write
+
+	ok, err := h.CoreService.HasPermissionByEmail(ctx, "mona@test.com", "secrets", "write")
+	require.NoError(t, err)
+	assert.True(t, ok, "a grant scoped to project 3 must authorize when checked via HasPermissionByEmail")
+}
+
+// #376: the flip side of the above — a grant scoped to ONE project must not
+// leak into a DIFFERENT, unrelated project. This is the exact false-positive
+// shape "ignoring scope" would produce: the pre-#630 raw query matched on
+// user_id/resource/action alone, so ANY project-scoped grant would have looked
+// identical to a global one to a caller that (incorrectly) treated "has the
+// permission somewhere" as "has the permission at project Y". Authorize — the
+// live path HasPermissionByEmail delegates to per discovered scope — must
+// still deny an explicit, different project scope for the same user and grant.
+func TestHasPermissionByEmail_ProjectScopedGrant_DifferentProjectNotAuthorized(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	ctx := context.Background()
+	projStaging := uint(3)    // "staging", seeded by the helper
+	projProduction := uint(2) // "production", seeded by the helper
+
+	user := h.CreateTestUser(t, "nate", 27)
+	h.AssignUserRole(t, 27, 3, &projStaging) // editor, scoped to project 3 only → secrets.write
+
+	// HasPermissionByEmail (the CLI diagnostic) correctly reports access — the
+	// user's own scope (project 3) does grant it.
+	ok, err := h.CoreService.HasPermissionByEmail(ctx, "nate@test.com", "secrets", "write")
+	require.NoError(t, err)
+	assert.True(t, ok, "the user's own project-3 grant must authorize")
+
+	// But a caller asking Authorize about a DIFFERENT project the user holds no
+	// grant at must be denied, not falsely authorized by an unscoped match.
+	denied, err := h.CoreService.Authorize(ctx, user.ID, "secrets.write", core.Scope{ProjectID: projProduction})
+	require.NoError(t, err)
+	assert.False(t, denied, "a grant scoped to project 3 must not authorize project 2")
+}
+
+// #376: a PROJECT-SCOPED admin (not just a global super_admin, already pinned
+// by TestHasPermissionByEmail_AdminBypass) must also bypass the per-permission
+// check within its own scope when reached through HasPermissionByEmail — the
+// pre-#630 raw storage query had no admin-bypass concept at all, so an admin
+// with no explicit role_permissions row for the checked permission would have
+// incorrectly read as "does NOT have permission".
+func TestHasPermissionByEmail_ProjectScopedAdminBypass(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	ctx := context.Background()
+	projProduction := uint(2) // "production", seeded by the helper
+
+	h.CreateTestUser(t, "olga", 28)
+	h.AssignUserRole(t, 28, 2, &projProduction) // admin, scoped to project 2 only
+
+	// "connect.read" is not in the seeded "admin" role's role_permissions set —
+	// only the admin-role bypass in Authorize() can grant it.
+	ok, err := h.CoreService.HasPermissionByEmail(ctx, "olga@test.com", "connect", "read")
+	require.NoError(t, err)
+	assert.True(t, ok, "a project-scoped admin bypasses the per-permission check within its own scope")
 }
