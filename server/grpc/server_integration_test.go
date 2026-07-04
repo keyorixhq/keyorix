@@ -2,7 +2,9 @@ package grpc_test
 
 import (
 	"context"
+	"errors"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,7 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -194,4 +197,65 @@ func TestGRPCServer_HonorsConfiguredMaxRecvMsgSize(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Unauthenticated, status.Code(err),
 		"a small request clears the size cap and is then rejected by auth")
+}
+
+// TestGRPCServer_KeepaliveReclaimsAbandonedConnection proves grpc.KeepaliveParams is
+// actually wired from server.grpc.keepalive (#222/#435), not just constructed and
+// discarded: an abandoned connection — one that never sends another frame and never
+// ACKs a keepalive ping, exactly the "credential holder opens a connection and never
+// closes it" scenario the finding describes — must be detected and torn down within
+// Time+Timeout, rather than held open indefinitely (the pre-fix behavior, a slow-drip
+// goroutine/fd exhaustion surface).
+//
+// A real grpc-go client can't be used to simulate this: its HTTP/2 transport always
+// ACKs pings automatically regardless of the client's own keepalive settings, so it
+// can never look "dead" to the server. Instead this dials a raw net.Conn, completes
+// just enough of the HTTP/2 handshake (client preface + an empty SETTINGS frame) to
+// pass the server's handshake, and then goes silent — never reading, never writing,
+// never ACKing. That is a faithful stand-in for an abandoned connection, and the
+// server closing it (observed as the raw conn's Read unblocking with EOF/reset) is a
+// genuine behavioral proof of the configured Time/Timeout keepalive, not just a
+// construction check.
+func TestGRPCServer_KeepaliveReclaimsAbandonedConnection(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+
+	cfg := &config.Config{}
+	// 1s is the floor grpc-go enforces on the server's keepalive Time (values below it
+	// are silently raised with a warning), so this is the fastest this is practically
+	// observable; Timeout is independent and can be shorter.
+	cfg.Server.GRPC.Keepalive.Time = "1s"
+	cfg.Server.GRPC.Keepalive.Timeout = "500ms"
+
+	srv, err := keyorixgrpc.NewServer(cfg, h.CoreService)
+	require.NoError(t, err)
+	lis := bufconn.Listen(1024 * 1024)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	raw, err := lis.Dial()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = raw.Close() })
+
+	// Minimal HTTP/2 handshake: client preface + an empty SETTINGS frame (required
+	// before the server will treat this as a valid connection), then nothing else —
+	// no reads, no writes, no ping ACKs, ever.
+	_, err = raw.Write([]byte(http2.ClientPreface))
+	require.NoError(t, err)
+	require.NoError(t, http2.NewFramer(raw, raw).WriteSettings())
+
+	// The server must notice the silence, ping, get no ACK within Timeout, and close
+	// the connection well before our own read deadline (Time + Timeout + generous
+	// slack). Drain and discard whatever the server sends (its own SETTINGS frame,
+	// SETTINGS ACK, keepalive PINGs, GOAWAY, ...) without ever writing another byte
+	// ourselves — an abandoned connection reads nothing back either — until the read
+	// finally errors out because the server tore the connection down.
+	require.NoError(t, raw.SetReadDeadline(time.Now().Add(5*time.Second)))
+	buf := make([]byte, 256)
+	var readErr error
+	for readErr == nil {
+		_, readErr = raw.Read(buf)
+	}
+	assert.False(t, errors.Is(readErr, os.ErrDeadlineExceeded),
+		"the read must unblock because the SERVER closed the connection, not because our own read deadline fired first (got: %v)", readErr)
 }
