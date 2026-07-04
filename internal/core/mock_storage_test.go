@@ -167,9 +167,9 @@ func (m *MockStorage) GetProjectInvitation(ctx context.Context, id uint) (*model
 	return args.Get(0).(*models.ProjectInvitation), args.Error(1)
 }
 
-func (m *MockStorage) UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) error {
+func (m *MockStorage) UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (bool, error) {
 	args := m.Called(ctx, inv)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) ListProjectInvitations(ctx context.Context, projectID uint) ([]*models.ProjectInvitation, error) {
@@ -196,9 +196,9 @@ func (m *MockStorage) GetAccessRequest(ctx context.Context, id uint) (*models.Ac
 	return args.Get(0).(*models.AccessRequest), args.Error(1)
 }
 
-func (m *MockStorage) UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) error {
+func (m *MockStorage) UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) (bool, error) {
 	args := m.Called(ctx, req)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error) {

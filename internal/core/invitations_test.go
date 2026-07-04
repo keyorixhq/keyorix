@@ -76,7 +76,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.MatchedBy(func(r *models.AccessRequest) bool {
 		return r.State == AccessRequestApproved && r.GrantedRole == "project_developer" && r.ResolvedBy == 9
-	})).Return(nil)
+	})).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 		return e.EventType == "access_request.approved"
 	})).Return(nil)
@@ -108,7 +108,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).Return(nil)
-	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(nil)
+	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 	store.On("ListAccessRequestApprovals", ctx, uint(3)).Return([]*models.AccessRequestApproval{}, nil)
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
@@ -190,7 +190,7 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 	// Approver 9 holds the admin role (id 2) at the project.
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{2}, nil)
 	store.On("AssignRole", ctx, uint(2), uint(2), storage.Scope{ProjectID: 1}).Return(nil)
-	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(nil)
+	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 	store.On("ListAccessRequestApprovals", ctx, uint(3)).Return([]*models.AccessRequestApproval{}, nil)
 	store.On("CreateAccessRequestApproval", ctx, mock.Anything).Return(nil)
@@ -214,7 +214,7 @@ func TestApproveAccessRequest_RejectsExpired(t *testing.T) {
 	store.On("GetProject", ctx, uint(1)).Return(&models.Project{ID: 1}, nil)
 	store.On("UpdateAccessRequest", ctx, mock.MatchedBy(func(r *models.AccessRequest) bool {
 		return r.State == AccessRequestExpired
-	})).Return(nil)
+	})).Return(true, nil)
 
 	_, err := c.ApproveAccessRequest(ctx, 1, 3, 9, "")
 	require.Error(t, err)
@@ -344,7 +344,7 @@ func TestListProjectInvitations_LazyExpire(t *testing.T) {
 	// The expired pending invite is persisted as expired.
 	store.On("UpdateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		return inv.State == InvitationExpired
-	})).Return(nil)
+	})).Return(true, nil)
 
 	out, err := c.ListProjectInvitations(ctx, 1)
 	require.NoError(t, err)

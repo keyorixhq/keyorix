@@ -12,6 +12,19 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// invitationStatePending / accessRequestStatePending mirror the "pending" state
+// literal from internal/core (invitations.go's InvitationPending /
+// AccessRequestPending). Duplicated here rather than imported — storage must not
+// depend on core — matching the existing accessReviewCampaignOpen /
+// accessReviewItemPending convention in local_access_review_campaigns.go. Every
+// mutation of a ProjectInvitation or AccessRequest transitions FROM pending (see
+// invitations.go), so gating the write on the persisted row still being pending is
+// sufficient to guard every transition, not just a specific one.
+const (
+	invitationStatePending    = "pending"
+	accessRequestStatePending = "pending"
+)
+
 // --- Project invitations ---
 
 func (ls *LocalStorage) CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error) {
@@ -29,11 +42,25 @@ func (ls *LocalStorage) GetProjectInvitation(ctx context.Context, id uint) (*mod
 	return &inv, nil
 }
 
-func (ls *LocalStorage) UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) error {
-	if err := ls.db.WithContext(ctx).Save(inv).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+// UpdateProjectInvitation persists an invitation state transition with a
+// conditional UPDATE (`WHERE id = ? AND state = 'pending'`), not the prior
+// unconditional Save (#412). A bare Save let an admin's RevokeInvitation and a
+// concurrent holder's completeInvitationAccept race: both read the same pending
+// row, both mutated it in memory, and whichever Save landed second silently
+// clobbered the other's transition — an admin's revoke could be undone by an
+// in-flight accept, or vice versa, with no error on either side. Gating the write
+// on the row's CURRENT persisted state still being pending closes that: whichever
+// write lands first wins (RowsAffected==1); the loser's UPDATE matches zero rows
+// and is told so via the bool, instead of silently overwriting the winner.
+func (ls *LocalStorage) UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.ProjectInvitation{}).
+		Where("id = ? AND state = ?", inv.ID, invitationStatePending).
+		Select("*").
+		Updates(inv)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
-	return nil
+	return res.RowsAffected == 1, nil
 }
 
 func (ls *LocalStorage) ListProjectInvitations(ctx context.Context, projectID uint) ([]*models.ProjectInvitation, error) {
@@ -65,11 +92,28 @@ func (ls *LocalStorage) GetAccessRequest(ctx context.Context, id uint) (*models.
 	return &req, nil
 }
 
-func (ls *LocalStorage) UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) error {
-	if err := ls.db.WithContext(ctx).Save(req).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+// UpdateAccessRequest persists an access-request state transition with a
+// conditional UPDATE (`WHERE id = ? AND state = 'pending'`), not the prior
+// unconditional Save (#277). ApproveAccessRequestWithExpiry grants the role BEFORE
+// this write lands, so a bare Save racing WithdrawAccessRequest's (or
+// RejectAccessRequest's) own read-mutate-Save on the same row let either
+// transition silently clobber the other: a withdrawal could land after an
+// approval's grant, leaving state=withdrawn (or vice versa, state=approved) with
+// no indication anything raced — and, in the approval case, a live role grant
+// behind a request that no longer reads as approved. Gating the write on the row's
+// CURRENT persisted state still being pending closes that: whichever write lands
+// first wins (RowsAffected==1); the loser's UPDATE matches zero rows and is told
+// so via the bool, so it can react (e.g. revoke the grant it just made) instead of
+// silently overwriting the winner.
+func (ls *LocalStorage) UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.AccessRequest{}).
+		Where("id = ? AND state = ?", req.ID, accessRequestStatePending).
+		Select("*").
+		Updates(req)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
-	return nil
+	return res.RowsAffected == 1, nil
 }
 
 func (ls *LocalStorage) ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error) {

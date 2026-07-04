@@ -284,6 +284,47 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 	return err
 }
 
+// revokeInvitationGrants best-effort undoes applyInvitationGrants for userID. Used
+// exclusively by completeInvitationAccept when it discovers, only after granting,
+// that the invitation was concurrently revoked (#412): the conditional
+// UpdateProjectInvitation write that would flip the row to accepted lost the race,
+// so whatever was just granted must not be left standing behind an invitation that
+// no longer reads as accepted. actorID 0 attributes the reversal to the system
+// (mirroring applyInvitationGrants' own actorID-0-eligible AssignUserRole/
+// inviteMemberWithMode calls), and every removal is independently best-effort — a
+// failure on one project assignment must not stop the others from being reverted.
+// Errors are audited, not returned or retried: the caller is already on a fail-closed
+// path and a partial rollback is strictly better than leaving every grant live.
+func (c *KeyorixCore) revokeInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) {
+	if inv.SystemRole != "" || inv.AssignmentsJSON != "" {
+		if inv.SystemRole != "" {
+			if role, err := c.storage.GetRoleByName(ctx, inv.SystemRole); err == nil {
+				if err := c.RemoveUserRole(ctx, 0, userID, role.ID, Scope{ProjectID: 0}); err != nil {
+					c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, 0,
+						fmt.Sprintf("failed to revert system role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.SystemRole, userID, inv.ID, err))
+				}
+			}
+		}
+		if inv.AssignmentsJSON != "" {
+			var assignments []ProjectAssignment
+			if err := json.Unmarshal([]byte(inv.AssignmentsJSON), &assignments); err == nil {
+				for _, a := range assignments {
+					if err := c.RemoveProjectMember(ctx, 0, a.ProjectID, userID); err != nil {
+						c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, a.ProjectID,
+							fmt.Sprintf("failed to revert project assignment %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", a.Role, userID, inv.ID, err))
+					}
+				}
+			}
+		}
+		return
+	}
+	// Project-scoped invite: revert the single project membership/role.
+	if err := c.RemoveProjectMember(ctx, 0, inv.ProjectID, userID); err != nil {
+		c.auditProjectScoped(ctx, "invitation.accept_race_revoke_failed", userID, inv.ProjectID,
+			fmt.Sprintf("failed to revert project role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.Role, userID, inv.ID, err))
+	}
+}
+
 // ResendInvitationLink reissues the accept link for a still-pending invitation
 // (superseding the prior token) and re-delivers it. Throttled per ADR-028.
 func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, projectID, invitationID, actorID uint) (*ProvisionSetupResult, error) {
@@ -296,10 +337,12 @@ func (c *KeyorixCore) ResendInvitationLink(ctx context.Context, projectID, invit
 	if inv.ProjectID != projectID {
 		return nil, fmt.Errorf("invitation not found")
 	}
-	// Lazy-expire an overdue invite so a resend can't revive a dead one.
+	// Lazy-expire an overdue invite so a resend can't revive a dead one. Best-effort:
+	// if the conditional write loses to a concurrent transition (accept/revoke), that
+	// transition is authoritative and the state check below still refuses the resend.
 	if inv.State == InvitationPending && inv.ExpiresAt != nil && c.now().After(*inv.ExpiresAt) {
 		inv.State = InvitationExpired
-		_ = c.storage.UpdateProjectInvitation(ctx, inv)
+		_, _ = c.storage.UpdateProjectInvitation(ctx, inv)
 	}
 	if inv.State != InvitationPending {
 		return nil, fmt.Errorf("only a pending invitation can be resent (state is %s)", inv.State)
@@ -323,7 +366,11 @@ func (c *KeyorixCore) ListProjectInvitations(ctx context.Context, projectID uint
 	for _, inv := range rows {
 		if inv.State == InvitationPending && inv.ExpiresAt != nil && now.After(*inv.ExpiresAt) {
 			inv.State = InvitationExpired
-			_ = c.storage.UpdateProjectInvitation(ctx, inv)
+			// Best-effort: if a concurrent accept/revoke already resolved this
+			// invitation, that transition is authoritative — the conditional write
+			// no-ops here rather than clobbering it, but the row we return this
+			// call is still fine to display with the intended lazy-expiry state.
+			_, _ = c.storage.UpdateProjectInvitation(ctx, inv)
 		}
 	}
 	return rows, nil
@@ -344,8 +391,16 @@ func (c *KeyorixCore) RevokeInvitation(ctx context.Context, projectID, invitatio
 	now := c.now()
 	inv.State = InvitationRevoked
 	inv.RevokedAt = &now
-	if err := c.storage.UpdateProjectInvitation(ctx, inv); err != nil {
+	ok, err := c.storage.UpdateProjectInvitation(ctx, inv)
+	if err != nil {
 		return fmt.Errorf("failed to revoke invitation: %w", err)
+	}
+	if !ok {
+		// The invitation stopped being pending between the read above and this
+		// write — most likely a concurrent accept (completeInvitationAccept) won
+		// the race. Refuse rather than silently reporting success while the
+		// invitation (and whatever it granted) is left untouched (#412).
+		return fmt.Errorf("invitation is no longer pending (it was concurrently accepted or resolved)")
 	}
 	c.auditProjectScoped(ctx, "invitation.revoked", actorID, inv.ProjectID,
 		fmt.Sprintf("revoked invitation %d (%s)", inv.ID, inv.Email))
@@ -420,7 +475,9 @@ func (c *KeyorixCore) ListAccessRequests(ctx context.Context, projectID uint) ([
 	for _, req := range rows {
 		if req.State == AccessRequestPending && req.ExpiresAt != nil && now.After(*req.ExpiresAt) {
 			req.State = AccessRequestExpired
-			_ = c.storage.UpdateAccessRequest(ctx, req)
+			// Best-effort lazy expiry: a concurrent approve/reject/withdraw that
+			// already resolved this request wins and the conditional write no-ops.
+			_, _ = c.storage.UpdateAccessRequest(ctx, req)
 		}
 		// Annotate the dual-control progress for a pending request.
 		if req.State == AccessRequestPending {
@@ -489,7 +546,10 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	// stale request that should have lapsed. Expire it lazily and refuse.
 	if req.ExpiresAt != nil && c.now().After(*req.ExpiresAt) {
 		req.State = AccessRequestExpired
-		_ = c.storage.UpdateAccessRequest(ctx, req)
+		// Best-effort: if a concurrent approve/reject/withdraw already resolved this
+		// request, the "has expired" refusal below still stands — no role was
+		// granted on this path, so there's nothing to unwind either way.
+		_, _ = c.storage.UpdateAccessRequest(ctx, req)
 		return nil, fmt.Errorf("access request has expired")
 	}
 	if grantTTL < 0 {
@@ -589,8 +649,25 @@ func (c *KeyorixCore) ApproveAccessRequestWithExpiry(ctx context.Context, projec
 	req.GrantedRole = role
 	req.ResolvedBy = approverID
 	req.ResolvedAt = &now
-	if err := c.storage.UpdateAccessRequest(ctx, req); err != nil {
+	ok, err := c.storage.UpdateAccessRequest(ctx, req)
+	if err != nil {
 		return nil, fmt.Errorf("failed to update access request: %w", err)
+	}
+	if !ok {
+		// The request stopped being pending between the read above and this write —
+		// most likely a concurrent WithdrawAccessRequest or RejectAccessRequest won
+		// the race after the role grant above already landed. The grant must not
+		// outlive a request that no longer reads as approved (#277): revoke it and
+		// fail closed rather than reporting success with a stale/contradictory
+		// request state.
+		if rerr := c.RemoveUserRole(ctx, approverID, req.UserID, roleModel.ID, scope); rerr != nil {
+			c.auditProjectScoped(ctx, "access_request.approval_race_revoke_failed", approverID, req.ProjectID,
+				fmt.Sprintf("access request %d was concurrently withdrawn/rejected after granting %s to user %d, and reverting the grant failed: %v — MANUAL CLEANUP REQUIRED", req.ID, role, req.UserID, rerr))
+		} else {
+			c.auditProjectScoped(ctx, "access_request.approval_race_reverted", approverID, req.ProjectID,
+				fmt.Sprintf("access request %d was concurrently withdrawn/rejected; reverted the %s grant just made to user %d", req.ID, role, req.UserID))
+		}
+		return nil, fmt.Errorf("access request was concurrently withdrawn or resolved; the role grant was reverted")
 	}
 	c.auditProjectScoped(ctx, "access_request.approved", approverID, req.ProjectID,
 		fmt.Sprintf("approved access request %d for user %d as %s (%d approval(s))", req.ID, req.UserID, grantDesc, received))
@@ -636,8 +713,16 @@ func (c *KeyorixCore) RejectAccessRequest(ctx context.Context, projectID, reques
 	req.Reason = reason
 	req.ResolvedBy = approverID
 	req.ResolvedAt = &now
-	if err := c.storage.UpdateAccessRequest(ctx, req); err != nil {
+	ok, err := c.storage.UpdateAccessRequest(ctx, req)
+	if err != nil {
 		return nil, fmt.Errorf("failed to update access request: %w", err)
+	}
+	if !ok {
+		// The request stopped being pending between the read above and this write —
+		// e.g. a concurrent approval already granted the role and moved it to
+		// approved. Refuse rather than silently reporting a rejection that never
+		// took effect (#277's TOCTOU pattern, applied here too).
+		return nil, fmt.Errorf("access request is no longer pending (it was concurrently approved or resolved)")
 	}
 	c.auditProjectScoped(ctx, "access_request.rejected", approverID, req.ProjectID,
 		fmt.Sprintf("rejected access request %d for user %d", req.ID, req.UserID))
@@ -660,8 +745,16 @@ func (c *KeyorixCore) WithdrawAccessRequest(ctx context.Context, requestID, user
 	now := c.now()
 	req.State = AccessRequestWithdrawn
 	req.ResolvedAt = &now
-	if err := c.storage.UpdateAccessRequest(ctx, req); err != nil {
+	ok, err := c.storage.UpdateAccessRequest(ctx, req)
+	if err != nil {
 		return fmt.Errorf("failed to update access request: %w", err)
+	}
+	if !ok {
+		// The request stopped being pending between the read above and this write —
+		// e.g. a concurrent approval already granted the role and moved it to
+		// approved. Refuse rather than silently reporting a withdrawal that never
+		// took effect while a role grant is live behind it (#277).
+		return fmt.Errorf("access request is no longer pending (it was concurrently approved or resolved)")
 	}
 	c.auditProjectScoped(ctx, "access_request.withdrawn", userID, req.ProjectID,
 		fmt.Sprintf("withdrew access request %d", req.ID))
