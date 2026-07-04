@@ -20,8 +20,13 @@ const NotificationExpiryReminder = "secret.expiry_reminder"
 // SendExpiryReminders finds every secret expiring within leadDays (or already expired)
 // and, for each project with such secrets, sends ONE standing digest notification to
 // each of that project's admins. De-duplicates like rotation reminders: an admin who
-// already has an unread expiry reminder for the project is not re-notified. leadDays <= 0
-// falls back to the default lead window. Returns the number of notifications created.
+// already has an unread expiry reminder for the project is not re-notified. It also
+// compares the newly computed severity (already expired is more severe than merely
+// expiring soon) against what an existing unread reminder was recorded with: an
+// escalation updates the standing reminder in place rather than being silently
+// suppressed, so an unread reminder can't freeze at a stale, now-superseded severity
+// (#250). leadDays <= 0 falls back to the default lead window. Returns the number of
+// notifications created or escalated.
 func (c *KeyorixCore) SendExpiryReminders(ctx context.Context, leadDays int) (int, error) {
 	if leadDays <= 0 {
 		leadDays = defaultExpiryLeadDays
@@ -62,20 +67,36 @@ func (c *KeyorixCore) SendExpiryReminders(ctx context.Context, leadDays int) (in
 			continue
 		}
 		pid := projectID
+		title := "Secrets expiring"
 		msg := expiryReminderMessage(c.projectLabel(ctx, projectID), ct.expired, ct.soon)
+		severity := expirySeverity(ct.expired)
 		for _, mbr := range members {
 			if !isApproverRole(mbr.RoleName) {
 				continue
 			}
-			if c.hasUnreadExpiryReminder(ctx, mbr.UserID, projectID) {
-				continue // a standing reminder already exists — don't pile up
+			if existing := c.unreadExpiryReminder(ctx, mbr.UserID, projectID); existing != nil {
+				if severity <= existing.Severity {
+					continue // no worse than what's already standing — don't pile up
+				}
+				if c.upgradeReminder(ctx, existing, title, msg, severity) {
+					sent++ // escalated in place (#250): expiring soon → now expired
+				}
+				continue
 			}
-			c.notify(ctx, mbr.UserID, NotificationExpiryReminder,
-				"Secrets expiring", msg, &pid, "/secrets/expiry")
+			c.notifyWithSeverity(ctx, mbr.UserID, NotificationExpiryReminder, title, msg, &pid, "/secrets/expiry", severity)
 			sent++
 		}
 	}
 	return sent, nil
+}
+
+// expirySeverity ranks a project's expiry state: any already-expired secret is
+// strictly more severe than merely having secrets expiring soon (#250).
+func expirySeverity(expired int) models.NotificationSeverity {
+	if expired > 0 {
+		return models.NotificationSeverityCritical
+	}
+	return models.NotificationSeverityWarning
 }
 
 const (
@@ -103,19 +124,19 @@ func (c *KeyorixCore) listSecretsExpiringBefore(ctx context.Context, cutoff time
 	return all, nil
 }
 
-// hasUnreadExpiryReminder reports whether the user already has an unread expiry-reminder
-// notification for the given project.
-func (c *KeyorixCore) hasUnreadExpiryReminder(ctx context.Context, userID, projectID uint) bool {
+// unreadExpiryReminder returns the user's existing unread expiry-reminder
+// notification for the given project, or nil if none exists.
+func (c *KeyorixCore) unreadExpiryReminder(ctx context.Context, userID, projectID uint) *models.Notification {
 	notes, err := c.storage.ListNotifications(ctx, userID, true, 100)
 	if err != nil {
-		return false // on a read error, prefer notifying over silently skipping
+		return nil // on a read error, prefer notifying over silently skipping
 	}
 	for _, n := range notes {
 		if n.Type == NotificationExpiryReminder && n.ProjectID != nil && *n.ProjectID == projectID {
-			return true
+			return n
 		}
 	}
-	return false
+	return nil
 }
 
 func expiryReminderMessage(project string, expired, soon int) string {

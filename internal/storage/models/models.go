@@ -800,6 +800,30 @@ type SecretTag struct {
 	TagID        uint `gorm:"primaryKey"`
 }
 
+// NotificationSeverity is a coarse escalation ranking recorded on a standing
+// reminder notification (#250). Reminder schedulers (expiry/rotation/license)
+// compare a newly computed severity against the value recorded here on an
+// existing unread notification of the same (user, type, project): the
+// notification is escalated in place only when the new state is strictly
+// more severe than what was originally recorded, so an unread standing
+// reminder can't freeze forever at a stale, since-superseded severity while
+// still suppressing re-notification when nothing has gotten worse.
+type NotificationSeverity int
+
+const (
+	// NotificationSeverityNone is the default for notification types that don't
+	// participate in escalation-aware dedup.
+	NotificationSeverityNone NotificationSeverity = 0
+	// NotificationSeverityWarning marks a "heads up" state, e.g. a secret
+	// expiring soon, a rotation approaching its deadline, or a license
+	// expiring soon.
+	NotificationSeverityWarning NotificationSeverity = 1
+	// NotificationSeverityCritical marks a materially worse state than
+	// NotificationSeverityWarning, e.g. a secret that has actually expired, a
+	// rotation that is now overdue, or a license that has actually expired.
+	NotificationSeverityCritical NotificationSeverity = 2
+)
+
 // Notification is an in-app notification addressed to a single user (ADR-024).
 // Surfaced via the header bell; delivery is in-app only (email/Slack is M3+).
 type Notification struct {
@@ -811,7 +835,11 @@ type Notification struct {
 	Title        string
 	Message      string
 	Link         string // optional in-app target, e.g. /projects/{id}
-	IsRead       bool   `gorm:"index"`
+	// Severity records the escalation ranking at which this notification was
+	// last created/updated (#250). Zero (NotificationSeverityNone) for
+	// notification types that don't use escalation-aware dedup.
+	Severity NotificationSeverity `gorm:"default:0"`
+	IsRead   bool                 `gorm:"index"`
 	CreatedAt    time.Time
 }
 

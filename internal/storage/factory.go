@@ -691,7 +691,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		}
 	} else {
 		m := db.Migrator()
-		for _, col := range []string{"ProjectID", "Title", "Link"} {
+		for _, col := range []string{"ProjectID", "Title", "Link", "Severity"} {
 			if !m.HasColumn(&models.Notification{}, col) {
 				if err := m.AddColumn(&models.Notification{}, col); err != nil {
 					return fmt.Errorf("failed to add notifications.%s column: %w", col, err)

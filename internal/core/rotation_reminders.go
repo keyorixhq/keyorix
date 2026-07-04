@@ -6,6 +6,8 @@ package core
 import (
 	"context"
 	"fmt"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // NotificationRotationDue marks an in-app rotation-reminder notification.
@@ -16,7 +18,12 @@ const NotificationRotationDue = "rotation.reminder"
 // notification to each of that project's admins. It de-duplicates: an admin who
 // already has an unread rotation reminder for the project is not re-notified, so
 // reminders don't pile up — once they read it (and the secret is still overdue) the
-// next run nudges them again. Returns the number of notifications created.
+// next run nudges them again. It also compares the newly computed severity
+// (overdue is more severe than merely approaching) against what an existing
+// unread reminder was recorded with: an escalation (e.g. approaching → overdue)
+// updates the standing reminder in place rather than being silently suppressed,
+// so an unread reminder can't freeze at a stale, now-superseded severity (#250).
+// Returns the number of notifications created or escalated.
 func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) {
 	evals, err := c.EvaluateRotationPolicies(ctx, nil, nil)
 	if err != nil {
@@ -56,34 +63,53 @@ func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) {
 			continue
 		}
 		pid := projectID
+		title := "Secrets due for rotation"
 		msg := rotationReminderMessage(c.projectLabel(ctx, projectID), ct.overdue, ct.approaching)
+		severity := rotationSeverity(ct.overdue)
 		for _, mbr := range members {
 			if !isApproverRole(mbr.RoleName) {
 				continue
 			}
-			if c.hasUnreadRotationReminder(ctx, mbr.UserID, projectID) {
-				continue // a standing reminder already exists — don't pile up
+			if existing := c.unreadRotationReminder(ctx, mbr.UserID, projectID); existing != nil {
+				if severity <= existing.Severity {
+					continue // no worse than what's already standing — don't pile up
+				}
+				if c.upgradeReminder(ctx, existing, title, msg, severity) {
+					sent++ // escalated in place (#250): approaching → now overdue
+				}
+				continue
 			}
-			c.notify(ctx, mbr.UserID, NotificationRotationDue,
-				"Secrets due for rotation", msg, &pid, "/rotation-policies")
+			c.notifyWithSeverity(ctx, mbr.UserID, NotificationRotationDue, title, msg, &pid, "/rotation-policies", severity)
 			sent++
 		}
 	}
 	return sent, nil
 }
 
-// hasUnreadRotationReminder reports whether the user already has an unread
-// rotation-reminder notification for the given project. This queries at the DB
-// level for exactly this (user, type, project) triple — it does NOT page through
-// "the newest N notifications of any type" — so a user with a large volume of
-// other unrelated unread notifications can't push a genuine standing reminder out
-// of an arbitrary top-N window and defeat the dedup guard (#399).
-func (c *KeyorixCore) hasUnreadRotationReminder(ctx context.Context, userID, projectID uint) bool {
-	has, err := c.storage.HasUnreadNotification(ctx, userID, NotificationRotationDue, projectID)
-	if err != nil {
-		return false // on a read error, prefer notifying over silently skipping
+// rotationSeverity ranks a project's rotation state: any overdue secret is
+// strictly more severe than merely having secrets approaching their deadline
+// (#250).
+func rotationSeverity(overdue int) models.NotificationSeverity {
+	if overdue > 0 {
+		return models.NotificationSeverityCritical
 	}
-	return has
+	return models.NotificationSeverityWarning
+}
+
+// unreadRotationReminder returns the user's existing unread rotation-reminder
+// notification for the given project, or nil if none exists (including on a
+// storage read error — on error, prefer notifying over silently skipping).
+// This queries at the DB level for exactly this (user, type, project) triple —
+// it does NOT page through "the newest N notifications of any type" — so a
+// user with a large volume of other unrelated unread notifications can't push
+// a genuine standing reminder out of an arbitrary top-N window and defeat the
+// dedup guard (#399).
+func (c *KeyorixCore) unreadRotationReminder(ctx context.Context, userID, projectID uint) *models.Notification {
+	n, err := c.storage.GetUnreadNotification(ctx, userID, NotificationRotationDue, projectID)
+	if err != nil {
+		return nil
+	}
+	return n
 }
 
 func rotationReminderMessage(project string, overdue, approaching int) string {

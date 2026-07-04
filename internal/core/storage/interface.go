@@ -279,6 +279,18 @@ type Storage interface {
 	// unbounded/"top N of everything" fetch), so it finds a match regardless of
 	// how many other unread notifications of other types/projects exist (#399).
 	HasUnreadNotification(ctx context.Context, userID uint, nType string, projectID uint) (bool, error)
+	// GetUnreadNotification returns the user's unread notification of the given
+	// type scoped to the given project, or nil if none exists. Unlike
+	// HasUnreadNotification, this returns the full row so a dedup check can also
+	// compare (and, on escalation, update) its recorded Severity instead of only
+	// checking existence (#250).
+	GetUnreadNotification(ctx context.Context, userID uint, nType string, projectID uint) (*models.Notification, error)
+	// UpdateNotification updates an existing notification's Title/Message/Severity
+	// in place, scoped to its owner (id + userID must both match or nothing is
+	// changed). Used to escalate a standing reminder when a recheck finds a more
+	// severe state than what was originally recorded (#250), instead of creating
+	// a second unread notification and piling up.
+	UpdateNotification(ctx context.Context, n *models.Notification) error
 	// MarkNotificationRead marks one notification read, scoped to its owner.
 	MarkNotificationRead(ctx context.Context, id, userID uint) error
 	MarkAllNotificationsRead(ctx context.Context, userID uint) error

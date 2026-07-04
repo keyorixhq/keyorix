@@ -27,6 +27,14 @@ func (rs *RemoteStorage) HasUnreadNotification(_ context.Context, _ uint, _ stri
 	return false, remoteUnsupported("HasUnreadNotification")
 }
 
+func (rs *RemoteStorage) GetUnreadNotification(_ context.Context, _ uint, _ string, _ uint) (*models.Notification, error) {
+	return nil, remoteUnsupported("GetUnreadNotification")
+}
+
+func (rs *RemoteStorage) UpdateNotification(_ context.Context, _ *models.Notification) error {
+	return remoteUnsupported("UpdateNotification")
+}
+
 func (rs *RemoteStorage) MarkNotificationRead(ctx context.Context, id, _ uint) error {
 	// The server scopes the mark to the authenticated user (the client's own
 	// session), so userID is implicit in the endpoint.

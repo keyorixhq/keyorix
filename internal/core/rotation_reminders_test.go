@@ -91,13 +91,16 @@ func TestHasUnreadRotationReminder_NotBuriedByNotificationVolume(t *testing.T) {
 	ctx := context.Background()
 	c, db, now := newRotationReminderCore(t)
 
-	// Seed the genuine rotation reminder first (oldest), then bury it under 150
-	// newer, unrelated unread notifications for the same user.
+	// Seed the genuine rotation reminder first (oldest), already at the severity
+	// the fixture's secret warrants (overdue → Critical) so this run is a pure
+	// anti-burying check, not an escalation. Then bury it under 150 newer,
+	// unrelated unread notifications for the same user.
 	pid := uint(1)
 	require.NoError(t, db.Create(&models.Notification{
 		UserID: 5, ProjectID: &pid, Type: NotificationRotationDue,
 		Title: "Secrets due for rotation", Message: "old standing reminder",
-		IsRead: false, CreatedAt: now.Add(-24 * time.Hour),
+		Severity: models.NotificationSeverityCritical,
+		IsRead:   false, CreatedAt: now.Add(-24 * time.Hour),
 	}).Error)
 	for i := 0; i < 150; i++ {
 		require.NoError(t, db.Create(&models.Notification{
@@ -107,11 +110,11 @@ func TestHasUnreadRotationReminder_NotBuriedByNotificationVolume(t *testing.T) {
 		}).Error)
 	}
 
-	assert.True(t, c.hasUnreadRotationReminder(ctx, 5, 1),
+	assert.NotNil(t, c.unreadRotationReminder(ctx, 5, 1),
 		"the standing reminder must be found even though 150 newer unread notifications of another type exist")
 
 	// The straightforward case (no volume issue, no reminder) still works.
-	assert.False(t, c.hasUnreadRotationReminder(ctx, 6, 1),
+	assert.Nil(t, c.unreadRotationReminder(ctx, 6, 1),
 		"a user with no rotation reminder at all must not be reported as having one")
 
 	// SendRotationReminders itself must not duplicate the reminder despite the noise.
@@ -133,6 +136,79 @@ func TestSendRotationReminders_NothingDue(t *testing.T) {
 	sent, err := c.SendRotationReminders(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 0, sent)
+}
+
+// TestSendRotationReminders_EscalatesOnMoreSevereState is a regression test for
+// #250: an unread standing reminder must not freeze at a stale severity. First
+// run notes the secret is merely *approaching* its rotation deadline (Warning);
+// once it becomes genuinely *overdue* (Critical) while that reminder is still
+// unread, the next run must escalate the SAME notification row in place rather
+// than silently suppressing the far more consequential state.
+func TestSendRotationReminders_EscalatesOnMoreSevereState(t *testing.T) {
+	ctx := context.Background()
+	c, db, now := newRotationReminderCore(t)
+
+	// 25 days into a 30-day policy with a 7-day alert window: approaching, not
+	// yet overdue (30-25=5 <= 7).
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", 10).
+		Update("created_at", now.AddDate(0, 0, -25)).Error)
+
+	sent, err := c.SendRotationReminders(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sent, "the project admin is notified of the approaching deadline")
+
+	var note models.Notification
+	require.NoError(t, db.Where("type = ?", NotificationRotationDue).First(&note).Error)
+	assert.Equal(t, models.NotificationSeverityWarning, note.Severity)
+	assert.Contains(t, note.Message, "approaching")
+	assert.False(t, note.IsRead)
+	firstID := note.ID
+
+	// Now the secret is 35 days old → overdue (Critical) — a strictly more
+	// severe state — while the Warning reminder is STILL UNREAD.
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", 10).
+		Update("created_at", now.AddDate(0, 0, -35)).Error)
+
+	sent, err = c.SendRotationReminders(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sent, "the escalation to overdue must reach the admin")
+
+	var notes []models.Notification
+	require.NoError(t, db.Where("type = ?", NotificationRotationDue).Find(&notes).Error)
+	require.Len(t, notes, 1, "the standing reminder was updated in place, not duplicated")
+	assert.Equal(t, firstID, notes[0].ID, "same notification row, upgraded")
+	assert.Equal(t, models.NotificationSeverityCritical, notes[0].Severity)
+	assert.Contains(t, notes[0].Message, "overdue")
+	assert.False(t, notes[0].IsRead)
+}
+
+// TestSendRotationReminders_NoEscalation_SameOrLowerSeverity_NoNoise is the
+// inverse of the escalation test: once a Critical (overdue) reminder is
+// standing, a recheck that finds the state no worse must not touch it or
+// create noise — only a genuine escalation updates the notification.
+func TestSendRotationReminders_NoEscalation_SameOrLowerSeverity_NoNoise(t *testing.T) {
+	ctx := context.Background()
+	c, db, _ := newRotationReminderCore(t)
+
+	// Default fixture: the secret is already overdue → first run creates a
+	// Critical standing reminder.
+	sent, err := c.SendRotationReminders(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, sent)
+
+	var before models.Notification
+	require.NoError(t, db.Where("type = ?", NotificationRotationDue).First(&before).Error)
+	require.Equal(t, models.NotificationSeverityCritical, before.Severity)
+
+	// Still overdue (same severity) and still unread: no escalation, no noise.
+	sent, err = c.SendRotationReminders(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, sent, "an at-or-below-severity recheck must not notify again")
+
+	var after models.Notification
+	require.NoError(t, db.Where("type = ?", NotificationRotationDue).First(&after).Error)
+	assert.Equal(t, before.Message, after.Message, "the standing reminder is untouched")
+	assert.Equal(t, before.Severity, after.Severity)
 }
 
 func TestRotationReminderMessage(t *testing.T) {

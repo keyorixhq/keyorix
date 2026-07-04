@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/license"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // NotificationLicenseExpiry is the in-app/external notification type for an offline
@@ -21,9 +22,13 @@ var globalAdminRoleNames = map[string]struct{}{
 
 // ScanLicenseExpiry checks the installed offline license and, when it is within leadDays of
 // expiry or already expired, notifies every install-wide admin (deduped so it does not spam
-// on each tick). It returns the number of notifications created. It is the proactive
-// counterpart to the fail-safe gate: a commercial license that lapses silently would
-// disable airgap_updates with no warning, so admins are reminded ahead of the lapse.
+// on each tick). It also compares the newly computed severity (an actually-expired license is
+// more severe than merely expiring soon) against what an existing unread reminder was recorded
+// with: an escalation updates the standing reminder in place rather than being silently
+// suppressed, so an unread reminder can't freeze at a stale, now-superseded severity (#250). It
+// returns the number of notifications created or escalated. It is the proactive counterpart to
+// the fail-safe gate: a commercial license that lapses silently would disable airgap_updates
+// with no warning, so admins are reminded ahead of the lapse.
 //
 // Only a validly-signed license with a real expiry triggers a reminder. No license
 // (community baseline) and an invalid/untrusted token are intentionally silent here — the
@@ -53,15 +58,31 @@ func (c *KeyorixCore) ScanLicenseExpiry(ctx context.Context, leadDays int) (int,
 		return 0, err
 	}
 	title, msg := licenseExpiryNotice(st)
+	severity := licenseExpirySeverity(st)
 	sent := 0
 	for _, uid := range admins {
-		if c.hasUnreadLicenseExpiry(ctx, uid) {
+		if existing := c.unreadLicenseExpiry(ctx, uid); existing != nil {
+			if severity <= existing.Severity {
+				continue // no worse than what's already standing — don't pile up
+			}
+			if c.upgradeReminder(ctx, existing, title, msg, severity) {
+				sent++ // escalated in place (#250): expiring soon → now expired
+			}
 			continue
 		}
-		c.notify(ctx, uid, NotificationLicenseExpiry, title, msg, nil, "/admin/license")
+		c.notifyWithSeverity(ctx, uid, NotificationLicenseExpiry, title, msg, nil, "/admin/license", severity)
 		sent++
 	}
 	return sent, nil
+}
+
+// licenseExpirySeverity ranks the license state: an already-expired license is
+// strictly more severe than merely expiring soon (#250).
+func licenseExpirySeverity(st license.Status) models.NotificationSeverity {
+	if st.State == license.StateExpired {
+		return models.NotificationSeverityCritical
+	}
+	return models.NotificationSeverityWarning
 }
 
 // globalAdminIDsPageSize bounds each page of the active-users walk in globalAdminIDs.
@@ -98,19 +119,20 @@ func (c *KeyorixCore) globalAdminIDs(ctx context.Context) ([]uint, error) {
 	return ids, nil
 }
 
-// hasUnreadLicenseExpiry reports whether the user already has an unread license-expiry
-// reminder, so a standing reminder is not re-created on every scheduler tick.
-func (c *KeyorixCore) hasUnreadLicenseExpiry(ctx context.Context, userID uint) bool {
+// unreadLicenseExpiry returns the user's existing unread license-expiry
+// reminder, or nil if none exists, so a standing reminder is not re-created on
+// every scheduler tick.
+func (c *KeyorixCore) unreadLicenseExpiry(ctx context.Context, userID uint) *models.Notification {
 	notes, err := c.storage.ListNotifications(ctx, userID, true, 100)
 	if err != nil {
-		return false // on read error, prefer notifying over silently skipping
+		return nil // on read error, prefer notifying over silently skipping
 	}
 	for _, n := range notes {
 		if n.Type == NotificationLicenseExpiry {
-			return true
+			return n
 		}
 	}
-	return false
+	return nil
 }
 
 // licenseExpiryNotice builds the admin reminder title + message for the license state.

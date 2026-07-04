@@ -84,6 +84,70 @@ func TestSendExpiryReminders(t *testing.T) {
 	assert.Equal(t, 1, sent, "after reading, still-expiring secrets re-notify")
 }
 
+// TestSendExpiryReminders_EscalatesOnMoreSevereState is a regression test for
+// #250: an unread standing expiry reminder recorded at Warning (expiring soon)
+// must be escalated in place — not silently suppressed — once the secret has
+// genuinely expired (Critical) while that reminder is still unread.
+func TestSendExpiryReminders_EscalatesOnMoreSevereState(t *testing.T) {
+	ctx := context.Background()
+	c, db, _ := newExpiryReminderCore(t)
+	// Drop the already-expired secret; only the "soon" secret remains due →
+	// first run is Warning-only.
+	require.NoError(t, db.Where("id = ?", 10).Delete(&models.SecretNode{}).Error)
+
+	sent, err := c.SendExpiryReminders(ctx, 14)
+	require.NoError(t, err)
+	require.Equal(t, 1, sent)
+
+	var note models.Notification
+	require.NoError(t, db.Where("type = ?", NotificationExpiryReminder).First(&note).Error)
+	assert.Equal(t, models.NotificationSeverityWarning, note.Severity)
+	firstID := note.ID
+
+	// Now that secret has also expired (soon-key's expiry moved into the past)
+	// while the Warning reminder is still unread: escalate to Critical.
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", 11).
+		Update("expiration", note.CreatedAt.AddDate(0, 0, -1)).Error)
+
+	sent, err = c.SendExpiryReminders(ctx, 14)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sent, "the escalation to expired must reach the admin")
+
+	var notes []models.Notification
+	require.NoError(t, db.Where("type = ?", NotificationExpiryReminder).Find(&notes).Error)
+	require.Len(t, notes, 1, "the standing reminder was updated in place, not duplicated")
+	assert.Equal(t, firstID, notes[0].ID)
+	assert.Equal(t, models.NotificationSeverityCritical, notes[0].Severity)
+	assert.Contains(t, notes[0].Message, "have expired")
+}
+
+// TestSendExpiryReminders_NoEscalation_SameOrLowerSeverity_NoNoise is the
+// inverse: a recheck that finds the state no worse than what's already
+// standing must not touch the notification or create noise.
+func TestSendExpiryReminders_NoEscalation_SameOrLowerSeverity_NoNoise(t *testing.T) {
+	ctx := context.Background()
+	c, db, _ := newExpiryReminderCore(t)
+
+	// Default fixture already has an expired secret → Critical on first run.
+	sent, err := c.SendExpiryReminders(ctx, 14)
+	require.NoError(t, err)
+	require.Equal(t, 1, sent)
+
+	var before models.Notification
+	require.NoError(t, db.Where("type = ?", NotificationExpiryReminder).First(&before).Error)
+	require.Equal(t, models.NotificationSeverityCritical, before.Severity)
+
+	// Still expired (same severity), still unread: no escalation, no noise.
+	sent, err = c.SendExpiryReminders(ctx, 14)
+	require.NoError(t, err)
+	assert.Equal(t, 0, sent, "an at-or-below-severity recheck must not notify again")
+
+	var after models.Notification
+	require.NoError(t, db.Where("type = ?", NotificationExpiryReminder).First(&after).Error)
+	assert.Equal(t, before.Message, after.Message)
+	assert.Equal(t, before.Severity, after.Severity)
+}
+
 func TestSendExpiryReminders_NothingDue(t *testing.T) {
 	ctx := context.Background()
 	c, db, _ := newExpiryReminderCore(t)
