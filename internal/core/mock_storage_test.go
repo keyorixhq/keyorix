@@ -524,8 +524,8 @@ func (m *MockStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time
 	return args.Get(0).(int64), args.Error(1)
 }
 
-func (m *MockStorage) DeleteAnomalyAlertsBefore(ctx context.Context, before time.Time) (int64, error) {
-	args := m.Called(ctx, before)
+func (m *MockStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore, unackCeiling time.Time) (int64, error) {
+	args := m.Called(ctx, ackBefore, unackCeiling)
 	return args.Get(0).(int64), args.Error(1)
 }
 

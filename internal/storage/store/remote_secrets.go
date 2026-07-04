@@ -124,7 +124,7 @@ func (rs *RemoteStorage) PurgeDeletedSecretsBefore(_ context.Context, _ time.Tim
 }
 
 // Data-retention purges run server-side (the scheduler); not available remotely.
-func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(_ context.Context, _ time.Time) (int64, error) {
+func (rs *RemoteStorage) DeleteAnomalyAlertsBefore(_ context.Context, _, _ time.Time) (int64, error) {
 	return 0, remoteUnsupported("DeleteAnomalyAlertsBefore")
 }
 

@@ -32,9 +32,9 @@ func TestDeleteAnomalyAlertsBefore(t *testing.T) {
 	require.NoError(t, ls.db.Create(&models.AnomalyAlert{ID: 1, DetectedAt: now.AddDate(0, 0, -40)}).Error)
 	require.NoError(t, ls.db.Create(&models.AnomalyAlert{ID: 2, DetectedAt: now.AddDate(0, 0, -5)}).Error)
 
-	n, err := ls.DeleteAnomalyAlertsBefore(ctx, now.AddDate(0, 0, -30))
+	n, err := ls.DeleteAnomalyAlertsBefore(ctx, now.AddDate(0, 0, -30), time.Time{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), n, "neither alert is acknowledged, so nothing is purged regardless of age")
+	assert.Equal(t, int64(0), n, "neither alert is acknowledged, and the unacked ceiling is disabled (zero), so nothing is purged")
 
 	var remaining int64
 	require.NoError(t, ls.db.Model(&models.AnomalyAlert{}).Count(&remaining).Error)
@@ -55,9 +55,9 @@ func TestDeleteAnomalyAlertsBefore_SkipsUnacknowledged(t *testing.T) {
 		ID: 2, DetectedAt: now.AddDate(0, 0, -40), Acknowledged: false,
 	}).Error)
 
-	n, err := ls.DeleteAnomalyAlertsBefore(ctx, now.AddDate(0, 0, -30))
+	n, err := ls.DeleteAnomalyAlertsBefore(ctx, now.AddDate(0, 0, -30), time.Time{})
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), n, "only the acknowledged, old alert is purged")
+	assert.Equal(t, int64(1), n, "only the acknowledged, old alert is purged; the unacked ceiling is disabled (zero)")
 
 	var remaining models.AnomalyAlert
 	require.NoError(t, ls.db.Where("id = ?", 2).First(&remaining).Error)
@@ -66,6 +66,67 @@ func TestDeleteAnomalyAlertsBefore_SkipsUnacknowledged(t *testing.T) {
 	var count int64
 	require.NoError(t, ls.db.Model(&models.AnomalyAlert{}).Where("id = ?", 1).Count(&count).Error)
 	assert.Equal(t, int64(0), count, "the acknowledged alert must be gone")
+}
+
+// #489: unacknowledged alerts must not accumulate forever. A separate, much more
+// generous absolute-age ceiling is a safety net independent of acknowledgment:
+// an unacknowledged alert younger than the ceiling survives (preserving the #415
+// guarantee that a reasonable operational backlog is never silently discarded),
+// but one older than the ceiling is purged (closing the disk-exhaustion / unbounded
+// ListAnomalyAlerts-scan surface). An acknowledged alert past the pre-existing,
+// much shorter acknowledged-retention window is purged exactly as before.
+func TestDeleteAnomalyAlertsBefore_UnackedCeilingSafetyNet(t *testing.T) {
+	ls := newRetentionTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Unacknowledged, well within the ceiling (e.g. a normal operational review
+	// backlog) — must survive.
+	require.NoError(t, ls.db.Create(&models.AnomalyAlert{
+		ID: 1, DetectedAt: now.AddDate(0, 0, -60), Acknowledged: false,
+	}).Error)
+	// Unacknowledged, older than the ceiling — truly ancient, almost certainly
+	// abandoned — must be purged by the new safety net.
+	require.NoError(t, ls.db.Create(&models.AnomalyAlert{
+		ID: 2, DetectedAt: now.AddDate(0, 0, -800), Acknowledged: false,
+	}).Error)
+	// Acknowledged, past the pre-existing (much shorter) acknowledged-retention
+	// window but well within the unacked ceiling — must still be purged as before
+	// (non-regression), via the acknowledged clause, not the ceiling clause.
+	require.NoError(t, ls.db.Create(&models.AnomalyAlert{
+		ID: 3, DetectedAt: now.AddDate(0, 0, -40), Acknowledged: true,
+	}).Error)
+	// Acknowledged, recent — within the acknowledged window — must survive.
+	require.NoError(t, ls.db.Create(&models.AnomalyAlert{
+		ID: 4, DetectedAt: now.AddDate(0, 0, -5), Acknowledged: true,
+	}).Error)
+
+	ackBefore := now.AddDate(0, 0, -30)     // acknowledged-alert retention window
+	unackCeiling := now.AddDate(0, 0, -730) // generous absolute-age safety net
+
+	n, err := ls.DeleteAnomalyAlertsBefore(ctx, ackBefore, unackCeiling)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), n, "the ancient-unacknowledged alert and the old-acknowledged alert are purged")
+
+	var remainingIDs []uint
+	require.NoError(t, ls.db.Model(&models.AnomalyAlert{}).Order("id").Pluck("id", &remainingIDs).Error)
+	assert.Equal(t, []uint{1, 4}, remainingIDs, "the recent-unacknowledged and recent-acknowledged alerts survive")
+}
+
+// #489: with the unacked ceiling disabled (zero value), behavior is unchanged from
+// pre-#489: an unacknowledged alert survives no matter how old it is.
+func TestDeleteAnomalyAlertsBefore_UnackedCeilingDisabledKeepsForever(t *testing.T) {
+	ls := newRetentionTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	require.NoError(t, ls.db.Create(&models.AnomalyAlert{
+		ID: 1, DetectedAt: now.AddDate(-5, 0, 0), Acknowledged: false,
+	}).Error)
+
+	n, err := ls.DeleteAnomalyAlertsBefore(ctx, now.AddDate(0, 0, -30), time.Time{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n, "unacked ceiling disabled (zero) means unacknowledged alerts are kept forever, as before #489")
 }
 
 func TestDeleteClosedAccessReviewsBefore_CascadesItemsAndSkipsOpen(t *testing.T) {
