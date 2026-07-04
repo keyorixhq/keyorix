@@ -23,6 +23,10 @@ func (rs *RemoteStorage) CountUnreadNotifications(_ context.Context, _ uint) (in
 	return 0, remoteUnsupported("CountUnreadNotifications")
 }
 
+func (rs *RemoteStorage) HasUnreadNotification(_ context.Context, _ uint, _ string, _ uint) (bool, error) {
+	return false, remoteUnsupported("HasUnreadNotification")
+}
+
 func (rs *RemoteStorage) MarkNotificationRead(ctx context.Context, id, _ uint) error {
 	// The server scopes the mark to the authenticated user (the client's own
 	// session), so userID is implicit in the endpoint.

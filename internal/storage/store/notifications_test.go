@@ -64,3 +64,55 @@ func TestNotifications_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), other)
 }
+
+// TestHasUnreadNotification_NotBuriedByVolume is a regression test for #399:
+// unlike ListNotifications (newest-N of any type, dedup callers used to filter
+// client-side), HasUnreadNotification filters user_id/type/project_id/is_read at
+// the DB level, so a genuine match can't be pushed out of a "top N" window by a
+// pile of newer, unrelated unread notifications.
+func TestHasUnreadNotification_NotBuriedByVolume(t *testing.T) {
+	ctx := context.Background()
+	ls := newNotificationStore(t)
+	pid := uint(7)
+
+	// The target notification is the OLDEST row for this user.
+	_, err := ls.CreateNotification(ctx, &models.Notification{
+		UserID: 9, ProjectID: &pid, Type: "rotation.reminder", Title: "T", Message: "target",
+	})
+	require.NoError(t, err)
+
+	// Bury it under 150 newer, unrelated unread notifications for the same user.
+	for i := 0; i < 150; i++ {
+		_, err := ls.CreateNotification(ctx, &models.Notification{
+			UserID: 9, ProjectID: &pid, Type: "access_request.created", Title: "N", Message: "noise",
+		})
+		require.NoError(t, err)
+	}
+
+	has, err := ls.HasUnreadNotification(ctx, 9, "rotation.reminder", 7)
+	require.NoError(t, err)
+	assert.True(t, has, "the target notification must be found despite 150 newer unread rows of another type")
+
+	// Straightforward negative cases: wrong type, wrong project, wrong user.
+	has, err = ls.HasUnreadNotification(ctx, 9, "no.such.type", 7)
+	require.NoError(t, err)
+	assert.False(t, has)
+
+	has, err = ls.HasUnreadNotification(ctx, 9, "rotation.reminder", 99)
+	require.NoError(t, err)
+	assert.False(t, has)
+
+	has, err = ls.HasUnreadNotification(ctx, 42, "rotation.reminder", 7)
+	require.NoError(t, err)
+	assert.False(t, has)
+
+	// A read notification of the right type/project doesn't count as "unread".
+	_, err = ls.CreateNotification(ctx, &models.Notification{
+		UserID: 9, ProjectID: &pid, Type: "rotation.reminder", Title: "T2", Message: "read",
+		IsRead: true,
+	})
+	require.NoError(t, err)
+	has, err = ls.HasUnreadNotification(ctx, 9, "rotation.reminder", 7)
+	require.NoError(t, err)
+	assert.True(t, has, "still true because of the earlier unread target row")
+}

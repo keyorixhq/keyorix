@@ -73,18 +73,17 @@ func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) {
 }
 
 // hasUnreadRotationReminder reports whether the user already has an unread
-// rotation-reminder notification for the given project.
+// rotation-reminder notification for the given project. This queries at the DB
+// level for exactly this (user, type, project) triple — it does NOT page through
+// "the newest N notifications of any type" — so a user with a large volume of
+// other unrelated unread notifications can't push a genuine standing reminder out
+// of an arbitrary top-N window and defeat the dedup guard (#399).
 func (c *KeyorixCore) hasUnreadRotationReminder(ctx context.Context, userID, projectID uint) bool {
-	notes, err := c.storage.ListNotifications(ctx, userID, true, 100)
+	has, err := c.storage.HasUnreadNotification(ctx, userID, NotificationRotationDue, projectID)
 	if err != nil {
 		return false // on a read error, prefer notifying over silently skipping
 	}
-	for _, n := range notes {
-		if n.Type == NotificationRotationDue && n.ProjectID != nil && *n.ProjectID == projectID {
-			return true
-		}
-	}
-	return false
+	return has
 }
 
 func rotationReminderMessage(project string, overdue, approaching int) string {
