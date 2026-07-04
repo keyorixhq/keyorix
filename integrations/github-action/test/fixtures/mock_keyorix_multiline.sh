@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Mock keyorix CLI used by entrypoint_test.sh's #466 case: already
-# "installed" (so install_cli short-circuits without touching the
-# network); returns a secret VALUE that spans multiple lines (simulating,
-# e.g., a PEM private key), so the test can verify every line gets its own
-# ::add-mask:: directive, not just the first.
+# Mock keyorix CLI used by entrypoint_test.sh's #466 case: placed on PATH
+# before entrypoint.sh runs, paired with INPUT_VERSION and
+# mock_curl_checksum_match.sh (which serves this exact file's SHA-256 as the
+# published checksum) so install_cli's checksum-verified reuse path (#179)
+# accepts it without touching the network. Returns a secret VALUE that spans
+# multiple lines (simulating, e.g., a PEM private key), so the test can
+# verify every line gets its own ::add-mask:: directive, not just the first.
 if [ "$1" = "--version" ]; then
   echo "keyorix version mock-1.0.0"
   exit 0
