@@ -361,11 +361,28 @@ func (c *KeyorixCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortB
 	})
 }
 
-// convertToStorageFilter converts SecretListFilter to storage.SecretFilter.
+// secretListingMaxRows bounds the single unpaginated storage fetch backing
+// ListSecretsInScope / ListSecretsWithSharingInfo (mirrors secretInventoryMaxRows
+// in secret_inventory.go). Both callers apply post-fetch filters in Go — tag
+// AND-matching and cross-field search need a per-secret storage lookup, and
+// ShowSharedOnly only makes sense after owned+shared results are merged — none of
+// which can be expressed as a single SQL predicate the storage layer could apply
+// before its own LIMIT/OFFSET. If the DB paginated to the caller's requested page
+// FIRST and the post-fetch filter ran second, the filter would silently operate on
+// (and the code below would re-paginate) an already-sliced page: page >= 2 could
+// come back empty even when more genuinely-matching secrets exist beyond page 1,
+// and Total/TotalPages would reflect the pre-filter page count rather than the
+// true post-filter match count (#251). So the storage fetch always pulls every
+// matching row (up to this bound) and pagination is applied once, in Go, after
+// filtering the full set.
+const secretListingMaxRows = 10000
+
+// convertToStorageFilter converts SecretListFilter to storage.SecretFilter. It
+// deliberately ignores the caller's Page/PageSize — see secretListingMaxRows.
 func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
-	f := &storage.SecretFilter{
-		Page:           filter.Page,
-		PageSize:       filter.PageSize,
+	return &storage.SecretFilter{
+		Page:           1,
+		PageSize:       secretListingMaxRows,
 		Type:           filter.Type,
 		Classification: filter.Classification,
 		CreatedBy:      filter.CreatedBy,
@@ -373,11 +390,4 @@ func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *s
 		EnvironmentID:  filter.EnvironmentID,
 		IncludeDeleted: filter.IncludeDeleted,
 	}
-	if f.Page < 1 {
-		f.Page = 1
-	}
-	if f.PageSize < 1 {
-		f.PageSize = 20
-	}
-	return f
 }
