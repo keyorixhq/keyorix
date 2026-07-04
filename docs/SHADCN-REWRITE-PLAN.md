@@ -282,6 +282,23 @@ highest reuse — validates the theming bridge first.
   future component too, by simply never introducing a lowercase sibling file
   in this repo at all.
 
+- **`Input`: done (2026-07-04).** Real shadcn Input is a deliberately bare
+  `<input>` — no label/error/icon support (that's react-hook-form's
+  `FormField`/`FormMessage` territory, Phase 5's job, not this one). Kept a
+  thin wrapper around shadcn's actual input styling for `label`/`error`/
+  `helperText`/`icon` — the same kind of scope-justified addition as
+  Button's `loading`. Dropped `leftIcon` (redundant alias), `rightIcon`,
+  `onRightIconClick`, `fullWidth` (zero real usage of any of them, one
+  `fullWidth` call site caught by `tsc` after the initial grep missed it).
+  Adopting the real component simplified the file: error state now uses
+  `aria-invalid` (shadcn's Input styles this natively) instead of hand-rolled
+  red-border classes, and `Math.random()`-based id generation was swapped
+  for `React.useId()`. Every prop still in real use (`label`, `error`,
+  `helperText`, `icon`, native attrs) kept its exact name, so none of the 10
+  call sites needed editing beyond the one dropped `fullWidth`. Verified the
+  bridge again: compiled CSS now contains
+  `.border-input { border-color: var(--border) }`.
+
 ## Phase 4 — Migrate compound components
 
 `Modal`, `Dropdown`, `Toast`, `Dialog`, `CmdKSearch` → shadcn/Radix equivalents

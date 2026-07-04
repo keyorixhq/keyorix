@@ -24,8 +24,7 @@ describe('Input', () => {
     it('shows error state correctly', () => {
         render(<Input label="Email" error="Invalid email" />);
         const input = screen.getByLabelText('Email');
-        // Component uses border-red-300 for error state
-        expect(input).toHaveClass('border-red-300');
+        expect(input).toHaveAttribute('aria-invalid', 'true');
         expect(screen.getByText('Invalid email')).toBeInTheDocument();
     });
 

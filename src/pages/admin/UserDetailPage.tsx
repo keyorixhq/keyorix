@@ -367,7 +367,6 @@ export const UserDetailPage: React.FC = () => {
                         placeholder={user.username}
                         value={migName}
                         onChange={(e) => setMigName(e.target.value)}
-                        fullWidth
                     />
                     <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
                         <input type="checkbox" checked={migKeepUser} onChange={(e) => setMigKeepUser(e.target.checked)} />

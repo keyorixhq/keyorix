@@ -1,5 +1,6 @@
 import React from 'react';
 import { clsx } from 'clsx';
+import { cn } from '@/lib/utils';
 
 type IconComponent = React.ComponentType<React.SVGProps<SVGSVGElement>>;
 
@@ -8,70 +9,22 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
     error?: string;
     helperText?: string;
     icon?: IconComponent;
-    leftIcon?: IconComponent;
-    rightIcon?: IconComponent;
-    onRightIconClick?: () => void;
-    fullWidth?: boolean;
 }
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-    (
-        {
-            className,
-            label,
-            error,
-            helperText,
-            icon: Icon,
-            leftIcon: LeftIconProp,
-            rightIcon: RightIcon,
-            onRightIconClick,
-            fullWidth = true,
-            id,
-            ...props
-        },
-        ref
-    ) => {
-        const LeftIcon = Icon ?? LeftIconProp;
-        const inputId = id || `input-${Math.random().toString(36).substr(2, 9)}`;
+    ({ className, label, error, helperText, icon: Icon, id, type, ...props }, ref) => {
+        const generatedId = React.useId();
+        const inputId = id || generatedId;
         const hasError = Boolean(error);
 
-        const baseInputClasses = [
-            'block px-3 py-2 border rounded-md shadow-xs',
-            'placeholder-base-muted focus:outline-hidden focus:ring-2 focus:ring-offset-0',
-            'transition-colors duration-200',
-            'disabled:bg-gray-50 disabled:text-base-muted disabled:cursor-not-allowed',
-        ];
-
-        const inputStateClasses = hasError
-            ? [
-                'border-red-300 text-red-900 focus:ring-red-500 focus:border-red-500',
-                'placeholder-red-300',
-            ]
-            : [
-                'border-base focus:ring-blue-500 focus:border-blue-500',
-            ];
-
-        const containerClasses = [
-            'relative',
-            fullWidth ? 'w-full' : 'w-auto',
-        ];
-
-        const inputClasses = [
-            ...baseInputClasses,
-            ...inputStateClasses,
-            LeftIcon && 'pl-10',
-            RightIcon && 'pr-10',
-            fullWidth ? 'w-full' : 'w-auto',
-        ];
-
         return (
-            <div className={clsx(containerClasses)}>
+            <div className="relative w-full">
                 {label && (
                     <label
                         htmlFor={inputId}
                         className={clsx(
                             'block text-sm font-medium mb-1',
-                            hasError ? 'text-red-600' : 'text-base-secondary'
+                            hasError ? 'text-destructive' : 'text-base-secondary'
                         )}
                     >
                         {label}
@@ -79,12 +32,12 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                 )}
 
                 <div className="relative">
-                    {LeftIcon && (
+                    {Icon && (
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <LeftIcon
+                            <Icon
                                 className={clsx(
                                     'h-5 w-5',
-                                    hasError ? 'text-red-400' : 'text-base-muted'
+                                    hasError ? 'text-destructive' : 'text-base-muted'
                                 )}
                             />
                         </div>
@@ -93,32 +46,22 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                     <input
                         ref={ref}
                         id={inputId}
-                        className={clsx(inputClasses, className)}
-                        style={{ backgroundColor: 'var(--bg-app)', color: 'var(--text-primary)', borderColor: 'var(--border-strong)' }}
+                        type={type}
+                        aria-invalid={hasError}
+                        data-slot="input"
+                        className={cn(
+                            "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-input/30",
+                            "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                            "aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
+                            Icon && 'pl-10',
+                            className
+                        )}
                         {...props}
                     />
-
-                    {RightIcon && (
-                        <div
-                            className={clsx(
-                                'absolute inset-y-0 right-0 pr-3 flex items-center',
-                                onRightIconClick ? 'cursor-pointer' : 'pointer-events-none'
-                            )}
-                            onClick={onRightIconClick}
-                        >
-                            <RightIcon
-                                className={clsx(
-                                    'h-5 w-5',
-                                    hasError ? 'text-red-400' : 'text-base-muted',
-                                    onRightIconClick && 'hover:text-base-secondary'
-                                )}
-                            />
-                        </div>
-                    )}
                 </div>
 
                 {error && (
-                    <p className="mt-1 text-sm text-red-600" role="alert">
+                    <p className="mt-1 text-sm text-destructive" role="alert">
                         {error}
                     </p>
                 )}
