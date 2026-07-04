@@ -14,6 +14,7 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -68,6 +69,32 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		maxMsg = math.MaxInt32
 	}
 	opts = append(opts, grpc.MaxRecvMsgSize(int(maxMsg)))
+
+	// Detect and reclaim idle/abandoned connections (#222/#435). Without server-side
+	// keepalive, a valid audit.read (or any other) credential holder can open many
+	// long-lived, mostly-idle connections that the server can never detect as dead —
+	// a slow-drip goroutine/fd exhaustion surface distinct from the per-principal
+	// concurrency cap already applied to StreamAuditLogs (which only bounds "many
+	// streams from one principal", not "idle connections nobody ever closes").
+	ka := cfg.Server.GRPC.Keepalive
+	opts = append(opts,
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			// Ping an idle connection after this long to check it's still alive.
+			Time: ka.GetTime(),
+			// Close the connection if the ping isn't ack'd within this long.
+			Timeout: ka.GetTimeout(),
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			// Reject a client that pings more often than this as abusive (GOAWAY
+			// ENHANCE_YOUR_CALM) rather than let ping frequency itself become a DoS
+			// vector.
+			MinTime: ka.GetMinTime(),
+			// No client here legitimately pings with zero active RPCs/streams — even
+			// StreamAuditLogs keeps its stream open for as long as it needs pings — so
+			// streamless pings are rejected outright rather than tolerated.
+			PermitWithoutStream: ka.PermitWithoutStream,
+		}),
+	)
 
 	// Add TLS if enabled
 	if cfg.Server.GRPC.TLS.Enabled {

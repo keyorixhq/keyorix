@@ -244,6 +244,59 @@ type ServerInstanceConfig struct {
 	WebAssetsPath  string   `yaml:"web_assets_path,omitempty"`
 	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
 	Domain         string   `yaml:"domain,omitempty"`
+	// Keepalive tunes server-side connection keepalive/idle-reclaim (#222/#435). GRPC
+	// only — an authenticated credential holder can otherwise open many long-lived,
+	// mostly-idle connections that the server has no way to detect and reclaim, a
+	// slow-drip goroutine/fd exhaustion surface distinct from the per-principal
+	// concurrency cap already applied to StreamAuditLogs.
+	Keepalive GRPCKeepaliveConfig `yaml:"keepalive,omitempty"`
+}
+
+// GRPCKeepaliveConfig tunes the gRPC server's keepalive ping and enforcement policy
+// (#222/#435). Every field is a Go duration string (e.g. "5m", "20s"); empty/unparseable
+// values fall back to the documented default via the Get* accessors below.
+type GRPCKeepaliveConfig struct {
+	// Time is how long the server waits on an idle connection before sending a
+	// keepalive ping to check it's still alive. Default 5m when unset/unparseable.
+	Time string `yaml:"time,omitempty"`
+	// Timeout is how long the server waits for a ping ack before closing the
+	// connection as dead. Default 20s when unset/unparseable.
+	Timeout string `yaml:"timeout,omitempty"`
+	// MinTime is the minimum interval a client is allowed to send keepalive pings on;
+	// a client pinging more often than this is judged abusive and sent GOAWAY
+	// ENHANCE_YOUR_CALM. Default 5m when unset/unparseable.
+	MinTime string `yaml:"min_time,omitempty"`
+	// PermitWithoutStream, if true, lets a client send keepalive pings even with no
+	// active RPC/stream open. No client in this codebase pings without an active
+	// call (StreamAuditLogs keeps its stream open for the duration it needs pings),
+	// so this defaults to false — rejecting streamless pings closes off a cheap
+	// ping-flood vector from a valid credential holder that never opens an RPC.
+	PermitWithoutStream bool `yaml:"permit_without_stream,omitempty"`
+}
+
+// defaultGRPCKeepaliveTime/Timeout/MinTime are the server-side keepalive defaults
+// applied when the operator hasn't configured server.grpc.keepalive.* (#222/#435).
+const (
+	defaultGRPCKeepaliveTime    = 5 * time.Minute
+	defaultGRPCKeepaliveTimeout = 20 * time.Second
+	defaultGRPCKeepaliveMinTime = 5 * time.Minute
+)
+
+// GetTime returns the idle-before-ping interval (default 5m).
+func (c GRPCKeepaliveConfig) GetTime() time.Duration {
+	return parseDurationDefault(c.Time, defaultGRPCKeepaliveTime)
+}
+
+// GetTimeout returns the ping-ack wait before the connection is closed as dead
+// (default 20s).
+func (c GRPCKeepaliveConfig) GetTimeout() time.Duration {
+	return parseDurationDefault(c.Timeout, defaultGRPCKeepaliveTimeout)
+}
+
+// GetMinTime returns the minimum interval a client may send keepalive pings on
+// before being treated as abusive (default 5m).
+func (c GRPCKeepaliveConfig) GetMinTime() time.Duration {
+	return parseDurationDefault(c.MinTime, defaultGRPCKeepaliveMinTime)
 }
 
 // defaultMaxRequestBodyBytes is the request-body cap when none is configured.
