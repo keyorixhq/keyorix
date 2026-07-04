@@ -36,6 +36,16 @@ func (ls *LocalStorage) purgeDeletedBefore(ctx context.Context, model interface{
 // that could collide with a future reused ID, a PAT/session row that (before the
 // core.DeleteUser fix) may still be live, and a share the user received sitting
 // unreachable but undestroyed. Returns the number of users purged.
+//
+// #276-sibling: like PurgeDeletedSecretsBefore, the eligible-ID list is gathered by a
+// SELECT (Pluck) and the deletes run moments later — a window in which a concurrent
+// RestoreUser can flip deleted_at back to NULL on one of those IDs. Deleting purely
+// off the stale ID list would hard-delete that already-restored user (and cascade
+// through its role grants, memberships, sessions and PATs) anyway, silently undoing a
+// restore that already reported success. Every delete below therefore re-applies the
+// same "deleted_at IS NOT NULL AND deleted_at < before" predicate the SELECT used,
+// keyed on id — not just the ID list — so a user a restore raced out from under the
+// purge is left alone.
 func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time.Time) (int64, error) {
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -48,24 +58,36 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 		if len(ids) == 0 {
 			return nil
 		}
-		if e := tx.Where("user_id IN ?", ids).Delete(&models.UserRole{}).Error; e != nil {
+		// Re-scoped to still-deleted-and-eligible users only, via a subquery against
+		// users' live deleted_at rather than the stale `ids` list, so a user restored
+		// after the SELECT above is excluded from every delete below it. A fresh
+		// subquery builder is used per reference since a *gorm.DB is stateful and must
+		// not be shared across clauses.
+		stillEligible := func() *gorm.DB {
+			return tx.Unscoped().Model(&models.User{}).
+				Select("id").
+				Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before)
+		}
+		if e := tx.Where("user_id IN (?)", stillEligible()).Delete(&models.UserRole{}).Error; e != nil {
 			return e
 		}
-		if e := tx.Where("user_id IN ?", ids).Delete(&models.UserGroup{}).Error; e != nil {
+		if e := tx.Where("user_id IN (?)", stillEligible()).Delete(&models.UserGroup{}).Error; e != nil {
 			return e
 		}
 		// ShareRecord carries its own DeletedAt (soft-delete) — Unscoped so this is a
 		// true hard delete, not another soft-deleted orphan nothing else purges.
-		if e := tx.Unscoped().Where("recipient_id IN ? AND is_group = ?", ids, false).Delete(&models.ShareRecord{}).Error; e != nil {
+		if e := tx.Unscoped().Where("recipient_id IN (?) AND is_group = ?", stillEligible(), false).Delete(&models.ShareRecord{}).Error; e != nil {
 			return e
 		}
-		if e := tx.Where("user_id IN ?", ids).Delete(&models.PersonalAccessToken{}).Error; e != nil {
+		if e := tx.Where("user_id IN (?)", stillEligible()).Delete(&models.PersonalAccessToken{}).Error; e != nil {
 			return e
 		}
-		if e := tx.Where("user_id IN ? OR impersonated_by IN ?", ids, ids).Delete(&models.Session{}).Error; e != nil {
+		if e := tx.Where("user_id IN (?) OR impersonated_by IN (?)", stillEligible(), stillEligible()).Delete(&models.Session{}).Error; e != nil {
 			return e
 		}
-		ru := tx.Unscoped().Where("id IN ?", ids).Delete(&models.User{})
+		ru := tx.Unscoped().
+			Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before).
+			Delete(&models.User{})
 		if ru.Error != nil {
 			return ru.Error
 		}
@@ -86,6 +108,18 @@ func (ls *LocalStorage) PurgeDeletedUsersBefore(ctx context.Context, before time
 // no longer exists anywhere, since IDs are never reused): dead weight in every "who
 // has access" report and role/access-review listing forever after. Global-scope
 // grants (ProjectID 0) are untouched — they aren't project-scoped.
+//
+// #276-sibling: like PurgeDeletedSecretsBefore, the eligible-ID list is gathered by a
+// SELECT (Pluck) and the deletes run moments later — a window in which a concurrent
+// RestoreProject can flip deleted_at back to NULL on one of those IDs (and cascade the
+// restore onto its environments/secrets, see LocalStorage.RestoreProject). Deleting
+// purely off the stale ID list would hard-delete that already-restored project anyway,
+// silently undoing a restore that already reported success — and orphaning the very
+// environments/secrets RestoreProject just brought back, which would reference a
+// project ID that no longer exists. Every delete below therefore re-applies the same
+// "deleted_at IS NOT NULL AND deleted_at < before" predicate the SELECT used, keyed on
+// id — not just the ID list — so a project a restore raced out from under the purge is
+// left alone.
 func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before time.Time) (int64, error) {
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -98,13 +132,25 @@ func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before t
 		if len(ids) == 0 {
 			return nil
 		}
-		if e := tx.Where("project_id IN ?", ids).Delete(&models.UserRole{}).Error; e != nil {
+		// Re-scoped to still-deleted-and-eligible projects only, via a subquery against
+		// projects' live deleted_at rather than the stale `ids` list, so a project
+		// restored after the SELECT above is excluded from every delete below it. A
+		// fresh subquery builder is used per reference since a *gorm.DB is stateful and
+		// must not be shared across clauses.
+		stillEligible := func() *gorm.DB {
+			return tx.Unscoped().Model(&models.Project{}).
+				Select("id").
+				Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before)
+		}
+		if e := tx.Where("project_id IN (?)", stillEligible()).Delete(&models.UserRole{}).Error; e != nil {
 			return e
 		}
-		if e := tx.Where("project_id IN ?", ids).Delete(&models.GroupRole{}).Error; e != nil {
+		if e := tx.Where("project_id IN (?)", stillEligible()).Delete(&models.GroupRole{}).Error; e != nil {
 			return e
 		}
-		rp := tx.Unscoped().Where("id IN ?", ids).Delete(&models.Project{})
+		rp := tx.Unscoped().
+			Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before).
+			Delete(&models.Project{})
 		if rp.Error != nil {
 			return rp.Error
 		}
@@ -117,6 +163,12 @@ func (ls *LocalStorage) PurgeDeletedProjectsBefore(ctx context.Context, before t
 	return purged, nil
 }
 
+// PurgeDeletedEnvironmentsBefore is NOT #276-sibling-affected despite RestoreEnvironment
+// existing: unlike the Pluck-then-delete-by-ID-list shape used above, purgeDeletedBefore
+// issues a single DELETE ... WHERE deleted_at IS NOT NULL AND deleted_at < before
+// statement — there is no separate SELECT and no stale ID list for a concurrent restore
+// to race against, so the predicate is necessarily evaluated against live row state at
+// delete time already.
 func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, before time.Time) (int64, error) {
 	return ls.purgeDeletedBefore(ctx, &models.Environment{}, before)
 }
