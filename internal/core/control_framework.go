@@ -161,8 +161,8 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 		},
 		{
 			ID: "data-classification", Name: "Secret data classification", Area: "Asset management",
-			Status:     controlStatus(p.DegradedArea("classification:"), p.Classification.Unclassified > 0),
-			Detail:     fmt.Sprintf("%d of %d secrets unclassified", p.Classification.Unclassified, p.Classification.TotalSecrets),
+			Status:     classificationStatus(p),
+			Detail:     classificationDetail(p),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.12", "A.5.13"}, SOC2: []string{"CC3.2"}, ENS: []string{"mp.info.2"}},
 		},
 		{
@@ -258,6 +258,36 @@ func certificateHygieneDetail(p *CompliancePosture) string {
 		return fmt.Sprintf("certificate-expiry scanning not enabled — %d certificate(s) never evaluated", c.TotalCertificates)
 	}
 	return fmt.Sprintf("%d expired, %d expiring soon of %d certificate(s) (%d not yet evaluated)", c.Expired, c.ExpiringSoon, c.TotalCertificates, c.NotEvaluated)
+}
+
+// classificationTotals folds all four classifiable surfaces the posture already
+// collects — static secrets, dynamic-secret configs, machine identities, and
+// machine-token credentials — into one unclassified/total pair (#396). Before this,
+// the data-classification control only ever reflected
+// p.Classification.Unclassified/TotalSecrets (static secrets), so a deployment with a
+// perfectly-classified secret store but thousands of unclassified dynamic-secret
+// configs, machine identities, or machine credentials still reported a clean Pass —
+// those sub-counts were collected by classificationPosture but never folded into the
+// control's pass/fail decision.
+func classificationTotals(p *CompliancePosture) (unclassified, total int) {
+	c := p.Classification
+	unclassified = c.Unclassified + c.DynamicConfigs.Unclassified + c.MachineIdentities.Unclassified + c.MachineCredentials.Unclassified
+	total = c.TotalSecrets + c.DynamicConfigs.Total + c.MachineIdentities.Total + c.MachineCredentials.Total
+	return unclassified, total
+}
+
+// classificationStatus is Gap when any classifiable surface — static secrets,
+// dynamic-secret configs, machine identities, or machine-token credentials — has an
+// unclassified item (A.5.12). See classificationTotals for why all four surfaces
+// must be folded in rather than just static secrets (#396).
+func classificationStatus(p *CompliancePosture) ControlStatus {
+	unclassified, _ := classificationTotals(p)
+	return controlStatus(p.DegradedArea("classification:"), unclassified > 0)
+}
+
+func classificationDetail(p *CompliancePosture) string {
+	unclassified, total := classificationTotals(p)
+	return fmt.Sprintf("%d of %d classifiable items unclassified across secrets/dynamic-configs/machine-identities/machine-credentials", unclassified, total)
 }
 
 // statusFromBool maps an enabled flag to pass / not-configured (an unset optional

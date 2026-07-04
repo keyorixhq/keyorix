@@ -71,6 +71,42 @@ func TestEvaluateControls_GapsFromPosture(t *testing.T) {
 	assert.Equal(t, ControlStatusNotConfigured, findControl(t, controls, "data-retention").Status)
 }
 
+// #396: the data-classification control must fold ALL FOUR classifiable surfaces —
+// static secrets, dynamic-secret configs, machine identities, and machine-token
+// credentials — into its pass/fail decision, not just static secrets. A deployment
+// with a perfectly-classified secret store but a pile of unclassified dynamic
+// configs / machine identities / machine credentials must report a Gap, never a
+// false Pass.
+func TestEvaluateControls_DataClassification_NonSecretSurfaces(t *testing.T) {
+	// Zero unclassified STATIC secrets, but each of the other three surfaces has an
+	// unclassified item.
+	p := &CompliancePosture{
+		Classification: ClassificationPosture{
+			TotalSecrets: 10, Unclassified: 0,
+			DynamicConfigs:     ClassificationCounts{Total: 5, Unclassified: 2},
+			MachineIdentities:  ClassificationCounts{Total: 3, Unclassified: 1},
+			MachineCredentials: ClassificationCounts{Total: 4, Unclassified: 1},
+		},
+	}
+	controls := EvaluateControls(p)
+	dc := findControl(t, controls, "data-classification")
+	assert.Equal(t, ControlStatusGap, dc.Status, "unclassified dynamic-configs/machine-identities/machine-credentials must gap the control even with 0 unclassified static secrets")
+	assert.Contains(t, dc.Detail, "4 of 22 classifiable items unclassified")
+	assert.Contains(t, dc.Detail, "secrets/dynamic-configs/machine-identities/machine-credentials")
+
+	// Fully clean across every surface stays Pass.
+	clean := EvaluateControls(&CompliancePosture{
+		Classification: ClassificationPosture{
+			TotalSecrets:       10,
+			DynamicConfigs:     ClassificationCounts{Total: 5},
+			MachineIdentities:  ClassificationCounts{Total: 3},
+			MachineCredentials: ClassificationCounts{Total: 4},
+		},
+	})
+	dcClean := findControl(t, clean, "data-classification")
+	assert.Equal(t, ControlStatusPass, dcClean.Status)
+}
+
 // Every ENS reference is a well-formed RD 311/2022 measure code: it names one of the
 // three measure frameworks (org. / op. / mp.) so the matrix can't carry a typo'd or
 // stray code that an auditor would reject.
