@@ -73,18 +73,21 @@ for platform in "${PLATFORMS[@]}"; do
     fi
     
     # Build flags
-    BUILD_FLAGS="-ldflags='-s -w -X main.Version=$VERSION -X main.BuildTime=$BUILD_TIME -X main.GitCommit=$GIT_COMMIT'"
-    
+    # Use an array (not a string re-parsed via `eval`) so that values such as
+    # $VERSION are passed to `go build` as literal argv entries, never as shell
+    # syntax to be re-interpreted (see #467/#468).
+    BUILD_FLAGS=(-ldflags="-s -w -X main.Version=$VERSION -X main.BuildTime=$BUILD_TIME -X main.GitCommit=$GIT_COMMIT")
+
     # Build CLI
-    if eval "go build $BUILD_FLAGS -o $PLATFORM_DIR/keyorix$EXT ./cmd/keyorix"; then
+    if go build "${BUILD_FLAGS[@]}" -o "$PLATFORM_DIR/keyorix$EXT" ./cmd/keyorix; then
         log_success "CLI built for $os/$arch"
     else
         log_warning "Failed to build CLI for $os/$arch"
         continue
     fi
-    
+
     # Build server
-    if eval "go build $BUILD_FLAGS -o $PLATFORM_DIR/keyorix-server$EXT ./server"; then
+    if go build "${BUILD_FLAGS[@]}" -o "$PLATFORM_DIR/keyorix-server$EXT" ./server; then
         log_success "Server built for $os/$arch"
     else
         log_warning "Failed to build server for $os/$arch"
