@@ -483,6 +483,17 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 			return fmt.Errorf("failed to migrate dynamic_secret_leases table: %w", err)
 		}
 	}
+	// At most one dynamic-secret config may exist per (project, environment, name)
+	// (#462), matching DynamicSecretConfig's own doc comment. The struct carries no
+	// unique-index tag (same reason as the max-TTL/Disabled columns above: this table
+	// is never re-AutoMigrated once it exists), so the index must be created
+	// explicitly here to also reach pre-existing databases. Close the gap at the DB
+	// layer regardless of whether the table pre-existed.
+	if tableExists(db, "dynamic_secret_configs") {
+		if err := ensureDynamicSecretConfigNameIndex(db); err != nil {
+			return err
+		}
+	}
 
 	// Create the WebAuthn tables if missing (ADR-036, additive, safe on existing DBs).
 	if !webauthnCredExists {
@@ -869,6 +880,19 @@ func ensureShareRecordUniqueIndex(db *gorm.DB) error {
 func ensureSecretVersionIndex(db *gorm.DB) error {
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_secret_versions_node_version ON secret_versions (secret_node_id, version_number)").Error; err != nil {
 		return fmt.Errorf("failed to create secret_versions unique index: %w", err)
+	}
+	return nil
+}
+
+// ensureDynamicSecretConfigNameIndex creates a unique index on
+// dynamic_secret_configs (project_id, environment_id, name), matching
+// DynamicSecretConfig's doc comment ("one per (project, env, name)", #462).
+// DynamicSecretConfig has no soft-delete column, so — unlike the partial indexes
+// above — this is a plain (non-partial) unique index. Idempotent; works on SQLite
+// and Postgres.
+func ensureDynamicSecretConfigNameIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_dynamic_secret_configs_project_env_name ON dynamic_secret_configs (project_id, environment_id, name)").Error; err != nil {
+		return fmt.Errorf("failed to create dynamic_secret_configs unique index: %w", err)
 	}
 	return nil
 }

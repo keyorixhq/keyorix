@@ -36,6 +36,11 @@ func newDynamicTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, *dynamic.FakeEngi
 		&models.Role{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{},
 	))
+	// Mirror factory.go's ensureDynamicSecretConfigNameIndex exactly (#462), so tests in
+	// this file exercise the same DB-level "one per (project, env, name)" guard
+	// production installs get.
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_dynamic_secret_configs_project_env_name "+
+		"ON dynamic_secret_configs (project_id, environment_id, name)").Error)
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: testAdminActorID, RoleID: 1}).Error)
 	// Every config created via mkConfig (or inline in these tests) targets
@@ -102,6 +107,61 @@ func TestDynamicSecrets_CreateConfig_RequiresAdminAuthority(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.NotZero(t, cfg.ID)
+}
+
+// TestDynamicSecrets_CreateConfig_DuplicateNameRejected is the (#462) regression:
+// DynamicSecretConfig's doc comment states "one per (project, env, name)" but
+// nothing enforced it. A second CreateDynamicSecretConfig call for the identical
+// (project, environment, name) tuple must fail with a clear validation error, not
+// silently create a duplicate row.
+func TestDynamicSecrets_CreateConfig_DuplicateNameRejected(t *testing.T) {
+	c, _, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	_ = mkConfig(t, c, ctx) // "app-db" on ProjectID 1 / EnvironmentID 2
+
+	_, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "app-db", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "bob", ActorID: testAdminActorID,
+	})
+	require.Error(t, err, "a duplicate (project, env, name) config must be rejected")
+	assert.Contains(t, err.Error(), "already exists")
+
+	configs, err := c.storage.ListDynamicSecretConfigs(ctx, 1, 2)
+	require.NoError(t, err)
+	assert.Len(t, configs, 1, "only the original config must exist")
+}
+
+// TestDynamicSecrets_CreateConfig_DifferentScopeAllowed asserts the "one per
+// (project, env, name)" rule (#462) is scoped to the full tuple: a different
+// environment, a different project, or a different name must all succeed
+// independently of an existing config.
+func TestDynamicSecrets_CreateConfig_DifferentScopeAllowed(t *testing.T) {
+	c, db, _, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	_ = mkConfig(t, c, ctx) // "app-db" on ProjectID 1 / EnvironmentID 2
+
+	// Different environment, same project + name.
+	require.NoError(t, db.Create(&models.Environment{ID: 3, ProjectID: 1, Name: "dyn-test-env-2"}).Error)
+	_, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "app-db", ProjectID: 1, EnvironmentID: 3, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
+	})
+	assert.NoError(t, err, "the same name in a different environment must succeed")
+
+	// Different project, same environment ID + name.
+	require.NoError(t, db.Create(&models.Project{ID: 4, Name: "dyn-test-project-2"}).Error)
+	_, err = c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "app-db", ProjectID: 4, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
+	})
+	assert.NoError(t, err, "the same name in a different project must succeed")
+
+	// Same project + environment, different name.
+	_, err = c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "app-db-2", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, DefaultTTLSeconds: 3600, CreatedBy: "alice", ActorID: testAdminActorID,
+	})
+	assert.NoError(t, err, "a different name in the same project/environment must succeed")
 }
 
 func TestDynamicSecrets_ConfigEncryptsAdminDSN(t *testing.T) {
