@@ -116,39 +116,6 @@ func TestKeyorixCore_LogShareRevoked(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
-func TestKeyorixCore_LogSharedSecretAccessed(t *testing.T) {
-	// Setup
-	mockStorage := new(MockStorage)
-	mockTime := time.Date(2025, 7, 1, 12, 0, 0, 0, time.UTC)
-	core := &KeyorixCore{
-		storage: mockStorage,
-		now: func() time.Time {
-			return mockTime
-		},
-	}
-	ctx := context.Background()
-
-	// Test data
-	auditCtx := &ShareAuditContext{
-		ActorID:    1,
-		SecretID:   1,
-		Permission: "read",
-	}
-
-	// Mock expectations
-	mockStorage.On("LogAuditEvent", ctx, mock.MatchedBy(func(event *models.AuditEvent) bool {
-		return event.EventType == string(ShareAuditEventAccessed) &&
-			event.SecretNodeID != nil &&
-			*event.SecretNodeID == 1
-	})).Return(nil)
-
-	// Execute
-	core.LogSharedSecretAccessed(ctx, auditCtx)
-
-	// Assert
-	mockStorage.AssertExpectations(t)
-}
-
 func TestKeyorixCore_LogGroupShareCreated(t *testing.T) {
 	// Setup
 	mockStorage := new(MockStorage)
@@ -273,7 +240,6 @@ func TestShareAudit_StampsImpersonationContext(t *testing.T) {
 		string(ShareAuditEventCreated):      func() { core.LogShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "read"}) },
 		string(ShareAuditEventUpdated):      func() { core.LogShareUpdated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3, Permission: "write", OldPermission: "read"}) },
 		string(ShareAuditEventRevoked):      func() { core.LogShareRevoked(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 3}) },
-		string(ShareAuditEventAccessed):     func() { core.LogSharedSecretAccessed(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, Permission: "read"}) },
 		string(ShareAuditEventGroupCreated): func() { core.LogGroupShareCreated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true, Permission: "read"}) },
 		string(ShareAuditEventGroupUpdated): func() {
 			core.LogGroupShareUpdated(ctx, &ShareAuditContext{ActorID: 2, SecretID: 1, RecipientID: 4, IsGroup: true, Permission: "write", OldPermission: "read"})

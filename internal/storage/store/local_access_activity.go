@@ -13,7 +13,15 @@ import (
 
 // accessActivityEventTypes are the audit event types that count as "using" access
 // to a project's secrets (so a grant whose principal never triggers one is dormant).
-var accessActivityEventTypes = []string{"secret.read", "shared_secret_accessed"}
+//
+// Every secret read — whether the reader is the owner or a share recipient — is
+// audited generically as "secret.read" (see LogSecretReadWithProject); there is
+// currently no separate event type for a share-sourced read, so only "secret.read"
+// is listed here. A prior "shared_secret_accessed" entry was removed (#418): the
+// writer that would have produced it was dead code with no caller other than its
+// own unit test, so the event never actually occurred and this list never matched
+// it in practice.
+var accessActivityEventTypes = []string{"secret.read"}
 
 // LastUserSecretActivity returns the most recent secret-access time per user in the
 // project, read from audit_events (where the read events carry user_id + project_id).
