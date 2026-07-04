@@ -733,8 +733,10 @@ type Storage interface {
 	CreateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) (*models.DynamicSecretLease, error)
 	GetDynamicSecretLease(ctx context.Context, leaseID string) (*models.DynamicSecretLease, error)
 	ListDynamicSecretLeases(ctx context.Context, configID uint) ([]*models.DynamicSecretLease, error)
-	// CountActiveLeases returns how many leases from configID are currently active —
-	// used to enforce the config's MaxActiveLeases ceiling.
+	// CountActiveLeases returns how many leases from configID still hold a live
+	// credential upstream — "active" AND "revoke_failed" (#411: a revoke_failed
+	// lease's earlier revoke attempt failed on the target, so the credential is
+	// still live) — used to enforce the config's MaxActiveLeases ceiling.
 	CountActiveLeases(ctx context.Context, configID uint) (int64, error)
 	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
 	ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error)

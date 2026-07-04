@@ -84,11 +84,17 @@ func (ls *LocalStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.
 	return ls.db.WithContext(ctx).Save(l).Error
 }
 
-// CountActiveLeases returns the number of active leases for a config.
+// CountActiveLeases returns the number of leases for a config that still hold a live
+// credential upstream — status "active" AND "revoke_failed" (#411: a revoke_failed
+// lease's earlier revoke attempt failed on the target, so its credential is still live,
+// exactly the same "still live" reasoning ListExpiredActiveLeases documents above). An
+// active-only count would let an attacker (or ordinary backend flakiness) force revokes
+// to fail at issue time and silently exceed MaxActiveLeases forever, since every
+// subsequent ceiling check would undercount the leftover live credentials.
 func (ls *LocalStorage) CountActiveLeases(ctx context.Context, configID uint) (int64, error) {
 	var n int64
 	err := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
-		Where("config_id = ? AND status = ?", configID, "active").Count(&n).Error
+		Where("config_id = ? AND status IN ?", configID, []string{"active", "revoke_failed"}).Count(&n).Error
 	return n, err
 }
 
