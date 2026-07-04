@@ -113,6 +113,42 @@ func TestFileKeyProvider_Errors(t *testing.T) {
 	}
 }
 
+func TestFileKeyProvider_RejectsPermissiveMode(t *testing.T) {
+	dir := t.TempDir()
+	raw := make([]byte, KEKSize)
+	for i := range raw {
+		raw[i] = byte(i + 1)
+	}
+
+	for _, mode := range []os.FileMode{0644, 0666, 0640, 0604} {
+		t.Run(mode.String(), func(t *testing.T) {
+			path := filepath.Join(dir, "permissive-"+mode.String()+".key")
+			require.NoError(t, os.WriteFile(path, raw, mode))
+			_, err := NewFileKeyProvider(path).KEK()
+			require.Error(t, err, "a KEK file readable/writable beyond its owner must be rejected")
+			assert.Contains(t, err.Error(), "beyond its owner")
+		})
+	}
+}
+
+func TestFileKeyProvider_AcceptsOwnerOnlyMode(t *testing.T) {
+	dir := t.TempDir()
+	raw := make([]byte, KEKSize)
+	for i := range raw {
+		raw[i] = byte(255 - i)
+	}
+
+	for _, mode := range []os.FileMode{0600, 0400} {
+		t.Run(mode.String(), func(t *testing.T) {
+			path := filepath.Join(dir, "owner-only-"+mode.String()+".key")
+			require.NoError(t, os.WriteFile(path, raw, mode))
+			kek, err := NewFileKeyProvider(path).KEK()
+			require.NoError(t, err, "an owner-only-permissioned KEK file must still load")
+			assert.Equal(t, raw, kek)
+		})
+	}
+}
+
 func TestEnvKeyProvider(t *testing.T) {
 	raw := make([]byte, KEKSize)
 	for i := range raw {

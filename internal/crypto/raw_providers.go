@@ -50,7 +50,20 @@ func (p *FileKeyProvider) KEK() ([]byte, error) {
 	if p.path == "" {
 		return nil, fmt.Errorf("file key provider: file_path is required")
 	}
-	data, err := os.ReadFile(p.path) // #nosec G304 -- operator-configured trusted KEK path
+	// Reject a group-/world-readable (or -writable) KEK file before ever trusting its
+	// contents. Mirrors the mode-bit threshold server/main.go's enforceKeyFilePermissions
+	// already uses for the wrapped DEK / salt / TLS key files (perm&0o077 != 0). Unlike
+	// that check — which only warns by default — the KEK is the root of the encryption
+	// key hierarchy, so a bad permission here fails closed unconditionally: an
+	// operator-fixable chmod, not a runtime toggle, is the correct remedy.
+	info, err := os.Stat(p.path)
+	if err != nil {
+		return nil, fmt.Errorf("file key provider: failed to stat %s: %w", p.path, err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("file key provider: %s is readable/writable beyond its owner (mode %o) — refusing to trust it as key material; chmod it to 0600 (or 0400)", p.path, info.Mode().Perm())
+	}
+	data, err := os.ReadFile(p.path) // #nosec G304 -- operator-configured trusted KEK path, permission-checked above
 	if err != nil {
 		return nil, fmt.Errorf("file key provider: failed to read %s: %w", p.path, err)
 	}
