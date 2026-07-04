@@ -182,6 +182,44 @@ func TestSendRotationReminders_EscalatesOnMoreSevereState(t *testing.T) {
 	assert.False(t, notes[0].IsRead)
 }
 
+// TestSendRotationReminders_EscalationRedispatchesDelivery is a regression test for
+// #482: escalating a standing rotation reminder in place (#250) must also re-fire the
+// out-of-band delivery channel (email/webhook via recipientNotificationSink), not just
+// update the notification row's Severity/Title/Message in the DB. Before the fix,
+// upgradeReminder never called dispatchNotification, so an admin whose "approaching"
+// reminder silently escalated to "overdue" while still unread would never actually
+// receive a second alert — undermining the entire point of escalation-aware reminders.
+func TestSendRotationReminders_EscalationRedispatchesDelivery(t *testing.T) {
+	ctx := context.Background()
+	c, db, now := newRotationReminderCore(t)
+	sink := &fakeSink{}
+	c.SetRecipientNotificationSink(sink)
+
+	// 25 days into a 30-day policy with a 7-day alert window: approaching, not overdue.
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", 10).
+		Update("created_at", now.AddDate(0, 0, -25)).Error)
+
+	sent, err := c.SendRotationReminders(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, sent)
+	require.Len(t, sink.events, 1, "the initial reminder must be delivered")
+	assert.Contains(t, sink.events[0].Message, "approaching")
+
+	// Now overdue (Critical) while the Warning reminder is still unread: an escalation.
+	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", 10).
+		Update("created_at", now.AddDate(0, 0, -35)).Error)
+
+	sent, err = c.SendRotationReminders(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, sent, "the escalation counts as sent")
+
+	require.Len(t, sink.events, 2,
+		"the escalation must re-fire delivery — a Warning reminder silently becoming Critical must not go out unless the channel actually re-sends")
+	assert.Contains(t, sink.events[1].Message, "overdue",
+		"the redispatched event carries the escalated message, not the stale one")
+	assert.Equal(t, NotificationRotationDue, sink.events[1].Type)
+}
+
 // TestSendRotationReminders_NoEscalation_SameOrLowerSeverity_NoNoise is the
 // inverse of the escalation test: once a Critical (overdue) reminder is
 // standing, a recheck that finds the state no worse must not touch it or
