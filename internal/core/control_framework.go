@@ -196,8 +196,8 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 		},
 		{
 			ID: "supply-chain-integrity", Name: "Software supply-chain integrity (signed, verifiable updates)", Area: "Supply chain",
-			Status:     supplyChainStatus(p.SupplyChain),
-			Detail:     supplyChainDetail(p.SupplyChain),
+			Status:     supplyChainStatus(p),
+			Detail:     supplyChainDetail(p),
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.19", "A.5.20", "A.5.21"}, SOC2: []string{"CC8.1"}, NIS2: []string{"Art.21(2)(d)"}, DORA: []string{"Art.28"}, ENS: []string{"op.pl.2", "op.exp.2"}},
 		},
 	}
@@ -205,12 +205,22 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 
 // supplyChainStatus is Pass when this deployment verifies updates against a pinned signing
 // key (a signed release). A source/dev build pins no key, so the control is "not configured"
-// (it does not apply to an unsigned build) rather than a gap.
-func supplyChainStatus(s SupplyChainPosture) ControlStatus {
-	return statusFromBool(s.UpdateSigningTrusted)
+// (it does not apply to an unsigned build) rather than a gap. But if the trust-registry
+// lookup itself failed this run (#145 — the embedded key material was malformed, a
+// build/release integrity problem, not an ordinary unsigned build), that must surface as
+// Unknown rather than silently reading identical to "not configured".
+func supplyChainStatus(p *CompliancePosture) ControlStatus {
+	if p.DegradedArea("supply_chain") {
+		return ControlStatusUnknown
+	}
+	return statusFromBool(p.SupplyChain.UpdateSigningTrusted)
 }
 
-func supplyChainDetail(s SupplyChainPosture) string {
+func supplyChainDetail(p *CompliancePosture) string {
+	s := p.SupplyChain
+	if p.DegradedArea("supply_chain") {
+		return "UNKNOWN — trust-registry lookup failed this run (embedded key material malformed); do not treat as unsigned/not-configured"
+	}
 	if !s.UpdateSigningTrusted {
 		return "no pinned update-signing key (unsigned/source build) — offline bundle verification not in force"
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -68,6 +69,31 @@ func TestGetCompliancePosture_DegradedOnLegalHoldQueryError(t *testing.T) {
 	require.NoError(t, err)
 	lh := findControl(t, controls.Controls, "legal-hold")
 	assert.Equal(t, ControlStatusUnknown, lh.Status, "the legal-hold CONTROL must surface as unknown, not silently pass, when its posture signal is degraded")
+}
+
+// #145: trust.DefaultRegistry() only errors when the embedded update/license signing-key
+// material itself is malformed (a build/release integrity problem) — distinct from an
+// ordinary unsigned/source build, which parses its empty key spec with a nil error. Before
+// this fix, a registry-lookup failure left SupplyChain.TrustedUpdateKeys/UpdateSigningTrusted
+// at their zero values — byte-identical to the expected "no keys pinned, ordinary dev build"
+// state — masking a genuine "couldn't even check" failure as benign not-configured.
+func TestGetCompliancePosture_DegradedOnSupplyChainTrustRegistryError(t *testing.T) {
+	c := compliancePostureCore(t)
+	c.SetTrustRegistryFunc(func() (*trust.KeyRegistry, error) {
+		return nil, errors.New("simulated malformed embedded key data")
+	})
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err, "a single failed sub-rollup must not abort the whole snapshot")
+
+	assert.False(t, p.SupplyChain.UpdateSigningTrusted, "the field itself still reads as its zero value")
+	assert.True(t, p.Degraded, "a failed trust-registry lookup must flip Degraded — the zero value above is UNKNOWN, not a verified unsigned build")
+	assert.True(t, containsSubstring(p.DegradedReasons, "supply_chain"), "expected a supply_chain entry in DegradedReasons, got %v", p.DegradedReasons)
+
+	controls, err := c.GetComplianceControls(context.Background())
+	require.NoError(t, err)
+	sc := findControl(t, controls.Controls, "supply-chain-integrity")
+	assert.Equal(t, ControlStatusUnknown, sc.Status, "the supply-chain-integrity CONTROL must surface as unknown, not silently not-configured, when its trust-registry lookup failed")
 }
 
 // failingRiskExceptionsStore wraps LocalStorage and fails ListRiskExceptions, simulating

@@ -20,6 +20,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/trust"
 )
 
 // KeyorixCore represents the core business logic layer.
@@ -44,6 +45,10 @@ type KeyorixCore struct {
 	// dynamicEngineFactory resolves a dynamic-secrets credential engine by backend
 	// type (ADR-035). nil = the real dynamic.New; overridable in tests with a fake.
 	dynamicEngineFactory func(string) (dynamic.CredentialEngine, error)
+	// trustRegistry resolves the embedded update/license signing-key trust registry
+	// (ADR-062/064). nil = the real trust.DefaultRegistry; overridable in tests to
+	// inject a lookup failure (#145) without mutating trust package internals.
+	trustRegistry func() (*trust.KeyRegistry, error)
 	// dynamicSweepEnabled mirrors config dynamic_secrets.sweep_enabled. Backends
 	// without DB-level expiry (MySQL/MongoDB) rely entirely on the sweeper to
 	// enforce a lease's TTL, so IssueLease refuses to mint from them when it is off
@@ -491,6 +496,21 @@ func (c *KeyorixCore) dynamicEngine(backendType string) (dynamic.CredentialEngin
 		return c.dynamicEngineFactory(backendType)
 	}
 	return dynamic.New(backendType)
+}
+
+// SetTrustRegistryFunc overrides how the update/license signing-key trust registry
+// is resolved (tests inject a failing lookup to exercise #145's degrade path).
+func (c *KeyorixCore) SetTrustRegistryFunc(f func() (*trust.KeyRegistry, error)) {
+	c.trustRegistry = f
+}
+
+// defaultTrustRegistry resolves the trust registry via the override (or the real
+// trust.DefaultRegistry when none is set).
+func (c *KeyorixCore) defaultTrustRegistry() (*trust.KeyRegistry, error) {
+	if c.trustRegistry != nil {
+		return c.trustRegistry()
+	}
+	return trust.DefaultRegistry()
 }
 
 // SetWebAuthn wires the WebAuthn relying party (ADR-036). The server calls this
