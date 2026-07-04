@@ -165,10 +165,13 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	if err != nil {
 		return nil, fmt.Errorf("%s: invitation not found", i18n.T("ErrorNotFound", nil))
 	}
-	// Lazy-expire an overdue invite, then require it still be pending.
+	// Lazy-expire an overdue invite, then require it still be pending. Best-effort:
+	// if a concurrent revoke/accept already resolved this invitation, that
+	// transition wins and the conditional write no-ops; the state check below
+	// still refuses to proceed either way.
 	if inv.State == InvitationPending && inv.ExpiresAt != nil && c.now().After(*inv.ExpiresAt) {
 		inv.State = InvitationExpired
-		_ = c.storage.UpdateProjectInvitation(ctx, inv)
+		_, _ = c.storage.UpdateProjectInvitation(ctx, inv)
 	}
 	if inv.State != InvitationPending {
 		return nil, fmt.Errorf("%s: invitation is %s", i18n.T("ErrorValidation", nil), inv.State)
@@ -238,10 +241,28 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	}
 
 	// Mark the invitation accepted (only now that account + membership both exist).
+	// Conditional on the invitation still being pending (#412): the grants above
+	// were already applied, so if an admin's RevokeInvitation won a concurrent race
+	// and flipped the row to revoked in the window since the pending check at the
+	// top of this function, this write must not silently re-establish "accepted"
+	// over a revoke — and the grant that already landed must not survive it.
 	now := c.now()
 	inv.State = InvitationAccepted
 	inv.AcceptedAt = &now
-	_ = c.storage.UpdateProjectInvitation(ctx, inv)
+	ok, uerr := c.storage.UpdateProjectInvitation(ctx, inv)
+	if uerr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
+	}
+	if !ok {
+		// Lost the race: the invitation was concurrently revoked (or lazily
+		// expired) after the grants above were applied. Best-effort revoke the
+		// membership/role(s) just granted so a revoked invitation can't leave a
+		// live grant behind, then fail closed — no session is minted below.
+		c.revokeInvitationGrants(ctx, inv, user.ID)
+		c.auditProjectScoped(ctx, "invitation.accept_race_reverted", user.ID, inv.ProjectID,
+			fmt.Sprintf("invitation %d was concurrently revoked/resolved while %s (user %d) was accepting it; reverted the grant(s) just made", inv.ID, inv.Email, user.ID))
+		return nil, fmt.Errorf("%s: this invitation was revoked", i18n.T("ErrorValidation", nil))
+	}
 
 	c.auditProjectScoped(ctx, "invitation.accepted", user.ID, inv.ProjectID,
 		fmt.Sprintf("invitation %d accepted by %s (user %d)", inv.ID, inv.Email, user.ID))

@@ -18,8 +18,8 @@ func (rs *RemoteStorage) GetProjectInvitation(_ context.Context, _ uint) (*model
 	return nil, remoteUnsupported("GetProjectInvitation")
 }
 
-func (rs *RemoteStorage) UpdateProjectInvitation(_ context.Context, _ *models.ProjectInvitation) error {
-	return remoteUnsupported("UpdateProjectInvitation")
+func (rs *RemoteStorage) UpdateProjectInvitation(_ context.Context, _ *models.ProjectInvitation) (bool, error) {
+	return false, remoteUnsupported("UpdateProjectInvitation")
 }
 
 func (rs *RemoteStorage) ListProjectInvitations(_ context.Context, _ uint) ([]*models.ProjectInvitation, error) {
@@ -34,8 +34,8 @@ func (rs *RemoteStorage) GetAccessRequest(_ context.Context, _ uint) (*models.Ac
 	return nil, remoteUnsupported("GetAccessRequest")
 }
 
-func (rs *RemoteStorage) UpdateAccessRequest(_ context.Context, _ *models.AccessRequest) error {
-	return remoteUnsupported("UpdateAccessRequest")
+func (rs *RemoteStorage) UpdateAccessRequest(_ context.Context, _ *models.AccessRequest) (bool, error) {
+	return false, remoteUnsupported("UpdateAccessRequest")
 }
 
 func (rs *RemoteStorage) ListAccessRequests(_ context.Context, _ uint) ([]*models.AccessRequest, error) {

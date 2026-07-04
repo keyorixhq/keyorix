@@ -108,13 +108,25 @@ type Storage interface {
 	// Project invitations (ADR-024).
 	CreateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (*models.ProjectInvitation, error)
 	GetProjectInvitation(ctx context.Context, id uint) (*models.ProjectInvitation, error)
-	UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) error
+	// UpdateProjectInvitation persists an invitation state transition with a
+	// conditional UPDATE (only an invitation whose CURRENT stored state is still
+	// "pending" may be transitioned). The bool reports whether the row matched and
+	// was updated; false means the invitation was already resolved (accepted,
+	// revoked, or expired) by a prior or racing call and this write was rejected,
+	// not silently applied (#412).
+	UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (bool, error)
 	ListProjectInvitations(ctx context.Context, projectID uint) ([]*models.ProjectInvitation, error)
 
 	// Access requests (ADR-024).
 	CreateAccessRequest(ctx context.Context, req *models.AccessRequest) (*models.AccessRequest, error)
 	GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error)
-	UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) error
+	// UpdateAccessRequest persists an access-request state transition with a
+	// conditional UPDATE (only a request whose CURRENT stored state is still
+	// "pending" may be transitioned). The bool reports whether the row matched and
+	// was updated; false means the request was already resolved (approved,
+	// rejected, withdrawn, or expired) by a prior or racing call and this write was
+	// rejected, not silently applied (#277).
+	UpdateAccessRequest(ctx context.Context, req *models.AccessRequest) (bool, error)
 	ListAccessRequests(ctx context.Context, projectID uint) ([]*models.AccessRequest, error)
 	// Access-request approvals (N-of-M dual control). One row per approver sign-off.
 	CreateAccessRequestApproval(ctx context.Context, a *models.AccessRequestApproval) error

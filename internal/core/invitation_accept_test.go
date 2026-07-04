@@ -53,7 +53,7 @@ func TestCompleteInvitationAccept(t *testing.T) {
 		ms.On("CreateProjectMembership", ctx, mock.AnythingOfType("*models.ProjectMembership")).
 			Return(&models.ProjectMembership{ID: 1, ProjectID: 5, UserID: 20, Role: "developer", State: MembershipActive}, nil)
 		ms.On("AssignRole", ctx, uint(20), uint(9), mock.Anything).Return(nil)
-		ms.On("UpdateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).Return(nil)
+		ms.On("UpdateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).Return(true, nil)
 		ms.On("CreateSession", ctx, mock.AnythingOfType("*models.Session")).
 			Return(&models.Session{ID: 1, UserID: 20, SessionToken: "sess-bob"}, nil)
 
@@ -87,7 +87,7 @@ func TestCompleteInvitationAccept(t *testing.T) {
 		ms.On("GetActiveProjectMembership", ctx, uint(5), uint(21)).Return(nil, assertNotFoundErr())
 		ms.On("CreateProjectMembership", ctx, mock.AnythingOfType("*models.ProjectMembership")).
 			Return(&models.ProjectMembership{ID: 2, ProjectID: 5, UserID: 21, Role: "developer", State: MembershipInvited}, nil)
-		ms.On("UpdateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).Return(nil)
+		ms.On("UpdateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).Return(true, nil)
 		ms.On("CreateSession", ctx, mock.AnythingOfType("*models.Session")).
 			Return(&models.Session{ID: 2, UserID: 21, SessionToken: "sess-bob2"}, nil)
 
