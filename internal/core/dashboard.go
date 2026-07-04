@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -27,6 +28,15 @@ type StatTrend struct {
 }
 
 // DashboardStats contains summary statistics for the dashboard.
+//
+// #394: every deployment-wide sub-check gated behind hasAuditRead below (and the
+// expiring-secrets rollup) is queried best-effort so one failing signal doesn't
+// abort the whole dashboard — but a query failure must never read the same as
+// "checked, genuinely zero" (e.g. FailedAuthAttempts24h=0 on an audit-log query
+// error looks identical to a clean 24h window and could mask an ongoing
+// incident or audit-log outage). Degraded + DegradedReasons make a partial
+// snapshot detectable instead of indistinguishable from a fully-clean one,
+// mirroring the CompliancePosture.Degraded convention (compliance_posture.go).
 type DashboardStats struct {
 	TotalSecrets          int64            `json:"totalSecrets"`
 	SharedSecrets         int              `json:"sharedSecrets"`
@@ -43,6 +53,23 @@ type DashboardStats struct {
 	SharedWithMeTrend     *StatTrend       `json:"sharedWithMeTrend,omitempty"`
 	ExpiringSecrets       []ExpiringSecret `json:"expiringSecrets,omitempty"`
 	RecentActivity        []ActivityItem   `json:"recentActivity"`
+	// Degraded is true when one or more sub-checks above could not be queried —
+	// the zero/empty values they carry are UNKNOWN, not verified-clean. A
+	// consumer must treat a degraded snapshot as incomplete, not as a clean
+	// read (e.g. FailedAuthAttempts24h=0 does NOT mean "no failed auth" when
+	// Degraded is true).
+	Degraded bool `json:"degraded"`
+	// DegradedReasons names each failed sub-check with its underlying error.
+	DegradedReasons []string `json:"degradedReasons,omitempty"`
+}
+
+// degrade records that a dashboard sub-check could not be queried: it flips
+// Degraded and appends a human-readable reason, so a consumer can tell "queried,
+// genuinely zero" apart from "query failed, treat as unknown" — mirroring
+// CompliancePosture.degrade (compliance_posture.go).
+func (s *DashboardStats) degrade(area string, err error) {
+	s.Degraded = true
+	s.DegradedReasons = append(s.DegradedReasons, fmt.Sprintf("%s: %v", area, err))
 }
 
 // ActivityItem represents a single entry in the activity feed.
@@ -111,71 +138,92 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 		recent = append(recent, mapAuditEventToActivity(e, username))
 	}
 
-	expiringSecrets := c.getExpiringSecrets(ctx, username)
+	stats := &DashboardStats{}
+
+	expiringSecrets, err := c.getExpiringSecrets(ctx, username)
+	if err != nil {
+		stats.degrade("expiring_secrets", err)
+	}
 
 	var activeUsers, auditCount, auditLogins, auditSecretReads, failedAuth24h, inactiveUsers int64
 	if hasAuditRead {
 		// Active users from storage stats.
 		if storageStats, err := c.storage.GetStats(ctx); err == nil {
 			activeUsers = storageStats.TotalUsers
+		} else {
+			stats.degrade("active_users", err)
 		}
 
 		// Audit events in the last 30 days — total count only.
 		thirtyDaysAgo := time.Now().UTC().Add(-30 * 24 * time.Hour)
-		_, auditCount, _ = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		var auditErr error
+		_, auditCount, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
 			StartTime: &thirtyDaysAgo,
 			Page:      1,
 			PageSize:  1,
 		})
+		if auditErr != nil {
+			stats.degrade("audit_count", auditErr)
+		}
 		// Auth events (login/logout) vs secret events in last 30 days.
 		authAction := "auth.login"
-		_, auditLogins, _ = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		_, auditLogins, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
 			StartTime: &thirtyDaysAgo,
 			Action:    &authAction,
 			Page:      1,
 			PageSize:  1,
 		})
+		if auditErr != nil {
+			stats.degrade("audit_logins", auditErr)
+		}
 		secretReadAction := "secret.read"
-		_, auditSecretReads, _ = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		_, auditSecretReads, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
 			StartTime: &thirtyDaysAgo,
 			Action:    &secretReadAction,
 			Page:      1,
 			PageSize:  1,
 		})
+		if auditErr != nil {
+			stats.degrade("audit_secret_reads", auditErr)
+		}
 
 		// Failed auth attempts in the last 24 hours (success=false, any action).
 		twentyFourHoursAgo := time.Now().UTC().Add(-24 * time.Hour)
 		successFalse := false
-		_, failedAuth24h, _ = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+		_, failedAuth24h, auditErr = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
 			StartTime: &twentyFourHoursAgo,
 			Success:   &successFalse,
 			Page:      1,
 			PageSize:  1,
 		})
+		if auditErr != nil {
+			stats.degrade("failed_auth_24h", auditErr)
+		}
 
 		// Inactive users: registered users whose last_login_at is null or older than
 		// 30 days. Counted directly off the users table (no audit-log scan).
 		inactiveCutoff := thirtyDaysAgo
-		_, inactiveUsers, _ = c.storage.ListUsers(ctx, &storage.UserFilter{
+		_, inactiveUsers, auditErr = c.storage.ListUsers(ctx, &storage.UserFilter{
 			InactiveSince: &inactiveCutoff,
 			Page:          1,
 			PageSize:      1,
 		})
+		if auditErr != nil {
+			stats.degrade("inactive_users", auditErr)
+		}
 	}
 
-	stats := &DashboardStats{
-		TotalSecrets:          total,
-		SharedSecrets:         sharedSecrets,
-		SecretsSharedWithMe:   sharedWithMe,
-		ActiveUsers:           activeUsers,
-		AuditEvents30d:        auditCount,
-		AuditLogins30d:        auditLogins,
-		AuditSecretReads30d:   auditSecretReads,
-		FailedAuthAttempts24h: failedAuth24h,
-		InactiveUsers:         inactiveUsers,
-		RecentActivity:        recent,
-		ExpiringSecrets:       expiringSecrets,
-	}
+	stats.TotalSecrets = total
+	stats.SharedSecrets = sharedSecrets
+	stats.SecretsSharedWithMe = sharedWithMe
+	stats.ActiveUsers = activeUsers
+	stats.AuditEvents30d = auditCount
+	stats.AuditLogins30d = auditLogins
+	stats.AuditSecretReads30d = auditSecretReads
+	stats.FailedAuthAttempts24h = failedAuth24h
+	stats.InactiveUsers = inactiveUsers
+	stats.RecentActivity = recent
+	stats.ExpiringSecrets = expiringSecrets
 
 	prev, err := c.storage.GetPreviousStatsSnapshot(ctx, userID)
 	if err == nil && prev != nil {
@@ -230,8 +278,11 @@ func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username
 }
 
 // getExpiringSecrets returns secrets expiring within 30 days OR already expired,
-// sorted by expiration ascending (expired first, then soonest-expiring).
-func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) []ExpiringSecret {
+// sorted by expiration ascending (expired first, then soonest-expiring). The
+// returned error (non-nil only when a page fails to load) signals that the
+// result may be truncated — the caller (#394) must surface this as a degraded
+// snapshot rather than silently treating a partial (or empty) list as complete.
+func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) ([]ExpiringSecret, error) {
 	now := time.Now().UTC()
 	cutoff := now.Add(30 * 24 * time.Hour)
 
@@ -249,6 +300,7 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) [
 	// expired/expiring selection in the query.
 	const pageSize = 200
 	var result []ExpiringSecret
+	var pageErr error
 	for page := 1; ; page++ {
 		secrets, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
 			CreatedBy:     &username,
@@ -257,6 +309,7 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) [
 			PageSize:      pageSize,
 		})
 		if err != nil {
+			pageErr = err
 			break
 		}
 		for _, s := range secrets {
@@ -287,7 +340,7 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) [
 		return result[i].ExpiresAt.Before(result[j].ExpiresAt)
 	})
 
-	return result
+	return result, pageErr
 }
 
 // computeTrend calculates percentage change between previous and current values.
