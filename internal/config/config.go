@@ -1514,10 +1514,18 @@ func (c *Config) Validate() error {
 		if db.DSN == "" && (db.Host == "" || db.Name == "" || db.User == "") {
 			return fmt.Errorf("postgres storage requires either database.dsn or all of host, name, and user to be set")
 		}
-	default: // "local", ""
+	case "local", "":
 		if c.Storage.Database.Path == "" {
 			return fmt.Errorf("database path is not specified")
 		}
+	default:
+		// #463: an unrecognized storage.type (e.g. a typo like "postgress" or
+		// "remot") used to fall through silently to the SQLite default in both
+		// this validator and the storage factory — in a multi-replica HA
+		// deployment intending shared Postgres/remote storage, that produced
+		// per-replica split-brain SQLite instances with no operator-visible
+		// signal. Fail fast at config-validation time instead.
+		return fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"postgres\", \"postgresql\", or \"remote\"", c.Storage.Type)
 	}
 
 	if c.Locale.Language == "" {

@@ -11,8 +11,8 @@ import (
 
 // OpenGormDB opens a raw *gorm.DB for the configured local backend, switching on
 // cfg.Storage.Type with the same mapping the factory uses (postgres/postgresql →
-// Postgres, anything else → SQLite) and applying the same connection-pool
-// settings via applyPoolSettings.
+// Postgres, local/"" → SQLite, anything else rejected — #463) and applying the
+// same connection-pool settings via applyPoolSettings.
 //
 // Unlike the factory's CreateStorage, it deliberately does NOT run migrations: it
 // exists for the handful of CLI admin commands that need a raw *gorm.DB the
@@ -42,7 +42,7 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 			return nil, err
 		}
 		return db, nil
-	default: // "local", "" or any other value → SQLite (mirrors the factory)
+	case "local", "":
 		dbPath := cfg.Storage.Database.Path
 		if dbPath == "" {
 			dbPath = "./secrets.db"
@@ -55,5 +55,11 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 			return nil, err
 		}
 		return db, nil
+	default:
+		// #463: defense in depth, mirroring the factory's own hardening — these
+		// CLI admin commands run without going through Config.Validate() first,
+		// so a typo'd storage.type must not silently open a local SQLite file
+		// disconnected from the operator's intended (e.g. shared Postgres) backend.
+		return nil, fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"postgres\", \"postgresql\", or \"remote\"", cfg.Storage.Type)
 	}
 }

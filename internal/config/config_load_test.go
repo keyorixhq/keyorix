@@ -149,3 +149,35 @@ func TestValidate_AcceptsExplicitAllowedOrigins(t *testing.T) {
 	c.Server.HTTP.AllowedOrigins = []string{"https://app.example.com", "http://localhost:3000"}
 	require.NoError(t, c.Validate())
 }
+
+// #463: an unrecognized storage.type (e.g. a typo like "postgres_typo") used to
+// be silently accepted by Validate and fall through to the SQLite default
+// everywhere downstream — in a multi-replica HA deployment intending shared
+// Postgres/remote storage, that produces per-replica split-brain SQLite
+// instances with no operator-visible signal. Validate must reject it clearly.
+func TestValidate_RejectsUnknownStorageType(t *testing.T) {
+	c := &Config{}
+	c.Storage.Type = "postgres_typo"
+	err := c.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "storage.type")
+	require.Contains(t, err.Error(), "postgres_typo")
+}
+
+// Companion to TestValidate_RejectsUnknownStorageType: every genuinely-supported
+// storage.type value must still validate cleanly — a validation change that's
+// too aggressive is as dangerous as one that's too permissive.
+func TestValidate_AcceptsValidStorageTypes(t *testing.T) {
+	for _, storageType := range []string{"", "local", "postgres", "postgresql", "remote"} {
+		c := &Config{}
+		c.Storage.Type = storageType
+		switch storageType {
+		case "postgres", "postgresql":
+			c.Storage.Database.DSN = "postgres://user:pass@localhost/db"
+		case "local", "":
+			c.Storage.Database.Path = "/tmp/keyorix.db"
+		}
+		err := c.Validate()
+		require.NoErrorf(t, err, "storage.type %q should be accepted", storageType)
+	}
+}
