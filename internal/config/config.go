@@ -165,6 +165,15 @@ type ConnectorConfig struct {
 	// (e.g. https://vault:8200), or the Key Vault URL for type "azure-key-vault"
 	// (e.g. https://myvault.vault.azure.net/).
 	Address string `yaml:"address"`
+	// ProjectID pins a "gcp-secret-manager" connector to a single GCP project (#431):
+	// every ref must embed this exact project ID
+	// (projects/PROJECT/secrets/NAME/versions/VERSION), or the read is rejected before
+	// reaching the backend. Unlike Address for "vault"/"azure-key-vault", a GCP ref
+	// carries its own project ID, so leaving this unset lets a single connector (and
+	// the ambient ADC identity it runs under) address secrets in ANY project that
+	// identity can reach, relying solely on AllowedRefs to scope reach. Strongly
+	// recommended; left empty only for backward compatibility with an existing config.
+	ProjectID string `yaml:"project_id"`
 	// TokenEnv names the environment variable holding the backend token for type
 	// "vault" (default "VAULT_TOKEN"). The token is read from the environment, never
 	// from this file.
