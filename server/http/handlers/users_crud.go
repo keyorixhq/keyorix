@@ -411,6 +411,12 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "InvalidParameter", "Invalid user ID", http.StatusBadRequest, nil)
 		return
 	}
+	// Mirrors accountStateAction's self-action guard (line 367): an admin must not be
+	// able to revoke their own active sessions out from under themselves mid-request.
+	if uint(id) == admin.UserID {
+		sendError(w, "BadRequest", "Cannot revoke your own sessions", http.StatusBadRequest, nil)
+		return
+	}
 	n, err := h.coreService.RevokeUserSessions(r.Context(), admin.UserID, uint(id))
 	if err != nil {
 		status := http.StatusInternalServerError

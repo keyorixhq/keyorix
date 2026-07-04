@@ -60,7 +60,7 @@ func doPasswordReset(h *AuthHandler, ip string) int {
 // throttle-check + potential email send.
 func TestPasswordReset_RateLimitedByIP(t *testing.T) {
 	c := newPasswordResetTestCore(t)
-	h := NewAuthHandler(c)
+	h := NewAuthHandler(c, false)
 	const ip = "203.0.113.7"
 
 	for i := 0; i < core.PasswordResetMaxAttempts; i++ {
@@ -74,7 +74,7 @@ func TestPasswordReset_RateLimitedByIP(t *testing.T) {
 // IP, not global — a different caller is unaffected by another IP's burst.
 func TestPasswordReset_RateLimitIsPerIP(t *testing.T) {
 	c := newPasswordResetTestCore(t)
-	h := NewAuthHandler(c)
+	h := NewAuthHandler(c, false)
 
 	for i := 0; i < core.PasswordResetMaxAttempts; i++ {
 		assert.Equal(t, http.StatusOK, doPasswordReset(h, "203.0.113.7"))

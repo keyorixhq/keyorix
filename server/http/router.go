@@ -66,9 +66,9 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		return nil, fmt.Errorf("failed to init core HTTP handlers: %w", err)
 	}
 
-	authHandler := handlers.NewAuthHandler(coreService)
+	authHandler := handlers.NewAuthHandler(coreService, cfg.Server.HTTP.TLS.Enabled)
 	patHandler := handlers.NewPATHandler(coreService)
-	impersonationHandler := handlers.NewImpersonationHandler(coreService)
+	impersonationHandler := handlers.NewImpersonationHandler(coreService, cfg.Server.HTTP.TLS.Enabled)
 
 	secretHandler, err := handlers.NewSecretHandler(coreService)
 	if err != nil {
@@ -223,6 +223,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// an authorization boundary. Runs right after Authentication so the
 		// principal is resolved. No-op unless server.http.ratelimit.enabled is set.
 		r.Use(customMiddleware.PrincipalRateLimit(cfg.Server.HTTP.RateLimit))
+		// Double-submit CSRF check for cookie-authenticated state-changing requests
+		// (Phase 1 auth-cookie migration) — no-op for Bearer-only callers (PATs,
+		// machine tokens, CI/API clients), see RequireCSRF's doc comment.
+		r.Use(customMiddleware.RequireCSRF)
 		// Confine restricted (must-change-password) sessions to the password-change
 		// allowlist (ADR-025).
 		r.Use(customMiddleware.EnforceAccountRestriction)

@@ -101,7 +101,11 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 // EndImpersonation terminates the impersonation session identified by token,
 // logging an impersonation.end event with the session duration and the number
 // of actions taken while impersonating. The token must belong to an
-// impersonation session.
+// impersonation session. Restoring the admin's own session is a caller (HTTP
+// handler) concern — see admin_impersonation.go's End, which stashes the
+// admin's token in a second cookie at Start and reads it back here, rather than
+// this core layer trying to recall a plaintext token it never retains (session
+// tokens are stored only as a hash, see local_auth.go's hashSessionToken).
 func (c *KeyorixCore) EndImpersonation(ctx context.Context, token string) error {
 	session, err := c.storage.GetSession(ctx, token)
 	if err != nil {

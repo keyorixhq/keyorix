@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -936,4 +938,293 @@ func TestEveryMutatingRouteDeniesReadOnly(t *testing.T) {
 	})
 	require.NoError(t, walkErr)
 	assert.Greater(t, checked, 25, "sanity: the walk should cover many mutating routes")
+}
+
+// ── Phase 1 auth-cookie migration ──────────────────────────────────────────────
+
+// newCookieClient returns an *http.Client with its own cookie jar scoped to
+// baseURL, so cookies set by one request (e.g. login) are automatically sent on
+// subsequent requests through this client — exactly how a browser behaves.
+func newCookieClient(t *testing.T) *http.Client {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	return &http.Client{Jar: jar, Timeout: 5 * time.Second}
+}
+
+// loginViaHTTP performs a real POST /auth/login and returns the response (body
+// not yet closed — the caller must close it) so tests can inspect both the
+// Set-Cookie headers and the JSON body.
+func loginViaHTTP(t *testing.T, client *http.Client, baseURL, username, password string) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"username": username, "password": password})
+	require.NoError(t, err)
+	resp, err := client.Post(baseURL+"/auth/login", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	return resp
+}
+
+// csrfCookieValue reads the csrf_token cookie the jar picked up for baseURL —
+// standing in for the SPA reading document.cookie to echo it back as a header.
+func csrfCookieValue(t *testing.T, client *http.Client, baseURL string) string {
+	t.Helper()
+	u, err := url.Parse(baseURL)
+	require.NoError(t, err)
+	for _, c := range client.Jar.Cookies(u) {
+		if c.Name == "csrf_token" {
+			return c.Value
+		}
+	}
+	return ""
+}
+
+func TestCookieAuth_LoginSetsCookiesAndDualModeWorks(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	_ = createTestToken(t, testCore) // seeds testadmin/TestPassword123!
+
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	client := newCookieClient(t)
+	resp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var sessionCookie, csrfCookie *http.Cookie
+	for _, c := range resp.Cookies() {
+		switch c.Name {
+		case "kx_session":
+			sessionCookie = c
+		case "csrf_token":
+			csrfCookie = c
+		}
+	}
+	require.NotNil(t, sessionCookie, "login must set the session cookie")
+	require.NotNil(t, csrfCookie, "login must set the CSRF cookie")
+	assert.True(t, sessionCookie.HttpOnly, "session cookie must be HttpOnly")
+	assert.False(t, csrfCookie.HttpOnly, "CSRF cookie must be readable by JS")
+	assert.Equal(t, http.SameSiteLaxMode, sessionCookie.SameSite)
+
+	var loginBody struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&loginBody))
+	require.NotEmpty(t, loginBody.Data.Token, "Phase A keeps the token in the JSON body for dual-mode")
+
+	t.Run("cookie-only auth works with no Authorization header", func(t *testing.T) {
+		profResp, err := client.Get(server.URL + "/api/v1/auth/profile")
+		require.NoError(t, err)
+		defer func() { _ = profResp.Body.Close() }()
+		assert.Equal(t, http.StatusOK, profResp.StatusCode)
+	})
+
+	t.Run("Bearer-only still works with no cookie (dual-mode)", func(t *testing.T) {
+		bareClient := &http.Client{Timeout: 5 * time.Second} // no cookie jar
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/auth/profile", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer "+loginBody.Data.Token)
+		profResp, err := bareClient.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = profResp.Body.Close() }()
+		assert.Equal(t, http.StatusOK, profResp.StatusCode)
+	})
+
+	t.Run("cookie takes precedence when both cookie and a stale Bearer header are present", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/auth/profile", nil)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer this-is-not-a-real-token")
+		for _, c := range client.Jar.Cookies(mustParseURL(t, server.URL)) {
+			req.AddCookie(c)
+		}
+		profResp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		require.NoError(t, err)
+		defer func() { _ = profResp.Body.Close() }()
+		assert.Equal(t, http.StatusOK, profResp.StatusCode, "the valid cookie must win over the garbage Bearer header")
+	})
+}
+
+func mustParseURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	return u
+}
+
+func TestCSRF_RequiredForCookieAuthenticatedMutations(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	_ = createTestToken(t, testCore)
+
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	client := newCookieClient(t)
+	resp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	profileUpdate := func() *http.Request {
+		body, _ := json.Marshal(map[string]string{"display_name": "Test Admin", "email": "testadmin@example.com"})
+		req, err := http.NewRequest(http.MethodPut, server.URL+"/api/v1/auth/profile", bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}
+
+	t.Run("rejected with no CSRF header", func(t *testing.T) {
+		r, err := client.Do(profileUpdate())
+		require.NoError(t, err)
+		defer func() { _ = r.Body.Close() }()
+		assert.Equal(t, http.StatusForbidden, r.StatusCode)
+	})
+
+	t.Run("rejected with a wrong CSRF header", func(t *testing.T) {
+		req := profileUpdate()
+		req.Header.Set("X-CSRF-Token", "not-the-right-value")
+		r, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = r.Body.Close() }()
+		assert.Equal(t, http.StatusForbidden, r.StatusCode)
+	})
+
+	t.Run("accepted with the matching CSRF header", func(t *testing.T) {
+		req := profileUpdate()
+		req.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+		r, err := client.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = r.Body.Close() }()
+		assert.Equal(t, http.StatusOK, r.StatusCode)
+	})
+
+	t.Run("Bearer-only requests are exempt from CSRF (no cookie at all)", func(t *testing.T) {
+		var loginBody struct {
+			Data struct{ Token string } `json:"data"`
+		}
+		resp2 := loginViaHTTP(t, &http.Client{Timeout: 5 * time.Second}, server.URL, "testadmin", "TestPassword123!")
+		defer func() { _ = resp2.Body.Close() }()
+		require.NoError(t, json.NewDecoder(resp2.Body).Decode(&loginBody))
+
+		req := profileUpdate()
+		req.Header.Set("Authorization", "Bearer "+loginBody.Data.Token)
+		// Deliberately no X-CSRF-Token — must still succeed, no cookie means CSRF doesn't apply.
+		bareClient := &http.Client{Timeout: 5 * time.Second}
+		r, err := bareClient.Do(req)
+		require.NoError(t, err)
+		defer func() { _ = r.Body.Close() }()
+		assert.Equal(t, http.StatusOK, r.StatusCode)
+	})
+}
+
+// TestImpersonationRoundTrip_CookieSwapAndRestore is the end-to-end proof for
+// the impersonation redesign: the client never sees or holds an admin token at
+// any point — starting impersonation swaps the cookie to the target's session,
+// and ending it restores the ADMIN'S ORIGINAL session value (not a fresh one),
+// purely via the server-side OriginalSessionID linkage.
+func TestImpersonationRoundTrip_CookieSwapAndRestore(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	_ = createTestToken(t, testCore) // seeds testadmin (admin role) /TestPassword123!
+
+	ctx := context.Background()
+	targetUser, err := testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "target", Email: "target@example.com", Password: "CorrectHorseBattery9!",
+	})
+	require.NoError(t, err)
+
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	client := newCookieClient(t)
+	loginResp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+	_ = loginResp.Body.Close()
+	require.Equal(t, http.StatusOK, loginResp.StatusCode)
+
+	adminSessionCookie := func() string {
+		for _, c := range client.Jar.Cookies(mustParseURL(t, server.URL)) {
+			if c.Name == "kx_session" {
+				return c.Value
+			}
+		}
+		return ""
+	}
+	originalAdminCookie := adminSessionCookie()
+	require.NotEmpty(t, originalAdminCookie)
+
+	type profileResult struct {
+		Username      string `json:"username"`
+		Impersonation *struct {
+			AdminUsername string `json:"admin_username"`
+		} `json:"impersonation"`
+	}
+	getProfile := func() profileResult {
+		r, err := client.Get(server.URL + "/api/v1/auth/profile")
+		require.NoError(t, err)
+		defer func() { _ = r.Body.Close() }()
+		require.Equal(t, http.StatusOK, r.StatusCode)
+		var out struct {
+			Data profileResult `json:"data"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&out))
+		return out.Data
+	}
+	getProfileUsername := func() string { return getProfile().Username }
+	initialProfile := getProfile()
+	require.Equal(t, "testadmin", initialProfile.Username)
+	require.Nil(t, initialProfile.Impersonation, "not impersonating yet — the field must be absent")
+
+	startBody, _ := json.Marshal(map[string]uint{"user_id": targetUser.ID})
+	startReq, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/admin/impersonate", bytes.NewReader(startBody))
+	require.NoError(t, err)
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	startResp, err := client.Do(startReq)
+	require.NoError(t, err)
+	defer func() { _ = startResp.Body.Close() }()
+	require.Equal(t, http.StatusOK, startResp.StatusCode)
+
+	impersonationCookie := adminSessionCookie()
+	require.NotEmpty(t, impersonationCookie)
+	assert.NotEqual(t, originalAdminCookie, impersonationCookie, "the cookie must swap to the impersonation session")
+	impersonatingProfile := getProfile()
+	assert.Equal(t, "target", impersonatingProfile.Username, "requests now act as the impersonated user")
+	require.NotNil(t, impersonatingProfile.Impersonation, "the client derives the banner from this, not local state")
+	assert.Equal(t, "testadmin", impersonatingProfile.Impersonation.AdminUsername)
+
+	endReq, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/end-impersonation", nil)
+	require.NoError(t, err)
+	endReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	endResp, err := client.Do(endReq)
+	require.NoError(t, err)
+	defer func() { _ = endResp.Body.Close() }()
+	require.Equal(t, http.StatusOK, endResp.StatusCode)
+
+	var endBody struct {
+		Data struct {
+			AdminSessionRestored bool `json:"admin_session_restored"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(endResp.Body).Decode(&endBody))
+	assert.True(t, endBody.Data.AdminSessionRestored)
+
+	restoredCookie := adminSessionCookie()
+	assert.Equal(t, originalAdminCookie, restoredCookie, "must restore the SAME original session, not a fresh one")
+	assert.Equal(t, "testadmin", getProfileUsername(), "admin's own identity and permissions are back with no re-login")
 }
