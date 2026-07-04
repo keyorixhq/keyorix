@@ -99,3 +99,50 @@ func TestNotFound_BackendRoutePrefixesReturn404(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, body, "Keyorix")
 }
+
+// TestOpenAPISpec_RespectsSwaggerEnabled pins #224: /openapi.yaml used to be
+// registered unconditionally, so it stayed fully reachable (unauthenticated)
+// even with swagger_enabled turned off for production hardening — silently
+// bypassing the very toggle meant to disable it. It must now be gated by the
+// same swagger_enabled config as the Swagger UI mount, with matching
+// on/off behavior (404 when disabled, served when enabled).
+func TestOpenAPISpec_RespectsSwaggerEnabled(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	t.Cleanup(i18n.ResetForTesting)
+	client := &http.Client{}
+
+	t.Run("disabled by default", func(t *testing.T) {
+		cfg := &config.Config{}
+		router, err := NewRouter(cfg, newTestCore(t))
+		require.NoError(t, err)
+		srv := httptest.NewServer(router)
+		t.Cleanup(srv.Close)
+
+		resp, err := client.Get(srv.URL + "/openapi.yaml")
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "GET /openapi.yaml must 404 when swagger_enabled is off")
+
+		// The Swagger UI mount must be gated the same way.
+		resp, err = client.Get(srv.URL + "/swagger/")
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "GET /swagger/ must 404 when swagger_enabled is off")
+	})
+
+	t.Run("enabled", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Server.HTTP.SwaggerEnabled = true
+		router, err := NewRouter(cfg, newTestCore(t))
+		require.NoError(t, err)
+		srv := httptest.NewServer(router)
+		t.Cleanup(srv.Close)
+
+		resp, err := client.Get(srv.URL + "/openapi.yaml")
+		require.NoError(t, err)
+		body := readAll(t, resp.Body)
+		_ = resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "GET /openapi.yaml must be served normally when swagger_enabled is on")
+		assert.NotEmpty(t, body)
+	})
+}

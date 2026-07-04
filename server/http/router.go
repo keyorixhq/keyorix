@@ -790,13 +790,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		})
 	})
 
-	// Swagger UI (optional, based on config)
+	// Swagger UI and the raw OpenAPI spec are both dev/docs surfaces gated by the
+	// same swagger_enabled toggle (#224). The spec was previously registered
+	// unconditionally, so disabling swagger_enabled in production hid the UI but
+	// still served /openapi.yaml — a full unauthenticated map of every API route
+	// and schema. Register both, or neither, behind the one config check.
 	if cfg.Server.HTTP.SwaggerEnabled {
 		r.Mount("/swagger/", handlers.SwaggerHandler())
+		r.Get("/openapi.yaml", handlers.OpenAPISpec)
 	}
-
-	// OpenAPI spec endpoint
-	r.Get("/openapi.yaml", handlers.OpenAPISpec)
 
 	// Serve the web dashboard. Prefer an on-disk build (mounted in the Docker
 	// stack, or present in dev); otherwise fall back to the build embedded in the
