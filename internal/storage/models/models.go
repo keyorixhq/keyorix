@@ -322,7 +322,7 @@ type MFARecoveryCode struct {
 type MFAChallenge struct {
 	ID        uint   `gorm:"primaryKey"`
 	UserID    uint   `gorm:"index"`
-	TokenHash string `gorm:"uniqueIndex"`
+	TokenHash string `gorm:"uniqueIndex" json:"-"`
 	ExpiresAt time.Time
 	UsedAt    *time.Time
 	CreatedAt time.Time
@@ -376,7 +376,7 @@ type WebAuthnCredential struct {
 type WebAuthnSession struct {
 	ID        uint   `gorm:"primaryKey"`
 	UserID    uint   `gorm:"index"`
-	TokenHash string `gorm:"uniqueIndex"`
+	TokenHash string `gorm:"uniqueIndex" json:"-"`
 	Purpose   string
 	Data      []byte // JSON of webauthn.SessionData
 	ExpiresAt time.Time
@@ -1073,8 +1073,8 @@ type MachineIdentityCredential struct {
 	ID                uint   `gorm:"primaryKey"`
 	MachineIdentityID uint   `gorm:"index;not null"`
 	Name              string // operator-facing label
-	TokenHash         string `gorm:"uniqueIndex;not null"` // SHA-256 hex (never the plaintext)
-	TokenPrefix       string `gorm:"index"`                // leading chars for display ("kx_machine_ab12cd")
+	TokenHash         string `gorm:"uniqueIndex;not null" json:"-"` // SHA-256 hex (never the plaintext)
+	TokenPrefix       string `gorm:"index"`                         // leading chars for display ("kx_machine_ab12cd")
 	LastUsedAt        *time.Time
 	ExpiresAt         *time.Time // nil = never expires
 	Revoked           bool       `gorm:"default:false"`
