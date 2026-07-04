@@ -89,7 +89,12 @@ ingress:
   className: ""
   annotations: {}
   host: keyorix.local
-  tls: []   # e.g. [{ secretName: keyorix-tls, hosts: [keyorix.example.com] }]
+  # e.g. [{ secretName: keyorix-tls, hosts: [keyorix.example.com] }]
+  # #479: left empty, the ingress serves plaintext HTTP only — session cookies,
+  # PATs, and the admin/master passwords entered at login would cross the wire
+  # unencrypted. Only leave this empty if TLS already terminates upstream (e.g.
+  # a cloud load balancer or service mesh) before traffic reaches this ingress.
+  tls: []
 
 # ── Bundled PostgreSQL ────────────────────────────────────────────────────────
 # A minimal in-chart Postgres for evaluation. For production, set enabled:false

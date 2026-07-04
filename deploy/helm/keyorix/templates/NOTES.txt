@@ -16,6 +16,14 @@ Keyorix has been deployed as release "{{ .Release.Name }}".
 
    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "keyorix.server.fullname" . }} 8080:{{ .Values.server.service.port }}
 {{- end }}
+{{- if and .Values.ingress.enabled (not .Values.ingress.tls) }}
+
+⚠️  WARNING — ingress.tls is empty, so this Ingress serves plaintext HTTP only.
+    Session cookies, PATs, and login passwords will cross the wire unencrypted
+    unless TLS already terminates upstream (e.g. a cloud load balancer). Set
+    ingress.tls to enable HTTPS at this ingress, or confirm upstream TLS
+    termination is in place.
+{{- end }}
 
 {{- if .Values.auth.adminPassword }}
 
