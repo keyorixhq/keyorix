@@ -14,11 +14,10 @@ RUN CGO_ENABLED=0 go build \
     -ldflags "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION} -X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" \
     -trimpath -o /out/keyorix-k8s-sync ./cmd/keyorix-k8s-sync
 
-# Runtime stage — minimal, non-root. ca-certificates lets the agent reach the
-# Keyorix server over HTTPS; the Kubernetes API is trusted via the mounted SA CA.
-FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
-RUN apk add --no-cache ca-certificates tzdata
-RUN addgroup -g 1001 keyorix && adduser -D -s /bin/sh -u 1001 -G keyorix keyorix
+# Runtime stage — distroless static, non-root (no shell, no package manager). The agent
+# reaches the Keyorix server over HTTPS (CA bundle baked into the static base) and the
+# Kubernetes API via the mounted ServiceAccount CA; it needs no shell/wget at runtime.
+FROM gcr.io/distroless/static:nonroot@sha256:963fa6c544fe5ce420f1f54fb88b6fb01479f054c8056d0f74cc2c6000df5240
 COPY --from=builder /out/keyorix-k8s-sync /usr/local/bin/keyorix-k8s-sync
-USER keyorix
+USER 65532:65532
 ENTRYPOINT ["keyorix-k8s-sync"]
