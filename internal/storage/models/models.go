@@ -209,6 +209,18 @@ type AccessReviewCampaign struct {
 	CreatedAt time.Time  `json:"created_at"`
 	ClosedBy  uint       `json:"closed_by,omitempty"`
 	ClosedAt  *time.Time `json:"closed_at,omitempty"`
+	// Degraded/DegradedReasons carry forward AccessReviewReport.Degraded/
+	// DegradedReasons (access_review.go) from the snapshot this campaign was
+	// opened from (#483). Without this, a transient storage error mid-snapshot
+	// (e.g. ListSharesBySecret failing for one secret) produces a campaign
+	// evidence row indistinguishable from a fully-covered review — the ephemeral
+	// report signal would otherwise be discarded the instant the campaign is
+	// created, undermining the very control (ISO 27001 A.5.18 recertification
+	// coverage) the #453 degrade signal exists to protect.
+	Degraded bool `gorm:"default:false" json:"degraded"`
+	// DegradedReasons is JSON-serialized (gorm serializer) so it round-trips as a
+	// native []string, mirroring AccessReviewReport.DegradedReasons.
+	DegradedReasons []string `gorm:"serializer:json" json:"degraded_reasons,omitempty"`
 }
 
 // AccessReviewItem is one access grant captured in a campaign at open time, plus

@@ -278,3 +278,40 @@ func TestOpenAccessReviewCampaign_RequiresProject(t *testing.T) {
 	_, err := h.CoreService.OpenAccessReviewCampaign(context.Background(), 1, 0, "x")
 	require.Error(t, err)
 }
+
+// #483: OpenAccessReviewCampaign previously took report.Entries and discarded
+// report.Degraded/DegradedReasons entirely — the #453 degrade signal evaporated the
+// instant a campaign was opened, even though models.AccessReviewCampaign had no field
+// to carry it forward anyway. A degraded snapshot must now leave a DURABLE record on
+// the campaign row itself, verified by reading the row back from storage (not just
+// trusting the in-memory return value).
+func TestOpenAccessReviewCampaign_PersistsDegradedFromReport(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	// Only the campaign tables are migrated — models.AuditEvent is deliberately NOT
+	// migrated, so GenerateProjectAccessReview's LastUserSecretActivity lookup fails
+	// and the report it returns comes back Degraded=true (same trick as
+	// TestGenerateProjectAccessReview_DegradedOnLastUsedQueryError).
+	require.NoError(t, h.DB.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}))
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor → write
+
+	report, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	require.NoError(t, err)
+	require.True(t, report.Degraded, "sanity: the report itself must be degraded for this test to be meaningful")
+
+	res, err := h.CoreService.OpenAccessReviewCampaign(ctx, 1, proj, "degraded review")
+	require.NoError(t, err)
+	assert.True(t, res.Campaign.Degraded, "the campaign returned by Open must carry the degraded signal")
+	assert.NotEmpty(t, res.Campaign.DegradedReasons)
+
+	// Read the row back from storage — not just the in-memory return value — to
+	// confirm it's a durable record, not an ephemeral one.
+	stored, err := h.Storage.GetAccessReviewCampaign(ctx, res.Campaign.ID)
+	require.NoError(t, err)
+	assert.True(t, stored.Degraded, "Degraded must be persisted on the campaign row")
+	assert.Equal(t, res.Campaign.DegradedReasons, stored.DegradedReasons)
+}
