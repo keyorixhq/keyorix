@@ -42,6 +42,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(customMiddleware.ClientIP(cfg.Server.HTTP.TrustedProxies))
 	r.Use(customMiddleware.Logger())
 	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
+	// Global default: no-store on every response (#433). This is a secrets manager — a
+	// browser or intermediate proxy must never be allowed to cache anything by default,
+	// including routes registered outside the auth/SCIM/API groups (health/status/metrics,
+	// the OpenAPI spec, swagger docs, the web UI shell) or any route added here later.
+	// Registered early (before per-route handlers/middleware further down the chain) so it
+	// merely sets the header first: a handler that deliberately wants different caching
+	// (the health/readiness checks' own "no-cache", the status pages' own "no-cache", and
+	// the web UI's hashed static assets via setCacheHeaders) calls w.Header().Set on the
+	// same key afterward and wins, since Set replaces rather than appends. Routes with no
+	// opinion of their own keep the safe no-store default instead of silently having none.
+	r.Use(customMiddleware.NoStore)
 	r.Use(customMiddleware.PrometheusMiddleware)
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
@@ -92,15 +103,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	connectHandler := handlers.NewConnectHandler(coreService)
 	adminJobsHandler := handlers.NewAdminJobsHandler(coreService)
 
-	// Auth endpoints (no authentication middleware). Grouped under NoStore: several of
-	// these mint or hand back a session token (login, refresh, MFA/WebAuthn verify, the
-	// SSO/SAML callbacks) or bootstrap/setup credentials (system/init, setup consume) —
-	// a browser or intermediate cache must never be allowed to cache that response. The
-	// /api/v1 group below has its own NoStore for the same reason; these routes sit
-	// outside that group (no session yet to authenticate against) so they need their
-	// own coverage rather than inheriting it.
+	// Auth endpoints (no authentication middleware). Several of these mint or hand back a
+	// session token (login, refresh, MFA/WebAuthn verify, the SSO/SAML callbacks) or
+	// bootstrap/setup credentials (system/init, setup consume) — a browser or intermediate
+	// cache must never be allowed to cache that response. Covered by the router's global
+	// no-store default (above) rather than a group-local one.
 	r.Group(func(r chi.Router) {
-		r.Use(customMiddleware.NoStore)
 		r.Post("/auth/login", authHandler.Login)
 		r.Post("/auth/logout", authHandler.Logout)
 		r.Post("/auth/refresh", authHandler.RefreshToken)
@@ -193,7 +201,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		}
 		scimHandler := handlers.NewSCIMHandler(coreService)
 		r.Route("/scim/v2", func(r chi.Router) {
-			r.Use(customMiddleware.NoStore)
+			// no-store is covered by the router's global default (above).
 			r.Use(customMiddleware.SCIMToken(cfg.SCIM.GetToken()))
 			r.Get("/ServiceProviderConfig", scimHandler.GetServiceProviderConfig)
 			r.Get("/Users", scimHandler.ListUsers)
@@ -213,8 +221,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	r.Route("/api/v1", func(r chi.Router) {
 		// Never let any API response (secret values, tokens, …) be cached by a browser or
-		// proxy. Before auth, so even a 401 carries it.
-		r.Use(customMiddleware.NoStore)
+		// proxy. Covered by the router's global no-store default (above), which runs
+		// before Authentication too, so even a 401 carries it.
 		// Authentication middleware for API routes
 		r.Use(customMiddleware.Authentication(coreService))
 		// General per-principal request budget (#163) — a backstop against one
