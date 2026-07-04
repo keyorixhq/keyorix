@@ -294,3 +294,56 @@ func shareIDSet(shares []*models.ShareRecord) map[uint]bool {
 	}
 	return out
 }
+
+// #252: CheckSharePermission used to resolve a direct-vs-group conflict by returning
+// whichever it happened to check first (the direct share, unconditionally) — so a
+// weaker direct grant could silently override a stronger group grant. It must instead
+// return the STRONGER of the two, mirroring the "strongest grant wins" rank convention
+// in internal/core/secret_access_list.go (read < write < owner). Tested both
+// directions so a naive fix that just flips the bug (always preferring the group
+// share) would also fail.
+func TestCheckSharePermission_DirectVsGroupConflict_StrongestWins(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "member", Email: "m@x.io"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "team"}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 2, GroupID: 10}).Error)
+
+	t.Run("direct weaker than group", func(t *testing.T) {
+		require.NoError(t, db.Create(&models.SecretNode{
+			ID: 100, Name: "s1", ProjectID: 1, EnvironmentID: 1, OwnerID: 1, Status: "active", Type: "password",
+		}).Error)
+		_, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+			SecretID: 100, RecipientID: 2, IsGroup: false, OwnerID: 1, Permission: "read",
+		})
+		require.NoError(t, err)
+		_, err = ls.CreateShareRecord(ctx, &models.ShareRecord{
+			SecretID: 100, RecipientID: 10, IsGroup: true, OwnerID: 1, Permission: "write",
+		})
+		require.NoError(t, err)
+
+		perm, err := ls.CheckSharePermission(ctx, 100, 2)
+		require.NoError(t, err)
+		assert.Equal(t, "write", perm, "a stronger group grant must not be shadowed by a weaker direct grant")
+	})
+
+	t.Run("direct stronger than group", func(t *testing.T) {
+		require.NoError(t, db.Create(&models.SecretNode{
+			ID: 101, Name: "s2", ProjectID: 1, EnvironmentID: 1, OwnerID: 1, Status: "active", Type: "password",
+		}).Error)
+		_, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+			SecretID: 101, RecipientID: 2, IsGroup: false, OwnerID: 1, Permission: "write",
+		})
+		require.NoError(t, err)
+		_, err = ls.CreateShareRecord(ctx, &models.ShareRecord{
+			SecretID: 101, RecipientID: 10, IsGroup: true, OwnerID: 1, Permission: "read",
+		})
+		require.NoError(t, err)
+
+		perm, err := ls.CheckSharePermission(ctx, 101, 2)
+		require.NoError(t, err)
+		assert.Equal(t, "write", perm, "a stronger direct grant must win over a weaker group grant")
+	})
+}
