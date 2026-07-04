@@ -76,6 +76,22 @@ func TestBootstrapSeedsTwoTierRoleCatalog(t *testing.T) {
 	}
 }
 
+// #227: system.write's catalog description must name its full real footprint —
+// audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and
+// admin job triggers — not just the legacy service-account/API-token routes
+// (removed as dead code by finding #131). A misleading description here is an
+// informed-consent gap for whoever grants this permission on a custom role.
+func TestSystemWritePermissionDescriptionMatchesFullFootprint(t *testing.T) {
+	for _, def := range defaultPermissions {
+		if def.Name != "system.write" {
+			continue
+		}
+		assert.Equal(t, "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", def.Description)
+		return
+	}
+	t.Fatal("system.write not found in defaultPermissions")
+}
+
 // Authorize must honour the two-tier scope semantics on the sentinel model:
 // system roles assigned globally apply install-wide, project roles apply only
 // within their project, and *_admin roles bypass the per-permission check at the

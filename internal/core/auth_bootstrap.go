@@ -56,7 +56,17 @@ var defaultPermissions = []bootstrapPermissionDef{
 	{"roles.assign", "Assign roles to users", "roles", "assign"},
 	{"audit.read", "View audit logs", "audit", "read"},
 	{"system.read", "View system information", "system", "read"},
-	{"system.write", "Manage service accounts and API tokens", "system", "write"},
+	// #227: this permission's blast radius is much broader than "system.write"
+	// sounds — it gates every deployment-wide admin-tier action that isn't a
+	// dedicated resource permission of its own: audit-checkpoint writes and
+	// anomaly-alert acknowledgment, legal-hold place/lift, risk-exception
+	// create/approve/revoke, SoD-policy create/delete, and on-demand admin job
+	// triggers (rotation/expiry reminders, anomaly alerts, compliance digest).
+	// The description must name that footprint so an operator granting a
+	// custom role system.write knows what they're actually handing over — not
+	// just the legacy service-account/API-token routes, which were removed as
+	// dead code (finding #131) and no longer exist.
+	{"system.write", "Manage audit checkpoints/alerts, legal holds, risk exceptions, SoD policies, and admin job triggers", "system", "write"},
 	{"connect.read", "Read secrets from external stores via Keyorix Connect (ADR-043)", "connect", "read"},
 }
 
