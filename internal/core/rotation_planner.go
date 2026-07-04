@@ -26,12 +26,19 @@ import (
 // PlannedRotation is one secret's place in the rotation plan, with the rationale an
 // operator needs to act on (or override) it.
 type PlannedRotation struct {
-	SecretID       uint     `json:"secret_id"`
-	SecretName     string   `json:"secret_name"`
-	Status         string   `json:"status"`           // overdue | due_soon
-	DaysOverdue    int      `json:"days_overdue"`     // positive = overdue, negative = days remaining
-	RiskScore      int      `json:"risk_score"`       // 0-100 composite (0 if not computable)
-	RiskBand       string   `json:"risk_band"`        // low | medium | high
+	SecretID    uint   `json:"secret_id"`
+	SecretName  string `json:"secret_name"`
+	Status      string `json:"status"`       // overdue | due_soon
+	DaysOverdue int    `json:"days_overdue"` // positive = overdue, negative = days remaining
+	RiskScore   int    `json:"risk_score"`   // 0-100 composite (0 if not computable)
+	RiskBand    string `json:"risk_band"`    // low | medium | high
+	// RiskDegraded is true when RiskScore/RiskBand were computed from an
+	// incomplete exposure count (#407, SecretRiskScore.Degraded) — ComputeSecretRiskScore
+	// already fails the exposure factor toward its worst case in this situation, so
+	// RiskScore here is a floor, not an inflated or deflated guess; RiskDegraded just
+	// makes that incompleteness visible instead of indistinguishable from a fully
+	// resolved score.
+	RiskDegraded   bool     `json:"risk_degraded"`
 	Urgency        int      `json:"urgency"`          // composite priority; higher rotates sooner
 	AutoRotate     bool     `json:"auto_rotate"`      // self-rotates (ADR-046) vs needs a human
 	AfterSecretIDs []uint   `json:"after_secret_ids"` // in-plan dependencies that must rotate first
@@ -214,19 +221,22 @@ func (c *KeyorixCore) GenerateDeploymentRotationPlan(ctx context.Context) (*Depl
 // planSecret turns a candidate entry into a PlannedRotation with urgency and reasons.
 func (c *KeyorixCore) planSecret(ctx context.Context, e *RotationStatusEntry, deps []uint, candidates map[uint]*RotationStatusEntry) PlannedRotation {
 	riskScore, riskBand := 0, ""
+	riskDegraded := false
 	if r, err := c.ComputeSecretRiskScore(ctx, e.SecretID); err == nil && r != nil {
 		riskScore, riskBand = r.Score, r.Band
+		riskDegraded = r.Degraded
 	}
 
 	pr := PlannedRotation{
-		SecretID:    e.SecretID,
-		SecretName:  e.SecretName,
-		Status:      e.Status,
-		DaysOverdue: e.DaysOverdue,
-		RiskScore:   riskScore,
-		RiskBand:    riskBand,
-		Urgency:     rotationUrgency(e.Status, e.DaysOverdue, riskScore),
-		AutoRotate:  e.AutoRotate,
+		SecretID:     e.SecretID,
+		SecretName:   e.SecretName,
+		Status:       e.Status,
+		DaysOverdue:  e.DaysOverdue,
+		RiskScore:    riskScore,
+		RiskBand:     riskBand,
+		RiskDegraded: riskDegraded,
+		Urgency:      rotationUrgency(e.Status, e.DaysOverdue, riskScore),
+		AutoRotate:   e.AutoRotate,
 	}
 
 	if e.Status == RotationStatusOverdue {
@@ -236,6 +246,9 @@ func (c *KeyorixCore) planSecret(ctx context.Context, e *RotationStatusEntry, de
 	}
 	if riskScore >= 34 {
 		pr.Reasons = append(pr.Reasons, fmt.Sprintf("%s risk (score %d)", riskBand, riskScore))
+	}
+	if riskDegraded {
+		pr.Reasons = append(pr.Reasons, "risk score based on incomplete exposure data (treated as worst-case, not deprioritized)")
 	}
 	if e.AutoRotate {
 		pr.Reasons = append(pr.Reasons, "self-rotating")

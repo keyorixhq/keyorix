@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -27,12 +28,26 @@ type SecretRiskFactor struct {
 
 // SecretRiskScore is a per-secret risk assessment combining expiry, rotation
 // age, usage (read activity), and exposure (how many principals can read it).
+//
+// #407: the exposure factor depends on ListSharesBySecret/ListGroupMembers, and a
+// failure there is an UNDER-count (never an over-count) — a secret that's
+// actually widely shared could get incorrectly deprioritized for rotation if its
+// exposure silently read as low. Degraded + DegradedReasons make an incomplete
+// exposure count detectable, mirroring CompliancePosture.Degraded
+// (compliance_posture.go). ComputeSecretRiskScore additionally fails the exposure
+// factor toward the worst case when degraded, so a degraded score is never
+// LOWER than a fully-computed one would be.
 type SecretRiskScore struct {
 	SecretID   uint               `json:"secret_id"`
 	SecretName string             `json:"secret_name"`
 	Score      int                `json:"score"` // 0-100 weighted composite (higher = riskier)
 	Band       string             `json:"band"`  // low | medium | high
 	Factors    []SecretRiskFactor `json:"factors"`
+	// Degraded is true when the exposure factor could not be fully computed —
+	// treat Score/Band as a floor (best-case), not a verified value.
+	Degraded bool `json:"degraded"`
+	// DegradedReasons names each failed lookup behind the exposure factor.
+	DegradedReasons []string `json:"degraded_reasons,omitempty"`
 }
 
 func riskBand(score int) string {
@@ -58,7 +73,19 @@ func (c *KeyorixCore) ComputeSecretRiskScore(ctx context.Context, secretID uint)
 	expScore, expDetail := expiryRisk(secret.Expiration, now)
 	rotScore, rotDetail := rotationRisk(secret.LastRotatedAt, secret.CreatedAt, now)
 	usageScore, usageDetail := usageRisk(c.countReads(ctx, secretID, now.AddDate(0, 0, -30)))
-	expoScore, expoDetail := exposureRisk(c.countPrincipals(ctx, secret))
+
+	principalCount, expoDegraded, expoReasons := c.countPrincipals(ctx, secret)
+	expoScore, expoDetail := exposureRisk(principalCount)
+	if expoDegraded {
+		// #407: a share/group-membership lookup failed, so principalCount is an
+		// UNDER-count at best — never trust it as a verified low-exposure reading.
+		// Fail toward caution: force the worst exposure tier so a widely-shared
+		// secret whose exposure lookup errored is never scored as LESS risky (and
+		// so never incorrectly deprioritized for rotation) than a fully-resolved
+		// equivalent would be.
+		expoScore, _ = exposureRisk(1 << 30)
+		expoDetail = fmt.Sprintf("Exposure data incomplete (%s) — treated as worst-case until resolved", strings.Join(expoReasons, "; "))
+	}
 
 	factors := []SecretRiskFactor{
 		{Key: "expiry", Label: "Expiry", Score: expScore, Weight: 0.30, Detail: expDetail},
@@ -73,13 +100,20 @@ func (c *KeyorixCore) ComputeSecretRiskScore(ctx context.Context, secretID uint)
 	}
 	score := int(composite + 0.5)
 
-	return &SecretRiskScore{
+	out := &SecretRiskScore{
 		SecretID:   secret.ID,
 		SecretName: secret.Name,
 		Score:      score,
 		Band:       riskBand(score),
 		Factors:    factors,
-	}, nil
+	}
+	if expoDegraded {
+		out.Degraded = true
+		for _, r := range expoReasons {
+			out.DegradedReasons = append(out.DegradedReasons, "exposure:"+r)
+		}
+	}
+	return out, nil
 }
 
 func expiryRisk(exp *time.Time, now time.Time) (int, string) {
@@ -170,19 +204,27 @@ func (c *KeyorixCore) countReads(ctx context.Context, secretID uint, since time.
 
 // countPrincipals counts the distinct users that can read a secret: the owner
 // plus direct share recipients plus the members of any group it is shared with.
-func (c *KeyorixCore) countPrincipals(ctx context.Context, secret *models.SecretNode) int {
+// degraded is true when a ListSharesBySecret/ListGroupMembers lookup failed — the
+// returned count is then an UNDER-count (a share or group's members are missing
+// from the tally), never a verified low-exposure reading. See #407: this used to
+// silently fall back to an owner-only (or partial) count on any such error,
+// deflating the exposure factor that both the risk dashboard and auto-rotation
+// prioritization (rotation_planner.go) rely on.
+func (c *KeyorixCore) countPrincipals(ctx context.Context, secret *models.SecretNode) (count int, degraded bool, reasons []string) {
 	principals := map[uint]struct{}{}
 	if secret.OwnerID != 0 { // an ownerless (machine-created) secret has no owner principal
 		principals[secret.OwnerID] = struct{}{}
 	}
 	shares, err := c.storage.ListSharesBySecret(ctx, secret.ID)
 	if err != nil {
-		return len(principals)
+		return len(principals), true, []string{fmt.Sprintf("shares: %v", err)}
 	}
 	for _, sh := range shares {
 		if sh.IsGroup {
 			members, err := c.storage.ListGroupMembers(ctx, sh.RecipientID)
 			if err != nil {
+				degraded = true
+				reasons = append(reasons, fmt.Sprintf("group_members:group=%d: %v", sh.RecipientID, err))
 				continue
 			}
 			for _, m := range members {
@@ -192,5 +234,5 @@ func (c *KeyorixCore) countPrincipals(ctx context.Context, secret *models.Secret
 			principals[sh.RecipientID] = struct{}{}
 		}
 	}
-	return len(principals)
+	return len(principals), degraded, reasons
 }

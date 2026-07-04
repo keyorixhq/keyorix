@@ -2,10 +2,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -78,4 +80,61 @@ func TestComputeSecretRiskScore_LowRisk(t *testing.T) {
 	require.Equal(t, 10, factorByKey(got, "rotation").Score)
 	require.Equal(t, 10, factorByKey(got, "usage").Score, "12 reads, update excluded")
 	require.Equal(t, 10, factorByKey(got, "exposure").Score, "owner only")
+	require.False(t, got.Degraded)
+}
+
+// TestComputeSecretRiskScore_DegradedOnListSharesError proves that a failing
+// ListSharesBySecret call no longer silently deflates the exposure factor to an
+// owner-only count — it now flips Degraded and forces exposure to the worst-case
+// score, so a secret that is actually widely shared can't be incorrectly
+// deprioritized for rotation because its exposure looked artificially low (#407).
+func TestComputeSecretRiskScore_DegradedOnListSharesError(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	future := now.AddDate(0, 0, 200)
+	rotated := now.AddDate(0, 0, -5)
+	store := new(MockStorage)
+
+	store.On("GetSecret", mock.Anything, uint(3)).Return(&models.SecretNode{
+		ID: 3, Name: "widely-shared-key", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10),
+	}, nil)
+	store.On("ListSecretAccessLogs", mock.Anything, uint(3), mock.Anything).Return([]models.SecretAccessLog{}, nil)
+	store.On("ListSharesBySecret", mock.Anything, uint(3)).Return(nil, errors.New("simulated shares query failure"))
+
+	c := NewKeyorixCore(store)
+	c.now = func() time.Time { return now }
+
+	got, err := c.ComputeSecretRiskScore(context.Background(), 3)
+	require.NoError(t, err)
+	assert.True(t, got.Degraded, "a failed ListSharesBySecret call must flip Degraded")
+	require.NotEmpty(t, got.DegradedReasons)
+	assert.Contains(t, got.DegradedReasons[0], "exposure:shares")
+	assert.Equal(t, 90, factorByKey(got, "exposure").Score, "an incomplete exposure count must fail toward the worst-case score, not an owner-only low score")
+}
+
+// TestComputeSecretRiskScore_DegradedOnListGroupMembersError proves that a failing
+// ListGroupMembers call no longer silently skips that group's members from the
+// exposure count — it now flips Degraded and forces exposure to the worst-case
+// score (#407).
+func TestComputeSecretRiskScore_DegradedOnListGroupMembersError(t *testing.T) {
+	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	future := now.AddDate(0, 0, 200)
+	rotated := now.AddDate(0, 0, -5)
+	store := new(MockStorage)
+
+	store.On("GetSecret", mock.Anything, uint(4)).Return(&models.SecretNode{
+		ID: 4, Name: "group-shared-key", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10),
+	}, nil)
+	store.On("ListSecretAccessLogs", mock.Anything, uint(4), mock.Anything).Return([]models.SecretAccessLog{}, nil)
+	store.On("ListSharesBySecret", mock.Anything, uint(4)).Return([]*models.ShareRecord{{IsGroup: true, RecipientID: 7}}, nil)
+	store.On("ListGroupMembers", mock.Anything, uint(7)).Return(nil, errors.New("simulated: ListGroupMembers unimplemented on this backend"))
+
+	c := NewKeyorixCore(store)
+	c.now = func() time.Time { return now }
+
+	got, err := c.ComputeSecretRiskScore(context.Background(), 4)
+	require.NoError(t, err)
+	assert.True(t, got.Degraded, "a failed ListGroupMembers call must flip Degraded")
+	require.NotEmpty(t, got.DegradedReasons)
+	assert.Contains(t, got.DegradedReasons[0], "exposure:group_members:group=7")
+	assert.Equal(t, 90, factorByKey(got, "exposure").Score, "an incomplete exposure count must fail toward the worst-case score")
 }

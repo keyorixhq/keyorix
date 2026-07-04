@@ -26,7 +26,7 @@ func (h *SecretHandler) ListAccessors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessors, err := h.coreService.ListSecretAccessors(r.Context(), uint(id), userCtx.UserID)
+	result, err := h.coreService.ListSecretAccessors(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		switch {
 		case strings.Contains(err.Error(), "not found"):
@@ -38,5 +38,13 @@ func (h *SecretHandler) ListAccessors(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	h.sendSuccess(w, map[string]interface{}{"accessors": accessors, "total": len(accessors)}, "")
+	// #417: degraded/degraded_reasons must reach API consumers — a report that
+	// silently dropped a group's members would look identical to a fully-resolved
+	// one otherwise.
+	h.sendSuccess(w, map[string]interface{}{
+		"accessors":        result.Accessors,
+		"total":            len(result.Accessors),
+		"degraded":         result.Degraded,
+		"degraded_reasons": result.DegradedReasons,
+	}, "")
 }

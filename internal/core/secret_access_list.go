@@ -22,11 +22,39 @@ type SecretAccessor struct {
 	Source     string `json:"source"`     // owner | direct_share | group_share:<group>
 }
 
+// SecretAccessorsResult is the effective access list for a secret plus a signal for
+// whether it is complete. #417: on storage.type: remote, ListGroupMembers is
+// unconditionally unimplemented, so every group-share accessor was silently
+// omitted from this incident-response-critical "who can access secret X" report
+// with no indication anything was missing. Degraded + DegradedReasons make that
+// detectable instead of the result silently looking like a complete accessor
+// list — mirroring CompliancePosture.Degraded (compliance_posture.go) and
+// DashboardStats.Degraded (dashboard.go, #394).
+type SecretAccessorsResult struct {
+	Accessors []SecretAccessor `json:"accessors"`
+	// Degraded is true when at least one group's membership could not be
+	// resolved — Accessors is then an UNDER-count (missing group members), never
+	// verified-complete.
+	Degraded bool `json:"degraded"`
+	// DegradedReasons names each group whose membership failed to resolve, with
+	// the underlying error.
+	DegradedReasons []string `json:"degraded_reasons,omitempty"`
+}
+
+// degrade records that a group's membership could not be resolved: it flips
+// Degraded and appends a human-readable reason, mirroring
+// CompliancePosture.degrade (compliance_posture.go).
+func (r *SecretAccessorsResult) degrade(area string, err error) {
+	r.Degraded = true
+	r.DegradedReasons = append(r.DegradedReasons, fmt.Sprintf("%s: %v", area, err))
+}
+
 var permissionRank = map[string]int{"read": 1, "write": 2, "owner": 3}
 
 // ListSecretAccessors returns the distinct users who can access secretID, strongest
-// grant per user, sorted by username. The actor must be able to read the secret.
-func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID uint) ([]SecretAccessor, error) {
+// grant per user, sorted by username, plus whether the list is known-complete. The
+// actor must be able to read the secret.
+func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID uint) (*SecretAccessorsResult, error) {
 	if _, err := c.EnforceSecretReadPermission(ctx, secretID, actorID); err != nil {
 		return nil, err
 	}
@@ -63,6 +91,8 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 		add(secret.OwnerID, "owner", "owner")
 	}
 
+	result := &SecretAccessorsResult{}
+
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -75,7 +105,12 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 			}
 			members, err := c.storage.ListGroupMembers(ctx, sh.RecipientID)
 			if err != nil {
-				continue // skip an unresolvable group rather than fail the whole list
+				// #417: a group whose membership can't be resolved (deterministically
+				// every group on storage.type: remote, where ListGroupMembers is
+				// unimplemented) must not silently vanish from this report — record
+				// it as an explicit gap instead of continuing unflagged.
+				result.degrade(fmt.Sprintf("group_members:group=%d(%s)", sh.RecipientID, gname), err)
+				continue
 			}
 			for _, m := range members {
 				userNames[m.ID] = m.Username // already loaded; prime the cache
@@ -91,5 +126,6 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
-	return out, nil
+	result.Accessors = out
+	return result, nil
 }
