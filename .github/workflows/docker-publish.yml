@@ -18,6 +18,8 @@ jobs:
       # produced the image, and Sigstore's transparency log makes that provable
       # after the fact (#115).
       id-token: write
+      # Required for uploading the Trivy SARIF scan below to the Security tab.
+      security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -56,6 +58,35 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # #478 guard: scan the exact pushed digest (not a mutable tag) for known
+      # vulnerabilities. Split into two runs deliberately: a broad CRITICAL+HIGH
+      # scan uploaded to the Security tab for visibility (never fails the
+      # build), and a narrow CRITICAL-only scan that DOES fail the build —
+      # base-image HIGH findings are often unfixed/wontfix upstream and would
+      # make the gate too noisy to keep meaningful, but a fixable CRITICAL in
+      # a published image is worth blocking on.
+      - name: Scan image for vulnerabilities (Trivy, report)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/keyorixhq/keyorix-server@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+      - name: Upload Trivy scan results to the Security tab
+        uses: github/codeql-action/upload-sarif@703b9949c65fcfced30e2f9f41569c4adfcb657f # v3.36.3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-keyorix-server
+      - name: Scan image for vulnerabilities (Trivy, gate)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/keyorixhq/keyorix-server@${{ steps.build.outputs.digest }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.0
 
@@ -73,6 +104,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -109,6 +141,28 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Scan image for vulnerabilities (Trivy, report)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/keyorixhq/keyorix-k8s-sync@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+      - name: Upload Trivy scan results to the Security tab
+        uses: github/codeql-action/upload-sarif@703b9949c65fcfced30e2f9f41569c4adfcb657f # v3.36.3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-keyorix-k8s-sync
+      - name: Scan image for vulnerabilities (Trivy, gate)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/keyorixhq/keyorix-k8s-sync@${{ steps.build.outputs.digest }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.0
 
@@ -123,6 +177,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -156,6 +211,28 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Scan image for vulnerabilities (Trivy, report)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/keyorixhq/keyorix-operator@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+      - name: Upload Trivy scan results to the Security tab
+        uses: github/codeql-action/upload-sarif@703b9949c65fcfced30e2f9f41569c4adfcb657f # v3.36.3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-keyorix-operator
+      - name: Scan image for vulnerabilities (Trivy, gate)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/keyorixhq/keyorix-operator@${{ steps.build.outputs.digest }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.0
 
@@ -170,6 +247,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
+      security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -204,6 +282,28 @@ jobs:
             VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Scan image for vulnerabilities (Trivy, report)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/keyorixhq/keyorix-mcp@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+      - name: Upload Trivy scan results to the Security tab
+        uses: github/codeql-action/upload-sarif@703b9949c65fcfced30e2f9f41569c4adfcb657f # v3.36.3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-keyorix-mcp
+      - name: Scan image for vulnerabilities (Trivy, gate)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/keyorixhq/keyorix-mcp@${{ steps.build.outputs.digest }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
 
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.10.0
