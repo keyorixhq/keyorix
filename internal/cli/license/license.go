@@ -8,10 +8,12 @@ package license
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	ilicense "github.com/keyorixhq/keyorix/internal/license"
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/spf13/cobra"
 )
@@ -111,7 +113,11 @@ var installCmd = &cobra.Command{
 		if st.State == ilicense.StateInvalid {
 			return fmt.Errorf("refusing to install an invalid license: %s", st.Reason)
 		}
-		if err := os.WriteFile(installDest, []byte(token+"\n"), 0o600); err != nil {
+		// SecureWriteFileSync (#265) refuses to write through a pre-planted symlink
+		// (O_NOFOLLOW) and enforces the mode even if a file already existed with a
+		// looser one — a plain os.WriteFile silently follows a symlink and never
+		// chmods an existing file.
+		if err := securefiles.SecureWriteFileSync(filepath.Dir(installDest), filepath.Base(installDest), []byte(token+"\n"), 0o600); err != nil {
 			return fmt.Errorf("write license: %w", err)
 		}
 		fmt.Printf("Installed license for %q (plan %s) → %s\n", st.Licensee, st.Plan, installDest)
