@@ -162,6 +162,41 @@ func TestCompliancePosture_RecentActivityNotDormant(t *testing.T) {
 	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants, "alice accessed a secret recently — not dormant")
 }
 
+// #424: a write-tier grant (e.g. "editor": secrets.read + secrets.write) held by a
+// user who only ever creates/updates/rotates secrets — never reads one back, a
+// legitimate pattern for a CI/CD pipeline operator or secret-provisioning admin —
+// must not be flagged dormant purely because "read" isn't part of their workflow.
+// accessActivityEventTypes now also matches secret.created/updated/rotated, not
+// just secret.read.
+func TestCompliancePosture_WriteOnlyActivityNotDormant(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.AuditEvent{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.RotationPolicy{},
+	))
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor: secrets.read + secrets.write
+
+	aid := uint(10)
+	pid := proj
+	// Zero secret.read events anywhere in the project — only write/rotate/create
+	// activity, exactly the write-only usage pattern this fix targets.
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "secret.created", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-72 * time.Hour),
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "secret.rotated", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-time.Hour),
+	}).Error)
+
+	p, err := h.CoreService.GetCompliancePosture(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants,
+		"alice's editor grant has recent write/rotate activity — a write-tier grant must not require a read to count as used")
+}
+
 // #258: role grants must be assessed per grant, not per user — an admin-tier grant
 // (secrets.delete + roles.assign, like the seeded "admin" role) must be flagged
 // dormant even when the SAME user has recent, ordinary read activity under a

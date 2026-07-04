@@ -717,12 +717,15 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 // flagged even though the same user is actively reading secrets elsewhere.
 //
 // The activity signal used per grant depends on the role's tier (roleIsAdminTier):
-//   - A plain read/write-tier role is "used" by ANY entry in LastUserSecretActivity
-//     (a secret read is exactly what such a role exists to enable).
+//   - A plain read/write-tier role is "used" by ANY entry in LastUserSecretActivity —
+//     a read OR a create/update/rotate (#424), since a write-tier grant (e.g. a
+//     CI/CD pipeline operator or secret-provisioning admin) may legitimately never
+//     read a secret's value back at all.
 //   - An admin-tier role (secrets.delete/admin, or a role-management permission
 //     like roles.assign) additionally requires an entry in
 //     LastUserElevatedActivity — an actually-observed elevated action — since
-//     ordinary secret reads don't attest to the ADMIN capability being used at all.
+//     ordinary secret reads/writes don't attest to the ADMIN capability being used
+//     at all.
 //
 // This is an approximation, not a perfect per-grant attribution: the audit trail
 // doesn't record which specific grant authorized a given action, only that SOME
