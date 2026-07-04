@@ -18,9 +18,6 @@ const (
 	// ShareAuditEventRevoked represents a share revocation event
 	ShareAuditEventRevoked ShareAuditEvent = "share_revoked"
 
-	// ShareAuditEventAccessed represents a shared secret access event
-	ShareAuditEventAccessed ShareAuditEvent = "shared_secret_accessed"
-
 	// ShareAuditEventGroupCreated represents a group share creation event
 	ShareAuditEventGroupCreated ShareAuditEvent = "group_share_created"
 
@@ -78,12 +75,6 @@ func (c *KeyorixCore) LogShareRevoked(ctx context.Context, auditCtx *ShareAuditC
 
 	desc := fmt.Sprintf("Revoked share for %s %d", recipientType, auditCtx.RecipientID)
 	c.writeAuditEvent(ctx, string(ShareAuditEventRevoked), &auditCtx.ActorID, &auditCtx.SecretID, desc)
-}
-
-// LogSharedSecretAccessed logs when a user accesses a shared secret
-func (c *KeyorixCore) LogSharedSecretAccessed(ctx context.Context, auditCtx *ShareAuditContext) {
-	desc := fmt.Sprintf("Accessed shared secret (permission: %s)", auditCtx.Permission)
-	c.writeAuditEvent(ctx, string(ShareAuditEventAccessed), &auditCtx.ActorID, &auditCtx.SecretID, desc)
 }
 
 // LogGroupShareCreated logs a group share creation event
