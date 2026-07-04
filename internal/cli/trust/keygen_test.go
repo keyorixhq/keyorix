@@ -74,6 +74,23 @@ func TestKeygen_RefusesOverwriteWithoutForce_AllowsWithForce(t *testing.T) {
 	assert.NotEqual(t, origPub, newPub, "--force must actually overwrite the public key")
 }
 
+// #265: a dangling symlink planted at the target path (its target not yet existing,
+// so the pre-write os.Stat existence check doesn't catch it) must not be silently
+// written through — the write should fail rather than create the key material at
+// the symlink's target location outside keygenDir.
+func TestKeygen_RefusesToFollowSymlinkAtTarget(t *testing.T) {
+	dir := t.TempDir()
+	outsideTarget := filepath.Join(t.TempDir(), "exfiltrated.private.pem")
+	require.NoError(t, os.Symlink(outsideTarget, filepath.Join(dir, "sym-test.private.pem")))
+
+	keygenPurpose, keygenKeyID, keygenDir, keygenForce = "update", "sym-test", dir, false
+	err := keygenCmd.RunE(keygenCmd, nil)
+	require.Error(t, err, "writing through a pre-planted symlink must be refused")
+
+	_, statErr := os.Stat(outsideTarget)
+	assert.True(t, os.IsNotExist(statErr), "the symlink target must NOT have been created")
+}
+
 func TestKeygen_RejectsBadPurposeAndMissingKeyID(t *testing.T) {
 	keygenPurpose, keygenKeyID, keygenDir = "bogus", "x", t.TempDir()
 	require.Error(t, keygenCmd.RunE(keygenCmd, nil), "an invalid purpose is rejected")

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/securefiles"
 	itrust "github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/spf13/cobra"
 )
@@ -85,11 +86,16 @@ var keygenCmd = &cobra.Command{
 		pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
 
 		// Both at 0600 — the private key is a signing secret; the public key need not be
-		// world-readable here (it is published separately).
-		if err := os.WriteFile(privPath, privPEM, 0o600); err != nil {
+		// world-readable here (it is published separately). SecureWriteFileSync (#265)
+		// refuses to write through a pre-planted symlink (O_NOFOLLOW) and enforces the
+		// mode even if a file already existed with a looser one — a plain os.WriteFile
+		// silently follows a symlink and never chmods an existing file, so the ROOT
+		// signing key could land world-readable or redirected to an attacker-controlled
+		// path with no error. Sync'd since this is unrecoverable key material.
+		if err := securefiles.SecureWriteFileSync(keygenDir, keyID+".private.pem", privPEM, 0o600); err != nil {
 			return fmt.Errorf("write private key: %w", err)
 		}
-		if err := os.WriteFile(pubPath, pubPEM, 0o600); err != nil {
+		if err := securefiles.SecureWriteFileSync(keygenDir, keyID+".public.pem", pubPEM, 0o600); err != nil {
 			return fmt.Errorf("write public key: %w", err)
 		}
 
