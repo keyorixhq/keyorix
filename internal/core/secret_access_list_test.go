@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -57,8 +58,10 @@ func TestListSecretAccessors(t *testing.T) {
 	past := now.Add(-time.Hour)
 	require.NoError(t, db.Create(&models.ShareRecord{SecretID: secret.ID, OwnerID: 1, RecipientID: 5, Permission: "read", ExpiresAt: &past}).Error)
 
-	accessors, err := c.ListSecretAccessors(ctx, secret.ID, 1)
+	result, err := c.ListSecretAccessors(ctx, secret.ID, 1)
 	require.NoError(t, err)
+	require.False(t, result.Degraded)
+	accessors := result.Accessors
 
 	byName := map[string]SecretAccessor{}
 	for _, a := range accessors {
@@ -106,11 +109,69 @@ func TestListSecretAccessors_StrongestGrantWins(t *testing.T) {
 	_, err = c.ShareSecret(ctx, &ShareSecretRequest{SecretID: secret.ID, RecipientID: 2, Permission: "write", SharedBy: 1})
 	require.NoError(t, err)
 
-	accessors, err := c.ListSecretAccessors(ctx, secret.ID, 1)
+	result, err := c.ListSecretAccessors(ctx, secret.ID, 1)
 	require.NoError(t, err)
-	for _, a := range accessors {
+	require.False(t, result.Degraded)
+	for _, a := range result.Accessors {
 		if a.Username == "alice" {
 			assert.Equal(t, "write", a.Permission, "the stronger (write) grant wins over the group read")
 		}
 	}
+}
+
+// failingGroupMembersStore wraps LocalStorage and fails every ListGroupMembers
+// call, simulating storage.type: remote where ListGroupMembers is
+// unconditionally unimplemented (#417).
+type failingGroupMembersStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingGroupMembersStore) ListGroupMembers(_ context.Context, _ uint) ([]*models.User, error) {
+	return nil, errors.New("simulated: ListGroupMembers unimplemented on this backend")
+}
+
+// TestListSecretAccessors_DegradedOnGroupMembersError proves that a failing
+// ListGroupMembers call now surfaces as Degraded instead of silently omitting
+// the entire group's accessors from an incident-response-critical report (#417).
+func TestListSecretAccessors_DegradedOnGroupMembersError(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
+		&models.Group{}, &models.UserGroup{},
+	))
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "b@t.com"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "platform"}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 2, GroupID: 10}).Error)
+
+	now := time.Now()
+	base := store.NewLocalStorage(db)
+	failing := &failingGroupMembersStore{LocalStorage: base}
+	c := &KeyorixCore{storage: failing, now: func() time.Time { return now }}
+	ctx := context.Background()
+
+	secret, err := base.CreateSecret(ctx, &models.SecretNode{
+		Name: "db", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	require.NoError(t, err)
+	_, err = c.ShareSecretWithGroup(ctx, &GroupShareSecretRequest{SecretID: secret.ID, GroupID: 10, Permission: "read", SharedBy: 1})
+	require.NoError(t, err)
+
+	result, err := c.ListSecretAccessors(ctx, secret.ID, 1)
+	require.NoError(t, err)
+	assert.True(t, result.Degraded, "a failed ListGroupMembers call must flip Degraded")
+	require.NotEmpty(t, result.DegradedReasons)
+	assert.Contains(t, result.DegradedReasons[0], "group_members:group=10")
+	byName := map[string]SecretAccessor{}
+	for _, a := range result.Accessors {
+		byName[a.Username] = a
+	}
+	assert.NotContains(t, byName, "bob", "bob's group-share access must not silently appear as verified-absent")
+	assert.Contains(t, byName, "owner")
 }
