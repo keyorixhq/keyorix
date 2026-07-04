@@ -782,13 +782,15 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		})
 	})
 
-	// Swagger UI (optional, based on config)
+	// Swagger UI and the raw OpenAPI spec (optional, based on config). #224: the
+	// spec endpoint was previously registered unconditionally, so disabling
+	// swagger_enabled still leaked the machine-readable API surface even though
+	// the human-facing UI was correctly gated. Both routes must share the same
+	// on/off behavior.
 	if cfg.Server.HTTP.SwaggerEnabled {
 		r.Mount("/swagger/", handlers.SwaggerHandler())
+		r.Get("/openapi.yaml", handlers.OpenAPISpec)
 	}
-
-	// OpenAPI spec endpoint
-	r.Get("/openapi.yaml", handlers.OpenAPISpec)
 
 	// Serve the web dashboard. Prefer an on-disk build (mounted in the Docker
 	// stack, or present in dev); otherwise fall back to the build embedded in the
