@@ -47,7 +47,7 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 		if dbPath == "" {
 			dbPath = "./secrets.db"
 		}
-		db, err := gorm.Open(sqlite.Open(dbPath), gormConfig())
+		db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to database: %w", err)
 		}
