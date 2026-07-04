@@ -380,7 +380,7 @@ export const AdminPage: React.FC = () => {
                         <Button variant="outline" onClick={() => setInviteOpen(true)}>
                             <EnvelopeIcon className="h-4 w-4 mr-1.5" />Invite User
                         </Button>
-                        <Button variant="primary" onClick={() => { setFormError(''); setActiveModal({ type: 'create' }); }}>
+                        <Button variant="default" onClick={() => { setFormError(''); setActiveModal({ type: 'create' }); }}>
                             <PlusIcon className="h-4 w-4 mr-1.5" />New User
                         </Button>
                     </div>
@@ -588,7 +588,7 @@ export const AdminPage: React.FC = () => {
                             </p>
                         )}
                         <div className="flex justify-end pt-2">
-                            <Button variant="primary" onClick={closeModal}>Done</Button>
+                            <Button variant="default" onClick={closeModal}>Done</Button>
                         </div>
                     </div>
                 ) : otpResult ? (
@@ -606,7 +606,7 @@ export const AdminPage: React.FC = () => {
                             </Button>
                         </div>
                         <div className="flex justify-end pt-2">
-                            <Button variant="primary" onClick={closeModal}>Done</Button>
+                            <Button variant="default" onClick={closeModal}>Done</Button>
                         </div>
                     </div>
                 ) : (
@@ -684,7 +684,7 @@ export const AdminPage: React.FC = () => {
                     )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>Cancel</Button>
-                        <Button variant="primary" onClick={handleCreate} disabled={createMutation.isPending}>
+                        <Button variant="default" onClick={handleCreate} disabled={createMutation.isPending}>
                             {createMutation.isPending ? 'Creating…'
                                 : createMode === 'setup_link' ? 'Create & Send Link'
                                 : createMode === 'one_time_password' ? 'Create & Generate Password'
@@ -717,7 +717,7 @@ export const AdminPage: React.FC = () => {
                     </div>
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={updateMutation.isPending}>Cancel</Button>
-                        <Button variant="primary" onClick={handleUpdate} disabled={updateMutation.isPending}>
+                        <Button variant="default" onClick={handleUpdate} disabled={updateMutation.isPending}>
                             {updateMutation.isPending ? 'Saving…' : 'Save Changes'}
                         </Button>
                     </div>
@@ -733,7 +733,7 @@ export const AdminPage: React.FC = () => {
                     )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={deleteMutation.isPending}>Cancel</Button>
-                        <Button variant="danger" onClick={handleDelete} disabled={deleteMutation.isPending}>
+                        <Button variant="destructive" onClick={handleDelete} disabled={deleteMutation.isPending}>
                             {deleteMutation.isPending ? 'Deleting…' : 'Delete User'}
                         </Button>
                     </div>
@@ -749,7 +749,7 @@ export const AdminPage: React.FC = () => {
                     )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={restoreMutation.isPending}>Cancel</Button>
-                        <Button variant="primary" onClick={handleRestore} disabled={restoreMutation.isPending}>
+                        <Button variant="default" onClick={handleRestore} disabled={restoreMutation.isPending}>
                             {restoreMutation.isPending ? 'Restoring…' : 'Restore User'}
                         </Button>
                     </div>
@@ -785,7 +785,7 @@ export const AdminPage: React.FC = () => {
                     )}
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={closeModal} disabled={updateRolesMutation.isPending}>Cancel</Button>
-                        <Button variant="primary" onClick={handleSaveRoles} disabled={updateRolesMutation.isPending || rolesLoading}>
+                        <Button variant="default" onClick={handleSaveRoles} disabled={updateRolesMutation.isPending || rolesLoading}>
                             {updateRolesMutation.isPending ? 'Saving…' : 'Save Roles'}
                         </Button>
                     </div>

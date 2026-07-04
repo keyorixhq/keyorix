@@ -281,7 +281,7 @@ export const ServiceAccountsPage: React.FC = () => {
                             Machine identities for CI/CD pipelines and automated workflows
                         </p>
                     </div>
-                    <Button variant="primary" onClick={openCreate}>
+                    <Button variant="default" onClick={openCreate}>
                         <PlusIcon className="h-4 w-4 mr-1.5" />New Service Account
                     </Button>
                 </div>
@@ -479,7 +479,7 @@ export const ServiceAccountsPage: React.FC = () => {
                         <Button variant="ghost" onClick={closeModal} disabled={createMutation.isPending}>
                             Cancel
                         </Button>
-                        <Button variant="primary" onClick={handleCreate} disabled={createMutation.isPending}>
+                        <Button variant="default" onClick={handleCreate} disabled={createMutation.isPending}>
                             {createMutation.isPending ? 'Creating…' : 'Create Service Account'}
                         </Button>
                     </div>
@@ -525,7 +525,7 @@ export const ServiceAccountsPage: React.FC = () => {
                         <Button variant="ghost" onClick={closeModal} disabled={updateMutation.isPending}>
                             Cancel
                         </Button>
-                        <Button variant="primary" onClick={handleUpdate} disabled={updateMutation.isPending}>
+                        <Button variant="default" onClick={handleUpdate} disabled={updateMutation.isPending}>
                             {updateMutation.isPending ? 'Saving…' : 'Save Changes'}
                         </Button>
                     </div>
@@ -551,7 +551,7 @@ export const ServiceAccountsPage: React.FC = () => {
                         <Button variant="ghost" onClick={closeModal} disabled={deactivateMutation.isPending}>
                             Cancel
                         </Button>
-                        <Button variant="danger" onClick={handleDeactivate} disabled={deactivateMutation.isPending}>
+                        <Button variant="destructive" onClick={handleDeactivate} disabled={deactivateMutation.isPending}>
                             {deactivateMutation.isPending ? 'Deactivating…' : 'Deactivate'}
                         </Button>
                     </div>
@@ -629,7 +629,7 @@ export const ServiceAccountsPage: React.FC = () => {
 
                         <div className="flex justify-end pt-2">
                             <Button
-                                variant="primary"
+                                variant="default"
                                 onClick={() => {
                                     setCreatedCreds(null);
                                     setCopiedField(null);
@@ -693,7 +693,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                 )}
                             </div>
                             <Button
-                                variant="primary"
+                                variant="default"
                                 size="sm"
                                 onClick={() => {
                                     setCreatedAccessToken(null);
@@ -772,7 +772,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                             Cancel
                                         </Button>
                                         <Button
-                                            variant="primary"
+                                            variant="default"
                                             size="sm"
                                             onClick={handleCreateToken}
                                             disabled={createTokenMutation.isPending}
@@ -834,7 +834,7 @@ export const ServiceAccountsPage: React.FC = () => {
                                                                 Revoke this token?
                                                             </span>
                                                             <Button
-                                                                variant="danger"
+                                                                variant="destructive"
                                                                 size="sm"
                                                                 onClick={() => handleRevokeToken(token.id)}
                                                                 disabled={revokeTokenMutation.isPending}

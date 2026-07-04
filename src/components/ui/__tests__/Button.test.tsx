@@ -16,19 +16,26 @@ describe('Button', () => {
         expect(handleClick).toHaveBeenCalledTimes(1);
     });
 
-    it('applies primary variant styles', () => {
-        render(<Button variant="primary">Primary</Button>);
-        expect(screen.getByRole('button')).toHaveClass('bg-blue-600');
+    it('applies default variant styles', () => {
+        render(<Button variant="default">Default</Button>);
+        expect(screen.getByRole('button')).toHaveClass('bg-primary');
     });
 
-    it('applies danger variant styles', () => {
-        render(<Button variant="danger">Danger</Button>);
-        expect(screen.getByRole('button')).toHaveClass('bg-red-600');
+    it('applies destructive variant styles', () => {
+        render(<Button variant="destructive">Destructive</Button>);
+        expect(screen.getByRole('button')).toHaveClass('bg-destructive');
     });
 
     it('can be disabled', () => {
         render(<Button disabled>Disabled</Button>);
         expect(screen.getByRole('button')).toBeDisabled();
+    });
+
+    it('disables the button and renders a spinner while loading', () => {
+        render(<Button loading>Save</Button>);
+        const button = screen.getByRole('button');
+        expect(button).toBeDisabled();
+        expect(button.querySelector('svg.animate-spin')).toBeInTheDocument();
     });
 
     it('forwards refs correctly', () => {

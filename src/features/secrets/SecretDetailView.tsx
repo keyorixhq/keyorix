@@ -821,7 +821,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
                             Cancel
                         </Button>
                         <Button
-                            variant="primary"
+                            variant="default"
                             onClick={handleRotate}
                             disabled={!rotateValue.trim() || rotateMutation.isPending}
                         >

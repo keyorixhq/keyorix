@@ -195,11 +195,11 @@ const ReauthModal: React.FC<{
     onClose: () => void;
     title: string;
     confirmLabel: string;
-    confirmVariant?: 'primary' | 'danger';
+    confirmVariant?: 'default' | 'destructive';
     intro: string;
     isPending: boolean;
     run: (proof: { code?: string; password?: string }) => Promise<string[] | void>;
-}> = ({ isOpen, onClose, title, confirmLabel, confirmVariant = 'primary', intro, isPending, run }) => {
+}> = ({ isOpen, onClose, title, confirmLabel, confirmVariant = 'default', intro, isPending, run }) => {
     const [secret, setSecret] = useState('');
     const [codes, setCodes] = useState<string[] | null>(null);
     const [error, setError] = useState('');
@@ -327,7 +327,7 @@ export const MfaSection: React.FC = () => {
                     {isLoading ? (
                         <Spinner size="sm" />
                     ) : enabled ? (
-                        <Button variant="danger" size="sm" onClick={() => setDisableOpen(true)}>
+                        <Button variant="destructive" size="sm" onClick={() => setDisableOpen(true)}>
                             Disable
                         </Button>
                     ) : (
@@ -375,7 +375,7 @@ export const MfaSection: React.FC = () => {
                 onClose={() => setDisableOpen(false)}
                 title="Disable two-factor authentication"
                 confirmLabel="Disable 2FA"
-                confirmVariant="danger"
+                confirmVariant="destructive"
                 intro="Your account will be protected by your password only. Confirm with a current authenticator code or your password."
                 isPending={disable.isPending}
                 run={async (proof) => {

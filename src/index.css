@@ -113,50 +113,6 @@
 
 /* ─── Components ────────────────────────────────────────────────── */
 
-@utility btn {
-  /* Button variants */
-  @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
-}
-
-@utility btn-primary {
-  @apply btn text-white;
-  background-color: var(--accent);
-  &:hover {
-    background-color: var(--accent-hover);
-  }
-}
-
-@utility btn-secondary {
-  @apply btn;
-  background-color: var(--bg-subtle);
-  color: var(--text-primary);
-  &:hover {
-    background-color: var(--bg-muted);
-  }
-}
-
-@utility btn-outline {
-  @apply btn border;
-  border-color: var(--border-strong);
-  background-color: var(--bg-surface);
-  color: var(--text-secondary);
-  &:hover {
-    background-color: var(--bg-subtle);
-  }
-}
-
-@utility btn-ghost {
-  @apply btn;
-  color: var(--text-secondary);
-  &:hover {
-    background-color: var(--bg-subtle);
-  }
-}
-
-@utility btn-danger {
-  @apply btn bg-red-600 text-white hover:bg-red-700 active:bg-red-800;
-}
-
 @utility input {
   /* Input styles */
   @apply block w-full rounded-md shadow-xs sm:text-sm;

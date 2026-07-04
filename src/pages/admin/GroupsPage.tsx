@@ -199,7 +199,8 @@ export const GroupsPage: React.FC = () => {
                         Organise users into groups and assign roles at the group level.
                     </p>
                 </div>
-                <Button size="sm" onClick={openCreate} icon={PlusIcon}>
+                <Button size="sm" onClick={openCreate}>
+                    <PlusIcon className="size-4" />
                     New Group
                 </Button>
             </div>
@@ -435,7 +436,7 @@ export const GroupsPage: React.FC = () => {
                         <Button variant="secondary" onClick={() => { setDeleteGroup(null); deleteMutation.reset(); }}>
                             Cancel
                         </Button>
-                        <Button variant="danger" loading={deleteMutation.isPending} onClick={handleDelete}>
+                        <Button variant="destructive" loading={deleteMutation.isPending} onClick={handleDelete}>
                             Delete
                         </Button>
                     </div>

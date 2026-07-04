@@ -755,7 +755,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                             Permanently deletes the project and all its secrets. This cannot be undone.
                         </p>
                     </div>
-                    <Button variant="danger" onClick={() => setShowDeleteModal(true)}>Delete Project</Button>
+                    <Button variant="destructive" onClick={() => setShowDeleteModal(true)}>Delete Project</Button>
                 </div>
             </section>
 
@@ -791,7 +791,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                         </Button>
                         {!deleteEnvError && (
                             <Button
-                                variant="danger"
+                                variant="destructive"
                                 disabled={deleteEnvMutation.isPending}
                                 onClick={() => envToDelete && deleteEnvMutation.mutate(envToDelete.id)}
                             >
@@ -834,7 +834,7 @@ export const ProjectSettingsTab: React.FC<ProjectSettingsTabProps> = ({ projectI
                             Cancel
                         </Button>
                         <Button
-                            variant="danger"
+                            variant="destructive"
                             disabled={deleteConfirm !== project?.name || deleteProjectMutation.isPending}
                             onClick={() => deleteProjectMutation.mutate()}
                         >

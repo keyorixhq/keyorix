@@ -118,7 +118,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         </p>
                     )}
                     <div className="flex justify-end pt-2">
-                        <Button variant="primary" onClick={handleClose}>Done</Button>
+                        <Button variant="default" onClick={handleClose}>Done</Button>
                     </div>
                 </div>
             ) : deliveryError ? (
@@ -132,7 +132,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
                         the user’s detail page.
                     </p>
                     <div className="flex justify-end pt-2">
-                        <Button variant="primary" onClick={handleClose}>Done</Button>
+                        <Button variant="default" onClick={handleClose}>Done</Button>
                     </div>
                 </div>
             ) : (
@@ -180,7 +180,7 @@ export const GlobalInviteUserModal: React.FC<GlobalInviteUserModalProps> = ({ is
 
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={handleClose} disabled={invite.isPending}>Cancel</Button>
-                        <Button variant="primary" onClick={handleSubmit} disabled={invite.isPending || !email.trim()}>
+                        <Button variant="default" onClick={handleSubmit} disabled={invite.isPending || !email.trim()}>
                             {invite.isPending ? 'Sending…' : 'Send Invitation'}
                         </Button>
                     </div>

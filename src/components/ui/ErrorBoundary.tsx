@@ -99,11 +99,10 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
                                 <div className="mt-6 flex flex-col space-y-3 sm:flex-row sm:space-y-0 sm:space-x-3">
                                     <Button
-                                        variant="primary"
                                         onClick={this.handleRetry}
-                                        icon={ArrowPathIcon}
                                         className="flex-1"
                                     >
+                                        <ArrowPathIcon className="size-4" />
                                         Try Again
                                     </Button>
                                     <Button
@@ -143,7 +142,7 @@ const ErrorFallback: React.FC<ErrorFallbackProps> = ({ error, resetError }) => {
                     {error.message || 'An unexpected error occurred'}
                 </p>
                 <div className="mt-6">
-                    <Button variant="primary" onClick={resetError}>
+                    <Button variant="default" onClick={resetError}>
                         Try again
                     </Button>
                 </div>

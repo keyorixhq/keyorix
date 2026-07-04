@@ -435,7 +435,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
                     </p>
                     <div className="flex justify-end gap-2 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
                         <Button variant="outline" onClick={list.closeModal} disabled={list.deleteMutation.isPending}>Cancel</Button>
-                        <Button variant="danger"
+                        <Button variant="destructive"
                             onClick={() => list.modalData?.secret && list.deleteMutation.mutate(list.modalData.secret.id)}
                             disabled={list.deleteMutation.isPending}>
                             {list.deleteMutation.isPending ? 'Deleting…' : 'Delete'}

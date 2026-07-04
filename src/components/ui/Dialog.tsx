@@ -73,7 +73,7 @@ const Dialog: React.FC<DialogProps> = ({
     const config = iconConfig[type];
     const Icon = config.icon;
 
-    const confirmButtonVariant = type === 'danger' ? 'danger' : 'primary';
+    const confirmButtonVariant = type === 'danger' ? 'destructive' : 'default';
 
     return (
         <Modal

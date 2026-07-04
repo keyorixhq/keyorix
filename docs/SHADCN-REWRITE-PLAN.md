@@ -247,16 +247,40 @@ pages import count):
 Known deferred decision for Phase 3: shadcn's generated components import
 `lucide-react`; this app uses `@heroicons/react` in 61 files. Reconcile
 per-component as each one is added (swap icons by hand vs. accept a second
-icon lib), not resolved globally here. Also note for Phase 3: shadcn writes
-lowercase filenames (`button.tsx`) that collide with this app's existing
-PascalCase files (`Button.tsx`) on case-insensitive filesystems — always
-replace the old file in the same commit as the `shadcn add`, never let both
-exist simultaneously.
+icon lib), not resolved globally here — Button's own migration didn't need
+to touch this, since shadcn's Button imports no icon library itself.
+
+**Resolved (Button's migration)**: rather than running `shadcn add` (whose
+lowercase filenames, e.g. `button.tsx`, would collide with this app's
+existing PascalCase files like `Button.tsx` on case-insensitive filesystems),
+every migrated component is hand-authored from shadcn's verified upstream
+source and kept at its existing PascalCase filename. This sidesteps the
+collision risk entirely — no future component needs the "replace in the same
+commit" workaround, since the lowercase sibling is simply never created.
 
 ## Phase 3 — Migrate leaf primitives
 
 `Button`, `Input`, `Select`, `Alert` → shadcn equivalents. Lowest blast radius,
 highest reuse — validates the theming bridge first.
+
+- **`Button`: done (2026-07-04).** Rewritten on shadcn's actual `cva`-based
+  component (`default/destructive/outline/secondary/ghost` variants,
+  `default/sm/lg` sizes), adding `radix-ui` for `asChild`/`Slot` support.
+  `variant="primary"` → `"default"`, `variant="danger"` → `"destructive"`
+  across all ~27 call sites (including 3 dynamic ternary expressions the
+  initial literal-string grep missed, caught by `tsc`); `icon`/`iconPosition`
+  dropped in favor of shadcn's icon-as-children composition (7 call sites
+  migrated); `fullWidth` dropped (unused). `loading` kept as one deliberate
+  addition beyond upstream (3 real call sites depend on it), reusing the
+  existing inline spinner SVG rather than pulling in an icon library. The
+  now-dead `btn`/`btn-*` utility classes removed from `src/index.css`.
+  Verified the Phase 2 bridge actually activates: compiled CSS now contains
+  real `.bg-primary { background-color: var(--accent) }` /
+  `.bg-destructive { background-color: var(--danger) }` rules. Kept the
+  PascalCase filename (`Button.tsx`, not shadcn's lowercase convention) —
+  this fully resolves Phase 2's filesystem-case-collision note for every
+  future component too, by simply never introducing a lowercase sibling file
+  in this repo at all.
 
 ## Phase 4 — Migrate compound components
 

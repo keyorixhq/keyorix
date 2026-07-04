@@ -333,7 +333,7 @@ export const UserDetailPage: React.FC = () => {
                         <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>{ACTION_COPY[pending].body}</p>
                         <div className="flex justify-end gap-3 pt-2">
                             <Button variant="ghost" onClick={() => setPending(null)}>Cancel</Button>
-                            <Button variant={ACTION_COPY[pending].danger ? 'danger' : 'primary'} onClick={runAction}>
+                            <Button variant={ACTION_COPY[pending].danger ? 'destructive' : 'default'} onClick={runAction}>
                                 {ACTION_COPY[pending].confirm}
                             </Button>
                         </div>
@@ -375,7 +375,7 @@ export const UserDetailPage: React.FC = () => {
                     </label>
                     <div className="flex justify-end gap-3 pt-2">
                         <Button variant="ghost" onClick={() => setShowMigrate(false)}>Cancel</Button>
-                        <Button variant="primary" onClick={runMigrate} disabled={!migProjectId || migrate.isPending} loading={migrate.isPending}>
+                        <Button variant="default" onClick={runMigrate} disabled={!migProjectId || migrate.isPending} loading={migrate.isPending}>
                             Convert
                         </Button>
                     </div>

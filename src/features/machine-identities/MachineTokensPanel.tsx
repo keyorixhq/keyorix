@@ -78,7 +78,8 @@ export const MachineTokensPanel: React.FC<{
                         className="flex-1 min-w-[10rem] rounded-lg px-3 py-1.5 text-sm outline-hidden"
                         style={selectStyle}
                     />
-                    <Button size="sm" onClick={handleIssue} disabled={!name.trim() || issue.isPending} icon={KeyIcon}>
+                    <Button size="sm" onClick={handleIssue} disabled={!name.trim() || issue.isPending}>
+                        <KeyIcon className="size-4" />
                         Issue token
                     </Button>
                 </div>

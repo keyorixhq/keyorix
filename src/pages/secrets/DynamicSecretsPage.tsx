@@ -62,7 +62,8 @@ const DynamicSecretsPage: React.FC = () => {
                     Dynamic Secrets
                 </h1>
                 {isAdmin && projectId > 0 && (
-                    <Button onClick={() => setShowCreate(true)} icon={PlusIcon}>
+                    <Button onClick={() => setShowCreate(true)}>
+                        <PlusIcon className="size-4" />
                         New config
                     </Button>
                 )}

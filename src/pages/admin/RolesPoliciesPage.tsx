@@ -69,7 +69,8 @@ const RoleCard: React.FC<RoleCardProps> = ({ role, onEdit, onDelete, onManage })
             <div className="px-5 py-3 border-t flex items-center gap-2"
                 style={{ borderColor: 'var(--border)' }}>
                 <Button size="sm" variant="outline" onClick={() => onManage(role)}
-                    icon={ShieldCheckIcon} className="flex-1">
+                    className="flex-1">
+                    <ShieldCheckIcon className="size-4" />
                     Permissions
                 </Button>
                 <button
@@ -201,7 +202,8 @@ export const RolesPoliciesPage: React.FC = () => {
             {tab === 'roles' && (
                 <div>
                     <div className="flex justify-end mb-4">
-                        <Button size="sm" onClick={openCreate} icon={PlusIcon}>
+                        <Button size="sm" onClick={openCreate}>
+                            <PlusIcon className="size-4" />
                             New Role
                         </Button>
                     </div>
@@ -467,7 +469,7 @@ export const RolesPoliciesPage: React.FC = () => {
                         <Button variant="secondary" onClick={() => { setDeleteRole(null); deleteMutation.reset(); }}>
                             Cancel
                         </Button>
-                        <Button variant="danger" loading={deleteMutation.isPending} onClick={handleDelete}>
+                        <Button variant="destructive" loading={deleteMutation.isPending} onClick={handleDelete}>
                             Delete
                         </Button>
                     </div>

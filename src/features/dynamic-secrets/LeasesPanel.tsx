@@ -85,13 +85,14 @@ export const LeasesPanel: React.FC<{ configId: number; canManage: boolean }> = (
 
             {canManage && (
                 <div className="flex items-center gap-2 mb-3">
-                    <Button size="sm" onClick={handleIssue} disabled={issue.isPending} icon={KeyIcon}>
+                    <Button size="sm" onClick={handleIssue} disabled={issue.isPending}>
+                        <KeyIcon className="size-4" />
                         Issue credential
                     </Button>
                     {activeCount > 0 && (
                         <Button
                             size="sm"
-                            variant="danger"
+                            variant="destructive"
                             onClick={() => {
                                 setError('');
                                 revokeAll.mutate(undefined, { onError: err => surface(err, 'Failed to revoke leases.') });

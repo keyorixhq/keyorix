@@ -569,7 +569,7 @@ export const SharingManagementPage: React.FC = () => {
                                                     return (
                                                         <Button
                                                             key={page}
-                                                            variant={pagination.page === page ? 'primary' : 'outline'}
+                                                            variant={pagination.page === page ? 'default' : 'outline'}
                                                             onClick={() => handlePageChange(page)}
                                                             className="rounded-none"
                                                         >

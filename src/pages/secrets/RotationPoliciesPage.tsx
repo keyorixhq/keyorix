@@ -584,7 +584,7 @@ export function RotationPoliciesPage() {
                             Cancel
                         </Button>
                         <Button
-                            variant="danger"
+                            variant="destructive"
                             onClick={() => {
                                 if (!deleting) return;
                                 deleteMutation.mutate(deleting.id, {

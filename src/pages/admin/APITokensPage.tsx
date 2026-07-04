@@ -216,7 +216,7 @@ export const APITokensPage: React.FC = () => {
                                                     <div className="flex items-center justify-end gap-2">
                                                         <span className="text-xs text-base-muted">Revoke?</span>
                                                         <Button
-                                                            variant="danger"
+                                                            variant="destructive"
                                                             size="sm"
                                                             onClick={() => handleRevokeToken(token.id)}
                                                             disabled={revokeTokenMutation.isPending}

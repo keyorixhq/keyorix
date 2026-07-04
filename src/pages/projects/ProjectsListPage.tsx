@@ -368,7 +368,7 @@ export const ProjectsListPage: React.FC = () => {
                         </Button>
                         {!deleteError && (
                             <Button
-                                variant="danger"
+                                variant="destructive"
                                 disabled={deleteConfirm !== projectToDelete?.name || deleteProject.isPending}
                                 onClick={handleDelete}
                             >
