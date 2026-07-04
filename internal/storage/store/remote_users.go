@@ -112,6 +112,29 @@ func (rs *RemoteStorage) UpdateLastLogin(_ context.Context, _ uint, _ time.Time)
 	return fmt.Errorf("UpdateLastLogin not available in remote mode")
 }
 
+// SetAccountState always hard-fails: account_state has no field in the wire format
+// UpdateUser sends (core.UpdateUserRequest only carries username/email/display_name/
+// active — see server/http/handlers/users_crud.go and core.UpdateUser), so there is no
+// way to actually persist this upstream. Returning an error here — instead of silently
+// falling through to a generic write that would just no-op the field — is the whole
+// point of this method (#454): setAccountState (admin suspend/reactivate) and
+// UpdateSCIMUser (SCIM deprovision/reactivate) must see a hard failure, not a false
+// "success" that leaves the account's login-blocking state unchanged.
+func (rs *RemoteStorage) SetAccountState(_ context.Context, _ uint, _ string, _ time.Time) error {
+	return fmt.Errorf("account_state cannot be persisted through remote storage: the "+
+		"upstream PUT /api/v1/users/{id} endpoint does not accept this field: %w", ErrRemoteUnsupported)
+}
+
+// UpdateLoginLockoutState always returns ErrRemoteUnsupported: none of the four
+// login-lockout columns are expressible in the wire format either (#454), so, unlike
+// SetAccountState above, the caller (login_lockout.go) treats this as the same
+// "permanent architectural gap" #452 already established for the login rate limiter —
+// log a loud one-time operator warning and fail OPEN, rather than blocking every login
+// under storage.type: remote.
+func (rs *RemoteStorage) UpdateLoginLockoutState(_ context.Context, _ uint, _ int, _, _ *time.Time, _ int) error {
+	return remoteUnsupported("UpdateLoginLockoutState")
+}
+
 // DeleteUser deletes a user via remote API.
 func (rs *RemoteStorage) DeleteUser(ctx context.Context, id uint) error {
 	path := fmt.Sprintf("/api/v1/users/%d", id)

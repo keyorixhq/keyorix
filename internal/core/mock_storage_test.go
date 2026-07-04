@@ -744,6 +744,16 @@ func (m *MockStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt 
 	return args.Error(0)
 }
 
+func (m *MockStorage) SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error {
+	args := m.Called(ctx, id, state, updatedAt)
+	return args.Error(0)
+}
+
+func (m *MockStorage) UpdateLoginLockoutState(ctx context.Context, id uint, attempts int, lastFailedAt, lockedUntil *time.Time, lockoutCount int) error {
+	args := m.Called(ctx, id, attempts, lastFailedAt, lockedUntil, lockoutCount)
+	return args.Error(0)
+}
+
 func (m *MockStorage) DeleteUser(ctx context.Context, id uint) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)

@@ -95,9 +95,7 @@ func TestAdminAccountTransitions(t *testing.T) {
 			c := newAccountCore(store)
 			ctx := context.Background()
 			store.On("GetUser", ctx, uint(2)).Return(&models.User{ID: 2, AccountState: AccountActive}, nil)
-			store.On("UpdateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
-				return u.AccountState == tc.wantState
-			})).Return(&models.User{ID: 2}, nil)
+			store.On("SetAccountState", ctx, uint(2), tc.wantState, mock.Anything).Return(nil)
 			store.On("LogAuditEvent", ctx, mock.MatchedBy(func(e *models.AuditEvent) bool {
 				return e.EventType == tc.event
 			})).Return(nil)

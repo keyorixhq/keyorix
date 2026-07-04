@@ -369,6 +369,31 @@ type Storage interface {
 	// UpdateLastLogin stamps the user's last_login_at column without touching any
 	// other field (no updated_at bump). Called on every successful login.
 	UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error
+	// SetAccountState persists ONLY the account_state column (plus updated_at) —
+	// narrower than the generic UpdateUser, and deliberately so (#454): RemoteStorage's
+	// wire format (core.UpdateUserRequest, decoded by the upstream server's PUT
+	// /api/v1/users/{id} handler) carries only username/email/display_name/active, so a
+	// caller going through the generic LockUserForUpdate + UpdateUser read-modify-write to
+	// change account_state succeeds against LocalStorage but silently no-ops under
+	// storage.type: remote — the field is simply absent from the request body the upstream
+	// handler decodes, so it re-persists whatever account_state was already there. An admin
+	// suspend/reactivate (setAccountState) or a SCIM deprovision/reactivate (UpdateSCIMUser)
+	// is an explicit, security-relevant directive, not passive accounting — the caller must
+	// see a hard error rather than a false "success" that leaves the account state
+	// unchanged. LocalStorage performs the real column update; RemoteStorage always
+	// returns storage.ErrUnsupportedByBackend (wrapped) so the caller fails closed.
+	SetAccountState(ctx context.Context, id uint, state string, updatedAt time.Time) error
+	// UpdateLoginLockoutState persists ONLY the four login-lockout accounting columns
+	// (failed_login_attempts, last_failed_login_at, login_locked_until,
+	// login_lockout_count) — the same #454 rationale as SetAccountState above, since none
+	// of these fields are expressible in RemoteStorage's wire format either. Unlike
+	// SetAccountState, though, lockout accounting is a passive backstop counter, not an
+	// explicit security directive (mirrors #452's identical call on
+	// CountRecentLoginAttempts/RecordLoginAttempt): LocalStorage performs the real column
+	// update; RemoteStorage always returns storage.ErrUnsupportedByBackend (wrapped), and
+	// the core caller (login_lockout.go) logs a loud one-time operator warning and fails
+	// OPEN rather than blocking every login under this backend.
+	UpdateLoginLockoutState(ctx context.Context, id uint, attempts int, lastFailedAt, lockedUntil *time.Time, lockoutCount int) error
 	DeleteUser(ctx context.Context, id uint) error
 	RestoreUser(ctx context.Context, id uint) error
 	// PurgeDeleted*Before hard-delete soft-deleted rows whose deleted_at is

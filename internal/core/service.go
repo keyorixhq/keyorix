@@ -132,6 +132,13 @@ type KeyorixCore struct {
 	// opposed to an ordinary transient storage error) — once per process, not
 	// once per request. Zero value is ready to use. See rate_limit.go.
 	rateLimitUnsupportedWarnOnce sync.Once
+	// loginLockoutUnsupportedWarnOnce guards the #454 operator warning logged the
+	// first time recordFailedLogin/checkLockAndClearLoginFailures/clearLoginFailures
+	// observe that the active storage backend can never satisfy
+	// UpdateLoginLockoutState (as opposed to an ordinary transient storage error) —
+	// once per process, not once per login attempt. Zero value is ready to use. See
+	// login_lockout.go.
+	loginLockoutUnsupportedWarnOnce sync.Once
 	auditForwarder               AuditForwarder
 	// auditStream is the in-process pub/sub broker that wakes live audit tails
 	// (gRPC StreamAuditLogs) the instant an event is written, replacing fixed-interval
