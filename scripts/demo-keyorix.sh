@@ -28,6 +28,16 @@ demo_warn() { echo -e "${YELLOW}⚠️${NC}  $1"; }
 
 SERVER="${KEYORIX_SERVER:-http://localhost:8080}"
 
+# Scratch dir for this run (demo-user response body + a short-lived curl header
+# file). mktemp avoids the fixed-path symlink race a hardcoded /tmp path would
+# have, and the header file keeps the bearer token out of argv (ps/procfs
+# visible to other local users) — it's read by curl via `-H @file` instead.
+DEMO_TMP_DIR=""
+cleanup_demo_tmp() {
+    [ -n "$DEMO_TMP_DIR" ] && rm -rf "$DEMO_TMP_DIR"
+}
+trap cleanup_demo_tmp EXIT
+
 if [ -z "$KEYORIX_TOKEN" ]; then
     demo_warn "KEYORIX_TOKEN is not set. Secrets are created via the CLI's own"
     demo_warn "remote config (cli.yaml from 'keyorix connect'); the demo-user step"
@@ -47,17 +57,22 @@ demo_step "2. Creating a limited-permission demo user (for the RBAC chapter)"
 # 'keyorix rbac check-permission --user demo@keyorix.com --permission secrets.write'
 # returns ❌ — the contrast that makes the RBAC chapter land.
 if [ -n "$KEYORIX_TOKEN" ]; then
-    HTTP_CODE=$(curl -s -o /tmp/keyorix-demo-user.json -w "%{http_code}" \
+    DEMO_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/keyorix-demo.XXXXXX")
+    RESPONSE_FILE="$DEMO_TMP_DIR/keyorix-demo-user.json"
+    HEADER_FILE="$DEMO_TMP_DIR/auth.header"
+    (umask 077 && printf 'Authorization: Bearer %s\n' "$KEYORIX_TOKEN" > "$HEADER_FILE")
+    HTTP_CODE=$(curl -s -o "$RESPONSE_FILE" -w "%{http_code}" \
         -X POST "$SERVER/api/v1/users" \
-        -H "Authorization: Bearer $KEYORIX_TOKEN" \
+        -H @"$HEADER_FILE" \
         -H "Content-Type: application/json" \
         -d '{"username":"demo","email":"demo@keyorix.com","password":"Demo#Pass!2026","display_name":"Demo User"}')
+    rm -f "$HEADER_FILE"
     if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
         demo_success "Created demo user demo@keyorix.com (viewer role)"
     elif [ "$HTTP_CODE" = "409" ]; then
         demo_info "Demo user demo@keyorix.com already exists — skipping"
     else
-        demo_warn "Demo user creation returned HTTP $HTTP_CODE (see /tmp/keyorix-demo-user.json)"
+        demo_warn "Demo user creation returned HTTP $HTTP_CODE (see $RESPONSE_FILE)"
     fi
 else
     demo_warn "Skipped demo-user creation (no KEYORIX_TOKEN). Create it in the web"
