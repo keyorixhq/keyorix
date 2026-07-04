@@ -1,2 +1,7 @@
 allowBuilds:
   esbuild: true
+
+# form-data <4.0.6 has a CRLF-injection advisory (GHSA-hmw2-7cc7-3qxx); axios
+# pulls a vulnerable range transitively.
+overrides:
+  form-data@>=4.0.0 <4.0.6: ^4.0.6

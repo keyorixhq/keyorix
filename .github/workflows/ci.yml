@@ -41,3 +41,29 @@ jobs:
       # `test` is bare `vitest` (watch mode); --run forces a single pass.
       - name: Test
         run: pnpm test --run
+
+      # Fails on high/critical known-vulnerable dependencies (govulncheck's
+      # equivalent for the npm ecosystem, mirrored from keyorix's CI). Scoped to
+      # --prod: dev-only tooling (jsdom/vitest's undici chain) never ships and
+      # would make this gate noisy with findings that carry no real exposure.
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high --prod
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    env:
+      # Pinned + checksum-verified, mirroring keyorix's ci.yml — the tool that
+      # scans for leaked secrets is itself a supply-chain surface.
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks (full history)
+        run: |
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_LINUX_X64_SHA256}  gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sha256sum -c -
+          tar -xz -f "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
+          ./gitleaks detect --source . --verbose --redact

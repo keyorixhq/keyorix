@@ -13,6 +13,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required for cosign's keyless (OIDC) signing — no long-lived signing key
+      # is stored as a secret; GitHub's OIDC token proves this exact workflow run
+      # produced the image, and Sigstore's transparency log makes that provable
+      # after the fact (mirrored from keyorix's docker-publish.yml).
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -35,9 +40,24 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          # BuildKit-native SBOM + provenance attestations, pushed to GHCR
+          # alongside the image (mirrored from keyorix's docker-publish.yml).
+          provenance: mode=max
+          sbom: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Signs the image DIGEST (not a mutable tag) keylessly: cosign requests a
+      # short-lived certificate from Sigstore's Fulcio CA bound to this workflow's
+      # OIDC identity, and records the signature in the public Rekor transparency
+      # log — no signing key to provision, rotate, or leak.
+      - name: Sign image (keyless)
+        run: cosign sign --yes "ghcr.io/keyorixhq/keyorix-web@${{ steps.build.outputs.digest }}"
