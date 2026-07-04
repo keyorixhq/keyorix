@@ -96,8 +96,17 @@ func (f *DefaultStorageFactory) CreateStorage(cfg *config.Config) (storage.Stora
 		return f.createRemoteStorage(cfg)
 	case "postgres", "postgresql":
 		return f.createPostgresStorage(cfg)
-	default: // "local", "" or any other value defaults to SQLite
+	case "local", "":
 		return f.createLocalStorage(cfg)
+	default:
+		// #463: defense in depth. Config.Validate() rejects an unrecognized
+		// storage.type at boot, but this factory can also be invoked directly
+		// (e.g. by tests or other code paths that don't call Validate() first)
+		// — a typo like "postgress" must never silently fall back to SQLite,
+		// since in a multi-replica HA deployment intending shared Postgres/
+		// remote storage that produces per-replica split-brain SQLite
+		// instances with no operator-visible signal.
+		return nil, fmt.Errorf("invalid storage.type %q: must be one of \"local\", \"postgres\", \"postgresql\", or \"remote\"", cfg.Storage.Type)
 	}
 }
 
