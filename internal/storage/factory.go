@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,6 +66,46 @@ func withMigrationLock(db *gorm.DB, isPostgres bool, fn func(*gorm.DB) error) er
 // backing database's connection limit. A conservative cap is safer out of the box.
 const defaultMaxOpenConns = 25
 
+// sqliteBusyTimeoutMillis is how long a SQLite connection waits for a lock held by
+// another connection before returning SQLITE_BUSY (#465). SQLite's own default is 0
+// (fail immediately), which surfaces as spurious write failures under the concurrent
+// goroutines/HTTP handlers this server routinely runs against a single local SQLite
+// file. 10s matches the value the storage package's own file-backed-SQLite
+// concurrency tests already use (see internal/storage/store/concurrency_*_test.go),
+// which is a real, empirically-exercised value for this exact workload rather than an
+// invented one.
+const sqliteBusyTimeoutMillis = 10000
+
+// sqliteDSN builds the gorm-sqlite (mattn/go-sqlite3) DSN for a local SQLite database
+// file, appending the DSN-level pragmas needed for correctness/robustness on the
+// default local-storage backend:
+//
+//   - _foreign_keys=1 (#436): SQLite defaults foreign-key CONSTRAINT enforcement to
+//     OFF per-connection unless explicitly enabled. This is table-stakes hygiene
+//     regardless of which constraints exist today: any FOREIGN KEY declared on this
+//     connection (now or in a future migration/model change) is silently
+//     unenforced without it, so a raw DELETE/UPDATE that bypasses the application's
+//     own cascade logic could orphan dependent rows with zero DB-level backstop and
+//     no visible error. See factory_sqlite_pragma_test.go for the scope note on
+//     what this codebase's GORM-generated schema currently declares.
+//   - _busy_timeout=<ms> (#465): see sqliteBusyTimeoutMillis above.
+//   - _journal_mode=WAL (#465): the default rollback-journal mode blocks readers
+//     during a write and vice versa, increasing SQLITE_BUSY frequency under
+//     concurrent access; WAL lets readers proceed concurrently with a writer.
+//
+// Postgres has no equivalent opt-out (FK enforcement is always on) and no analogous
+// pragmas, so this is intentionally SQLite-only — never applied to the Postgres
+// connection path.
+func sqliteDSN(dbPath string) string {
+	sep := "?"
+	if strings.Contains(dbPath, "?") {
+		// The operator already supplied their own DSN query parameters (e.g. a
+		// custom path with embedded pragmas) — append rather than clobber them.
+		sep = "&"
+	}
+	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL", dbPath, sep, sqliteBusyTimeoutMillis)
+}
+
 // gormConfig returns the *gorm.Config shared by every gorm.Open call in this
 // package. GORM's zero-value Config leaves its default Warn-level logger active,
 // which interpolates bound query-parameter VALUES into the logged SQL statement
@@ -117,7 +158,24 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		dbPath = "./secrets.db"
 	}
 
-	db, err := gorm.Open(sqlite.Open(dbPath), gormConfig())
+	// Hold migrationMu across gorm.Open too, not just the migration that follows
+	// (#465 follow-up). gorm.Open eagerly establishes a physical connection and
+	// applies the SQLite DSN pragmas, including the journal_mode=WAL switch added
+	// above — and unlike ordinary write-lock contention, that mode switch does NOT
+	// participate in SQLite's busy-timeout retry loop: on a fresh (not-yet-WAL)
+	// database file it can fail immediately with "database is locked" instead of
+	// waiting, if another connection races to switch modes at the same instant.
+	// migrationMu's own doc comment describes exactly this scenario in production —
+	// startHTTPServer and startGRPCServer both call CreateStorage as separate
+	// in-process goroutines when both are enabled — so this is a real deployment
+	// race, not just a test artifact (empirically reproduced standalone against the
+	// mattn/go-sqlite3 driver directly, ~1-in-5 under concurrent fresh-file opens).
+	// Serializing Open ensures only one goroutine ever performs the actual mode
+	// switch; every later Open against an already-WAL file is a same-mode pragma
+	// no-op that always succeeds immediately, regardless of other open connections.
+	migrationMu.Lock()
+	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	migrationMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
