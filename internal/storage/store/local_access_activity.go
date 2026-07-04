@@ -17,11 +17,28 @@ import (
 // Every secret read — whether the reader is the owner or a share recipient — is
 // audited generically as "secret.read" (see LogSecretReadWithProject); there is
 // currently no separate event type for a share-sourced read, so only "secret.read"
-// is listed here. A prior "shared_secret_accessed" entry was removed (#418): the
-// writer that would have produced it was dead code with no caller other than its
-// own unit test, so the event never actually occurred and this list never matched
-// it in practice.
-var accessActivityEventTypes = []string{"secret.read"}
+// is listed here for reads. A prior "shared_secret_accessed" entry was removed
+// (#418): the writer that would have produced it was dead code with no caller
+// other than its own unit test, so the event never actually occurred and this list
+// never matched it in practice.
+//
+// "secret.created" / "secret.updated" / "secret.rotated" (LogSecretCreatedWithProject
+// / LogSecretUpdatedWithProject / LogSecretRotatedWithProject, internal/core/audit.go)
+// are also included (#424): a plain secrets.write-tier grant (create/update/rotate,
+// no read) exists to enable exactly these actions — e.g. a CI/CD pipeline operator
+// or a secret-provisioning admin who writes secrets but never reads their values
+// back. Before this, such a holder's genuinely-active grant was misclassified as
+// dormant purely because "read" wasn't part of their workflow.
+//
+// Deliberately NOT included: "secret.deleted". Holding secrets.delete/admin makes a
+// role admin-tier (see roleIsAdminTier, internal/core/access_review.go) and its
+// grant is instead assessed against elevatedActivityEventTypes below — folding
+// "secret.deleted" into this plain-tier list would let an admin-tier grant's
+// destructive action satisfy the WRONG activity check for countDormantRoleGrants'
+// per-grant-tier split (#258).
+var accessActivityEventTypes = []string{
+	"secret.read", "secret.created", "secret.updated", "secret.rotated",
+}
 
 // elevatedActivityEventTypes are the audit event types that count as exercising an
 // administrative-tier capability, for the admin-tier half of dormant-role-grant
