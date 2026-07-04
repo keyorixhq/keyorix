@@ -443,12 +443,23 @@ single-replica-gated (ADR-039). Two things it deliberately never deletes: the
 ```yaml
 data_retention:
   enabled: true
-  schedule: "24h"                     # Go duration between runs (default 24h)
-  anomaly_alerts_days: 90             # access-anomaly alerts, on detected_at
-  closed_access_reviews_days: 730     # closed recertification campaigns + items, on closed_at
-  break_glass_days: 365               # non-active emergency-access activations, on created_at
-  resolved_access_requests_days: 365  # terminal-state access requests + approvals, on resolved_at
+  schedule: "24h"                              # Go duration between runs (default 24h)
+  anomaly_alerts_days: 90                      # ACKNOWLEDGED access-anomaly alerts, on detected_at
+  anomaly_alerts_unacked_ceiling_days: 730     # UNACKNOWLEDGED alerts — generous absolute-age safety net
+  closed_access_reviews_days: 730              # closed recertification campaigns + items, on closed_at
+  break_glass_days: 365                        # non-active emergency-access activations, on created_at
+  resolved_access_requests_days: 365           # terminal-state access requests + approvals, on resolved_at
 ```
+
+`anomaly_alerts_days` only ages out alerts a human has already **acknowledged** — a
+never-acknowledged alert is still a live, unreviewed signal and is never purged by
+that window alone, no matter how old (#415). `anomaly_alerts_unacked_ceiling_days`
+is a separate, independent, and deliberately much longer window: a safety net so an
+alert stream nobody ever acknowledges cannot accumulate rows forever (a
+disk-exhaustion surface — the creation-time dedup window alone is trivially defeated
+by varying the secret/type/actor/IP). Set it generously (a year or more) so it only
+catches truly-ancient, almost-certainly-abandoned alerts, never a reasonable
+operational review backlog.
 
 The configured windows surface in the compliance posture (`keyorix compliance report`
 → "Data retention") as evidence that storage-limitation is actively enforced.

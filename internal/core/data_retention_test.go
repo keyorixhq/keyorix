@@ -13,14 +13,15 @@ import (
 func TestPurgeExpiredComplianceRecords_CountsCutoffsAndAudits(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	policy := RetentionPolicy{
-		AnomalyAlertsDays:          30,
-		ClosedAccessReviewsDays:    365,
-		BreakGlassDays:             90,
-		ResolvedAccessRequestsDays: 180,
+		AnomalyAlertsDays:               30,
+		AnomalyAlertsUnackedCeilingDays: 730,
+		ClosedAccessReviewsDays:         365,
+		BreakGlassDays:                  90,
+		ResolvedAccessRequestsDays:      180,
 	}
 	store := new(MockStorage)
 	store.On("GetActiveLegalHold", mock.Anything).Return(nil, nil) // no active legal hold
-	store.On("DeleteAnomalyAlertsBefore", mock.Anything, now.AddDate(0, 0, -30)).Return(int64(5), nil)
+	store.On("DeleteAnomalyAlertsBefore", mock.Anything, now.AddDate(0, 0, -30), now.AddDate(0, 0, -730)).Return(int64(5), nil)
 	store.On("DeleteClosedAccessReviewsBefore", mock.Anything, now.AddDate(0, 0, -365)).Return(int64(2), int64(7), nil)
 	store.On("DeleteExpiredBreakGlassBefore", mock.Anything, now.AddDate(0, 0, -90)).Return(int64(1), nil)
 	store.On("DeleteResolvedAccessRequestsBefore", mock.Anything, now.AddDate(0, 0, -180)).Return(int64(3), int64(4), nil)
@@ -62,7 +63,7 @@ func TestPurgeExpiredComplianceRecords_ZeroWindowsSkipped(t *testing.T) {
 	require.Equal(t, int64(0), res.Total())
 
 	// Disabled types are never queried, and a zero-purge run emits no audit event.
-	store.AssertNotCalled(t, "DeleteAnomalyAlertsBefore", mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "DeleteAnomalyAlertsBefore", mock.Anything, mock.Anything, mock.Anything)
 	store.AssertNotCalled(t, "DeleteClosedAccessReviewsBefore", mock.Anything, mock.Anything)
 	store.AssertNotCalled(t, "DeleteResolvedAccessRequestsBefore", mock.Anything, mock.Anything)
 	store.AssertNotCalled(t, "LogAuditEvent", mock.Anything, mock.Anything)
@@ -71,7 +72,27 @@ func TestPurgeExpiredComplianceRecords_ZeroWindowsSkipped(t *testing.T) {
 func TestRetentionPolicy_Configured(t *testing.T) {
 	require.False(t, RetentionPolicy{}.Configured())
 	require.True(t, RetentionPolicy{AnomalyAlertsDays: 1}.Configured())
+	require.True(t, RetentionPolicy{AnomalyAlertsUnackedCeilingDays: 1}.Configured())
 	require.True(t, RetentionPolicy{ResolvedAccessRequestsDays: 90}.Configured())
+}
+
+// #489: the unacked-ceiling window is independent of AnomalyAlertsDays — a policy
+// that only configures the ceiling (leaving the acknowledged-alert window at 0,
+// i.e. keep-forever) must still call through with a zero ackBefore (disabling that
+// clause) and the ceiling cutoff.
+func TestPurgeExpiredComplianceRecords_AnomalyUnackedCeilingOnly(t *testing.T) {
+	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	policy := RetentionPolicy{AnomalyAlertsUnackedCeilingDays: 730}
+	store := new(MockStorage)
+	store.On("GetActiveLegalHold", mock.Anything).Return(nil, nil)
+	store.On("DeleteAnomalyAlertsBefore", mock.Anything, time.Time{}, now.AddDate(0, 0, -730)).Return(int64(2), nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	c := NewKeyorixCore(store)
+	res, err := c.PurgeExpiredComplianceRecords(context.Background(), now, policy)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), res.AnomalyAlerts)
+	store.AssertExpectations(t)
 }
 
 // #160: applying the retention policy at startup must leave an audit trail of the
@@ -80,10 +101,11 @@ func TestRetentionPolicy_Configured(t *testing.T) {
 // of the CHANGE itself.
 func TestSetRetentionPolicy_EmitsAuditEvent(t *testing.T) {
 	policy := RetentionPolicy{
-		AnomalyAlertsDays:          30,
-		ClosedAccessReviewsDays:    365,
-		BreakGlassDays:             90,
-		ResolvedAccessRequestsDays: 180,
+		AnomalyAlertsDays:               30,
+		AnomalyAlertsUnackedCeilingDays: 730,
+		ClosedAccessReviewsDays:         365,
+		BreakGlassDays:                  90,
+		ResolvedAccessRequestsDays:      180,
 	}
 	store := new(MockStorage)
 	var captured *models.AuditEvent
@@ -104,6 +126,7 @@ func TestSetRetentionPolicy_EmitsAuditEvent(t *testing.T) {
 	require.NotNil(t, captured.Success)
 	require.True(t, *captured.Success)
 	require.Contains(t, captured.Description, "anomaly_alerts=30d")
+	require.Contains(t, captured.Description, "anomaly_alerts_unacked_ceiling=730d")
 	require.Contains(t, captured.Description, "closed_access_reviews=365d")
 	require.Contains(t, captured.Description, "break_glass=90d")
 	require.Contains(t, captured.Description, "resolved_access_requests=180d")

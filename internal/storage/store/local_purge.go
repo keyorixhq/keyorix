@@ -9,6 +9,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -243,21 +244,49 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 // delete (no Unscoped needed). Active/open/pending rows are excluded by predicate
 // so an in-flight record is never destroyed by a too-short window.
 
-// DeleteAnomalyAlertsBefore hard-deletes anomaly alerts detected before the cutoff.
-// Unlike a plain age purge, this only removes ALREADY-ACKNOWLEDGED alerts
-// (Acknowledged = true) — matching every sibling purge in this section, which
-// excludes in-flight rows (open campaigns, active break-glass, pending access
-// requests) from age-based deletion. An old alert nobody has ever acknowledged is
-// exactly the in-flight case here: it is still a live, unreviewed security signal,
-// not a resolved record, so it stays until a human acknowledges it (or is handled
-// by some separate abandoned-alert mechanism, if one is ever added). Without this
-// gate, a retention window shorter than the real review cadence would silently
-// hard-delete a genuine, never-reviewed high-severity alert — and the compliance
-// dashboard would then report FEWER unacknowledged anomalies, masking the fact
-// that a real signal was destroyed rather than resolved.
-func (ls *LocalStorage) DeleteAnomalyAlertsBefore(ctx context.Context, before time.Time) (int64, error) {
+// DeleteAnomalyAlertsBefore hard-deletes anomaly alerts matching either of two
+// independent conditions:
+//
+//   - acknowledged = true AND detected_at < ackBefore — the normal, short
+//     retention window. Matching every sibling purge in this section, which
+//     excludes in-flight rows (open campaigns, active break-glass, pending access
+//     requests) from age-based deletion, an old alert nobody has ever acknowledged
+//     is exactly the in-flight case here: it is still a live, unreviewed security
+//     signal, not a resolved record, so it is NOT matched by this clause alone.
+//     Without this gate, a retention window shorter than the real review cadence
+//     would silently hard-delete a genuine, never-reviewed high-severity alert —
+//     and the compliance dashboard would then report FEWER unacknowledged
+//     anomalies, masking the fact that a real signal was destroyed rather than
+//     resolved.
+//   - acknowledged = false AND detected_at < unackCeiling — a separate, much more
+//     generous absolute-age safety net (#489). The creation-time dedup window
+//     (CreateAnomalyAlert) only collapses alerts sharing the same secret/type/
+//     actor/IP within an hour; varying any one of those fields defeats it, so
+//     without this ceiling an alert stream that is never acknowledged (or an
+//     actor deliberately triggering distinct anomalies) accumulates rows forever
+//     with no cap — a disk-exhaustion surface, and ListAnomalyAlerts scans grow
+//     correspondingly slower over time. unackCeiling is expected to be configured
+//     far longer than ackBefore precisely so it only catches truly-ancient,
+//     almost-certainly-abandoned alerts, never a reasonable operational backlog.
+//
+// A zero time.Time for either parameter disables that clause (it matches nothing,
+// rather than being misread as "purge everything before year 1").
+func (ls *LocalStorage) DeleteAnomalyAlertsBefore(ctx context.Context, ackBefore, unackCeiling time.Time) (int64, error) {
+	var conds []string
+	var args []interface{}
+	if !ackBefore.IsZero() {
+		conds = append(conds, "(acknowledged = ? AND detected_at < ?)")
+		args = append(args, true, ackBefore)
+	}
+	if !unackCeiling.IsZero() {
+		conds = append(conds, "(acknowledged = ? AND detected_at < ?)")
+		args = append(args, false, unackCeiling)
+	}
+	if len(conds) == 0 {
+		return 0, nil
+	}
 	result := ls.db.WithContext(ctx).
-		Where("acknowledged = ? AND detected_at < ?", true, before).
+		Where(strings.Join(conds, " OR "), args...).
 		Delete(&models.AnomalyAlert{})
 	if result.Error != nil {
 		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)

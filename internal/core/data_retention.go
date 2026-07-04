@@ -24,16 +24,23 @@ import (
 // compliance posture can share it without core importing the config package. Set
 // at startup via SetRetentionPolicy.
 type RetentionPolicy struct {
-	AnomalyAlertsDays          int
-	ClosedAccessReviewsDays    int
-	BreakGlassDays             int
-	ResolvedAccessRequestsDays int
+	AnomalyAlertsDays int
+	// AnomalyAlertsUnackedCeilingDays is a separate, more generous absolute-age
+	// safety net for alerts that are NEVER acknowledged (#489) — see
+	// config.DataRetentionConfig.AnomalyAlertsUnackedCeilingDays for the rationale.
+	// It does not replace or shorten AnomalyAlertsDays, which still gates only
+	// already-acknowledged alerts.
+	AnomalyAlertsUnackedCeilingDays int
+	ClosedAccessReviewsDays         int
+	BreakGlassDays                  int
+	ResolvedAccessRequestsDays      int
 }
 
 // Configured reports whether at least one retention window is active.
 func (p RetentionPolicy) Configured() bool {
-	return p.AnomalyAlertsDays > 0 || p.ClosedAccessReviewsDays > 0 ||
-		p.BreakGlassDays > 0 || p.ResolvedAccessRequestsDays > 0
+	return p.AnomalyAlertsDays > 0 || p.AnomalyAlertsUnackedCeilingDays > 0 ||
+		p.ClosedAccessReviewsDays > 0 || p.BreakGlassDays > 0 ||
+		p.ResolvedAccessRequestsDays > 0
 }
 
 // RetentionResult reports how many records each per-type retention purge removed.
@@ -68,8 +75,8 @@ func (c *KeyorixCore) SetRetentionPolicy(ctx context.Context, p RetentionPolicy)
 	c.emitAudit(ctx, &models.AuditEvent{
 		EventType: "data_retention.policy_configured",
 		Description: fmt.Sprintf(
-			"Data retention policy applied: anomaly_alerts=%dd closed_access_reviews=%dd break_glass=%dd resolved_access_requests=%dd",
-			p.AnomalyAlertsDays, p.ClosedAccessReviewsDays, p.BreakGlassDays, p.ResolvedAccessRequestsDays,
+			"Data retention policy applied: anomaly_alerts=%dd anomaly_alerts_unacked_ceiling=%dd closed_access_reviews=%dd break_glass=%dd resolved_access_requests=%dd",
+			p.AnomalyAlertsDays, p.AnomalyAlertsUnackedCeilingDays, p.ClosedAccessReviewsDays, p.BreakGlassDays, p.ResolvedAccessRequestsDays,
 		),
 		Success:   &ok,
 		ActorType: ActorTypeSystem,
@@ -108,8 +115,18 @@ func (c *KeyorixCore) PurgeExpiredComplianceRecords(ctx context.Context, now tim
 	}
 	cutoff := func(days int) time.Time { return now.AddDate(0, 0, -days) }
 
-	if policy.AnomalyAlertsDays > 0 {
-		n, err := c.storage.DeleteAnomalyAlertsBefore(ctx, cutoff(policy.AnomalyAlertsDays))
+	if policy.AnomalyAlertsDays > 0 || policy.AnomalyAlertsUnackedCeilingDays > 0 {
+		// Zero time.Time means "no bound" here — DeleteAnomalyAlertsBefore skips
+		// whichever clause is passed the zero value, so a type left at 0 in the
+		// policy is not silently treated as "purge everything before year 1".
+		var ackBefore, unackCeiling time.Time
+		if policy.AnomalyAlertsDays > 0 {
+			ackBefore = cutoff(policy.AnomalyAlertsDays)
+		}
+		if policy.AnomalyAlertsUnackedCeilingDays > 0 {
+			unackCeiling = cutoff(policy.AnomalyAlertsUnackedCeilingDays)
+		}
+		n, err := c.storage.DeleteAnomalyAlertsBefore(ctx, ackBefore, unackCeiling)
 		rec(err)
 		res.AnomalyAlerts = n
 	}

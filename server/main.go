@@ -51,8 +51,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
-	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/startup"
+	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/trust"
 	"github.com/keyorixhq/keyorix/server/grpc"
 	httpServer "github.com/keyorixhq/keyorix/server/http"
@@ -684,10 +684,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// reports them; the scheduler below drives the actual purge. Audited (#160) so a
 	// shortened window is on the record, not just its eventual purge counts.
 	coreService.SetRetentionPolicy(context.Background(), core.RetentionPolicy{
-		AnomalyAlertsDays:          cfg.DataRetention.AnomalyAlertsDays,
-		ClosedAccessReviewsDays:    cfg.DataRetention.ClosedAccessReviewsDays,
-		BreakGlassDays:             cfg.DataRetention.BreakGlassDays,
-		ResolvedAccessRequestsDays: cfg.DataRetention.ResolvedAccessRequestsDays,
+		AnomalyAlertsDays:               cfg.DataRetention.AnomalyAlertsDays,
+		AnomalyAlertsUnackedCeilingDays: cfg.DataRetention.AnomalyAlertsUnackedCeilingDays,
+		ClosedAccessReviewsDays:         cfg.DataRetention.ClosedAccessReviewsDays,
+		BreakGlassDays:                  cfg.DataRetention.BreakGlassDays,
+		ResolvedAccessRequestsDays:      cfg.DataRetention.ResolvedAccessRequestsDays,
 	})
 
 	// Wire the access-recertification cadence (A.5.18) so the posture flags overdue
@@ -922,17 +923,18 @@ func startHTTPServer(ctx context.Context, cfg *config.Config) error {
 	// touched (append-only). Runs only when at least one window is configured.
 	if cfg.DataRetention.Enabled {
 		policy := core.RetentionPolicy{
-			AnomalyAlertsDays:          cfg.DataRetention.AnomalyAlertsDays,
-			ClosedAccessReviewsDays:    cfg.DataRetention.ClosedAccessReviewsDays,
-			BreakGlassDays:             cfg.DataRetention.BreakGlassDays,
-			ResolvedAccessRequestsDays: cfg.DataRetention.ResolvedAccessRequestsDays,
+			AnomalyAlertsDays:               cfg.DataRetention.AnomalyAlertsDays,
+			AnomalyAlertsUnackedCeilingDays: cfg.DataRetention.AnomalyAlertsUnackedCeilingDays,
+			ClosedAccessReviewsDays:         cfg.DataRetention.ClosedAccessReviewsDays,
+			BreakGlassDays:                  cfg.DataRetention.BreakGlassDays,
+			ResolvedAccessRequestsDays:      cfg.DataRetention.ResolvedAccessRequestsDays,
 		}
 		if !policy.Configured() {
 			log.Printf("Data-retention scheduler enabled but no retention windows are set; nothing to purge")
 		} else {
 			interval := cfg.DataRetention.GetInterval()
-			log.Printf("Data-retention scheduler enabled: every %s (anomaly_alerts=%dd, closed_reviews=%dd, break_glass=%dd, access_requests=%dd; 0=keep)",
-				interval, policy.AnomalyAlertsDays, policy.ClosedAccessReviewsDays, policy.BreakGlassDays, policy.ResolvedAccessRequestsDays)
+			log.Printf("Data-retention scheduler enabled: every %s (anomaly_alerts=%dd, anomaly_alerts_unacked_ceiling=%dd, closed_reviews=%dd, break_glass=%dd, access_requests=%dd; 0=keep)",
+				interval, policy.AnomalyAlertsDays, policy.AnomalyAlertsUnackedCeilingDays, policy.ClosedAccessReviewsDays, policy.BreakGlassDays, policy.ResolvedAccessRequestsDays)
 			runScheduler(ctx, "data_retention", interval, func() middleware.SchedulerOutcome {
 				if legalHoldBlocks("Data-retention purge") {
 					return middleware.SchedulerSkipped

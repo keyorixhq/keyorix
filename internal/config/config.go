@@ -769,7 +769,19 @@ type DataRetentionConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Schedule string `yaml:"schedule"`
 	// AnomalyAlertsDays ages out resolved/old access-anomaly alerts on detected_at.
+	// Only ACKNOWLEDGED alerts are eligible (#415) — a never-acknowledged alert is
+	// still a live, unreviewed signal and survives this window regardless of age.
 	AnomalyAlertsDays int `yaml:"anomaly_alerts_days"`
+	// AnomalyAlertsUnackedCeilingDays is a separate, much more generous absolute-age
+	// safety net (#489) for alerts that are NEVER acknowledged: without it, an
+	// environment (or an actor deliberately triggering distinct anomalies to defeat
+	// the creation-time dedup window) accumulates unacknowledged alert rows forever,
+	// with no cap — a disk-exhaustion surface and an ever-slower ListAnomalyAlerts
+	// scan. This window is independent of, and does not weaken, AnomalyAlertsDays:
+	// it only catches alerts old enough that they are almost certainly abandoned, not
+	// a reasonable operational review backlog. 0 disables it (kept forever, the
+	// pre-#489 behavior).
+	AnomalyAlertsUnackedCeilingDays int `yaml:"anomaly_alerts_unacked_ceiling_days"`
 	// ClosedAccessReviewsDays ages out closed recertification campaigns (and their
 	// snapshot items) on closed_at. Open campaigns are never purged.
 	ClosedAccessReviewsDays int `yaml:"closed_access_reviews_days"`
