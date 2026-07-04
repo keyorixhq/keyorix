@@ -11,16 +11,21 @@ import (
 	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
 )
 
-// Validator provides request validation functionality
-type Validator struct {
-	errors map[string][]string
-}
+// Validator provides request validation functionality.
+//
+// Validator instances are constructed once at process startup (see the
+// handler constructors in server/http/handlers) and shared across every
+// subsequent concurrent request for the lifetime of the server process.
+// Validate MUST therefore be stateless: it must never read or write any
+// Validator field across calls. All per-call error accumulation happens in
+// a map that is local to a single Validate call and is returned directly,
+// never stored on the struct — this removes the concurrent map read/write
+// hazard entirely rather than serializing it behind a mutex.
+type Validator struct{}
 
 // NewValidator creates a new validator instance
 func NewValidator() *Validator {
-	return &Validator{
-		errors: make(map[string][]string),
-	}
+	return &Validator{}
 }
 
 // ValidationError represents validation errors
@@ -43,9 +48,14 @@ func (ve ValidationErrors) Error() string {
 	return strings.Join(messages, "; ")
 }
 
-// Validate validates a struct using reflection and validation tags
+// Validate validates a struct using reflection and validation tags. It is
+// stateless: every call builds its own local errs map and never reads or
+// writes any Validator field, so a single shared *Validator instance can be
+// called concurrently by many goroutines/requests without risk of a
+// concurrent map read/write (which the Go runtime treats as fatal) or of one
+// call's in-flight errors being corrupted by another's.
 func (v *Validator) Validate(s interface{}) error {
-	v.errors = make(map[string][]string)
+	errs := make(map[string][]string)
 
 	val := reflect.ValueOf(s)
 	if val.Kind() == reflect.Pointer {
@@ -84,12 +94,12 @@ func (v *Validator) Validate(s interface{}) error {
 		}
 
 		// Validate field
-		v.validateField(fieldName, field, tag)
+		v.validateField(errs, fieldName, field, tag)
 	}
 
-	if len(v.errors) > 0 {
+	if len(errs) > 0 {
 		var validationErrors []ValidationError
-		for field, messages := range v.errors {
+		for field, messages := range errs {
 			for _, message := range messages {
 				validationErrors = append(validationErrors, ValidationError{
 					Field:   field,
@@ -103,8 +113,10 @@ func (v *Validator) Validate(s interface{}) error {
 	return nil
 }
 
-// validateField validates a single field based on validation rules
-func (v *Validator) validateField(fieldName string, field reflect.Value, tag string) {
+// validateField validates a single field based on validation rules,
+// accumulating any failures into errs, which is local to the enclosing
+// Validate call (see the stateless-by-design note on Validate).
+func (v *Validator) validateField(errs map[string][]string, fieldName string, field reflect.Value, tag string) {
 	rules := strings.Split(tag, ",")
 
 	for _, rule := range rules {
@@ -128,7 +140,7 @@ func (v *Validator) validateField(fieldName string, field reflect.Value, tag str
 
 		// Apply validation rule
 		if err := v.applyRule(fieldName, field, ruleName, param); err != nil {
-			v.addError(fieldName, err.Error())
+			addError(errs, fieldName, err.Error())
 		}
 	}
 }
@@ -475,10 +487,13 @@ func (v *Validator) validateOneOf(field reflect.Value, param string) error {
 	return fmt.Errorf("%s: must be one of: %s", i18n.T("ErrorValidation", nil), strings.Join(allowedValues, ", "))
 }
 
-// addError adds a validation error
-func (v *Validator) addError(field, message string) {
-	if v.errors[field] == nil {
-		v.errors[field] = []string{}
+// addError records a validation failure into errs, the map local to a
+// single Validate call (see the stateless-by-design note on Validate). It
+// is a plain function, not a *Validator method, precisely so it cannot be
+// tempted into touching shared struct state.
+func addError(errs map[string][]string, field, message string) {
+	if errs[field] == nil {
+		errs[field] = []string{}
 	}
-	v.errors[field] = append(v.errors[field], message)
+	errs[field] = append(errs[field], message)
 }

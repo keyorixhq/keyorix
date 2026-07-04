@@ -1,8 +1,11 @@
 package validation
 
 import (
+	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -360,4 +363,69 @@ func TestValidate_UsesJSONNameForErrorField(t *testing.T) {
 	ve := err.(ValidationErrors)
 	require.Len(t, ve.Errors, 1)
 	assert.Equal(t, "user_name", ve.Errors[0].Field, "json tag name preferred over Go field name")
+}
+
+// --- Concurrent-Validate regression test (#476) ---
+//
+// Validator instances are constructed exactly once at server startup (one
+// per handler, plus a package-level shared instance in
+// server/http/handlers/rbac.go) and then called concurrently by every
+// subsequent HTTP request for the life of the process. Validate must
+// therefore be safe to call concurrently on a single shared *Validator: no
+// data race, and no goroutine result may be corrupted by another
+// goroutine concurrently running Validate.
+//
+// Before the fix, Validate reset and mutated a *Validator-level errors map
+// with zero synchronization. That reliably reported a concurrent map
+// read/write under go test -race here, and separately from the race
+// report, this test could also observe wrong pass/fail verdicts (a valid
+// input spuriously failing, or an invalid input spuriously passing)
+// because one goroutine map reset-then-accumulate sequence could stomp a
+// different concurrent goroutine in-flight accumulation.
+func TestValidate_ConcurrentCallsAreIsolated(t *testing.T) {
+	type payload struct {
+		Name string `json:"name" validate:"required,min=3"`
+	}
+
+	v := NewValidator() // a single shared instance, exactly as in production
+
+	const goroutines = 50
+	const itersPerGoroutine = 20
+
+	var wg sync.WaitGroup
+	var unexpectedNoErr int32 // invalid input that should have failed but did not
+	var unexpectedErr int32   // valid input that should have passed but did not
+
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < itersPerGoroutine; i++ {
+				valid := (id+i)%2 == 0
+
+				var p payload
+				if valid {
+					p = payload{Name: fmt.Sprintf("valid-name-%d-%d", id, i)}
+				} else {
+					p = payload{Name: ""} // empty: fails required
+				}
+
+				err := v.Validate(&p)
+
+				if valid && err != nil {
+					atomic.AddInt32(&unexpectedErr, 1)
+				}
+				if !valid && err == nil {
+					atomic.AddInt32(&unexpectedNoErr, 1)
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(&unexpectedErr),
+		"a valid input incorrectly failed validation under concurrency (result corrupted by another concurrent call)")
+	assert.Equal(t, int32(0), atomic.LoadInt32(&unexpectedNoErr),
+		"an invalid input incorrectly passed validation under concurrency (validation bypass)")
 }
