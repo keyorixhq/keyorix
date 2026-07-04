@@ -280,6 +280,11 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		if !scimManaged(user) {
 			return storage.ErrUserNotFound
 		}
+		// Captured before any mutation below, so we can tell whether this call actually
+		// changes account_state (#454) — SetAccountState is only invoked when it does,
+		// avoiding an unnecessary hard failure under RemoteStorage for a plain
+		// displayName/email SCIM PATCH that never touches the lifecycle state at all.
+		origState := user.AccountState
 		if displayName != nil {
 			user.DisplayName = *displayName
 		}
@@ -310,6 +315,17 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 					user.AccountState = AccountDeprovisioned
 				}
 				deactivated = true
+			}
+		}
+		// #454: a SCIM deprovision/reactivate is an explicit security-relevant directive,
+		// not passive accounting — persist the state transition through SetAccountState
+		// FIRST (before any other write) and abort the whole update if the backend cannot
+		// actually persist it (RemoteStorage), rather than let a false "success" leave the
+		// account's login-blocking state silently unchanged. Ordered first so no partial
+		// effect (e.g. IsActive alone) is committed when this fails.
+		if user.AccountState != origState {
+			if err := tx.SetAccountState(ctx, id, user.AccountState, c.now()); err != nil {
+				return err
 			}
 		}
 		user.UpdatedAt = c.now()

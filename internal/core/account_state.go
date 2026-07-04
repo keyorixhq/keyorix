@@ -163,6 +163,12 @@ func (c *KeyorixCore) RequirePasswordReset(ctx context.Context, adminID, userID 
 // UpdateSCIMUser in-process, and LockUserForUpdate's row lock (Postgres: SELECT ...
 // FOR UPDATE) does the same across replicas — the identical pattern recordFailedLogin
 // uses for the login-lockout counter (see login_lockout.go).
+//
+// #454: persists via SetAccountState, not the generic UpdateUser — an admin
+// suspend/reactivate is an explicit security directive, so a backend that cannot
+// actually persist account_state (RemoteStorage, storage.type: remote) must fail this
+// call outright rather than silently succeed while the account stays unchanged. See
+// SetAccountState's doc comment on storage.Storage.
 func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint, state, eventType string) error {
 	if userID == 0 {
 		return fmt.Errorf("user ID is required")
@@ -172,8 +178,9 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 
 	var sessionHashes []string
 	err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		user, err := tx.LockUserForUpdate(ctx, userID)
-		if err != nil {
+		// The lock-guarded read is still needed for serialization (row lock + existence
+		// check) even though its returned user struct is no longer written back wholesale.
+		if _, err := tx.LockUserForUpdate(ctx, userID); err != nil {
 			return err
 		}
 		// Capture the user's current session-token HASHES BEFORE mutating so we can evict
@@ -184,9 +191,7 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 		// SHA-256 hash, which is exactly the cache key.
 		sessionHashes, _ = tx.ListSessionTokenHashesForUser(ctx, userID)
 
-		user.AccountState = state
-		user.UpdatedAt = c.now()
-		if _, err := tx.UpdateUser(ctx, user); err != nil {
+		if err := tx.SetAccountState(ctx, userID, state, c.now()); err != nil {
 			return err
 		}
 		// A state that blocks login must also terminate the user's existing sessions AND

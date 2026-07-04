@@ -22,13 +22,11 @@ func TestMigrateUserToMachine(t *testing.T) {
 		store.On("CreateMachineIdentity", ctx, mock.MatchedBy(func(m *models.MachineIdentity) bool {
 			return m.ProjectID == 3 && m.Name == "ci-bot" && m.IdentityType == MachineTypeService && m.State == MachineActive
 		})).Return(&models.MachineIdentity{ID: 20, ProjectID: 3, Name: "ci-bot", IdentityType: MachineTypeService, State: MachineActive}, nil)
-		// SuspendUser path: GetUser → UpdateUser(account_state=suspended) →
+		// SuspendUser path: LockUserForUpdate → SetAccountState(account_state=suspended) →
 		// purge the migrated user's sessions (suspension revokes existing tokens).
 		store.On("GetUser", ctx, uint(7)).
 			Return(&models.User{ID: 7, Username: "ci-bot", AccountState: "active"}, nil)
-		store.On("UpdateUser", ctx, mock.MatchedBy(func(u *models.User) bool {
-			return u.ID == 7 && u.AccountState == AccountSuspended
-		})).Return(&models.User{ID: 7, AccountState: AccountSuspended}, nil)
+		store.On("SetAccountState", ctx, uint(7), AccountSuspended, mock.Anything).Return(nil)
 		store.On("DeleteSessionsForUserExcept", ctx, uint(7), uint(0)).Return(nil)
 		// Suspension also evicts the user's cached session tokens and revokes their PATs.
 		store.On("ListSessionTokenHashesForUser", ctx, uint(7)).Return([]string{}, nil)
@@ -64,7 +62,7 @@ func TestMigrateUserToMachine(t *testing.T) {
 
 		_, err := c.MigrateUserToMachine(ctx, "svc", 1, MachineTypeAutomation, "renamed", 9, false)
 		require.NoError(t, err)
-		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "SetAccountState", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		store.AssertExpectations(t)
 	})
 

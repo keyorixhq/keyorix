@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
@@ -34,6 +36,38 @@ func TestRemoteStorage_UnsupportedSentinel(t *testing.T) {
 		assert.True(t, errors.Is(err, store.ErrRemoteUnsupported),
 			"%s should wrap ErrRemoteUnsupported, got %v", name, err)
 	}
+}
+
+// TestRemoteStorage_SetAccountState_HardFails proves the #454 fix: since
+// account_state has no field in the wire format UpdateUser sends (only
+// username/email/display_name/active — see core.UpdateUserRequest), RemoteStorage
+// must refuse the write outright rather than silently no-op it. No httptest server is
+// needed at all: SetAccountState never makes an HTTP call — the whole point is that
+// there is nowhere to send this field.
+func TestRemoteStorage_SetAccountState_HardFails(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("https://unused.example"))
+	require.NoError(t, err)
+
+	err = rs.SetAccountState(context.Background(), 1, "suspended", time.Now())
+	require.Error(t, err, "an account_state change must hard-fail under remote storage, not silently succeed")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported))
+	assert.True(t, errors.Is(err, corestorage.ErrUnsupportedByBackend))
+}
+
+// TestRemoteStorage_UpdateLoginLockoutState_ReturnsUnsupportedSentinel proves the
+// #454 fix for the lockout-accounting columns: same wire-format gap as
+// SetAccountState, but this one is a passive backstop counter, not an explicit
+// security directive — the caller (login_lockout.go) distinguishes it from
+// SetAccountState's hard-fail treatment by matching storage.ErrUnsupportedByBackend
+// via isUnsupportedByBackend, so it must errors.Is-wrap that sentinel too.
+func TestRemoteStorage_UpdateLoginLockoutState_ReturnsUnsupportedSentinel(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("https://unused.example"))
+	require.NoError(t, err)
+
+	err = rs.UpdateLoginLockoutState(context.Background(), 1, 3, nil, nil, 1)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported))
+	assert.True(t, errors.Is(err, corestorage.ErrUnsupportedByBackend))
 }
 
 func TestRemoteStorage_MarkAllNotificationsRead(t *testing.T) {
