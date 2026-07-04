@@ -3,6 +3,7 @@ package system
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
@@ -17,26 +18,52 @@ var auditCmd = &cobra.Command{
 	},
 }
 
+// auditConfigFile mirrors the --config flag on `keyorix system validate`: an
+// empty default so an unset flag defers to config.Load's own resolution order
+// (KEYORIX_CONFIG_PATH env var, then "keyorix.yaml"), rather than baking in a
+// literal filename that ignores both the flag and the env var.
+var auditConfigFile string
+
+func init() {
+	auditCmd.Flags().StringVar(&auditConfigFile, "config", "", "Path to config file (defaults to $KEYORIX_CONFIG_PATH or keyorix.yaml)")
+}
+
 // auditCmd is now added to SystemCmd in system.go
 
 func runAudit() {
-	cfg, err := config.Load("keyorix.yaml") // Use default config file name
+	if runAuditNoExit() {
+		os.Exit(1)
+	}
+}
+
+// runAuditNoExit performs the audit and reports the outcome on stdout,
+// returning true if it failed. Splitting this out from runAudit lets tests
+// exercise the real config-path resolution logic (including a deliberate
+// failure) without a failing case tearing down the test binary via os.Exit.
+func runAuditNoExit() bool {
+	// Resolve the same way config.Load will, so the path we report/check below is
+	// the file actually loaded — not a hardcoded "keyorix.yaml" that silently
+	// diverges from --config / KEYORIX_CONFIG_PATH on any non-default deployment.
+	configPath := filepath.Clean(config.ResolvedPath(auditConfigFile))
+	fmt.Printf("Auditing config file: %s\n", configPath)
+
+	cfg, err := config.Load(auditConfigFile)
 	if err != nil {
 		fmt.Println("Failed to load config:", err)
-		os.Exit(1)
+		return true
 	}
 
 	files := []securefiles.FilePermSpec{
-		{Path: "keyorix.yaml", Mode: 0600},
+		{Path: configPath, Mode: 0600},
 		{Path: cfg.Storage.Encryption.SaltPath, Mode: 0600},
 		{Path: cfg.Storage.Encryption.DEKPath, Mode: 0600},
 	}
 
-	err = securefiles.FixFilePerms(files, false) // false = audit only
-	if err != nil {
+	if err := securefiles.FixFilePerms(files, false); err != nil { // false = audit only
 		fmt.Println("\nAudit finished with warnings/errors. Please fix the issues.")
-		os.Exit(1)
+		return true
 	}
 
 	fmt.Println("✅ Audit passed: all critical files have correct permissions and ownership.")
+	return false
 }
