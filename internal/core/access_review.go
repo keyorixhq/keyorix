@@ -41,6 +41,34 @@ type AccessReviewEntry struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
+// AccessReviewReport is the full access-review result for a project: every
+// grant (Entries) plus a signal for whether it is complete. #453: on
+// storage.type: remote, LastUserSecretActivity is unconditionally unimplemented
+// (see internal/storage/store/remote_access_activity.go), so this
+// human-facing, compliance-critical report's dormant-access signal
+// (LastUsedAt) was silently left nil for every entry with no indication
+// anything was missing — indistinguishable from "genuinely never used" for
+// the deployment's entire lifetime under that backend. Degraded +
+// DegradedReasons make that detectable, mirroring CompliancePosture.Degraded
+// (compliance_posture.go) and SecretAccessorsResult.Degraded
+// (secret_access_list.go, #417).
+type AccessReviewReport struct {
+	Entries []*AccessReviewEntry `json:"entries"`
+	// Degraded is true when the last-secret-access lookup could not be queried —
+	// every entry's LastUsedAt is then unknown, never verified "never used".
+	Degraded bool `json:"degraded"`
+	// DegradedReasons names the failed sub-query with its underlying error.
+	DegradedReasons []string `json:"degraded_reasons,omitempty"`
+}
+
+// degrade records that a sub-query of the access review could not be answered:
+// it flips Degraded and appends a human-readable reason, mirroring
+// CompliancePosture.degrade (compliance_posture.go).
+func (r *AccessReviewReport) degrade(area string, err error) {
+	r.Degraded = true
+	r.DegradedReasons = append(r.DegradedReasons, fmt.Sprintf("%s: %v", area, err))
+}
+
 // secretsActionRank orders secrets.* actions so a review reports the strongest
 // access a role confers.
 var secretsActionRank = map[string]int{"read": 1, "write": 2, "delete": 3, "admin": 4}
@@ -63,8 +91,11 @@ func highestSecretsAction(perms []*models.Permission) string {
 // GenerateProjectAccessReview returns every grant of access to a project's secrets
 // (ISO 27001 A.5.18): the role-based standing access (project-scoped role grants
 // whose role confers a secrets.* permission) and the per-secret grants (ownership
-// and direct/group shares). Each entry's Source identifies the mechanism.
-func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID uint) ([]*AccessReviewEntry, error) {
+// and direct/group shares). Each entry's Source identifies the mechanism. The
+// returned report's Degraded/DegradedReasons signal when the dormant-access
+// annotation (LastUsedAt) could not be computed, rather than silently reading as
+// "no entry has ever been used" (#453).
+func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID uint) (*AccessReviewReport, error) {
 	if projectID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
@@ -205,8 +236,14 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 		}
 	}
 
+	report := &AccessReviewReport{Entries: entries}
+
 	// Annotate user principals with their last secret-access time (dormant-access
-	// detection). Best-effort: a lookup failure simply leaves LastUsedAt nil.
+	// detection). #453: on storage.type: remote, LastUserSecretActivity is
+	// unconditionally unimplemented, so a lookup failure must not silently leave
+	// every LastUsedAt at nil with no signal — that reads identically to
+	// "genuinely never used" for this compliance-critical report's entire
+	// lifetime under that backend. Record the gap instead.
 	if activity, err := c.storage.LastUserSecretActivity(ctx, projectID); err == nil {
 		for _, e := range entries {
 			if e.PrincipalType == "user" {
@@ -216,8 +253,10 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 				}
 			}
 		}
+	} else {
+		report.degrade(fmt.Sprintf("last_used:project=%d", projectID), err)
 	}
-	return entries, nil
+	return report, nil
 }
 
 // listAllProjectSecrets pages through every secret in a project (no silent cap).

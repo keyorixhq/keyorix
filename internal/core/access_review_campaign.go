@@ -78,10 +78,11 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, pro
 	if projectID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
 	}
-	entries, err := c.GenerateProjectAccessReview(ctx, projectID)
+	report, err := c.GenerateProjectAccessReview(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
+	entries := report.Entries
 	if name == "" {
 		name = "Access review"
 	}

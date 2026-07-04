@@ -82,10 +82,10 @@ func TestDecideAccessReviewItem_AttestAndRevoke(t *testing.T) {
 	assert.Equal(t, 0, after.Progress.Pending)
 
 	// bob's editor/viewer grant is actually gone from the live review; alice's stays.
-	review, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	report, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)
 	var names []string
-	for _, e := range review {
+	for _, e := range report.Entries {
 		names = append(names, e.PrincipalName)
 	}
 	assert.Contains(t, names, "alice")
