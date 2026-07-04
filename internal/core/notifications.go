@@ -61,11 +61,17 @@ func (c *KeyorixCore) notify(ctx context.Context, userID uint, nType, title, mes
 // standing unread reminder — see upgradeReminder. Notification types that don't
 // participate in escalation-aware dedup should keep using plain notify(), which
 // records NotificationSeverityNone.
+//
+// #488: a failed CreateNotification — including the benign duplicate-skip a
+// concurrent reminder run hits against the unread-reminder dedup index — must not
+// still fire an out-of-band delivery for a row that was never actually persisted,
+// or the race this index closes at the DB layer would still duplicate the
+// user-visible email/webhook. Mirrors upgradeReminder's identical guard (#482).
 func (c *KeyorixCore) notifyWithSeverity(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string, severity models.NotificationSeverity) {
 	if userID == 0 {
 		return
 	}
-	_, _ = c.storage.CreateNotification(ctx, &models.Notification{
+	if _, err := c.storage.CreateNotification(ctx, &models.Notification{
 		UserID:    userID,
 		ProjectID: projectID,
 		Type:      nType,
@@ -74,7 +80,9 @@ func (c *KeyorixCore) notifyWithSeverity(ctx context.Context, userID uint, nType
 		Link:      link,
 		Severity:  severity,
 		CreatedAt: c.now(),
-	})
+	}); err != nil {
+		return
+	}
 	c.dispatchNotification(ctx, userID, nType, title, message, projectID, link)
 }
 

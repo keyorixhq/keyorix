@@ -781,6 +781,16 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 			}
 		}
 	}
+	// At most one unread rotation/expiry reminder may stand per (user, project) at a
+	// time — closing the #488 TOCTOU: the admin-jobs HTTP trigger for these two jobs
+	// runs with no lock at all (unlike the scheduled path, single-replica-gated via
+	// WithSchedulerLock, ADR-039), so two concurrent runs can both pass the
+	// check-then-act "does a reminder already exist" read before either commits its
+	// insert. Close the race at the DB layer regardless of whether the table
+	// pre-existed.
+	if err := ensureReminderNotificationDedupIndex(db); err != nil {
+		return err
+	}
 
 	// Groups gained soft-delete (DeletedAt) + a partial unique index on name. On an
 	// existing DB add the column and swap the plain unique index for the partial one
@@ -1111,6 +1121,34 @@ func ensureProjectNameIndex(db *gorm.DB) error {
 func ensureLegalHoldActiveIndex(db *gorm.DB) error {
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active ON legal_holds (released) WHERE released = false").Error; err != nil {
 		return fmt.Errorf("failed to create partial legal_holds active index: %w", err)
+	}
+	return nil
+}
+
+// ensureReminderNotificationDedupIndex creates a partial unique index that permits
+// at most one unread rotation-reminder or expiry-reminder notification per
+// (user_id, type, project_id) at a time (#488). SendRotationReminders and
+// SendExpiryReminders each dedupe with a check-then-act read (an existing unread
+// reminder for the user/project is not re-notified) followed by a separate
+// CreateNotification call — a TOCTOU race. The scheduled path is safe (run under
+// WithSchedulerLock, single-replica-gated, ADR-039), but the on-demand admin-jobs
+// HTTP trigger (POST /api/v1/admin/jobs/rotation-reminders or .../expiry-reminders)
+// calls the core function directly with no lock at all, so two concurrent runs — or
+// one racing the scheduler's own tick — against a project with no existing reminder
+// can both pass the "does a reminder already exist" check before either commits,
+// producing duplicate reminder rows.
+//
+// Scoped to just these two notification types (via the type IN (...) predicate) —
+// unlike rotation.reminder/secret.expiry_reminder, most other notification types
+// (e.g. secret.shared) legitimately create more than one unread notification of the
+// same type for the same user/project (one per distinct secret/event), so a
+// blanket index across the whole table would silently drop those. Idempotent; works
+// on both SQLite and Postgres (both support partial indexes and IF NOT EXISTS).
+func ensureReminderNotificationDedupIndex(db *gorm.DB) error {
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_notifications_unread_reminder " +
+		"ON notifications (user_id, type, project_id) " +
+		"WHERE is_read = false AND type IN ('rotation.reminder', 'secret.expiry_reminder')").Error; err != nil {
+		return fmt.Errorf("failed to create partial notifications reminder-dedup index: %w", err)
 	}
 	return nil
 }
