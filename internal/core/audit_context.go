@@ -8,7 +8,10 @@
 // DetachedAuditContext to carry the tag past request cancellation.
 package core
 
-import "context"
+import (
+	"context"
+	"log"
+)
 
 // Actor types stamped on every audit event (ADR-023). They distinguish a human
 // user from a non-human machine identity so the audit view can segment and
@@ -71,4 +74,29 @@ func DetachedAuditContext(parent context.Context) context.Context {
 		ctx = WithActorType(ctx, t)
 	}
 	return ctx
+}
+
+// goSafe runs fn in a detached goroutine with panic recovery. Several core
+// methods spawn "fire and forget" goroutines for post-response side effects
+// (audit logging of secret reads/writes, password-reset link provisioning)
+// so the caller isn't blocked on that I/O — but those goroutines run on the
+// hottest request paths (every secret read/write, and — for
+// RequestPasswordReset — even an unauthenticated one) and are NOT covered by
+// the HTTP server's per-request recovery middleware, which only guards the
+// goroutine actually serving the request. A panic in a bare `go
+// c.LogSecret...(...)` here (a future nil-deref, malformed diff content,
+// etc.) would crash the entire process for every connected tenant (backlog
+// #481, an unrecovered-coverage gap in the #243 fix). goSafe closes that gap:
+// any panic in fn is recovered and logged instead of taking the server down.
+// This mirrors server/http/handlers' goSafe, duplicated here because that
+// package cannot be imported from internal/core.
+func goSafe(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("recovered from panic in background goroutine: %v", r)
+			}
+		}()
+		fn()
+	}()
 }

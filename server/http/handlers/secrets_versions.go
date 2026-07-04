@@ -49,7 +49,10 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 	secret, sErr := h.coreService.GetSecret(r.Context(), uint(id))
 	if sErr == nil && secret != nil {
 		ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-		go h.coreService.LogSecretReadWithProject(core.DetachedAuditContext(r.Context()), userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua) // #nosec G118
+		auditCtx := core.DetachedAuditContext(r.Context())
+		goSafe(func() {
+			h.coreService.LogSecretReadWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua)
+		}) // #nosec G118
 	}
 
 	h.sendSuccess(w, map[string]interface{}{"versions": versions}, "")
@@ -111,7 +114,10 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	// Audit the rotation (async, detached) so the rotation inspector and the
 	// activity feed have an attributable secret.rotated event.
 	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
-	go h.coreService.LogSecretRotatedWithProject(core.DetachedAuditContext(r.Context()), userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua) // #nosec G118
+	auditCtx := core.DetachedAuditContext(r.Context())
+	goSafe(func() {
+		h.coreService.LogSecretRotatedWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua)
+	}) // #nosec G118
 
 	h.sendSuccess(w, secret, "Secret rotated successfully")
 }

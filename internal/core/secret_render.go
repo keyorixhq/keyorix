@@ -71,7 +71,9 @@ func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string,
 		// Record the read like the single-secret read path does, so a bulk render is
 		// auditable and visible to the anomaly detector (detached so it survives the
 		// request and never blocks the render).
-		go c.LogSecretReadWithProject(DetachedAuditContext(ctx), userID, secret.ID, projectID, username, secretName, ip, ua) // #nosec G118
+		goSafe(func() {
+			c.LogSecretReadWithProject(DetachedAuditContext(ctx), userID, secret.ID, projectID, username, secretName, ip, ua)
+		}) // #nosec G118
 		return string(val), nil
 	})
 }

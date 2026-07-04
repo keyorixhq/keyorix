@@ -8,6 +8,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strings"
 	"time"
 
@@ -37,6 +38,29 @@ func clientSafe(err error) string {
 		return ""
 	}
 	return "an internal error occurred; please try again or contact support if the problem persists"
+}
+
+// goSafe runs fn in a detached goroutine with panic recovery. secret_service.go
+// spawns "fire and forget" goroutines to audit-log secret reads/writes over
+// gRPC (mirroring the HTTP handlers) so the RPC response isn't blocked on that
+// I/O — but those goroutines run on the hottest secret CRUD paths and are NOT
+// covered by any per-RPC recovery interceptor, which only guards the goroutine
+// actually serving the RPC. A panic in a bare `go s.core.LogSecret...(...)`
+// here would crash the entire process for every connected tenant (backlog
+// #481, an unrecovered-coverage gap in the #243 fix, which only covered
+// server/http/handlers). goSafe closes that gap: any panic in fn is recovered
+// and logged instead of taking the server down. Mirrors
+// server/http/handlers.goSafe / internal/core.goSafe, duplicated here because
+// this package cannot import the handlers package.
+func goSafe(fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("recovered from panic in background goroutine: %v", r)
+			}
+		}()
+		fn()
+	}()
 }
 
 // isSafeConnectError mirrors the HTTP handlers' connect.go allowlist: it
