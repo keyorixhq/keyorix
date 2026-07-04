@@ -127,7 +127,15 @@ func (c *KeyorixCore) CreateUser(ctx context.Context, req *CreateUserRequest) (*
 // names and project IDs are resolved and validated up front, so an invalid input
 // fails before anything is written; a storage failure mid-way rolls everything
 // back. systemRole defaults to system_viewer when empty.
-func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *CreateUserRequest, systemRole string, assignments []ProjectAssignment) (*models.User, error) {
+//
+// #480: this is InviteGlobal's sibling — both mint a system role plus a set of
+// project assignments in one call, and both need the identical escalation-by-proxy
+// ceiling (requireAuthorityForRole): the generic roles.assign permission that gates
+// the HTTP/gRPC entry points is a plain, non-admin-gated permission grantable to
+// any custom role, so without this check a non-admin roles.assign holder could
+// mint a brand-new super_admin account directly — no invite/accept step an admin
+// could notice or revoke in between, unlike InviteGlobal.
+func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *CreateUserRequest, systemRole string, assignments []ProjectAssignment, actorID uint) (*models.User, error) {
 	user, hash, err := c.buildUserForCreate(ctx, req)
 	if err != nil {
 		return nil, err
@@ -154,6 +162,12 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	if err != nil {
 		return nil, fmt.Errorf("%s: unknown role %q (system)", i18n.T("ErrorValidation", nil), sysRole)
 	}
+	// Escalation-by-proxy guard (#480), mirroring InviteGlobal (#231): a global
+	// system role is the most powerful grant this flow can mint, so it needs the
+	// same admin-authority ceiling check, at global scope (projectID 0).
+	if err := c.requireAuthorityForRole(ctx, actorID, 0, sysRole); err != nil {
+		return nil, err
+	}
 	addGrant(sr.ID, 0)
 
 	for _, a := range assignments {
@@ -166,6 +180,12 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 		r, err := c.storage.GetRoleByName(ctx, a.Role)
 		if err != nil {
 			return nil, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
+		}
+		// Same ceiling check InviteGlobal applies to each of its own project
+		// assignments — without this, a non-admin roles.assign holder could bundle
+		// an admin-conferring project assignment into an otherwise-innocuous create.
+		if err := c.requireAuthorityForRole(ctx, actorID, a.ProjectID, a.Role); err != nil {
+			return nil, err
 		}
 		addGrant(r.ID, a.ProjectID)
 	}

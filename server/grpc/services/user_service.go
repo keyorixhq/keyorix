@@ -113,7 +113,7 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 		if req.GetPassword() == "" {
 			return nil, status.Error(codes.InvalidArgument, "password is required unless deliver_setup_link or generate_one_time_password is set")
 		}
-		u, err = s.core.CreateUserWithAssignments(ctx, coreReq, role, assignments)
+		u, err = s.core.CreateUserWithAssignments(ctx, coreReq, role, assignments, actor.UserID)
 	}
 	if err != nil {
 		return nil, mapUserError(err)
@@ -294,6 +294,8 @@ func mapUserError(err error) error {
 		return status.Error(codes.NotFound, "user not found")
 	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"):
 		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")
+	case strings.Contains(msg, "administrator can grant"):
+		return status.Error(codes.PermissionDenied, err.Error())
 	case strings.Contains(msg, "validation"), strings.Contains(msg, "required"), strings.Contains(msg, "invalid"), strings.Contains(msg, "must be"):
 		return status.Error(codes.InvalidArgument, err.Error())
 	default:

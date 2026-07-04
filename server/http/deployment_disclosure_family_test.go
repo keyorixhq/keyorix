@@ -56,7 +56,7 @@ func createAuditorToken(t *testing.T, c *core.KeyorixCore) string {
 	ctx := context.Background()
 	_, err := c.CreateUserWithAssignments(ctx, &core.CreateUserRequest{
 		Username: "family_auditor", Email: "family_auditor@example.com", Password: "Qr7#Kp2$Lm5@Vn9!",
-	}, "system_auditor", nil)
+	}, "system_auditor", nil, 0)
 	require.NoError(t, err)
 	sess, _, err := c.Login(ctx, &core.LoginRequest{Username: "family_auditor", Password: "Qr7#Kp2$Lm5@Vn9!"})
 	require.NoError(t, err)
