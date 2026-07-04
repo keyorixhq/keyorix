@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -14,6 +15,50 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// migrationMu serializes migrateDatabase across goroutines IN THIS PROCESS (#266).
+// startHTTPServer and startGRPCServer each independently call CreateStorage →
+// migrateDatabase as separate goroutines when both HTTP and gRPC are enabled (a
+// documented example config) — without this, both goroutines can observe a fresh
+// database (`projectsExists == false`) and race the same CREATE TABLE/CREATE INDEX
+// statements, with the loser erroring out and its server silently never starting
+// listening (no crash, no alert). This does NOT protect against multiple separate
+// OS processes/replicas migrating a shared Postgres concurrently — see
+// postgresMigrationLockKey below for that.
+var migrationMu sync.Mutex
+
+// postgresMigrationLockKey is an arbitrary, fixed application-specific key for
+// Postgres's session-level advisory lock (pg_advisory_lock/pg_advisory_unlock),
+// used to serialize migrateDatabase ACROSS PROCESSES when running against
+// Postgres (e.g. multiple replicas booting against a shared, fresh database).
+// SQLite has no analogous multi-process advisory-lock primitive, but SQLite
+// deployments are single-process-per-file by construction, so migrationMu alone
+// is sufficient there; only Postgres needs the additional cross-process lock.
+const postgresMigrationLockKey = 872341
+
+// withMigrationLock runs fn while holding migrationMu (always) and, when db is a
+// Postgres connection, an additional Postgres session-level advisory lock (closing
+// the cross-replica race #266 describes, not just the in-process one). The
+// advisory lock is released in the same session it was acquired in, so this must
+// run on a single connection for the duration — acquired/released via db.Exec on
+// the same *gorm.DB, which GORM services from one checked-out *sql.Conn per call
+// only within an explicit transaction; to guarantee same-connection acquire/
+// release without depending on that, this wraps fn in db.Transaction.
+func withMigrationLock(db *gorm.DB, isPostgres bool, fn func(*gorm.DB) error) error {
+	migrationMu.Lock()
+	defer migrationMu.Unlock()
+
+	if !isPostgres {
+		return fn(db)
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_lock(?)", postgresMigrationLockKey).Error; err != nil {
+			return fmt.Errorf("acquire migration advisory lock: %w", err)
+		}
+		defer tx.Exec("SELECT pg_advisory_unlock(?)", postgresMigrationLockKey)
+		return fn(tx)
+	})
+}
 
 // defaultMaxOpenConns bounds the DB connection pool when the operator hasn't set
 // max_open_conns — Go's own default is unlimited, which lets a request flood exhaust the
@@ -72,7 +117,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		return nil, err
 	}
 
-	if err := f.migrateDatabase(db); err != nil {
+	if err := withMigrationLock(db, false, f.migrateDatabase); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -95,7 +140,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 		return nil, err
 	}
 
-	if err := f.migrateDatabase(db); err != nil {
+	if err := withMigrationLock(db, true, f.migrateDatabase); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
