@@ -131,6 +131,14 @@ func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, befo
 // its own (ADR-052) — it lives and dies with its endpoints — so purging a secret without
 // removing its edges would leave rows referencing a hard-deleted secret. Returns the number
 // of secret_nodes purged (version and edge rows are not counted).
+//
+// #276: the eligible-ID list is gathered by a SELECT (Pluck) and the deletes run moments
+// later — a window in which a concurrent RestoreSecret can flip deleted_at back to NULL on
+// one of those IDs. Deleting purely off the stale ID list would hard-delete that
+// already-restored secret anyway, silently undoing a restore that already reported success
+// to its caller. Every delete below therefore re-applies the same
+// "deleted_at IS NOT NULL AND deleted_at < before" predicate the SELECT used, keyed on id —
+// not just the ID list — so a row a restore raced out from under the purge is left alone.
 func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before time.Time) (int64, error) {
 	var purged int64
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -144,15 +152,26 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 			return nil
 		}
 		// Destroy the ciphertext-bearing versions and the incident dependency edges
-		// first, then the node rows.
-		if e := tx.Where("secret_node_id IN ?", ids).Delete(&models.SecretVersion{}).Error; e != nil {
+		// first, then the node rows — each re-scoped to still-deleted-and-eligible
+		// secrets only, via a subquery against secret_nodes' live deleted_at rather
+		// than the stale `ids` list, so a secret restored after the SELECT above is
+		// excluded from every delete below it. A fresh subquery builder is used per
+		// reference since a *gorm.DB is stateful and must not be shared across clauses.
+		stillEligible := func() *gorm.DB {
+			return tx.Unscoped().Model(&models.SecretNode{}).
+				Select("id").
+				Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before)
+		}
+		if e := tx.Where("secret_node_id IN (?)", stillEligible()).Delete(&models.SecretVersion{}).Error; e != nil {
 			return e
 		}
-		if e := tx.Where("dependent_secret_id IN ? OR depends_on_secret_id IN ?", ids, ids).
+		if e := tx.Where("dependent_secret_id IN (?) OR depends_on_secret_id IN (?)", stillEligible(), stillEligible()).
 			Delete(&models.SecretDependency{}).Error; e != nil {
 			return e
 		}
-		rn := tx.Unscoped().Where("id IN ?", ids).Delete(&models.SecretNode{})
+		rn := tx.Unscoped().
+			Where("id IN ? AND deleted_at IS NOT NULL AND deleted_at < ?", ids, before).
+			Delete(&models.SecretNode{})
 		if rn.Error != nil {
 			return rn.Error
 		}
