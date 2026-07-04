@@ -4,13 +4,24 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 func (ls *LocalStorage) CreateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error) {
 	if err := ls.db.WithContext(ctx).Create(c).Error; err != nil {
+		if isUniqueViolation(err) {
+			// The unique index uniq_dynamic_secret_configs_project_env_name (#462) caught a
+			// duplicate (project, environment, name) tuple — the only unique constraint on
+			// this table, so a bare driver-message match (isUniqueViolation, shared with
+			// CreateProjectMembership) is unambiguous here. Translate to the sentinel so
+			// callers (CreateDynamicSecretConfig in internal/core) can surface a clean
+			// validation error instead of a raw constraint-violation message.
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateDynamicSecretConfig, err)
+		}
 		return nil, err
 	}
 	return c, nil

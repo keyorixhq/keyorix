@@ -7,10 +7,12 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -103,6 +105,14 @@ func (c *KeyorixCore) CreateDynamicSecretConfig(ctx context.Context, req *Create
 		UpdatedAt:         c.now(),
 	})
 	if err != nil {
+		// #462: DynamicSecretConfig's doc comment states "one per (project, env,
+		// name)"; the unique index uniq_dynamic_secret_configs_project_env_name backs
+		// that up at the DB layer and CreateDynamicSecretConfig wraps a violation in
+		// storage.ErrDuplicateDynamicSecretConfig. Surface a clean validation error
+		// instead of a raw constraint-violation message.
+		if errors.Is(err, storage.ErrDuplicateDynamicSecretConfig) {
+			return nil, fmt.Errorf("a dynamic-secret config named %q already exists in this project and environment", req.Name)
+		}
 		return nil, err
 	}
 	dsnEnc, dsnMeta, err := c.encryptAuthSecret(req.AdminDSN, encryption.DynamicSecretConfigAAD(cfg.ID, cfg.ProjectID, cfg.EnvironmentID))

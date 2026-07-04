@@ -84,3 +84,11 @@ var ErrUnsupportedByBackend = errors.New("operation not supported by the active 
 // the same friendly "already active" message a losing racer gets from the earlier
 // application-level check.
 var ErrBreakGlassAlreadyActive = errors.New("an active break-glass grant already exists for this project and user")
+
+// ErrDuplicateDynamicSecretConfig is returned (wrapped) by CreateDynamicSecretConfig
+// when the insert collides with the unique index on dynamic_secret_configs
+// (project_id, environment_id, name, #462), matching DynamicSecretConfig's own doc
+// comment ("one per (project, env, name)") — previously documented but not enforced.
+// Callers translate this into a clean validation error instead of a raw
+// constraint-violation message.
+var ErrDuplicateDynamicSecretConfig = errors.New("a dynamic-secret config with this name already exists in this project and environment")

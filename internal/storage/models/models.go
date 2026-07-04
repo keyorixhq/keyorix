@@ -581,7 +581,11 @@ type SecretVersion struct {
 // DynamicSecretConfig (ADR-035) defines an on-demand database-credential source:
 // Keyorix connects to the target with the (encrypted) admin DSN and runs the
 // creation template to mint a short-lived role per lease. One per (project, env,
-// name).
+// name) — enforced by a unique index on (project_id, environment_id, name)
+// created in migrateDatabase (#462), not a `uniqueIndex` struct tag here: this
+// table is never fully re-AutoMigrated once it exists (same pgx hazard as
+// elsewhere in migrateDatabase), so a struct tag alone would never reach an
+// existing database.
 type DynamicSecretConfig struct {
 	ID            uint   `gorm:"primaryKey"`
 	Name          string `gorm:"not null"`
