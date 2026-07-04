@@ -380,6 +380,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "classification") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN classification TEXT DEFAULT ''")
 	}
+	// Companion index: models.SecretNode.Classification carries `gorm:"index"`, so a
+	// fresh AutoMigrate-created install already gets this index automatically, but an
+	// upgraded install only ever reaches the column via the raw ALTER above (AutoMigrate
+	// never re-diffs an existing table's indexes here), so it would otherwise never gain
+	// the index and classification-filtered queries would degrade to a full table scan
+	// as secret_nodes grows. Gated on tableExists only (not columnExists) so it also
+	// converges an install that already has the column from an older deploy of this
+	// migration but predates this index. CREATE INDEX IF NOT EXISTS is idempotent, so
+	// running it unconditionally on every boot (matching the ensure*Index helpers below)
+	// is cheap once the index is in place.
+	if tableExists(db, "secret_nodes") {
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_classification ON secret_nodes (classification)")
+	}
 	// ADR-046: automated rotation opt-in. Additive auto_rotate (false = off).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "auto_rotate") {
 		db.Exec("ALTER TABLE secret_nodes ADD COLUMN auto_rotate BOOLEAN NOT NULL DEFAULT false")
@@ -403,10 +416,20 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if !columnExists(db, "secret_nodes", "cert_not_after") {
 			db.Exec("ALTER TABLE secret_nodes ADD COLUMN cert_not_after TIMESTAMP WITH TIME ZONE")
 		}
+		// Companion index (models.SecretNode.CertNotAfter is `gorm:"index"`); see the
+		// classification companion-index comment above for why this runs unconditionally
+		// (gated on the table only) rather than nested inside the ALTER guard above.
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_cert_not_after ON secret_nodes (cert_not_after)")
 	}
 	// Anomaly alerting: additive `alerted` flag (false = not yet pushed out).
 	if tableExists(db, "anomaly_alerts") && !columnExists(db, "anomaly_alerts", "alerted") {
 		db.Exec("ALTER TABLE anomaly_alerts ADD COLUMN alerted BOOLEAN DEFAULT FALSE")
+	}
+	// Companion index (models.AnomalyAlert.Alerted is `gorm:"default:false;index"`); see
+	// the secret_nodes.classification companion-index comment above for why this is
+	// gated on the table only, not on the ALTER above having just run.
+	if tableExists(db, "anomaly_alerts") {
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_alerted ON anomaly_alerts (alerted)")
 	}
 
 	// Track last successful login per user (nil = never logged in).
@@ -494,6 +517,15 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if !columnExists(db, "audit_events", "entry_hash") {
 			db.Exec("ALTER TABLE audit_events ADD COLUMN entry_hash TEXT NOT NULL DEFAULT ''")
 		}
+		// Companion indexes (models.AuditEvent.PrevHash/EntryHash are both
+		// `gorm:"index"`). VerifyAuditChain walks this hash chain as a security
+		// control; without these an upgraded install's audit_events table degrades
+		// to a full table scan on every chain verification as it grows, risking the
+		// check being skipped operationally once it gets too slow to run regularly.
+		// Gated on the table only, not the ALTERs above — see the
+		// secret_nodes.classification companion-index comment for why.
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_prev_hash ON audit_events (prev_hash)")
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_entry_hash ON audit_events (entry_hash)")
 	}
 
 	// Impersonation sessions carry the initiating admin + start time.
@@ -623,6 +655,12 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if tableExists(db, "dynamic_secret_configs") && !columnExists(db, "dynamic_secret_configs", "classification") {
 			db.Exec("ALTER TABLE dynamic_secret_configs ADD COLUMN classification TEXT DEFAULT ''")
 		}
+		// Companion index (models.DynamicSecretConfig.Classification is `gorm:"index"`);
+		// this whole branch only runs when dynamic_secret_configs already existed (the
+		// upgrade path — a fresh install's AutoMigrate call below already creates the
+		// index), so it's safe to run unconditionally here rather than nesting inside
+		// the ALTER guard above — see the secret_nodes.classification comment for why.
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_dynamic_secret_configs_classification ON dynamic_secret_configs (classification)")
 		// Disabled (#369): refuses new leases once the owning project is soft-deleted.
 		// Additive (defaults false = every pre-existing config stays enabled).
 		if !m.HasColumn(&models.DynamicSecretConfig{}, "Disabled") {
@@ -813,9 +851,17 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := db.AutoMigrate(&models.MachineIdentity{}); err != nil {
 			return fmt.Errorf("failed to migrate machine_identities table: %w", err)
 		}
-	} else if !columnExists(db, "machine_identities", "classification") {
-		// Data classification (ISO A.5.12). Additive ("" = unclassified).
-		db.Exec("ALTER TABLE machine_identities ADD COLUMN classification TEXT DEFAULT ''")
+	} else {
+		if !columnExists(db, "machine_identities", "classification") {
+			// Data classification (ISO A.5.12). Additive ("" = unclassified).
+			db.Exec("ALTER TABLE machine_identities ADD COLUMN classification TEXT DEFAULT ''")
+		}
+		// Companion index (models.MachineIdentity.Classification is `gorm:"index"`);
+		// this else branch only runs on the upgrade path (a fresh install's
+		// AutoMigrate call above already creates the index) — see the
+		// secret_nodes.classification comment for why this runs unconditionally
+		// rather than nested inside the ALTER guard.
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_machine_identities_classification ON machine_identities (classification)")
 	}
 
 	// Create machine-token tables if missing (ADR-030, additive, safe on existing DBs).
@@ -823,8 +869,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := db.AutoMigrate(&models.MachineIdentityCredential{}); err != nil {
 			return fmt.Errorf("failed to migrate machine_identity_credentials table: %w", err)
 		}
-	} else if !columnExists(db, "machine_identity_credentials", "classification") {
-		db.Exec("ALTER TABLE machine_identity_credentials ADD COLUMN classification TEXT DEFAULT ''")
+	} else {
+		if !columnExists(db, "machine_identity_credentials", "classification") {
+			db.Exec("ALTER TABLE machine_identity_credentials ADD COLUMN classification TEXT DEFAULT ''")
+		}
+		// Companion index (models.MachineIdentityCredential.Classification is
+		// `gorm:"index"`); see the machine_identities.classification comment above
+		// for why this runs unconditionally in this (upgrade-only) branch.
+		db.Exec("CREATE INDEX IF NOT EXISTS idx_machine_identity_credentials_classification ON machine_identity_credentials (classification)")
 	}
 	if !machineRoleExists {
 		if err := db.AutoMigrate(&models.MachineIdentityRole{}); err != nil {
