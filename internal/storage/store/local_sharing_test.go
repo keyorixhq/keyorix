@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -182,4 +183,114 @@ func TestCheckSharePermission_OwnerZeroGuard(t *testing.T) {
 	perm, err := ls.CheckSharePermission(ctx, 100, 0)
 	require.Error(t, err, "userID=0 must not match an ownerless secret's OwnerID=0")
 	assert.Equal(t, "", perm)
+}
+
+// #402: ListSharesBySecret/ListSharesByUser/ListSharesByGroup/ListSharesByOwner used
+// to return already-EXPIRED (but not-yet-swept) shares alongside genuinely active
+// ones — reporting/compliance-review/risk-scoring callers built on them therefore
+// over-counted access that no longer authorizes anything, even though the real
+// permission-check path (CheckSharePermission) already excluded expired shares.
+// Every listing function must apply the identical expiry filter.
+func TestListShares_ExcludeExpiredIncludeActive(t *testing.T) {
+	db := sharingConcurrentDB(t)
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "grantee-active", Email: "ga@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 3, Username: "grantee-time-bound-active", Email: "ge@x.io"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 4, Username: "grantee-only-expired", Email: "goe@x.io"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "g-active"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 2, Name: "g-expired"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		ID: 100, Name: "s", ProjectID: 1, EnvironmentID: 1, OwnerID: 1, Status: "active", Type: "password",
+	}).Error)
+
+	past := time.Now().Add(-1 * time.Hour)
+	future := time.Now().Add(1 * time.Hour)
+
+	// Active direct share (permanent, no expiry).
+	activeDirect, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: 100, RecipientID: 2, IsGroup: false, OwnerID: 1, Permission: "read",
+	})
+	require.NoError(t, err)
+
+	// Active, time-bound direct share that hasn't expired yet.
+	activeTimeBound, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: 100, RecipientID: 3, IsGroup: false, OwnerID: 1, Permission: "read", ExpiresAt: &future,
+	})
+	require.NoError(t, err)
+
+	// Direct share to a distinct recipient (4), created permanent then back-dated
+	// directly to simulate a time-bound share whose expiry has already passed but
+	// which hasn't been swept yet (DeleteExpiredShareRecords runs on its own tick).
+	expiredDirect, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: 100, RecipientID: 4, IsGroup: false, OwnerID: 1, Permission: "write",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&models.ShareRecord{}).Where("id = ?", expiredDirect.ID).
+		Update("expires_at", past).Error)
+
+	// Active group share.
+	activeGroup, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: 100, RecipientID: 1, IsGroup: true, OwnerID: 1, Permission: "read",
+	})
+	require.NoError(t, err)
+
+	// Expired group share (distinct recipient group so it doesn't collide with the
+	// active group share above).
+	expiredGroup, err := ls.CreateShareRecord(ctx, &models.ShareRecord{
+		SecretID: 100, RecipientID: 2, IsGroup: true, OwnerID: 1, Permission: "write",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&models.ShareRecord{}).Where("id = ?", expiredGroup.ID).
+		Update("expires_at", past).Error)
+
+	// --- ListSharesBySecret ---
+	bySecret, err := ls.ListSharesBySecret(ctx, 100)
+	require.NoError(t, err)
+	gotIDs := shareIDSet(bySecret)
+	assert.Contains(t, gotIDs, activeDirect.ID, "permanent active share must be listed")
+	assert.Contains(t, gotIDs, activeTimeBound.ID, "not-yet-expired time-bound share must be listed")
+	assert.Contains(t, gotIDs, activeGroup.ID, "active group share must be listed")
+	assert.NotContains(t, gotIDs, expiredDirect.ID, "expired direct share must be excluded")
+	assert.NotContains(t, gotIDs, expiredGroup.ID, "expired group share must be excluded")
+
+	// --- ListSharesByUser (recipient 3: one active time-bound, none expired left there) ---
+	byUser3, err := ls.ListSharesByUser(ctx, 3)
+	require.NoError(t, err)
+	got3 := shareIDSet(byUser3)
+	assert.Contains(t, got3, activeTimeBound.ID, "active time-bound share must be listed for its recipient")
+
+	// --- ListSharesByUser (recipient 4: only an expired share) ---
+	byUser4, err := ls.ListSharesByUser(ctx, 4)
+	require.NoError(t, err)
+	assert.Empty(t, byUser4, "a recipient whose only share is expired must see no active shares")
+
+	// --- ListSharesByGroup ---
+	byGroup1, err := ls.ListSharesByGroup(ctx, 1)
+	require.NoError(t, err)
+	got1 := shareIDSet(byGroup1)
+	assert.Contains(t, got1, activeGroup.ID, "active group share must be listed for its group")
+
+	byGroup2, err := ls.ListSharesByGroup(ctx, 2)
+	require.NoError(t, err)
+	assert.Empty(t, byGroup2, "a group whose only share is expired must see no active shares")
+
+	// --- ListSharesByOwner ---
+	byOwner, err := ls.ListSharesByOwner(ctx, 1)
+	require.NoError(t, err)
+	gotOwner := shareIDSet(byOwner)
+	assert.Contains(t, gotOwner, activeDirect.ID)
+	assert.Contains(t, gotOwner, activeTimeBound.ID)
+	assert.Contains(t, gotOwner, activeGroup.ID)
+	assert.NotContains(t, gotOwner, expiredDirect.ID, "expired share must be excluded from the owner's outgoing list")
+	assert.NotContains(t, gotOwner, expiredGroup.ID, "expired group share must be excluded from the owner's outgoing list")
+}
+
+func shareIDSet(shares []*models.ShareRecord) map[uint]bool {
+	out := make(map[uint]bool, len(shares))
+	for _, s := range shares {
+		out[s.ID] = true
+	}
+	return out
 }

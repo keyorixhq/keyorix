@@ -177,37 +177,59 @@ func (ls *LocalStorage) DeleteExpiredShareRecords(ctx context.Context, before ti
 	return removed, nil
 }
 
-// ListSharesBySecret lists active share records for a secret.
+// ListSharesBySecret lists currently-active share records for a secret — soft-deleted
+// AND expired (time-bound) shares are excluded, matching the expiry filter every
+// authorization path (CheckSharePermission, CheckSecretPermission via activeShares)
+// already applies. #402: this used to return expired shares too, so reporting/
+// compliance/risk-scoring callers built on it over-counted access that no longer
+// authorizes anything, even though the real permission-check path was never fooled.
 func (ls *LocalStorage) ListSharesBySecret(ctx context.Context, secretID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord
-	if err := ls.db.Where("secret_id = ? AND deleted_at IS NULL", secretID).Find(&shares).Error; err != nil {
+	if err := ls.db.Where(
+		"secret_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+		secretID, time.Now(),
+	).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
 }
 
-// ListSharesByUser lists active share records where userID is the direct recipient.
+// ListSharesByUser lists currently-active share records where userID is the direct
+// recipient. See ListSharesBySecret for why expired shares are excluded (#402).
 func (ls *LocalStorage) ListSharesByUser(ctx context.Context, userID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord
-	if err := ls.db.Where("recipient_id = ? AND is_group = ? AND deleted_at IS NULL", userID, false).Find(&shares).Error; err != nil {
+	if err := ls.db.Where(
+		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+		userID, false, time.Now(),
+	).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
 }
 
-// ListSharesByOwner lists active share records created by ownerID.
+// ListSharesByOwner lists currently-active share records created by ownerID. See
+// ListSharesBySecret for why expired shares are excluded (#402) — this feeds the
+// dashboard's outgoing-share count and ListSharesByUser's owned-share half, both of
+// which must reflect what actually still grants access, not stale time-bound grants.
 func (ls *LocalStorage) ListSharesByOwner(ctx context.Context, ownerID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord
-	if err := ls.db.Where("owner_id = ? AND deleted_at IS NULL", ownerID).Find(&shares).Error; err != nil {
+	if err := ls.db.Where(
+		"owner_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+		ownerID, time.Now(),
+	).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
 }
 
-// ListSharesByGroup lists active share records where groupID is the recipient.
+// ListSharesByGroup lists currently-active share records where groupID is the
+// recipient. See ListSharesBySecret for why expired shares are excluded (#402).
 func (ls *LocalStorage) ListSharesByGroup(ctx context.Context, groupID uint) ([]*models.ShareRecord, error) {
 	var shares []*models.ShareRecord
-	if err := ls.db.Where("recipient_id = ? AND is_group = ? AND deleted_at IS NULL", groupID, true).Find(&shares).Error; err != nil {
+	if err := ls.db.Where(
+		"recipient_id = ? AND is_group = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+		groupID, true, time.Now(),
+	).Find(&shares).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return shares, nil
