@@ -78,6 +78,65 @@ func TestNotify_NeverReachesBroadcastSink(t *testing.T) {
 	assert.Equal(t, NotificationSecretShared, recipient.events[0].Type)
 }
 
+// TestUpgradeReminder_RedispatchesOnEscalation is a regression test for #482: an
+// escalation must re-fire the out-of-band delivery channel, not just update the DB
+// row. Before the fix, upgradeReminder only called storage.UpdateNotification —
+// dispatchNotification (the only path that reaches recipientNotificationSink.Deliver)
+// was never invoked on the escalation path, so a Warning reminder silently becoming
+// Critical while unread updated Title/Message/Severity in the DB but never re-sent the
+// email/webhook that would actually alert the user to the more severe state.
+func TestUpgradeReminder_RedispatchesOnEscalation(t *testing.T) {
+	store := new(MockStorage)
+	store.On("UpdateNotification", mock.Anything, mock.Anything).Return(nil)
+	store.On("GetUser", mock.Anything, uint(5)).Return(&models.User{ID: 5, Email: "admin@x.io"}, nil)
+
+	c := NewKeyorixCore(store)
+	sink := &fakeSink{}
+	c.SetRecipientNotificationSink(sink)
+
+	pid := uint(1)
+	existing := &models.Notification{
+		ID: 1, UserID: 5, ProjectID: &pid, Type: NotificationRotationDue,
+		Title: "Secrets due for rotation", Message: "1 secret(s) approaching",
+		Severity: models.NotificationSeverityWarning, Link: "/rotation-policies",
+	}
+
+	ok := c.upgradeReminder(context.Background(), existing, "Secrets due for rotation",
+		"1 secret(s) overdue for rotation.", models.NotificationSeverityCritical)
+	require.True(t, ok)
+
+	require.Len(t, sink.events, 1, "the escalation must re-fire delivery, not just update the DB row")
+	ev := sink.events[0]
+	assert.Equal(t, uint(5), ev.UserID)
+	assert.Equal(t, "admin@x.io", ev.Email)
+	assert.Equal(t, NotificationRotationDue, ev.Type)
+	assert.Equal(t, "1 secret(s) overdue for rotation.", ev.Message, "the redispatched event carries the escalated message, not the stale one")
+	assert.Equal(t, "/rotation-policies", ev.Link)
+	require.NotNil(t, ev.ProjectID)
+	assert.Equal(t, uint(1), *ev.ProjectID)
+
+	// The in-memory row itself was upgraded in place.
+	assert.Equal(t, models.NotificationSeverityCritical, existing.Severity)
+}
+
+// TestUpgradeReminder_UpdateFailure_SkipsDispatch ensures a failed DB update does not
+// still fire an out-of-band delivery for a row that was never actually persisted.
+func TestUpgradeReminder_UpdateFailure_SkipsDispatch(t *testing.T) {
+	store := new(MockStorage)
+	store.On("UpdateNotification", mock.Anything, mock.Anything).Return(assert.AnError)
+
+	c := NewKeyorixCore(store)
+	sink := &fakeSink{}
+	c.SetRecipientNotificationSink(sink)
+
+	existing := &models.Notification{ID: 1, UserID: 5, Type: NotificationRotationDue}
+	ok := c.upgradeReminder(context.Background(), existing, "t", "m", models.NotificationSeverityCritical)
+
+	assert.False(t, ok)
+	assert.Empty(t, sink.events, "a failed persist must not still fire delivery")
+	store.AssertNotCalled(t, "GetUser", mock.Anything, mock.Anything)
+}
+
 // SendComplianceDigest and notifyRotationFailures are the deliberately-deployment-
 // wide, aggregate broadcasts (#391) — they must keep reaching the broadcast sink
 // (Slack/Teams/webhook), never the per-user recipient sink (which they don't

@@ -85,9 +85,20 @@ func (c *KeyorixCore) notifyWithSeverity(ctx context.Context, userID uint, nType
 // piling up a second unread notification of the same (user, type, project).
 // Returns whether the update succeeded (best-effort — a storage failure here
 // just means the stale reminder stands until the next tick).
+//
+// #482: an escalation must also re-fire the out-of-band channel exactly like a
+// fresh notification does, or a Warning-level reminder silently escalating to
+// Critical (e.g. "expiring soon" → "now expired") would update the DB row but
+// never re-send the email/webhook that made the state change visible in the
+// first place. dispatchNotification is only called after the DB update
+// succeeds, mirroring notifyWithSeverity's create path.
 func (c *KeyorixCore) upgradeReminder(ctx context.Context, n *models.Notification, title, message string, severity models.NotificationSeverity) bool {
 	n.Title, n.Message, n.Severity = title, message, severity
-	return c.storage.UpdateNotification(ctx, n) == nil
+	if c.storage.UpdateNotification(ctx, n) != nil {
+		return false
+	}
+	c.dispatchNotification(ctx, n.UserID, n.Type, title, message, n.ProjectID, n.Link)
+	return true
 }
 
 // dispatchNotification fans a per-user notification out to the recipient-addressable
