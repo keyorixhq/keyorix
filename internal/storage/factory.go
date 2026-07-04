@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -255,17 +254,47 @@ func (f *DefaultStorageFactory) createRemoteStorage(cfg *config.Config) (storage
 	return store.NewRemoteStorage(remoteConfig)
 }
 
+// columnExists reports whether table already has column, branching on the
+// dialect like indexExists below: information_schema on Postgres, but SQLite
+// has no information_schema at all — querying it there returns a "no such
+// table" driver error that this Raw().Scan() call was silently swallowing
+// (Scan's error return was never checked), so columnExists was unconditionally
+// returning false for every SQLite deployment (the default "local" storage
+// backend). Every `columnExists(...) && ...`-gated ALTER TABLE ADD COLUMN
+// below was consequently silently unreachable on SQLite; a fresh installs
+// still get the column via models.X{}'s own struct tag through AutoMigrate,
+// masking the gap, but any additive column that (like several here) is only
+// ever added via this raw-SQL path and never via a struct tag would silently
+// never reach an existing SQLite database. pragma_table_info is a builtin
+// table-valued function on both the CGO (mattn) and pure-Go SQLite drivers.
 func columnExists(db *gorm.DB, table, column string) bool {
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", table, column).Scan(&count)
+	if db.Dialector.Name() == "postgres" {
+		db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", table, column).Scan(&count)
+	} else {
+		db.Raw("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?", table, column).Scan(&count)
+	}
 	return count > 0
 }
 
 // tableExists checks whether a table exists without relying on GORM's HasTable
-// (which can fail with "insufficient arguments" on some Postgres driver versions).
+// (which can fail with "insufficient arguments" on some Postgres driver
+// versions). See columnExists's doc comment: this had the identical SQLite gap
+// (information_schema.tables doesn't exist there, so the query errored and the
+// unchecked Scan silently left count at its zero value) — every
+// `tableExists(...)`-gated block, including the ensureDynamicSecretConfigNameIndex
+// and ensureProjectMembershipIndex calls this same file makes below, was
+// unconditionally skipped on every SQLite ("local" storage) deployment, which
+// is the default backend. That means the very unique indexes this file (and
+// the #490 fix in particular) exists to create were never actually being
+// created on SQLite at all.
 func tableExists(db *gorm.DB, table string) bool {
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", table).Scan(&count)
+	if db.Dialector.Name() == "postgres" {
+		db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?", table).Scan(&count)
+	} else {
+		db.Raw("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count)
+	}
 	return count > 0
 }
 
@@ -288,88 +317,48 @@ func indexExists(db *gorm.DB, indexName string) bool {
 	return count > 0
 }
 
-// dedupeBeforeUniqueIndex removes all but one row per group of pre-existing rows
-// in table that share keyExpr (a column list or SQL expression, e.g.
-// "project_id, environment_id, name" or "LOWER(email)"), optionally restricted
-// to rows matching whereClause (mirroring a partial index's own predicate, e.g.
-// "deleted_at IS NULL" — pass "" for a plain, non-partial index).
-//
-// This closes #490: the ensure*Index helpers below create a brand-new unique
-// (or partial-unique) index with a bare `CREATE UNIQUE INDEX IF NOT EXISTS`,
-// which has no "drop the extras" mode. Any install that already accumulated
-// duplicate rows before the index existed — via the exact same check-then-
-// create race the index is meant to close, a bulk import, or a restore — makes
-// that CREATE UNIQUE INDEX fail outright, and the error propagates out of
-// migrateDatabase and blocks the server from starting at all on upgrade. This
-// dedup pass runs first so the index can always be created successfully.
-//
-// The survivor of each duplicate group is the lowest-id row (== earliest
-// created, since ids are assigned by an ever-increasing primary key sequence on
-// both SQLite and Postgres) — a deterministic, storage-agnostic tie-break that
-// doesn't require guessing which duplicate an operator considers authoritative.
-// Every row removed is named in a single WARNING log line (table, key
-// expression, and the exact ids deleted) so an operator has an audit trail of
-// what an unattended migration deleted — this touches live data and must never
-// happen with zero signal.
-//
-// Callers gate this on !indexExists(db, indexName) so the scan runs at most
-// once per deployment's lifetime, never on repeat boots once the index exists.
-func dedupeBeforeUniqueIndex(db *gorm.DB, table, keyExpr, whereClause string) error {
-	groupFilter := ""
-	if whereClause != "" {
-		groupFilter = " WHERE " + whereClause
-	}
-	survivors := fmt.Sprintf("SELECT MIN(id) FROM %s%s GROUP BY %s", table, groupFilter, keyExpr)
-
-	dupFilter := fmt.Sprintf("id NOT IN (%s)", survivors)
-	if whereClause != "" {
-		dupFilter = whereClause + " AND " + dupFilter
-	}
-
-	var dupIDs []int64
-	if err := db.Raw(fmt.Sprintf("SELECT id FROM %s WHERE %s", table, dupFilter)).Scan(&dupIDs).Error; err != nil {
-		return fmt.Errorf("failed to scan %s for pre-existing duplicate rows: %w", table, err)
-	}
-	if len(dupIDs) == 0 {
-		return nil
-	}
-
-	if err := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE id IN ?", table), dupIDs).Error; err != nil {
-		return fmt.Errorf("failed to remove pre-existing duplicate rows from %s: %w", table, err)
-	}
-
-	log.Printf("WARNING: migration removed %d pre-existing duplicate row(s) from %s (ids=%v) that shared a value of (%s) which a new unique index now enforces; the surviving row in each duplicate group is the lowest-id (earliest-created) one (#490)",
-		len(dupIDs), table, dupIDs, keyExpr)
-	return nil
-}
-
 // warnIfDuplicatesExist checks whether pre-existing rows already violate the
 // unique constraint about to be created and, if so, returns a clear, actionable
 // error instead of letting the bare CREATE UNIQUE INDEX fail later with an
 // opaque driver-level "duplicate key"/"UNIQUE constraint failed" message
-// (#490). Unlike dedupeBeforeUniqueIndex, this never deletes or modifies any
-// row: it is used only for tables where a "duplicate" under the predicate is
-// not an incidental clash of the same event but a distinct, compliance-
-// relevant record in its own right (break_glass_activations,
-// legal_holds) — silently deleting one, or flipping its status, at boot is
-// itself a consequential action that deserves a deliberate operator decision
-// via the application's own APIs (which record a proper audit entry), not an
-// unattended migration script. This still fails the boot on a genuine
-// conflict (same outcome as before this fix), but with a message that tells
-// the operator exactly what to do, instead of an opaque constraint-violation
-// error surfacing from deep inside a later CREATE INDEX statement.
+// (#490). whereClause mirrors a partial index's own predicate (e.g.
+// "deleted_at IS NULL"); pass "" for a plain, non-partial index.
+//
+// This never deletes or modifies any row. Every ensure*Index helper below uses
+// this rather than an auto-delete/dedup pass: a row that collides on the new
+// unique key is never guaranteed to be a redundant repeat of the same event —
+// for every one of these tables, the non-key columns (an encrypted secret
+// value, a permission level, a role, an admin DSN, an account's password hash
+// and MFA config, a project's child secrets/environments) can legitimately
+// differ between the colliding rows, so an arbitrary "keep the lowest id"
+// tie-break could silently destroy the one that was actually correct/current
+// with zero operator visibility. Resolving a genuine conflict is therefore
+// left to a deliberate operator decision made through the application's own
+// APIs (which record a proper audit entry), not an unattended migration
+// script. This still fails the boot on a genuine conflict (same outcome as
+// before this fix), but with a message that tells the operator exactly what to
+// do, instead of an opaque constraint-violation error surfacing from deep
+// inside a later CREATE INDEX statement.
 func warnIfDuplicatesExist(db *gorm.DB, table, keyExpr, whereClause, remediation string) error {
+	groupFilter := ""
+	if whereClause != "" {
+		groupFilter = " WHERE " + whereClause
+	}
 	var dupGroups int64
 	query := fmt.Sprintf(
-		"SELECT COUNT(*) FROM (SELECT %s FROM %s WHERE %s GROUP BY %s HAVING COUNT(*) > 1) dupes",
-		keyExpr, table, whereClause, keyExpr,
+		"SELECT COUNT(*) FROM (SELECT %s FROM %s%s GROUP BY %s HAVING COUNT(*) > 1) dupes",
+		keyExpr, table, groupFilter, keyExpr,
 	)
 	if err := db.Raw(query).Scan(&dupGroups).Error; err != nil {
 		return fmt.Errorf("failed to check %s for pre-existing duplicates: %w", table, err)
 	}
 	if dupGroups > 0 {
+		predicate := whereClause
+		if predicate == "" {
+			predicate = "(no predicate — every row is in scope)"
+		}
 		return fmt.Errorf("cannot create unique index on %s (%s): %d pre-existing group(s) of rows already share a value under %q — %s",
-			table, keyExpr, dupGroups, whereClause, remediation)
+			table, keyExpr, dupGroups, predicate, remediation)
 	}
 	return nil
 }
@@ -1043,8 +1032,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 // revoke. Idempotent; works on SQLite and Postgres.
 func ensureShareRecordUniqueIndex(db *gorm.DB) error {
 	const idxName = "uniq_share_records_active"
+	// #490: two colliding share rows can carry different Permission ("read" vs
+	// "write") or ExpiresAt values — an auto-delete keyed on lowest-id could
+	// silently discard the intended grant and leave the wrong one (e.g. a
+	// stale broader "write" share) in effect. Fail loud instead so an operator
+	// resolves the conflict deliberately.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "share_records", "secret_id, recipient_id, is_group", "deleted_at IS NULL"); err != nil {
+		if err := warnIfDuplicatesExist(db, "share_records", "secret_id, recipient_id, is_group", "deleted_at IS NULL",
+			"revoke or re-share the conflicting active share record(s) for the affected secret+recipient via the application's share revoke/create API before upgrading"); err != nil {
 			return err
 		}
 	}
@@ -1062,8 +1057,19 @@ func ensureShareRecordUniqueIndex(db *gorm.DB) error {
 // works on SQLite and Postgres.
 func ensureSecretVersionIndex(db *gorm.DB) error {
 	const idxName = "uniq_secret_versions_node_version"
+	// #490: two rows colliding on version_number came from the exact
+	// concurrent-rotation race this index closes — they very plausibly hold
+	// two DIFFERENT EncryptedValue payloads. GetLatestSecretVersion resolves
+	// the "current" version by `ORDER BY version_number DESC LIMIT 1`
+	// (store/local_secrets.go), which is an undefined tie-break across a
+	// version_number collision; auto-deleting the lowest-id row could
+	// silently discard the actual most-recently-rotated secret value and roll
+	// the vault back to stale content with zero signal. There is no
+	// application-level "merge two secret versions" API, so this fails loud
+	// and points at a manual, out-of-band resolution instead.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "secret_versions", "secret_node_id, version_number", ""); err != nil {
+		if err := warnIfDuplicatesExist(db, "secret_versions", "secret_node_id, version_number", "",
+			"resolve the conflicting secret version rows manually (they may hold different encrypted values from a version-number race) — consult the operator runbook or contact support before upgrading; do not delete either row without first confirming which encrypted value is current"); err != nil {
 			return err
 		}
 	}
@@ -1086,8 +1092,13 @@ func ensureDynamicSecretConfigNameIndex(db *gorm.DB) error {
 	// race the index closes, a bulk import, or a restore — would otherwise
 	// hit a bare CREATE UNIQUE INDEX failure here, propagating out of
 	// migrateDatabase and blocking the server from starting at all on upgrade.
+	// Two colliding rows can carry different AdminDSNEnc/CreationTemplate/
+	// BackendType values, so this fails loud instead of auto-deleting one and
+	// silently breaking whichever lease depended on its specific connection
+	// details.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "dynamic_secret_configs", "project_id, environment_id, name", ""); err != nil {
+		if err := warnIfDuplicatesExist(db, "dynamic_secret_configs", "project_id, environment_id, name", "",
+			"rename or delete one of the conflicting dynamic secret configs via the application's dynamic-secret-config API before upgrading"); err != nil {
 			return err
 		}
 	}
@@ -1107,8 +1118,13 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 		return fmt.Errorf("failed to drop legacy groups name index: %w", err)
 	}
 	const idxName = "uniq_groups_name_active"
+	// #490: other tables (GroupRole, UserGroup) reference a group by ID, so
+	// auto-deleting one of two "duplicate name" groups would silently orphan
+	// any real memberships/role-grants tied to the deleted group's ID. Fail
+	// loud instead so an operator resolves the name collision deliberately.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "groups", "name", "deleted_at IS NULL"); err != nil {
+		if err := warnIfDuplicatesExist(db, "groups", "name", "deleted_at IS NULL",
+			"rename or delete one of the conflicting groups via the application's group-rename/delete API before upgrading"); err != nil {
 			return err
 		}
 	}
@@ -1129,8 +1145,13 @@ func ensureGroupNameIndex(db *gorm.DB) error {
 // ensureGroupNameIndex/ensureUserNameIndex (partial unique index, live rows only).
 func ensureProjectMembershipIndex(db *gorm.DB) error {
 	const idxName = "uniq_project_memberships_active"
+	// #490: the #309 race this index closes lets two concurrent invites for
+	// the same (project, user) both commit — plausibly with different Role
+	// values. Auto-deleting the lowest-id row doesn't necessarily keep the
+	// intended/correct role, so this fails loud instead.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "project_memberships", "project_id, user_id", "state <> 'revoked'"); err != nil {
+		if err := warnIfDuplicatesExist(db, "project_memberships", "project_id, user_id", "state <> 'revoked'",
+			"revoke one of the conflicting non-revoked memberships for the affected project+user via the application's membership-revoke API before upgrading"); err != nil {
 			return err
 		}
 	}
@@ -1151,14 +1172,14 @@ func ensureProjectMembershipIndex(db *gorm.DB) error {
 // expires or is revoked. Idempotent; works on both SQLite and Postgres.
 func ensureBreakGlassActiveIndex(db *gorm.DB) error {
 	const idxName = "uniq_break_glass_active_project_user"
-	// #490: unlike the identity/dedup tables above, an "extra" active
-	// break-glass row here is not an incidental duplicate of the same event —
-	// it is a distinct, audit-relevant activation record. Silently deleting or
-	// re-statusing one at boot would itself be a consequential, compliance-
-	// sensitive action, so this deliberately does NOT auto-remediate; it just
-	// fails with an actionable message (instead of an opaque DB constraint
-	// error) telling the operator to resolve the conflict via the
-	// application's own revoke API first, which records a proper audit entry.
+	// #490: an "extra" active break-glass row here is not an incidental
+	// duplicate of the same event — it is a distinct, audit-relevant
+	// activation record. Silently deleting or re-statusing one at boot would
+	// itself be a consequential, compliance-sensitive action, so this
+	// deliberately does NOT auto-remediate; it just fails with an actionable
+	// message (instead of an opaque DB constraint error) telling the operator
+	// to resolve the conflict via the application's own revoke API first,
+	// which records a proper audit entry.
 	if !indexExists(db, idxName) {
 		if err := warnIfDuplicatesExist(db, "break_glass_activations", "project_id, user_id", "state = 'active'",
 			"revoke the extra active break-glass activation(s) for the affected project+user via the application's break-glass revoke API before upgrading"); err != nil {
@@ -1185,8 +1206,14 @@ func ensureUserNameIndex(db *gorm.DB) error {
 		}
 	}
 	const idxName = "uniq_users_username_active"
+	// #490: two accounts colliding on username are two DIFFERENT real users
+	// (their own PasswordHash, MFA config, sessions), and other tables
+	// (roles, audit logs, owned secrets, sessions) reference a user by ID —
+	// auto-deleting one would silently delete a real account/credential and
+	// leave those references dangling. Fail loud instead.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "users", "username", "deleted_at IS NULL"); err != nil {
+		if err := warnIfDuplicatesExist(db, "users", "username", "deleted_at IS NULL",
+			"merge or rename the conflicting user accounts via the application's admin user API before upgrading"); err != nil {
 			return err
 		}
 	}
@@ -1214,8 +1241,13 @@ func ensureUserNameIndex(db *gorm.DB) error {
 // IF [NOT] EXISTS).
 func ensureUserEmailIndex(db *gorm.DB) error {
 	const idxName = "uniq_users_email_active"
+	// #490: same reasoning as ensureUserNameIndex — two accounts colliding on
+	// email are two DIFFERENT real accounts with their own credential/MFA
+	// state, and other tables reference a user by ID. Fail loud instead of
+	// auto-deleting one.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "users", "LOWER(email)", "deleted_at IS NULL AND email <> ''"); err != nil {
+		if err := warnIfDuplicatesExist(db, "users", "LOWER(email)", "deleted_at IS NULL AND email <> ''",
+			"merge or update the email of one of the conflicting user accounts via the application's admin user API before upgrading"); err != nil {
 			return err
 		}
 	}
@@ -1236,8 +1268,14 @@ func ensureUserEmailIndex(db *gorm.DB) error {
 // Idempotent; works on SQLite and Postgres.
 func ensureUserExternalIDIndex(db *gorm.DB) error {
 	const idxName = "uniq_users_external_id_active"
+	// #490: same reasoning as ensureUserNameIndex/ensureUserEmailIndex — two
+	// accounts colliding on external_id are two DIFFERENT real accounts.
+	// Deciding which is the authoritative SSO/SCIM identity is a deliberate
+	// admin call, not something an unattended migration should guess by
+	// lowest-id. Fail loud instead.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "users", "external_id", "deleted_at IS NULL AND external_id != ''"); err != nil {
+		if err := warnIfDuplicatesExist(db, "users", "external_id", "deleted_at IS NULL AND external_id != ''",
+			"resolve the conflicting user accounts sharing this external_id (rename/merge/deprovision one) via the application's admin user API before upgrading"); err != nil {
 			return err
 		}
 	}
@@ -1270,8 +1308,16 @@ func ensureUserExternalIDIndex(db *gorm.DB) error {
 // (Unicode Technical Standard #39) and is intentionally out of scope here.
 func ensureProjectNameIndex(db *gorm.DB) error {
 	const idxName = "uniq_projects_name_active"
+	// #490: this index is ADDING name uniqueness for the first time — nothing
+	// enforced it before, so on a pre-existing install two DIFFERENT,
+	// legitimate projects could plausibly share a display name coincidentally.
+	// Projects are the parent of secrets/environments/machine identities via
+	// project_id foreign keys that this migration does not cascade-delete;
+	// auto-removing one "duplicate" project would silently orphan an entire
+	// project's worth of child data. Fail loud instead.
 	if !indexExists(db, idxName) {
-		if err := dedupeBeforeUniqueIndex(db, "projects", "LOWER(name)", "deleted_at IS NULL AND name <> ''"); err != nil {
+		if err := warnIfDuplicatesExist(db, "projects", "LOWER(name)", "deleted_at IS NULL AND name <> ''",
+			"rename or archive one of the conflicting projects via the application's project-rename/archive API before upgrading"); err != nil {
 			return err
 		}
 	}

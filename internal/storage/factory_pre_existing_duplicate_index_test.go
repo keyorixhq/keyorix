@@ -13,19 +13,22 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestDynamicSecretConfigNameIndex_DedupesPreExistingDuplicates pins #490: the
-// #462 fix (ensureDynamicSecretConfigNameIndex) creates a bare
+// TestDynamicSecretConfigNameIndex_FailsLoudOnPreExistingDuplicates pins #490:
+// the #462 fix (ensureDynamicSecretConfigNameIndex) creates a bare
 // `CREATE UNIQUE INDEX` on (project_id, environment_id, name) with no
-// pre-migration cleanup pass. Any install that already accumulated duplicate
-// rows before that index existed — via the very check-then-create race the
-// index was meant to close, a bulk import, or a restore — would previously
-// hit a hard migration failure on upgrade, blocking the server from starting
-// at all. The migration must instead dedupe first (keeping the lowest-id /
-// earliest-created row per duplicate group) so the index can always be
-// created, and the resulting index must actually reject a fresh duplicate
-// insert afterward.
-func TestDynamicSecretConfigNameIndex_DedupesPreExistingDuplicates(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "dynconfig-dedup.db")
+// pre-migration check. Any install that already accumulated duplicate rows
+// before that index existed — via the very check-then-create race the index
+// was meant to close, a bulk import, or a restore — would otherwise hit an
+// opaque driver-level constraint-violation error deep inside migrateDatabase.
+//
+// Two rows colliding on (project, env, name) can carry different AdminDSNEnc/
+// CreationTemplate/BackendType values (they are not guaranteed to be
+// redundant repeats of the same event), so the migration must NOT silently
+// delete either one — it must fail with a clear, actionable error naming the
+// conflicting table and pointing the operator at a real remediation path,
+// leaving both rows untouched.
+func TestDynamicSecretConfigNameIndex_FailsLoudOnPreExistingDuplicates(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dynconfig-dup.db")
 	db, err := gormOpenForTest(t, dbPath)
 	require.NoError(t, err)
 
@@ -35,58 +38,48 @@ func TestDynamicSecretConfigNameIndex_DedupesPreExistingDuplicates(t *testing.T)
 	require.NoError(t, db.AutoMigrate(&models.DynamicSecretConfig{}))
 
 	// Seed pre-existing duplicates directly via raw insert, bypassing any
-	// app-level uniqueness check entirely — the exact #490 scenario.
-	dup1 := &models.DynamicSecretConfig{Name: "pg-app", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres"}
+	// app-level uniqueness check entirely — the exact #490 scenario. The two
+	// rows deliberately carry different BackendType/CreationTemplate values to
+	// demonstrate they are not necessarily redundant.
+	dup1 := &models.DynamicSecretConfig{Name: "pg-app", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres", CreationTemplate: "GRANT SELECT ...;"}
 	require.NoError(t, db.Create(dup1).Error)
-	dup2 := &models.DynamicSecretConfig{Name: "pg-app", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres"}
+	dup2 := &models.DynamicSecretConfig{Name: "pg-app", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres", CreationTemplate: "GRANT ALL ...;"}
 	require.NoError(t, db.Create(dup2).Error)
-	dup3 := &models.DynamicSecretConfig{Name: "pg-app", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres"}
-	require.NoError(t, db.Create(dup3).Error)
 	// A row under a different key must be left untouched.
 	other := &models.DynamicSecretConfig{Name: "pg-other", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres"}
 	require.NoError(t, db.Create(other).Error)
 
 	var countBefore int64
 	require.NoError(t, db.Model(&models.DynamicSecretConfig{}).Count(&countBefore).Error)
-	require.Equal(t, int64(4), countBefore)
+	require.Equal(t, int64(3), countBefore)
 
-	// (a) The migration step must NOT error on the pre-existing duplicates.
-	require.NoError(t, ensureDynamicSecretConfigNameIndex(db))
+	// The migration step must fail loud instead of silently deleting a row.
+	err = ensureDynamicSecretConfigNameIndex(db)
+	require.Error(t, err, "pre-existing duplicates must block the migration with an actionable error, not be silently deleted")
+	assert.Contains(t, err.Error(), "dynamic_secret_configs")
+	assert.Contains(t, err.Error(), "dynamic-secret-config API")
 
-	// (b) Exactly one survivor per duplicate group — the lowest-id (earliest
-	// created) row.
-	var survivors []models.DynamicSecretConfig
-	require.NoError(t, db.Where("project_id = ? AND environment_id = ? AND name = ?", 1, 1, "pg-app").Find(&survivors).Error)
-	require.Len(t, survivors, 1, "only one row per duplicate group must survive")
-	assert.Equal(t, dup1.ID, survivors[0].ID, "the lowest-id (earliest-created) row must be the survivor")
-
-	var otherCount int64
-	require.NoError(t, db.Model(&models.DynamicSecretConfig{}).Where("id = ?", other.ID).Count(&otherCount).Error)
-	assert.Equal(t, int64(1), otherCount, "a row under a different key must be untouched")
-
-	// (c) The index now exists and rejects a fresh duplicate insert.
-	err = db.Create(&models.DynamicSecretConfig{Name: "pg-app", ProjectID: 1, EnvironmentID: 1, BackendType: "postgres"}).Error
-	require.Error(t, err, "the unique index must now reject a duplicate (project, env, name) insert")
-
-	// Re-running the migration step (simulating a later boot, once the index
-	// already exists) must be a pure no-op: no error, no further row loss, and
-	// no re-scan for duplicates (guarded by indexExists).
-	require.NoError(t, ensureDynamicSecretConfigNameIndex(db))
+	// No row was touched: both duplicates and the unrelated row still exist.
 	var countAfter int64
 	require.NoError(t, db.Model(&models.DynamicSecretConfig{}).Count(&countAfter).Error)
-	assert.Equal(t, int64(2), countAfter, "survivor + untouched row only")
+	assert.Equal(t, int64(3), countAfter, "no row may be deleted by a failed migration check")
+
+	var survivingDup2 models.DynamicSecretConfig
+	require.NoError(t, db.First(&survivingDup2, dup2.ID).Error, "dup2 must not have been deleted")
 }
 
-// TestDynamicSecretConfigNameIndex_FullBootDoesNotHardFail exercises the real
-// production entry point end to end: CreateStorage -> migrateDatabase against
-// a database file that already has duplicate dynamic_secret_configs rows
-// before the process ever calls it (simulating an upgrade of a pre-#462
-// install). Boot must succeed, not error out.
-func TestDynamicSecretConfigNameIndex_FullBootDoesNotHardFail(t *testing.T) {
+// TestDynamicSecretConfigNameIndex_FullBootHardFailsOnPreExistingDuplicates
+// exercises the real production entry point end to end: CreateStorage ->
+// migrateDatabase against a database file that already has duplicate
+// dynamic_secret_configs rows before the process ever calls it (simulating an
+// upgrade of a pre-#462 install). Boot must fail with the actionable
+// warnIfDuplicatesExist error rather than an opaque driver-level constraint
+// violation — and, per #490, must not have deleted either conflicting row.
+func TestDynamicSecretConfigNameIndex_FullBootHardFailsOnPreExistingDuplicates(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	defer i18n.ResetForTesting()
 
-	dbPath := filepath.Join(t.TempDir(), "dynconfig-boot-dedup.db")
+	dbPath := filepath.Join(t.TempDir(), "dynconfig-boot-dup.db")
 
 	// Simulate a pre-#462 database: create only the dynamic_secret_configs
 	// table (no unique index) and seed duplicates directly, then close this
@@ -105,41 +98,53 @@ func TestDynamicSecretConfigNameIndex_FullBootDoesNotHardFail(t *testing.T) {
 	cfg.Storage.Database.Path = dbPath
 
 	_, err = NewStorageFactory().CreateStorage(cfg)
-	require.NoError(t, err, "boot must not hard-fail on pre-existing dynamic_secret_configs duplicates (#490)")
+	require.Error(t, err, "boot must fail loud (not silently delete a row) on pre-existing dynamic_secret_configs duplicates (#490)")
+	assert.Contains(t, err.Error(), "dynamic_secret_configs")
+
+	// Re-open directly and confirm both conflicting rows are still present.
+	verifyDB, err := gormOpenForTest(t, dbPath)
+	require.NoError(t, err)
+	var count int64
+	require.NoError(t, verifyDB.Model(&models.DynamicSecretConfig{}).Where("project_id = ? AND environment_id = ? AND name = ?", 5, 1, "shared").Count(&count).Error)
+	assert.Equal(t, int64(2), count, "a failed migration check must not delete either conflicting row")
 }
 
-// TestProjectMembershipIndex_DedupesPreExistingDuplicates sanity-checks the
-// shared dedupeBeforeUniqueIndex helper against a *partial* index (scoped by a
-// WHERE predicate), not just the plain index the primary #462/#490 case above
-// covers — proving the fix generalizes to the sibling ensure*Index helpers.
-func TestProjectMembershipIndex_DedupesPreExistingDuplicates(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "membership-dedup.db")
+// TestProjectMembershipIndex_FailsLoudOnPreExistingDuplicates sanity-checks
+// warnIfDuplicatesExist against a *partial* index (scoped by a WHERE
+// predicate), not just the plain index the dynamic_secret_configs case above
+// covers — proving the fail-loud behavior generalizes to the sibling
+// ensure*Index helpers. Two non-revoked memberships for the same (project,
+// user) can carry different Role values (the #309 fix comment explicitly
+// calls this out), so the migration must not guess which one is correct by
+// deleting the other.
+func TestProjectMembershipIndex_FailsLoudOnPreExistingDuplicates(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "membership-dup.db")
 	db, err := gormOpenForTest(t, dbPath)
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.ProjectMembership{}))
 
-	live1 := &models.ProjectMembership{ProjectID: 1, UserID: 1, State: "active"}
+	live1 := &models.ProjectMembership{ProjectID: 1, UserID: 1, State: "active", Role: "viewer"}
 	require.NoError(t, db.Create(live1).Error)
-	live2 := &models.ProjectMembership{ProjectID: 1, UserID: 1, State: "active"}
+	live2 := &models.ProjectMembership{ProjectID: 1, UserID: 1, State: "active", Role: "admin"}
 	require.NoError(t, db.Create(live2).Error)
 	// A revoked row for the same (project, user) must be left alone — it falls
 	// outside the partial index's WHERE state <> 'revoked' predicate.
 	revoked := &models.ProjectMembership{ProjectID: 1, UserID: 1, State: "revoked"}
 	require.NoError(t, db.Create(revoked).Error)
 
-	require.NoError(t, ensureProjectMembershipIndex(db))
+	err = ensureProjectMembershipIndex(db)
+	require.Error(t, err, "pre-existing non-revoked duplicates must block the migration with an actionable error, not be silently deleted")
+	assert.Contains(t, err.Error(), "project_memberships")
+	assert.Contains(t, err.Error(), "membership-revoke API")
 
+	// Neither conflicting row was touched.
 	var liveRows []models.ProjectMembership
 	require.NoError(t, db.Where("project_id = ? AND user_id = ? AND state <> 'revoked'", 1, 1).Find(&liveRows).Error)
-	require.Len(t, liveRows, 1, "only one non-revoked row per (project, user) must survive")
-	assert.Equal(t, live1.ID, liveRows[0].ID)
+	require.Len(t, liveRows, 2, "a failed migration check must not delete either conflicting non-revoked row")
 
 	var revokedCount int64
 	require.NoError(t, db.Model(&models.ProjectMembership{}).Where("id = ?", revoked.ID).Count(&revokedCount).Error)
 	assert.Equal(t, int64(1), revokedCount, "the revoked row (outside the partial predicate) must be untouched")
-
-	err = db.Create(&models.ProjectMembership{ProjectID: 1, UserID: 1, State: "active"}).Error
-	require.Error(t, err, "the partial unique index must reject a second non-revoked row for the same (project, user)")
 }
 
 // gormOpenForTest opens a fresh SQLite connection at dbPath using the same
