@@ -88,6 +88,51 @@ func highestSecretsAction(perms []*models.Permission) string {
 	return best
 }
 
+// nonSecretsAdminPermissions are permission names, outside the secrets resource,
+// that confer administrative capability over the PROJECT itself — granting/
+// revoking access for other principals, or install-wide control — rather than
+// merely reading/writing secret values. Holding one of these makes a role
+// "admin-tier" for roleIsAdminTier (#258), alongside secrets.delete/admin.
+var nonSecretsAdminPermissions = map[string]bool{
+	"roles.assign": true,
+	"roles.write":  true,
+	"roles.delete": true,
+	"users.write":  true,
+	"users.delete": true,
+	"system.write": true,
+	"system.admin": true,
+}
+
+// roleIsAdminTier reports whether a role's permission set confers administrative
+// capability: destructive/whole-secret control (secrets.delete or secrets.admin) or
+// the ability to manage who else has access (role assignment, user/system
+// management) — as opposed to plain secrets.read/secrets.write.
+//
+// This is the classification behind the admin-tier half of dormant-role-grant
+// detection (#258): a role's grant should only be considered "used" by ordinary
+// secret-read/write activity when the role ITSELF is only read/write-tier. An
+// admin-tier role (e.g. project_admin) needs evidence of an actually-exercised
+// elevated action (see LastUserElevatedActivity) — a user reading secrets under a
+// separate, lower-tier grant must not mask an unused admin-tier standing grant.
+//
+// This is a practical approximation, not a perfect per-permission attribution: the
+// audit trail records WHICH ACTION occurred (e.g. "a role was assigned"), not
+// WHICH GRANT the actor invoked to authorize it. A user holding two admin-tier
+// role grants in the same project who exercises either one will show both as
+// "used" — this only distinguishes admin-tier activity from pure read/write
+// activity, not one admin-tier grant from another.
+func roleIsAdminTier(perms []*models.Permission) bool {
+	for _, p := range perms {
+		if p.Resource == "secrets" && (p.Action == "delete" || p.Action == "admin") {
+			return true
+		}
+		if nonSecretsAdminPermissions[p.Name] {
+			return true
+		}
+	}
+	return false
+}
+
 // GenerateProjectAccessReview returns every grant of access to a project's secrets
 // (ISO 27001 A.5.18): the role-based standing access (project-scoped role grants
 // whose role confers a secrets.* permission) and the per-secret grants (ownership

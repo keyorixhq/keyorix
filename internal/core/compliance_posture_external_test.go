@@ -84,3 +84,73 @@ func TestCompliancePosture_RecentActivityNotDormant(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants, "alice accessed a secret recently — not dormant")
 }
+
+// #258: role grants must be assessed per grant, not per user — an admin-tier grant
+// (secrets.delete + roles.assign, like the seeded "admin" role) must be flagged
+// dormant even when the SAME user has recent, ordinary read activity under a
+// separate, lower-tier grant (like "viewer") in the same project. Before this fix,
+// countDormantRoleGrants asked only "did this user have ANY secret-access activity
+// anywhere in the project", so the viewer grant's routine use masked a completely
+// separate, unused admin-tier standing grant as "non-dormant".
+func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotMaskedByReadActivity(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.AuditEvent{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.RotationPolicy{},
+	))
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	// alice holds both a read-tier grant (role 4, "viewer": secrets.read) and a
+	// separate admin-tier grant (role 2, "admin": seeded with secrets.delete +
+	// roles.assign among others) in the same project.
+	h.AssignUserRole(t, 10, 4, uptr(proj))
+	h.AssignUserRole(t, 10, 2, uptr(proj))
+
+	// She reads secrets weekly — recent, ordinary activity exercising the viewer
+	// grant — but never performs an admin-tier action (no role.assigned/removed or
+	// secret.deleted) anywhere in this project.
+	aid := uint(10)
+	pid := proj
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "secret.read", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-time.Hour),
+	}).Error)
+
+	p, err := h.CoreService.GetCompliancePosture(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, p.AccessGovernance.DormantRoleGrants,
+		"the unused admin-tier grant must be flagged dormant despite alice's recent read activity under the separate viewer grant")
+}
+
+// The companion case: once the admin-tier grant is actually exercised (a role
+// assignment change attributed to alice, in the project), it's no longer dormant —
+// demonstrating the fix distinguishes "used" from "unused" per grant rather than
+// simply always requiring elevated activity.
+func TestCompliancePosture_DormantRoleGrants_AdminTierGrantNotDormantWhenExercised(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	require.NoError(t, h.DB.AutoMigrate(
+		&models.AuditEvent{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.RotationPolicy{},
+	))
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 4, uptr(proj))
+	h.AssignUserRole(t, 10, 2, uptr(proj))
+
+	aid := uint(10)
+	pid := proj
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "secret.read", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-time.Hour),
+	}).Error)
+	require.NoError(t, h.DB.Create(&models.AuditEvent{
+		EventType: "role.assigned", UserID: &aid, ProjectID: &pid, EventTime: time.Now().Add(-time.Hour),
+	}).Error)
+
+	p, err := h.CoreService.GetCompliancePosture(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants,
+		"alice actually exercised the admin-tier grant — neither grant should be dormant")
+}

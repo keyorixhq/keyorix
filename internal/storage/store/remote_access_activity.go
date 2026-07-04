@@ -10,3 +10,7 @@ import (
 func (rs *RemoteStorage) LastUserSecretActivity(_ context.Context, _ uint) (map[uint]time.Time, error) {
 	return nil, remoteUnsupported("LastUserSecretActivity")
 }
+
+func (rs *RemoteStorage) LastUserElevatedActivity(_ context.Context, _ uint) (map[uint]time.Time, error) {
+	return nil, remoteUnsupported("LastUserElevatedActivity")
+}
