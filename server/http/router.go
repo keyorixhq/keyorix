@@ -639,7 +639,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			// (matching the group's role-grant routes below), not users.read.
 			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/members", groupHandler.AddGroupMember)
 			r.With(customMiddleware.RequirePermission("roles.assign")).Delete("/{id}/members/{userId}", groupHandler.RemoveGroupMember)
-			r.Get("/{id}/roles", rbacHandler.GetGroupRoles)
+			// Viewing a group's role grants discloses the same privilege-escalation
+			// topology as a single user's role list, so gate on roles.read (#262) —
+			// not the group-wide users.read (held by nearly every seeded role,
+			// including the baseline viewer). This matches GetUserRolesForUser above
+			// (#141) and the roles.read gate the /roles route group itself uses for
+			// GetRolePermissions; the mutating siblings (AssignRoleToGroup,
+			// RemoveRoleFromGroup) already require the more privileged roles.assign.
+			r.With(customMiddleware.RequirePermission("roles.read")).Get("/{id}/roles", rbacHandler.GetGroupRoles)
 			r.With(customMiddleware.RequirePermission("roles.assign")).Post("/{id}/roles", rbacHandler.AssignRoleToGroup)
 			r.With(customMiddleware.RequirePermission("roles.assign")).Delete("/{id}/roles/{roleId}", rbacHandler.RemoveRoleFromGroup)
 		})
