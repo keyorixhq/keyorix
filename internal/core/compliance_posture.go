@@ -15,6 +15,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/trust"
 )
 
@@ -225,14 +226,97 @@ type SupplyChainPosture struct {
 // soon" in the posture.
 const riskExpiringSoonWindow = 14 * 24 * time.Hour
 
+// complianceSnapshot holds every underlying sub-query that both GetCompliancePosture
+// and GenerateComplianceEvidence need, fetched EXACTLY ONCE per generation (#256).
+// Before this, GenerateComplianceEvidence independently re-ran the same queries a
+// second time after GetCompliancePosture had already run them — with no transaction
+// or snapshot isolation between the two passes, a concurrent write (a role granted, a
+// secret rotated, an SoD violation created/resolved) landing between the two reads
+// could make the resulting evidence pack's sections mutually inconsistent, even
+// though it gets HMAC-signed as one atomic point-in-time attestation. Building one
+// snapshot and having both the posture rollup and the evidence pack read from it
+// removes that gap entirely: there is no second pass left to diverge from the first.
+//
+// Each field pairs the fetched value with its own error (nil on success) so callers
+// keep applying the exact fail-open/degrade semantics they always have — a posture
+// sub-rollup and the evidence pack's copy of the same signal each still record their
+// own DegradedReasons entry — without re-issuing the query to learn that outcome.
+type complianceSnapshot struct {
+	projects []*models.Project
+
+	auditChain    *storage.AuditChainVerification
+	auditChainErr error
+
+	rotationStatuses []*RotationStatusEntry
+	rotationErr      error
+
+	sodReport *SoDViolationsReport
+	sodErr    error
+
+	// riskExceptionsActive is ListRiskExceptions(ctx, true) — active-only exceptions.
+	riskExceptionsActive []*RiskExceptionView
+	riskExceptionsErr    error
+
+	// Per-project results, keyed by project ID.
+	campaignsByProject     map[uint][]*CampaignWithProgress
+	campaignsErrByProject  map[uint]error
+	breakGlassByProject    map[uint][]*models.BreakGlassActivation
+	breakGlassErrByProject map[uint]error
+}
+
+// buildComplianceSnapshot fetches every shared sub-query once. ListProjects is the
+// one query treated as fatal (mirroring the previous accessGovernancePosture/
+// GenerateComplianceEvidence behavior) — everything else is best-effort, with its
+// error recorded on the snapshot for the caller to degrade on rather than abort.
+func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceSnapshot, error) {
+	projects, err := c.ListProjects(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	snap := &complianceSnapshot{
+		projects:               projects,
+		campaignsByProject:     make(map[uint][]*CampaignWithProgress, len(projects)),
+		campaignsErrByProject:  make(map[uint]error, len(projects)),
+		breakGlassByProject:    make(map[uint][]*models.BreakGlassActivation, len(projects)),
+		breakGlassErrByProject: make(map[uint]error, len(projects)),
+	}
+
+	snap.auditChain, snap.auditChainErr = c.VerifyAuditChain(ctx)
+	snap.rotationStatuses, snap.rotationErr = c.GetRotationStatus(ctx, nil, nil)
+	snap.sodReport, snap.sodErr = c.DetectSoDViolations(ctx)
+	snap.riskExceptionsActive, snap.riskExceptionsErr = c.ListRiskExceptions(ctx, true)
+
+	for _, proj := range projects {
+		pid := proj.ID
+		camps, cErr := c.ListAccessReviewCampaigns(ctx, pid)
+		snap.campaignsByProject[pid] = camps
+		snap.campaignsErrByProject[pid] = cErr
+
+		acts, bErr := c.ListBreakGlassActivations(ctx, pid)
+		snap.breakGlassByProject[pid] = acts
+		snap.breakGlassErrByProject[pid] = bErr
+	}
+	return snap, nil
+}
+
 // GetCompliancePosture aggregates the deployment's control posture. It is an
 // on-demand admin report (it walks every project for the access-governance roll-up),
 // not a hot path.
 func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePosture, error) {
+	snap, err := c.buildComplianceSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.compliancePostureFromSnapshot(ctx, snap), nil
+}
+
+// compliancePostureFromSnapshot builds the posture rollup entirely from an
+// already-fetched complianceSnapshot — no query in this function touches storage.
+func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *complianceSnapshot) *CompliancePosture {
 	p := &CompliancePosture{GeneratedAt: c.now()}
 
 	// Audit-trail integrity.
-	if v, err := c.VerifyAuditChain(ctx); err == nil && v != nil {
+	if v, err := snap.auditChain, snap.auditChainErr; err == nil && v != nil {
 		p.AuditIntegrity = AuditIntegrityPosture{
 			ChainVerified: v.Valid,
 			ChainedEvents: v.ChainedEvents,
@@ -256,7 +340,7 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	}
 
 	// Rotation hygiene (deployment-wide).
-	if statuses, err := c.GetRotationStatus(ctx, nil, nil); err == nil {
+	if statuses, err := snap.rotationStatuses, snap.rotationErr; err == nil {
 		p.Rotation.CoveredSecrets = len(statuses)
 		for _, s := range statuses {
 			switch s.Status {
@@ -271,15 +355,13 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	}
 
 	// Access governance + emergency access — per project.
-	if err := c.accessGovernancePosture(ctx, p); err != nil {
-		return nil, err
-	}
+	c.accessGovernancePostureFromSnapshot(ctx, p, snap)
 
 	// Separation-of-duties violations (A.5.3), net of governed risk exceptions
 	// (#170): an approved, active "sod"-category exception suppresses only the ONE
 	// violation it names, not the whole SoD control.
-	if sod, err := c.DetectSoDViolations(ctx); err == nil {
-		p.AccessGovernance.SoDViolations = len(c.suppressExceptedSoDViolations(ctx, sod.Violations))
+	if sod, err := snap.sodReport, snap.sodErr; err == nil {
+		p.AccessGovernance.SoDViolations = len(c.suppressExceptedSoDViolations(sod.Violations, snap.riskExceptionsActive, snap.riskExceptionsErr))
 		// #420: a principal whose permissions couldn't be read means the scan may be
 		// missing a violation for them — the posture rollup must say so too, not just
 		// count what it managed to see.
@@ -316,11 +398,21 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 		p.degrade("legal_hold", err)
 	}
 
-	// Risk register — governed, time-bound exceptions (A.5.8).
-	if active, soon, err := c.CountActiveRiskExceptions(ctx, riskExpiringSoonWindow); err == nil {
+	// Risk register — governed, time-bound exceptions (A.5.8). Derived from the same
+	// ListRiskExceptions(ctx, true) read as suppressExceptedSoDViolations above and as
+	// the evidence pack's RiskExceptions field — one query, three consumers.
+	if snap.riskExceptionsErr == nil {
+		active, soon := 0, 0
+		cutoff := c.now().Add(riskExpiringSoonWindow)
+		for _, e := range snap.riskExceptionsActive {
+			active++
+			if e.ExpiresAt.Before(cutoff) {
+				soon++
+			}
+		}
 		p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon}
 	} else {
-		p.degrade("risk", err)
+		p.degrade("risk", snap.riskExceptionsErr)
 	}
 
 	// Certificate hygiene from the cached cert expiry (ADR-056).
@@ -356,7 +448,7 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	sc.LicenseValid = ls.Grants()
 	p.SupplyChain = sc
 
-	return p, nil
+	return p
 }
 
 // suppressExceptedSoDViolations drops any violation covered by an active, APPROVED
@@ -365,13 +457,10 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 // reported every raw violation regardless, so the "governed acceptance" mechanism
 // didn't actually accept anything. Fails safe: a lookup error reports every
 // violation unfiltered rather than risking an under-count from a partial exception
-// list.
-func (c *KeyorixCore) suppressExceptedSoDViolations(ctx context.Context, violations []SoDViolation) []SoDViolation {
-	if len(violations) == 0 {
-		return violations
-	}
-	exceptions, err := c.ListRiskExceptions(ctx, true) // active only (not revoked, not expired)
-	if err != nil {
+// list. exceptions/exceptionsErr come from the shared complianceSnapshot's single
+// ListRiskExceptions(ctx, true) read (#256) rather than a fresh query here.
+func (c *KeyorixCore) suppressExceptedSoDViolations(violations []SoDViolation, exceptions []*RiskExceptionView, exceptionsErr error) []SoDViolation {
+	if len(violations) == 0 || exceptionsErr != nil {
 		return violations
 	}
 	excepted := make(map[string]bool, len(exceptions))
@@ -468,18 +557,15 @@ func (c *KeyorixCore) identityPosture(ctx context.Context) (IdentityPosture, err
 }
 
 // accessGovernancePosture walks every project, rolling up campaign coverage,
-// dormant role grants, and break-glass usage.
-func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *CompliancePosture) error {
-	projects, err := c.ListProjects(ctx)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	p.AccessGovernance.Projects = len(projects)
+// dormant role grants, and break-glass usage. campaigns/break-glass per project come
+// from the shared complianceSnapshot (#256) rather than a fresh query per call.
+func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p *CompliancePosture, snap *complianceSnapshot) {
+	p.AccessGovernance.Projects = len(snap.projects)
 	recertCutoff := c.now().AddDate(0, 0, -c.recertCadence())
-	for _, proj := range projects {
+	for _, proj := range snap.projects {
 		pid := proj.ID
 
-		campaigns, err := c.ListAccessReviewCampaigns(ctx, pid)
+		campaigns, err := snap.campaignsByProject[pid], snap.campaignsErrByProject[pid]
 		if err == nil {
 			if len(campaigns) == 0 {
 				p.AccessGovernance.ProjectsNeverReviewed++
@@ -506,7 +592,7 @@ func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *Compliance
 
 		p.AccessGovernance.DormantRoleGrants += c.countDormantRoleGrants(ctx, pid, p)
 
-		if acts, err := c.ListBreakGlassActivations(ctx, pid); err == nil {
+		if acts, err := snap.breakGlassByProject[pid], snap.breakGlassErrByProject[pid]; err == nil {
 			p.EmergencyAccess.TotalActivations += len(acts)
 			for _, a := range acts {
 				if a.State == BreakGlassActive {
@@ -517,7 +603,6 @@ func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *Compliance
 			p.degrade(fmt.Sprintf("emergency_access:project=%d", pid), err)
 		}
 	}
-	return nil
 }
 
 // countDormantRoleGrants counts individual role grants in the project that are
