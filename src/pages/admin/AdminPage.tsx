@@ -33,6 +33,7 @@ import type { SetupLinkResult, ProjectAssignment } from '../../services/users';
 import { SYSTEM_ROLES } from '../../services/users';
 import { AccountStateBadge, StaleAccountsSection, PATHygieneSection, MachineTokenHygieneSection, DeploymentHygieneSection, OrgNameConformanceSection, OrgInventoryExport, ProjectAssignmentsPicker, MaintenanceSection } from '../../features/admin';
 import { GlobalInviteUserModal } from '../../features/invitations/GlobalInviteUserModal';
+import { copyToClipboard } from '../../utils';
 
 // "system_auditor" → "Auditor"; the leading "system_" is stripped since the
 // whole control is already labelled "System role".
@@ -257,7 +258,7 @@ export const AdminPage: React.FC = () => {
     async function handleCopyOtp() {
         if (!otpResult) return;
         try {
-            await navigator.clipboard.writeText(otpResult);
+            await copyToClipboard(otpResult);
             setOtpCopied(true);
             window.setTimeout(() => setOtpCopied(false), 2000);
         } catch {
@@ -269,7 +270,7 @@ export const AdminPage: React.FC = () => {
     async function handleCopyLink() {
         if (!setupResult?.link_for_admin) return;
         try {
-            await navigator.clipboard.writeText(setupResult.link_for_admin);
+            await copyToClipboard(setupResult.link_for_admin);
             setLinkCopied(true);
             window.setTimeout(() => setLinkCopied(false), 2000);
         } catch {

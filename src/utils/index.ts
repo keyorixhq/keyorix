@@ -50,7 +50,7 @@ export function maskSensitiveData(value: string, visibleChars = 4): string {
 /**
  * Copies text to clipboard and clears it after a timeout
  */
-export async function copyToClipboard(text: string, clearTimeout = 30000): Promise<void> {
+export async function copyToClipboard(text: string, clearTimeout = getEnvConfig().CLIPBOARD_CLEAR_TIMEOUT): Promise<void> {
     try {
         await navigator.clipboard.writeText(text);
 

@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Alert } from '../../components/ui/Alert';
 import { Spinner } from '../../components/ui/Loading';
+import { copyToClipboard } from '../../utils';
 import {
     useConnectors,
     useReadFederatedSecret,
@@ -90,7 +91,7 @@ const FederatedReadPanel: React.FC = () => {
 
     const copy = async () => {
         if (value == null) return;
-        await navigator.clipboard.writeText(value);
+        await copyToClipboard(value);
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
     };

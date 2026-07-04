@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { secretsApi } from '../../services/secrets';
 import { Secret } from '../../types';
+import { copyToClipboard } from '../../utils';
 
 export const useSecretReveal = () => {
     const [copyingSecretId, setCopyingSecretId] = useState<number | null>(null);
@@ -15,7 +16,7 @@ export const useSecretReveal = () => {
             if (!versions || versions.length === 0) throw new Error('No versions found');
             const latest = versions[0]!;
             const decoded = atob(latest.EncryptedValue as unknown as string);
-            await navigator.clipboard.writeText(decoded);
+            await copyToClipboard(decoded);
             setCopiedSecretId(secret.id);
             setTimeout(() => setCopiedSecretId(null), 2000);
         } catch {

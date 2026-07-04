@@ -1,77 +1,46 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../../features/auth';
 
 interface SessionTimeoutWarningProps {
-    warningTimeMs?: number;
     onExtendSession?: () => void;
     onLogout?: () => void;
 }
 
+// Purely presentational: the countdown itself is owned by useAuth()
+// (sessionTimeLeftMs), which is the single source of truth for the inactivity
+// deadline — this component no longer runs its own independent timer/activity
+// listeners, so the warning window can't drift out of sync with the real
+// SESSION_TIMEOUT-driven logout.
 export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
-    warningTimeMs = 5 * 60 * 1000,
     onExtendSession,
     onLogout,
 }) => {
-    const { isAuthenticated, logout, refreshToken } = useAuth();
-    const [showWarning, setShowWarning] = useState(false);
-    const [timeLeft, setTimeLeft] = useState(0);
+    const { isAuthenticated, sessionTimeLeftMs, logout, refreshToken } = useAuth();
     const [isExtending, setIsExtending] = useState(false);
+    const [dismissed, setDismissed] = useState(false);
 
-    // Always points at the latest handleLogout so the inactivity timer can call it
-    // without re-subscribing the effect (which would re-register listeners/timers).
-    const handleLogoutRef = useRef<(() => void) | null>(null);
+    const showWarning = isAuthenticated && sessionTimeLeftMs !== null && !dismissed;
 
+    // Re-arm dismissal once the user leaves the warning window (activity reset
+    // the deadline), so the next inactivity cycle can warn again.
     useEffect(() => {
-        if (!isAuthenticated) { setShowWarning(false); return; }
-
-        let warningTimeout: ReturnType<typeof setTimeout>;
-        let countdownInterval: ReturnType<typeof setInterval>;
-
-        const setupWarning = () => {
-            if (warningTimeout) clearTimeout(warningTimeout);
-            if (countdownInterval) clearInterval(countdownInterval);
-            warningTimeout = setTimeout(() => {
-                setShowWarning(true);
-                setTimeLeft(warningTimeMs);
-                countdownInterval = setInterval(() => {
-                    setTimeLeft((prev) => {
-                        if (prev <= 1000) { handleLogoutRef.current?.(); return 0; }
-                        return prev - 1000;
-                    });
-                }, 1000);
-            }, warningTimeMs);
-        };
-
-        const resetWarning = () => { setShowWarning(false); if (countdownInterval) clearInterval(countdownInterval); setupWarning(); };
-        const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
-        events.forEach(event => document.addEventListener(event, resetWarning, true));
-        setupWarning();
-
-        return () => {
-            if (warningTimeout) clearTimeout(warningTimeout);
-            if (countdownInterval) clearInterval(countdownInterval);
-            events.forEach(event => document.removeEventListener(event, resetWarning, true));
-        };
-    }, [isAuthenticated, warningTimeMs]);
-
-    useEffect(() => { handleLogoutRef.current = handleLogout; });
+        if (sessionTimeLeftMs === null && dismissed) setDismissed(false);
+    }, [sessionTimeLeftMs, dismissed]);
 
     const handleExtendSession = async () => {
         setIsExtending(true);
         try {
             await refreshToken();
-            setShowWarning(false);
             onExtendSession?.();
         } catch {
-            handleLogout();
+            await handleLogout();
         } finally {
             setIsExtending(false);
         }
     };
 
     const handleLogout = async () => {
-        setShowWarning(false);
         await logout();
         onLogout?.();
     };
@@ -82,7 +51,7 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
         return `${m}:${s.toString().padStart(2, '0')}`;
     };
 
-    if (!showWarning || !isAuthenticated) return null;
+    if (!showWarning) return null;
 
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto" role="dialog" aria-modal="true">
@@ -96,7 +65,7 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
                         type="button"
                         className="absolute top-4 right-4 rounded-md transition-colors focus:outline-hidden focus:ring-2 focus:ring-blue-500"
                         style={{ color: 'var(--text-muted)' }}
-                        onClick={() => setShowWarning(false)}
+                        onClick={() => setDismissed(true)}
                         aria-label="Close"
                         onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'}
                         onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'}
@@ -118,7 +87,7 @@ export const SessionTimeoutWarning: React.FC<SessionTimeoutWarningProps> = ({
                                 Your session will expire soon due to inactivity. Would you like to extend your session?
                             </p>
                             <div className="text-2xl font-bold mb-6" style={{ color: '#f87171' }}>
-                                {formatTime(timeLeft)}
+                                {formatTime(sessionTimeLeftMs ?? 0)}
                             </div>
                             <div className="flex space-x-3">
                                 <button

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     EyeIcon,
     EyeSlashIcon,
@@ -21,6 +22,8 @@ import { SecretDependenciesSection } from './SecretDependenciesSection';
 import { CertificatePanel } from './CertificatePanel';
 import { CLASSIFICATION_LEVELS, classificationMeta } from './classification';
 import { RiskBand } from '../../types';
+import { copyToClipboard } from '../../utils';
+import { queryKeys } from '../../lib/queryClient';
 const formatDate = (d: string | Date) =>
     new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
 const formatTime = (d: string | Date) =>
@@ -122,6 +125,20 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
     };
 
     const { data: versions, isLoading, error } = useSecretVersions(secret.id, showValue);
+    const queryClient = useQueryClient();
+    // Revealed plaintext otherwise lingers in the React Query cache for the
+    // default gcTime after the value is hidden or the view is closed —
+    // evict it explicitly rather than relying on that timeout.
+    useEffect(() => {
+        if (!showValue) {
+            queryClient.removeQueries({ queryKey: queryKeys.secrets.versions(secret.id) });
+        }
+    }, [showValue, secret.id, queryClient]);
+    useEffect(() => {
+        return () => {
+            queryClient.removeQueries({ queryKey: queryKeys.secrets.versions(secret.id) });
+        };
+    }, [secret.id, queryClient]);
     const rotateMutation = useRotateSecret(secret.id);
     const rollbackMutation = useRollbackSecret(secret.id);
     const { data: accessors } = useSecretAccessors(secret.id);
@@ -174,7 +191,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({
 
     const handleCopyValue = async (value: string): Promise<void> => {
         try {
-            await navigator.clipboard.writeText(value);
+            await copyToClipboard(value);
             setCopySuccess(true);
             setTimeout(() => setCopySuccess(false), 2000);
         } catch (error) {

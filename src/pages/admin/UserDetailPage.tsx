@@ -23,6 +23,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
+import { copyToClipboard } from '../../utils';
 import { Loading } from '../../components/ui/Loading';
 import { MACHINE_IDENTITY_TYPES } from '../../services/machineIdentities';
 import type { AdminUser, SetupLinkResult } from '../../services/users';
@@ -150,7 +151,7 @@ export const UserDetailPage: React.FC = () => {
     const copyLink = async () => {
         if (!resentLink?.link_for_admin) return;
         try {
-            await navigator.clipboard.writeText(resentLink.link_for_admin);
+            await copyToClipboard(resentLink.link_for_admin);
             setLinkCopied(true);
             window.setTimeout(() => setLinkCopied(false), 2000);
         } catch {

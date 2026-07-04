@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useStaleAccounts, useResendSetupLink, useSuspendUser } from './api';
+import { copyToClipboard } from '../../utils';
 
 // daysSince returns whole days between now and an ISO timestamp (>= 0).
 function daysSince(iso: string): number {
@@ -32,7 +33,7 @@ export const StaleAccountsSection: React.FC = () => {
             onSuccess: async (outcome) => {
                 if (outcome?.link_for_admin) {
                     try {
-                        await navigator.clipboard.writeText(outcome.link_for_admin);
+                        await copyToClipboard(outcome.link_for_admin);
                         setNote(`Setup link for ${email} copied to clipboard.`);
                     } catch {
                         setNote(`Setup link reissued for ${email} (copy it from the user detail page).`);

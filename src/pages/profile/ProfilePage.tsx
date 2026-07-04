@@ -15,6 +15,7 @@ import { Input } from '../../components/ui/Input';
 import { Alert } from '../../components/ui/Alert';
 import { Spinner } from '../../components/ui/Loading';
 import { Modal } from '../../components/ui/Modal';
+import { copyToClipboard } from '../../utils';
 import {
     useUpdateProfile,
     useChangePassword,
@@ -389,7 +390,7 @@ const TokensTab: React.FC = () => {
 
     const copy = async () => {
         if (!newToken) return;
-        await navigator.clipboard.writeText(newToken);
+        await copyToClipboard(newToken);
         setCopied(true);
     };
 

@@ -18,6 +18,7 @@ import {
 import { ServiceAccount, APIToken } from '../../types/serviceAccounts';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
+import { copyToClipboard } from '../../utils';
 import { Alert } from '../../components/ui/Alert';
 import { Loading } from '../../components/ui/Loading';
 import { useUIStore } from '../../store/uiStore';
@@ -237,7 +238,7 @@ export const ServiceAccountsPage: React.FC = () => {
     }
 
     async function handleCopy(text: string, field: string) {
-        await navigator.clipboard.writeText(text);
+        await copyToClipboard(text);
         setCopiedField(field);
         setTimeout(() => setCopiedField(null), 2000);
     }

@@ -11,6 +11,7 @@ import { Input } from '../../components/ui/Input';
 import { Alert } from '../../components/ui/Alert';
 import { Spinner } from '../../components/ui/Loading';
 import { Modal } from '../../components/ui/Modal';
+import { copyToClipboard } from '../../utils';
 import {
     useMfaRecoveryStatus,
     useEnrollMfa,
@@ -34,7 +35,7 @@ function errMessage(e: unknown, fallback: string): string {
 const RecoveryCodes: React.FC<{ codes: string[] }> = ({ codes }) => {
     const [copied, setCopied] = useState(false);
     const copy = async () => {
-        await navigator.clipboard.writeText(codes.join('\n'));
+        await copyToClipboard(codes.join('\n'));
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
     };

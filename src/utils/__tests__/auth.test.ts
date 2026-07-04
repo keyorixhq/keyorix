@@ -79,30 +79,18 @@ describe('shouldRefreshToken', () => {
 });
 
 describe('persist / clear', () => {
-    it('writes expiry and remember-me, and does NOT clobber the Zustand auth-storage key', () => {
+    it('writes expiry, and does NOT clobber the Zustand auth-storage key', () => {
         persistAuthData({
             user: { id: 1, username: 'testuser' },
             token: 'tok-1',
             expiresAt: future(60_000),
-            rememberMe: true,
         });
         // Regression guard: the `auth-storage` key is owned by Zustand's persist
         // middleware ({state,version}). persistAuthData must never write it — a
         // flat write broke rehydration on reload (deep routes bounced to /login).
         expect(memStore.map.has('auth-storage')).toBe(false);
-        expect(memStore.map.get('rememberMe')).toBe(true);
         // the expiry write is observable through the public token API
         expect(isTokenValid()).toBe(true);
-    });
-
-    it('omits the remember-me flag when not requested', () => {
-        persistAuthData({
-            user: { id: 1 },
-            token: 'tok-2',
-            expiresAt: future(60_000),
-            rememberMe: false,
-        });
-        expect(memStore.map.has('rememberMe')).toBe(false);
     });
 
     it('clear removes all persisted auth data', () => {
@@ -110,12 +98,10 @@ describe('persist / clear', () => {
             user: { id: 1 },
             token: 'tok-4',
             expiresAt: future(60_000),
-            rememberMe: true,
         });
         clearPersistedAuthData();
         expect(memStore.map.has('auth-storage')).toBe(false);
         expect(memStore.map.has('tokenExpiresAt')).toBe(false);
-        expect(memStore.map.has('rememberMe')).toBe(false);
         expect(isTokenValid()).toBe(false);
     });
 });

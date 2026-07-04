@@ -29,9 +29,9 @@ services:
       - ENV=production
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=keyorix
-      - DB_USER=keyorix
-      - DB_PASSWORD=secret
+      - DB_NAME=${DB_NAME:?set DB_NAME in .env, see .env.example}
+      - DB_USER=${DB_USER:?set DB_USER in .env, see .env.example}
+      - DB_PASSWORD=${DB_PASSWORD:?set DB_PASSWORD in .env, see .env.example}
     depends_on:
       - postgres
     networks:
@@ -41,9 +41,9 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      - POSTGRES_DB=keyorix
-      - POSTGRES_USER=keyorix
-      - POSTGRES_PASSWORD=secret
+      - POSTGRES_DB=${DB_NAME:?set DB_NAME in .env, see .env.example}
+      - POSTGRES_USER=${DB_USER:?set DB_USER in .env, see .env.example}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env, see .env.example}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

@@ -377,7 +377,7 @@ export const AuditLogPage: React.FC = () => {
                                         <div className="px-5 py-2 border-b border-base flex items-center gap-2 bg-subtle">
                                             <span className="text-xs text-base-muted">Filtered:</span>
                                             <span className="text-xs font-medium text-base-secondary">
-                                                {urlFilter === 'failed' ? 'Failed auth attempts' : urlFilter === 'reads' ? 'Secret reads' : urlFilter === 'logins' ? 'Login events' : urlFilter}
+                                                {urlFilter === 'failed' ? 'Failed auth attempts' : urlFilter === 'reads' ? 'Secret reads' : urlFilter === 'logins' ? 'Login events' : 'Custom filter'}
                                             </span>
                                             <button onClick={() => window.history.replaceState({}, '', window.location.pathname + '?tab=audit')}
                                                 className="text-xs text-base-muted hover:text-base-secondary ml-auto">✕ Clear filter</button>

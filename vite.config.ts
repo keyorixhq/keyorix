@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
     plugins: [react()],
     resolve: {
         alias: {
@@ -35,7 +35,9 @@ export default defineConfig({
     },
     build: {
         outDir: 'dist',
-        sourcemap: true,
+        // Never ship de-minified source structure in the production image;
+        // still available for local `vite build --mode development` debugging.
+        sourcemap: mode !== 'production',
         rollupOptions: {
             output: {
                 manualChunks(id) {
@@ -55,4 +57,4 @@ export default defineConfig({
         setupFiles: ['./src/test/setup.ts'],
         css: true,
     },
-});
+}));
