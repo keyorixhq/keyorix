@@ -38,7 +38,7 @@ type AccessGovernancePosture struct {
 	OpenCampaigns            int `json:"open_campaigns"`
 	PendingItems             int `json:"pending_items"`       // undecided items across open campaigns
 	ProjectsOverdue          int `json:"projects_overdue"`    // overdue for recertification (A.5.18 cadence)
-	DormantRoleGrants        int `json:"dormant_role_grants"` // user role grants with no/old secret access
+	DormantRoleGrants        int `json:"dormant_role_grants"` // per-grant: no/old activity at the capability tier the grant confers (#258)
 	SoDViolations            int `json:"sod_violations"`      // principals holding a forbidden permission pair (A.5.3)
 }
 
@@ -514,9 +514,34 @@ func (c *KeyorixCore) accessGovernancePosture(ctx context.Context, p *Compliance
 	return nil
 }
 
-// countDormantRoleGrants counts distinct users holding a role grant in the project
-// who have not accessed a secret recently (or ever) — stale standing access. Cheap:
-// the project's role assignments + the last-activity map, no full secret walk.
+// countDormantRoleGrants counts individual role grants in the project that are
+// stale standing access — a grant whose holder hasn't exercised the CAPABILITY it
+// confers recently (or ever). Cheap: the project's role assignments + the two
+// last-activity maps, no full secret walk.
+//
+// Per-grant, not per-user (#258): a user can hold several role grants in the same
+// project — e.g. an everyday project_viewer grant they use weekly, plus a
+// project_admin grant handed out "just in case" that they've never actually
+// exercised. Counting dormancy per USER (as this used to) meant that ordinary
+// secret-read activity under the viewer grant masked the separate, genuinely-stale
+// admin grant as "non-dormant" — the coarse per-project activity check couldn't
+// tell which grant the activity was attributable to. Each (principal, role) grant
+// is now assessed independently, so the unused admin-tier grant is correctly
+// flagged even though the same user is actively reading secrets elsewhere.
+//
+// The activity signal used per grant depends on the role's tier (roleIsAdminTier):
+//   - A plain read/write-tier role is "used" by ANY entry in LastUserSecretActivity
+//     (a secret read is exactly what such a role exists to enable).
+//   - An admin-tier role (secrets.delete/admin, or a role-management permission
+//     like roles.assign) additionally requires an entry in
+//     LastUserElevatedActivity — an actually-observed elevated action — since
+//     ordinary secret reads don't attest to the ADMIN capability being used at all.
+//
+// This is an approximation, not a perfect per-grant attribution: the audit trail
+// doesn't record which specific grant authorized a given action, only that SOME
+// elevated action occurred. A user holding two admin-tier grants in the project
+// who exercises either one will show both as "used". See roleIsAdminTier's doc for
+// the exact boundary and its limits.
 func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint, cp *CompliancePosture) int {
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
@@ -528,14 +553,55 @@ func (c *KeyorixCore) countDormantRoleGrants(ctx context.Context, projectID uint
 		cp.degrade(fmt.Sprintf("dormant_role_grants:activity:project=%d", projectID), err)
 		return 0
 	}
+	elevated, err := c.storage.LastUserElevatedActivity(ctx, projectID)
+	if err != nil {
+		cp.degrade(fmt.Sprintf("dormant_role_grants:elevated_activity:project=%d", projectID), err)
+		return 0
+	}
 	cutoff := c.now().Add(-dormantThreshold)
-	seen := map[uint]bool{}
+
+	adminTierByRole := map[uint]bool{}
+	degradedRoles := map[uint]bool{}
+	isAdminTier := func(roleID uint) bool {
+		if v, ok := adminTierByRole[roleID]; ok {
+			return v
+		}
+		perms, err := c.storage.GetRolePermissions(ctx, roleID)
+		if err != nil {
+			// Can't classify this role's tier; degrade once per role and fall back to
+			// the plain read/write activity check rather than silently under- or
+			// over-counting.
+			if !degradedRoles[roleID] {
+				degradedRoles[roleID] = true
+				cp.degrade(fmt.Sprintf("dormant_role_grants:role_permissions:project=%d:role=%d", projectID, roleID), err)
+			}
+			adminTierByRole[roleID] = false
+			return false
+		}
+		v := roleIsAdminTier(perms)
+		adminTierByRole[roleID] = v
+		return v
+	}
+
+	seen := map[[2]uint]bool{} // dedup identical (principal, role) grant rows
 	dormant := 0
 	for _, a := range assignments {
-		if a.PrincipalType != "user" || seen[a.PrincipalID] {
+		if a.PrincipalType != "user" {
 			continue
 		}
-		seen[a.PrincipalID] = true
+		key := [2]uint{a.PrincipalID, a.RoleID}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		if isAdminTier(a.RoleID) {
+			last, ok := elevated[a.PrincipalID]
+			if !ok || last.Before(cutoff) {
+				dormant++
+			}
+			continue
+		}
 		last, ok := activity[a.PrincipalID]
 		if !ok || last.Before(cutoff) {
 			dormant++

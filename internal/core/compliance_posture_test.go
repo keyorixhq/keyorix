@@ -278,3 +278,30 @@ func TestGetCompliancePosture_DegradedOnDormantRoleGrantsActivityQueryError(t *t
 	assert.True(t, p.Degraded)
 	assert.True(t, containsSubstring(p.DegradedReasons, "dormant_role_grants:activity:project=1"), "got %v", p.DegradedReasons)
 }
+
+// failingElevatedActivityStore wraps LocalStorage and fails LastUserElevatedActivity,
+// simulating a DB error on the admin-tier activity signal (#258) while
+// LastUserSecretActivity itself still succeeds.
+type failingElevatedActivityStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingElevatedActivityStore) LastUserElevatedActivity(_ context.Context, _ uint) (map[uint]time.Time, error) {
+	return nil, errors.New("simulated db failure")
+}
+
+// #258: countDormantRoleGrants's admin-tier activity query must independently
+// degrade rather than silently return 0 (undercounting stale privileged access) on
+// a storage error.
+func TestGetCompliancePosture_DegradedOnDormantRoleGrantsElevatedActivityQueryError(t *testing.T) {
+	c, db := compliancePostureCoreWithProject(t)
+	require.NoError(t, db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}, &models.BreakGlassActivation{}, &models.UserRole{}, &models.GroupRole{}, &models.AuditEvent{}))
+	c.storage = &failingElevatedActivityStore{LocalStorage: c.storage.(*store.LocalStorage)}
+
+	p, err := c.GetCompliancePosture(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, p.AccessGovernance.DormantRoleGrants)
+	assert.True(t, p.Degraded)
+	assert.True(t, containsSubstring(p.DegradedReasons, "dormant_role_grants:elevated_activity:project=1"), "got %v", p.DegradedReasons)
+}
