@@ -1,6 +1,13 @@
-// concurrency_purge_restore_race_test.go — regression coverage for #276: a concurrent
-// RestoreSecret landing in the window between PurgeDeletedSecretsBefore's SELECT (Pluck)
-// and its DELETE must not be silently undone by the purge.
+// concurrency_purge_restore_race_test.go — regression coverage for #276 and its siblings:
+// a concurrent Restore* call landing in the window between a Purge*Before's SELECT
+// (Pluck) and its DELETE must not be silently undone by the purge. Covers
+// PurgeDeletedSecretsBefore (the original #276), PurgeDeletedUsersBefore, and
+// PurgeDeletedProjectsBefore — the other Purge*Before functions that share the same
+// stale-Pluck-then-delete-by-ID-list shape and have a genuine Restore* counterpart.
+// PurgeDeletedEnvironmentsBefore is deliberately NOT covered here: it purges via a
+// single DELETE ... WHERE deleted_at ... statement with no separate SELECT/ID-list step,
+// so it was never exposed to this race in the first place (see its doc comment in
+// local_purge.go).
 package store
 
 import (
@@ -87,4 +94,111 @@ func TestConcurrency_PurgeDeletedSecretsBefore_RestoreWinsRace(t *testing.T) {
 	// Its version (the ciphertext) must survive too.
 	var version models.SecretVersion
 	require.NoError(t, db.First(&version, 10).Error, "the version row must survive — the purge must not have destroyed it")
+}
+
+// TestConcurrency_PurgeDeletedUsersBefore_RestoreWinsRace is the #276-sibling case for
+// PurgeDeletedUsersBefore: it follows the identical stale-Pluck-then-delete-by-ID-list
+// shape as the original PurgeDeletedSecretsBefore bug, and RestoreUser is a real,
+// reachable operation that could race it the same way. Same technique as the secrets
+// test above — see its doc comment for why this drives the callback on the purge's own
+// transaction handle rather than a genuinely separate goroutine/connection.
+func TestConcurrency_PurgeDeletedUsersBefore_RestoreWinsRace(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.UserRole{}, &models.UserGroup{},
+		&models.ShareRecord{}, &models.PersonalAccessToken{}, &models.Session{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "race-me"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1}).Error)
+	// Soft-deleted 40 days ago — squarely past a 30-day retention cutoff, so the purge's
+	// Pluck picks it up as eligible before anyone restores it.
+	require.NoError(t, db.Unscoped().Model(&models.User{}).Where("id = ?", 1).
+		Update("deleted_at", time.Now().AddDate(0, 0, -40)).Error)
+
+	var fired bool
+	require.NoError(t, db.Callback().Delete().Before("gorm:delete").Register(
+		"test:simulate-concurrent-restore-before-user-role-delete",
+		func(tx *gorm.DB) {
+			if fired {
+				return
+			}
+			if _, ok := tx.Statement.Dest.(*models.UserRole); !ok {
+				return
+			}
+			fired = true
+			// Simulate a concurrent RestoreUser landing in the window between the
+			// purge's Pluck (already ran) and this delete, on the purge's own
+			// still-open transaction (see the secrets test above for why).
+			require.NoError(t, tx.Exec("UPDATE users SET deleted_at = NULL WHERE id = ?", 1).Error)
+		},
+	))
+
+	purgedCount, purgeErr := ls.PurgeDeletedUsersBefore(ctx, time.Now().AddDate(0, 0, -30))
+	require.NoError(t, purgeErr)
+	assert.True(t, fired, "the callback must have fired — otherwise this test isn't exercising the race window at all")
+	assert.Equal(t, int64(0), purgedCount, "the concurrently-restored user must be excluded from the purge count")
+
+	// The user must be alive — not hard-deleted despite having been in the stale ID list.
+	var user models.User
+	require.NoError(t, db.First(&user, 1).Error, "a scoped read must find the restored user live")
+	assert.False(t, user.DeletedAt.Valid, "must be live (deleted_at cleared), not soft-deleted")
+
+	// Its role grant must survive too — not orphan-deleted alongside the almost-purged user.
+	var roleCount int64
+	require.NoError(t, db.Model(&models.UserRole{}).Where("user_id = ?", 1).Count(&roleCount).Error)
+	assert.Equal(t, int64(1), roleCount, "the role grant must survive — the purge must not have destroyed it")
+}
+
+// TestConcurrency_PurgeDeletedProjectsBefore_RestoreWinsRace is the #276-sibling case for
+// PurgeDeletedProjectsBefore: same stale-Pluck-then-delete-by-ID-list shape, and
+// RestoreProject is a real, reachable operation (including cascading the restore onto
+// the project's environments/secrets) that could race it the same way.
+func TestConcurrency_PurgeDeletedProjectsBefore_RestoreWinsRace(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.UserRole{}, &models.GroupRole{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "race-me"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	// Soft-deleted 40 days ago — squarely past a 30-day retention cutoff, so the purge's
+	// Pluck picks it up as eligible before anyone restores it.
+	require.NoError(t, db.Unscoped().Model(&models.Project{}).Where("id = ?", 1).
+		Update("deleted_at", time.Now().AddDate(0, 0, -40)).Error)
+
+	var fired bool
+	require.NoError(t, db.Callback().Delete().Before("gorm:delete").Register(
+		"test:simulate-concurrent-restore-before-project-role-delete",
+		func(tx *gorm.DB) {
+			if fired {
+				return
+			}
+			if _, ok := tx.Statement.Dest.(*models.UserRole); !ok {
+				return
+			}
+			fired = true
+			// Simulate a concurrent RestoreProject landing in the window between the
+			// purge's Pluck (already ran) and this delete, on the purge's own
+			// still-open transaction (see the secrets test above for why).
+			require.NoError(t, tx.Exec("UPDATE projects SET deleted_at = NULL WHERE id = ?", 1).Error)
+		},
+	))
+
+	purgedCount, purgeErr := ls.PurgeDeletedProjectsBefore(ctx, time.Now().AddDate(0, 0, -30))
+	require.NoError(t, purgeErr)
+	assert.True(t, fired, "the callback must have fired — otherwise this test isn't exercising the race window at all")
+	assert.Equal(t, int64(0), purgedCount, "the concurrently-restored project must be excluded from the purge count")
+
+	// The project must be alive — not hard-deleted despite having been in the stale ID list.
+	var project models.Project
+	require.NoError(t, db.First(&project, 1).Error, "a scoped read must find the restored project live")
+	assert.False(t, project.DeletedAt.Valid, "must be live (deleted_at cleared), not soft-deleted")
+
+	// Its role grant must survive too — not orphan-deleted alongside the almost-purged project.
+	var roleCount int64
+	require.NoError(t, db.Model(&models.UserRole{}).Where("project_id = ?", 1).Count(&roleCount).Error)
+	assert.Equal(t, int64(1), roleCount, "the role grant must survive — the purge must not have destroyed it")
 }
