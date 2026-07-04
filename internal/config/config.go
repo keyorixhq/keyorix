@@ -459,6 +459,19 @@ type KeyProviderConfig struct {
 	// single share reveals the KEK.
 	ShamirShareFiles []string `yaml:"shamir_share_files"`
 	ShamirShareEnv   []string `yaml:"shamir_share_env"`
+	// ShamirCommitment is the hex-encoded HMAC-SHA256 commitment to the original KEK
+	// (crypto.CommitKEK), printed by `keyorix encryption shamir-split` alongside the
+	// shares. It is verified against the RECONSTRUCTED KEK at unseal time (#429):
+	// without it, reconstruction is checked only by a 4-byte magic embedded in the
+	// split payload, which an attacker holding threshold-1 genuine shares can forge
+	// (each byte of the reconstructed payload — magic and KEK alike — is
+	// independently retargetable via the forged share's Lagrange coordinate, so a
+	// bigger in-payload check wouldn't help either). The commitment is safe to store
+	// in the clear here — it is one-way and reveals nothing about the KEK. Empty is
+	// accepted for key material split before this field existed, but every startup
+	// then logs a loud warning that verification is reduced to the forgeable magic
+	// check alone.
+	ShamirCommitment string `yaml:"shamir_commitment"`
 	// TPMDevice is the TPM 2.0 device for type "tpm" (default /dev/tpmrm0). The KEK
 	// is sealed to this TPM and the sealed blob stored at WrappedKeyPath.
 	TPMDevice string `yaml:"tpm_device"`

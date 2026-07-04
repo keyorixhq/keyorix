@@ -105,7 +105,7 @@ func NewKeyProviderFromConfig(cfg *config.EncryptionConfig, baseDir, passphrase 
 	case "exec":
 		return crypto.NewExecKeyProvider(kp.ExecCommand), nil
 	case "shamir":
-		return crypto.NewShamirKeyProvider(kp.ShamirShareFiles, kp.ShamirShareEnv), nil
+		return crypto.NewShamirKeyProvider(kp.ShamirShareFiles, kp.ShamirShareEnv, kp.ShamirCommitment), nil
 	case "tpm":
 		return crypto.NewTPMKeyProvider(kp.TPMDevice, baseDir, kp.WrappedKeyPath), nil
 	case "aws-kms":

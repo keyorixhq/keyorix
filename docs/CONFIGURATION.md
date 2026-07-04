@@ -145,6 +145,11 @@ storage:
       # via files and/or env vars. Generate with `keyorix encryption shamir-split`.
       # shamir_share_files: [/etc/keyorix/share-1.hex, /etc/keyorix/share-2.hex, /etc/keyorix/share-3.hex]
       # shamir_share_env: [KX_KEK_SHARE_1, KX_KEK_SHARE_2]
+      # shamir_commitment is also printed by shamir-split — set it so reconstruction
+      # is verified by a real HMAC commitment, not just a forgeable framing check
+      # (#429). Safe to store here in the clear: it's one-way, reveals nothing about
+      # the KEK.
+      # shamir_commitment: 3f9a…
 
       # type: tpm — seal the KEK to the host TPM 2.0. The KEK is generated and sealed
       # on first start; only the sealed blob (wrapped_key_path) is on disk, and it is
@@ -177,12 +182,17 @@ storage:
   threshold, so no single custodian holds it and at least K must combine to unseal
   (separation of duties for the master key). Generate with `keyorix encryption
   shamir-split --shares N --threshold K` (the KEK is never printed/stored — only the
-  shares are). Provide at least K shares at startup via `shamir_share_files` and/or
-  `shamir_share_env` (each a hex/base64 share); the server reconstructs the KEK in
-  memory. `KEYORIX_MASTER_PASSWORD` is **not** required. Move an existing install
-  onto it with `keyorix encryption migrate-provider --to-type shamir
-  --to-shamir-share-files …`. ⚠️ Losing more than N-K shares makes the KEK — and all
-  data — permanently unrecoverable; store and back up shares separately.
+  shares are, plus a `shamir_commitment` value). Provide at least K shares at
+  startup via `shamir_share_files` and/or `shamir_share_env` (each a hex/base64
+  share); the server reconstructs the KEK in memory. Also set `shamir_commitment` —
+  without it, reconstruction falls back to a 4-byte magic check that (#429) an
+  attacker holding threshold-1 genuine shares can forge to make ANY chosen value
+  reconstruct; with it, the reconstructed KEK is verified against a real HMAC-SHA256
+  commitment computed at split time. `KEYORIX_MASTER_PASSWORD` is **not** required.
+  Move an existing install onto it with `keyorix encryption migrate-provider
+  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`. ⚠️ Losing
+  more than N-K shares makes the KEK — and all data — permanently unrecoverable;
+  store and back up shares separately.
 - **`tpm`**: the KEK is **sealed to the host TPM 2.0** (`tpm_device`, default
   `/dev/tpmrm0`) and only unsealable on that machine. A random KEK is generated and
   sealed on first start; only the **sealed blob** (`wrapped_key_path`) touches disk,

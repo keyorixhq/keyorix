@@ -101,7 +101,7 @@ func TestKeyProvider_ShamirRoundTrip(t *testing.T) {
 		require.NoError(t, os.WriteFile(p, []byte(hex.EncodeToString(shares[i])), 0600))
 		files = append(files, p)
 	}
-	roundTrip(t, dir, func() crypto.KeyProvider { return crypto.NewShamirKeyProvider(files, nil) })
+	roundTrip(t, dir, func() crypto.KeyProvider { return crypto.NewShamirKeyProvider(files, nil, "") })
 }
 
 // TestKeyProvider_KMSRoundTrip proves a KMS-envelope KEK wraps/unwraps the DEK

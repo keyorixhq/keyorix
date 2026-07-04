@@ -40,6 +40,7 @@ var (
 	mpToExecCommand          []string
 	mpToShareFiles           []string
 	mpToShareEnv             []string
+	mpToShareCommitment      string
 	mpToTPMDevice            string
 	mpToSaltPath             string
 	mpConfirm                bool
@@ -106,6 +107,7 @@ func init() {
 	f.StringSliceVar(&mpToExecCommand, "to-exec-command", nil, "resolver argv whose stdout supplies the KEK (exec type), e.g. op,read,op://vault/kek/value")
 	f.StringSliceVar(&mpToShareFiles, "to-shamir-share-files", nil, "paths to >=threshold Shamir share files (shamir type)")
 	f.StringSliceVar(&mpToShareEnv, "to-shamir-share-env", nil, "env var names holding Shamir shares (shamir type)")
+	f.StringVar(&mpToShareCommitment, "to-shamir-commitment", "", "hex KEK commitment printed by `shamir-split` for these shares (shamir type; recommended — #429)")
 	f.StringVar(&mpToTPMDevice, "to-tpm-device", "", "TPM 2.0 device path (tpm type; default /dev/tpmrm0)")
 	f.StringVar(&mpToSaltPath, "to-salt-path", "", "salt path for the target password provider (default: current salt_path)")
 	f.BoolVar(&mpConfirm, "confirm", false, "required acknowledgement before re-wrapping the DEK")
@@ -203,6 +205,7 @@ type migrateOpts struct {
 	toExecCommand          []string
 	toShareFiles           []string
 	toShareEnv             []string
+	toShareCommitment      string
 	toTPMDevice            string
 	toSaltPath             string
 }
@@ -222,6 +225,7 @@ func runMigrateProvider(cmd *cobra.Command, args []string) error {
 		toExecCommand:          mpToExecCommand,
 		toShareFiles:           mpToShareFiles,
 		toShareEnv:             mpToShareEnv,
+		toShareCommitment:      mpToShareCommitment,
 		toTPMDevice:            mpToTPMDevice,
 		toSaltPath:             mpToSaltPath,
 	}
@@ -261,6 +265,7 @@ func targetEncryptionConfig(cur *config.EncryptionConfig, opts migrateOpts) (con
 		}
 		kp.ShamirShareFiles = opts.toShareFiles
 		kp.ShamirShareEnv = opts.toShareEnv
+		kp.ShamirCommitment = opts.toShareCommitment
 	case "tpm":
 		if opts.toWrappedKeyPath == "" {
 			return tgt, fmt.Errorf("--to-wrapped-key-path is required for --to-type tpm (where the sealed KEK blob lives)")
@@ -480,6 +485,14 @@ func printMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 		}
 		if len(kp.ShamirShareEnv) > 0 {
 			fmt.Printf("      shamir_share_env: %v\n", kp.ShamirShareEnv)
+		}
+		if kp.ShamirCommitment != "" {
+			fmt.Printf("      shamir_commitment: %s\n", kp.ShamirCommitment)
+		} else {
+			fmt.Println("      # shamir_commitment: not set — pass --to-shamir-commitment (the value")
+			fmt.Println("      # printed by `shamir-split` for these shares) for real cryptographic")
+			fmt.Println("      # verification of the reconstructed KEK (#429); without it, unseal falls")
+			fmt.Println("      # back to a weaker, forgeable check and logs a loud warning at startup.")
 		}
 	case "tpm":
 		if kp.TPMDevice != "" {
