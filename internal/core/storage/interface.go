@@ -531,13 +531,6 @@ type Storage interface {
 	// GetUserRoleIDsAt/GetUserGroupRoleIDsAt (via scopedRoleIDs) per scope.
 	GetUserRoleScopes(ctx context.Context, userID uint) ([]Scope, error)
 	RoleSetHasPermission(ctx context.Context, roleIDs []uint, permission string) (bool, error)
-	// CheckPermission is a raw, scope-agnostic role/permission-grant existence
-	// check (direct OR group-inherited role), with NO admin-role bypass — it does
-	// not answer "would Authorize() grant this at scope X". Prefer
-	// core.HasPermissionByEmail (which resolves via Authorize/scopedRoleIDs per
-	// scope) for anything that needs the true live-authorization-equivalent
-	// answer (#376).
-	CheckPermission(ctx context.Context, userID uint, resource, action string) (bool, error)
 	GetUserPermissions(ctx context.Context, userID uint) ([]*Permission, error)
 	// GetUserGroupPermissions returns the permissions a user holds via GROUP
 	// membership (group → group_roles → role_permissions), scope-agnostically and

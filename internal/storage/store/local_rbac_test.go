@@ -159,12 +159,12 @@ func TestAssignRoleToGroup_SucceedsAfterPriorTimeBoundGrantExpired(t *testing.T)
 	assert.Contains(t, ids, uint(10))
 }
 
-// #374/#375/#376: GetUserPermissions and CheckPermission previously joined ONLY
-// user_roles (direct assignments), leaving them blind to a permission granted
-// purely via a group role — unlike the live authorization path (scopedRoleIDs,
-// authz.go), which correctly unions direct and group-inherited roles. These
-// tests pin the fix: a permission held ONLY through group membership must now
-// be visible.
+// #374/#375/#376: GetUserPermissions previously joined ONLY user_roles (direct
+// assignments), leaving it blind to a permission granted purely via a group
+// role — unlike the live authorization path (scopedRoleIDs, authz.go), which
+// correctly unions direct and group-inherited roles. This test pins the fix:
+// a permission held ONLY through group membership must now be visible via
+// GetUserGroupPermissions, its group-derived counterpart.
 func TestGetUserPermissions_DirectOnly_DoesNotIncludeGroupGrant(t *testing.T) {
 	ls := newRBACScopeTestStore(t)
 	ctx := context.Background()
@@ -187,38 +187,6 @@ func TestGetUserGroupPermissions_IncludesGroupDerivedPermission(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, perms, 1)
 	assert.Equal(t, "secrets.admin", perms[0].Name)
-}
-
-// CheckPermission must find a permission granted purely via a group role — the
-// storage-layer #376 axis: it previously joined only user_roles, so a group-only
-// grant read as "does NOT have permission" even though Authorize() genuinely
-// grants it.
-func TestCheckPermission_IncludesGroupDerivedPermission(t *testing.T) {
-	ls := newRBACScopeTestStore(t)
-	ctx := context.Background()
-	seedGroupGrantedPermission(t, ls)
-
-	has, err := ls.CheckPermission(ctx, 1, "secrets", "admin")
-	require.NoError(t, err)
-	assert.True(t, has, "a permission granted only via a group role must be found")
-
-	has, err = ls.CheckPermission(ctx, 1, "secrets", "write")
-	require.NoError(t, err)
-	assert.False(t, has, "an unrelated permission must not be reported as held")
-}
-
-// A soft-deleted group must confer no permission, mirroring
-// GetUserGroupRoleIDsAt's own soft-delete gate.
-func TestCheckPermission_SoftDeletedGroupConfersNothing(t *testing.T) {
-	ls := newRBACScopeTestStore(t)
-	ctx := context.Background()
-	seedGroupGrantedPermission(t, ls)
-
-	require.NoError(t, ls.db.Delete(&models.Group{}, 100).Error)
-
-	has, err := ls.CheckPermission(ctx, 1, "secrets", "admin")
-	require.NoError(t, err)
-	assert.False(t, has, "a soft-deleted group's grant must stop authorizing")
 }
 
 // seedGroupGrantedPermission puts user 1 in group 100, which holds role 50
