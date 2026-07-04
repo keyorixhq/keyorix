@@ -56,6 +56,43 @@
   }
 }
 
+/* ─── shadcn/ui theming bridge ──────────────────────────────────────
+   Aliases shadcn's expected token names onto the existing semantic vars
+   below (`--accent`, `--bg-*`, etc.) instead of introducing a parallel
+   theme — most tokens flip light/dark automatically since they reference
+   the same variable the app already uses, rather than a copied value.
+   Two tokens have no existing equivalent and are new: `--radius` and
+   `--danger` (added to the semantic blocks further down). Note shadcn's
+   own "accent" token (a subtle hover background) is a different concept
+   from this app's existing `--accent` (the brand color) — mapped to
+   `--bg-subtle` directly rather than aliased by name, to avoid the two
+   colliding at the same cascade scope. */
+@theme inline {
+  --color-background: var(--bg-app);
+  --color-foreground: var(--text-primary);
+  --color-card: var(--bg-surface);
+  --color-card-foreground: var(--text-primary);
+  --color-popover: var(--bg-surface);
+  --color-popover-foreground: var(--text-primary);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--text-inverse);
+  --color-secondary: var(--bg-subtle);
+  --color-secondary-foreground: var(--text-primary);
+  --color-muted: var(--bg-muted);
+  --color-muted-foreground: var(--text-secondary);
+  --color-accent: var(--bg-subtle);
+  --color-accent-foreground: var(--text-primary);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--text-inverse);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 /*
   The default border color has changed to `currentcolor` in Tailwind CSS v4,
   so we've added these compatibility styles to make sure everything still
@@ -288,6 +325,11 @@
     --accent-subtle: #eff6ff; /* blue-50 */
     --accent-text: #1d4ed8; /* blue-700 */
 
+    --danger: #dc2626; /* red-600, matches btn-danger */
+    --danger-hover: #b91c1c; /* red-700 */
+
+    --radius: 0.5rem;
+
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
     --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
     color-scheme: light;
@@ -311,6 +353,9 @@
     --accent-hover: #60a5fa; /* blue-400 */
     --accent-subtle: #1e2d47; /* custom dark-blue tint */
     --accent-text: #60a5fa; /* blue-400 */
+
+    --danger: #ef4444; /* red-500 — slightly lighter for dark bg, matches --accent's pattern */
+    --danger-hover: #f87171; /* red-400 */
 
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
     --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);

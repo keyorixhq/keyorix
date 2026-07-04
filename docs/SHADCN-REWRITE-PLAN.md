@@ -206,10 +206,52 @@ Decide once; retrofitting after the rewrite is double the work:
 
 ## Phase 2 — shadcn setup & component inventory
 
-- Install shadcn CLI; map existing CSS variables (`--bg-app`, `--accent`, etc. in
-  `src/index.css`) onto shadcn's theming layer so dark/light theming isn't lost.
-- Freeze the current component inventory (11 custom UI components in
-  `src/components/ui`, 84 feature files, 14 page dirs) as the migration checklist.
+**Status: done (2026-07-04).** `components.json` + `src/lib/utils.ts` (the
+`cn()` helper) added; `tailwind-merge` and `class-variance-authority`
+installed. `src/index.css` gained an additive `@theme inline` block that
+aliases every shadcn token onto this app's existing semantic vars (`--accent`,
+`--bg-*`, `--border`, etc.) rather than introducing a parallel theme — dark
+mode needs no separate handling for most tokens since they reference the same
+variable the app already flips per `[data-theme]`. Two tokens had no existing
+equivalent and are new: `--radius` (0.5rem, chosen to reproduce the exact
+`rounded-md`/`rounded-lg` pixel values already on screen) and `--danger`
+(red-600/red-500 light/dark, matching `btn-danger`'s existing hardcoded
+color and the `--accent` 600→500 dark-mode lightening pattern). Verified
+additive/zero-regression: the built CSS's `@theme inline` block is fully
+tree-shaken away today since no component references its tokens yet — it
+only activates as each component is actually migrated below.
+
+Corrected component inventory (the original 11/84/14 draft counts were off —
+actual: **15 UI components, 84 feature files, 12 page dirs**). This table is
+the frozen migration checklist for Phases 3-5, ordered by usage (features +
+pages import count):
+
+| Existing | shadcn target | Usage | Note |
+|---|---|---|---|
+| Button | Button | 25 | |
+| Alert | Alert | 24 | |
+| Modal | Dialog | 21 | naming swap: our Modal = shadcn's Dialog |
+| Loading | Skeleton (partial) | 17 | Spinner/Progress/Overlay stay custom, no shadcn equivalent |
+| Input | Input | 10 | |
+| Select | Select | 8 | |
+| Dialog | AlertDialog | 0 | naming swap: our confirm-Dialog = shadcn's AlertDialog |
+| Textarea | Textarea | 2 | |
+| Dropdown | DropdownMenu | 0 | |
+| Toast | Sonner | 0 | matches the stack decision above |
+| CmdKSearch | Command | 0 | not barrel-exported today either |
+| Form | Form | 0 (dead code) | replace wholesale in Phase 5, not touched in Phase 2 |
+| ErrorBoundary | — | — | React pattern, no shadcn equivalent, stays custom |
+| SessionTimeoutWarning | — | — | app-specific, stays custom (restyle via new tokens later) |
+| AbsoluteSessionExpiryWarning | — | — | same as above |
+
+Known deferred decision for Phase 3: shadcn's generated components import
+`lucide-react`; this app uses `@heroicons/react` in 61 files. Reconcile
+per-component as each one is added (swap icons by hand vs. accept a second
+icon lib), not resolved globally here. Also note for Phase 3: shadcn writes
+lowercase filenames (`button.tsx`) that collide with this app's existing
+PascalCase files (`Button.tsx`) on case-insensitive filesystems — always
+replace the old file in the same commit as the `shadcn add`, never let both
+exist simultaneously.
 
 ## Phase 3 — Migrate leaf primitives
 
