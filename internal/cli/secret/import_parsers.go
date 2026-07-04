@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,6 +32,63 @@ func checkImportFileSize(path string) error {
 	}
 	if info.Size() > maxImportFileBytes {
 		return fmt.Errorf("import file %q is %d bytes, which exceeds the %d byte limit", path, info.Size(), maxImportFileBytes)
+	}
+	return nil
+}
+
+// keyHasControlChars reports whether a parsed secret name contains any Unicode
+// control character (C0/C1 controls, including the ESC byte that introduces an
+// ANSI escape sequence). Unlike sanitizeForTerminal (import.go), which only
+// scrubs bytes for terminal DISPLAY, this gates what is actually stored.
+// Secret names are simple identifiers — see core.SecretNamePolicy, whose
+// operator-configured pattern is exactly the kind of convention a name with
+// raw control bytes would already violate — so there is no legitimate case for
+// one to contain control characters. Reject rather than silently strip: a
+// dropped byte could change which existing secret an import collides with.
+func keyHasControlChars(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// valueHasDangerousControlChars reports whether a parsed secret value contains
+// a control character that could manipulate a terminal when the value is
+// later echoed back (dry-run preview, "already exists" listings, an error
+// quoting it) — ESC-introduced ANSI/C1 escape sequences and other
+// non-printable control bytes. Plain \t, \n, and \r are tolerated because
+// real credential material legitimately contains them (PEM-encoded private
+// keys and certificates are multi-line, for example), and this codebase must
+// not silently mangle the actual secret bytes it stores on an operator's
+// behalf. Values that trip this check are rejected — never auto-stripped —
+// so a suspicious import fails loudly instead of quietly corrupting
+// credential material.
+func valueHasDangerousControlChars(s string) bool {
+	for _, r := range s {
+		switch r {
+		case '\t', '\n', '\r':
+			continue
+		}
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateImportedEntry rejects a parsed key/value pair that contains raw
+// control characters or ANSI escape sequences, naming the offending key so
+// the operator can locate and fix (or knowingly re-export) the source record.
+// See #295: previously only sanitizeForTerminal existed, and it cleaned
+// display output only — the value actually sent to the server was untouched.
+func validateImportedEntry(e secretEntry) error {
+	if keyHasControlChars(e.Name) {
+		return fmt.Errorf("secret name %q contains control characters or ANSI escape sequences; rejecting import", sanitizeForTerminal(e.Name))
+	}
+	if valueHasDangerousControlChars(e.Value) {
+		return fmt.Errorf("value for secret %q contains control characters or ANSI escape sequences; rejecting import (if this is expected binary-ish data, re-export it without escape bytes)", sanitizeForTerminal(e.Name))
 	}
 	return nil
 }
@@ -84,7 +142,11 @@ func parseDotenv(path string) ([]secretEntry, error) {
 		if key == "" || val == "" {
 			continue
 		}
-		entries = append(entries, secretEntry{Name: key, Value: val})
+		entry := secretEntry{Name: key, Value: val}
+		if err := validateImportedEntry(entry); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
 	}
 	return entries, scanner.Err()
 }
@@ -136,7 +198,11 @@ func parseVault(path string) ([]secretEntry, error) {
 			if fval, isFormat1 := fields["value"]; isFormat1 {
 				val := fmt.Sprintf("%v", fval)
 				if val != "" {
-					entries = append(entries, secretEntry{Name: segment, Value: val})
+					entry := secretEntry{Name: segment, Value: val}
+					if err := validateImportedEntry(entry); err != nil {
+						return nil, err
+					}
+					entries = append(entries, entry)
 				}
 				continue
 			}
@@ -146,7 +212,11 @@ func parseVault(path string) ([]secretEntry, error) {
 			if key == "" || val == "" {
 				continue
 			}
-			entries = append(entries, secretEntry{Name: segment + "-" + key, Value: val})
+			entry := secretEntry{Name: segment + "-" + key, Value: val}
+			if err := validateImportedEntry(entry); err != nil {
+				return nil, err
+			}
+			entries = append(entries, entry)
 		}
 	}
 	return entries, nil
@@ -175,7 +245,11 @@ func parseJSON(path string) ([]secretEntry, error) {
 		if k == "" || val == "" {
 			continue
 		}
-		entries = append(entries, secretEntry{Name: k, Value: val})
+		entry := secretEntry{Name: k, Value: val}
+		if err := validateImportedEntry(entry); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
 	}
 	return entries, nil
 }
