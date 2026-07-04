@@ -63,6 +63,28 @@ type EmergencyAccessPosture struct {
 	TotalActivations  int `json:"total_activations"`
 }
 
+// AccessRequestPosture summarises the dual-control access-request/approval workflow
+// (ADR-024, ISO 27001 A.5.3): how many project access requests exist and in what
+// state, across the deployment. The dual-control invariants themselves — a
+// requester can never approve their own request (maker != checker), and a distinct
+// approver can only sign off once, with the role granted only once
+// RequiredApprovals distinct approvers have done so — are already enforced by
+// ApproveAccessRequestWithExpiry (internal/core/invitations.go); this rollup gives
+// an auditor visibility into the counts that workflow produces, not new
+// enforcement (#257).
+type AccessRequestPosture struct {
+	TotalRequests int `json:"total_requests"`
+	Pending       int `json:"pending"`
+	Approved      int `json:"approved"`
+	Rejected      int `json:"rejected"`
+	Withdrawn     int `json:"withdrawn"`
+	Expired       int `json:"expired"`
+	// RequiredApprovals is the currently-configured N-of-M dual-control threshold
+	// (SetDualControlPolicy): >1 means at least two distinct approvers — never the
+	// requester — must sign off before a request's role grant lands.
+	RequiredApprovals int `json:"required_approvals"`
+}
+
 // LegalHoldPosture reports whether a litigation/investigation hold is in effect
 // (ISO 27001 A.5.34) — while active the purge jobs preserve all records.
 type LegalHoldPosture struct {
@@ -167,6 +189,7 @@ type CompliancePosture struct {
 	Rotation         RotationPosture         `json:"rotation"`
 	Identity         IdentityPosture         `json:"identity"`
 	EmergencyAccess  EmergencyAccessPosture  `json:"emergency_access"`
+	AccessRequests   AccessRequestPosture    `json:"access_requests"`
 	Classification   ClassificationPosture   `json:"classification"`
 	Anomalies        AnomaliesPosture        `json:"anomalies"`
 	LegalHold        LegalHoldPosture        `json:"legal_hold"`
@@ -258,10 +281,12 @@ type complianceSnapshot struct {
 	riskExceptionsErr    error
 
 	// Per-project results, keyed by project ID.
-	campaignsByProject     map[uint][]*CampaignWithProgress
-	campaignsErrByProject  map[uint]error
-	breakGlassByProject    map[uint][]*models.BreakGlassActivation
-	breakGlassErrByProject map[uint]error
+	campaignsByProject         map[uint][]*CampaignWithProgress
+	campaignsErrByProject      map[uint]error
+	breakGlassByProject        map[uint][]*models.BreakGlassActivation
+	breakGlassErrByProject     map[uint]error
+	accessRequestsByProject    map[uint][]*models.AccessRequest
+	accessRequestsErrByProject map[uint]error
 }
 
 // buildComplianceSnapshot fetches every shared sub-query once. ListProjects is the
@@ -274,11 +299,13 @@ func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceS
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	snap := &complianceSnapshot{
-		projects:               projects,
-		campaignsByProject:     make(map[uint][]*CampaignWithProgress, len(projects)),
-		campaignsErrByProject:  make(map[uint]error, len(projects)),
-		breakGlassByProject:    make(map[uint][]*models.BreakGlassActivation, len(projects)),
-		breakGlassErrByProject: make(map[uint]error, len(projects)),
+		projects:                   projects,
+		campaignsByProject:         make(map[uint][]*CampaignWithProgress, len(projects)),
+		campaignsErrByProject:      make(map[uint]error, len(projects)),
+		breakGlassByProject:        make(map[uint][]*models.BreakGlassActivation, len(projects)),
+		breakGlassErrByProject:     make(map[uint]error, len(projects)),
+		accessRequestsByProject:    make(map[uint][]*models.AccessRequest, len(projects)),
+		accessRequestsErrByProject: make(map[uint]error, len(projects)),
 	}
 
 	snap.auditChain, snap.auditChainErr = c.VerifyAuditChain(ctx)
@@ -295,8 +322,30 @@ func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceS
 		acts, bErr := c.ListBreakGlassActivations(ctx, pid)
 		snap.breakGlassByProject[pid] = acts
 		snap.breakGlassErrByProject[pid] = bErr
+
+		reqs, rErr := c.storage.ListAccessRequests(ctx, pid)
+		if rErr == nil {
+			applyAccessRequestEffectiveExpiry(reqs, c.now())
+		}
+		snap.accessRequestsByProject[pid] = reqs
+		snap.accessRequestsErrByProject[pid] = rErr
 	}
 	return snap, nil
+}
+
+// applyAccessRequestEffectiveExpiry corrects the in-memory State of any row that is
+// still persisted as pending but whose ExpiresAt has passed — mirroring how
+// ListBreakGlassActivations computes an activation's effective expired state without
+// writing it back. The posture/evidence snapshot is read-only (unlike the core
+// ListAccessRequests method, which lazily persists this same transition on read), so
+// a stale "pending" row must not be reported as still-pending here without also
+// issuing a write this snapshot is not meant to perform.
+func applyAccessRequestEffectiveExpiry(reqs []*models.AccessRequest, now time.Time) {
+	for _, r := range reqs {
+		if r.State == AccessRequestPending && r.ExpiresAt != nil && now.After(*r.ExpiresAt) {
+			r.State = AccessRequestExpired
+		}
+	}
 }
 
 // GetCompliancePosture aggregates the deployment's control posture. It is an
@@ -561,6 +610,7 @@ func (c *KeyorixCore) identityPosture(ctx context.Context) (IdentityPosture, err
 // from the shared complianceSnapshot (#256) rather than a fresh query per call.
 func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p *CompliancePosture, snap *complianceSnapshot) {
 	p.AccessGovernance.Projects = len(snap.projects)
+	p.AccessRequests.RequiredApprovals = c.requiredApprovals()
 	recertCutoff := c.now().AddDate(0, 0, -c.recertCadence())
 	for _, proj := range snap.projects {
 		pid := proj.ID
@@ -601,6 +651,26 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 			}
 		} else {
 			p.degrade(fmt.Sprintf("emergency_access:project=%d", pid), err)
+		}
+
+		if reqs, err := snap.accessRequestsByProject[pid], snap.accessRequestsErrByProject[pid]; err == nil {
+			p.AccessRequests.TotalRequests += len(reqs)
+			for _, r := range reqs {
+				switch r.State {
+				case AccessRequestPending:
+					p.AccessRequests.Pending++
+				case AccessRequestApproved:
+					p.AccessRequests.Approved++
+				case AccessRequestRejected:
+					p.AccessRequests.Rejected++
+				case AccessRequestWithdrawn:
+					p.AccessRequests.Withdrawn++
+				case AccessRequestExpired:
+					p.AccessRequests.Expired++
+				}
+			}
+		} else {
+			p.degrade(fmt.Sprintf("access_requests:project=%d", pid), err)
 		}
 	}
 }

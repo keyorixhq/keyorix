@@ -59,6 +59,9 @@ type ComplianceEvidence struct {
 	RotationOverdue []EvidenceRotation             `json:"rotation_overdue"`
 	SoDViolations   []SoDViolation                 `json:"sod_violations"`
 	RiskExceptions  []*RiskExceptionView           `json:"risk_exceptions"` // active governed exceptions (A.5.8)
+	// AccessRequests is every project access request (dual-control workflow, #257),
+	// across all projects — the record set the AccessRequests posture rollup counts.
+	AccessRequests []*models.AccessRequest `json:"access_requests"`
 }
 
 // GenerateComplianceEvidence assembles the evidence pack. Like the posture, it is an
@@ -90,6 +93,7 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 		RotationOverdue: []EvidenceRotation{},
 		SoDViolations:   []SoDViolation{},
 		RiskExceptions:  []*RiskExceptionView{},
+		AccessRequests:  []*models.AccessRequest{},
 	}
 
 	// Active risk exceptions (the governed-acceptance register) — the snapshot's one
@@ -171,6 +175,11 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 			ev.BreakGlass = append(ev.BreakGlass, acts...)
 		} else {
 			posture.degrade(fmt.Sprintf("evidence:break_glass:project=%d", pid), err)
+		}
+		if reqs, err := snap.accessRequestsByProject[pid], snap.accessRequestsErrByProject[pid]; err == nil {
+			ev.AccessRequests = append(ev.AccessRequests, reqs...)
+		} else {
+			posture.degrade(fmt.Sprintf("evidence:access_requests:project=%d", pid), err)
 		}
 	}
 	return ev, nil
