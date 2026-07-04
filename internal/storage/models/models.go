@@ -1125,9 +1125,15 @@ type ProjectMembership struct {
 	UserID    uint `gorm:"index"`
 	Role      string
 	State     string // invited | identity_verified | provisioned | active | revoked
-	// Uniqueness of a non-revoked membership per (project, user) is enforced in
-	// core (see InviteMember), not by a DB constraint — so a revoked membership
-	// can be followed by a fresh invite without a unique-index collision.
+	// Uniqueness of a non-revoked membership per (project, user) is enforced by a
+	// DB-level partial unique index (uniq_project_memberships_active, factory.go's
+	// ensureProjectMembershipIndex, scoped to state <> 'revoked') so a revoked
+	// membership can be followed by a fresh invite without a unique-index collision,
+	// while two concurrent invites for the same (project, user) can't both commit a
+	// row (#309). That index only dedupes this table, though — it says nothing about
+	// the user_roles grant a membership is supposed to carry once active; see
+	// KeyorixCore.revertFailedActivation for what happens when that grant fails
+	// after this row already committed as active.
 	InvitedBy   uint
 	InvitedAt   time.Time
 	ActivatedAt *time.Time

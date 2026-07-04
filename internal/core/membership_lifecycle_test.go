@@ -118,6 +118,88 @@ func TestTransitionMembership_RejectsIllegalJump(t *testing.T) {
 	store.AssertNotCalled(t, "UpdateProjectMembership", mock.Anything, mock.Anything)
 }
 
+// TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership is the
+// (#309) losing-racer regression: open-mode InviteMember commits a `state=active`
+// ProjectMembership row first, then grants the role. This deterministically
+// simulates the losing racer of a concurrent invite race (or any other path that
+// already holds the role independently of this membership) by making the role
+// grant itself fail with the exact composite-primary-key rejection message a real
+// SQLite/Postgres backend returns ("Role already assigned") — reproducing the
+// interleaving without needing real goroutines. It asserts (a) the caller still
+// sees the error (existing, correct behavior) and (b) the just-created row no
+// longer reads as active — it must not survive as an orphaned "ghost" active
+// membership behind a reported failure.
+func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *testing.T) {
+	store := new(MockStorage)
+	c := newMembershipCore(store)
+	c.membershipValidationMode = ValidationModeOpen
+	ctx := context.Background()
+
+	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
+	store.On("GetActiveProjectMembership", ctx, uint(1), uint(2)).Return(nil, fmt.Errorf("not found"))
+	created := &models.ProjectMembership{ID: 51, ProjectID: 1, UserID: 2, Role: "project_viewer", State: MembershipActive}
+	store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+		return m.State == MembershipActive && m.ProjectID == 1 && m.UserID == 2
+	})).Return(created, nil)
+	// The composite user_roles primary key rejects the grant — the losing racer (or
+	// any caller whose role is already held via an independent path).
+	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).
+		Return(fmt.Errorf("Role already assigned"))
+	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+		return m.ID == 51 && m.State == MembershipRevoked && m.RevokedAt != nil
+	})).Return(nil)
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	m, err := c.InviteMember(ctx, 1, 2, "project_viewer", 9, false)
+
+	// (a) the error still propagates to the caller.
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to grant role on activation")
+	assert.Nil(t, m)
+
+	// (b) the just-created row was actually reverted, not left standing active.
+	store.AssertNumberOfCalls(t, "UpdateProjectMembership", 1)
+	assert.Equal(t, MembershipRevoked, created.State, "orphaned row must not still read as active")
+	assert.NotNil(t, created.RevokedAt)
+}
+
+// TestTransitionMembership_ActivationFailure_RevertsToPriorState is the (#309)
+// companion for the non-Open validation modes: an admin's explicit
+// TransitionMembership(..., MembershipActive, ...) call persists `active` first,
+// then grants the role — the identical ordering, and identical orphan risk, as
+// inviteMemberWithMode. Unlike a brand-new invite, this row already existed in a
+// legitimate pending state before the failed activation attempt, so the revert
+// must restore THAT state (leaving the membership retriable) rather than jumping
+// straight to the terminal `revoked` state.
+func TestTransitionMembership_ActivationFailure_RevertsToPriorState(t *testing.T) {
+	store := new(MockStorage)
+	c := newMembershipCore(store)
+	ctx := context.Background()
+
+	existing := &models.ProjectMembership{ID: 50, ProjectID: 1, UserID: 2, Role: "project_viewer", State: MembershipProvisioned}
+	store.On("GetProjectMembership", ctx, uint(50)).Return(existing, nil)
+	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
+	// First write: persists the (about to be reverted) active state.
+	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+		return m.ID == 50 && m.State == MembershipActive
+	})).Return(nil).Once()
+	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).
+		Return(fmt.Errorf("Role already assigned"))
+	// Revert write: must go back to `provisioned`, not `revoked`.
+	store.On("UpdateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
+		return m.ID == 50 && m.State == MembershipProvisioned
+	})).Return(nil).Once()
+	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
+
+	m, err := c.TransitionMembership(ctx, 1, 50, MembershipActive, 9)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to grant role on activation")
+	assert.Nil(t, m)
+	assert.Equal(t, MembershipProvisioned, existing.State, "must revert to the pre-transition state, not stay active or jump to revoked")
+	store.AssertNumberOfCalls(t, "UpdateProjectMembership", 2)
+}
+
 // Cross-project guard: a membership in project 2 must not be transitionable when
 // the caller is authorized for project 1 (would otherwise grant a role in 2).
 func TestTransitionMembership_RejectsOtherProject(t *testing.T) {
