@@ -2,9 +2,12 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 )
@@ -16,14 +19,51 @@ import (
 // fail closed even on a FRESH install (where there is no existing wrapped DEK to
 // fail against). The byte after the magic carries the threshold K so the provider
 // can enforce that at least K shares were actually supplied.
+//
+// #429: this magic is NOT a cryptographic integrity check and must never be relied
+// on as one. Because each byte of the split payload is the constant term of an
+// INDEPENDENT Lagrange polynomial evaluated at the same set of share x-coordinates,
+// an attacker holding threshold-1 genuine shares can forge one additional share by
+// picking any x-coordinate and solving, independently per output byte, for the
+// y-value that makes the interpolation land on a chosen byte — including the magic
+// bytes AND every KEK byte simultaneously. Embedding a bigger/stronger check INSIDE
+// the split payload (e.g. a hash of the KEK next to it) would not help: it is just
+// as forgeable, one byte at a time, as the 4-byte magic is. Real protection has to
+// come from a value that is NOT itself reconstructed via interpolation — see
+// kekCommitment below, verified against a value stored outside the Shamir shares.
 const kekShareMagic = "KXK1"
 
 // kekFrameLen is the framed-payload length: magic + 1 threshold byte + KEK.
 const kekFrameLen = len(kekShareMagic) + 1 + KEKSize
 
+// kekCommitmentContext domain-separates the KEK integrity commitment (#429) from any
+// other HMAC/hash use of the same KEK bytes elsewhere in the codebase — it is a
+// fixed, public label, not a secret.
+const kekCommitmentContext = "keyorix-shamir-kek-commitment-v1"
+
+// CommitKEK computes a public, one-way HMAC-SHA256 commitment to kek. Unlike
+// kekShareMagic (embedded IN the Shamir-split payload and therefore forgeable — see
+// its doc comment), this commitment is computed ONCE at split time from the real
+// original KEK and must be stored OUTSIDE the Shamir shares (e.g. in the server's
+// own config, alongside — not as part of — the share files/env vars). At
+// reconstruction time, ShamirKeyProvider recomputes this same commitment over the
+// RECONSTRUCTED KEK and compares it (constant-time) against the stored value: an
+// attacker who forges a share fully controls the interpolated KEK bytes, but cannot
+// make them hash to a commitment they never see and cannot influence, since it isn't
+// part of the interpolation at all. The commitment is safe to store in the clear —
+// it is one-way and reveals nothing about the KEK — so it can live right next to the
+// shares' own metadata/config without weakening anything.
+func CommitKEK(kek []byte) []byte {
+	mac := hmac.New(sha256.New, []byte(kekCommitmentContext))
+	mac.Write(kek)
+	return mac.Sum(nil)
+}
+
 // SplitKEK frames a 32-byte KEK (magic ‖ threshold ‖ KEK) and Shamir-splits it into
 // parts shares with the given threshold. Reconstructing with combineKEK then both
-// recovers the KEK and verifies enough correct shares were combined.
+// recovers the KEK and verifies enough correct shares were combined. Callers should
+// also persist CommitKEK(kek) (see its doc comment) so combineKEK can be given a
+// real cryptographic commitment to verify against, not just the forgeable magic.
 func SplitKEK(kek []byte, parts, threshold int) ([][]byte, error) {
 	if len(kek) != KEKSize {
 		return nil, fmt.Errorf("shamir: KEK must be %d bytes, got %d", KEKSize, len(kek))
@@ -39,9 +79,16 @@ func SplitKEK(kek []byte, parts, threshold int) ([][]byte, error) {
 }
 
 // combineKEK reconstructs a KEK from shares produced by SplitKEK. It fails closed
-// when the magic does not match (too few or incorrect shares were combined) or
-// when fewer than the embedded threshold shares were supplied.
-func combineKEK(shares [][]byte) ([]byte, error) {
+// when the magic does not match (too few or incorrect shares were combined) or when
+// fewer than the embedded threshold shares were supplied. If commitment is non-empty
+// (the operator configured shamir_commitment — see CommitKEK), it ALSO verifies the
+// reconstructed KEK against that commitment in constant time and rejects a mismatch;
+// this is the real cryptographic defense against the share-forgery attack (#429) —
+// the magic check alone cannot catch it. An empty commitment is accepted for
+// backward compatibility with key material split before this check existed; the
+// caller is responsible for warning loudly about the reduced verification strength
+// in that case.
+func combineKEK(shares [][]byte, commitment []byte) ([]byte, error) {
 	payload, err := Combine(shares)
 	if err != nil {
 		return nil, err
@@ -53,7 +100,16 @@ func combineKEK(shares [][]byte) ([]byte, error) {
 	if len(shares) < threshold {
 		return nil, fmt.Errorf("shamir: %d shares supplied but the split requires %d (threshold)", len(shares), threshold)
 	}
-	return validateKEK(payload[len(kekShareMagic)+1:], "shamir")
+	kek, err := validateKEK(payload[len(kekShareMagic)+1:], "shamir")
+	if err != nil {
+		return nil, err
+	}
+	if len(commitment) > 0 {
+		if !hmac.Equal(CommitKEK(kek), commitment) {
+			return nil, fmt.Errorf("shamir: reconstructed KEK failed its commitment check (shamir_commitment mismatch) — this indicates a forged/incorrect share, refusing to unseal")
+		}
+	}
+	return kek, nil
 }
 
 // ShamirKeyProvider reconstructs the KEK from K-of-N Shamir shares (ADR-038): no
@@ -63,14 +119,24 @@ func combineKEK(shares [][]byte) ([]byte, error) {
 // supplied shares (the operator provides at least the threshold many) and combines
 // them; the result must be exactly KEKSize bytes or the unseal fails closed (too
 // few / wrong shares reconstruct garbage rather than the real key).
+//
+// commitmentHex, if set (shamir_commitment in config, also printed by
+// `keyorix encryption shamir-split`), is the hex-encoded CommitKEK output computed
+// at split time; KEK() verifies the reconstructed key against it (#429) — real
+// cryptographic protection against a forged share, unlike the magic-byte framing
+// check alone. Left empty for key material split before this existed; KEK() then
+// logs a loud warning rather than hard-failing an existing legitimate deployment.
 type ShamirKeyProvider struct {
-	shareFiles []string
-	shareEnv   []string
+	shareFiles    []string
+	shareEnv      []string
+	commitmentHex string
 }
 
-// NewShamirKeyProvider builds a provider from share file paths and/or env var names.
-func NewShamirKeyProvider(shareFiles, shareEnv []string) *ShamirKeyProvider {
-	return &ShamirKeyProvider{shareFiles: shareFiles, shareEnv: shareEnv}
+// NewShamirKeyProvider builds a provider from share file paths and/or env var names,
+// and an optional hex-encoded KEK commitment (shamir_commitment; empty = not
+// configured, see the ShamirKeyProvider doc comment for the security implication).
+func NewShamirKeyProvider(shareFiles, shareEnv []string, commitmentHex string) *ShamirKeyProvider {
+	return &ShamirKeyProvider{shareFiles: shareFiles, shareEnv: shareEnv, commitmentHex: commitmentHex}
 }
 
 func (p *ShamirKeyProvider) Name() string { return "shamir" }
@@ -109,10 +175,29 @@ func (p *ShamirKeyProvider) KEK() ([]byte, error) {
 	if len(shares) < 2 {
 		return nil, fmt.Errorf("shamir key provider: need at least 2 shares, got %d", len(shares))
 	}
+
+	var commitment []byte
+	if p.commitmentHex != "" {
+		var err error
+		commitment, err = hex.DecodeString(strings.TrimSpace(p.commitmentHex))
+		if err != nil {
+			return nil, fmt.Errorf("shamir key provider: shamir_commitment is not valid hex: %w", err)
+		}
+	} else {
+		// #429: without a stored commitment, reconstruction is verified ONLY by the
+		// 4-byte magic framing check, which an attacker holding threshold-1 genuine
+		// shares can forge (they fully control the interpolated bytes, magic included).
+		// Not a hard failure — existing key material split before shamir_commitment
+		// existed has no commitment to check — but this is a real reduction in
+		// verification strength that every startup should surface loudly.
+		log.Printf("shamir key provider: no shamir_commitment configured — reconstruction relies solely on the forgeable magic-byte framing check, NOT a cryptographic integrity check (see issue #429); run `keyorix encryption shamir-split` again (or otherwise compute crypto.CommitKEK over the existing KEK) and set shamir_commitment to close this gap")
+	}
 	// combineKEK enforces the embedded threshold and verifies the framing magic, so
 	// a sub-threshold or wrong set of shares fails closed here — including on a fresh
 	// install, where there is no existing wrapped DEK for a wrong KEK to fail against.
-	kek, err := combineKEK(shares)
+	// When commitment is non-empty it also verifies the real cryptographic commitment
+	// (#429), which the magic check alone cannot do.
+	kek, err := combineKEK(shares, commitment)
 	if err != nil {
 		return nil, fmt.Errorf("shamir key provider: %w", err)
 	}

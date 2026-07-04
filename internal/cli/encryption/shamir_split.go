@@ -60,6 +60,13 @@ unrecoverable. Store shares separately and back them up.`,
 		if err != nil {
 			return err
 		}
+		// #429: the magic byte embedded in the split payload is forgeable by an
+		// attacker holding threshold-1 genuine shares (see combineKEK's doc comment),
+		// so also emit a real cryptographic commitment to the KEK, computed here from
+		// the actual (never-split) secret and verified against the RECONSTRUCTED KEK
+		// at unseal time. It reveals nothing about the KEK, so printing/storing it in
+		// the clear next to the shares is safe.
+		commitment := hex.EncodeToString(crypto.CommitKEK(kek))
 
 		fmt.Printf("Generated a new 32-byte KEK split into %d shares (threshold %d).\n", ssShares, ssThreshold)
 		fmt.Println("The KEK itself is not stored — keep at least the threshold many shares safe.")
@@ -84,7 +91,21 @@ unrecoverable. Store shares separately and back them up.`,
 			fmt.Printf("  share %d -> %s\n", i+1, path)
 		}
 		fmt.Println()
-		fmt.Printf("Configure: key_provider.type: shamir with at least %d of the shares.\n", ssThreshold)
+		fmt.Println("KEK integrity commitment (safe to store/print in the clear — reveals nothing")
+		fmt.Println("about the KEK; verified against the RECONSTRUCTED key at unseal time so a")
+		fmt.Println("forged/wrong share is rejected rather than silently accepted, #429):")
+		fmt.Printf("  shamir_commitment: %s\n", commitment)
+		if ssOutDir != "" {
+			commitPath := filepath.Join(ssOutDir, "commitment.hex")
+			if err := securefiles.SecureWriteFileSync(ssOutDir, "commitment.hex", []byte(commitment+"\n"), 0o644); err != nil {
+				return fmt.Errorf("write %s: %w", commitPath, err)
+			}
+			fmt.Printf("  -> also written to %s\n", commitPath)
+		}
+		fmt.Println()
+		fmt.Printf("Configure: key_provider.type: shamir with at least %d of the shares, plus\n", ssThreshold)
+		fmt.Println("shamir_commitment (above) — without it, reconstruction falls back to a weaker,")
+		fmt.Println("forgeable check and logs a loud warning at every startup.")
 		return nil
 	},
 }
