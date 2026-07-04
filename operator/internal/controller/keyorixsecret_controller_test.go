@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,15 +22,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	secretsv1alpha1 "github.com/keyorixhq/keyorix/operator/api/v1alpha1"
+	"github.com/keyorixhq/keyorix/operator/internal/keyorix"
 )
 
-// fakeFetcher serves values from a map; refs absent from it (or in failRefs) error.
+// fakeFetcher serves values from a map. Refs in failRefs error with a plain
+// (non-ErrSecretGone) error, simulating a transient failure (network/5xx/401). Refs in
+// goneRefs error wrapping keyorix.ErrSecretGone, simulating a confirmed 404/403 from
+// the upstream Keyorix server (#428).
 type fakeFetcher struct {
 	values   map[string][]byte
 	failRefs map[string]bool
+	goneRefs map[string]bool
 }
 
 func (f *fakeFetcher) FetchValue(_ context.Context, ref string) ([]byte, error) {
+	if f.goneRefs[ref] {
+		return nil, fmt.Errorf("ref %q gone: %w", ref, keyorix.ErrSecretGone)
+	}
 	if f.failRefs[ref] {
 		return nil, errors.New("boom")
 	}
@@ -208,6 +217,101 @@ func TestReconcile_FetchFailureFailsClosed(t *testing.T) {
 	require.Len(t, ks.Status.Conditions, 1)
 	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
 	assert.Equal(t, "SyncError", ks.Status.Conditions[0].Reason)
+}
+
+// TestReconcile_UpstreamGoneWipesTargetSecret pins #428: a fetch failure that
+// AFFIRMATIVELY indicates the upstream secret is gone (404/403, wrapped as
+// keyorix.ErrSecretGone) must actively delete the previously synced target Secret —
+// otherwise every workload mounting it goes on reading a revoked/deleted value
+// indefinitely, with the CR's Ready condition the only (easy-to-miss) hint anything is
+// wrong.
+func TestReconcile_UpstreamGoneWipesTargetSecret(t *testing.T) {
+	// First reconcile succeeds and creates the target Secret normally.
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var got corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got),
+		"precondition: the target Secret exists after a successful sync")
+
+	// The upstream secret is now confirmed gone (404/403) on the next reconcile.
+	fetcher.goneRefs = map[string]bool{"app/production/db-password": true}
+
+	_, err = reconcile(t, r)
+	require.Error(t, err, "a confirmed-gone upstream ref still requeues with error for backoff")
+	assert.True(t, errors.Is(err, keyorix.ErrSecretGone))
+
+	err = c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got)
+	assert.Error(t, err, "the target Secret must be wiped once the upstream secret is confirmed gone")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	require.Len(t, ks.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
+	assert.Equal(t, "UpstreamSecretGone", ks.Status.Conditions[0].Reason,
+		"the status reason must distinguish a confirmed wipe from an ordinary SyncError")
+}
+
+// TestReconcile_TransientFetchFailureLeavesTargetSecretUntouched pins #428's other
+// half: a transient failure (network error, timeout, 5xx, or an ambiguous 401) must
+// NOT touch a previously synced target Secret. Wiping it on every hiccup would cause
+// unnecessary outages for every workload depending on it.
+func TestReconcile_TransientFetchFailureLeavesTargetSecretUntouched(t *testing.T) {
+	fetcher := &fakeFetcher{values: map[string][]byte{
+		"app/production/db-password": []byte("p4ss"),
+		"app/production/api-key":     []byte("k3y"),
+	}}
+	r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret())
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+
+	var before corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &before))
+
+	// A transient failure on the next reconcile — NOT wrapping ErrSecretGone.
+	fetcher.failRefs = map[string]bool{"app/production/db-password": true}
+
+	_, err = reconcile(t, r)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, keyorix.ErrSecretGone), "a transient failure must not be classified as gone")
+
+	var after corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after),
+		"the target Secret must still exist after a transient fetch failure")
+	assert.Equal(t, before.Data, after.Data, "a transient failure must not alter the previously synced values")
+
+	var ks secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &ks))
+	require.Len(t, ks.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionFalse, ks.Status.Conditions[0].Status)
+	assert.Equal(t, "SyncError", ks.Status.Conditions[0].Reason, "a transient failure keeps the generic SyncError reason")
+}
+
+// A target Secret this operator does NOT manage (no ManagedByLabel — applySecret
+// already refuses to adopt it) must never be deleted, even when the upstream secret is
+// confirmed gone: it isn't ours to touch, and it may belong to an unrelated workload
+// that merely collides on name.
+func TestReconcile_UpstreamGoneDoesNotDeleteUnmanagedSecret(t *testing.T) {
+	foreign := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "db-creds", Namespace: "app"},
+		Data:       map[string][]byte{"OTHER": []byte("do-not-touch")},
+	}
+	fetcher := &fakeFetcher{goneRefs: map[string]bool{"app/production/db-password": true}}
+	r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret(), foreign)
+
+	_, err := reconcile(t, r)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, keyorix.ErrSecretGone))
+
+	var got corev1.Secret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &got),
+		"an unmanaged Secret sharing the target name must not be deleted")
+	assert.Equal(t, []byte("do-not-touch"), got.Data["OTHER"])
 }
 
 // TestReconcile_TokenSecretReadUsesAPIReader pins #124: the token Secret lookup
