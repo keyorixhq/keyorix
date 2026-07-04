@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -64,6 +65,9 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
 			status = http.StatusForbidden
+		default:
+			log.Printf("Error copying secret %d to environment %d: %v", id, reqBody.EnvironmentID, err)
+			msg = clientSafe(err)
 		}
 		h.sendError(w, "Error", msg, status, nil)
 		return

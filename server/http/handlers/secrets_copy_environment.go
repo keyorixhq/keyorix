@@ -4,6 +4,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,6 +51,9 @@ func (h *SecretHandler) CopyEnvironmentSecrets(w http.ResponseWriter, r *http.Re
 		msg := err.Error()
 		if strings.Contains(msg, "must ") || strings.Contains(msg, "required") || strings.Contains(msg, "belong") || strings.Contains(msg, "validation") {
 			status = http.StatusBadRequest
+		} else {
+			log.Printf("Error copying secrets from environment %d to %d (project %d): %v", sourceEnvID, reqBody.TargetEnvironmentID, projectID, err)
+			msg = clientSafe(err)
 		}
 		h.sendError(w, "Error", msg, status, nil)
 		return

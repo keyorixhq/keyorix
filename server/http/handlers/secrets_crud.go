@@ -130,6 +130,9 @@ func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusBadRequest
 		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
+		default:
+			log.Printf("Error classifying secret %d: %v", id, err)
+			msg = clientSafe(err)
 		}
 		h.sendError(w, "Error", msg, status, nil)
 		return
@@ -166,17 +169,21 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 		Backend: reqBody.Backend, Ref: reqBody.Ref,
 	}, userCtx.UserID); err != nil {
 		status := http.StatusInternalServerError
+		msg := err.Error()
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case strings.Contains(msg, "not found"):
 			status = http.StatusNotFound
-		case strings.Contains(err.Error(), "unknown rotation charset"),
-			strings.Contains(err.Error(), "out of range"),
-			strings.Contains(err.Error(), "must be set together"),
-			strings.Contains(err.Error(), "unknown rotation backend"),
-			strings.Contains(err.Error(), "no rotation backends"):
+		case strings.Contains(msg, "unknown rotation charset"),
+			strings.Contains(msg, "out of range"),
+			strings.Contains(msg, "must be set together"),
+			strings.Contains(msg, "unknown rotation backend"),
+			strings.Contains(msg, "no rotation backends"):
 			status = http.StatusBadRequest
+		default:
+			log.Printf("Error setting auto-rotate for secret %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		h.sendError(w, "Error", err.Error(), status, nil)
+		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
 	h.sendSuccess(w, map[string]interface{}{
@@ -318,10 +325,14 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.coreService.RestoreSecret(r.Context(), userCtx.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "not found") {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
 			status = http.StatusNotFound
+		} else {
+			log.Printf("Error restoring secret %d: %v", id, err)
+			msg = clientSafe(err)
 		}
-		h.sendError(w, "Error", err.Error(), status, nil)
+		h.sendError(w, "Error", msg, status, nil)
 		return
 	}
 	h.sendSuccess(w, map[string]interface{}{"id": id, "restored": true}, "Secret restored")
