@@ -155,6 +155,17 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	// If the mode put us straight into active, grant the role now.
 	if created.State == MembershipActive {
 		if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role); err != nil {
+			// #309: created just committed as `active` above; if the role grant that's
+			// supposed to back it fails (e.g. the composite user_roles primary key
+			// rejects a grant that already exists via some other, independent path —
+			// the DB-level uniq_project_memberships_active index only dedupes
+			// ProjectMembership rows, not user_roles grants), leaving that row standing
+			// would report a failure to the caller while a live active-looking
+			// membership with no grant behind it persists in ListProjectMemberships/
+			// ListUserProjectMemberships indefinitely. There's no earlier state to fall
+			// back to (this row didn't exist before this call), so revert straight to
+			// revoked.
+			c.revertFailedActivation(ctx, created, MembershipRevoked)
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
 	}
@@ -207,6 +218,7 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 		}
 	}
 
+	prevState := m.State
 	now := c.now()
 	m.State = to
 	m.UpdatedAt = now
@@ -224,6 +236,13 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	switch to {
 	case MembershipActive:
 		if err := c.AddProjectMember(ctx, actorID, m.ProjectID, m.UserID, m.Role); err != nil {
+			// #309: m just committed as `active` above; if the role grant fails, revert
+			// to the state m held before this transition (not straight to revoked) —
+			// unlike inviteMemberWithMode's straight-to-active create, this row already
+			// existed in a legitimate pending state, so a failed activation attempt
+			// should leave it retriable rather than terminally revoked. See
+			// revertFailedActivation.
+			c.revertFailedActivation(ctx, m, prevState)
 			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
 		}
 	case MembershipRevoked:
@@ -285,4 +304,43 @@ func (c *KeyorixCore) logMembershipEvent(ctx context.Context, eventType string, 
 	aid, pid := actorID, m.ProjectID
 	c.writeAuditEventFull(ctx, eventType, &aid, nil, &pid, "",
 		fmt.Sprintf("membership %d for user %d in project %d → %s", m.ID, m.UserID, m.ProjectID, m.State))
+}
+
+// revertFailedActivation reverts a ProjectMembership row that was just persisted as
+// `active` back to a non-active state, after the role grant that's supposed to back
+// that `active` row failed (#309). Without this, a caller-visible error ("failed to
+// grant role on activation") would still leave a live state=active row behind —
+// ListProjectMemberships/ListUserProjectMemberships would keep reporting the user as
+// an active project member indefinitely, with no role grant behind it and no way to
+// revoke a grant that was never made. This can happen without any TOCTOU: the
+// uniq_project_memberships_active partial index only dedupes ProjectMembership rows,
+// not user_roles grants, so a role already held via an independent path (a direct
+// /user-roles grant, another membership's activation, etc.) still makes
+// AssignRole's composite primary key reject this grant after the row committed.
+//
+// toState is the state to fall back to: inviteMemberWithMode has no earlier state to
+// return to (the row didn't exist before this call) and passes MembershipRevoked;
+// TransitionMembership passes the membership's own pre-transition state, so a
+// legitimate retry of the activation is still possible.
+//
+// Best-effort and mirrors revokeInvitationGrants (invitations.go): m is already on a
+// path that's about to return an error to its caller, so a failure to revert is
+// audited (flagged for manual cleanup) rather than returned or retried — a partial
+// revert is strictly better than silently leaving the active row standing.
+func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.ProjectMembership, toState string) {
+	m.State = toState
+	m.UpdatedAt = c.now()
+	if toState == MembershipRevoked {
+		t := c.now()
+		m.RevokedAt = &t
+	} else {
+		m.ActivatedAt = nil
+	}
+	if err := c.storage.UpdateProjectMembership(ctx, m); err != nil {
+		c.auditProjectScoped(ctx, "membership.activation_race_revert_failed", m.UserID, m.ProjectID,
+			fmt.Sprintf("failed to revert orphaned active membership %d for user %d in project %d (state %s) after a role-grant failure: %v — MANUAL CLEANUP REQUIRED",
+				m.ID, m.UserID, m.ProjectID, toState, err))
+		return
+	}
+	c.logMembershipEvent(ctx, "membership.activation_reverted", m, 0)
 }
