@@ -156,6 +156,34 @@ func TestGenerateRotationPlanEmptyWhenNothingDue(t *testing.T) {
 	assert.Empty(t, plan.Waves)
 }
 
+// #486: a genuine failure to compute the risk score (ComputeSecretRiskScore
+// returning an error, not just a Degraded=true result) must not silently read
+// as a fully-resolved zero-risk secret — that would under-rank an actually
+// risky overdue secret in rotationUrgency's intra-wave ordering, and the API
+// response's RiskDegraded:false would give callers no hint anything failed.
+func TestPlanSecretRiskScoreErrorDegrades(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	c, _ := newPlannerCore(t, now)
+
+	// No SecretNode row exists for this ID, so ComputeSecretRiskScore's
+	// underlying c.storage.GetSecret call fails outright (not a degraded
+	// result — an error).
+	e := &RotationStatusEntry{
+		SecretID:    999,
+		SecretName:  "ghost-secret",
+		Status:      RotationStatusOverdue,
+		DaysOverdue: 10,
+	}
+
+	pr := c.planSecret(ctx, e, nil, map[uint]*RotationStatusEntry{})
+
+	assert.True(t, pr.RiskDegraded, "a risk-score computation error must degrade the plan entry, not silently zero it")
+	assert.Equal(t, 0, pr.RiskScore, "an errored risk score is a floor of 0, not an inflated guess")
+	assert.Empty(t, pr.RiskBand)
+	assert.Contains(t, joinReasons(pr.Reasons), "risk score", "the reason must surface that the risk score itself could not be computed")
+}
+
 func joinReasons(rs []string) string {
 	out := ""
 	for _, r := range rs {

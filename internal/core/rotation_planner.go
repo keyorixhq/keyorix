@@ -32,12 +32,15 @@ type PlannedRotation struct {
 	DaysOverdue int    `json:"days_overdue"` // positive = overdue, negative = days remaining
 	RiskScore   int    `json:"risk_score"`   // 0-100 composite (0 if not computable)
 	RiskBand    string `json:"risk_band"`    // low | medium | high
-	// RiskDegraded is true when RiskScore/RiskBand were computed from an
-	// incomplete exposure count (#407, SecretRiskScore.Degraded) — ComputeSecretRiskScore
+	// RiskDegraded is true either when RiskScore/RiskBand were computed from an
+	// incomplete exposure count (#407, SecretRiskScore.Degraded — ComputeSecretRiskScore
 	// already fails the exposure factor toward its worst case in this situation, so
-	// RiskScore here is a floor, not an inflated or deflated guess; RiskDegraded just
-	// makes that incompleteness visible instead of indistinguishable from a fully
-	// resolved score.
+	// RiskScore here is a floor, not an inflated or deflated guess), or when
+	// ComputeSecretRiskScore returned an outright error and RiskScore/RiskBand are
+	// zero values (#486 — a storage flake computing risk must not read the same as
+	// a genuine, fully-resolved zero-risk secret, since rotationUrgency shifts
+	// intra-wave ordering by risk score). Either way, RiskDegraded makes the gap
+	// visible instead of indistinguishable from a fully resolved score.
 	RiskDegraded   bool     `json:"risk_degraded"`
 	Urgency        int      `json:"urgency"`          // composite priority; higher rotates sooner
 	AutoRotate     bool     `json:"auto_rotate"`      // self-rotates (ADR-046) vs needs a human
@@ -222,7 +225,19 @@ func (c *KeyorixCore) GenerateDeploymentRotationPlan(ctx context.Context) (*Depl
 func (c *KeyorixCore) planSecret(ctx context.Context, e *RotationStatusEntry, deps []uint, candidates map[uint]*RotationStatusEntry) PlannedRotation {
 	riskScore, riskBand := 0, ""
 	riskDegraded := false
-	if r, err := c.ComputeSecretRiskScore(ctx, e.SecretID); err == nil && r != nil {
+	riskDegradedReason := "risk score based on incomplete exposure data (treated as worst-case, not deprioritized)"
+	if r, err := c.ComputeSecretRiskScore(ctx, e.SecretID); err != nil {
+		// #486: an outright failure to compute the risk score (e.g. a storage
+		// flake on the secret lookup) must NOT read the same as a genuine,
+		// fully-resolved zero-risk score — that would silently under-rank an
+		// actually-risky overdue secret, since rotationUrgency shifts intra-wave
+		// ordering by risk score. Degrade the same way ComputeSecretRiskScore's
+		// own incomplete-exposure case does below, so callers can't tell the two
+		// "the score is 0" cases apart from a real, verified low-risk secret.
+		log.Printf("rotation plan: risk score for secret %d (%s): %v — treating as degraded, not silently zero", e.SecretID, e.SecretName, err)
+		riskDegraded = true
+		riskDegradedReason = fmt.Sprintf("risk score: %v (treated as worst-case, not deprioritized)", err)
+	} else if r != nil {
 		riskScore, riskBand = r.Score, r.Band
 		riskDegraded = r.Degraded
 	}
@@ -248,7 +263,7 @@ func (c *KeyorixCore) planSecret(ctx context.Context, e *RotationStatusEntry, de
 		pr.Reasons = append(pr.Reasons, fmt.Sprintf("%s risk (score %d)", riskBand, riskScore))
 	}
 	if riskDegraded {
-		pr.Reasons = append(pr.Reasons, "risk score based on incomplete exposure data (treated as worst-case, not deprioritized)")
+		pr.Reasons = append(pr.Reasons, riskDegradedReason)
 	}
 	if e.AutoRotate {
 		pr.Reasons = append(pr.Reasons, "self-rotating")
