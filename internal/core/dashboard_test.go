@@ -57,6 +57,56 @@ func (s *failingExpiringSecretsStore) ListSecrets(ctx context.Context, filter *s
 	return s.LocalStorage.ListSecrets(ctx, filter)
 }
 
+// failingDashboardTotalSecretsStore wraps LocalStorage and fails only the
+// TotalSecrets ListSecrets call (identified by CreatedBy with no
+// ExpiresBefore), leaving the unrelated expiring-secrets ListSecrets call
+// (ExpiresBefore set) untouched.
+type failingDashboardTotalSecretsStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingDashboardTotalSecretsStore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
+	if filter != nil && filter.CreatedBy != nil && filter.ExpiresBefore == nil {
+		return nil, 0, errors.New("simulated total-secrets query failure")
+	}
+	return s.LocalStorage.ListSecrets(ctx, filter)
+}
+
+// failingDashboardSharesByOwnerStore wraps LocalStorage and fails
+// ListSharesByOwner, simulating a DB error on the shared-secrets rollup.
+type failingDashboardSharesByOwnerStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingDashboardSharesByOwnerStore) ListSharesByOwner(_ context.Context, _ uint) ([]*models.ShareRecord, error) {
+	return nil, errors.New("simulated shares-by-owner query failure")
+}
+
+// failingDashboardSharesByUserStore wraps LocalStorage and fails
+// ListSharesByUser, simulating a DB error on the shared-with-me rollup.
+type failingDashboardSharesByUserStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingDashboardSharesByUserStore) ListSharesByUser(_ context.Context, _ uint) ([]*models.ShareRecord, error) {
+	return nil, errors.New("simulated shares-by-user query failure")
+}
+
+// failingDashboardRecentActivityStore wraps LocalStorage and fails only the
+// recent-activity GetAuditLogs call (identified by having no StartTime set —
+// the deployment-wide audit-count sub-checks below all set StartTime),
+// leaving those sub-checks untouched.
+type failingDashboardRecentActivityStore struct {
+	*store.LocalStorage
+}
+
+func (s *failingDashboardRecentActivityStore) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
+	if filter != nil && filter.StartTime == nil {
+		return nil, 0, errors.New("simulated recent-activity query failure")
+	}
+	return s.LocalStorage.GetAuditLogs(ctx, filter)
+}
+
 // #394: on a real deployment, a failed audit-log/user-count query left every
 // deployment-wide dashboard stat at its zero value — byte-identical to
 // "queried, genuinely zero" (e.g. FailedAuthAttempts24h=0 reads as a clean
@@ -125,6 +175,66 @@ func TestGetDashboardStats_DegradedOnExpiringSecretsQueryError(t *testing.T) {
 	// A baseline caller (no audit.read) must not see the deployment-wide
 	// aggregates degrade too — expiring_secrets is the only failure injected.
 	assert.False(t, containsSubstring(stats.DegradedReasons, "active_users"))
+}
+
+// #485: round-101 regression audit found #394 only wired degrade() into 2 of
+// the 6 error paths in GetDashboardStats — ListSecrets (TotalSecrets),
+// ListSharesByOwner (SharedSecrets), ListSharesByUser (SecretsSharedWithMe),
+// and GetAuditLogs (RecentActivity) all silently swallowed their errors and
+// left the corresponding field at its zero/empty "genuinely clean" value. The
+// zeroed TotalSecrets is also what gets persisted via SaveStatsSnapshot, so an
+// unsurfaced ListSecrets failure here would corrupt the next day's trend
+// computation too. These tests prove all 4 sub-checks now surface as Degraded.
+func TestGetDashboardStats_DegradedOnTotalSecretsQueryError(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	viewerID := seedUserWithRole(t, st, "viewer2", "system_viewer", storage.Scope{})
+	c.storage = &failingDashboardTotalSecretsStore{LocalStorage: st}
+
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer2")
+	require.NoError(t, err, "a single failed sub-check must not abort the whole dashboard")
+
+	assert.Zero(t, stats.TotalSecrets, "the field itself still reads as its safe-default zero value")
+	assert.True(t, stats.Degraded, "a failed total-secrets query must flip Degraded — 0 above is UNKNOWN, not verified-clean")
+	assert.True(t, containsSubstring(stats.DegradedReasons, "total_secrets"), "expected a total_secrets entry, got %v", stats.DegradedReasons)
+}
+
+func TestGetDashboardStats_DegradedOnSharedSecretsQueryError(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	viewerID := seedUserWithRole(t, st, "viewer3", "system_viewer", storage.Scope{})
+	c.storage = &failingDashboardSharesByOwnerStore{LocalStorage: st}
+
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer3")
+	require.NoError(t, err)
+
+	assert.Zero(t, stats.SharedSecrets, "the field itself still reads as its safe-default zero value")
+	assert.True(t, stats.Degraded, "a failed shares-by-owner query must flip Degraded")
+	assert.True(t, containsSubstring(stats.DegradedReasons, "shared_secrets"), "expected a shared_secrets entry, got %v", stats.DegradedReasons)
+}
+
+func TestGetDashboardStats_DegradedOnSharedWithMeQueryError(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	viewerID := seedUserWithRole(t, st, "viewer4", "system_viewer", storage.Scope{})
+	c.storage = &failingDashboardSharesByUserStore{LocalStorage: st}
+
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer4")
+	require.NoError(t, err)
+
+	assert.Zero(t, stats.SecretsSharedWithMe, "the field itself still reads as its safe-default zero value")
+	assert.True(t, stats.Degraded, "a failed shares-by-user query must flip Degraded")
+	assert.True(t, containsSubstring(stats.DegradedReasons, "shared_with_me"), "expected a shared_with_me entry, got %v", stats.DegradedReasons)
+}
+
+func TestGetDashboardStats_DegradedOnRecentActivityQueryError(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	viewerID := seedUserWithRole(t, st, "viewer5", "system_viewer", storage.Scope{})
+	c.storage = &failingDashboardRecentActivityStore{LocalStorage: st}
+
+	stats, err := c.GetDashboardStats(context.Background(), viewerID, "viewer5")
+	require.NoError(t, err)
+
+	assert.Empty(t, stats.RecentActivity, "the field itself still reads as its safe-default empty value")
+	assert.True(t, stats.Degraded, "a failed recent-activity query must flip Degraded")
+	assert.True(t, containsSubstring(stats.DegradedReasons, "recent_activity"), "expected a recent_activity entry, got %v", stats.DegradedReasons)
 }
 
 // A fully-healthy storage must never report Degraded.
