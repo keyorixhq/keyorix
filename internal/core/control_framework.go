@@ -195,6 +195,17 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.34"}, DORA: []string{"Art.12"}, ENS: []string{"mp.info.6"}},
 		},
 		{
+			ID: "risk-exception-hygiene", Name: "Risk-exception register hygiene (no stale, unrenewed acceptances)", Area: "Risk governance",
+			// #395: a risk exception is a governed, time-bound acceptance of a control
+			// gap — once it expires with no renewal or revocation, the risk it was
+			// excepting is unmitigated again. It simply drops out of ActiveExceptions
+			// at that point, so without this control an auditor has no visibility into
+			// the lapsed acceptance at all.
+			Status:     controlStatus(p.DegradedArea("risk"), p.Risk.Expired > 0),
+			Detail:     fmt.Sprintf("%d active exception(s), %d expired but not yet revoked/renewed", p.Risk.ActiveExceptions, p.Risk.Expired),
+			Frameworks: FrameworkRefs{ISO27001: []string{"A.5.8"}, SOC2: []string{"CC3.2"}, DORA: []string{"Art.6"}, ENS: []string{"org.3"}},
+		},
+		{
 			ID: "supply-chain-integrity", Name: "Software supply-chain integrity (signed, verifiable updates)", Area: "Supply chain",
 			Status:     supplyChainStatus(p),
 			Detail:     supplyChainDetail(p),

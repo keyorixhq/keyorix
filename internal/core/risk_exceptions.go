@@ -89,10 +89,12 @@ func (c *KeyorixCore) CreateRiskException(ctx context.Context, actorID uint, tit
 	return created, nil
 }
 
-// ListRiskExceptions returns exceptions with their effective status. When activeOnly
-// is set, only currently-active (not revoked, not expired) exceptions are returned;
-// otherwise every non-revoked exception is returned (expired included, for history).
-func (c *KeyorixCore) ListRiskExceptions(ctx context.Context, activeOnly bool) ([]*RiskExceptionView, error) {
+// listRiskExceptionRows is the one storage read shared by ListRiskExceptions,
+// CountExpiredRiskExceptions, and the compliance snapshot's own risk-register
+// rollup: every row gets its effective status computed here, so a caller needing a
+// different slice of that status (active only, expired only, or every non-revoked
+// row) never has to re-query storage to get it (#256, #395).
+func (c *KeyorixCore) listRiskExceptionRows(ctx context.Context, activeOnly bool) ([]*RiskExceptionView, error) {
 	rows, err := c.storage.ListRiskExceptions(ctx, activeOnly) // activeOnly excludes revoked at storage
 	if err != nil {
 		return nil, err
@@ -100,13 +102,51 @@ func (c *KeyorixCore) ListRiskExceptions(ctx context.Context, activeOnly bool) (
 	now := c.now()
 	out := make([]*RiskExceptionView, 0, len(rows))
 	for _, e := range rows {
-		st := exceptionStatus(e, now)
-		if activeOnly && st != ExceptionStatusActive {
-			continue // storage dropped revoked; drop expired here too
-		}
-		out = append(out, &RiskExceptionView{RiskException: e, Status: st})
+		out = append(out, &RiskExceptionView{RiskException: e, Status: exceptionStatus(e, now)})
 	}
 	return out, nil
+}
+
+// ListRiskExceptions returns exceptions with their effective status. When activeOnly
+// is set, only currently-active (not revoked, not expired) exceptions are returned;
+// otherwise every non-revoked exception is returned (expired included, for history).
+func (c *KeyorixCore) ListRiskExceptions(ctx context.Context, activeOnly bool) ([]*RiskExceptionView, error) {
+	views, err := c.listRiskExceptionRows(ctx, activeOnly)
+	if err != nil {
+		return nil, err
+	}
+	if !activeOnly {
+		return views, nil
+	}
+	out := make([]*RiskExceptionView, 0, len(views))
+	for _, v := range views {
+		if v.Status == ExceptionStatusActive {
+			out = append(out, v) // storage dropped revoked; drop expired here too
+		}
+	}
+	return out, nil
+}
+
+// CountExpiredRiskExceptions returns how many stored risk exceptions have passed
+// their expiry but are still marked non-revoked — i.e. a governed acceptance whose
+// sunset came and went with no renewal or explicit revocation (#395). The risk it
+// was excepting is unmitigated again the moment expiry passes, but without this
+// count the compliance matrix has no visibility into that: the exception simply
+// drops out of the "active" tally (see ListRiskExceptions/CountActiveRiskExceptions)
+// as if it had never existed, rather than surfacing as a stale acceptance an
+// auditor needs to see.
+func (c *KeyorixCore) CountExpiredRiskExceptions(ctx context.Context) (int, error) {
+	views, err := c.listRiskExceptionRows(ctx, true) // excludes revoked; expiry computed here
+	if err != nil {
+		return 0, err
+	}
+	expired := 0
+	for _, v := range views {
+		if v.Status == ExceptionStatusExpired {
+			expired++
+		}
+	}
+	return expired, nil
 }
 
 // RevokeRiskException withdraws an exception before its expiry. actorID is the admin.
