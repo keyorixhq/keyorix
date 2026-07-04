@@ -6,7 +6,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -34,6 +37,26 @@ func (ls *LocalStorage) ListNotifications(ctx context.Context, userID uint, unre
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return rows, nil
+}
+
+// HasUnreadNotification reports whether userID has an unread notification of
+// nType scoped to projectID. Unlike ListNotifications (newest-N, any type), this
+// filters user_id/is_read/type/project_id at the DB level and stops at the first
+// match, so it can't be defeated by a pile-up of newer, unrelated unread
+// notifications pushing the target one outside a "top N" window (#399).
+func (ls *LocalStorage) HasUnreadNotification(ctx context.Context, userID uint, nType string, projectID uint) (bool, error) {
+	var row models.Notification
+	err := ls.db.WithContext(ctx).
+		Select("id").
+		Where("user_id = ? AND is_read = ? AND type = ? AND project_id = ?", userID, false, nType, projectID).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return true, nil
 }
 
 func (ls *LocalStorage) CountUnreadNotifications(ctx context.Context, userID uint) (int64, error) {

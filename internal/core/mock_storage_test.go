@@ -1779,6 +1779,11 @@ func (m *MockStorage) CountUnreadNotifications(ctx context.Context, userID uint)
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockStorage) HasUnreadNotification(ctx context.Context, userID uint, nType string, projectID uint) (bool, error) {
+	args := m.Called(ctx, userID, nType, projectID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) MarkNotificationRead(ctx context.Context, id, userID uint) error {
 	return m.Called(ctx, id, userID).Error(0)
 }

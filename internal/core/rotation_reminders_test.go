@@ -82,6 +82,48 @@ func TestSendRotationReminders(t *testing.T) {
 	assert.Equal(t, 1, sent, "after reading, a still-overdue secret re-notifies")
 }
 
+// TestHasUnreadRotationReminder_NotBuriedByNotificationVolume is a regression test
+// for #399: the dedup check must find a genuine standing rotation reminder even
+// when it's buried under more than 100 newer, unrelated unread notifications — it
+// must not depend on the reminder happening to fall inside a "newest N of any
+// type" window.
+func TestHasUnreadRotationReminder_NotBuriedByNotificationVolume(t *testing.T) {
+	ctx := context.Background()
+	c, db, now := newRotationReminderCore(t)
+
+	// Seed the genuine rotation reminder first (oldest), then bury it under 150
+	// newer, unrelated unread notifications for the same user.
+	pid := uint(1)
+	require.NoError(t, db.Create(&models.Notification{
+		UserID: 5, ProjectID: &pid, Type: NotificationRotationDue,
+		Title: "Secrets due for rotation", Message: "old standing reminder",
+		IsRead: false, CreatedAt: now.Add(-24 * time.Hour),
+	}).Error)
+	for i := 0; i < 150; i++ {
+		require.NoError(t, db.Create(&models.Notification{
+			UserID: 5, ProjectID: &pid, Type: NotificationAccessRequested,
+			Title: "Unrelated", Message: "noise",
+			IsRead: false, CreatedAt: now.Add(time.Duration(i) * time.Minute),
+		}).Error)
+	}
+
+	assert.True(t, c.hasUnreadRotationReminder(ctx, 5, 1),
+		"the standing reminder must be found even though 150 newer unread notifications of another type exist")
+
+	// The straightforward case (no volume issue, no reminder) still works.
+	assert.False(t, c.hasUnreadRotationReminder(ctx, 6, 1),
+		"a user with no rotation reminder at all must not be reported as having one")
+
+	// SendRotationReminders itself must not duplicate the reminder despite the noise.
+	sent, err := c.SendRotationReminders(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, sent, "the buried-but-genuine reminder still dedupes the run")
+	var n int64
+	require.NoError(t, db.Model(&models.Notification{}).
+		Where("type = ? AND user_id = ?", NotificationRotationDue, 5).Count(&n).Error)
+	assert.Equal(t, int64(1), n, "no duplicate rotation reminder was created")
+}
+
 func TestSendRotationReminders_NothingDue(t *testing.T) {
 	ctx := context.Background()
 	c, db, now := newRotationReminderCore(t)

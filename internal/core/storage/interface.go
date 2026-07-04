@@ -274,6 +274,11 @@ type Storage interface {
 	// unreadOnly is set, only unread ones. limit caps the result (0 = default).
 	ListNotifications(ctx context.Context, userID uint, unreadOnly bool, limit int) ([]*models.Notification, error)
 	CountUnreadNotifications(ctx context.Context, userID uint) (int64, error)
+	// HasUnreadNotification reports whether the user has an unread notification of
+	// the given type scoped to the given project. Filters at the DB level (no
+	// unbounded/"top N of everything" fetch), so it finds a match regardless of
+	// how many other unread notifications of other types/projects exist (#399).
+	HasUnreadNotification(ctx context.Context, userID uint, nType string, projectID uint) (bool, error)
 	// MarkNotificationRead marks one notification read, scoped to its owner.
 	MarkNotificationRead(ctx context.Context, id, userID uint) error
 	MarkAllNotificationsRead(ctx context.Context, userID uint) error
