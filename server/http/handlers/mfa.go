@@ -161,7 +161,9 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := h.buildLoginResponse(r.Context(), session, user)
-	go h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get("User-Agent")) // #nosec G118
-	go func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }()                                // #nosec G118
+	goSafe(func() {
+		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get("User-Agent"))
+	}) // #nosec G118
+	goSafe(func() { _ = h.coreService.RecordLogin(context.Background(), user.ID) }) // #nosec G118
 	sendSuccess(w, resp, "Login successful")
 }
