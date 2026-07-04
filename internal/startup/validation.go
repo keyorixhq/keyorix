@@ -25,8 +25,12 @@ type ValidationResult struct {
 	Errors        []string
 }
 
-// ValidateStartup performs comprehensive startup validation
-func ValidateStartup(configPath string) (*ValidationResult, error) {
+// ValidateStartup performs comprehensive startup validation. forceAutoFix, when
+// true, remediates file-permission issues regardless of the loaded config's
+// Security.AutoFixFilePermissions setting — this is how a caller-supplied
+// intent (e.g. an explicit CLI flag) takes effect without silently depending
+// on a field read from the very config file being validated.
+func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, error) {
 	result := &ValidationResult{
 		ConfigValid:   false,
 		PermissionsOK: false,
@@ -48,7 +52,7 @@ func ValidateStartup(configPath string) (*ValidationResult, error) {
 	result.ConfigValid = true
 
 	if cfg.Security.EnableFilePermissionCheck {
-		if err := validateFilePermissions(cfg, configPath, result); err != nil {
+		if err := validateFilePermissions(cfg, configPath, forceAutoFix, result); err != nil {
 			if !cfg.Security.AllowUnsafeFilePermissions {
 				return result, fmt.Errorf("file permission validation failed: %w", err)
 			}
@@ -81,22 +85,50 @@ func ValidateStartup(configPath string) (*ValidationResult, error) {
 	return result, nil
 }
 
-func validateFilePermissions(cfg *config.Config, configPath string, result *ValidationResult) error {
+// safeFilePermPath cleans path and rejects it if the cleaned form still
+// contains a ".." segment. Unlike validateEncryption/validateDatabase (whose
+// paths come from a small, fixed set of config fields dedicated to a single
+// key/db file), the paths collected here span several independently-authored
+// config fields (config path, key paths, TLS cert/key paths, db path) that
+// FixFilePerms below will Lstat/Chmod/Chown — so every one of them is
+// sanitized the same way before it is ever added to that list, closing off a
+// config-driven path-traversal into chmod/chown of an unintended file.
+func safeFilePermPath(label, path string) (string, error) {
+	clean := filepath.Clean(path)
+	if strings.Contains(clean, "..") {
+		return "", fmt.Errorf("%s path is unsafe (contains '..'): %s", label, path)
+	}
+	return clean, nil
+}
+
+func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix bool, result *ValidationResult) error {
 	var files []securefiles.FilePermSpec
 
 	// Check the config file that was actually loaded, not a hardcoded "keyorix.yaml":
 	// the loader resolves KEYORIX_CONFIG_PATH / an absolute path, so a fixed relative
 	// name would silently stat a non-existent file and pass. Skip only when truly unknown.
 	if cfgFile := strings.TrimSpace(configPath); cfgFile != "" {
-		files = append(files, securefiles.FilePermSpec{Path: filepath.Clean(cfgFile), Mode: 0600})
+		clean, err := safeFilePermPath("config file", cfgFile)
+		if err != nil {
+			return err
+		}
+		files = append(files, securefiles.FilePermSpec{Path: clean, Mode: 0600})
 	}
 
 	if cfg.Storage.Encryption.Enabled {
 		// The KEK is passphrase-derived and never on disk (ADR-004); the salt and
 		// the wrapped DEK are the only key files to lock down.
+		saltPath, err := safeFilePermPath("KEK salt", cfg.Storage.Encryption.SaltPath)
+		if err != nil {
+			return err
+		}
+		dekPath, err := safeFilePermPath("DEK", cfg.Storage.Encryption.DEKPath)
+		if err != nil {
+			return err
+		}
 		files = append(files,
-			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Storage.Encryption.SaltPath), Mode: 0600},
-			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Storage.Encryption.DEKPath), Mode: 0600},
+			securefiles.FilePermSpec{Path: saltPath, Mode: 0600},
+			securefiles.FilePermSpec{Path: dekPath, Mode: 0600},
 		)
 	}
 
@@ -110,31 +142,52 @@ func validateFilePermissions(cfg *config.Config, configPath string, result *Vali
 		// no local database file to check
 	default: // "local", ""
 		if cfg.Storage.Database.Path != "" {
+			dbPath, err := safeFilePermPath("database", cfg.Storage.Database.Path)
+			if err != nil {
+				return err
+			}
 			files = append(files, securefiles.FilePermSpec{
-				Path: filepath.Clean(cfg.Storage.Database.Path),
+				Path: dbPath,
 				Mode: 0600,
 			})
 		}
 	}
 
 	if cfg.Server.HTTP.TLS.Enabled {
+		certPath, err := safeFilePermPath("HTTP TLS cert", cfg.Server.HTTP.TLS.CertFile)
+		if err != nil {
+			return err
+		}
+		keyPath, err := safeFilePermPath("HTTP TLS key", cfg.Server.HTTP.TLS.KeyFile)
+		if err != nil {
+			return err
+		}
 		files = append(files,
-			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Server.HTTP.TLS.CertFile), Mode: 0600},
-			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Server.HTTP.TLS.KeyFile), Mode: 0600},
+			securefiles.FilePermSpec{Path: certPath, Mode: 0600},
+			securefiles.FilePermSpec{Path: keyPath, Mode: 0600},
 		)
 	}
 	if cfg.Server.GRPC.TLS.Enabled {
+		certPath, err := safeFilePermPath("gRPC TLS cert", cfg.Server.GRPC.TLS.CertFile)
+		if err != nil {
+			return err
+		}
+		keyPath, err := safeFilePermPath("gRPC TLS key", cfg.Server.GRPC.TLS.KeyFile)
+		if err != nil {
+			return err
+		}
 		files = append(files,
-			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Server.GRPC.TLS.CertFile), Mode: 0600},
-			securefiles.FilePermSpec{Path: filepath.Clean(cfg.Server.GRPC.TLS.KeyFile), Mode: 0600},
+			securefiles.FilePermSpec{Path: certPath, Mode: 0600},
+			securefiles.FilePermSpec{Path: keyPath, Mode: 0600},
 		)
 	}
 
-	if err := securefiles.FixFilePerms(files, cfg.Security.AutoFixFilePermissions); err != nil {
+	autoFix := cfg.Security.AutoFixFilePermissions || forceAutoFix
+	if err := securefiles.FixFilePerms(files, autoFix); err != nil {
 		return fmt.Errorf("file permission validation failed: %w", err)
 	}
 
-	if cfg.Security.AutoFixFilePermissions {
+	if autoFix {
 		result.Warnings = append(result.Warnings, "File permissions were automatically fixed")
 	}
 

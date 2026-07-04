@@ -1371,7 +1371,9 @@ func runStartupValidation(cfg *config.Config) error {
 		return nil
 	}
 	configPath := config.ResolvedPath("")
-	result, err := startup.ValidateStartup(configPath)
+	// Server startup has no --fix flag; remediation is governed solely by the
+	// config's Security.AutoFixFilePermissions field, as before.
+	result, err := startup.ValidateStartup(configPath, false)
 	if result != nil {
 		for _, w := range result.Warnings {
 			log.Printf("startup validation warning: %s", w)

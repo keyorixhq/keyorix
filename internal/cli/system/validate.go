@@ -43,8 +43,11 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("config file not found")
 	}
 
-	// Perform validation
-	result, err := startup.ValidateStartup(configFile)
+	// Perform validation. fixIssues (--fix) is read here and forwarded explicitly,
+	// so the flag actually drives remediation instead of the command silently
+	// depending on the Security.AutoFixFilePermissions field read from the same
+	// config file it is validating.
+	result, err := startup.ValidateStartup(configFile, fixIssues)
 	if err != nil {
 		fmt.Printf("❌ Validation failed: %v\n", err)
 
