@@ -34,11 +34,12 @@ func TestGenerateProjectAccessReview_AnnotatesLastUsed(t *testing.T) {
 	require.NoError(t, h.DB.Create(&models.AuditEvent{EventType: "secret.read", UserID: &aid, ProjectID: &pid, EventTime: older}).Error)
 	require.NoError(t, h.DB.Create(&models.AuditEvent{EventType: "secret.read", UserID: &aid, ProjectID: &pid, EventTime: newer}).Error)
 
-	review, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	report, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)
+	require.False(t, report.Degraded, "audit_events is migrated with valid data — the lookup must not degrade")
 
 	var alice, bob *core.AccessReviewEntry
-	for _, e := range review {
+	for _, e := range report.Entries {
 		switch e.PrincipalName {
 		case "alice":
 			alice = e
@@ -70,8 +71,38 @@ func TestGenerateProjectAccessReview_LastUsedIsProjectScoped(t *testing.T) {
 		EventType: "secret.read", UserID: &aid, ProjectID: &otherProj, EventTime: time.Now(),
 	}).Error)
 
-	review, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	report, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)
-	require.Len(t, review, 1)
-	assert.Nil(t, review[0].LastUsedAt, "activity in project 3 doesn't count for project 2")
+	require.Len(t, report.Entries, 1)
+	assert.Nil(t, report.Entries[0].LastUsedAt, "activity in project 3 doesn't count for project 2")
+}
+
+// #453: on storage.type: remote, LastUserSecretActivity is unconditionally
+// unimplemented (internal/storage/store/remote_access_activity.go), and the
+// access-review report's caller previously silently swallowed that error —
+// every entry's LastUsedAt read as nil with no signal, indistinguishable from
+// "genuinely never used". Simulating the same failure mode locally (the
+// audit_events table is unmigrated, so the underlying query errors) must now
+// flip Degraded rather than silently produce a report that looks complete.
+func TestGenerateProjectAccessReview_DegradedOnLastUsedQueryError(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	defer h.Cleanup()
+	// models.AuditEvent deliberately NOT migrated → LastUserSecretActivity's raw
+	// "audit_events" table query fails, mirroring
+	// TestGetCompliancePosture_DegradedOnDormantRoleGrantsActivityQueryError
+	// (compliance_posture_test.go).
+
+	const proj = uint(2)
+	ctx := context.Background()
+	h.CreateTestUser(t, "alice", 10)
+	h.AssignUserRole(t, 10, 3, uptr(proj)) // editor → write
+
+	report, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	require.NoError(t, err)
+
+	require.Len(t, report.Entries, 1)
+	assert.Nil(t, report.Entries[0].LastUsedAt, "the field itself still reads as its zero value — no visible dormant/active signal")
+	assert.True(t, report.Degraded, "an unqueryable last-used lookup must flip Degraded rather than silently read as no entry ever used")
+	require.NotEmpty(t, report.DegradedReasons)
+	assert.Contains(t, report.DegradedReasons[0], "last_used:project=2")
 }

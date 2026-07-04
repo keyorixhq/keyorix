@@ -34,12 +34,12 @@ func TestGenerateProjectAccessReview(t *testing.T) {
 	h.CreateTestGroup(t, "devs", "", 100)
 	h.AssignGroupRole(t, 100, 4, uptr(proj))
 
-	review, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
+	report, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
 	require.NoError(t, err)
 
 	type got struct{ typ, name, level string }
 	var rows []got
-	for _, e := range review {
+	for _, e := range report.Entries {
 		rows = append(rows, got{e.PrincipalType, e.PrincipalName, e.AccessLevel})
 	}
 	assert.ElementsMatch(t, []got{
@@ -67,11 +67,11 @@ func TestGenerateProjectAccessReview_IncludesMachineIdentities(t *testing.T) {
 		MachineIdentityID: 50, RoleID: 3, ProjectID: proj,
 	}).Error)
 
-	review, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
+	report, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
 	require.NoError(t, err)
 
 	var found *core.AccessReviewEntry
-	for _, e := range review {
+	for _, e := range report.Entries {
 		if e.PrincipalType == "machine" {
 			found = e
 		}
@@ -126,12 +126,12 @@ func TestGenerateProjectAccessReview_SharesAndOwnership(t *testing.T) {
 	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 500, RecipientID: 11, IsGroup: false, Permission: "read"}).Error)
 	require.NoError(t, h.DB.Create(&models.ShareRecord{SecretID: 500, RecipientID: 100, IsGroup: true, Permission: "write"}).Error)
 
-	review, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
+	report, err := h.CoreService.GenerateProjectAccessReview(context.Background(), proj)
 	require.NoError(t, err)
 
 	type got struct{ source, typ, name, level, secret string }
 	var rows []got
-	for _, e := range review {
+	for _, e := range report.Entries {
 		rows = append(rows, got{e.Source, e.PrincipalType, e.PrincipalName, e.AccessLevel, e.SecretName})
 	}
 	assert.Contains(t, rows, got{"owner", "user", "alice", "owner", "db-pw"})
@@ -159,7 +159,7 @@ func TestRevokeAccessReviewGrant_Role(t *testing.T) {
 	ctx := context.Background()
 	before, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)
-	require.Len(t, before, 1, "alice's editor grant is present before revoke")
+	require.Len(t, before.Entries, 1, "alice's editor grant is present before revoke")
 
 	err = h.CoreService.RevokeAccessReviewGrant(ctx, 1, proj, core.AccessReviewDecision{
 		Source: "role", PrincipalType: "user", PrincipalID: 10, RoleID: 3,
@@ -168,7 +168,7 @@ func TestRevokeAccessReviewGrant_Role(t *testing.T) {
 
 	after, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)
-	assert.Empty(t, after, "alice's role grant is gone after revoke")
+	assert.Empty(t, after.Entries, "alice's role grant is gone after revoke")
 }
 
 // Revoking a group share removes that ShareRecord; revoking ownership is refused.
@@ -193,9 +193,9 @@ func TestRevokeAccessReviewGrant_ShareAndOwner(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	review, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	report, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)
-	for _, e := range review {
+	for _, e := range report.Entries {
 		assert.NotEqual(t, "group_share", e.Source, "the group share is gone after revoke")
 	}
 
@@ -262,9 +262,9 @@ func TestAttestAccessReviewGrant_AuditsDecision(t *testing.T) {
 	require.NoError(t, err)
 
 	// The grant is untouched — still in the review.
-	review, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
+	report, err := h.CoreService.GenerateProjectAccessReview(ctx, proj)
 	require.NoError(t, err)
-	assert.Len(t, review, 1, "attest does not change access")
+	assert.Len(t, report.Entries, 1, "attest does not change access")
 
 	var count int64
 	require.NoError(t, h.DB.Model(&models.AuditEvent{}).

@@ -38,13 +38,21 @@ func (h *CatalogHandler) GetProjectAccessReview(w http.ResponseWriter, r *http.R
 		sendError(w, "InvalidParameter", "Invalid project ID", http.StatusBadRequest, nil)
 		return
 	}
-	entries, err := h.coreService.GenerateProjectAccessReview(r.Context(), uint(id))
+	report, err := h.coreService.GenerateProjectAccessReview(r.Context(), uint(id))
 	if err != nil {
 		log.Printf("Error generating access review for project %d: %v", id, err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"entries": entries, "count": len(entries)}, "")
+	// #453: degraded/degraded_reasons must reach API consumers — a report whose
+	// dormant-access annotation silently failed would otherwise look identical to
+	// one where every entry genuinely has no recorded access.
+	sendSuccess(w, map[string]interface{}{
+		"entries":          report.Entries,
+		"count":            len(report.Entries),
+		"degraded":         report.Degraded,
+		"degraded_reasons": report.DegradedReasons,
+	}, "")
 }
 
 // accessReviewDecisionBody is the request body for a recertification decision on
