@@ -234,6 +234,46 @@ func TestDynamicSecrets_MaxActiveLeasesCeiling(t *testing.T) {
 	require.NoError(t, err, "a slot opens after a revoke")
 }
 
+// #411: a lease stuck in revoke_failed still holds a live credential upstream (its
+// earlier revoke attempt failed on the target) — CountActiveLeases must count it toward
+// MaxActiveLeases exactly like an "active" lease, or an attacker (or ordinary backend
+// flakiness) could force revokes to fail at issue time and silently mint past the
+// configured ceiling forever, since every subsequent count would undercount the leftover
+// live credential.
+func TestDynamicSecrets_MaxActiveLeasesCeiling_CountsRevokeFailed(t *testing.T) {
+	c, _, fake, _ := newDynamicTestCore(t)
+	ctx := context.Background()
+	cfg, err := c.CreateDynamicSecretConfig(ctx, &CreateDynamicSecretConfigRequest{
+		Name: "capped-revoke-failed", ProjectID: 1, EnvironmentID: 2, BackendType: "postgres",
+		AdminDSN: adminDSNPlain, CreationTemplate: "GRANT SELECT TO {{name}};",
+		DefaultTTLSeconds: 3600, MaxActiveLeases: 1, CreatedBy: "alice", ActorID: testAdminActorID,
+	})
+	require.NoError(t, err)
+
+	// One lease is allowed at the ceiling of 1.
+	issued, err := c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.NoError(t, err)
+
+	// Force its revoke to fail on the target — the lease is flagged revoke_failed but its
+	// credential is still live upstream.
+	fake.FailRevoke = true
+	require.Error(t, c.RevokeLease(ctx, issued.LeaseID, 7, "manual"))
+	lease, err := c.storage.GetDynamicSecretLease(ctx, issued.LeaseID)
+	require.NoError(t, err)
+	require.Equal(t, "revoke_failed", lease.Status, "precondition: the lease is stuck revoke_failed")
+
+	// CountActiveLeases must reflect the revoke_failed lease as still occupying a slot.
+	active, err := c.storage.CountActiveLeases(ctx, cfg.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), active, "a revoke_failed lease still holds a live credential and must count toward the ceiling")
+
+	// With the sole slot occupied by the revoke_failed lease, issuing another must be
+	// refused — not silently allowed because the lease is no longer literally "active".
+	_, err = c.IssueLease(ctx, cfg.ID, 0, 7)
+	require.Error(t, err, "the ceiling must not be evadable by forcing a revoke to fail")
+	assert.Contains(t, err.Error(), "active-lease limit")
+}
+
 func TestDynamicSecrets_IssueListRevoke(t *testing.T) {
 	c, db, fake, _ := newDynamicTestCore(t)
 	ctx := context.Background()
