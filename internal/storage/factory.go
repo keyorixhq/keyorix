@@ -634,6 +634,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error {
 		if err := db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}); err != nil {
 			return fmt.Errorf("failed to migrate access_review_campaign tables: %w", err)
 		}
+	} else {
+		// #483: Degraded/DegradedReasons were added to AccessReviewCampaign after this
+		// table could already exist in the field (same pgx hazard as project_invitations
+		// above — never full-AutoMigrate an existing table here); add the new columns
+		// via the Migrator so an existing deployment's campaigns table picks them up.
+		m := db.Migrator()
+		for _, col := range []string{"Degraded", "DegradedReasons"} {
+			if !m.HasColumn(&models.AccessReviewCampaign{}, col) {
+				if err := m.AddColumn(&models.AccessReviewCampaign{}, col); err != nil {
+					return fmt.Errorf("failed to add access_review_campaigns.%s column: %w", col, err)
+				}
+			}
+		}
 	}
 
 	// Create the break-glass activations table if missing (additive).

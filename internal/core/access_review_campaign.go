@@ -86,12 +86,19 @@ func (c *KeyorixCore) OpenAccessReviewCampaign(ctx context.Context, actorID, pro
 	if name == "" {
 		name = "Access review"
 	}
+	// #483: report.Degraded/DegradedReasons signal a transient storage error mid-
+	// snapshot (e.g. one secret's shares couldn't be read); persist them onto the
+	// campaign row itself instead of discarding them the instant the report is
+	// consumed — an ephemeral return value is not a durable record that this
+	// recertification cycle's evidence snapshot was incomplete.
 	campaign, err := c.storage.CreateAccessReviewCampaign(ctx, &models.AccessReviewCampaign{
-		ProjectID: projectID,
-		Name:      name,
-		State:     CampaignStateOpen,
-		CreatedBy: actorID,
-		CreatedAt: c.now(),
+		ProjectID:       projectID,
+		Name:            name,
+		State:           CampaignStateOpen,
+		CreatedBy:       actorID,
+		CreatedAt:       c.now(),
+		Degraded:        report.Degraded,
+		DegradedReasons: report.DegradedReasons,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)

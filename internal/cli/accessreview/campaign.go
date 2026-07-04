@@ -20,6 +20,25 @@ type campaignView struct {
 	ProjectID uint   `json:"project_id"`
 	Name      string `json:"name"`
 	State     string `json:"state"`
+	// Degraded/DegradedReasons (#483): true when the snapshot this campaign was
+	// opened from couldn't fully read every secret's shares — the campaign may be
+	// MISSING a direct/group-share item for the affected secret(s).
+	Degraded        bool     `json:"degraded"`
+	DegradedReasons []string `json:"degraded_reasons"`
+}
+
+// printCampaignDegradedWarning surfaces a degraded snapshot instead of letting it
+// pass unnoticed, mirroring the sod/compliance CLI degrade warnings.
+func printCampaignDegradedWarning(c campaignView) {
+	if !c.Degraded {
+		return
+	}
+	fmt.Println("*** DEGRADED SNAPSHOT — one or more secrets' shares could not be read when this campaign was opened ***")
+	fmt.Println("*** This campaign may be MISSING a direct/group-share item for them.                                ***")
+	for _, reason := range c.DegradedReasons {
+		fmt.Printf("    - %s\n", reason)
+	}
+	fmt.Println()
 }
 
 type progressView struct {
@@ -87,6 +106,7 @@ var campaignOpenCmd = &cobra.Command{
 		if err := c.Post(context.Background(), campaignBase(cProject), map[string]string{"name": cName}, &out); err != nil {
 			return err
 		}
+		printCampaignDegradedWarning(out.Campaign)
 		fmt.Printf("Opened campaign %d (%q) for project %d — %s.\n", out.Campaign.ID, out.Campaign.Name, cProject, progressStr(out.Progress))
 		fmt.Printf("Review items: keyorix access-review campaign show --project-id %d --campaign-id %d\n", cProject, out.Campaign.ID)
 		return nil
@@ -121,8 +141,19 @@ var campaignListCmd = &cobra.Command{
 		}
 		fmt.Printf("Access-review campaigns — project %d:\n\n", cProject)
 		fmt.Printf("%-5s %-8s %-28s %s\n", "ID", "STATE", "NAME", "PROGRESS")
+		anyDegraded := false
 		for _, c := range out.Campaigns {
-			fmt.Printf("%-5d %-8s %-28s %s\n", c.Campaign.ID, c.Campaign.State, truncate(c.Campaign.Name, 28), progressStr(c.Progress))
+			state := c.Campaign.State
+			if c.Campaign.Degraded {
+				// #483: this campaign's opening snapshot couldn't fully read every
+				// secret's shares — it may be missing a share item.
+				state += "*"
+				anyDegraded = true
+			}
+			fmt.Printf("%-5d %-8s %-28s %s\n", c.Campaign.ID, state, truncate(c.Campaign.Name, 28), progressStr(c.Progress))
+		}
+		if anyDegraded {
+			fmt.Println("\n(* = degraded snapshot; run `campaign show` on it for details)")
 		}
 		return nil
 	},
@@ -149,6 +180,7 @@ var campaignShowCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Campaign %d (%q) — %s — %s\n\n", out.Campaign.ID, out.Campaign.Name, out.Campaign.State, progressStr(out.Progress))
+		printCampaignDegradedWarning(out.Campaign)
 		if len(out.Items) == 0 {
 			fmt.Println("No items.")
 			return nil
@@ -215,6 +247,7 @@ var campaignCloseCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Closed campaign %d — %s.\n", out.Campaign.ID, progressStr(out.Progress))
+		printCampaignDegradedWarning(out.Campaign)
 		return nil
 	},
 }

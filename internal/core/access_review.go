@@ -215,6 +215,7 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 		return n
 	}
 
+	report := &AccessReviewReport{}
 	var entries []*AccessReviewEntry
 
 	// (1) Role-based standing access — project-scoped role grants whose role confers
@@ -263,6 +264,14 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 		}
 		shares, err := c.storage.ListSharesBySecret(ctx, s.ID)
 		if err != nil {
+			// #483: a transient error reading ONE secret's shares must not silently drop
+			// its direct/group grants from the report with no signal — that reads
+			// identically to "this secret has no shares" to every downstream consumer
+			// (the campaign snapshot, the API/CLI), exactly the fail-open pattern #453
+			// already fixed for LastUserSecretActivity below. The secret's shares still
+			// can't be reported (there's nothing else to do without the data), but the
+			// caller must now be told coverage is incomplete.
+			report.degrade(fmt.Sprintf("shares:secret=%d", s.ID), err)
 			continue // best-effort; a secret whose shares can't be read is skipped
 		}
 		for _, sh := range shares {
@@ -281,7 +290,7 @@ func (c *KeyorixCore) GenerateProjectAccessReview(ctx context.Context, projectID
 		}
 	}
 
-	report := &AccessReviewReport{Entries: entries}
+	report.Entries = entries
 
 	// Annotate user principals with their last secret-access time (dormant-access
 	// detection). #453: on storage.type: remote, LastUserSecretActivity is
