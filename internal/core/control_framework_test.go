@@ -176,6 +176,37 @@ func TestEvaluateControls_CertificateHygiene_ScanningNeverEnabled(t *testing.T) 
 	assert.Contains(t, cu.Detail, "not enabled")
 }
 
+// #395: a risk exception is a governed, time-bound acceptance of a control gap — once
+// it expires without renewal or revocation, the risk it was excepting is unmitigated
+// again. Zero exceptions, or exceptions that are all current, must pass; any
+// expired-but-not-yet-revoked exception must surface as a gap naming the count.
+func TestEvaluateControls_RiskExceptionHygiene(t *testing.T) {
+	none := EvaluateControls(&CompliancePosture{})
+	rn := findControl(t, none, "risk-exception-hygiene")
+	assert.Equal(t, ControlStatusPass, rn.Status)
+
+	current := EvaluateControls(&CompliancePosture{
+		Risk: RiskPosture{ActiveExceptions: 2, ExpiringSoon: 1, Expired: 0},
+	})
+	rc := findControl(t, current, "risk-exception-hygiene")
+	assert.Equal(t, ControlStatusPass, rc.Status, "all-current exceptions must not gap the control")
+
+	stale := EvaluateControls(&CompliancePosture{
+		Risk: RiskPosture{ActiveExceptions: 1, Expired: 3},
+	})
+	rs := findControl(t, stale, "risk-exception-hygiene")
+	assert.Equal(t, ControlStatusGap, rs.Status)
+	assert.Contains(t, rs.Detail, "3 expired but not yet revoked/renewed")
+
+	// A degraded expired-exception collection must surface as unknown, never a false
+	// pass just because Expired's zero value looks clean (#136).
+	degraded := EvaluateControls(&CompliancePosture{
+		DegradedReasons: []string{"risk: simulated db failure"},
+	})
+	rd := findControl(t, degraded, "risk-exception-hygiene")
+	assert.Equal(t, ControlStatusUnknown, rd.Status)
+}
+
 // Once the scan has evaluated at least one certificate, the control reflects the real
 // data: pass when none are expired, gap when at least one is.
 func TestEvaluateControls_CertificateHygiene_ScanningEnabled(t *testing.T) {

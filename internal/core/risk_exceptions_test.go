@@ -156,3 +156,35 @@ func TestCountActiveRiskExceptions(t *testing.T) {
 	assert.Equal(t, 2, active)
 	assert.Equal(t, 1, soon)
 }
+
+// #395: an exception past its expiry but still non-revoked counts as expired,
+// distinct from a genuinely-active one — it dropped out of the active tally with no
+// other signal that its accepted risk is unmitigated again.
+func TestCountExpiredRiskExceptions(t *testing.T) {
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+	store := new(MockStorage)
+	store.On("ListRiskExceptions", mock.Anything, true).Return([]*models.RiskException{
+		{ID: 1, ExpiresAt: now.AddDate(0, 0, 3)},   // active, not expired
+		{ID: 2, ExpiresAt: now.AddDate(0, 0, -1)},  // expired, still non-revoked
+		{ID: 3, ExpiresAt: now.AddDate(0, 0, -30)}, // expired, still non-revoked
+	}, nil)
+
+	c := riskCore(store, now)
+	expired, err := c.CountExpiredRiskExceptions(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, expired)
+}
+
+// Zero stored exceptions, or exceptions that are all current, count zero expired.
+func TestCountExpiredRiskExceptions_NoneExpired(t *testing.T) {
+	now := time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC)
+	store := new(MockStorage)
+	store.On("ListRiskExceptions", mock.Anything, true).Return([]*models.RiskException{
+		{ID: 1, ExpiresAt: now.AddDate(0, 0, 3)},
+	}, nil)
+
+	c := riskCore(store, now)
+	expired, err := c.CountExpiredRiskExceptions(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, expired)
+}

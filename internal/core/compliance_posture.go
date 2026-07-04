@@ -140,6 +140,12 @@ type RetentionPosture struct {
 type RiskPosture struct {
 	ActiveExceptions int `json:"active_exceptions"`
 	ExpiringSoon     int `json:"expiring_soon"` // active exceptions expiring within the soon window
+	// Expired counts exceptions that have passed their expiry but are still marked
+	// non-revoked (#395) — a stale, never-renewed acceptance whose underlying risk is
+	// unmitigated again. These already drop out of ActiveExceptions above, so without
+	// this field a lapsed exception becomes invisible to compliance posture/evidence
+	// the instant it expires, rather than surfacing as a gap needing attention.
+	Expired int `json:"expired"`
 }
 
 // CertificatePosture reports certificate hygiene from the cached cert expiry (ADR-056).
@@ -253,9 +259,14 @@ type complianceSnapshot struct {
 	sodReport *SoDViolationsReport
 	sodErr    error
 
-	// riskExceptionsActive is ListRiskExceptions(ctx, true) — active-only exceptions.
-	riskExceptionsActive []*RiskExceptionView
-	riskExceptionsErr    error
+	// riskExceptionsActive and riskExceptionsExpired both come from the SAME single
+	// listRiskExceptionRows(ctx, true) read (#256) — active-only exceptions, and a
+	// count of non-revoked exceptions whose expiry has already passed (#395), i.e.
+	// stale acceptances that dropped out of riskExceptionsActive with no compliance
+	// visibility. One storage read, two derived views.
+	riskExceptionsActive  []*RiskExceptionView
+	riskExceptionsExpired int
+	riskExceptionsErr     error
 
 	// Per-project results, keyed by project ID.
 	campaignsByProject     map[uint][]*CampaignWithProgress
@@ -284,7 +295,18 @@ func (c *KeyorixCore) buildComplianceSnapshot(ctx context.Context) (*complianceS
 	snap.auditChain, snap.auditChainErr = c.VerifyAuditChain(ctx)
 	snap.rotationStatuses, snap.rotationErr = c.GetRotationStatus(ctx, nil, nil)
 	snap.sodReport, snap.sodErr = c.DetectSoDViolations(ctx)
-	snap.riskExceptionsActive, snap.riskExceptionsErr = c.ListRiskExceptions(ctx, true)
+	if views, err := c.listRiskExceptionRows(ctx, true); err == nil {
+		for _, v := range views {
+			switch v.Status {
+			case ExceptionStatusActive:
+				snap.riskExceptionsActive = append(snap.riskExceptionsActive, v)
+			case ExceptionStatusExpired:
+				snap.riskExceptionsExpired++
+			}
+		}
+	} else {
+		snap.riskExceptionsErr = err
+	}
 
 	for _, proj := range projects {
 		pid := proj.ID
@@ -399,8 +421,12 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 	}
 
 	// Risk register — governed, time-bound exceptions (A.5.8). Derived from the same
-	// ListRiskExceptions(ctx, true) read as suppressExceptedSoDViolations above and as
-	// the evidence pack's RiskExceptions field — one query, three consumers.
+	// listRiskExceptionRows(ctx, true) read as suppressExceptedSoDViolations above and
+	// as the evidence pack's RiskExceptions field — one query, several consumers.
+	// Expired (#395) comes from that identical read: a stale, never-renewed exception
+	// means the risk it accepted is unmitigated again, so it must stay visible to the
+	// control matrix rather than silently reading as "no exceptions" the moment
+	// expiry passes.
 	if snap.riskExceptionsErr == nil {
 		active, soon := 0, 0
 		cutoff := c.now().Add(riskExpiringSoonWindow)
@@ -410,7 +436,7 @@ func (c *KeyorixCore) compliancePostureFromSnapshot(ctx context.Context, snap *c
 				soon++
 			}
 		}
-		p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon}
+		p.Risk = RiskPosture{ActiveExceptions: active, ExpiringSoon: soon, Expired: snap.riskExceptionsExpired}
 	} else {
 		p.degrade("risk", snap.riskExceptionsErr)
 	}
