@@ -125,6 +125,19 @@ func (rs *RemoteStorage) SetAccountState(_ context.Context, _ uint, _ string, _ 
 		"upstream PUT /api/v1/users/{id} endpoint does not accept this field: %w", ErrRemoteUnsupported)
 }
 
+// SetPasswordHash always hard-fails: password_hash is tagged json:"-" on models.User
+// (internal/storage/models/models.go), so it never even reaches the JSON body a
+// RemoteStorage UpdateUser call sends — there is no way to persist a password change
+// through the remote API at all. Returning an error here — instead of falling through
+// to a generic write that would just no-op the field — is the #484 analogue of
+// SetAccountState above (#454): applyNewPassword (self-service ChangePassword and the
+// setup-token consume flow) must see a hard failure, not a false "success" that leaves
+// the stored password hash unchanged.
+func (rs *RemoteStorage) SetPasswordHash(_ context.Context, _ uint, _ string, _ time.Time) error {
+	return fmt.Errorf("password_hash cannot be persisted through remote storage: the "+
+		"upstream PUT /api/v1/users/{id} endpoint does not accept this field: %w", ErrRemoteUnsupported)
+}
+
 // UpdateLoginLockoutState always returns ErrRemoteUnsupported: none of the four
 // login-lockout columns are expressible in the wire format either (#454), so, unlike
 // SetAccountState above, the caller (login_lockout.go) treats this as the same

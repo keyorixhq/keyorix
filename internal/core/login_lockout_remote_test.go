@@ -94,3 +94,31 @@ func TestLockout_RemoteStorageFailsOpenLoudlyOnce(t *testing.T) {
 	})
 	assert.Contains(t, out3, "login lockout accounting is INERT")
 }
+
+// TestUnlockUser_RemoteStorageFailsOpenLoudly is the (#484) regression for the admin
+// UnlockUser path: it clears the identical four lockout-accounting columns that
+// recordFailedLogin/checkLockAndClearLoginFailures clear automatically on a successful
+// login, via the SAME UpdateLoginLockoutState primitive #454 already established for
+// them — so it must get the identical fail-OPEN-but-loud treatment under storage.type:
+// remote (log the operator warning once, return no error to the admin), not a hard
+// failure: this is still passive lockout accounting, not an explicit security
+// directive like account_state, and the worst case of the write silently no-op'ing is
+// merely that the lock expires on its own cooldown instead of clearing early.
+func TestUnlockUser_RemoteStorageFailsOpenLoudly(t *testing.T) {
+	policy := LoginLockoutPolicy{Enabled: true, MaxAttempts: 3, Window: 15 * time.Minute, BaseCooldown: time.Minute, MaxCooldown: time.Hour}
+	user := &models.User{ID: 44, Username: "dave", AccountState: AccountActive, IsActive: true, FailedLoginAttempts: 2, LoginLockoutCount: 1}
+	c := newRemoteLockoutCore(t, user, policy)
+	ctx := context.Background()
+
+	out := captureLog(t, func() {
+		err := c.UnlockUser(ctx, 1, 44)
+		assert.NoError(t, err, "an admin unlock must not fail just because lockout accounting can't be persisted")
+	})
+	assert.Contains(t, out, "login lockout accounting is INERT")
+
+	// The warning fires once per process; a second unlock attempt logs nothing further.
+	out2 := captureLog(t, func() {
+		assert.NoError(t, c.UnlockUser(ctx, 1, 44))
+	})
+	assert.Empty(t, out2, "the warning must not repeat on subsequent calls")
+}

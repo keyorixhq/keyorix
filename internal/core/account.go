@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"golang.org/x/crypto/bcrypt"
@@ -145,19 +146,48 @@ func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User
 // account state back to active per ADR-025), persists the user, and records the hash
 // in history. It assumes the password has already passed validateNewPassword. Shared
 // by ChangePassword and the setup-token consume flow so password handling is uniform.
+//
+// #484: persists via the narrow SetPasswordHash (and, only when the account state
+// actually needs to clear a restriction, SetAccountState) rather than the generic
+// UpdateUser — RemoteStorage can never express password_hash in its wire format at
+// all (models.User.PasswordHash is json:"-"), so a caller going through the generic
+// read-modify-write succeeds against LocalStorage but silently no-ops under
+// storage.type: remote, leaving the caller told "success" while the password never
+// actually changed. Both writes run inside one transaction so a partial application
+// (hash persisted but the state clear lost, or vice versa) can't happen on backends
+// that support real transactions.
 func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, newPassword string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	now := c.now()
-	user.PasswordHash = string(hash)
-	user.PasswordChangedAt = &now
-	user.AccountState = clearRestrictionOnPasswordChange(user.AccountState)
-	user.UpdatedAt = now
-	if _, err := c.storage.UpdateUser(ctx, user); err != nil {
+	newState := clearRestrictionOnPasswordChange(user.AccountState)
+	// Compare against the NORMALIZED current state, not the raw field: an unset legacy
+	// AccountState ("") normalizes to AccountActive, exactly like newState does for a
+	// non-restricted user, so a naive raw comparison would spuriously call
+	// SetAccountState (and, on RemoteStorage, hard-fail) for every legacy-row password
+	// change even though nothing is actually changing.
+	stateChanged := newState != NormalizeAccountState(user.AccountState)
+
+	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := tx.SetPasswordHash(ctx, user.ID, string(hash), now); err != nil {
+			return err
+		}
+		if stateChanged {
+			if err := tx.SetAccountState(ctx, user.ID, newState, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	user.PasswordHash = string(hash)
+	user.PasswordChangedAt = &now
+	user.AccountState = newState
+	user.UpdatedAt = now
 
 	// Record the new hash in history and prune to the configured depth.
 	// Best-effort: the password change itself has already succeeded.

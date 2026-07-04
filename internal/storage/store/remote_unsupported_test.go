@@ -54,6 +54,23 @@ func TestRemoteStorage_SetAccountState_HardFails(t *testing.T) {
 	assert.True(t, errors.Is(err, corestorage.ErrUnsupportedByBackend))
 }
 
+// TestRemoteStorage_SetPasswordHash_HardFails proves the #484 fix: since
+// models.User.PasswordHash is tagged json:"-", it never even reaches the JSON body a
+// RemoteStorage UpdateUser call would send — there is no way to persist a password
+// change through the remote API at all. RemoteStorage must refuse the write outright
+// rather than silently no-op it, exactly mirroring SetAccountState's #454 hard-fail
+// treatment above. No httptest server is needed: SetPasswordHash never makes an HTTP
+// call — the whole point is that there is nowhere to send this field.
+func TestRemoteStorage_SetPasswordHash_HardFails(t *testing.T) {
+	rs, err := store.NewRemoteStorage(testConfig("https://unused.example"))
+	require.NoError(t, err)
+
+	err = rs.SetPasswordHash(context.Background(), 1, "$2a$10$fakehash", time.Now())
+	require.Error(t, err, "a password change must hard-fail under remote storage, not silently succeed")
+	assert.True(t, errors.Is(err, store.ErrRemoteUnsupported))
+	assert.True(t, errors.Is(err, corestorage.ErrUnsupportedByBackend))
+}
+
 // TestRemoteStorage_UpdateLoginLockoutState_ReturnsUnsupportedSentinel proves the
 // #454 fix for the lockout-accounting columns: same wire-format gap as
 // SetAccountState, but this one is a passive backstop counter, not an explicit

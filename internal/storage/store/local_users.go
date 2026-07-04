@@ -210,6 +210,26 @@ func (ls *LocalStorage) SetAccountState(ctx context.Context, id uint, state stri
 	return nil
 }
 
+// SetPasswordHash persists ONLY password_hash and password_changed_at (plus
+// updated_at) via a direct column update — see the storage.Storage interface doc
+// comment (#484/#454) for why this narrower primitive exists alongside the generic
+// UpdateUser.
+func (ls *LocalStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
+	result := ls.db.WithContext(ctx).Model(&models.User{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"password_hash":       hash,
+			"password_changed_at": changedAt,
+			"updated_at":          changedAt,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+	}
+	return nil
+}
+
 // UpdateLoginLockoutState persists ONLY the four login-lockout accounting columns via a
 // direct column update — see the storage.Storage interface doc comment (#454).
 func (ls *LocalStorage) UpdateLoginLockoutState(ctx context.Context, id uint, attempts int, lastFailedAt, lockedUntil *time.Time, lockoutCount int) error {
