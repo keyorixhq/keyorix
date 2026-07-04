@@ -411,6 +411,9 @@ type Storage interface {
 	// (ISO A.5.33 / GDPR), returning the number removed. Unlike the soft-delete
 	// purge these age out live records by a time column, never touch active rows,
 	// and cascade to dependent rows where noted. Irreversible.
+	// DeleteAnomalyAlertsBefore only removes ALREADY-ACKNOWLEDGED alerts
+	// (detected_at < before AND acknowledged = true) — an old but never-acknowledged
+	// alert is still a live, unreviewed signal and is never purged by age alone.
 	DeleteAnomalyAlertsBefore(ctx context.Context, before time.Time) (int64, error)
 	// DeleteClosedAccessReviewsBefore removes closed campaigns (closed_at < before)
 	// and their snapshot items, returning (campaigns, items) removed.

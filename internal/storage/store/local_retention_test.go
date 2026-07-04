@@ -34,11 +34,38 @@ func TestDeleteAnomalyAlertsBefore(t *testing.T) {
 
 	n, err := ls.DeleteAnomalyAlertsBefore(ctx, now.AddDate(0, 0, -30))
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), n, "only the 40-day-old alert is purged")
+	assert.Equal(t, int64(0), n, "neither alert is acknowledged, so nothing is purged regardless of age")
 
 	var remaining int64
 	require.NoError(t, ls.db.Model(&models.AnomalyAlert{}).Count(&remaining).Error)
-	assert.Equal(t, int64(1), remaining)
+	assert.Equal(t, int64(2), remaining)
+}
+
+// #415: a never-acknowledged alert is a live, unreviewed security signal — it must
+// survive age-based purge even when well past the retention window. Only an
+// already-acknowledged alert is eligible for deletion once it's old enough.
+func TestDeleteAnomalyAlertsBefore_SkipsUnacknowledged(t *testing.T) {
+	ls := newRetentionTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	require.NoError(t, ls.db.Create(&models.AnomalyAlert{
+		ID: 1, DetectedAt: now.AddDate(0, 0, -40), Acknowledged: true,
+	}).Error)
+	require.NoError(t, ls.db.Create(&models.AnomalyAlert{
+		ID: 2, DetectedAt: now.AddDate(0, 0, -40), Acknowledged: false,
+	}).Error)
+
+	n, err := ls.DeleteAnomalyAlertsBefore(ctx, now.AddDate(0, 0, -30))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "only the acknowledged, old alert is purged")
+
+	var remaining models.AnomalyAlert
+	require.NoError(t, ls.db.Where("id = ?", 2).First(&remaining).Error)
+	assert.False(t, remaining.Acknowledged)
+
+	var count int64
+	require.NoError(t, ls.db.Model(&models.AnomalyAlert{}).Where("id = ?", 1).Count(&count).Error)
+	assert.Equal(t, int64(0), count, "the acknowledged alert must be gone")
 }
 
 func TestDeleteClosedAccessReviewsBefore_CascadesItemsAndSkipsOpen(t *testing.T) {
