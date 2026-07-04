@@ -82,6 +82,42 @@ func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
 	store.AssertNotCalled(t, "CreateProjectInvitation", mock.Anything, mock.Anything)
 }
 
+// #231: InviteGlobal must refuse to let a non-admin actor mint a global admin
+// system role, mirroring the ceiling check InviteToProject already applies to
+// its own role parameter. Uses real storage since the check goes through
+// GetUserRoleIDsAt, not a mockable single call.
+func TestInviteGlobal_RejectsNonAdminGrantingGlobalAdminRole(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	// A non-admin actor holding only roles.write-adjacent permissions (project_developer,
+	// no admin-tier role anywhere) must not be able to mint an "admin" invitation.
+	nonAdminID := seedUserWithRole(t, st, "non-admin-inviter", "project_developer", storage.Scope{})
+
+	_, err := c.InviteGlobal(ctx, "mallory@acme.io", "admin", nil, nonAdminID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only an administrator can grant")
+}
+
+// #231: the per-project assignments bundled into a global invite must be
+// individually ceiling-checked too — a non-admin actor shouldn't be able to
+// smuggle an admin-conferring project assignment into an otherwise-plain
+// global invite.
+func TestInviteGlobal_RejectsNonAdminGrantingProjectAdminAssignment(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+
+	nonAdminID := seedUserWithRole(t, st, "non-admin-inviter-2", "project_developer", storage.Scope{})
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "target-project"})
+	require.NoError(t, err)
+
+	_, err = c.InviteGlobal(ctx, "mallory2@acme.io", "system_viewer", []ProjectAssignment{
+		{ProjectID: proj.ID, Role: "project_admin"},
+	}, nonAdminID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only an administrator can grant")
+}
+
 func TestInviteGlobal_DefaultsSystemViewer(t *testing.T) {
 	store := new(MockStorage)
 	c := newInviteCore(store)

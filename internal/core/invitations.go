@@ -169,6 +169,12 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 	if _, err := c.storage.GetRoleByName(ctx, sysRole); err != nil {
 		return nil, fmt.Errorf("unknown role %q (system): %w", sysRole, err)
 	}
+	// Escalation-by-proxy guard (#231), mirroring InviteToProject: a global system
+	// role is the most powerful grant this flow can mint, so it needs the same
+	// admin-authority ceiling check, at global scope (projectID 0).
+	if err := c.requireAuthorityForRole(ctx, invitedBy, 0, sysRole); err != nil {
+		return nil, err
+	}
 
 	// Validate + dedup assignments before persisting anything.
 	seen := map[uint]bool{}
@@ -186,6 +192,13 @@ func (c *KeyorixCore) InviteGlobal(ctx context.Context, email, systemRole string
 		}
 		if _, err := c.storage.GetRoleByName(ctx, a.Role); err != nil {
 			return nil, fmt.Errorf("unknown role %q: %w", a.Role, err)
+		}
+		// Same ceiling check InviteToProject applies to its own role parameter —
+		// without this, a non-admin roles.assign holder could bundle an
+		// admin-conferring project assignment into an otherwise-innocuous global
+		// invite.
+		if err := c.requireAuthorityForRole(ctx, invitedBy, a.ProjectID, a.Role); err != nil {
+			return nil, err
 		}
 		clean = append(clean, ProjectAssignment{ProjectID: a.ProjectID, Role: a.Role})
 	}
