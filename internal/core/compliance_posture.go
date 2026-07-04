@@ -278,8 +278,14 @@ func (c *KeyorixCore) GetCompliancePosture(ctx context.Context) (*CompliancePost
 	// Separation-of-duties violations (A.5.3), net of governed risk exceptions
 	// (#170): an approved, active "sod"-category exception suppresses only the ONE
 	// violation it names, not the whole SoD control.
-	if violations, err := c.DetectSoDViolations(ctx); err == nil {
-		p.AccessGovernance.SoDViolations = len(c.suppressExceptedSoDViolations(ctx, violations))
+	if sod, err := c.DetectSoDViolations(ctx); err == nil {
+		p.AccessGovernance.SoDViolations = len(c.suppressExceptedSoDViolations(ctx, sod.Violations))
+		// #420: a principal whose permissions couldn't be read means the scan may be
+		// missing a violation for them — the posture rollup must say so too, not just
+		// count what it managed to see.
+		for _, reason := range sod.DegradedReasons {
+			p.degrade("sod_violations", fmt.Errorf("%s", reason))
+		}
 	} else {
 		p.degrade("sod_violations", err)
 	}

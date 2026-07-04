@@ -131,11 +131,23 @@ var violationsCmd = &cobra.Command{
 			return fmt.Errorf("not connected to a server — run: keyorix connect <server>")
 		}
 		var out struct {
-			Violations []violationView `json:"violations"`
-			Count      int             `json:"count"`
+			Violations      []violationView `json:"violations"`
+			Count           int             `json:"count"`
+			Degraded        bool            `json:"degraded"`
+			DegradedReasons []string        `json:"degraded_reasons"`
 		}
 		if err := c.Get(context.Background(), "/api/v1/sod/violations", &out); err != nil {
 			return err
+		}
+		// #420: a scan that couldn't read every principal's permissions may be missing
+		// a violation — surface that instead of a silently-clean report.
+		if out.Degraded {
+			fmt.Println("*** DEGRADED SCAN — one or more principals' permissions could not be read ***")
+			fmt.Println("*** This list may be MISSING a violation for them.                        ***")
+			for _, reason := range out.DegradedReasons {
+				fmt.Printf("    - %s\n", reason)
+			}
+			fmt.Println()
 		}
 		if out.Count == 0 {
 			fmt.Println("No separation-of-duties violations.")
