@@ -32,7 +32,8 @@ func TestDetectSoDViolations(t *testing.T) {
 	require.NoError(t, err)
 
 	var users []string
-	for _, v := range violations {
+	require.False(t, violations.Degraded)
+	for _, v := range violations.Violations {
 		users = append(users, v.Username)
 		assert.Equal(t, "write-vs-useradmin", v.PolicyName)
 	}
@@ -69,7 +70,8 @@ func TestDetectSoDViolations_GroupInheritedPermission(t *testing.T) {
 	require.NoError(t, err)
 
 	var users []string
-	for _, v := range violations {
+	require.False(t, violations.Degraded)
+	for _, v := range violations.Violations {
 		users = append(users, v.Username)
 	}
 	assert.Contains(t, users, "carol", "carol holds secrets.write via her group and secrets.read directly")
@@ -105,7 +107,8 @@ func TestDetectSoDViolations_AdminBypass(t *testing.T) {
 		detail   string
 		username string
 	}
-	for _, v := range violations {
+	require.False(t, violations.Degraded)
+	for _, v := range violations.Violations {
 		if v.Username == "erin" {
 			erinV = &struct {
 				detail   string
@@ -146,7 +149,8 @@ func TestDetectSoDViolations_MachinePrincipal(t *testing.T) {
 	require.NoError(t, err)
 
 	var found bool
-	for _, v := range violations {
+	require.False(t, violations.Degraded)
+	for _, v := range violations.Violations {
 		if v.PrincipalType == "machine" && v.Username == "ci-bot" {
 			found = true
 			assert.Equal(t, uint(70), v.UserID)
@@ -166,7 +170,8 @@ func TestDetectSoDViolations_NoPolicies(t *testing.T) {
 
 	v, err := h.CoreService.DetectSoDViolations(context.Background())
 	require.NoError(t, err)
-	assert.Empty(t, v)
+	assert.False(t, v.Degraded)
+	assert.Empty(t, v.Violations)
 }
 
 // CreateSoDPolicy validates its inputs.

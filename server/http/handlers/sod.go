@@ -91,11 +91,19 @@ func (h *CatalogHandler) DeleteSoDPolicy(w http.ResponseWriter, r *http.Request)
 
 // ListSoDViolations handles GET /api/v1/sod/violations.
 func (h *CatalogHandler) ListSoDViolations(w http.ResponseWriter, r *http.Request) {
-	violations, err := h.coreService.DetectSoDViolations(r.Context())
+	report, err := h.coreService.DetectSoDViolations(r.Context())
 	if err != nil {
 		log.Printf("Error detecting SoD violations: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"violations": violations, "count": len(violations)}, "")
+	// #420: degraded/degraded_reasons must reach API consumers — a scan that silently
+	// skipped a principal whose permissions couldn't be read would otherwise look
+	// identical to one that scanned everyone and found nothing for them.
+	sendSuccess(w, map[string]interface{}{
+		"violations":       report.Violations,
+		"count":            len(report.Violations),
+		"degraded":         report.Degraded,
+		"degraded_reasons": report.DegradedReasons,
+	}, "")
 }

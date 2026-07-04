@@ -51,6 +51,32 @@ func sodViolationReference(policyID uint, principalType string, principalID uint
 	return fmt.Sprintf("sod:policy:%d:%s:%d", policyID, principalType, principalID)
 }
 
+// SoDViolationsReport is the result of a full separation-of-duties scan: every
+// violation found, plus a signal for whether the scan is complete. #420: a user
+// whose effective permissions could not be read was previously silently skipped
+// (`continue`, no logging, no signal) — if that user actually held a toxic
+// permission combination, the violation was silently never reported, exactly the
+// fail-open shape already fixed elsewhere (CompliancePosture.degrade,
+// AccessReviewReport.degrade, SecretAccessorsResult.degrade). Degraded +
+// DegradedReasons make the gap detectable instead.
+type SoDViolationsReport struct {
+	Violations []SoDViolation `json:"violations"`
+	// Degraded is true when at least one principal's permissions could not be read,
+	// so the scan may be missing a violation for that principal.
+	Degraded bool `json:"degraded"`
+	// DegradedReasons names each principal whose permissions failed to resolve,
+	// with the underlying error.
+	DegradedReasons []string `json:"degraded_reasons,omitempty"`
+}
+
+// degrade records that a principal's permissions could not be evaluated for SoD
+// violations: it flips Degraded and appends a human-readable reason, mirroring
+// AccessReviewReport.degrade (access_review.go).
+func (r *SoDViolationsReport) degrade(area string, err error) {
+	r.Degraded = true
+	r.DegradedReasons = append(r.DegradedReasons, fmt.Sprintf("%s: %v", area, err))
+}
+
 // CreateSoDPolicy defines a toxic-combination rule. The two permissions must be
 // present and distinct. actorID is the creating admin.
 func (c *KeyorixCore) CreateSoDPolicy(ctx context.Context, actorID uint, name, description, permA, permB string) (*models.SoDPolicy, error) {
@@ -101,17 +127,19 @@ func (c *KeyorixCore) DeleteSoDPolicy(ctx context.Context, actorID, id uint) err
 // effective permissions and returns each that holds both sides of a policy. Empty
 // when there are no policies. It covers BOTH human users (paged, no silent cap) and
 // machine identities — automation principals hold roles and are authorized too, so
-// omitting them would leave the control blind to a whole class of actor.
-func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) ([]SoDViolation, error) {
+// omitting them would leave the control blind to a whole class of actor. The
+// returned report's Degraded/DegradedReasons signal when a principal's permissions
+// could not be read, rather than silently reading as "scanned, no violation" (#420).
+func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) (*SoDViolationsReport, error) {
 	policies, err := c.storage.ListSoDPolicies(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	report := &SoDViolationsReport{Violations: []SoDViolation{}}
 	if len(policies) == 0 {
-		return []SoDViolation{}, nil
+		return report, nil
 	}
 
-	violations := []SoDViolation{}
 	const pageSize = 500
 	for page := 1; ; page++ {
 		users, total, err := c.storage.ListUsers(ctx, &storage.UserFilter{Page: page, PageSize: pageSize})
@@ -122,15 +150,23 @@ func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) ([]SoDViolation, 
 			if !u.IsActive {
 				continue
 			}
-			violations = append(violations, c.userSoDViolations(ctx, u, policies)...)
+			uv, err := c.userSoDViolations(ctx, u, policies)
+			if err != nil {
+				// #420: the user is still skipped (nothing else can be done without
+				// the data), but the report must say coverage is incomplete instead
+				// of looking like a clean scan that silently missed them.
+				report.degrade(fmt.Sprintf("user_permissions:user=%d", u.ID), err)
+				continue
+			}
+			report.Violations = append(report.Violations, uv...)
 		}
 		if len(users) < pageSize || int64(page*pageSize) >= total {
 			break
 		}
 	}
 
-	violations = append(violations, c.machineSoDViolations(ctx, policies)...)
-	return violations, nil
+	report.Violations = append(report.Violations, c.machineSoDViolations(ctx, policies)...)
+	return report, nil
 }
 
 // userSoDViolations returns the policy violations a single user holds. A user whose
@@ -140,7 +176,12 @@ func (c *KeyorixCore) DetectSoDViolations(ctx context.Context) ([]SoDViolation, 
 // rows may name only one side (or neither). Missing that made the SoD control blind to
 // exactly the most-privileged principals it exists to police. For a non-admin, the
 // held-set unions direct and group-inherited permissions (mirroring Authorize).
-func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, policies []*models.SoDPolicy) []SoDViolation {
+//
+// #420: an error resolving the user's permissions is returned to the caller rather
+// than silently swallowed — the user genuinely can't be scanned without the data, but
+// the caller (DetectSoDViolations) must record that the scan is incomplete instead of
+// looking clean.
+func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, policies []*models.SoDPolicy) ([]SoDViolation, error) {
 	if adminRole := c.adminRoleName(ctx, u.ID); adminRole != "" {
 		out := make([]SoDViolation, 0, len(policies))
 		detail := fmt.Sprintf("holds all permissions via admin role %q", adminRole)
@@ -153,16 +194,16 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 				Reference: sodViolationReference(pol.ID, "user", u.ID),
 			})
 		}
-		return out
+		return out, nil
 	}
 
 	perms, err := c.storage.GetUserPermissions(ctx, u.ID)
 	if err != nil {
-		return nil // best-effort; a user whose permissions can't be read is skipped
+		return nil, err
 	}
 	groupPerms, err := c.storage.GetUserGroupPermissions(ctx, u.ID)
 	if err != nil {
-		return nil // best-effort; skip a user whose group permissions can't be read
+		return nil, err
 	}
 	held := make(map[string]bool, len(perms)+len(groupPerms))
 	for _, p := range perms {
@@ -182,7 +223,7 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 			})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // machineSoDViolations scans active machine identities. Machines resolve permissions

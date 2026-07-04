@@ -61,10 +61,11 @@ func TestSoD_SuppressedByApprovedRiskException(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, p.AccessGovernance.SoDViolations, 1, "unaccepted, the violation counts")
 
-	violations, err := h.CoreService.DetectSoDViolations(ctx)
+	sod, err := h.CoreService.DetectSoDViolations(ctx)
 	require.NoError(t, err)
-	require.NotEmpty(t, violations)
-	ref := violations[0].Reference
+	require.False(t, sod.Degraded)
+	require.NotEmpty(t, sod.Violations)
+	ref := sod.Violations[0].Reference
 	require.NotEmpty(t, ref, "every violation must carry a stable reference to except against")
 
 	// Create the exception — NOT yet approved. Still counts.

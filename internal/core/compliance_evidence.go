@@ -97,8 +97,15 @@ func (c *KeyorixCore) GenerateComplianceEvidence(ctx context.Context) (*Complian
 	}
 
 	// Separation-of-duties violations (the toxic-combination register).
-	if violations, err := c.DetectSoDViolations(ctx); err == nil {
-		ev.SoDViolations = violations
+	if sod, err := c.DetectSoDViolations(ctx); err == nil {
+		ev.SoDViolations = sod.Violations
+		// #420: a principal whose permissions couldn't be read means this register
+		// may be missing a violation for them — flip the shared posture.Degraded
+		// signal so an evidence-pack consumer catches it, same as every other
+		// sub-query above.
+		for _, reason := range sod.DegradedReasons {
+			posture.degrade("evidence:sod_violations", fmt.Errorf("%s", reason))
+		}
 	} else {
 		posture.degrade("evidence:sod_violations", err)
 	}
